@@ -1,7 +1,7 @@
 import { Program } from 'clvm-lib';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { krunkStateCodec } from '../../features/krunk/stateCodec';
-import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { krunkStateCodec } from '@games/krunk/ui/stateCodec';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/stateCodec';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,

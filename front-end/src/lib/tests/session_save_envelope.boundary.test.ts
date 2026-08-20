@@ -1,4 +1,4 @@
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
 import {
   flushSessionSave,
   hasSavedSessionMarker,
@@ -125,7 +125,7 @@ describe('save boundary enforcement', () => {
     errorSpy.mockRestore();
   });
 
-  it('deletes a malformed current-v13 metadata envelope read from IndexedDB', async () => {
+  it('deletes a malformed current-v14 metadata envelope read from IndexedDB', async () => {
     markSavedSession();
     await writeSessionRecord(
       baseSave({
@@ -133,9 +133,11 @@ describe('save boundary enforcement', () => {
           selected_game: 'calpoker',
           game_timeout: 'not-a-timeout',
           proposal_sent: false,
-          calpoker: { amount: '10' },
-          krunk: { amount: '100' },
-          spacepoker: { unit_size: '1', stack_size: '10' },
+          drafts: {
+            calpoker: { amount: '10' },
+            krunk: { amount: '100' },
+            spacepoker: { unitSize: '1', stackSize: '10' },
+          },
         },
       }),
     );

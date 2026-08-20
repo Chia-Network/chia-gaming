@@ -16,8 +16,9 @@ import type {
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
 import {
   decodePersistedGameState,
+  encodeGameTermsExtras,
   gameHandMembershipDescription,
-  isRegisteredGameType,
+  isCatalogGameType,
   validateGameHandMembership,
 } from '../gameRegistry';
 import {
@@ -36,6 +37,7 @@ import type { BetweenHandModeModel, HandTermsModel, SessionModel } from './types
 import { isTerminalChannelSnapshot } from './selectors';
 import {
   parseComposeDraftState,
+  encodeComposeDraftState,
   parseOptionalTermsSnapshot,
   parseProposalGroups,
   parseTermsSnapshot,
@@ -279,50 +281,13 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
 }
 
 function savedTermsFromModel(terms: HandTermsModel): SavedHandTerms {
-  const base = {
+  return {
     my_contribution: terms.myContribution.toString(),
     their_contribution: terms.theirContribution.toString(),
     game_timeout: terms.gameTimeout.toString(),
+    game_type: terms.gameType,
+    ...encodeGameTermsExtras(terms),
   };
-  return terms.gameType === 'spacepoker'
-    ? {
-        ...base,
-        game_type: terms.gameType,
-        spacepoker_unit_size: terms.unitSizeMojos.toString(),
-      }
-    : { ...base, game_type: terms.gameType };
-}
-
-function initialTermsFromCompose(
-  compose: ReturnType<typeof parseComposeDraftState>,
-): HandTermsModel {
-  const common = { gameTimeout: compose.gameTimeout };
-  switch (compose.selectedGame) {
-    case 'calpoker':
-      return {
-        ...common,
-        gameType: compose.selectedGame,
-        myContribution: compose.calpoker.amount,
-        theirContribution: compose.calpoker.amount,
-      };
-    case 'krunk':
-      return {
-        ...common,
-        gameType: compose.selectedGame,
-        myContribution: compose.krunk.amount,
-        theirContribution: compose.krunk.amount,
-      };
-    case 'spacepoker': {
-      const contribution = compose.spacepoker.unitSize * compose.spacepoker.stackSize;
-      return {
-        ...common,
-        gameType: compose.selectedGame,
-        myContribution: contribution,
-        theirContribution: contribution,
-        unitSizeMojos: compose.spacepoker.unitSize,
-      };
-    }
-  }
 }
 
 function parsePresentation(value: unknown): SessionPresentationSave {
@@ -348,7 +313,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       return [id, parsed];
     }),
   );
-  if (!isRegisteredGameType(fields.activeGameType)) {
+  if (!isCatalogGameType(fields.activeGameType)) {
     throw new Error(`Garbled save: invalid activeGameType ${String(fields.activeGameType)}`);
   }
   const decodedHandState =
@@ -417,17 +382,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       BETWEEN_HAND_MODES,
       'betweenHandMode',
     ),
-    betweenHandCompose: {
-      selected_game: compose.selectedGame,
-      game_timeout: compose.gameTimeout.toString(),
-      proposal_sent: compose.proposalSent,
-      calpoker: { amount: compose.calpoker.amount.toString() },
-      krunk: { amount: compose.krunk.amount.toString() },
-      spacepoker: {
-        unit_size: compose.spacepoker.unitSize.toString(),
-        stack_size: compose.spacepoker.stackSize.toString(),
-      },
-    },
+    betweenHandCompose: encodeComposeDraftState(compose),
     betweenHandLastTerms: lastTerms === null ? null : savedTermsFromModel(lastTerms),
     betweenHandRejectedOnceTerms:
       rejectedOnceTerms === null ? null : savedTermsFromModel(rejectedOnceTerms),
@@ -662,7 +617,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
   }
   if (
     currentHandIds.length > 0 &&
-    isRegisteredGameType(save.activeGameType) &&
+    isCatalogGameType(save.activeGameType) &&
     !validateGameHandMembership(save.activeGameType, currentHandIds, handState)
   ) {
     throw new Error(
@@ -673,15 +628,16 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
   const compose = parseComposeDraftState(save.betweenHandCompose);
   const lastTerms =
     save.betweenHandLastTerms === null
-      ? initialTermsFromCompose(compose)
+      ? null
       : parseTermsSnapshot(save.betweenHandLastTerms, 'betweenHandLastTerms');
   const hasPersistedHand = activeIds.length > 0 || currentHandIds.length > 0 || handState !== null;
-  if (hasPersistedHand && save.betweenHandLastTerms === null) {
+  if (hasPersistedHand && lastTerms === null) {
     throw new Error('Garbled save: persisted hand is missing betweenHandLastTerms');
   }
   if (
     hasPersistedHand &&
-    isRegisteredGameType(save.activeGameType) &&
+    lastTerms !== null &&
+    isCatalogGameType(save.activeGameType) &&
     lastTerms.gameType !== save.activeGameType
   ) {
     throw new Error('Garbled save: activeGameType does not match betweenHandLastTerms.game_type');

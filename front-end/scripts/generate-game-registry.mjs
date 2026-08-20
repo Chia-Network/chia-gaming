@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+// Generates front-end/src/generated/gamePackages.ts from games/registry.json.
+import { mkdirSync, readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const FE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(FE, '..', '..');
+const registry = JSON.parse(readFileSync(join(ROOT, 'games', 'registry.json'), 'utf8'));
+const production = registry.production;
+if (!Array.isArray(production) || production.length === 0) {
+  throw new Error('games/registry.json production list is empty');
+}
+
+function factoryHex(key) {
+  return `games/${key}/clsp/factory_${key}_factory.hex`;
+}
+
+function extraPresets(key) {
+  const clsp = join(ROOT, 'games', key, 'clsp');
+  try {
+    return readdirSync(clsp)
+      .filter((name) => name.endsWith('.dat'))
+      .map((name) => `games/${key}/clsp/${name}`);
+  } catch {
+    return [];
+  }
+}
+
+const presetFiles = production.flatMap((key) => [factoryHex(key), ...extraPresets(key)]);
+const imports = production
+  .map((key, index) => {
+    const rel = relative(join(FE, '../src/generated'), join(ROOT, 'games', key, 'ui/package.ts'))
+      .replace(/\\/g, '/')
+      .replace(/\.ts$/, '');
+    return `import pkg${index} from '${rel.startsWith('.') ? rel : `./${rel}`}';`;
+  })
+  .join('\n');
+const packageList = production.map((_, index) => `pkg${index}`).join(', ');
+
+const destDir = join(FE, '../src/generated');
+mkdirSync(destDir, { recursive: true });
+
+writeFileSync(
+  join(destDir, 'gamePresets.ts'),
+  `// Generated from games/registry.json. Do not edit.
+export const PRODUCTION_PACKAGE_KEYS = ${JSON.stringify(production)} as const;
+export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
+export const CORE_PRESET_FILES = [
+  'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
+  'clsp/referee/onchain/referee.hex',
+] as const;
+export const GAME_PRESET_FILES = ${JSON.stringify(presetFiles, null, 2)} as const;
+export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
+`,
+);
+
+writeFileSync(
+  join(destDir, 'gamePackages.ts'),
+  `// Generated from games/registry.json. Do not edit.
+${imports}
+
+export const PRODUCTION_PACKAGE_KEYS = ${JSON.stringify(production)} as const;
+export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
+export const GENERATED_GAME_PACKAGES = [${packageList}];
+export { PRESET_FILES, GAME_PRESET_FILES, CORE_PRESET_FILES } from './gamePresets';
+`,
+);
+
+const styleImports = production.flatMap((key) => {
+  const styles = join(ROOT, 'games', key, 'ui/styles.css');
+  if (!existsSync(styles)) return [];
+  const rel = relative(join(FE, '../src/generated'), styles).replace(/\\/g, '/');
+  return [`@import '${rel.startsWith('.') ? rel : `./${rel}`}';`];
+});
+writeFileSync(
+  join(destDir, 'gameStyles.css'),
+  `/* Generated from games/registry.json. Do not edit. */\n${styleImports.join('\n')}${styleImports.length ? '\n' : ''}`,
+);
+console.log(`generate-game-registry: ${production.length} production packages`);

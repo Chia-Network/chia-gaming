@@ -68,6 +68,18 @@ export function reduceSessionCommand(
         };
       }
       const terms = betweenHand.lastTerms;
+      if (terms === null) {
+        return {
+          state: {
+            ...state,
+            model: {
+              ...state.model,
+              betweenHand: { ...betweenHand, mode: 'compose-proposal' },
+            },
+          },
+          effects: [{ type: 'persist-session' }],
+        };
+      }
       const enough =
         canCover(state.model.channel.status.ourBalance, terms.myContribution) &&
         canCover(state.model.channel.status.theirBalance, terms.theirContribution);

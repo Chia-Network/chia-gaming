@@ -1,27 +1,48 @@
 import type { ReactElement } from 'react';
-import { calpokerMountRegistration } from '../features/calPoker/LiveMount';
-import { krunkMountRegistration } from '../features/krunk/LiveMount';
-import { spacepokerMountRegistration } from '../features/spacePoker/LiveMount';
+import {
+  requireLiveGameHandSource as requireLiveController,
+  type FrozenGameMountOptions,
+  type FrozenGameView,
+  type GameHandSource,
+  type GameMountNames,
+  type LiveGameView,
+} from '@games/host';
+import { isCatalogGameType, packageFor } from './gameRegistry';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
-import type { FrozenGameMountOptions, GameMountNames, GameMountRegistration } from './gameMount';
+import type { SessionController } from '../hooks/SessionController';
+import { selectIProposedHand } from './session/selectors';
 import type { SessionModel } from './session/model';
-import type { RegisteredGameType } from './session/types';
 
-export const GAME_MOUNTS = {
-  calpoker: calpokerMountRegistration,
-  spacepoker: spacepokerMountRegistration,
-  krunk: krunkMountRegistration,
-} satisfies Record<RegisteredGameType, GameMountRegistration>;
+export function requireLiveGameHandSource(source: GameHandSource): SessionController {
+  return requireLiveController(source) as SessionController;
+}
 
-export function hasGameMount(gameType: string): gameType is RegisteredGameType {
-  return Object.hasOwn(GAME_MOUNTS, gameType);
+export function frozenGameViewFromModel(model: SessionModel): FrozenGameView {
+  const lastTerms = model.betweenHand.lastTerms;
+  if (lastTerms === null) {
+    throw new Error('Frozen game view requires lastTerms');
+  }
+  return {
+    lastDisplayedId: model.game.lastDisplayedId,
+    currentHandIds: model.game.currentHandIds,
+    activeIds: model.game.activeIds,
+    handState: model.game.handState,
+    lastTerms,
+    instances: Object.fromEntries(
+      Object.entries(model.game.instances).map(([id, instance]) => [
+        id,
+        { terminal: instance.terminal, amount: instance.amount },
+      ]),
+    ),
+    iProposedHand: selectIProposedHand(model),
+  };
 }
 
 export function renderLiveGameMount(
   session: UseGameSessionResult,
   names: GameMountNames,
 ): ReactElement {
-  return GAME_MOUNTS[session.gameSpecificView.gameType].renderLive(session, names);
+  return packageFor(session.gameSpecificView.gameType).renderLive(session as LiveGameView, names);
 }
 
 export function renderFrozenGameMount(
@@ -29,6 +50,6 @@ export function renderFrozenGameMount(
   options: FrozenGameMountOptions,
 ): ReactElement {
   const gameType = model.game.handState?.gameType ?? model.game.activeGameType;
-  if (!hasGameMount(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
-  return GAME_MOUNTS[gameType].renderFrozen(model, options);
+  if (!isCatalogGameType(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
+  return packageFor(gameType).renderFrozen(frozenGameViewFromModel(model), options);
 }

@@ -6,7 +6,7 @@ import { destroySessionController } from '../../hooks/blobSingleton';
 import { useSessionControllerAfterCommit } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
 import type { PeerConnectionResult } from '../../types/ChiaGaming';
-import { requireLiveGameHandSource } from '../gameMount';
+import { requireLiveGameHandSource } from '../gameMountRegistry';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import {
   projectTerminalSessionResult,

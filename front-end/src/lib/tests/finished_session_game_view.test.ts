@@ -9,7 +9,7 @@ import {
   selectFinishedSessionDisplay,
   sessionModelForReactProps,
 } from '../session/finishedSessionDisplay';
-import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
 
 describe('finished session shell display', () => {
   it('falls back when a Calpoker hand lacks a validated display snapshot', () => {

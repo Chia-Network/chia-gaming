@@ -1,20 +1,14 @@
 import { WasmConnection, WasmInitFn, ChiaGame, RngId } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
 import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
+import { _resetGameIdentityWarmupForTests, warmRegisteredGames } from '../lib/gameIdentities';
+import { PRESET_FILES } from '../generated/gamePresets';
 
 let chia_gaming_init: WasmInitFn | undefined = undefined;
 let cg: WasmConnection | undefined = undefined;
 let logInitialized = false;
 
-/** Manual mirror of native startup loads (game_collection + channel/referee). Not auto-traced. */
-export const PRESET_FILES = [
-  'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
-  'clsp/referee/onchain/referee.hex',
-  'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
-  'clsp/games/spacepoker/spacepoker_include_spacepoker_factory.hex',
-  'clsp/games/krunk/krunk_include_krunk_factory.hex',
-  'clsp/games/krunk/krunk_signed_dict_tree.dat',
-];
+export { PRESET_FILES };
 
 const WASM_URL = 'chia_gaming_wasm_bg.wasm';
 
@@ -91,6 +85,19 @@ async function runWasmLoad(): Promise<WasmConnection> {
 }
 
 /**
+ * Start WASM + preset fetch on page load, then probe factories in the
+ * background. Handshake only needs the loaded module; protocol identities
+ * are bound later when the channel is live.
+ */
+export function startWasmBootstrap(): void {
+  void ensureWasmLoaded()
+    .then((wasm) => warmRegisteredGames(wasm))
+    .catch((err) => {
+      console.warn('wasm bootstrap failed', err);
+    });
+}
+
+/**
  * Idempotent while in flight or after success: reuses the same promise.
  * On failure, clears so a later getWasmConnection / Accept can retry.
  * Requires storeInitArgs to have run (or waits for it).
@@ -130,6 +137,7 @@ export function _resetWasmLoadForTests(): void {
   chia_gaming_init = undefined;
   cg = undefined;
   presetFetcher = fetchDeployPreset;
+  _resetGameIdentityWarmupForTests();
 }
 
 export class WasmStateInit {

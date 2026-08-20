@@ -512,8 +512,17 @@ on-chain slashing for out-of-dictionary plays. Together they show different ways
 to structure validators and off-chain handlers on the same channel/referee
 foundation.
 
-The Rust game collection also registers `debug` for simulator tests only. It is
-not a user-facing reference game.
+Each game lives in one top-level package under `games/<key>/`, registered only
+in [`games/registry.json`](games/registry.json) (`production` vs `test`). Package
+keys are build/bootstrap identifiers. The protocol identity is the factory's
+first-member `initial_validation_program_hash` from a canonical probe — never
+the human-readable key. Adding a game means creating that conventional package
+and appending the key to the registry; Chialisp compile, Rust/WASM wiring,
+frontend imports, and the full-suite test aggregator are generated from that
+file.
+
+The Rust game collection also registers `debug` (test list) for simulator tests
+only. It is not a user-facing reference game.
 
 ### Calpoker
 
@@ -615,12 +624,12 @@ dedicated handler and validation tests.
 `TheirTurnResult` (message field), `MessageHandler`
 - `src/session_phases/mod.rs` — sends `PeerMessage::Message` on receive;
 dispatches incoming messages via `received_message`
-- `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
-- `clsp/games/calpoker/calpoker_generate.clinc` — off-chain handlers
-- `src/test_support/calpoker_sim.rs` — Rust-side calpoker registration/helpers
-- `clsp/games/spacepoker/onchain/*.clsp`
-- `clsp/games/spacepoker/spacepoker_generate.clinc` — Space Poker handlers
-- `src/test_support/spacepoker_sim.rs` — Rust-side Space Poker helpers
+- `games/calpoker/clsp/onchain/a.clsp` through `e.clsp`
+- `games/calpoker/clsp/calpoker_generate.clinc` — off-chain handlers
+- `games/calpoker/rust/tests/sim.rs` — Rust-side calpoker registration/helpers
+- `games/spacepoker/clsp/onchain/*.clsp`
+- `games/spacepoker/clsp/spacepoker_generate.clinc` — Space Poker handlers
+- `games/spacepoker/rust/tests/sim.rs` — Rust-side Space Poker helpers
 
 ### Krunk
 
@@ -664,7 +673,7 @@ The dictionary tree and its signatures are generated once at build time by
 
 1. Generates an ephemeral BLS keypair (never written to disk)
 2. Signs every gap range in the sorted dictionary
-3. Writes `clsp/games/krunk/krunk_signed_dict_tree.dat` — a single binary file
+3. Writes `games/krunk/clsp/krunk_signed_dict_tree.dat` — a single binary file
    containing the 48-byte BLS public key followed by the CLVM-serialized signed
    dictionary tree. At runtime the Rust/WASM loader splits the file, and both
    values are curried into the handler programs.
@@ -674,8 +683,8 @@ dictionary changes. Regenerating requires rebuilding chialisp afterward
 (`./cb.sh`).
 
 The `.dat` file uses a `.dat` extension (not `.hex`) because `tools/build-chialisp.sh`
-deletes all `*.hex` files under `clsp/` before rebuilding to ensure a clean output
-tree.
+deletes all `*.hex` files under `clsp/` and `games/` before rebuilding to ensure a
+clean output tree.
 
 #### Atomic factory proposals
 
@@ -708,11 +717,11 @@ general mechanism.
 
 **Key code:**
 
-- `clsp/games/krunk/krunk_generate.clinc` — off-chain handlers (Alice/Bob)
-- `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` — on-chain validators
-- `clsp/games/krunk/krunk_helpers.clinc` — clue encoding, payout tables
-- `clsp/games/krunk/krunk_signed_dict_tree.dat` — generated: 48-byte pubkey + signed tree (binary)
-- `src/games/krunk_dict_tree.rs` — tree construction and gap signing logic
+- `games/krunk/clsp/krunk_generate.clinc` — off-chain handlers (Alice/Bob)
+- `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` — on-chain validators
+- `games/krunk/clsp/krunk_helpers.clinc` — clue encoding, payout tables
+- `games/krunk/clsp/krunk_signed_dict_tree.dat` — generated: 48-byte pubkey + signed tree (binary)
+- `games/krunk/rust/` — tree construction and gap signing logic
 - `src/bin/gen_krunk_dict.rs` — dictionary tree generator binary
 - `src/tests/krunk_handlers.rs` — handler tests
 - `src/tests/krunk_validation.rs` — on-chain validation tests
@@ -838,14 +847,15 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | --------------------------------------------- | --------------------------------------------------------- |
 | `clsp/unroll/unroll_puzzle.clsp`              | Unroll coin: timeout vs challenge with sequence numbers   |
 | `clsp/referee/onchain/referee.clsp`           | Game coin: move / timeout / slash enforcement             |
-| `clsp/games/calpoker/onchain/{a,b,c,d,e}.clsp` | Calpoker validation programs (one per protocol step)      |
-| `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)           |
-| `clsp/games/spacepoker/onchain/*.clsp`       | Space Poker validation programs                           |
-| `clsp/games/spacepoker/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
-| `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
-| `clsp/games/krunk/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
-| `clsp/games/krunk/krunk_signed_dict_tree.dat`| Generated: pubkey + signed dict tree, binary (see [Krunk](#krunk)) |
-| `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory   |
+| `clsp/games/game_codes.clinc` | Shared game error codes                                      |
+| `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp` | Calpoker validation programs (one per protocol step) |
+| `games/calpoker/clsp/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)      |
+| `games/spacepoker/clsp/onchain/*.clsp`       | Space Poker validation programs                           |
+| `games/spacepoker/clsp/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
+| `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
+| `games/krunk/clsp/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
+| `games/krunk/clsp/krunk_signed_dict_tree.dat`| Generated: pubkey + signed dict tree, binary (see [Krunk](#krunk)) |
+| `games/debug/clsp/factory.clsp`             | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
 
@@ -854,10 +864,10 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 
 | File                                        | Purpose                                                  |
 | ------------------------------------------- | -------------------------------------------------------- |
-| `src/test_support/calpoker_sim.rs`              | Calpoker test registration and helpers                   |
-| `src/test_support/spacepoker_sim.rs`            | Space Poker test registration and helpers                |
-| `src/test_support/krunk_sim.rs`                 | Krunk test registration and helpers                      |
-| `src/test_support/debug_game.rs`            | Debug game: minimal game with controllable `mover_share` |
+| `games/calpoker/rust/tests/sim.rs`          | Calpoker test registration and helpers                   |
+| `games/spacepoker/rust/tests/sim.rs`        | Space Poker test registration and helpers                |
+| `games/krunk/rust/tests/sim.rs`             | Krunk test registration and helpers                      |
+| `games/debug/rust/mod.rs`                   | Debug game: minimal game with controllable `mover_share` |
 | `src/simulator/tests/session_phases_sim.rs` | Integration tests including notification suite           |
 | `src/test_support/peer/peer_harness.rs`   | Test peer helper                                         |
 | `src/test_support/sim_script.rs`                  | `SimScriptAction` enum and simulation loop driver        |

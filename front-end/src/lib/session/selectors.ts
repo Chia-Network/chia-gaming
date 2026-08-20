@@ -658,7 +658,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
     channelStatus: model.channel.status,
     gameCoin: displayed?.coin ?? DEFAULT_GAME_COIN_MODEL,
     gameTerminal: displayed?.terminal ?? INITIAL_GAME_TERMINAL_MODEL,
-    currentHandAmount: model.betweenHand.lastTerms.myContribution,
+    currentHandAmount: model.betweenHand.lastTerms?.myContribution ?? 0n,
     activeGameId: model.game.activeIds[0] ?? null,
     activeGameIds: model.game.activeIds,
     activeGameType: model.game.activeGameType,

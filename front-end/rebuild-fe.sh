@@ -13,6 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FE_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLSP_DIR="$REPO_ROOT/clsp"
+GAMES_DIR="$REPO_ROOT/games"
 
 # Portable millisecond nonce. macOS `date +%s%3N` leaves a literal "3N".
 build_nonce() {
@@ -27,9 +28,7 @@ echo "=== Building chialisp (if needed) ==="
 "$REPO_ROOT/tools/build-chialisp.sh"
 
 echo "=== Building gaming-fe ==="
-(cd "$FE_DIR" && pnpm exec tsc --project . && \
- pnpm exec esbuild dist/js/index.js --bundle --outfile=dist/js/index-rollup.js && \
- pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css)
+(cd "$FE_DIR" && pnpm run build)
 
 echo "=== Assembling serve/ with build nonce ==="
 SERVE="$FE_DIR/serve"
@@ -44,14 +43,23 @@ cp "$FE_DIR/public/index.html" "$SERVE/index.html"
 [ -f "$FE_DIR/public/favicon.svg" ] && cp "$FE_DIR/public/favicon.svg" "$SERVE/favicon.svg"
 
 cp "$FE_DIR/dist/js/index-rollup.js" "$NONCE_DIR/index.js"
+[ -f "$FE_DIR/dist/js/index-rollup.js.map" ] && cp "$FE_DIR/dist/js/index-rollup.js.map" "$NONCE_DIR/index-rollup.js.map"
 cp "$FE_DIR/dist/css/index.css" "$NONCE_DIR/index.css"
 cp "$FE_DIR/dist/chia_gaming_wasm.js" "$NONCE_DIR/chia_gaming_wasm.js"
 cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$NONCE_DIR/chia_gaming_wasm_bg.wasm"
-# Match run-local-demo / assemble-bundle: games need both .hex and .dat (e.g. krunk tree).
+# Match run-local-demo / assemble-bundle: core clsp plus per-game factory hex/dat.
 (cd "$CLSP_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
     mkdir -p "$NONCE_DIR/clsp/$(dirname "$f")"
     cp "$f" "$NONCE_DIR/clsp/$f"
 done)
+(cd "$GAMES_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
+    mkdir -p "$NONCE_DIR/games/$(dirname "$f")"
+    cp "$f" "$NONCE_DIR/games/$f"
+done)
+if ! find "$NONCE_DIR/games" -name '*.hex' | grep -q .; then
+    echo "Error: no game factory .hex files copied into $NONCE_DIR/games" >&2
+    exit 1
+fi
 [ -d "$FE_DIR/public/images" ] && cp -r "$FE_DIR/public/images" "$NONCE_DIR/images"
 
 # Flip the pointer only after the new nonce tree is complete.

@@ -1,6 +1,6 @@
 import type { SessionSave } from '../../hooks/save';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
 import {
   createSessionModel,
   INITIAL_GAME_TERMINAL_MODEL,

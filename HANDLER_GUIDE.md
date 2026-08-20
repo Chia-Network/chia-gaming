@@ -38,6 +38,13 @@ Games are driven by two cooperating systems:
   are chialisp programs, curried with game-specific state.
 
 - **Validators** enforce the rules of each move. They are chialisp programs,
+  run both off-chain (to check a move before sending it) and on-chain (to
+  settle disputes).
+
+Each game is a package under `games/<key>/` with `clsp/factory.clsp`,
+`rust/mod.rs` (prepared factory + probe), `rust/tests/mod.rs`, and for
+production games `ui/package.ts`. Register the key in `games/registry.json`;
+do not hand-edit factory catalogs or frontend import lists.
   one per protocol step (e.g. `a.clsp` through `e.clsp` for calpoker). They
   run both off-chain (for move verification during normal play) and on-chain
   (inside the referee puzzle, for slash enforcement during disputes).
@@ -238,7 +245,8 @@ The proposal API takes one atomic group request:
 ```
 
 `parameters` is the game-specific CLVM object and `timeout` is shared by every
-game produced for the group. Both peers look up and run the same registered,
+game produced for the group. Each game package's `factoryParameters` codec is
+the parser for that object (see `clsp/handler_api.md`). Both peers look up and run the same registered,
 deterministic factory using those parameters. The factory returns a non-empty
 ordered list of canonical 12-field game records:
 
@@ -776,8 +784,8 @@ and nil for `incoming_validator_hash`, signaling the game is over.
 
 ### Key Code
 
-- Handlers: `clsp/games/calpoker/calpoker_generate.clinc`
-- Validators: `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
+- Handlers: `games/calpoker/clsp/calpoker_generate.clinc`
+- Validators: `games/calpoker/clsp/onchain/a.clsp` through `e.clsp`
 - Rust-side handler invocation: `src/channel_state/game_handler.rs`
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
@@ -799,7 +807,6 @@ changing the authoritative move flow.
 
 **Key code:**
 
-- Handlers: `clsp/games/spacepoker/spacepoker_generate.clinc`
-- Validators: `clsp/games/spacepoker/onchain/*.clsp`
-- Rust tests: `src/test_support/spacepoker.rs`, `src/tests/spacepoker_handlers.rs`,
-  `src/tests/spacepoker_validation.rs`
+- Handlers: `games/spacepoker/clsp/spacepoker_generate.clinc`
+- Validators: `games/spacepoker/clsp/onchain/*.clsp`
+- Rust tests: `games/spacepoker/rust/tests/`

@@ -1,8 +1,8 @@
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import { flushSessionSave, peekSession, saveSession } from '../../hooks/save';
-import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
-import { krunkStateCodec, type KrunkGameState } from '../../features/krunk/stateCodec';
+import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
+import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/stateCodec';
 import { terminalInfoFromGameSettled } from '../session/gameSessionEvents';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';

@@ -1,13 +1,13 @@
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
 import {
   initialKrunkGameState,
   krunkGameStateFromPersisted,
   krunkStateCodec,
   KrunkHandler,
   persistedKrunkGameState,
-} from '../../features/krunk/stateCodec';
-import { SpHandler } from '../../features/spacePoker/useSpacepokerHand';
-import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
+} from '@games/krunk/ui/stateCodec';
+import { SpHandler } from '@games/spacepoker/ui/useSpacepokerHand';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/stateCodec';
 import { canRemountFinishedGameState, decodePersistedGameState } from '../gameRegistry';
 
 describe('game-owned state codecs', () => {

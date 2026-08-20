@@ -1,10 +1,12 @@
 import type { UseGameSessionResult } from '../hooks/useGameSession';
-import { isValidKrunkStake } from '../features/krunk/adapter';
-import { gameDisplayName, REGISTERED_GAMES } from '../lib/gameRegistry';
+import {
+  describeReceivedProposal,
+  gameDisplayName,
+  packageFor,
+  REGISTERED_GAMES,
+} from '../lib/gameRegistry';
 import { composeDraftCanSubmit, composeDraftTerms } from '../lib/session/model';
-import { formatMojos } from '../util';
-import { getCurrencyLabels } from '../constants/currency';
-import { AmountInput } from './AmountInput';
+import { composeDraftValue } from '../lib/session/composeDraft';
 import { Button } from './button';
 
 export function ComposeProposalDialog({
@@ -15,21 +17,9 @@ export function ComposeProposalDialog({
   maxPerHandMojos: bigint | null;
 }) {
   const compose = session.composeDraftState;
-  const isSpacepoker = compose.selectedGame === 'spacepoker';
-  const isKrunk = compose.selectedGame === 'krunk';
-  const spUnitSize = compose.spacepoker.unitSize;
-  const spStackSize = compose.spacepoker.stackSize;
-  const spBetSize = spUnitSize * spStackSize;
-  const spMaxUnitSize =
-    maxPerHandMojos != null && spStackSize > 0n ? maxPerHandMojos / spStackSize : null;
-  const perHandAmount =
-    compose.selectedGame === 'spacepoker' ? spBetSize : compose[compose.selectedGame].amount;
-  const krunkStakeValid = !isKrunk || isValidKrunkStake(perHandAmount);
-  const standardMaxMojos =
-    isKrunk && maxPerHandMojos != null
-      ? maxPerHandMojos - (maxPerHandMojos % 100n)
-      : maxPerHandMojos;
+  const pkg = packageFor(compose.selectedGame);
   const canSubmit = composeDraftCanSubmit(compose, maxPerHandMojos);
+  const Editor = pkg.ComposeEditor;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -55,74 +45,13 @@ export function ComposeProposalDialog({
             </Button>
           ))}
         </div>
-        {isSpacepoker ? (
-          <>
-            <AmountInput
-              valueMojos={spUnitSize}
-              onChange={(unitSize) => session.setSpacepokerComposeDraft({ unitSize })}
-              maxMojos={spMaxUnitSize}
-              onUseMax={
-                spMaxUnitSize != null && spMaxUnitSize > 0n
-                  ? () => session.setSpacepokerComposeDraft({ unitSize: spMaxUnitSize })
-                  : undefined
-              }
-              disabled={session.composeProposalSent}
-              label="Unit size"
-              exceedsLabel="Exceeds available reserve."
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && canSubmit) submit();
-              }}
-            />
-            <div className="flex w-full flex-col items-center gap-1">
-              <label className="text-xs font-medium text-canvas-text">
-                Stack size (units per player)
-              </label>
-              <input
-                type="number"
-                min={1}
-                className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
-                value={spStackSize.toString()}
-                disabled={session.composeProposalSent}
-                onChange={(event) => {
-                  const next = event.target.value.replace(/[^0-9]/g, '');
-                  session.setSpacepokerComposeDraft({ stackSize: BigInt(next || '0') });
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && canSubmit) submit();
-                }}
-              />
-            </div>
-            <div className="text-xs text-canvas-text">
-              Per-player stake: {formatMojos(spBetSize)} · Total game size:{' '}
-              {formatMojos(spBetSize * 2n)}
-            </div>
-          </>
-        ) : (
-          <AmountInput
-            valueMojos={perHandAmount}
-            onChange={isKrunk ? session.setKrunkComposeAmount : session.setCalpokerComposeAmount}
-            maxMojos={standardMaxMojos}
-            onUseMax={
-              standardMaxMojos != null && standardMaxMojos > 0n
-                ? () =>
-                    isKrunk
-                      ? session.setKrunkComposeAmount(standardMaxMojos)
-                      : session.setCalpokerComposeAmount(standardMaxMojos)
-                : undefined
-            }
-            disabled={session.composeProposalSent}
-            label="Per-player stake"
-            exceedsLabel="Exceeds available reserve."
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && canSubmit) submit();
-            }}
-          />
-        )}
-        {isKrunk && perHandAmount > 0n && !krunkStakeValid && (
-          <p className="text-xs text-alert-text">
-            Krunk stakes must be multiples of 100 {getCurrencyLabels().mojos}.
-          </p>
-        )}
+        <Editor
+          draft={composeDraftValue(compose, compose.selectedGame)}
+          disabled={session.composeProposalSent}
+          maxPerHandMojos={maxPerHandMojos}
+          onChange={(update) => session.updateSelectedComposeDraft(update)}
+          onSubmit={submit}
+        />
         <div className="flex w-full flex-col items-center gap-1">
           <label className="text-xs font-medium text-canvas-text">Timeout (blocks)</label>
           <input
@@ -163,18 +92,10 @@ export function ReviewProposalDialog({ session }: { session: UseGameSessionResul
       <div className="flex flex-col gap-3">
         <p className="text-sm text-canvas-text-contrast">Do you want to accept this hand?</p>
         <p className="text-xs text-canvas-text">Game: {gameDisplayName(review.terms.gameType)}</p>
-        <p className="text-xs text-canvas-text">
-          Per-player stake: {formatMojos(review.terms.myContribution)}
-        </p>
+        <p className="text-xs text-canvas-text">{describeReceivedProposal(review.terms)}</p>
         <p className="text-xs text-canvas-text">
           Timeout: {String(review.terms.gameTimeout)} blocks
         </p>
-        {review.terms.gameType === 'spacepoker' && (
-          <p className="text-xs text-canvas-text">
-            Unit size: {formatMojos(review.terms.unitSizeMojos)} · Stack:{' '}
-            {String(review.terms.myContribution / review.terms.unitSizeMojos)} units
-          </p>
-        )}
         <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="solid"

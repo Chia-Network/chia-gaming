@@ -7,8 +7,6 @@ use crate::channel_state::types::ChannelEnv;
 #[cfg(test)]
 use crate::channel_state::types::{ChannelPrivateKeys, ReadableMove};
 use crate::common::standard_coin::private_to_public_key;
-#[cfg(test)]
-use crate::common::types::GameType;
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
@@ -572,12 +570,13 @@ pub fn test_peer_smoke() {
                 .expect("encode proposal parameters");
             let parameters =
                 Program::from_nodeptr(&mut allocator, params_node).expect("proposal parameters");
+            let calpoker_type = game_collection::game_type_for_package(&mut allocator, "calpoker");
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
             let (game_ids, effects1) = FromLocalUI::propose_games(
                 &mut peers[1],
                 &mut env,
                 &[GameProposal {
-                    game_type: GameType(b"calpoker".to_vec()),
+                    game_type: calpoker_type,
                     timeout: Timeout::new(15),
                     parameters,
                 }],

@@ -10,7 +10,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 13n;
+export const SESSION_SAVE_VERSION = 14n;
 
 export type BlockchainType = 'simulator' | 'walletconnect';
 
@@ -86,10 +86,9 @@ interface SavedHandTermsBase {
   game_timeout: string;
 }
 
-export type SavedHandTerms =
-  | (SavedHandTermsBase & { game_type: 'calpoker' })
-  | (SavedHandTermsBase & { game_type: 'krunk' })
-  | (SavedHandTermsBase & { game_type: 'spacepoker'; spacepoker_unit_size: string });
+export type SavedHandTerms = SavedHandTermsBase & {
+  game_type: RegisteredGameType;
+} & Record<string, string | undefined>;
 
 export interface SavedQueuedNotification {
   id: bigint;
@@ -118,9 +117,7 @@ export interface SessionPresentationSave {
     selected_game: RegisteredGameType;
     game_timeout: string;
     proposal_sent: boolean;
-    calpoker: { amount: string };
-    krunk: { amount: string };
-    spacepoker: { unit_size: string; stack_size: string };
+    drafts: Record<string, Record<string, string>>;
   };
   betweenHandLastTerms: SavedHandTerms | null;
   betweenHandRejectedOnceTerms: SavedHandTerms | null;

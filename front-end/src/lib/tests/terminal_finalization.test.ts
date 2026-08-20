@@ -4,13 +4,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { SessionController } from '../../hooks/SessionController';
-import {
-  initialKrunkGameState,
-  krunkStateCodec,
-  KrunkHandler,
-} from '../../features/krunk/stateCodec';
-import { reduceKrunkDurableState } from '../../features/krunk/adapter';
-import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
+import { initialKrunkGameState, krunkStateCodec, KrunkHandler } from '@games/krunk/ui/stateCodec';
+import { reduceKrunkDurableState } from '@games/krunk/ui/adapter';
+import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
   _resetForTests,

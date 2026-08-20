@@ -1,6 +1,10 @@
 import { applyTermsToComposeDraft } from './composeDraft';
 import { gameSliceReducer, type GameSlice } from './gameSlice';
-import { decodeGameFeatureState, reduceRegisteredGameState } from '../gameRegistry';
+import {
+  decodeGameFeatureState,
+  isCatalogGameType,
+  reduceRegisteredGameState,
+} from '../gameRegistry';
 import { clearProposalIds } from './sessionMachineProposals';
 import { selectProposalGroupByMemberId } from './selectors';
 import type {
@@ -45,13 +49,16 @@ function withDurableGameEvent(
   state: SessionMachineState,
   event: Parameters<typeof reduceRegisteredGameState>[2],
 ): SessionMachineTransition {
-  const gameType =
+  const rawGameType =
     event.type === 'accepted-group'
       ? event.terms.gameType
       : event.type === 'feature-state'
         ? event.gameType
         : state.model.game.activeGameType;
-  const handState = reduceRegisteredGameState(gameType, state.model.game.handState, event);
+  if (!isCatalogGameType(rawGameType)) {
+    throw new Error(`Durable game event has non-catalog gameType ${rawGameType}`);
+  }
+  const handState = reduceRegisteredGameState(rawGameType, state.model.game.handState, event);
   return {
     state: {
       ...state,

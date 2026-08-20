@@ -1,12 +1,12 @@
 import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming';
 import { coerceToBytes } from '../../util';
-import { EMPTY_COMPOSE_DRAFT_STATE } from './composeDraft';
+import { REGISTERED_GAMES } from '../gameRegistry';
+import { emptyComposeDraftState } from './composeDraft';
 import { gameInstanceFromView } from './presentation';
 import type {
   ChannelStatusModel,
   GameInstanceModel,
   GameInstanceViewModel,
-  HandTermsModel,
   SessionModel,
   SessionModelInput,
 } from './types';
@@ -32,13 +32,6 @@ export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
 export const DEFAULT_GAME_TIMEOUT_BLOCKS = 15n;
 export const DEFAULT_CHANNEL_TIMEOUT_BLOCKS = 15n;
 export const DEFAULT_UNROLL_TIMEOUT_BLOCKS = 15n;
-export const DEFAULT_HAND_TERMS_MODEL: HandTermsModel = {
-  gameType: 'calpoker',
-  myContribution: 0n,
-  theirContribution: 0n,
-  gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
-};
-
 function parseChannelAmount(coin: unknown): string | null {
   const bytes = coerceToBytes(coin);
   if (!bytes || bytes.length < 64) return null;
@@ -125,7 +118,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       currentHandIds: [],
       currentHandOrigin: null,
       lastDisplayedId: null,
-      activeGameType: 'calpoker',
+      activeGameType: REGISTERED_GAMES[0].gameType,
       handState: null,
       queue: [],
       ...game,
@@ -135,8 +128,8 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       mode: 'decision',
       proposalGroups: [],
       rejectedOnceTerms: null,
-      lastTerms: DEFAULT_HAND_TERMS_MODEL,
-      compose: EMPTY_COMPOSE_DRAFT_STATE,
+      lastTerms: null,
+      compose: emptyComposeDraftState(),
       newHandRequested: false,
       pendingRetryTerms: null,
       ...partial.betweenHand,

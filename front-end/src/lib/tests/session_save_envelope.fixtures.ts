@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
 import {
   CURRENT_VERSION,
   _resetForTests,
@@ -138,9 +138,11 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
       selected_game: 'calpoker',
       game_timeout: '15',
       proposal_sent: false,
-      calpoker: { amount: perGameAmount },
-      krunk: { amount: '100' },
-      spacepoker: { unit_size: '1', stack_size: '20' },
+      drafts: {
+        calpoker: { amount: perGameAmount },
+        krunk: { amount: '100' },
+        spacepoker: { unitSize: '1', stackSize: '20' },
+      },
     },
     betweenHandLastTerms: {
       my_contribution: perGameAmount,

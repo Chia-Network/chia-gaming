@@ -1,7 +1,4 @@
-import {
-  acceptedSettlementFromOpponent,
-  SpHandler,
-} from '../../features/spacePoker/useSpacepokerHand';
+import { acceptedSettlementFromOpponent, SpHandler } from '@games/spacepoker/ui/useSpacepokerHand';
 
 describe('Space Poker received accept settlement', () => {
   it('keeps the winning showdown side at showdown and marks the opponent as conceding', () => {

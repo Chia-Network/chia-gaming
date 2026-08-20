@@ -6,7 +6,11 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 const sourceFiles = ['**/*.{js,mjs,cjs,ts,tsx}'];
-const reactFiles = ['front-end/**/*.{ts,tsx}', 'hub/hub-frontend/**/*.{ts,tsx}'];
+const reactFiles = [
+  'front-end/**/*.{ts,tsx}',
+  'hub/hub-frontend/**/*.{ts,tsx}',
+  'games/**/*.{ts,tsx}',
+];
 
 export default defineConfig([
   globalIgnores([
@@ -75,7 +79,11 @@ export default defineConfig([
     },
   },
   {
-    files: ['front-end/src/**/*.{ts,tsx}', 'hub/hub-frontend/src/**/*.{ts,tsx}'],
+    files: [
+      'front-end/src/**/*.{ts,tsx}',
+      'hub/hub-frontend/src/**/*.{ts,tsx}',
+      'games/**/*.{ts,tsx}',
+    ],
     rules: {
       'no-console': ['error', { allow: ['error', 'warn'] }],
     },

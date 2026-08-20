@@ -10,19 +10,28 @@ STATE_FILE=".build-chialisp.state"
 CURRENT_STATE=$(mktemp)
 trap 'rm -f "$CURRENT_STATE"' EXIT
 
+clsp_sources() {
+    {
+        find clsp games -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
+        printf '%s\n' \
+            build.rs Cargo.toml Cargo.lock chialisp.toml \
+            games/registry.json \
+            tools/build-chialisp.sh
+    } | LC_ALL=C sort
+}
+
+clsp_hex() {
+    find clsp games -type f -name '*.hex' -print | LC_ALL=C sort
+}
+
 write_state() {
     local destination=$1
     {
         echo "version 1"
-        {
-            find clsp -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
-            printf '%s\n' \
-                build.rs Cargo.toml Cargo.lock chialisp.toml \
-                tools/build-chialisp.sh
-        } | LC_ALL=C sort | while IFS= read -r file; do
+        clsp_sources | while IFS= read -r file; do
             printf 'input %s  %s\n' "$(git hash-object "$file")" "$file"
         done
-        find clsp -type f -name '*.hex' -print | LC_ALL=C sort | while IFS= read -r file; do
+        clsp_hex | while IFS= read -r file; do
             printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
         done
     } > "$destination"
@@ -39,16 +48,14 @@ elif [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
 fi
 
 SECONDS=0
-find clsp -name '*.hex' -delete
+find clsp games -name '*.hex' -delete
 
 # CHIALISP_COMPILE is deliberately unique. Cargo tracks it as a build-script
 # input, so this forces one Chialisp compile without deleting Cargo's package
 # cache. Ordinary cargo commands leave it unset and never compile Chialisp.
 CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --features sim-server
 
-# Prefer head -n 1 over find's early-exit primary: that primary is GNU-only
-# and is rejected by macOS BSD find.
-if ! find clsp -type f -name '*.hex' -print | head -n 1 | grep -q .; then
+if ! { find clsp games -type f -name '*.hex' -print | head -n 1 | grep -q .; }; then
     echo "Error: Chialisp build produced no .hex files" >&2
     exit 1
 fi

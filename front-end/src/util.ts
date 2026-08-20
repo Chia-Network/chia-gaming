@@ -1,5 +1,6 @@
 import { Spend, CoinSpend, SpendBundle } from './types/ChiaGaming';
 import { getCurrencyLabels } from './constants/currency';
+import { formatAmountWithLabels, formatMojosWithLabels } from '@games/host';
 
 export function toUint8(s: string) {
   if (s.length % 2 != 0) {
@@ -118,30 +119,11 @@ export function spend_bundle_to_clvm(sbundle: SpendBundle): string {
 }
 
 export function formatAmount(mojos: bigint): string {
-  const labels = getCurrencyLabels();
-  if (mojos < 1_000_000n) {
-    return `${mojos} ${labels.MOJO}`;
-  }
-  const TRILLION = 1_000_000_000_000n;
-  const whole = mojos / TRILLION;
-  const frac = mojos % TRILLION;
-  if (frac === 0n) return `${whole} ${labels.xch}`;
-  const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
-  return `${whole}.${fracStr} ${labels.xch}`;
+  return formatAmountWithLabels(mojos, getCurrencyLabels());
 }
 
 export function formatMojos(mojos: bigint): string {
-  const labels = getCurrencyLabels();
-  const TRILLION = 1_000_000_000_000n;
-  const absMojos = mojos < 0n ? -mojos : mojos;
-  if (absMojos >= 100_000_000n) {
-    const sign = mojos < 0n ? '-' : '';
-    const whole = absMojos / TRILLION;
-    const frac = absMojos % TRILLION;
-    const fracStr = frac.toString().padStart(12, '0').slice(0, 4);
-    return `${sign}${whole.toLocaleString()}.${fracStr} ${labels.xch}`;
-  }
-  return `${mojos.toLocaleString()} ${labels.mojos}`;
+  return formatMojosWithLabels(mojos, getCurrencyLabels());
 }
 
 /** Encode a non-negative integer as CLVM atom hex (big-endian, minimal). */

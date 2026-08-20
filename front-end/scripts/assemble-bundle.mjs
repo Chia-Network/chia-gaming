@@ -16,6 +16,8 @@ const APP = join(FE, 'dist', 'app');
 // chialisp hex live. Defaults match tools/build-deploy.sh; overridable via env.
 const WASM_OUT_DIR = process.env.WASM_OUT_DIR || join(FE, 'dist');
 const CLSP_DIR = process.env.CLSP_DIR || resolve(FE, '..', 'clsp');
+const GAMES_DIR = process.env.GAMES_DIR || resolve(FE, '..', 'games');
+const REPO_ROOT = resolve(FE, '..');
 
 mkdirSync(APP, { recursive: true });
 
@@ -52,6 +54,22 @@ if (existsSync(CLSP_DIR)) {
   copyHex(CLSP_DIR);
 }
 
+function copyGameAssets(dir) {
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) {
+      copyGameAssets(p);
+    } else if (p.endsWith('.hex') || p.endsWith('.dat')) {
+      const dst = join(APP, relative(REPO_ROOT, p));
+      mkdirSync(dirname(dst), { recursive: true });
+      copyFileSync(p, dst);
+    }
+  }
+}
+if (existsSync(GAMES_DIR)) {
+  copyGameAssets(GAMES_DIR);
+}
+
 // Floor checks: fail loudly if the bundle is incomplete.
 const dirIsEmpty = (d) => !existsSync(d) || readdirSync(d).length === 0;
 const errors = [];
@@ -63,6 +81,9 @@ for (const f of ['index.js', 'index.css', ...WASM_FILES]) {
 }
 if (dirIsEmpty(join(APP, 'clsp'))) {
   errors.push('clsp/ is missing or empty (no compiled .hex)');
+}
+if (dirIsEmpty(join(APP, 'games'))) {
+  errors.push('games/ is missing or empty (no compiled factory .hex)');
 }
 if (dirIsEmpty(join(APP, 'images'))) {
   errors.push('images/ is missing or empty');

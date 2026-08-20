@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use crate::channel_state::types::ReadableMove;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, Hash, ProgramRef, PuzzleHash,
-    SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, Hash, Program, ProgramRef,
+    PuzzleHash, SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
     CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE,
@@ -248,6 +248,7 @@ pub enum GameNotification {
         initial_validation_program_hash: Hash,
         initial_state: ProgramRef,
         game_type: GameType,
+        parameters: Program,
     },
     ProposalAccepted {
         id: GameID,

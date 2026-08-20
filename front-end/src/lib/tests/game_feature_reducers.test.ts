@@ -4,23 +4,15 @@ import {
   reduceSpacepokerDurableState,
   reduceSpacepokerSettlementState,
   spacepokerRegistration,
-} from '../../features/spacePoker/adapter';
-import {
-  reduceCalpokerDurableState,
-  reduceCalpokerFeatureState,
-} from '../../features/calPoker/adapter';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { reduceKrunkDurableState, reduceKrunkFeatureState } from '../../features/krunk/adapter';
-import {
-  initialKrunkGameState,
-  KrunkHandler,
-  krunkStateCodec,
-} from '../../features/krunk/stateCodec';
-import {
-  spacepokerStateCodec,
-  type SpacepokerHandState,
-} from '../../features/spacePoker/stateCodec';
-import type { DurableGameStateEvent } from '../gameAdapter';
+} from '@games/spacepoker/ui/adapter';
+import { reduceCalpokerDurableState, reduceCalpokerFeatureState } from '@games/calpoker/ui/adapter';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { reduceKrunkDurableState, reduceKrunkFeatureState } from '@games/krunk/ui/adapter';
+import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/stateCodec';
+import { spacepokerStateCodec, type SpacepokerHandState } from '@games/spacepoker/ui/stateCodec';
+import type { DurableGameStateEvent } from '@games/host';
+import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 const text = (value: string) => Program.fromBytes(new TextEncoder().encode(value));
 const ints = (values: bigint[]) => Program.fromList(values.map(Program.fromBigInt));
@@ -93,6 +85,17 @@ describe('canonical feature gameplay reducers', () => {
 
     expect(state?.games['krunk-1'].role).toBe(first);
     expect(state?.games['krunk-2'].role).toBe(second);
+  });
+
+  it('initializes Space Poker while protocol identities are bound', () => {
+    setProtocolIds(TEST_PROTOCOL_IDS);
+    try {
+      const state = reduceSpacepokerDurableState(null, acceptedSpacepoker());
+      expect(state?.unitSizeMojos).toBe(10n);
+      expect(spacepokerStateCodec.gameType).toBe('spacepoker');
+    } finally {
+      resetProtocolIds();
+    }
   });
 
   it('keeps Space Poker streets, board, betting, and codec projection identical at every step', () => {

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Observable } from 'rxjs';
-import type { CalpokerOutcome } from '../../features/calPoker/outcome';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import { terminalGameHandSource, type GameHandOrigin, type GameHandSource } from '../gameMount';
+import { terminalGameHandSource, type GameHandOrigin, type GameHandSource } from '@games/host';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
+import type { ComposeDraftValue, HandWinOutcome } from '@games/host';
 import type { GameplayEvent } from './gameSessionEvents';
 import type {
   BetweenHandModeModel,
@@ -47,20 +47,18 @@ export interface UseGameSessionResult {
   handSource: GameHandSource;
   gameplayEvent$: Observable<GameplayEvent>;
   appendGameLog: (line: string) => void;
-  onHandOutcome: (outcome: CalpokerOutcome) => void;
+  onHandOutcome: (outcome: HandWinOutcome) => void;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   betweenHandMode: BetweenHandModeModel;
   incomingProposalGroup: ProposalGroupModel | null;
-  lastHandTerms: HandTermsModel;
+  lastHandTerms: HandTermsModel | null;
   composeDraftState: ComposeDraftState;
   chooseNewHandSameTerms: () => void;
   chooseDoNotUseCurrentProposal: () => void;
   openComposeProposal: () => void;
   setComposeGameTimeout: (value: bigint) => void;
   setComposeGameType: (value: HandTermsModel['gameType']) => void;
-  setCalpokerComposeAmount: (value: bigint) => void;
-  setKrunkComposeAmount: (value: bigint) => void;
-  setSpacepokerComposeDraft: (draft: Partial<ComposeDraftState['spacepoker']>) => void;
+  updateSelectedComposeDraft: (draft: Partial<ComposeDraftValue>) => void;
   composeProposalSent: boolean;
   newHandRequested: boolean;
   submitComposedProposal: (terms: HandTermsModel) => void;
@@ -179,9 +177,7 @@ export function projectTerminalSessionResult(
     openComposeProposal: NOOP,
     setComposeGameTimeout: NOOP,
     setComposeGameType: NOOP,
-    setCalpokerComposeAmount: NOOP,
-    setKrunkComposeAmount: NOOP,
-    setSpacepokerComposeDraft: NOOP,
+    updateSelectedComposeDraft: NOOP,
     composeProposalSent: model.betweenHand.compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: NOOP,

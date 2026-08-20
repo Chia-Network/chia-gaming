@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EMPTY, Subject } from 'rxjs';
-import type { CalpokerOutcome } from '../features/calPoker/outcome';
 import {
   createComposeDraftState,
   createSessionModel,
@@ -12,9 +11,9 @@ import {
   selectIProposedHand,
   selectSessionPhase,
   sessionModelFromSave,
-  type ComposeDraftState,
   type HandTermsModel,
 } from '../lib/session/model';
+import type { ComposeDraftValue, HandWinOutcome } from '@games/host';
 import {
   dispatchWasmNotification,
   gameplayEventForGameActionError,
@@ -29,7 +28,8 @@ import {
   useTerminalSessionPresentation,
 } from '../lib/session/sessionResult';
 import type { SessionMachineEvent } from '../lib/session/sessionMachineTypes';
-import { liveGameHandOrigin, type GameHandSource } from '../lib/gameMount';
+import { REGISTERED_GAMES } from '../lib/gameRegistry';
+import { liveGameHandOrigin, type GameHandSource } from '@games/host';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
@@ -135,7 +135,7 @@ export function useGameSession(
   const gameplayEvent$ = useMemo(() => gameplaySubject.asObservable(), [gameplaySubject]);
   const initialState = useMemo(() => {
     const terms: HandTermsModel = {
-      gameType: 'calpoker',
+      gameType: REGISTERED_GAMES[0].gameType,
       myContribution: perGameAmount,
       theirContribution: perGameAmount,
       gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
@@ -145,7 +145,7 @@ export function useGameSession(
         createSessionModel({
           channel: { cleanShutdownStarted: controller.cleanShutdownCalled },
           betweenHand: {
-            lastTerms: terms,
+            lastTerms: null,
             compose: createComposeDraftState(perGameAmount, terms),
           },
         }),
@@ -281,21 +281,13 @@ export function useGameSession(
     (gameType: HandTermsModel['gameType']) => dispatch({ type: 'select-compose-game', gameType }),
     [dispatch],
   );
-  const setCalpokerComposeAmount = useCallback(
-    (amount: bigint) => dispatch({ type: 'set-compose-amount', gameType: 'calpoker', amount }),
-    [dispatch],
-  );
-  const setKrunkComposeAmount = useCallback(
-    (amount: bigint) => dispatch({ type: 'set-compose-amount', gameType: 'krunk', amount }),
-    [dispatch],
-  );
-  const setSpacepokerComposeDraft = useCallback(
-    (draft: Partial<ComposeDraftState['spacepoker']>) =>
-      dispatch({ type: 'set-spacepoker-compose', draft }),
+  const updateSelectedComposeDraft = useCallback(
+    (draft: Partial<ComposeDraftValue>) =>
+      dispatch({ type: 'update-selected-compose-draft', draft }),
     [dispatch],
   );
   const onHandOutcome = useCallback(
-    (outcome: CalpokerOutcome) =>
+    (outcome: HandWinOutcome) =>
       dispatch({ type: 'hand-outcome', outcomeWin: outcome.my_win_outcome }),
     [dispatch],
   );
@@ -349,9 +341,7 @@ export function useGameSession(
     openComposeProposal: () => dispatch({ type: 'open-compose' }),
     setComposeGameTimeout,
     setComposeGameType,
-    setCalpokerComposeAmount,
-    setKrunkComposeAmount,
-    setSpacepokerComposeDraft,
+    updateSelectedComposeDraft,
     composeProposalSent: compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: (terms) => dispatch({ type: 'submit-compose', terms }),

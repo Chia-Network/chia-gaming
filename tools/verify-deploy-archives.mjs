@@ -140,6 +140,9 @@ function floorCheckPlayer(stageDir) {
   if (!dirHasHexFiles(join(nonceDir, "clsp"))) {
     errors.push("clsp/ is missing or has no .hex files");
   }
+  if (!dirHasHexFiles(join(nonceDir, "games"))) {
+    errors.push("games/ is missing or has no factory .hex files");
+  }
   if (!dirIsNonempty(join(nonceDir, "images"))) {
     errors.push("images/ is missing or empty");
   }

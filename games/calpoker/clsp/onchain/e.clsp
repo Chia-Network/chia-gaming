@@ -1,0 +1,71 @@
+(include *standard-cl-23*)
+
+(import games.calpoker.clsp.onchain.onehandcalc)
+(import games.calpoker.clsp.onchain.arrange_cards)
+(import std.list_compare)
+(import std.relops)
+(import std.popcount)
+(import std.if_any_fail)
+(import std.and)
+(import std.or)
+
+; Terminal validator (on-chain only).
+; state is (bob_discards alice_cards bob_cards alice_commit)
+; move is alice_salted_discards (17 bytes) and alice's card selections (1 byte)
+; evidence is Bob's card selection bitfield (provided by slasher)
+;
+; Slash succeeds if Alice claimed more than her fair share given the
+; best hand Bob can make with his evidence selections.
+
+(defun does_alice_claim_small_enough (alice_hand_value bob_card_selections bob_final_cards mover_share amount)
+    (assign
+        bob_hand_value
+            (onehandcalc (pull_out_cards bob_card_selections bob_final_cards))
+        result (list_compare alice_hand_value bob_hand_value)
+        (>= mover_share
+            (if (not result)
+                (/ amount 2)
+                (if (= result 1)
+                    0
+                    amount
+                )
+            )
+        )
+    )
+)
+
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        (bob_discards alice_cards bob_cards alice_commit) previous_validation_program bob_card_selections)
+    (if (or
+            (not (= (strlen MOVE) 18))
+            (not (= (popcount (substr MOVE 16 17)) 4))
+            (not (= (popcount (substr MOVE 17 18)) 5))
+        )
+        0
+
+        (assign
+            alice_salted_discards (substr MOVE 0 17)
+            alice_discards (substr MOVE 16 17)
+            alice_card_selections (substr MOVE 17 18)
+
+            (alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
+                alice_cards alice_discards bob_cards bob_discards)
+            alice_hand_value (onehandcalc (pull_out_cards
+                alice_card_selections alice_final_cards))
+            (if_any_fail
+                (= (sha256 alice_salted_discards) alice_commit)
+                (does_alice_claim_small_enough
+                    alice_hand_value
+                    bob_card_selections
+                    bob_final_cards
+                    MOVER_SHARE
+                    AMOUNT
+                )
+                0
+                (list 0)
+            )
+        )
+    )
+)

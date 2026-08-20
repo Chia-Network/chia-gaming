@@ -26,6 +26,7 @@ import {
   setTestGlobal,
   testIndexedDb,
 } from './message_protocol.harness';
+import { mockGamePackageIdentity, TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 describe('durability failures', () => {
   it('routes a rejected background save to the durability channel', async () => {
@@ -223,6 +224,8 @@ describe('restore ordering', () => {
     const cradle = makeMockCradle();
     const restoreWasmConnection = {
       game_session_serialization_schema: () => 4,
+      registered_game_packages: () => [...TEST_PROTOCOL_IDS],
+      warm_game_package: (key: string) => mockGamePackageIdentity(key),
     } as unknown as WasmConnection;
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => restoreWasmConnection),
@@ -342,6 +345,8 @@ describe('cradle serialization schema restore guard', () => {
         async () =>
           ({
             game_session_serialization_schema: () => 4,
+            registered_game_packages: () => [...TEST_PROTOCOL_IDS],
+            warm_game_package: (key: string) => mockGamePackageIdentity(key),
           }) as unknown as WasmConnection,
       ),
       deserializeGame: deserializeMock,

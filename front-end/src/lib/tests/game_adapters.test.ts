@@ -1,18 +1,29 @@
 import { Program } from 'clvm-lib';
-import { calpokerRegistration } from '../../features/calPoker/adapter';
-import { krunkRegistration, isValidKrunkStake } from '../../features/krunk/adapter';
-import { spacepokerRegistration } from '../../features/spacePoker/adapter';
-import { resolveSpacepokerUnitSize } from '../../features/spacePoker/unitSize';
+import calpokerPackage from '@games/calpoker/ui/package';
+import { calpokerRegistration } from '@games/calpoker/ui/adapter';
+import { krunkRegistration, isValidKrunkStake } from '@games/krunk/ui/adapter';
+import { spacepokerRegistration } from '@games/spacepoker/ui/adapter';
+import { resolveSpacepokerUnitSize } from '@games/spacepoker/ui/unitSize';
 import {
   decodeGameTerms,
   decodePersistedGameTerms,
   encodeGameProposalParameters,
   encodeGameTermsExtras,
   gameTermsEqual,
-  GAME_REGISTRATIONS,
+  packageFor,
   REGISTERED_GAMES,
+  isCatalogGameType,
   validateGameTerms,
 } from '../gameRegistry';
+import {
+  catalogGameTypeFromWire,
+  protocolIdForCatalog,
+  resetProtocolIds,
+  setProtocolIds,
+} from '../gameIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+
+const BOUND_IDS = TEST_PROTOCOL_IDS;
 
 const base = {
   myContribution: 100n,
@@ -22,12 +33,79 @@ const base = {
 
 describe('pure game registrations', () => {
   it('derives display metadata from the keyed registration source', () => {
-    expect(REGISTERED_GAMES).toEqual([
+    expect(
+      REGISTERED_GAMES.map(({ gameType, displayName }) => ({
+        gameType,
+        displayName,
+      })),
+    ).toEqual([
       { gameType: 'calpoker', displayName: 'California Poker' },
       { gameType: 'spacepoker', displayName: 'Space Poker' },
       { gameType: 'krunk', displayName: 'Krunk' },
     ]);
-    expect(GAME_REGISTRATIONS.calpoker).toBe(calpokerRegistration);
+    expect(packageFor('calpoker')).toBe(calpokerPackage);
+  });
+
+  it('exposes a factory-parameter codec on each game package', () => {
+    const calParams = calpokerRegistration.toFactoryParameters(
+      { gameType: 'calpoker', ...base },
+      true,
+    );
+    const spaceParams = spacepokerRegistration.toFactoryParameters(
+      { gameType: 'spacepoker', ...base, unitSizeMojos: 10n },
+      true,
+    );
+    const krunkParams = krunkRegistration.toFactoryParameters({ gameType: 'krunk', ...base }, true);
+    expect(calParams).toEqual({ perPlayerStake: 100n, senderGoesFirst: false });
+    expect(spaceParams).toEqual({
+      perPlayerStake: 100n,
+      betUnit: 10n,
+      senderGoesFirst: false,
+    });
+    expect(krunkParams).toEqual({ stake: 100n });
+    expect(
+      calpokerRegistration.factoryParameters.decode(
+        calpokerRegistration.factoryParameters.encode(calParams).serialize(),
+      ),
+    ).toEqual(calParams);
+    expect(
+      spacepokerRegistration.factoryParameters.decode(
+        spacepokerRegistration.factoryParameters.encode(spaceParams).serialize(),
+      ),
+    ).toEqual(spaceParams);
+    expect(
+      krunkRegistration.factoryParameters.decode(
+        krunkRegistration.factoryParameters.encode(krunkParams).serialize(),
+      ),
+    ).toEqual(krunkParams);
+    expect(
+      calpokerRegistration.factoryParameters.decode(
+        spacepokerRegistration.factoryParameters.encode(spaceParams).serialize(),
+      ),
+    ).toBeNull();
+    expect(
+      spacepokerRegistration.factoryParameters.decode(
+        krunkRegistration.factoryParameters.encode(krunkParams).serialize(),
+      ),
+    ).toBeNull();
+    expect(
+      krunkRegistration.factoryParameters.decode(
+        calpokerRegistration.factoryParameters.encode(calParams).serialize(),
+      ),
+    ).toBeNull();
+    const formatMojos = (mojos: bigint) => `${mojos} MOJO`;
+    expect(
+      calpokerRegistration.describeTerms({ gameType: 'calpoker', ...base }, { formatMojos }),
+    ).toBe('Stake 100 MOJO each');
+    expect(
+      spacepokerRegistration.describeTerms(
+        { gameType: 'spacepoker', ...base, unitSizeMojos: 10n },
+        { formatMojos },
+      ),
+    ).toBe('Stake 100 MOJO each · unit 10 MOJO · stack 10');
+    expect(krunkRegistration.describeTerms({ gameType: 'krunk', ...base }, { formatMojos })).toBe(
+      'Stake 100 MOJO each',
+    );
   });
 
   it('encodes each factory parameter shape', () => {
@@ -44,15 +122,57 @@ describe('pure game registrations', () => {
     );
   });
 
-  it('decodes Space Poker only with a positive encoded unit', () => {
-    expect(decodeGameTerms('spacepoker', base, Program.fromBigInt(10n).serialize())).toEqual({
+  it('round-trips each game through its own factory decoder', () => {
+    const cal = encodeGameProposalParameters({ gameType: 'calpoker', ...base }, true).serialize();
+    const space = encodeGameProposalParameters(
+      { gameType: 'spacepoker', ...base, unitSizeMojos: 10n },
+      true,
+    ).serialize();
+    const krunk = encodeGameProposalParameters({ gameType: 'krunk', ...base }, true).serialize();
+    expect(decodeGameTerms('calpoker', base, cal)).toEqual({ gameType: 'calpoker', ...base });
+    expect(decodeGameTerms('spacepoker', base, space)).toEqual({
       gameType: 'spacepoker',
       ...base,
       unitSizeMojos: 10n,
     });
+    expect(decodeGameTerms('krunk', base, krunk)).toEqual({ gameType: 'krunk', ...base });
+    expect(decodeGameTerms('calpoker', base, space)).toBeNull();
+    expect(decodeGameTerms('calpoker', base, krunk)).toBeNull();
+    expect(decodeGameTerms('spacepoker', base, cal)).toBeNull();
+    expect(decodeGameTerms('spacepoker', base, krunk)).toBeNull();
+    expect(decodeGameTerms('krunk', base, cal)).toBeNull();
+    expect(decodeGameTerms('krunk', base, space)).toBeNull();
     expect(decodeGameTerms('spacepoker', base, undefined)).toBeNull();
-    expect(decodeGameTerms('spacepoker', base, Program.fromBigInt(0n).serialize())).toBeNull();
+    expect(decodeGameTerms('spacepoker', base, Program.fromBigInt(10n).serialize())).toBeNull();
     expect(decodeGameTerms('spacepoker', base, Program.fromList([]).serialize())).toBeNull();
+  });
+
+  it('keeps package keys in the model after protocol identities are ready', () => {
+    resetProtocolIds();
+    expect(() => protocolIdForCatalog('calpoker')).toThrow(/No protocol identity/);
+    expect(isCatalogGameType(BOUND_IDS[0].id)).toBe(false);
+    expect(catalogGameTypeFromWire(BOUND_IDS[0].id)).toBeNull();
+    setProtocolIds(BOUND_IDS);
+    try {
+      expect(packageFor('calpoker').gameType).toBe('calpoker');
+      expect(isCatalogGameType(BOUND_IDS[0].id)).toBe(false);
+      expect(calpokerRegistration.stateCodec.gameType).toBe('calpoker');
+      expect(protocolIdForCatalog('calpoker')).toBe(BOUND_IDS[0].id);
+      expect(catalogGameTypeFromWire('calpoker')).toBeNull();
+      expect(catalogGameTypeFromWire(BOUND_IDS[0].id)).toBe('calpoker');
+      expect(REGISTERED_GAMES.map((game) => game.gameType)).toEqual([
+        'calpoker',
+        'spacepoker',
+        'krunk',
+      ]);
+      const cal = encodeGameProposalParameters({ gameType: 'calpoker', ...base }, true).serialize();
+      expect(decodeGameTerms('calpoker', base, cal)).toEqual({
+        gameType: 'calpoker',
+        ...base,
+      });
+    } finally {
+      resetProtocolIds();
+    }
   });
 
   it('validates and compares terms through their owning adapter', () => {
@@ -69,7 +189,7 @@ describe('pure game registrations', () => {
       decodeGameTerms(
         'calpoker',
         { ...base, theirContribution: 200n },
-        Program.fromList([]).serialize(),
+        encodeGameProposalParameters({ gameType: 'calpoker', ...base }, true).serialize(),
       ),
     ).toBeNull();
     expect(
@@ -111,7 +231,16 @@ describe('pure game registrations', () => {
     ['zero contribution', { ...base, myContribution: 0n, theirContribution: 0n }],
     ['unequal contribution', { ...base, theirContribution: 99n }],
   ])('rejects invalid Calpoker %s in proposal and persistence decoders', (_label, invalid) => {
-    expect(decodeGameTerms('calpoker', invalid, undefined)).toBeNull();
+    expect(
+      decodeGameTerms(
+        'calpoker',
+        invalid,
+        Program.fromList([
+          Program.fromBigInt(invalid.myContribution),
+          Program.fromBigInt(1n),
+        ]).serialize(),
+      ),
+    ).toBeNull();
     expect(decodePersistedGameTerms('calpoker', invalid, {})).toBeNull();
   });
 
@@ -128,7 +257,11 @@ describe('pure game registrations', () => {
     'rejects invalid Space Poker %s in proposal and persistence decoders',
     (_label, invalid, unit) => {
       const parameterState = /^-?\d+$/.test(unit)
-        ? Program.fromBigInt(BigInt(unit)).serialize()
+        ? Program.fromList([
+            Program.fromBigInt(invalid.myContribution),
+            Program.fromBigInt(BigInt(unit)),
+            Program.fromBigInt(1n),
+          ]).serialize()
         : new Uint8Array([0xff]);
       expect(decodeGameTerms('spacepoker', invalid, parameterState)).toBeNull();
       expect(
@@ -154,13 +287,16 @@ describe('pure game registrations', () => {
     expect(
       resolveSpacepokerUnitSize({
         terms,
-        encodedParameterState: Program.fromBigInt(10n).serialize(),
+        encodedParameterState: encodeGameProposalParameters(terms, true).serialize(),
       }),
     ).toBe(10n);
     expect(
       resolveSpacepokerUnitSize({
         terms,
-        encodedParameterState: Program.fromBigInt(20n).serialize(),
+        encodedParameterState: encodeGameProposalParameters(
+          { ...terms, unitSizeMojos: 20n },
+          true,
+        ).serialize(),
       }),
     ).toBeNull();
   });

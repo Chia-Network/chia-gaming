@@ -19,7 +19,7 @@ import { formatMojos } from '../util';
 import { SessionPhase } from '../types/ChiaGaming';
 import { RestoreStatus, type SessionController } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
-import { requireLiveGameHandSource } from '../lib/gameMount';
+import { requireLiveGameHandSource } from '../lib/gameMountRegistry';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {

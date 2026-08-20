@@ -1,5 +1,5 @@
-import type { Program } from 'clvm-lib';
 import type { ChannelStatus, GameConnectionState, WasmNotification } from '../../types/ChiaGaming';
+import type { ComposeDraftValue } from '@games/host';
 import type { ComposeDraftState } from './composeDraft';
 import type { GameSliceAction } from './gameSlice';
 import type { GameplayEvent } from './gameSessionEvents';
@@ -35,17 +35,7 @@ export interface SessionMachineState {
   coordination: SessionMachineCoordination;
 }
 
-export type LocalGameCommand =
-  | { type: 'make-move'; readable: Program | null }
-  | { type: 'accept-settlement' }
-  | { type: 'cheat'; moverShare: bigint };
-
-export interface LocalGameActionRequest {
-  gameType: RegisteredGameType;
-  id: string;
-  state: unknown;
-  command: LocalGameCommand;
-}
+export type { LocalGameCommand, LocalGameActionRequest } from '@games/host';
 
 export type SessionControllerCommand =
   | 'accept-proposal'
@@ -120,11 +110,7 @@ export type SessionMachineEvent =
   | { type: 'set-compose-draft'; compose: ComposeDraftState }
   | { type: 'select-compose-game'; gameType: RegisteredGameType }
   | { type: 'set-compose-timeout'; timeout: bigint }
-  | { type: 'set-compose-amount'; gameType: 'calpoker' | 'krunk'; amount: bigint }
-  | {
-      type: 'set-spacepoker-compose';
-      draft: Partial<ComposeDraftState['spacepoker']>;
-    }
+  | { type: 'update-selected-compose-draft'; draft: Partial<ComposeDraftValue> }
   | { type: 'set-compose-proposal-sent'; sent: boolean }
   | { type: 'clear-proposals'; ids?: readonly string[] }
   | { type: 'set-same-terms-requested'; requested: boolean }

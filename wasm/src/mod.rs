@@ -138,7 +138,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 5;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 6;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -221,8 +221,10 @@ mod gaming_wasm {
 
     fn parse_game_config(js_config: JsValue) -> Result<GameConfigPartial, JsValue> {
         let jsconfig: JsGameSessionConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
-        let mut allocator = AllocEncoder::new();
-        let game_types = game_collection(&mut allocator);
+        // Handshake does not need factories. Page load warms them in the
+        // background; OffChainPhase installs the cached collection when the
+        // channel becomes live.
+        let game_types = BTreeMap::new();
         let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).map_err(|e| {
             js_error(&format!(
                 "reward_puzzle_hash hex decode: {e:?} (length={})",
@@ -805,7 +807,7 @@ mod gaming_wasm {
 
     #[derive(Deserialize)]
     struct JsGameProposal {
-        // Game name
+        // Factory first-validator hash, 32-byte hex. Not a catalog name.
         game_type: String,
         timeout: u64,
     }
@@ -820,6 +822,53 @@ mod gaming_wasm {
         })?))
     }
 
+    fn parse_game_type_hex(hex_id: &str) -> Result<GameType, JsValue> {
+        let trimmed = hex_id.strip_prefix("0x").unwrap_or(hex_id);
+        let bytes = hex::decode(trimmed).map_err(|e| {
+            JsValue::from_str(&format!("game_type must be hex of a 32-byte hash: {e}"))
+        })?;
+        let hash = Hash::from_slice(&bytes).map_err(|e| {
+            JsValue::from_str(&format!("game_type must be a 32-byte hash: {e}"))
+        })?;
+        Ok(GameType::from_hash(hash))
+    }
+
+    #[derive(Serialize)]
+    struct JsPackageIdentity {
+        key: String,
+        id: String,
+    }
+
+    /// Bootstrap metadata: catalog `key` plus factory-derived validator-hash `id`.
+    /// Peer/WASM wire uses `id` (the hash). The JS session model and saves use catalog keys.
+    #[wasm_bindgen]
+    pub fn registered_game_packages() -> Result<JsValue, JsValue> {
+        let mut allocator = AllocEncoder::new();
+        let ids = game_collection::production_package_ids(&mut allocator);
+        let list: Vec<JsPackageIdentity> = ids
+            .into_iter()
+            .map(|(key, id)| JsPackageIdentity {
+                key,
+                id: id.to_string(),
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&list).map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Probe one production factory into the process-wide cache. Idempotent.
+    /// The host yields between calls so the browser event loop can stay responsive.
+    #[wasm_bindgen]
+    pub fn warm_game_package(key: String) -> Result<JsValue, JsValue> {
+        let mut allocator = AllocEncoder::new();
+        let id = game_collection::warm_production_package(&mut allocator, &key)
+            .map_err(|e| JsValue::from_str(&e))?;
+        serde_wasm_bindgen::to_value(&JsPackageIdentity {
+            key,
+            id: id.to_string(),
+        })
+        .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
     #[wasm_bindgen]
     pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
         let js_games: Vec<JsGameProposal> =
@@ -830,15 +879,16 @@ mod gaming_wasm {
             return Err(JsValue::from_str("games and parameters_list must have the same length"));
         }
         with_game(cid, move |cradle: &mut JsGameSession| {
-            let game_starts: Vec<GameProposal> = js_games
-                .iter()
-                .zip(params_arr.iter())
-                .map(|(g, p)| GameProposal {
-                    game_type: GameType(g.game_type.as_bytes().to_vec()),
+            let mut game_starts = Vec::with_capacity(js_games.len());
+            for (g, p) in js_games.iter().zip(params_arr.iter()) {
+                let game_type = parse_game_type_hex(&g.game_type)
+                    .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
+                game_starts.push(GameProposal {
+                    game_type,
                     timeout: Timeout::new(g.timeout),
                     parameters: Program::from_bytes(p),
-                })
-                .collect();
+                });
+            }
             let ids = cradle.cradle.propose_games(
                 &mut cradle.allocator,
                 &game_starts,

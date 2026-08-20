@@ -11,13 +11,9 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
 import { reduceRegisteredGameState } from '../gameRegistry';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
-import {
-  initialKrunkGameState,
-  KrunkHandler,
-  krunkStateCodec,
-} from '../../features/krunk/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/stateCodec';
+import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/stateCodec';
 import type { HandTermsModel, PersistedGameState } from '../session/types';
 import 'fake-indexeddb/auto';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.

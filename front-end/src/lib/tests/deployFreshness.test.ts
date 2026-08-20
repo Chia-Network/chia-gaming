@@ -46,12 +46,10 @@ describe('deployFreshness', () => {
   it('resolveDeployAssetUrl joins relative assets onto the nonce base', () => {
     expect(
       resolveDeployAssetUrl(
-        'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
+        'games/calpoker/clsp/factory_calpoker_factory.hex',
         'http://localhost:3002/app/123/',
       ),
-    ).toBe(
-      'http://localhost:3002/app/123/clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
-    );
+    ).toBe('http://localhost:3002/app/123/games/calpoker/clsp/factory_calpoker_factory.hex');
   });
 
   it('resolveDeployAssetUrl leaves absolute and root-relative URLs alone', () => {

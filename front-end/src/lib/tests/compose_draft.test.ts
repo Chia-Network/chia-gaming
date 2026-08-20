@@ -1,11 +1,13 @@
 import {
   composeDraftCanSubmit,
   composeDraftTerms,
+  composeDraftValue,
   createComposeDraftState,
   selectComposeGame,
-  setComposeDraftAmount,
-  setSpacepokerComposeDraft,
+  updateSelectedComposeDraft,
 } from '../session/composeDraft';
+import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
@@ -23,17 +25,18 @@ describe('compose draft state', () => {
     });
     expect(composeDraftTerms(state)).toBeNull();
 
-    state = setComposeDraftAmount(state, 'calpoker', 25n);
+    state = updateSelectedComposeDraft(state, { amount: 25n });
     expect(composeDraftTerms(state)).toEqual(CALPOKER_TERMS);
 
-    state = selectComposeGame(setComposeDraftAmount(state, 'krunk', 250n), 'krunk');
+    state = selectComposeGame(state, 'krunk');
+    state = updateSelectedComposeDraft(state, { amount: 250n });
     expect(composeDraftCanSubmit(state, null)).toBe(false);
-    state = setComposeDraftAmount(state, 'krunk', 300n);
+    state = updateSelectedComposeDraft(state, { amount: 300n });
     expect(composeDraftCanSubmit(state, 299n)).toBe(false);
     expect(composeDraftCanSubmit(state, 300n)).toBe(true);
 
     state = selectComposeGame(state, 'spacepoker');
-    state = setSpacepokerComposeDraft(state, { unitSize: 7n, stackSize: 13n });
+    state = updateSelectedComposeDraft(state, { unitSize: 7n, stackSize: 13n });
     expect(composeDraftTerms(state)).toEqual({
       gameType: 'spacepoker',
       myContribution: 91n,
@@ -41,7 +44,7 @@ describe('compose draft state', () => {
       gameTimeout: 15n,
       unitSizeMojos: 7n,
     });
-    state = setSpacepokerComposeDraft(state, {
+    state = updateSelectedComposeDraft(state, {
       stackSize: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
     });
     expect(composeDraftTerms(state)).toBeNull();
@@ -49,15 +52,28 @@ describe('compose draft state', () => {
 
   it('restores every exact draft after switching away and back', () => {
     let state = createComposeDraftState(25n, CALPOKER_TERMS);
-    state = setComposeDraftAmount(state, 'calpoker', 37n);
-    state = setComposeDraftAmount(state, 'krunk', 900n);
-    state = setSpacepokerComposeDraft(state, { unitSize: 11n, stackSize: 17n });
+    state = updateSelectedComposeDraft(state, { amount: 37n });
+    state = selectComposeGame(state, 'krunk');
+    state = updateSelectedComposeDraft(state, { amount: 900n });
+    state = selectComposeGame(state, 'spacepoker');
+    state = updateSelectedComposeDraft(state, { unitSize: 11n, stackSize: 17n });
 
     state = selectComposeGame(state, 'krunk');
-    expect(state.krunk.amount).toBe(900n);
+    expect(state.drafts.krunk.amount).toBe(900n);
     state = selectComposeGame(state, 'spacepoker');
-    expect(state.spacepoker).toEqual({ unitSize: 11n, stackSize: 17n });
+    expect(state.drafts.spacepoker).toEqual({ unitSize: 11n, stackSize: 17n });
     state = selectComposeGame(state, 'calpoker');
-    expect(state.calpoker.amount).toBe(37n);
+    expect(state.drafts.calpoker.amount).toBe(37n);
+  });
+
+  it('looks up drafts by catalog gameType after protocol identities are set', () => {
+    const state = createComposeDraftState(25n, CALPOKER_TERMS);
+    setProtocolIds(TEST_PROTOCOL_IDS);
+    try {
+      expect(composeDraftValue(state, 'calpoker')).toEqual({ amount: 25n });
+      expect(composeDraftTerms(state)?.myContribution).toBe(25n);
+    } finally {
+      resetProtocolIds();
+    }
   });
 });

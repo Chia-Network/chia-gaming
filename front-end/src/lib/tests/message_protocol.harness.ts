@@ -11,7 +11,9 @@ import type {
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { _resetForTests as resetSaveState, saveSession } from '../../hooks/save';
+import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
+import { mockGamePackageIdentity, TEST_PROTOCOL_IDS } from './protocolIdentities';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
   get: (target, property) =>
@@ -31,8 +33,16 @@ export function saveLiveSession(fields: Record<string, unknown>): Promise<void> 
 export const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
 export const mockWasmConnection = new Proxy({} as WasmConnection, {
-  get: (_target, property) =>
-    property === 'game_session_serialization_schema' ? () => 1 : () => undefined,
+  get: (_target, property) => {
+    if (property === 'game_session_serialization_schema') return () => 1;
+    if (property === 'registered_game_packages') {
+      return () => [...TEST_PROTOCOL_IDS];
+    }
+    if (property === 'warm_game_package') {
+      return (key: string) => mockGamePackageIdentity(key);
+    }
+    return () => undefined;
+  },
 });
 
 export function channelStatus(
@@ -272,6 +282,7 @@ afterEach(async () => {
     }
   } finally {
     resetSaveState();
+    _resetGameIdentityWarmupForTests();
     clearTestGlobal('localStorage');
     clearTestGlobal('sessionStorage');
   }

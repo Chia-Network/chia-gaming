@@ -13,8 +13,8 @@ use crate::channel_state::types::{
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
@@ -43,7 +43,7 @@ pub mod spend_channel_coin_phase;
 pub mod types;
 pub mod wallet_traits;
 
-pub use game_collection::{game_collection, register_all};
+pub use game_collection::game_collection;
 pub use wallet_traits::{ChannelFundingWallet, SpendWalletReceiver, WalletSpendInterface};
 
 fn serialize_game_type_map<S: Serializer>(
@@ -143,7 +143,7 @@ fn format_batch_action(action: &BatchAction) -> String {
             format!(
                 "ProposeGroup ids={:?} type={} timeout={}",
                 group.members.iter().map(|m| m.game_id).collect::<Vec<_>>(),
-                hex::encode(&group.start.game_type.0),
+                group.start.game_type,
                 group.start.timeout,
             )
         }
@@ -238,6 +238,11 @@ impl OffChainPhase {
         env: &mut ChannelEnv<'_>,
         start: &GameProposal,
     ) -> Result<Vec<game::FactoryGame>, Error> {
+        if self.game_types.is_empty() {
+            // Restored handshake-era sessions may still serialize an empty map.
+            self.game_types =
+                crate::session_phases::game_collection::game_collection(env.allocator);
+        }
         let factory = self
             .game_types
             .get(&start.game_type)
@@ -247,7 +252,18 @@ impl OffChainPhase {
             .as_ref()
             .ok_or_else(|| Error::StrErr("GameFactory program missing".to_string()))?
             .clone();
-        game::Game::run_factory(env.allocator, program.into(), &start.parameters)
+        let games = game::Game::run_factory(env.allocator, program.into(), &start.parameters)?;
+        let first_hash = games
+            .first()
+            .map(|g| g.initial_validation_program_hash.clone())
+            .ok_or_else(|| Error::StrErr("proposal factory returned no games".to_string()))?;
+        if &first_hash != start.game_type.hash() {
+            return Err(Error::StrErr(format!(
+                "factory for {} returned first validator hash {}, expected {}",
+                start.game_type, first_hash, start.game_type
+            )));
+        }
+        Ok(games)
     }
 
     fn hydrate_wire_proposal_group(
@@ -306,6 +322,12 @@ impl OffChainPhase {
         incoming_messages: VecDeque<Rc<PeerMessage>>,
         last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
     ) -> OffChainPhase {
+        let game_types = if game_types.is_empty() {
+            let mut allocator = AllocEncoder::new();
+            crate::session_phases::game_collection::game_collection(&mut allocator)
+        } else {
+            game_types
+        };
         OffChainPhase {
             initiator,
             have_potato,
@@ -735,6 +757,7 @@ impl OffChainPhase {
                             initial_validation_program_hash: ivp_hash,
                             initial_state,
                             game_type: resolved_game_type,
+                            parameters: wire.start.parameters.clone(),
                         }));
                     }
                 }
@@ -1937,7 +1960,7 @@ mod atomic_group_tests {
     fn group(members: Vec<WireGameSpec>, group_id: GameID) -> WireProposalGroup {
         WireProposalGroup {
             start: GameProposal {
-                game_type: GameType(b"test".to_vec()),
+                game_type: GameType::from_hash(Hash::default()),
                 timeout: Timeout::new(15),
                 parameters: Program::from_bytes(&[0x80]),
             },

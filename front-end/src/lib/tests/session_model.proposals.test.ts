@@ -18,7 +18,7 @@ import {
   projectGameStatus,
 } from '../session/model';
 import type { SessionSave } from '../../hooks/save';
-import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
 import { dispatchWasmNotification } from '../../hooks/useGameSession';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';

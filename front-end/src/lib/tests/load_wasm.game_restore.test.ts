@@ -8,6 +8,7 @@ import {
   saveSession,
 } from '../../hooks/save';
 import { canRemountFinishedGameState, encodeGameProposalParameters } from '../gameRegistry';
+import { protocolIdForCatalog } from '../gameIdentities';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import {
   channelStatusModelFromPayload,
@@ -16,7 +17,7 @@ import {
   sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
-import { krunkStateCodec } from '../../features/krunk/stateCodec';
+import { krunkStateCodec } from '@games/krunk/ui/stateCodec';
 import type { HandTermsModel } from '../session/types';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
@@ -72,7 +73,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     const proposer = cradles[0].blob!;
     const mover = cradles[1].blob!;
     const ids = proposer.proposeGame({
-      game_type: testCase.terms.gameType,
+      game_type: protocolIdForCatalog(testCase.terms.gameType),
       timeout: testCase.terms.gameTimeout,
       parameters: encodeGameProposalParameters(testCase.terms, true),
     });

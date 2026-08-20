@@ -3,7 +3,7 @@ import {
   sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
-import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
 import {
   gameInstanceModelFromSlice,
   gameSliceReducer,

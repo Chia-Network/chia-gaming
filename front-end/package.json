@@ -7,10 +7,11 @@
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --sourcemap --outfile=dist/js/index-rollup.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
-    "build:deploy": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --format=esm --splitting --outdir=dist/app && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
+    "generate:games": "node scripts/generate-game-registry.mjs",
+    "build": "pnpm run generate:games && pnpm exec tsc --project . --noEmit && pnpm exec esbuild src/index.tsx --bundle --sourcemap --jsx=automatic --outfile=dist/js/index-rollup.js --alias:@=./src --alias:@games=../games && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
+    "build:deploy": "pnpm run generate:games && pnpm exec tsc --project . --noEmit && pnpm exec esbuild src/index.tsx --bundle --format=esm --splitting --jsx=automatic --outdir=dist/app --alias:@=./src --alias:@games=../games && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
     "bundle": "rm -rf dist/app && pnpm run build:deploy && node scripts/assemble-bundle.mjs",
-    "test": "pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --verbose --useStderr --ci"
+    "test": "pnpm run generate:games && pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --verbose --useStderr --ci"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.23",
@@ -54,7 +55,8 @@
       "<rootDir>/scripts/testSetup.ts"
     ],
     "testMatch": [
-      "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
+      "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}",
+      "<rootDir>/../games/*/ui/**/*.{spec,test}.{ts,tsx}"
     ],
     "testPathIgnorePatterns": [],
     "moduleDirectories": [
@@ -63,11 +65,13 @@
       "src"
     ],
     "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/src/$1",
+      "^@games/(.*)$": "<rootDir>/../games/$1",
       "\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm|wav|mp3|m4a|aac|oga)$": "<rootDir>/scripts/testMock.js",
       "\\.(css|less)$": "<rootDir>/scripts/testMock.js"
     },
     "transform": {
-      "^.+\\.ts?$": "ts-jest"
+      "^.+\\.tsx?$": "ts-jest"
     },
     "modulePathIgnorePatterns": [
       "<rootDir>/dist"

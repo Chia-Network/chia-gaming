@@ -99,8 +99,7 @@ export function reduceSessionMachine(
     case 'set-compose-draft':
     case 'select-compose-game':
     case 'set-compose-timeout':
-    case 'set-compose-amount':
-    case 'set-spacepoker-compose':
+    case 'update-selected-compose-draft':
     case 'set-compose-proposal-sent':
     case 'set-same-terms-requested':
     case 'set-expecting-counter-proposal':

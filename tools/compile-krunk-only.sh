@@ -58,15 +58,15 @@ echo "Using build-script: $BUILD_SCRIPT"
 echo "=== Compiling Krunk chialisp only (build-script, sequential) ==="
 
 # helpers already compiled if hex present; recompile only if missing
-if [[ ! -f clsp/games/krunk/krunk_helpers_list_contains.hex ]]; then
-    compile_one krunk-helpers "clsp/games/krunk/krunk_helpers.clsp"
+if [[ ! -f games/krunk/clsp/krunk_helpers_list_contains.hex ]]; then
+    compile_one krunk-helpers "games/krunk/clsp/krunk_helpers.clsp"
 else
     echo "=== Skipping krunk-helpers (hex present) ==="
 fi
 
-compile_one krunk-validator-commit "clsp/games/krunk/onchain/commit.clsp"
-compile_one krunk-validator-guess "clsp/games/krunk/onchain/guess.clsp"
-compile_one krunk-validator-clue "clsp/games/krunk/onchain/clue.clsp"
-compile_one krunk-generate "clsp/games/krunk/krunk_include.clsp"
+compile_one krunk-validator-commit "games/krunk/clsp/onchain/commit.clsp"
+compile_one krunk-validator-guess "games/krunk/clsp/onchain/guess.clsp"
+compile_one krunk-validator-clue "games/krunk/clsp/onchain/clue.clsp"
+compile_one krunk-generate "games/krunk/clsp/factory.clsp"
 
 echo "=== Krunk chialisp compile done ==="

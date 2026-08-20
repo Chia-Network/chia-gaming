@@ -1,4 +1,4 @@
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
 import { applyTermsToComposeDraft } from '../session/composeDraft';
 import {
   createSessionModel,
@@ -23,15 +23,15 @@ describe('session machine behavior sequences', () => {
       }),
     );
 
-    state = send(state, { type: 'set-compose-amount', gameType: 'calpoker', amount: 37n });
+    state = send(state, { type: 'select-compose-game', gameType: 'calpoker' });
+    state = send(state, { type: 'update-selected-compose-draft', draft: { amount: 37n } });
 
-    state = send(state, { type: 'set-compose-amount', gameType: 'krunk', amount: 900n });
+    state = send(state, { type: 'select-compose-game', gameType: 'krunk' });
+    state = send(state, { type: 'update-selected-compose-draft', draft: { amount: 900n } });
 
     state = send(state, { type: 'select-compose-game', gameType: 'spacepoker' });
-
     state = send(state, {
-      type: 'set-spacepoker-compose',
-
+      type: 'update-selected-compose-draft',
       draft: { unitSize: 11n, stackSize: 17n },
     });
 
@@ -46,11 +46,11 @@ describe('session machine behavior sequences', () => {
 
       proposalSent: true,
 
-      calpoker: { amount: 37n },
-
-      krunk: { amount: 900n },
-
-      spacepoker: { unitSize: 11n, stackSize: 17n },
+      drafts: {
+        calpoker: { amount: 37n },
+        krunk: { amount: 900n },
+        spacepoker: { unitSize: 11n, stackSize: 17n },
+      },
     });
   });
 

@@ -2,6 +2,10 @@ import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 import { jsonStringify } from '../util/jsonSafe';
 
+declare const protocolGameIdBrand: unique symbol;
+/** Factory first-validator hash. Distinct from catalog keys like `calpoker`. */
+export type ProtocolGameId = string & { readonly [protocolGameIdBrand]: void };
+
 export type HubLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
 export type PeerLiveness = 'connected' | 'degraded' | 'dead' | null;
@@ -80,7 +84,8 @@ export interface CoinsetOrgBlockSpend {
 }
 
 export interface ProposeGameParams {
-  game_type: string;
+  /** Factory first-validator hash (32-byte hex). Not a catalog key. */
+  game_type: ProtocolGameId;
   timeout: bigint;
   parameters: Program | null;
 }
@@ -280,6 +285,8 @@ export interface WasmConnection {
   restore_session: (serialized: Uint8Array, new_seed: string) => number;
   game_session_serialization_schema: () => number;
   cache_file: (name: string, data: Uint8Array) => void;
+  registered_game_packages: () => Array<{ key: string; id: string }>;
+  warm_game_package: (key: string) => { key: string; id: string };
 
   // Blockchain
   set_funding_coin: (cid: number, coinstring: string) => WasmResult | undefined;

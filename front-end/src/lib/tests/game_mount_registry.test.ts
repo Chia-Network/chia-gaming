@@ -4,15 +4,17 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { SessionController } from '../../hooks/SessionController';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
-import { GAME_MOUNTS, hasGameMount } from '../gameMountRegistry';
+import { frozenGameViewFromModel, requireLiveGameHandSource } from '../gameMountRegistry';
+import { isCatalogGameType, packageFor } from '../gameRegistry';
+import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import {
   gameHandState,
   liveGameHandOrigin,
-  requireLiveGameHandSource,
   terminalGameHandSource,
   type GameHandSource,
-  useInitialGameHandState,
-} from '../gameMount';
+} from '@games/host';
+import { useInitialGameHandState } from '@games/host/ui';
 import { createSessionModel, type SessionModel } from '../session/model';
 import { projectTerminalSessionResult } from '../session/sessionResult';
 import { createSessionMachineState } from '../session/sessionMachine';
@@ -21,11 +23,42 @@ import type { PersistedGameState } from '../session/gameStateCodec';
 
 describe('game mount registry', () => {
   it('recognizes registered keys and rejects unknown mounts', () => {
-    expect(hasGameMount('calpoker')).toBe(true);
-    expect(hasGameMount('spacepoker')).toBe(true);
-    expect(hasGameMount('krunk')).toBe(true);
-    expect(hasGameMount('debug')).toBe(false);
-    expect(hasGameMount('')).toBe(false);
+    expect(isCatalogGameType('calpoker')).toBe(true);
+    expect(isCatalogGameType('spacepoker')).toBe(true);
+    expect(isCatalogGameType('krunk')).toBe(true);
+    expect(isCatalogGameType('debug')).toBe(false);
+    expect(isCatalogGameType('')).toBe(false);
+  });
+
+  it('renders Space Poker after protocol identities are ready without renaming terms', () => {
+    setProtocolIds(TEST_PROTOCOL_IDS);
+    try {
+      expect(packageFor('spacepoker').gameType).toBe('spacepoker');
+      expect(() =>
+        packageFor('spacepoker').renderLive(
+          {
+            lastHandTerms: {
+              gameType: 'spacepoker',
+              myContribution: 100n,
+              theirContribution: 100n,
+              gameTimeout: 15n,
+              unitSizeMojos: 10n,
+            },
+            handSource: { interactionMode: 'live', controller: {} },
+            handKey: 1,
+            activeGameId: '1',
+            gameplayEvent$: EMPTY,
+            iStarted: true,
+            onTurnChanged: () => {},
+            appendGameLog: () => {},
+            gameSpecificView: { displayGameId: '1', terminal: { type: 'none' } },
+          } as unknown as UseGameSessionResult,
+          {},
+        ),
+      ).not.toThrow();
+    } finally {
+      resetProtocolIds();
+    }
   });
 
   it('gives each Krunk hand a fresh React lifecycle', () => {
@@ -45,8 +78,8 @@ describe('game mount registry', () => {
       },
     } as unknown as UseGameSessionResult;
 
-    const first = GAME_MOUNTS.krunk.renderLive({ ...session, handKey: 1 }, {});
-    const second = GAME_MOUNTS.krunk.renderLive({ ...session, handKey: 2 }, {});
+    const first = packageFor('krunk').renderLive({ ...session, handKey: 1 }, {});
+    const second = packageFor('krunk').renderLive({ ...session, handKey: 2 }, {});
 
     expect(first.key).toBe('1');
     expect(second.key).toBe('2');
@@ -170,7 +203,7 @@ describe('game mount registry', () => {
       });
       const model = runtime.getState().model;
       const terminal = model.game.instances[ids[0]].terminal;
-      const mount = GAME_MOUNTS[gameType].renderLive(
+      const mount = packageFor(gameType).renderLive(
         {
           handSource: { interactionMode: 'live', controller },
           handKey: model.game.handKey,
@@ -244,7 +277,7 @@ describe('game mount registry', () => {
       betweenHand: { lastTerms: { myContribution: 100n } },
     } as unknown as SessionModel;
 
-    const mount = GAME_MOUNTS.krunk.renderFrozen(model, {
+    const mount = packageFor('krunk').renderFrozen(frozenGameViewFromModel(model), {
       iStarted: true,
     });
 
@@ -329,8 +362,8 @@ describe('game mount registry', () => {
       } as unknown as UseGameSessionResult;
       const terminal = projectTerminalSessionResult(live, { model, iStarted: true }, EMPTY);
 
-      const liveMount = GAME_MOUNTS[gameType].renderLive(live, {});
-      const terminalMount = GAME_MOUNTS[gameType].renderLive(terminal, {});
+      const liveMount = packageFor(gameType).renderLive(live, {});
+      const terminalMount = packageFor(gameType).renderLive(terminal, {});
 
       expect(terminalMount.type).toBe(liveMount.type);
       expect(terminalMount.key).toBe(liveMount.key);

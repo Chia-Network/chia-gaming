@@ -3,8 +3,8 @@
     "target": "ESNext",
     "lib": ["dom", "dom.iterable", "esnext"],
     "strict": true,
-    "rootDir": "./src",
-    "outDir": "./dist/js",
+    "rootDir": "..",
+    "outDir": "./dist/compiled",
     "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -14,7 +14,15 @@
     "module": "ESNext",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["src/*"],
+      "@games/*": ["../games/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime.d.ts"],
+      "react/jsx-dev-runtime": ["./node_modules/@types/react/jsx-dev-runtime.d.ts"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "rxjs": ["./node_modules/rxjs"],
+      "clvm-lib": ["./node_modules/clvm-lib"],
+      "react-test-renderer": ["./node_modules/@types/react-test-renderer"]
     },
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
@@ -25,6 +33,22 @@
     "sourceMap": true,
     "noEmitOnError": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["dist", "build", "coverage", "src/lib"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../games/*/ui/**/*.ts",
+    "../games/*/ui/**/*.tsx",
+    "../games/host/**/*.ts",
+    "../games/host/**/*.tsx"
+  ],
+  "exclude": [
+    "dist",
+    "build",
+    "coverage",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/lib/tests",
+    "../games/**/*.test.ts",
+    "../games/**/*.test.tsx"
+  ]
 }

@@ -50,6 +50,7 @@ axum = { version = "=0.8.9", features = ["ws"], optional = true }
 [build-dependencies]
 chialisp = "0.5.0"
 clvmr = { version = "=0.17.7" }
+serde_json = "=1.0.145"
 toml = "=0.8.23"
 
 [[bin]]
@@ -59,7 +60,7 @@ required-features = ["sim-server"]
 
 [[bin]]
 name = "gen-krunk-dict"
-path = "src/bin/gen_krunk_dict.rs"
+path = "games/krunk/rust/bin_gen_krunk_dict.rs"
 
 [lib]
 name = "chia_gaming"

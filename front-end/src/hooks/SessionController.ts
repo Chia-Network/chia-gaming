@@ -12,6 +12,7 @@ import {
   SpendBundle,
   ProposeGameParams,
   WasmEvent,
+  WasmNotification,
   NeedCoinSpendRequest,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
@@ -30,6 +31,8 @@ import {
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
 import { decodeChannelStatusPayload } from '../lib/session/persistence';
+import { completeRegisteredGames } from '../lib/gameIdentities';
+import { catalogGameTypeFromWire } from '../lib/gameIdentities';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 
 export interface WasmFields {
@@ -65,6 +68,14 @@ const KEEPALIVE_INTERVAL_MS = 15_000;
 const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
 /** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
 const ACTIVE_DRAIN_EVENT_BUDGET = 100;
+
+function proposalMadeAdmitted(notification: WasmNotification): boolean {
+  const payload = (notification as { ProposalMade?: { game_type?: unknown } }).ProposalMade;
+  if (payload === undefined) return true;
+  const raw = payload.game_type;
+  if (typeof raw !== 'string') return true;
+  return catalogGameTypeFromWire(raw) !== null;
+}
 
 function isActivatedChannelStatus(status: ChannelStatusPayload['state']): boolean {
   return (
@@ -144,6 +155,7 @@ export class SessionController implements PollingGameSession {
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: GameSessionEvent[] = [];
+  private heldProposalNotifications: WasmNotification[] = [];
   private drainScheduled = false;
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChainObservations: Array<
@@ -303,6 +315,7 @@ export class SessionController implements PollingGameSession {
     this.protocolStopped = true;
     this.terminalHandoff = null;
     this.eventQueue = [];
+    this.heldProposalNotifications = [];
     this.pendingOutboundSends = [];
     this.pendingAcks = [];
     this.unackedMessages = [];
@@ -392,6 +405,35 @@ export class SessionController implements PollingGameSession {
     return this.channelReady;
   }
 
+  private ensureProtocolIdentities(): void {
+    if (!this.wc) return;
+    try {
+      completeRegisteredGames(this.wc);
+    } catch (e) {
+      const message = extractErrorMessage(e);
+      diagStack('completeRegisteredGames failed', e);
+      log(`[wasm] completeRegisteredGames failed: ${message}`);
+      this.rxjsEmitter?.next({ type: 'error', error: message });
+    }
+  }
+
+  private flushHeldProposals(): void {
+    if (this.heldProposalNotifications.length === 0) {
+      return;
+    }
+    const held = this.heldProposalNotifications;
+    this.heldProposalNotifications = [];
+    const stillHeld: WasmNotification[] = [];
+    for (const notification of held) {
+      if (proposalMadeAdmitted(notification)) {
+        this.rxjsEmitter?.next({ type: 'notification', data: notification });
+      } else {
+        stillHeld.push(notification);
+      }
+    }
+    this.heldProposalNotifications = stillHeld;
+  }
+
   isOffChainActive(): boolean {
     return this.lastChannelStatus?.state === 'Active';
   }
@@ -399,6 +441,10 @@ export class SessionController implements PollingGameSession {
   restoreChannelStatus(status: ChannelStatusPayload | null): void {
     this.lastChannelStatus = status;
     this.channelReady = status !== null && isActivatedChannelStatus(status.state);
+    if (this.channelReady && this.wc) {
+      this.ensureProtocolIdentities();
+      this.flushHeldProposals();
+    }
   }
 
   getObservable() {
@@ -972,6 +1018,7 @@ export class SessionController implements PollingGameSession {
           notification = { ...n, ChannelStatus: channelStatus };
           if (channelStatus.state === 'Active') {
             this.channelReady = true;
+            this.ensureProtocolIdentities();
           }
         }
       }
@@ -997,7 +1044,12 @@ export class SessionController implements PollingGameSession {
         jsonStringify(notification),
         WASM_NOTIFICATION_HISTORY_LIMIT,
       );
-      this.rxjsEmitter?.next({ type: 'notification', data: notification });
+      if (tag === 'ProposalMade' && !proposalMadeAdmitted(notification)) {
+        this.heldProposalNotifications.push(notification);
+      } else {
+        this.rxjsEmitter?.next({ type: 'notification', data: notification });
+        this.flushHeldProposals();
+      }
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
@@ -1571,6 +1623,7 @@ export class SessionController implements PollingGameSession {
 
   proposeGames(paramsList: ProposeGameParams[]): string[] {
     if (!this.cradle) throw new Error('no cradle');
+    if (!this.wc) throw new Error('no wasm');
     if (paramsList.length !== 1) {
       throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
     }

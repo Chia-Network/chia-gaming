@@ -7,21 +7,30 @@ import type {
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import type { SettlementOutcome } from '../settlement';
 import type { ComposeDraftState } from './composeDraft';
 import type { PersistedGameState } from './gameStateCodec';
 
-export type GameTurnState =
-  | 'my-turn'
-  | 'their-turn'
-  | 'playing-on-chain'
-  | 'replaying'
-  | 'opponent-illegal-move'
-  | 'submitting-timeout'
-  | 'finishing'
-  | 'finishing-waiting-timeout'
-  | 'finishing-spending'
-  | 'ended';
+export type {
+  GameTurnState,
+  GameTerminalType,
+  GameTerminalModel,
+  HandTermsBaseModel,
+  ProposalGroupOrigin,
+} from '@games/host';
+import type {
+  GameTerminalModel,
+  GameTurnState,
+  HandTermsModel as HostHandTermsModel,
+  ProposalGroupOrigin,
+} from '@games/host';
+import type { CatalogGameType } from '../../generated/gamePresets';
+
+export type RegisteredGameType = CatalogGameType;
+export type { CatalogGameType };
+
+export type HandTermsModel = Omit<HostHandTermsModel, 'gameType'> & {
+  gameType: CatalogGameType;
+};
 
 export type HandStatus =
   | 'none'
@@ -50,21 +59,6 @@ export type GameProtocolPresentation =
   | 'finishing-waiting-timeout'
   | 'finishing-spending'
   | 'ended';
-
-export type GameTerminalType =
-  | 'none'
-  | 'settled'
-  | 'insufficient-balance'
-  | 'ended-cancelled'
-  | 'game-error';
-
-export interface GameTerminalModel {
-  type: GameTerminalType;
-  outcome: SettlementOutcome | null;
-  label: string | null;
-  myReward: string | null;
-  rewardCoinHex: string | null;
-}
 
 /** Canonical mutable/persisted game instance. */
 export interface GameInstanceModel {
@@ -128,20 +122,6 @@ export interface QueuedNotificationModel {
     | { label: string; myReward: string | null; rewardCoinHex: string | null };
 }
 
-export interface HandTermsBaseModel {
-  myContribution: bigint;
-  theirContribution: bigint;
-  gameTimeout: bigint;
-}
-
-export type RegisteredGameType = 'calpoker' | 'spacepoker' | 'krunk';
-
-export type HandTermsModel =
-  | (HandTermsBaseModel & { gameType: 'calpoker' })
-  | (HandTermsBaseModel & { gameType: 'spacepoker'; unitSizeMojos: bigint })
-  | (HandTermsBaseModel & { gameType: 'krunk' });
-
-export type ProposalGroupOrigin = 'local' | 'peer';
 export type ProposalGroupDisposition =
   | 'outgoing'
   | 'incoming-cached'
@@ -193,7 +173,7 @@ export interface BetweenHandModel {
   mode: BetweenHandModeModel;
   proposalGroups: ProposalGroupModel[];
   rejectedOnceTerms: HandTermsModel | null;
-  lastTerms: HandTermsModel;
+  lastTerms: HandTermsModel | null;
   compose: ComposeDraftState;
   newHandRequested: boolean;
   pendingRetryTerms: HandTermsModel | null;

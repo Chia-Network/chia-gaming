@@ -1,5 +1,12 @@
-import { decodePersistedGameTerms, isRegisteredGameType } from '../gameRegistry';
-import type { ComposeDraftState } from './composeDraft';
+import {
+  decodePersistedGameTerms,
+  isCatalogGameType,
+  packageFor,
+  REGISTERED_GAMES,
+} from '../gameRegistry';
+import type { ComposeDraftValue } from '@games/host';
+import { composeDraftValue, type ComposeDraftState } from './composeDraft';
+import type { SessionPresentationSave } from './saveEnvelope';
 import type { HandTermsModel, ProposalGroupModel } from './types';
 import {
   parseDecimalString,
@@ -9,44 +16,81 @@ import {
   requireUniqueIds,
 } from './persistencePrimitives';
 
+const TERMS_BASE = new Set(['game_type', 'my_contribution', 'their_contribution', 'game_timeout']);
+
+function encodeDraftValue(value: ComposeDraftValue): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(value).map(([key, field]) => [key, (field as bigint).toString()]),
+  );
+}
+
+function parseDraftValue(
+  raw: unknown,
+  fallback: ComposeDraftValue,
+  label: string,
+): ComposeDraftValue {
+  const saved = requireRecord(raw, label);
+  const next = { ...fallback };
+  for (const key of Object.keys(fallback)) {
+    if (saved[key] !== undefined) {
+      (next as Record<string, bigint>)[key] = parseDecimalString(saved[key], `${label}.${key}`, 0n);
+    }
+  }
+  return next;
+}
+
+export function encodeComposeDraftState(
+  compose: ComposeDraftState,
+): SessionPresentationSave['betweenHandCompose'] {
+  const drafts: Record<string, Record<string, string>> = {};
+  for (const { gameType } of REGISTERED_GAMES) {
+    drafts[gameType] = encodeDraftValue(composeDraftValue(compose, gameType));
+  }
+  return {
+    selected_game: compose.selectedGame,
+    game_timeout: compose.gameTimeout.toString(),
+    proposal_sent: compose.proposalSent,
+    drafts,
+  };
+}
+
 export function parseComposeDraftState(value: unknown): ComposeDraftState {
   const saved = requireRecord(value, 'betweenHandCompose');
   const selectedGame = saved.selected_game;
-  if (!isRegisteredGameType(selectedGame)) {
+  if (!isCatalogGameType(selectedGame)) {
     throw new Error('Garbled save: invalid betweenHandCompose.selected_game');
   }
-  const calpoker = requireRecord(saved.calpoker, 'betweenHandCompose.calpoker');
-  const krunk = requireRecord(saved.krunk, 'betweenHandCompose.krunk');
-  const spacepoker = requireRecord(saved.spacepoker, 'betweenHandCompose.spacepoker');
+  const savedDrafts = requireRecord(saved.drafts, 'betweenHandCompose.drafts');
+  const drafts: Record<string, ComposeDraftValue> = {};
+  for (const { gameType } of REGISTERED_GAMES) {
+    const fallback = packageFor(gameType).compose.defaultDraft(0n);
+    drafts[gameType] = parseDraftValue(
+      savedDrafts[gameType],
+      fallback,
+      `betweenHandCompose.drafts.${gameType}`,
+    );
+  }
   return {
-    selectedGame,
+    selectedGame: selectedGame,
     gameTimeout: parseDecimalString(saved.game_timeout, 'betweenHandCompose.game_timeout', 0n),
     proposalSent: requireBoolean(saved.proposal_sent, 'betweenHandCompose.proposal_sent'),
-    calpoker: {
-      amount: parseDecimalString(calpoker.amount, 'betweenHandCompose.calpoker.amount', 0n),
-    },
-    krunk: {
-      amount: parseDecimalString(krunk.amount, 'betweenHandCompose.krunk.amount', 0n),
-    },
-    spacepoker: {
-      unitSize: parseDecimalString(
-        spacepoker.unit_size,
-        'betweenHandCompose.spacepoker.unit_size',
-        0n,
-      ),
-      stackSize: parseDecimalString(
-        spacepoker.stack_size,
-        'betweenHandCompose.spacepoker.stack_size',
-        0n,
-      ),
-    },
+    drafts,
   };
+}
+
+function termsExtras(saved: Record<string, unknown>, label: string): Record<string, string> {
+  const extras: Record<string, string> = {};
+  for (const [key, value] of Object.entries(saved)) {
+    if (TERMS_BASE.has(key) || value === undefined) continue;
+    extras[key] = requireString(value, `${label}.${key}`);
+  }
+  return extras;
 }
 
 export function parseTermsSnapshot(value: unknown, label: string): HandTermsModel {
   const saved = requireRecord(value, label);
   const gameType = saved.game_type;
-  if (!isRegisteredGameType(gameType)) {
+  if (!isCatalogGameType(gameType)) {
     throw new Error(`Garbled save: unknown ${label}.game_type ${String(gameType)}`);
   }
   const myContribution = parseDecimalString(saved.my_contribution, `${label}.my_contribution`, 0n);
@@ -61,12 +105,7 @@ export function parseTermsSnapshot(value: unknown, label: string): HandTermsMode
       ),
       gameTimeout: parseDecimalString(saved.game_timeout, `${label}.game_timeout`, 1n),
     },
-    {
-      spacepoker_unit_size:
-        saved.spacepoker_unit_size === undefined
-          ? undefined
-          : requireString(saved.spacepoker_unit_size, `${label}.spacepoker_unit_size`),
-    },
+    termsExtras(saved, label),
   );
   if (!terms) throw new Error(`Garbled save: invalid ${label} ${gameType} terms`);
   return terms;
@@ -116,8 +155,7 @@ export function parseProposalGroups(value: unknown, label: string): ProposalGrou
     }
     if (origin === 'local' && disposition === 'outgoing') localOutgoing += 1;
     const terms = parseTermsSnapshot(saved.terms, `${groupLabel}.terms`);
-    const expectedMembers = terms.gameType === 'krunk' ? 2 : 1;
-    if (memberIds.length !== expectedMembers) {
+    if (!packageFor(terms.gameType).validateHandMembership(memberIds, null)) {
       throw new Error(
         `Garbled save: ${groupLabel} has ${memberIds.length} members for ${terms.gameType}`,
       );

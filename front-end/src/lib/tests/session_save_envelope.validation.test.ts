@@ -1,6 +1,6 @@
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
-import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/stateCodec';
 import { type SessionPresentationSave, type SessionSave } from '../../hooks/save';
 import {
   decodeSessionSaveEnvelope,
@@ -695,12 +695,14 @@ describe('validateSessionSaveEnvelope', () => {
           selected_game: 'calpoker',
           game_timeout: '15',
           proposal_sent: false,
-          calpoker: { amount: 'ten' },
-          krunk: { amount: '100' },
-          spacepoker: { unit_size: '1', stack_size: '10' },
+          drafts: {
+            calpoker: { amount: 'ten' },
+            krunk: { amount: '100' },
+            spacepoker: { unitSize: '1', stackSize: '10' },
+          },
         },
       },
-      'betweenHandCompose.calpoker.amount',
+      'betweenHandCompose.drafts.calpoker.amount',
     ],
   ])('rejects malformed %s state', (_label, fields, message) => {
     expect(() => validateSessionSaveEnvelope(liveSave(fields as Partial<SessionSave>))).toThrow(
@@ -752,9 +754,11 @@ describe('validateSessionSaveEnvelope', () => {
         selected_game: 'calpoker',
         game_timeout: '20',
         proposal_sent: false,
-        calpoker: { amount: '12' },
-        krunk: { amount: '100' },
-        spacepoker: { unit_size: '1', stack_size: '20' },
+        drafts: {
+          calpoker: { amount: '12' },
+          krunk: { amount: '100' },
+          spacepoker: { unitSize: '1', stackSize: '20' },
+        },
       },
       betweenHandLastTerms: {
         my_contribution: '12',
@@ -768,6 +772,6 @@ describe('validateSessionSaveEnvelope', () => {
 
     expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
     expect(() => sessionModelFromSave(save)).not.toThrow();
-    expect(sessionModelFromSave(save).betweenHand.compose.calpoker.amount).toBe(12n);
+    expect(sessionModelFromSave(save).betweenHand.compose.drafts.calpoker.amount).toBe(12n);
   });
 });

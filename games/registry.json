@@ -1,0 +1,4 @@
+{
+  "production": ["calpoker", "spacepoker", "krunk"],
+  "test": ["debug"]
+}

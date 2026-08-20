@@ -1,8 +1,14 @@
 import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import type { SavedHandTerms, SessionPresentationSave } from './saveEnvelope';
-import { encodeGameTermsExtras, validateGameTerms } from '../gameRegistry';
+import { encodeComposeDraftState } from './persistenceBetweenHands';
+import {
+  encodeGameTermsExtras,
+  isCatalogGameType,
+  packageFor,
+  validateGameTerms,
+} from '../gameRegistry';
 import { channelStatusPayloadFromModel } from './normalization';
-import type { HandTermsModel, SessionModel } from './types';
+import type { HandTermsModel, RegisteredGameType, SessionModel } from './types';
 
 export interface SessionPresentationFacts {
   channelStatus?: ChannelStatusPayload | null;
@@ -15,24 +21,24 @@ export function snapshotFromSessionModel(
   model: SessionModel,
   facts: SessionPresentationFacts = {},
 ): SessionPresentationSave {
+  const requireCatalogGameType = (gameType: string, label: string): RegisteredGameType => {
+    if (!isCatalogGameType(gameType)) {
+      throw new Error(`Session invariant broken: ${label} ${gameType} is not a catalog gameType`);
+    }
+    return gameType;
+  };
+
   const termsSnapshot = (terms: HandTermsModel): SavedHandTerms => {
     if (!validateGameTerms(terms)) {
       throw new Error(`Session invariant broken: invalid ${terms.gameType} terms`);
     }
-    const base = {
+    return {
       my_contribution: terms.myContribution.toString(),
       their_contribution: terms.theirContribution.toString(),
       game_timeout: terms.gameTimeout.toString(),
+      game_type: requireCatalogGameType(terms.gameType, 'terms.gameType'),
+      ...encodeGameTermsExtras(terms),
     };
-    if (terms.gameType === 'spacepoker') {
-      const extras = encodeGameTermsExtras(terms);
-      const unitSize = extras.spacepoker_unit_size;
-      if (unitSize === undefined) {
-        throw new Error('Session invariant broken: Space Poker terms are missing unit size');
-      }
-      return { ...base, game_type: terms.gameType, spacepoker_unit_size: unitSize };
-    }
-    return { ...base, game_type: terms.gameType };
   };
 
   const persistedGameIds = Array.from(
@@ -54,11 +60,9 @@ export function snapshotFromSessionModel(
   if (model.game.currentHandIds.length === 0 && model.game.currentHandOrigin !== null) {
     throw new Error('Session invariant broken: hand origin has no current hand');
   }
-  const hasValidLastTerms = validateGameTerms(model.betweenHand.lastTerms);
-  if (hasPersistedHand && !hasValidLastTerms) {
-    throw new Error(
-      `Session invariant broken: persisted hand has invalid ${model.betweenHand.lastTerms.gameType} terms`,
-    );
+  const lastTerms = model.betweenHand.lastTerms;
+  if (hasPersistedHand && lastTerms === null) {
+    throw new Error('Session invariant broken: persisted hand is missing betweenHandLastTerms');
   }
   const proposalMemberIds = new Set<string>();
   let localOutgoingGroups = 0;
@@ -66,8 +70,7 @@ export function snapshotFromSessionModel(
     if (group.memberIds.length === 0 || group.primaryId !== group.memberIds[0]) {
       throw new Error('Session invariant broken: proposal primary ID must be its first member');
     }
-    const expectedMembers = group.terms.gameType === 'krunk' ? 2 : 1;
-    if (group.memberIds.length !== expectedMembers) {
+    if (!packageFor(group.terms.gameType).validateHandMembership(group.memberIds, null)) {
       throw new Error(
         `Session invariant broken: ${group.terms.gameType} proposal has ${group.memberIds.length} members`,
       );
@@ -95,9 +98,13 @@ export function snapshotFromSessionModel(
     throw new Error('Session invariant broken: multiple local outgoing proposal groups');
   }
 
+  if (model.game.handState !== null) {
+    requireCatalogGameType(model.game.handState.gameType, 'handState.gameType');
+  }
+
   return {
     activeGameIds: model.game.activeIds,
-    activeGameType: model.game.activeGameType,
+    activeGameType: requireCatalogGameType(model.game.activeGameType, 'activeGameType'),
     handState: model.game.handState,
     currentHandGameIds: model.game.currentHandIds,
     currentHandOrigin: model.game.currentHandOrigin,
@@ -139,18 +146,8 @@ export function snapshotFromSessionModel(
     dismissedChannelStatus: model.channel.dismissedChannelStatus,
     cleanShutdownStarted: model.channel.cleanShutdownStarted,
     betweenHandMode: model.betweenHand.mode,
-    betweenHandCompose: {
-      selected_game: model.betweenHand.compose.selectedGame,
-      game_timeout: model.betweenHand.compose.gameTimeout.toString(),
-      proposal_sent: model.betweenHand.compose.proposalSent,
-      calpoker: { amount: model.betweenHand.compose.calpoker.amount.toString() },
-      krunk: { amount: model.betweenHand.compose.krunk.amount.toString() },
-      spacepoker: {
-        unit_size: model.betweenHand.compose.spacepoker.unitSize.toString(),
-        stack_size: model.betweenHand.compose.spacepoker.stackSize.toString(),
-      },
-    },
-    betweenHandLastTerms: hasValidLastTerms ? termsSnapshot(model.betweenHand.lastTerms) : null,
+    betweenHandCompose: encodeComposeDraftState(model.betweenHand.compose),
+    betweenHandLastTerms: lastTerms === null ? null : termsSnapshot(lastTerms),
     betweenHandRejectedOnceTerms: model.betweenHand.rejectedOnceTerms
       ? termsSnapshot(model.betweenHand.rejectedOnceTerms)
       : null,

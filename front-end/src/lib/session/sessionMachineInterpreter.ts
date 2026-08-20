@@ -1,4 +1,5 @@
 import type { SessionController } from '../../hooks/SessionController';
+import { protocolIdForCatalog } from '../gameIdentities';
 import { encodeGameProposalParameters, validateGameTerms } from '../gameRegistry';
 import { coinIdHex, type GameplayEvent } from './gameSessionEvents';
 import type {
@@ -89,7 +90,7 @@ export class SessionMachineInterpreter {
           'propose-game',
           () =>
             dependencies.controller.proposeGame({
-              game_type: effect.terms.gameType,
+              game_type: protocolIdForCatalog(effect.terms.gameType),
               timeout: effect.terms.gameTimeout,
               parameters: encodeGameProposalParameters(effect.terms, dependencies.iStarted),
             }),

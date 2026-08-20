@@ -2,6 +2,8 @@ import { SessionController } from '../../hooks/SessionController';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame, WasmEvent, WasmResult } from '../../types/ChiaGaming';
 import { wasClientErrorReported } from '../clientError';
+import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -11,9 +13,9 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { SessionMachineInterpreter } from '../session/sessionMachineInterpreter';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionMachineEvent } from '../session/sessionMachineTypes';
-import { krunkStateCodec } from '../../features/krunk/stateCodec';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
+import { krunkStateCodec } from '@games/krunk/ui/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/stateCodec';
 
 const TERMS = {
   gameType: 'calpoker' as const,
@@ -72,6 +74,13 @@ function fakeController(overrides: Partial<SessionController> = {}): SessionCont
     ...overrides,
   } as unknown as SessionController;
 }
+
+beforeEach(() => {
+  setProtocolIds(TEST_PROTOCOL_IDS);
+});
+afterEach(() => {
+  resetProtocolIds();
+});
 
 describe('session machine effect interpreter', () => {
   it('preserves controller command order and feeds proposal results back to authority', () => {
@@ -476,6 +485,14 @@ describe('session machine causal sequences', () => {
     });
     expect(transition.effects).toEqual([]);
     expect(transition.state.model.history.wasmNotificationHistory).toEqual(['notification']);
+  });
+
+  it('opens compose when there are no lastTerms to replay', () => {
+    const state = createSessionMachineState(createSessionModel());
+    const transition = reduceSessionMachine(state, { type: 'choose-same-terms' });
+    expect(transition.state.model.betweenHand.mode).toBe('compose-proposal');
+    expect(transition.state.model.betweenHand.lastTerms).toBeNull();
+    expect(transition.effects).toEqual([{ type: 'persist-session' }]);
   });
 
   it('runs choose, rejection, counterproposal, review, and acceptance as typed events', () => {

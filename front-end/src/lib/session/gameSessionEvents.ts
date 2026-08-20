@@ -6,13 +6,9 @@ import type {
   WasmNotification,
 } from '../../types/ChiaGaming';
 import { coinIdFromBytes, coerceToBytes } from '../../util';
-import {
-  isSettlementOutcome,
-  parseSettlementShare,
-  settlementLabel,
-  type SettlementOutcome,
-} from '../settlement';
-import { decodeGameTerms, isRegisteredGameType } from '../gameRegistry';
+import { isSettlementOutcome, parseSettlementShare, settlementLabel } from '../settlement';
+import { catalogGameTypeFromWire } from '../gameIdentities';
+import { decodeGameTerms } from '../gameRegistry';
 import { DEFAULT_GAME_TIMEOUT_BLOCKS } from './normalization';
 import type {
   GameTerminalModel,
@@ -22,20 +18,8 @@ import type {
   QueuedNotificationModel,
 } from './types';
 
-export type GameplayEvent =
-  | { ProposalAccepted: { id: bigint | number | string } }
-  | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string; moverShare: string } }
-  | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
-  | { MoveRejected: { gameId: string; tag: string; message: string } }
-  | { Settled: { gameId: string; outcome: SettlementOutcome; ourShare: string } }
-  | {
-      GameError: {
-        gameId: string;
-        reason: string;
-        source: 'action' | 'terminal';
-        action?: 'make-move' | 'accept-settlement';
-      };
-    };
+export type { GameplayEvent } from '@games/host';
+import type { GameplayEvent } from '@games/host';
 
 export type GameTerminalInfo = GameTerminalModel;
 export interface GameTerminalAttentionInfo {
@@ -199,16 +183,22 @@ function parseTimeout(value: unknown): bigint | null {
   }
 }
 
-function decodeHexText(value: string): string {
-  if (!/^[0-9a-f]+$/i.test(value)) return value;
-  return String.fromCharCode(...(value.match(/.{2}/g) ?? []).map((part) => parseInt(part, 16)));
+function coerceParameterState(value: unknown): unknown {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value) && value.every((item) => typeof item === 'number')) {
+    return Uint8Array.from(value);
+  }
+  if (typeof value === 'string' && /^[0-9a-f]*$/i.test(value) && value.length % 2 === 0) {
+    const bytes = value.match(/.{2}/g)?.map((part) => parseInt(part, 16)) ?? [];
+    return Uint8Array.from(bytes);
+  }
+  return value;
 }
 
 function gameTypeFromValue(value: Record<string, unknown>): HandTerms['gameType'] | null {
   const raw = value.game_type;
   if (typeof raw !== 'string') return null;
-  const decoded = decodeHexText(raw);
-  return isRegisteredGameType(decoded) ? decoded : null;
+  return catalogGameTypeFromWire(raw);
 }
 
 export function parseTermsFromNotificationValue(
@@ -230,7 +220,7 @@ export function parseTermsFromNotificationValue(
         theirContribution: BigInt(theirs),
         gameTimeout: timeout,
       },
-      object.initial_state,
+      coerceParameterState(object.parameters ?? object.initial_state),
     );
   } catch {
     return null;

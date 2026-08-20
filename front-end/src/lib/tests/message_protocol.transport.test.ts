@@ -8,6 +8,7 @@ import { reduceSessionNotification } from '../session/sessionMachineNotification
 import { createSessionModel } from '../session/model';
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
 import {
+  channelStatus,
   createReadyBlob,
   createUnreadyBlob,
   enc,
@@ -15,6 +16,12 @@ import {
   setActiveBlob,
   testSpendBundle,
 } from './message_protocol.harness';
+import {
+  protocolIdentitiesReady,
+  setProtocolIds,
+  _resetGameIdentityWarmupForTests,
+} from '../gameIdentities';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
 
 describe('in-order delivery', () => {
   it('drains an active result to quiescence in one macrotask', async () => {
@@ -141,6 +148,129 @@ describe('in-order delivery', () => {
   });
 });
 
+describe('protocol identity loading', () => {
+  it('delivers a hash ProposalMade in arrival order once protocol ids are known', () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    setProtocolIds(TEST_PROTOCOL_IDS);
+    const tags: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'notification') {
+        tags.push(Object.keys(event.data)[0] ?? '');
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [
+        {
+          Notification: {
+            ProposalMade: {
+              id: '7',
+              group_ids: ['7'],
+              my_contribution: '100',
+              their_contribution: '100',
+              timeout: '15',
+              game_type: testProtocolId('calpoker'),
+              parameters: null,
+            },
+          },
+        },
+        { Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } },
+      ],
+    });
+    blob.flushDeferredWork();
+    expect(protocolIdentitiesReady()).toBe(true);
+    expect(tags).toEqual(['ProposalMade', 'ChannelStatus']);
+  });
+
+  it('holds a factory-hash ProposalMade until protocol identities are ready', () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    _resetGameIdentityWarmupForTests();
+    const tags: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'notification') {
+        tags.push(Object.keys(event.data)[0] ?? '');
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [
+        {
+          Notification: {
+            ProposalMade: {
+              id: '7',
+              group_ids: ['7'],
+              my_contribution: '100',
+              their_contribution: '100',
+              timeout: '15',
+              game_type: testProtocolId('calpoker'),
+              parameters: null,
+            },
+          },
+        },
+      ],
+    });
+    blob.flushDeferredWork();
+    expect(tags).toEqual([]);
+    expect(protocolIdentitiesReady()).toBe(false);
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [{ Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } }],
+    });
+    blob.flushDeferredWork();
+    expect(protocolIdentitiesReady()).toBe(true);
+    expect(tags).toEqual(['ChannelStatus', 'ProposalMade']);
+  });
+
+  it('reports a bind failure on Active and still delivers ChannelStatus', () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    _resetGameIdentityWarmupForTests();
+    blob.wc = {
+      registered_game_packages: () => [],
+    } as (typeof blob)['wc'];
+    expectConsoleError('completeRegisteredGames failed');
+    const tags: string[] = [];
+    const errors: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'notification') {
+        tags.push(Object.keys(event.data)[0] ?? '');
+      }
+      if (event.type === 'error') {
+        errors.push(event.error);
+      }
+    });
+
+    blob.processResult({
+      disposition: { kind: 'active' },
+      events: [
+        {
+          Notification: {
+            ProposalMade: {
+              id: '7',
+              group_ids: ['7'],
+              my_contribution: '100',
+              their_contribution: '100',
+              timeout: '15',
+              game_type: testProtocolId('calpoker'),
+              parameters: null,
+            },
+          },
+        },
+        { Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } },
+      ],
+    });
+    blob.flushDeferredWork();
+    expect(protocolIdentitiesReady()).toBe(false);
+    expect(tags).toEqual(['ChannelStatus']);
+    expect(errors.some((error) => error.includes('Missing warmed identity'))).toBe(true);
+  });
+});
+
 describe('SessionController WASM action results', () => {
   function failedResult(reason: string): WasmResult {
     return {
@@ -159,7 +289,7 @@ describe('SessionController WASM action results', () => {
     [
       'proposeGame',
       (blob: SessionController) =>
-        blob.proposeGame({ game_type: 'x', timeout: 5n, parameters: null }),
+        blob.proposeGame({ game_type: testProtocolId('calpoker'), timeout: 5n, parameters: null }),
     ],
     ['acceptProposal', (blob: SessionController) => blob.acceptProposal('7')],
     ['cancelProposal', (blob: SessionController) => blob.cancel_proposal('7')],

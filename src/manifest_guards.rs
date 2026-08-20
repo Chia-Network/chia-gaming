@@ -29,17 +29,18 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Extract `clsp/.../*.hex` paths that appear inside double-quoted string
-/// literals. Dynamic paths containing a `{}` format placeholder are returned
-/// as-is; the caller skips them since they can't be checked statically.
+/// Extract `clsp/.../*.hex` and `games/.../*.hex` paths that appear inside
+/// double-quoted string literals. Dynamic paths containing a `{}` format
+/// placeholder are returned as-is; the caller skips them since they can't be
+/// checked statically.
 fn hex_literals(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text;
-    while let Some(pos) = rest.find("\"clsp/") {
+    while let Some(pos) = rest.find('"') {
         let after_quote = &rest[pos + 1..];
         if let Some(end) = after_quote.find('"') {
             let lit = &after_quote[..end];
-            if lit.ends_with(".hex") {
+            if lit.ends_with(".hex") && (lit.starts_with("clsp/") || lit.starts_with("games/")) {
                 out.push(lit.to_string());
             }
             rest = &after_quote[end + 1..];
@@ -106,6 +107,8 @@ fn every_test_module_is_registered_and_run() {
 fn every_referenced_hex_is_built() {
     let mut files = Vec::new();
     rs_files(Path::new("src"), &mut files);
+    rs_files(Path::new("games"), &mut files);
+    rs_files(Path::new("wasm"), &mut files);
 
     let mut missing = Vec::new();
     for file in &files {
@@ -129,5 +132,136 @@ fn every_referenced_hex_is_built() {
         "referenced .hex files are missing after build -- is the source .clsp registered \
          in chialisp.toml [compile]?\n  {}",
         missing.join("\n  ")
+    );
+}
+
+fn registry_keys() -> (Vec<String>, Vec<String>) {
+    let json: serde_json::Value = serde_json::from_str(&read("games/registry.json"))
+        .unwrap_or_else(|e| panic!("manifest guard: invalid games/registry.json: {e}"));
+    let strings = |field: &str| -> Vec<String> {
+        json.get(field)
+            .and_then(|v| v.as_array())
+            .unwrap_or_else(|| panic!("manifest guard: games/registry.json missing {field}"))
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .unwrap_or_else(|| panic!("manifest guard: {field} entries must be strings"))
+                    .to_string()
+            })
+            .collect()
+    };
+    (strings("production"), strings("test"))
+}
+
+/// Every directory under `games/` except the JSON catalog and `games/host`
+/// (the portable host contract, not a factory game) must be a registered
+/// package, and every registered key must exist with conventional files.
+/// Production packages must export `ui/package.ts`.
+#[test]
+fn every_game_package_is_registered() {
+    let (production, test) = registry_keys();
+    let mut registered = std::collections::BTreeSet::new();
+    for key in production.iter().chain(test.iter()) {
+        assert!(
+            registered.insert(key.clone()),
+            "duplicate game package key {key} in games/registry.json"
+        );
+    }
+
+    let mut on_disk = std::collections::BTreeSet::new();
+    for entry in fs::read_dir("games").expect("read games") {
+        let path = entry.expect("dir entry").path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap()
+            .to_string();
+        if name.starts_with('.') || name == "host" {
+            continue;
+        }
+        on_disk.insert(name);
+    }
+
+    let unregistered: Vec<_> = on_disk.difference(&registered).cloned().collect();
+    let missing: Vec<_> = registered.difference(&on_disk).cloned().collect();
+    assert!(
+        unregistered.is_empty(),
+        "games/* directories not listed in games/registry.json: {unregistered:?}"
+    );
+    assert!(
+        missing.is_empty(),
+        "games/registry.json keys with no package directory: {missing:?}"
+    );
+
+    let mut missing_files = Vec::new();
+    for key in &registered {
+        let root = PathBuf::from("games").join(key);
+        for rel in ["rust/mod.rs", "rust/tests/mod.rs", "clsp/factory.clsp"] {
+            if !root.join(rel).is_file() {
+                missing_files.push(format!("games/{key}/{rel}"));
+            }
+        }
+        if production.iter().any(|k| k == key) && !root.join("ui/package.ts").is_file() {
+            missing_files.push(format!("games/{key}/ui/package.ts"));
+        }
+    }
+    assert!(
+        missing_files.is_empty(),
+        "registered game packages missing conventional files: {missing_files:?}"
+    );
+}
+
+/// Game-owned `test_funs` collectors must exist and be pulled in through the
+/// generated full-suite aggregator rather than a handwritten list.
+#[test]
+fn every_game_package_test_module_is_aggregated() {
+    let (production, test) = registry_keys();
+    let mut missing = Vec::new();
+    for key in production.iter().chain(test.iter()) {
+        let tests = PathBuf::from(format!("games/{key}/rust/tests/mod.rs"));
+        let src = read(tests.to_str().unwrap());
+        if !src.contains("pub fn test_funs") {
+            missing.push(key.clone());
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "game packages missing rust/tests/mod.rs `pub fn test_funs`: {missing:?}"
+    );
+
+    let simulator_rs = read("src/simulator/mod.rs");
+    assert!(
+        simulator_rs.contains("game_package_test_funs()"),
+        "src/simulator/mod.rs must call generated game_package_test_funs()"
+    );
+}
+
+/// Production factory hex (and extra `.dat` presets) must exist after the
+/// chialisp build so the frontend generator's preset list is not hollow.
+#[test]
+fn every_production_package_preset_exists() {
+    let (production, _) = registry_keys();
+    let mut missing = Vec::new();
+    for key in production {
+        let factory = PathBuf::from(format!("games/{key}/clsp/factory_{key}_factory.hex"));
+        if !factory.is_file() {
+            missing.push(factory.display().to_string());
+        }
+        let clsp = PathBuf::from(format!("games/{key}/clsp"));
+        if let Ok(entries) = fs::read_dir(&clsp) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("dat") && !path.is_file() {
+                    missing.push(path.display().to_string());
+                }
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "production game presets missing after chialisp build: {missing:?}"
     );
 }

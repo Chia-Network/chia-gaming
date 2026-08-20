@@ -3,13 +3,13 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Subject } from 'rxjs';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { CalpokerOutcome } from '../../features/calPoker/outcome';
+import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { CalpokerOutcome } from '@games/calpoker/ui/outcome';
 import {
   shouldAutoFireCalpokerMove,
   useCalpokerHand,
   type UseCalpokerHandResult,
-} from '../../features/calPoker/useCalpokerHand';
+} from '@games/calpoker/ui/useCalpokerHand';
 import {
   channelStatusModelFromPayload,
   createSessionModel,
