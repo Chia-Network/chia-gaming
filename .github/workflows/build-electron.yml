@@ -19,6 +19,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 env:
   RUST_VERSION: stable
@@ -36,10 +37,12 @@ jobs:
           - platform: win
             os: windows-latest
             artifact: chia-gaming-electron-windows
+            environment: windows-code-signing
           - platform: linux
             os: ubuntu-22.04
             artifact: chia-gaming-electron-linux
     runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
 
     steps:
       - name: Checkout code
@@ -126,72 +129,56 @@ jobs:
         id: windows-signing
         shell: bash
         env:
-          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          SM_HOST: ${{ secrets.SM_HOST }}
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
-          SM_CERTKEY_ALIAS: ${{ secrets.SM_CERTKEY_ALIAS }}
+          AZURE_SIGNING_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_SIGNING_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
         run: |
           configured=0
           for value in \
-            "$SM_CLIENT_CERT_FILE_B64" \
-            "$SM_CLIENT_CERT_PASSWORD" \
-            "$SM_HOST" \
-            "$SM_API_KEY" \
-            "$SM_CODE_SIGNING_CERT_SHA1_HASH" \
-            "$SM_CERTKEY_ALIAS"; do
+            "$AZURE_SIGNING_CLIENT_ID" \
+            "$AZURE_SIGNING_TENANT_ID"; do
             if [[ -n "$value" ]]; then
               configured=$((configured + 1))
             fi
           done
 
-          if [[ "$configured" -eq 6 ]]; then
+          if [[ "$configured" -eq 2 ]]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           elif [[ "$configured" -eq 0 ]]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Windows signing is partially configured; all six DigiCert secrets are required"
+            echo "::error::Windows signing is partially configured; both Azure signing secrets are required"
             exit 1
           fi
 
-      - name: Configure DigiCert Signing Manager
+      - name: Install Azure Artifact Signing client
         if: steps.windows-signing.outputs.available == 'true'
-        shell: bash
-        env:
-          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          SM_HOST: ${{ secrets.SM_HOST }}
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+        shell: pwsh
         run: |
-          cert_file="D:/Certificate_pkcs12.p12"
-          echo "$SM_CLIENT_CERT_FILE_B64" | base64 --decode > /d/Certificate_pkcs12.p12
-          {
-            echo "SM_HOST=$SM_HOST"
-            echo "SM_API_KEY=$SM_API_KEY"
-            echo "SM_CLIENT_CERT_FILE=$cert_file"
-            echo "SM_CLIENT_CERT_PASSWORD=$SM_CLIENT_CERT_PASSWORD"
-            echo "SM_CODE_SIGNING_CERT_SHA1_HASH=$SM_CODE_SIGNING_CERT_SHA1_HASH"
-          } >> "$GITHUB_ENV"
-          {
-            echo "C:/Program Files (x86)/Windows Kits/10/App Certification Kit"
-            echo "C:/Program Files (x86)/Microsoft SDKs/Windows/v10.0A/bin/NETFX 4.8 Tools"
-            echo "C:/Program Files/DigiCert/DigiCert One Signing Manager Tools"
-          } >> "$GITHUB_PATH"
+          $toolsDir = Join-Path $env:RUNNER_TEMP "artifact-signing-client"
+          New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+          Push-Location $toolsDir
 
-      - name: Install DigiCert Signing Manager tools
-        if: steps.windows-signing.outputs.available == 'true'
-        shell: cmd
-        run: |
-          curl -X GET https://download.chia.net/dc/smtools-windows-x64.msi -o smtools-windows-x64.msi
-          start "" /wait msiexec.exe /i smtools-windows-x64.msi /qn /norestart
-          set "installer_exit=%ERRORLEVEL%"
-          if not "%installer_exit%"=="0" if not "%installer_exit%"=="3010" exit /b %installer_exit%
-          smksp_registrar.exe list
-          smctl.exe keypair ls
-          C:\Windows\System32\certutil.exe -csp "DigiCert Signing Manager KSP" -key -user
-          smctl.exe windows certsync --keypair-alias=${{ secrets.SM_CERTKEY_ALIAS }}
+          Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe" -OutFile nuget.exe
+          .\nuget.exe install Microsoft.ArtifactSigning.Client -x -OutputDirectory .
+
+          $dlib = Get-ChildItem -Recurse -Filter "Azure.CodeSigning.Dlib.dll" |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+            Select-Object -First 1
+          if (-not $dlib) {
+            throw "Azure.CodeSigning.Dlib.dll (x64) not found after installing Microsoft.ArtifactSigning.Client"
+          }
+
+          $metadataPath = Join-Path $toolsDir "metadata.json"
+          @{
+            Endpoint = "https://wus2.codesigning.azure.net/"
+            CodeSigningAccountName = "ChiaNetworkInc"
+            CertificateProfileName = "ChiaNetworkInc"
+            CorrelationId = "github-actions-$env:GITHUB_RUN_ID"
+          } | ConvertTo-Json | Set-Content -Path $metadataPath
+
+          Add-Content -Path $env:GITHUB_ENV -Value "AZURE_CODE_SIGNING_DLIB=$($dlib.FullName)"
+          Add-Content -Path $env:GITHUB_ENV -Value "AZURE_CODE_SIGNING_METADATA=$metadataPath"
+          Pop-Location
 
       - name: Build signed Electron installer
         if: steps.apple-signing.outputs.available == 'true'
@@ -206,6 +193,10 @@ jobs:
         shell: bash
         env:
           HAS_SIGNING_SECRET: 'true'
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          AZURE_TOKEN_CREDENTIALS: prod
+          AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
         run: tools/build-electron.sh --platform=${{ matrix.platform }}
 
       - name: Build unsigned Electron installer

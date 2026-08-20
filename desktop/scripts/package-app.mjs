@@ -8,7 +8,7 @@
 // are sealed by the time they are copied back.
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -60,33 +60,68 @@ function executablePaths(directory) {
 }
 
 function signAndVerify(path) {
-  const certificateHash = process.env.SM_CODE_SIGNING_CERT_SHA1_HASH;
-  if (!certificateHash) {
-    throw new Error('SM_CODE_SIGNING_CERT_SHA1_HASH is required for Windows signing');
+  const dlib = process.env.AZURE_CODE_SIGNING_DLIB;
+  const metadata = process.env.AZURE_CODE_SIGNING_METADATA;
+  if (!dlib || !metadata) {
+    throw new Error('Azure Artifact Signing client and metadata are required for Windows signing');
   }
   run('signtool.exe', [
     'sign',
-    '/sha1',
-    certificateHash,
-    '/tr',
-    'http://timestamp.digicert.com',
-    '/td',
-    'SHA256',
+    '/v',
     '/fd',
     'SHA256',
+    '/tr',
+    'http://timestamp.acs.microsoft.com',
+    '/td',
+    'SHA256',
+    '/dlib',
+    dlib,
+    '/dmdf',
+    metadata,
     path,
   ]);
   run('signtool.exe', ['verify', '/v', '/pa', path]);
+}
+
+async function requestAzureFederatedToken() {
+  const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+  const requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+  if (!requestUrl || !requestToken) {
+    throw new Error('GitHub OIDC token is unavailable; permissions.id-token must be write');
+  }
+  if (!process.env.AZURE_TENANT_ID || !process.env.AZURE_CLIENT_ID) {
+    throw new Error('AZURE_TENANT_ID and AZURE_CLIENT_ID are required for Windows signing');
+  }
+
+  const tokenUrl = new URL(requestUrl);
+  tokenUrl.searchParams.set('audience', 'api://AzureADTokenExchange');
+  const response = await fetch(tokenUrl, {
+    headers: { Authorization: `Bearer ${requestToken}` },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub OIDC token request failed with status ${response.status}`);
+  }
+
+  const body = await response.json();
+  if (!body || typeof body !== 'object' || typeof body.value !== 'string' || !body.value) {
+    throw new Error('GitHub OIDC token response did not contain a token');
+  }
+
+  const tokenFile = join(tmpdir(), 'azure-federated-token');
+  writeFileSync(tokenFile, body.value, { mode: 0o600 });
+  process.env.AZURE_FEDERATED_TOKEN_FILE = tokenFile;
 }
 
 const builderArgs = process.argv.slice(2);
 if (WINDOWS_SIGNING) {
   electronBuilder([...builderArgs, '--dir']);
   const unpackedDirectory = join(BUILD_DIR, 'win-unpacked');
+  await requestAzureFederatedToken();
   for (const path of executablePaths(unpackedDirectory)) {
     signAndVerify(path);
   }
   electronBuilder([...builderArgs, '--prepackaged', unpackedDirectory]);
+  await requestAzureFederatedToken();
   for (const path of executablePaths(BUILD_DIR)) {
     if (dirname(path) === BUILD_DIR) {
       signAndVerify(path);
