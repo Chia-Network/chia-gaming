@@ -406,7 +406,7 @@ user is notified.
 | `CancelReason`         | Emitted when                                                                                                                                                                                                                                                                                                                                 | Frontend behavior                                                                                                                                                         |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SupersededByIncoming` | A peer proposal arrived in a batch while our own proposal was queued locally. WASM removes our queued proposal because the state it was built against is now stale.                                                                                                                                                                          | **Local/silent.** Terms stashed in `pendingRetryTermsRef` for automatic re-submission (see [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)). |
-| `PeerProposalPending`  | JS called `propose_game` while an unresolved peer proposal already exists in `proposed_games`. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect.                                                                                                                                                   | **Local/silent.** Same retry stash as `SupersededByIncoming`.                                                                                                             |
+| `PeerProposalPending`  | JS called `propose_games` while an unresolved peer proposal already exists in `proposed_games`. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect.                                                                                                                                                  | **Local/silent.** Same retry stash as `SupersededByIncoming`.                                                                                                             |
 | `GameActive`           | Reserved for future use. The JS-side guard prevents this from occurring in practice.                                                                                                                                                                                                                                                         | **Local/silent.** Clears retry state.                                                                                                                                     |
 | `CancelledByPeer`      | The peer sent `BatchAction::CancelProposal` for our proposal. This usually means the peer rejected it, but the same protocol message is also used as the peer-side follow-up for failed accept attempts such as insufficient balance (see [Race Conditions in Proposal Lifecycle](GAME_LIFECYCLE.md#race-conditions-in-proposal-lifecycle)). | **User-facing notice:** the proposal did not proceed on the peer side.                                                                                                    |
 | `CancelledByUs`        | We explicitly cancelled the peer's proposal (via `cancel_proposal`).                                                                                                                                                                                                                                                                         | **Silent.** We initiated the cancellation; nothing to tell the user.                                                                                                      |
@@ -523,7 +523,7 @@ open item is explicitly resolved.
 
 ### Local actions are advisory
 
-Calling `propose_game`, `accept_proposal`, or `cancel_proposal` queues an
+Calling `propose_games`, `accept_proposal`, or `cancel_proposal` queues an
 intent. The potato protocol resolves it when the potato is held and the queue
 is drained. The notification stream — not the API call — is the source of
 truth. One proposal call represents one factory-derived group and the receiver
@@ -535,7 +535,7 @@ is drained).
 
 ### Rule A — Proposal lifecycle
 
-Every group-start event — a `propose_game` call (proposer side) or the single
+Every group-start event — a `propose_games` call (proposer side) or the single
 `ProposalMade` notification (receiver side) — covers the ordered IDs returned
 by the deterministic factory. Each member ID yields exactly one
 `ProposalAccepted` or `ProposalCancelled` on that player's side, but group

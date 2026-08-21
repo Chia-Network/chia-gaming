@@ -355,22 +355,6 @@ impl OffChainPhase {
         self.channel_spend_next_phase.take()
     }
 
-    pub fn amount(&self) -> Amount {
-        self.my_contribution.clone() + self.their_contribution.clone()
-    }
-
-    pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.channel_state
-            .as_ref()
-            .map(|ch| ch.get_our_current_share())
-    }
-
-    pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.channel_state
-            .as_ref()
-            .map(|ch| ch.get_their_current_share())
-    }
-
     pub fn is_failed(&self) -> bool {
         false
     }
@@ -1240,12 +1224,6 @@ impl OffChainPhase {
 
                     pending_shutdown = Some((channel_coin.clone(), spend.solution.clone()));
                 }
-                GameAction::SendPotato => {
-                    return Err(Error::StrErr(
-                        "SendPotato action is obsolete and must not appear in the queue"
-                            .to_string(),
-                    ));
-                }
                 #[cfg(test)]
                 GameAction::ForcedSelfAccept(game_id) => {
                     let ch = self.channel_state_mut()?;
@@ -1536,14 +1514,6 @@ impl OffChainPhase {
         self.push_action(action);
         let (_has_potato, effect) = self.send_potato_request_if_needed()?;
         Ok((false, effect.into_iter().collect()))
-    }
-
-    pub fn get_game_state_id(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Hash>, Error> {
-        let player_ch = self.channel_state().ok();
-        if let Some(player_ch) = player_ch {
-            return player_ch.get_game_state_id(env).map(Some);
-        }
-        Ok(None)
     }
 }
 

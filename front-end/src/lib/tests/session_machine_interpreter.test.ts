@@ -1,7 +1,6 @@
 import { SessionController } from '../../hooks/SessionController';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import type { ChiaGame, WasmEvent, WasmResult } from '../../types/ChiaGaming';
-import { wasClientErrorReported } from '../clientError';
+import type { ChiaGame } from '../../types/ChiaGaming';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import {
@@ -16,6 +15,7 @@ import type { SessionMachineEvent } from '../session/sessionMachineTypes';
 import { krunkStateCodec } from '@games/krunk/ui/serialize';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
+import { wasmResult } from './message_protocol.harness';
 
 const TERMS = {
   gameType: 'calpoker' as const,
@@ -70,7 +70,6 @@ function fakeController(overrides: Partial<SessionController> = {}): SessionCont
     makeMove: jest.fn(),
     acceptSettlement: jest.fn(),
     cheat: jest.fn(),
-    projectHandState: () => () => {},
     ...overrides,
   } as unknown as SessionController;
 }
@@ -163,36 +162,6 @@ describe('session machine effect interpreter', () => {
 
     expect(cleared).toEqual([1]);
     expect(events).toEqual([{ type: 'rejection-fallback-fired', generation: 2 }]);
-  });
-});
-
-describe('SessionController local action error reporting', () => {
-  it('reports an out-of-turn invariant through the session stream and still throws it', () => {
-    const invariant = new Error('Internal local action for game 2 attempted outside our turn');
-    const events: WasmEvent[] = [];
-    const controller = Object.create(SessionController.prototype) as SessionController;
-    controller.rxjsEmitter = { next: (event) => events.push(event) };
-    controller.onLocalGameAction = () => {
-      throw invariant;
-    };
-
-    expect(() =>
-      controller.commitLocalGameAction({
-        gameType: 'spacepoker',
-        id: '2',
-        state: { handler: 'betting' },
-        command: { type: 'make-move', readable: null },
-      }),
-    ).toThrow(invariant);
-    expect(events).toEqual([
-      {
-        type: 'game-action-error',
-        gameId: '2',
-        action: 'make-move',
-        error: invariant.message,
-      },
-    ]);
-    expect(wasClientErrorReported(invariant)).toBe(true);
   });
 });
 
@@ -596,16 +565,16 @@ describe('session machine controller command failures', () => {
       snapshot_watched_coins: () => [],
       drain_submissions: () => [],
       accept_proposal: () =>
-        ({
+        wasmResult({
           actionSucceeded: false,
           events: [
             {
               Notification: {
-                ActionFailed: { id: '7', reason: 'proposal no longer exists' },
+                ActionFailed: { id: 7n, reason: 'proposal no longer exists' },
               },
             },
           ],
-        }) as WasmResult,
+        }),
     } as unknown as ChiaGame);
     const initial = createSessionMachineState(
       createSessionModel({

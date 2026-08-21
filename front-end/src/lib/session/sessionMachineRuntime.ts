@@ -30,16 +30,12 @@ export class SessionMachineRuntime {
   private render: (state: SessionMachineState) => void = () => {};
   private readonly interpreter: SessionMachineInterpreter;
   private readonly controller: SessionController;
-  private readonly stopHandStateProjection: () => void;
   private dispatching = false;
   private readonly pendingEvents: SessionMachineEvent[] = [];
 
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
     this.state = initial;
     this.controller = dependencies.controller;
-    this.stopHandStateProjection = this.controller.projectHandState(
-      () => this.state.model.game.handState,
-    );
     this.interpreter = new SessionMachineInterpreter({
       controller: dependencies.controller,
       iStarted: dependencies.iStarted,
@@ -163,7 +159,6 @@ export class SessionMachineRuntime {
   }
 
   dispose(): void {
-    this.stopHandStateProjection();
     this.interpreter.dispose();
   }
 }

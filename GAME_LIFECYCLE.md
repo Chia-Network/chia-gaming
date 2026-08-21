@@ -16,14 +16,15 @@ see `OVERVIEW.md`. For on-chain dispute resolution, see `ON_CHAIN.md`.
 Games are initiated through a propose/accept flow:
 
 1. **Propose:** The caller submits one group request containing `game_type`
-   (the factory's first-validator hash, not a package name), game-specific
-   `parameters`, and one shared `timeout`. Both peers run the same
-   deterministic factory, which produces the ordered game records for the
-   group. The potato holder sends one `BatchAction::ProposeGroup`; both sides
-   record all produced games in `proposed_games`. The receiver gets one
-   `ProposalMade` notification for the group, with the member IDs in factory
-   order; the proposer does not. `ProposalMade` includes the canonical
-   parameter bytes so the UI can decode terms through the selected package.
+   (the first generated member's initial validation puzzle hash, not a factory
+   hash or package name), game-specific `parameters`, and one shared `timeout`.
+   Both peers run the same deterministic factory, which produces the ordered
+   game records for the group. The potato holder sends one
+   `BatchAction::ProposeGroup`; both sides record all produced games in
+   `proposed_games`. The receiver gets one `ProposalMade` notification for the
+   group, with the member IDs in factory order; the proposer does not.
+   `ProposalMade` includes the canonical parameter bytes so the UI can decode
+   terms through the selected package.
 2. **Accept:** The receiver (or proposer on a subsequent potato) sends
    `BatchAction::AcceptProposal` actions for every member in the same batch.
    Both sides instantiate every referee and game handler, moving the group into

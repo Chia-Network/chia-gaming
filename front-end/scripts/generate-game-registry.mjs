@@ -27,6 +27,15 @@ function extraPresets(key) {
   }
 }
 
+function tsString(value) {
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+function tsArray(values, multiline = false) {
+  if (!multiline) return `[${values.join(', ')}]`;
+  return `[\n${values.map((value) => `  ${value},`).join('\n')}\n]`;
+}
+
 const presetFiles = production.flatMap((key) => [factoryHex(key), ...extraPresets(key)]);
 function relTo(key, file) {
   const rel = relative(join(FE, '../src/generated'), join(ROOT, 'games', key, 'ui', file))
@@ -44,7 +53,9 @@ const imports = production
     ].join('\n');
   })
   .join('\n');
-const packageList = production.map((_, index) => `pkg${index}`).join(', ');
+const productionList = tsArray(production.map(tsString));
+const presetList = tsArray(presetFiles.map(tsString), true);
+const packageList = tsArray(production.map((_, index) => `pkg${index}`));
 
 const destDir = join(FE, '../src/generated');
 mkdirSync(destDir, { recursive: true });
@@ -52,13 +63,13 @@ mkdirSync(destDir, { recursive: true });
 writeFileSync(
   join(destDir, 'gamePresets.ts'),
   `// Generated from games/registry.json. Do not edit.
-export const PRODUCTION_PACKAGE_KEYS = ${JSON.stringify(production)} as const;
+export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;
 export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
 export const CORE_PRESET_FILES = [
   'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
   'clsp/referee/onchain/referee.hex',
 ] as const;
-export const GAME_PRESET_FILES = ${JSON.stringify(presetFiles, null, 2)} as const;
+export const GAME_PRESET_FILES = ${presetList} as const;
 export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
 `,
 );
@@ -68,9 +79,9 @@ writeFileSync(
   `// Generated from games/registry.json. Do not edit.
 ${imports}
 
-export const PRODUCTION_PACKAGE_KEYS = ${JSON.stringify(production)} as const;
+export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;
 export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
-export const GENERATED_GAME_PACKAGES = [${packageList}];
+export const GENERATED_GAME_PACKAGES = ${packageList};
 export { PRESET_FILES, GAME_PRESET_FILES, CORE_PRESET_FILES } from './gamePresets';
 `,
 );

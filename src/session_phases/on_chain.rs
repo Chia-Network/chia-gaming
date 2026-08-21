@@ -8,8 +8,8 @@ use crate::channel_state::types::{
     ChannelPrivateKeys, CoinSpentInformation, LiveGame, OnChainGameState, ReadableMove,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program,
-    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program, PuzzleHash, Spend,
+    SpendBundle, Timeout,
 };
 use crate::game_session::PeerLifecyclePhase;
 use crate::referee::types::{
@@ -232,20 +232,6 @@ impl OnChainPhase {
         Some(Effect::Notify(notification))
     }
 
-    // --- Getters (duplicated from ChannelState) ---
-
-    pub fn amount(&self) -> Amount {
-        self.my_allocated_balance.clone() + self.their_allocated_balance.clone()
-    }
-
-    pub fn get_our_current_share(&self) -> Option<Amount> {
-        None
-    }
-
-    pub fn get_their_current_share(&self) -> Option<Amount> {
-        None
-    }
-
     pub fn get_reward_puzzle_hash(&self) -> PuzzleHash {
         self.reward_puzzle_hash.clone()
     }
@@ -348,15 +334,6 @@ impl OnChainPhase {
     ) -> Result<bool, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         Ok(self.live_games[game_idx].enable_cheating(make_move, mover_share))
-    }
-
-    pub fn get_game_state_id(&self, allocator: &mut AllocEncoder) -> Result<Option<Hash>, Error> {
-        let mut bytes: Vec<u8> = Vec::with_capacity(self.live_games.len() * 32);
-        for l in self.live_games.iter() {
-            let ph = l.current_puzzle_hash(allocator)?;
-            bytes.extend_from_slice(ph.bytes());
-        }
-        Ok(Some(Sha256Input::Bytes(&bytes).hash()))
     }
 
     // --- Game coin tracking ---
@@ -1750,9 +1727,6 @@ impl OnChainPhase {
                 Ok(effects)
             }
             GameAction::CleanShutdown => Ok(Vec::new()),
-            GameAction::SendPotato => Err(Error::StrErr(
-                "SendPotato action is obsolete and must not appear in the queue".to_string(),
-            )),
             GameAction::QueuedProposalGroup(_, _)
             | GameAction::QueuedAcceptProposal(_)
             | GameAction::QueuedCancelProposal(_)

@@ -27,12 +27,19 @@ import {
 } from './statusPresentation';
 import {
   EMPTY_GAME_TERMINAL_MODEL,
+  type GameHandSource,
   type GameplayEvent,
-  type LiveGameController,
+  type LiveGamePort,
   type LocalGameActionRequest,
+  type PersistedGameState,
 } from '../../host';
 import { spacepokerRegistration } from './handProposal';
 import { spacepokerStateCodec, type SpacepokerHandState } from './serialize';
+
+function liveSource(port: LiveGamePort): GameHandSource {
+  const handState = (port as LiveGamePort & { handState?: PersistedGameState | null }).handState;
+  return { interactionMode: 'live', handState: handState ?? null, port };
+}
 
 describe('Space Poker terminal UX', () => {
   it('uses a single-character ten rank', () => {
@@ -290,12 +297,12 @@ describe('Space Poker feature-state authority', () => {
         throw new Error('check rejected');
       },
       makeMove,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
     let hand: UseSpacepokerHandResult | undefined;
 
     function Harness() {
       hand = useSpacepokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         '7',
         false,
         EMPTY,
@@ -303,7 +310,7 @@ describe('Space Poker feature-state authority', () => {
         10n,
         onTurnChanged,
         EMPTY_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
+        liveSource(controller).handState ?? undefined,
       );
       return null;
     }
@@ -344,11 +351,11 @@ describe('Space Poker feature-state authority', () => {
       commitLocalGameAction: () => {
         throw new Error('autoplay rejected');
       },
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
 
     function Harness() {
       useSpacepokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         '7',
         false,
         EMPTY,
@@ -356,7 +363,7 @@ describe('Space Poker feature-state authority', () => {
         10n,
         () => {},
         EMPTY_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
+        liveSource(controller).handState ?? undefined,
       );
       return null;
     }
@@ -408,12 +415,12 @@ describe('Space Poker feature-state authority', () => {
         transitions.push(request.state);
       },
       acceptSettlement,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
     let hand: UseSpacepokerHandResult | undefined;
 
     function Harness() {
       hand = useSpacepokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         '7',
         false,
         gameplayEvents,
@@ -421,7 +428,7 @@ describe('Space Poker feature-state authority', () => {
         10n,
         onTurnChanged,
         EMPTY_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
+        liveSource(controller).handState ?? undefined,
       );
       return null;
     }
@@ -503,12 +510,12 @@ describe('Space Poker feature-state authority', () => {
         transitions.push(request.state);
       },
       makeMove,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
     let hand: UseSpacepokerHandResult | undefined;
 
     function Harness() {
       hand = useSpacepokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         '7',
         false,
         EMPTY,
@@ -516,7 +523,7 @@ describe('Space Poker feature-state authority', () => {
         10n,
         jest.fn(),
         EMPTY_GAME_TERMINAL_MODEL,
-        controller.handState ?? undefined,
+        liveSource(controller).handState ?? undefined,
       );
       return null;
     }
@@ -571,7 +578,7 @@ describe('Space Poker feature-state authority', () => {
           displayMode: 'units',
         }),
       );
-      const controllerRef = React.useRef<LiveGameController | null>(null);
+      const controllerRef = React.useRef<LiveGamePort | null>(null);
       if (!controllerRef.current) {
         const controller = {
           isChannelReady: () => true,
@@ -588,7 +595,7 @@ describe('Space Poker feature-state authority', () => {
             persistedRef.current = canonical;
             rerender((value) => value + 1);
           },
-        } as unknown as LiveGameController;
+        } as unknown as LiveGamePort;
         Object.defineProperty(controller, 'handState', {
           get: () => persistedRef.current,
           enumerable: false,
@@ -596,7 +603,7 @@ describe('Space Poker feature-state authority', () => {
         controllerRef.current = controller;
       }
       return React.createElement(SpacePoker, {
-        handSource: { interactionMode: 'live', controller: controllerRef.current },
+        handSource: liveSource(controllerRef.current),
         gameId: '7',
         iStarted: false,
         gameplayEvent$: EMPTY,

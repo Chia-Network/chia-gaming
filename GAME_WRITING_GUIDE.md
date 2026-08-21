@@ -78,8 +78,9 @@ Two identifiers appear in the code:
 
 - The **catalog key** is the readable name from `registry.json`. The frontend
   uses it in saves and when choosing a UI package.
-- The **protocol ID** is a hash derived from the compiled factory. Peers use it
-  to identify the game on the wire.
+- The **protocol ID** is the first generated game's initial validation puzzle
+  hash (`initial_validation_program_hash`). Peers use that puzzle hash to
+  identify the game on the wire. It is not a hash of the factory code.
 
 Normally your game code only deals with the catalog key. The host converts
 between the key and protocol ID at the WASM boundary.
@@ -122,7 +123,9 @@ The Rust engine cannot execute a `.clsp` source file directly. Implement
 
 - `prepared_factory(allocator)` returns the factory used for real proposals.
 - `probe_parameters(allocator)` returns one representative, valid parameter
-  value. The build uses it to calculate the protocol ID.
+  value. During registration, the engine runs the factory with those parameters
+  and reads the first returned game's initial validation puzzle hash. That is
+  the protocol ID; the factory itself is never hashed as an identifier.
 
 For most games, this module only loads compiled hex. It should not duplicate
 the game rules; those remain in CLVM. Krunk is an unusual example because its

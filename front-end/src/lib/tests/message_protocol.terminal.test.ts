@@ -22,6 +22,7 @@ import {
   submitTransaction,
   testSpendBundle,
   transactionSubmitQueue,
+  wasmResult,
 } from './message_protocol.harness';
 
 describe('terminal protocol cleanup', () => {
@@ -42,6 +43,7 @@ describe('terminal protocol cleanup', () => {
       completeOutboundTerminalHandoff: jest.fn(
         () =>
           ({
+            ...wasmResult(),
             disposition: { kind: 'terminal' },
             events: [
               {
@@ -84,6 +86,7 @@ describe('terminal protocol cleanup', () => {
       completeOutboundTerminalHandoff: jest.fn(
         () =>
           ({
+            ...wasmResult(),
             disposition: { kind: 'terminal' },
             events: [
               {
@@ -112,10 +115,12 @@ describe('terminal protocol cleanup', () => {
   it('does not complete a terminal handoff before its message is acknowledged', () => {
     const { blob, cradle } = createReadyBlob();
     (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({
+      ...wasmResult(),
       events: [],
     } as WasmResult);
 
     blob.processResult({
+      ...wasmResult(),
       disposition: {
         kind: 'await-outbound-terminal',
         command: { id: '1', message: enc('complete clean close') },
@@ -142,6 +147,7 @@ describe('terminal protocol cleanup', () => {
       completeOutboundTerminalHandoff: jest.fn(
         () =>
           ({
+            ...wasmResult(),
             disposition: { kind: 'terminal' },
             events: [],
           }) as WasmResult,
@@ -152,6 +158,7 @@ describe('terminal protocol cleanup', () => {
     blob.kickSystem(2);
     blob.onSaveNeeded = jest.fn();
     blob.processResult({
+      ...wasmResult(),
       disposition: {
         kind: 'await-outbound-terminal',
         command: { id: '1', message: enc('complete clean close') },
@@ -179,9 +186,10 @@ describe('terminal protocol cleanup', () => {
       .mockImplementationOnce(() => {
         throw new Error('temporary completion failure');
       })
-      .mockReturnValueOnce({ disposition: { kind: 'terminal' }, events: [] } as WasmResult);
+      .mockReturnValueOnce(wasmResult({ disposition: { kind: 'terminal' } }));
     blob.onSaveNeeded = jest.fn();
     blob.processResult({
+      ...wasmResult(),
       disposition: {
         kind: 'await-outbound-terminal',
         command: { id: '1', message: enc('complete clean close') },
@@ -206,6 +214,7 @@ describe('terminal protocol cleanup', () => {
   it('hands off the final clean-close message before Rust terminalizes locally', async () => {
     const { blob, cradle, sentMessages } = createReadyBlob();
     (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({
+      ...wasmResult(),
       disposition: { kind: 'terminal' },
       events: [
         {
@@ -221,6 +230,7 @@ describe('terminal protocol cleanup', () => {
     } as WasmResult);
 
     blob.processResult({
+      ...wasmResult(),
       disposition: {
         kind: 'await-outbound-terminal',
         command: { id: '1', message: enc('complete clean close') },
@@ -270,12 +280,14 @@ describe('terminal protocol cleanup', () => {
     blob.setGameSession(cradle);
 
     blob.processResult({
+      ...wasmResult(),
       events: [
         { OutboundMessage: enc('stale protocol message') },
         { Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } },
       ],
     });
     blob.processResult({
+      ...wasmResult(),
       disposition: { kind: 'terminal' },
       events: [
         {
@@ -296,6 +308,7 @@ describe('terminal protocol cleanup', () => {
     });
 
     blob.processResult({
+      ...wasmResult(),
       events: [{ Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } }],
       watchCoins: [{ coin_name: 'late', coin_string: 'late-coin' }],
     });
@@ -309,6 +322,7 @@ describe('terminal protocol cleanup', () => {
   it('persists canonical timeout-submission channel progress from WASM', async () => {
     const { blob } = createReadyBlob();
     blob.processResult({
+      ...wasmResult(),
       events: [
         {
           Notification: {
@@ -474,6 +488,7 @@ describe('transaction submission', () => {
     (cradle.snapshot_watched_coins as jest.Mock).mockClear();
 
     blob.processResult({
+      ...wasmResult(),
       events: [],
       watchCoins: [{ coin_name: 'aa', coin_string: 'coin-a' }],
     });
@@ -483,6 +498,7 @@ describe('transaction submission', () => {
     expect(queriedNames).toEqual([['aa']]);
 
     blob.processResult({
+      ...wasmResult(),
       events: [],
       unwatchCoins: [{ coin_name: 'aa', coin_string: 'coin-a' }],
     });
@@ -579,7 +595,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.processResult({ events: [] });
+    blob.processResult(wasmResult());
 
     expect(cradle.drain_submissions).not.toHaveBeenCalled();
     expect(spend).not.toHaveBeenCalled();
@@ -690,7 +706,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.processResult({ events: [] });
+    blob.processResult(wasmResult());
 
     await flushPromiseJobs();
     expect(spend).toHaveBeenCalledTimes(1);
@@ -727,6 +743,7 @@ describe('transaction submission', () => {
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.processResult({
+      ...wasmResult(),
       disposition: { kind: 'terminal' },
       events: [{ Notification: { ChannelStatus: channelStatus({ state: 'ResolvedClean' }) } }],
     });
@@ -790,7 +807,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.processResult({ events: [] });
+    blob.processResult(wasmResult());
 
     await transactionSubmitQueue(blob);
     expect(spend).toHaveBeenCalledTimes(2);

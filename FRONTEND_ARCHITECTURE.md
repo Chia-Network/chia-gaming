@@ -443,7 +443,7 @@ are grouped under those phase-owned payloads:
 
 | Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | `bigint`                                                                                                   | Save schema version; currently `13`.                                                                                                                                                                                                                                                                            |
+| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `14`.                                                                                                                                                                                                                                                                          |
 | `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                     | `string?`                                                                                                  | Stable token linking the hub iframe and game-channel WebSocket.                                                                                                                                                                                                                                                 |
 | `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -457,7 +457,7 @@ are grouped under those phase-owned payloads:
 | `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
 | `blockchainType`                | `'simulator' \| 'walletconnect'?`                                                                          | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
-| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `4`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
+| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `6`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
 | `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
@@ -564,10 +564,10 @@ same entry changes to `accepted`, preserving terms and ordered Krunk membership
 across both `ProposalAccepted` notifications. An `InsufficientBalance` removes
 the affected group atomically; successful Krunk members still settle
 independently, and the accepted entry is removed only after the hand is fully
-settled. Schema version 12 also makes
+settled. The current v14 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation and stores the canonical `GameProtocolPresentation` discriminant.
-Under the alpha no-migration policy, version 12 and all other incompatible
+Under the alpha no-migration policy, all incompatible
 records are deleted rather than translated from aggregate current-game fields.
 
 #### Delivery-critical saves
@@ -660,13 +660,14 @@ protocol presentation and carries `handState` only as an opaque
 `PersistedGameState { gameType, version, state }` envelope. The shell does not
 interpret the payload. Production games export a `GamePackage`; the host
 contract, layout, and APIs are in [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md).
-`games/registry.json` is the only catalog. Factory hashes live in
-`gameIdentities.ts` (warmup fills the table; Active completes leftover probes).
-The JS session model and saves store catalog keys (`calpoker`, `spacepoker`,
-`krunk`). `packageFor` accepts those keys only. Hashes are protocol ids at the
-WASM propose/notify boundary (`protocolIdForCatalog` out,
-`catalogGameTypeFromWire` in). WASM and factory probes start on page load so
-the protocol id table is filled before play. Each game may ship
+`games/registry.json` is the only catalog. First-member initial validation
+puzzle hashes live in `gameIdentities.ts` (warmup fills the table by running
+factories with representative valid parameters; Active completes leftover
+probes). The JS session model and saves store catalog keys (`calpoker`,
+`spacepoker`, `krunk`). `packageFor` accepts those keys only. The puzzle hashes
+are protocol ids at the WASM propose/notify boundary (`protocolIdForCatalog`
+out, `catalogGameTypeFromWire` in). WASM and factory probes start on page load
+so the protocol id table is filled before play. Each game may ship
 `games/<key>/ui/styles.css`; the registry generator imports those files into
 the player-app stylesheet, and Tailwind scans `games/` for utility classes.
 Core never branches on Calpoker/Krunk/Space Poker when composing or reviewing a
@@ -1408,12 +1409,13 @@ across unmounts and reloads.
 The active game UI is rendered inside `GameSession` from the selected
 `GamePackage`. `front-end/src/lib/gameRegistry.ts` looks packages up by catalog
 key only. `front-end/src/lib/gameMountRegistry.tsx` dispatches live/frozen
-mounts through that package. Factory hashes are protocol ids at the WASM
-propose/notify boundary (`protocolIdForCatalog` out, `catalogGameTypeFromWire`
-in). `front-end/src/lib/gameProposalCodec.ts` is the inverse pair for that
-boundary: `encodeGameProposalParameters` on the way out and
-`decodeProposalMadeTerms` on the way in. Each package still owns its
-`factoryParameters` codec and `decodeHandProposal`.
+mounts through that package. The first generated member's initial validation
+puzzle hash is the protocol id at the WASM propose/notify boundary
+(`protocolIdForCatalog` out, `catalogGameTypeFromWire` in).
+`front-end/src/lib/gameProposalCodec.ts` is the inverse pair for that boundary:
+`encodeGameProposalParameters` on the way out and `decodeProposalMadeTerms` on
+the way in. Each package still owns its `factoryParameters` codec and
+`decodeHandProposal`.
 
 `CalpokerHand` receives gameplay events via an RxJS observable and submits moves
 through the shared Rust-first local-action boundary.
@@ -1575,7 +1577,7 @@ protocol's asynchronous nature and cannot be deferred to JS:
    the definitive state). WASM emits one `ProposalCancelled { reason:
 SupersededByIncoming }` for each removed group, keyed by its first ID.
 
-2. **`PeerProposalPending`** — When JS calls `propose_game` while an
+2. **`PeerProposalPending`** — When JS calls `propose_games` while an
    unresolved peer proposal exists in `proposed_games`, WASM rejects
    immediately with `ProposalCancelled { reason: PeerProposalPending }`.
    This prevents silently cancelling the peer's proposal as a side effect

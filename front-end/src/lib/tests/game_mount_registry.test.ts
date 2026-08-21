@@ -4,19 +4,17 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { SessionController } from '../../hooks/SessionController';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
-import {
-  renderFrozenGameMount,
-  renderLiveGameMount,
-  requireLiveGameHandSource,
-} from '../gameMountRegistry';
+import { renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
 import { isCatalogGameType, packageFor } from '../gameRegistry';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import {
   gameHandState,
   liveGameHandOrigin,
+  requireLiveGameHandSource,
   terminalGameHandSource,
   type GameHandSource,
+  type LiveGamePort,
 } from '@games/host';
 import { useInitialGameHandState } from '@games/host/ui';
 import { createSessionModel, type SessionModel } from '../session/model';
@@ -59,7 +57,11 @@ describe('game mount registry', () => {
       expect(() =>
         pkg.renderLive(
           {
-            handSource: { interactionMode: 'live', controller: { handState } },
+            handSource: {
+              interactionMode: 'live',
+              handState,
+              port: {} as LiveGamePort,
+            },
             activeGameId: '1',
             activeGameIds: ['1'],
             currentHandGameIds: ['1'],
@@ -87,7 +89,11 @@ describe('game mount registry', () => {
 
   it('gives every game a host-owned lifecycle key for each hand', () => {
     const session = {
-      handSource: { interactionMode: 'live', controller: {} },
+      handSource: {
+        interactionMode: 'live',
+        handState: null,
+        port: {} as LiveGamePort,
+      },
       handOrigin: 'fresh',
       activeGameId: '1',
       currentHandGameIds: ['1', '3'],
@@ -121,18 +127,19 @@ describe('game mount registry', () => {
     expect(liveGameHandOrigin(4, 5)).toBe('fresh');
   });
 
-  it('captures controller hand state once for the lifetime of a mount', () => {
+  it('captures machine-provided hand state once for the lifetime of a mount', () => {
     const first = { gameType: 'calpoker', version: 1n, state: { moveNumber: 0n } } as const;
     const second = { gameType: 'calpoker', version: 1n, state: { moveNumber: 1n } } as const;
     let current: PersistedGameState = first;
     let reads = 0;
-    const controller = {
+    const source: GameHandSource = {
+      interactionMode: 'live',
       get handState() {
         reads += 1;
         return current;
       },
-    } as unknown as SessionController;
-    const source: GameHandSource = { interactionMode: 'live', controller };
+      port: {} as LiveGamePort,
+    };
     let observed: Readonly<PersistedGameState> | null = null;
     let renderer: ReactTestRenderer | null = null;
     function Harness({ tick }: { tick: number }) {
@@ -177,22 +184,9 @@ describe('game mount registry', () => {
       { gameType: 'krunk', myContribution: 100n, theirContribution: 100n, gameTimeout: 15n },
     ],
   ] as const)(
-    'projects machine-owned %s state into live mounts and reset',
+    'passes machine-owned %s state into live mounts and reset',
     (gameType, ids, terms) => {
-      const formerControllerState: PersistedGameState = {
-        gameType: 'calpoker',
-        version: 1n,
-        state: { moveNumber: 99n },
-      };
-      let readHandState = () => formerControllerState;
       const controller = {
-        get handState() {
-          return readHandState();
-        },
-        projectHandState(read: () => PersistedGameState | null) {
-          readHandState = read;
-          return () => {};
-        },
         clearDerivedGamePresentation: () => {},
       } as unknown as SessionController;
       const runtime = new SessionMachineRuntime(
@@ -235,7 +229,11 @@ describe('game mount registry', () => {
       const terminal = model.game.instances[ids[0]].terminal;
       const mount = packageFor(gameType).renderLive(
         {
-          handSource: { interactionMode: 'live', controller },
+          handSource: {
+            interactionMode: 'live',
+            handState: model.game.handState,
+            port: controller as unknown as LiveGamePort,
+          },
           handKey: model.game.handKey,
           activeGameId: ids[0],
           currentHandGameIds: [...ids],
@@ -260,11 +258,10 @@ describe('game mount registry', () => {
         {},
       );
 
-      expect(mount.props.handSource.controller.handState).toBe(model.game.handState);
-      expect(mount.props.handSource.controller.handState).not.toBe(formerControllerState);
+      expect(mount.props.handSource.handState).toBe(model.game.handState);
 
       runtime.dispatch({ type: 'notification-abandoned' });
-      expect(controller.handState).toBeNull();
+      expect(runtime.getState().model.game.handState).toBeNull();
       runtime.dispose();
     },
   );
@@ -362,10 +359,14 @@ describe('game mount registry', () => {
         },
         betweenHand: { lastHandProposal: terms },
       });
-      const realMakeMove = jest.fn();
-      const realController = { makeMove: realMakeMove } as unknown as SessionController;
+      const realNerf = jest.fn();
+      const realPort = { nerf: realNerf } as unknown as LiveGamePort;
       const live = {
-        handSource: { interactionMode: 'live', controller: realController },
+        handSource: {
+          interactionMode: 'live',
+          handState: model.game.handState,
+          port: realPort,
+        },
         handKey: 7,
         handOrigin: 'restored',
         currentHandGameIds: model.game.currentHandIds,
@@ -403,10 +404,10 @@ describe('game mount registry', () => {
       }
       expect(terminal.handSource.interactionMode).toBe('terminal');
       expect(gameHandState(terminal.handSource)).toBe(model.game.handState);
-      expect(() => requireLiveGameHandSource(terminal.handSource).makeMove('1', null)).toThrow(
+      expect(() => requireLiveGameHandSource(terminal.handSource).nerf()).toThrow(
         'Protocol commands require a live game hand source',
       );
-      expect(realMakeMove).not.toHaveBeenCalled();
+      expect(realNerf).not.toHaveBeenCalled();
     },
   );
 });

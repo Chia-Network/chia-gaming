@@ -1,20 +1,13 @@
 import { cloneElement, type ReactElement } from 'react';
 import {
-  requireLiveGameHandSource as requireLiveController,
   type FrozenGameMountOptions,
   type FrozenGameView,
-  type GameHandSource,
   type GameMountNames,
   type LiveGameView,
 } from '@games/host';
 import { isCatalogGameType, packageFor } from './gameRegistry';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
-import type { SessionController } from '../hooks/SessionController';
 import type { SessionModel } from './session/model';
-
-export function requireLiveGameHandSource(source: GameHandSource): SessionController {
-  return requireLiveController(source) as SessionController;
-}
 
 export function frozenGameViewFromModel(model: SessionModel): FrozenGameView {
   return {

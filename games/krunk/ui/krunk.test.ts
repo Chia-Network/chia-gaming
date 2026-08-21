@@ -27,7 +27,7 @@ import { initialKrunkGameState, krunkStateCodec } from './serialize';
 import {
   type GameTerminalModel,
   type GameplayEvent,
-  type LiveGameController,
+  type LiveGamePort,
   type LocalGameActionRequest,
 } from '../../host';
 
@@ -84,9 +84,9 @@ describe('Krunk draft continuity', () => {
       makeMove: jest.fn(),
       commitLocalGameAction: jest.fn(),
       transitionFeatureState: jest.fn((_, __, state) => state),
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
     const baseProps = {
-      handSource: { interactionMode: 'live' as const, controller },
+      handSource: { interactionMode: 'live' as const, handState: persisted, port: controller },
       currentHandGameIds: ['picker', 'guesser'],
       activeGameIds: ['picker', 'guesser'],
       gameplayEvent$: gameplay,
@@ -217,12 +217,12 @@ describe('Krunk draft continuity', () => {
         React.createElement(Krunk, {
           handSource: {
             interactionMode: 'live',
-            controller: {
-              handState: persisted,
+            handState: persisted,
+            port: {
               makeMove,
               commitLocalGameAction,
               transitionFeatureState,
-            } as unknown as LiveGameController,
+            } as unknown as LiveGamePort,
           },
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['picker', 'guesser'],
@@ -282,12 +282,12 @@ describe('Krunk draft continuity', () => {
         React.createElement(Krunk, {
           handSource: {
             interactionMode: 'live',
-            controller: {
-              handState: persisted,
+            handState: persisted,
+            port: {
               makeMove,
               commitLocalGameAction,
               transitionFeatureState,
-            } as unknown as LiveGameController,
+            } as unknown as LiveGamePort,
           },
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['guesser'],

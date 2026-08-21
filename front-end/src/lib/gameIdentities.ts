@@ -60,7 +60,7 @@ export function protocolIdForCatalog(gameType: CatalogGameType): ProtocolGameId 
   return id;
 }
 
-/** Notify seam: factory hash → catalog key. Catalog strings on the wire are garbled. */
+/** Notify seam: first-member validation puzzle hash → local catalog key. */
 export function catalogGameTypeFromWire(value: string): CatalogGameType | null {
   const catalog = catalogByProtocolId.get(value);
   return catalog === undefined ? null : catalog;

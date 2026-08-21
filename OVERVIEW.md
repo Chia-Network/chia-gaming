@@ -509,13 +509,15 @@ The repository includes three production reference games:
 
 Each game lives in one top-level package under `games/<key>/`, registered only
 in [`games/registry.json`](games/registry.json) (`production` vs `test`). Package
-keys are build/bootstrap identifiers. The protocol identity is the factory's
-first-member `initial_validation_program_hash` from a canonical probe — never
-the human-readable key. Adding a game means creating that conventional package
-and appending the key to the registry; Chialisp compile, Rust/WASM wiring,
-frontend imports, and the full-suite test aggregator are generated from that
-file. See [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md). Handler and validator
-walkthroughs for the reference games are in
+keys are build/bootstrap identifiers. The protocol identity is the first
+generated member's initial validation puzzle hash
+(`initial_validation_program_hash`) — never the factory's hash or the
+human-readable key. Registration discovers it by running the factory with
+representative valid parameters. Adding a game means creating that conventional
+package and appending the key to the registry; Chialisp compile, Rust/WASM
+wiring, frontend imports, and the full-suite test aggregator are generated from
+that file. See [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md). Handler and
+validator walkthroughs for the reference games are in
 [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md#worked-examples-reference-games).
 
 The Rust game collection also registers `debug` (test list) for simulator tests
@@ -691,7 +693,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedRedoActions` | `channel_state/types/potato.rs`              | Enum for `cached_redo_actions` entries: `CachedSendMove`, `CachedAcceptSettlement`, `ProposalAccepted`     |
 | `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
-| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
+| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposal`, `QueuedCancelProposal`, `QueuedCancelProposalSilently`, `Cheat` |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
 | `OnChainGameState`              | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout` |
 | `SettlementOutcome`             | `session_phases/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |

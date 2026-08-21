@@ -2,8 +2,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::common::types::Hash;
 
-/// Protocol identity of a registered game: the factory's first-member
-/// `initial_validation_program_hash` derived from a canonical probe.
+/// Protocol identity of a registered game: the first generated member's
+/// `initial_validation_program_hash`.
+///
+/// Registration discovers it by running the factory with representative valid
+/// parameters; the factory program itself is not hashed as the identity.
 ///
 /// Package keys (`calpoker`, `krunk`, …) are bootstrap-only and never appear
 /// in peer messages or persisted protocol state.

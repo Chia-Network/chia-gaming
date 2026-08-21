@@ -156,7 +156,7 @@ fn registry_keys() -> (Vec<String>, Vec<String>) {
 /// Every directory under `games/` except the JSON catalog and `games/host`
 /// (the portable host contract, not a factory game) must be a registered
 /// package, and every registered key must exist with conventional files.
-/// Production packages must export `ui/package.ts`.
+/// Production packages must export the UI modules stitched by the generator.
 #[test]
 fn every_game_package_is_registered() {
     let (production, test) = registry_keys();
@@ -204,8 +204,16 @@ fn every_game_package_is_registered() {
                 missing_files.push(format!("games/{key}/{rel}"));
             }
         }
-        if production.iter().any(|k| k == key) && !root.join("ui/package.ts").is_file() {
-            missing_files.push(format!("games/{key}/ui/package.ts"));
+        if production.iter().any(|k| k == key) {
+            for rel in [
+                "ui/handProposal.ts",
+                "ui/handProposalForm.tsx",
+                "ui/play.tsx",
+            ] {
+                if !root.join(rel).is_file() {
+                    missing_files.push(format!("games/{key}/{rel}"));
+                }
+            }
         }
     }
     assert!(

@@ -29,7 +29,6 @@ describe('session machine behavior sequences', () => {
   it('queues dispatches requested during a React projection instead of re-entering it', () => {
     const controller = {
       clearDerivedGamePresentation: () => {},
-      projectHandState: () => () => {},
     } as unknown as SessionController;
 
     const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {

@@ -165,7 +165,6 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       );
       assert.equal(restored.getRestoreStatus(), 'restored');
       assert.deepEqual(restored.activeGameIds, ids);
-      assert.equal(restored.handState, null);
       assert.deepEqual(
         restored.getWasmFields()!.serializedGameSession,
         reloaded.live.serializedGameSession,
@@ -186,7 +185,6 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       });
       assert.deepEqual(restoredModel.game.currentHandIds, ids);
       assert.deepEqual(restoredModel.game.handState, postMove.handState);
-      assert.deepEqual(restored.handState, restoredModel.game.handState);
       assert.equal(canRemountFinishedGameState(restoredModel.game.handState), testCase.canRemount);
       if (testCase.handProposal.gameType === 'krunk') {
         const krunk = krunkStateCodec.decode(restoredModel.game.handState);

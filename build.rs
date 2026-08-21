@@ -106,9 +106,14 @@ fn validate_package(key: &str, production: bool) {
         panic!("game package {key} missing clsp/factory.clsp");
     }
     if production {
-        let package_ts = root.join("ui/package.ts");
-        if !package_ts.is_file() {
-            panic!("production game package {key} missing ui/package.ts");
+        for rel in [
+            "ui/handProposal.ts",
+            "ui/handProposalForm.tsx",
+            "ui/play.tsx",
+        ] {
+            if !root.join(rel).is_file() {
+                panic!("production game package {key} missing {rel}");
+            }
         }
     }
 }

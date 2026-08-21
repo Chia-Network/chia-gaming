@@ -1,9 +1,10 @@
 import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 import { jsonStringify } from '../util/jsonSafe';
+import type * as WasmContract from '../../../wasm/contract';
 
 declare const protocolGameIdBrand: unique symbol;
-/** Factory first-validator hash. Distinct from catalog keys like `calpoker`. */
+/** First generated member's initial validation puzzle hash. */
 export type ProtocolGameId = string & { readonly [protocolGameIdBrand]: void };
 
 export type HubLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
@@ -12,24 +13,9 @@ export type PeerLiveness = 'connected' | 'degraded' | 'dead' | null;
 
 export type SessionPhase = 'none' | 'off-chain' | 'on-chain' | 'resolved';
 
-interface Amount {
-  amt: bigint;
-}
-
-export interface Spend {
-  puzzle: string;
-  solution: string;
-  signature: string;
-}
-
-export interface CoinSpend {
-  coin: string;
-  bundle: Spend;
-}
-
-export interface SpendBundle {
-  spends: CoinSpend[];
-}
+export type Spend = WasmContract.Spend;
+export type CoinSpend = WasmContract.CoinSpend;
+export type SpendBundle = WasmContract.SpendBundle;
 
 /** Raw per-coin chain state fed to the transaction manager's `report_coin_states`. */
 export interface CoinStateRecord {
@@ -40,38 +26,106 @@ export interface CoinStateRecord {
 }
 
 /** Wallet funding request emitted by the WASM game-session boundary. */
-export interface NeedCoinSpendRequest {
-  /** Exact decimal u64 emitted by WASM; never an IEEE-754 number. */
-  amount: string;
-  conditions: Array<{ opcode: bigint | number; args: string[] }>;
-  coin_id?: string;
-  max_height?: bigint | number;
+export type NeedCoinSpendRequest = WasmContract.NeedCoinSpendRequest;
+export type GameSessionEvent = WasmContract.GameSessionEvent;
+export type WasmResult = WasmContract.WasmResult;
+export type WasmDisposition = WasmContract.WasmDisposition;
+
+const WASM_NOTIFICATION_TAGS = new Set([
+  'ChannelStatus',
+  'GameStatus',
+  'GameSettled',
+  'ProposalMade',
+  'ProposalAccepted',
+  'ProposalCancelled',
+  'InsufficientBalance',
+  'MoveRejected',
+  'ActionFailed',
+]);
+
+function requireClosedNotification(value: unknown): void {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('cradle returned a non-object notification');
+  }
+  const tags = Object.keys(value);
+  if (tags.length !== 1 || !WASM_NOTIFICATION_TAGS.has(tags[0])) {
+    throw new Error(`cradle returned an unknown notification: ${tags.join(',') || '(empty)'}`);
+  }
 }
 
-export type GameSessionEvent =
-  | { OutboundMessage: Uint8Array }
-  | { OutboundTransaction: SpendBundle }
-  | { Notification: WasmNotification }
-  | { Log: string }
-  | { CoinSolutionRequest: string }
-  | { ReceiveError: string }
-  | { NeedCoinSpend: NeedCoinSpendRequest }
-  | { NeedLauncherCoin: boolean };
-
-export interface WasmResult {
-  events?: GameSessionEvent[];
-  watchCoins?: Array<{ coin_name: string; coin_string: string }>;
-  unwatchCoins?: Array<{ coin_name: string; coin_string: string }>;
-  /** Whether the WASM action completed before its result was drained. */
-  actionSucceeded?: boolean;
-  ids?: string[];
-  disposition?: WasmDisposition;
+function requireGameSessionEvent(event: unknown): void {
+  if (typeof event !== 'object' || event === null) {
+    throw new Error('cradle returned a non-object GameSessionEvent');
+  }
+  const keys = Object.keys(event);
+  if (keys.length !== 1) {
+    throw new Error('cradle returned a malformed GameSessionEvent');
+  }
+  const key = keys[0];
+  const payload = (event as Record<string, unknown>)[key];
+  switch (key) {
+    case 'OutboundMessage':
+      if (!(payload instanceof Uint8Array)) {
+        throw new Error('cradle returned a non-byte OutboundMessage');
+      }
+      return;
+    case 'Notification':
+      requireClosedNotification(payload);
+      return;
+    case 'Log':
+    case 'CoinSolutionRequest':
+    case 'ReceiveError':
+      if (typeof payload !== 'string') {
+        throw new Error(`cradle returned an invalid ${key} event`);
+      }
+      return;
+    case 'NeedCoinSpend':
+      if (typeof payload !== 'object' || payload === null) {
+        throw new Error('cradle returned an invalid NeedCoinSpend event');
+      }
+      return;
+    case 'NeedLauncherCoin':
+      if (payload !== true) {
+        throw new Error('cradle returned an invalid NeedLauncherCoin event');
+      }
+      return;
+    default:
+      throw new Error(`cradle returned an unknown GameSessionEvent: ${key}`);
+  }
 }
 
-export type WasmDisposition =
-  | { kind: 'active' }
-  | { kind: 'await-outbound-terminal'; command: { id: string; message: Uint8Array } }
-  | { kind: 'terminal' };
+export function requireWasmResult(value: WasmResult | undefined): WasmResult {
+  if (value === undefined || typeof value !== 'object' || value === null) {
+    throw new Error('cradle returned no WasmResult');
+  }
+  if (
+    !Array.isArray(value.events) ||
+    !Array.isArray(value.watchCoins) ||
+    !Array.isArray(value.unwatchCoins) ||
+    typeof value.actionSucceeded !== 'boolean'
+  ) {
+    throw new Error('cradle returned an incomplete WasmResult');
+  }
+  value.events.forEach(requireGameSessionEvent);
+  const disposition = value.disposition;
+  if (
+    typeof disposition !== 'object' ||
+    disposition === null ||
+    !['active', 'await-outbound-terminal', 'terminal'].includes(disposition.kind)
+  ) {
+    throw new Error('cradle returned an invalid WasmResult disposition');
+  }
+  if (
+    disposition.kind === 'await-outbound-terminal' &&
+    (typeof disposition.command !== 'object' ||
+      disposition.command === null ||
+      typeof disposition.command.id !== 'string' ||
+      !(disposition.command.message instanceof Uint8Array))
+  ) {
+    throw new Error('cradle returned an invalid terminal handoff command');
+  }
+  return value;
+}
 
 export type WasmInitFn = (opts?: {
   module_or_path?: string | URL | Request | Response | Promise<Response>;
@@ -84,20 +138,13 @@ export interface CoinsetOrgBlockSpend {
 }
 
 export interface ProposeGameParams {
-  /** Factory first-validator hash (32-byte hex). Not a catalog key. */
+  /** First generated member's initial validation puzzle hash (32-byte hex). */
   game_type: ProtocolGameId;
   timeout: bigint;
   parameters: Program | null;
 }
 
-interface IChiaIdentity {
-  private_key: string;
-  synthetic_private_key: string;
-  public_key: string;
-  synthetic_public_key: string;
-  puzzle: string;
-  puzzle_hash: string;
-}
+type IChiaIdentity = WasmContract.IChiaIdentity;
 
 export interface GameConnectionState {
   stateIdentifier: StateIdentifier;
@@ -119,91 +166,12 @@ export interface GameSessionParams {
   unrollTimeout?: bigint; // blocks, for unroll coin
 }
 
-type WasmNotificationTag =
-  | 'ChannelStatus'
-  | 'GameStatus'
-  | 'GameSettled'
-  | 'ProposalMade'
-  | 'ProposalAccepted'
-  | 'ProposalCancelled'
-  | 'InsufficientBalance'
-  | 'MoveRejected'
-  | 'ActionFailed';
-
-export type GameStatusState =
-  | 'my-turn'
-  | 'their-turn'
-  | 'on-chain-my-turn'
-  | 'on-chain-their-turn'
-  | 'replaying'
-  | 'playing-move'
-  | 'illegal-move-detected'
-  | 'finishing-waiting-timeout'
-  | 'finishing-spending'
-  | 'ended-cancelled'
-  | 'ended-error';
-
-interface GameStatusOtherParams {
-  readable?: unknown;
-  mover_share?: unknown;
-  illegal_move_detected?: boolean;
-  moved_by_us?: boolean;
-  game_finished?: boolean;
-  submitting_timeout_claim?: boolean;
-}
-
-export interface GameStatusPayload {
-  id: unknown;
-  status: GameStatusState;
-  my_reward?: unknown;
-  coin_id?: unknown;
-  reason?: string | null;
-  other_params?: GameStatusOtherParams | null;
-}
-
-export interface GameSettledPayload {
-  id: unknown;
-  outcome: string;
-  our_share: unknown;
-  coin_id?: unknown;
-}
-
-export type ChannelStatus =
-  | 'Handshaking'
-  | 'WaitingForHeightToOffer'
-  | 'WaitingForHeightToAccept'
-  | 'OurWalletMakingOffer'
-  | 'OurWalletMakingOfferAcceptance'
-  | 'OfferSent'
-  | 'TransactionPending'
-  | 'Active'
-  | 'ShuttingDown'
-  | 'ShutdownTransactionPending'
-  | 'GoingOnChain'
-  | 'Unrolling'
-  | 'ResolvedClean'
-  | 'ResolvedUnrolled'
-  | 'ResolvedStale'
-  | 'Failed';
-
-export type SessionDisposition = 'AwaitOutboundTerminal' | 'Abandoned';
-
-export interface ChannelStatusPayload {
-  state: ChannelStatus;
-  session_disposition?: SessionDisposition | null;
-  advisory: string | null;
-  coin: unknown;
-  our_balance: unknown;
-  their_balance: unknown;
-  game_allocated: unknown;
-  have_potato?: boolean | null;
-  zero_payout?: boolean | null;
-  unroll_initiator?: 'us' | 'opponent' | null;
-  semantic_phase?: ChannelSemanticPhase | null;
-  state_number?: bigint | null;
-  unrolling_state_number?: bigint | null;
-  preempting_state_number?: bigint | null;
-}
+export type GameStatusState = WasmContract.GameStatusState;
+export type GameStatusPayload = WasmContract.GameStatusPayload;
+export type GameSettledPayload = WasmContract.GameSettledPayload;
+export type ChannelStatus = WasmContract.ChannelStatus;
+export type SessionDisposition = WasmContract.SessionDisposition;
+export type ChannelStatusPayload = WasmContract.ChannelStatusPayload;
 
 export const CHANNEL_SEMANTIC_PHASES = [
   'submitting_channel_spend',
@@ -215,49 +183,12 @@ export const CHANNEL_SEMANTIC_PHASES = [
   'resolving',
 ] as const;
 
-export type ChannelSemanticPhase = (typeof CHANNEL_SEMANTIC_PHASES)[number];
-
-export interface ProposalAcceptedPayload {
-  id: bigint | number | string;
-  amount: bigint | number | string | { amt?: unknown; Amount?: unknown };
-  our_turn: boolean;
-}
-
-export interface ProposalMadePayload {
-  id: unknown;
-  group_ids: unknown;
-  my_contribution: unknown;
-  their_contribution: unknown;
-  timeout: unknown;
-  game_type: unknown;
-  parameters?: unknown;
-  initial_state?: unknown;
-}
-
-export interface MoveRejectedPayload {
-  id: bigint | number | string;
-  tag: string;
-  message: string;
-}
-
-export interface ActionFailedPayload {
-  id?: bigint | number | string;
-  action?: 'make_move' | 'accept_settlement';
-  reason: string;
-}
-
-export type WasmNotification = {
-  [K in Exclude<
-    WasmNotificationTag,
-    'ChannelStatus' | 'ProposalAccepted' | 'ProposalMade' | 'MoveRejected' | 'ActionFailed'
-  >]?: Record<string, unknown>;
-} & {
-  ChannelStatus?: ChannelStatusPayload;
-  ProposalAccepted?: ProposalAcceptedPayload;
-  ProposalMade?: ProposalMadePayload;
-  MoveRejected?: MoveRejectedPayload;
-  ActionFailed?: ActionFailedPayload;
-};
+export type ChannelSemanticPhase = WasmContract.ChannelSemanticPhase;
+export type ProposalAcceptedPayload = WasmContract.ProposalAcceptedPayload;
+export type ProposalMadePayload = WasmContract.ProposalMadePayload;
+export type MoveRejectedPayload = WasmContract.MoveRejectedPayload;
+export type ActionFailedPayload = WasmContract.ActionFailedPayload;
+export type WasmNotification = WasmContract.WasmNotification;
 
 export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
@@ -272,16 +203,7 @@ export type WasmEvent =
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string };
 
-interface GameSessionCreateConfig {
-  rng_id: number;
-  have_potato: boolean;
-  my_contribution: Amount;
-  their_contribution: Amount;
-  channel_timeout: number;
-  unroll_timeout: number;
-  reward_puzzle_hash: string;
-  genesis_challenge: string;
-}
+type GameSessionCreateConfig = WasmContract.GameSessionConfig;
 
 /// A labeled coin id (hex) surfaced in the dashboard for explorer lookup.
 export interface CoinOfInterestEntry {
@@ -291,7 +213,7 @@ export interface CoinOfInterestEntry {
 
 export interface WasmConnection {
   // System
-  init: (print: (msg: string) => void) => void;
+  init: () => void;
   create_rng: (seed: string) => number;
   create_game_session: (config: GameSessionCreateConfig) => { id: number; puzzle_hash: string };
   restore_session: (serialized: Uint8Array, new_seed: string) => number;
@@ -301,31 +223,18 @@ export interface WasmConnection {
   warm_game_package: (key: string) => { key: string; id: string };
 
   // Blockchain
-  set_funding_coin: (cid: number, coinstring: string) => WasmResult | undefined;
-  start_handshake: (cid: number) => WasmResult | undefined;
-  provide_launcher_coin: (cid: number, hex_launcher_coin: string) => WasmResult | undefined;
-  provide_coin_spend_bundle: (cid: number, bundle_json: string) => WasmResult | undefined;
-  provide_offer_bech32: (cid: number, offer_bech32: string) => WasmResult | undefined;
-  wallet_callback_failed: (cid: number, reason: string) => WasmResult | undefined;
+  set_funding_coin: (cid: number, coinstring: string) => WasmResult;
+  start_handshake: (cid: number) => WasmResult;
+  provide_launcher_coin: (cid: number, hex_launcher_coin: string) => WasmResult;
+  provide_coin_spend_bundle: (cid: number, bundle_json: string) => WasmResult;
+  provide_offer_bech32: (cid: number, offer_bech32: string) => WasmResult;
+  wallet_callback_failed: (cid: number, reason: string) => WasmResult;
   get_channel_puzzle_hash: (cid: number) => string | null;
-  new_block: (
-    cid: number,
-    height: bigint,
-    additions: string[],
-    removals: string[],
-  ) => WasmResult | undefined;
-  report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult | undefined;
-  report_height: (cid: number, height: bigint) => WasmResult | undefined;
+  report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult;
+  report_height: (cid: number, height: bigint) => WasmResult;
   snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
   drain_submissions: (cid: number) => SpendBundle[];
   resubmit_submitted: (cid: number) => void;
-  convert_coinset_org_block_spend_to_watch_report: (
-    parent_coin_info: string,
-    puzzle_hash: string,
-    amount: string,
-    puzzle_reveal: string,
-    solution: string,
-  ) => WatchReport | undefined;
   convert_spend_to_coinset_org: (spend: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
   convert_coinset_to_coin_string: (
@@ -334,52 +243,42 @@ export interface WasmConnection {
     amount: string,
   ) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
-  coin_string_to_name: (hex_coinstring: string) => string;
 
   // Game
   propose_games: (
     cid: number,
     games: Omit<ProposeGameParams, 'parameters'>[],
     parameters_list: Uint8Array[],
-  ) => WasmResult | undefined;
-  accept_proposal: (cid: number, game_id: string) => WasmResult | undefined;
-  accept_proposal_and_move: (
-    cid: number,
-    id: string,
-    readable: Uint8Array,
-  ) => WasmResult | undefined;
-  cancel_proposal: (cid: number, game_id: string) => WasmResult | undefined;
+  ) => WasmResult;
+  accept_proposal: (cid: number, game_id: string) => WasmResult;
+  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
+  cancel_proposal: (cid: number, game_id: string) => WasmResult;
   make_move_with_entropy_for_testing: (
     cid: number,
     id: string,
     readable: Uint8Array,
     new_entropy: string,
-  ) => WasmResult | undefined;
-  make_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
-  cheat: (cid: number, id: string, mover_share: string) => WasmResult | undefined;
-  accept_settlement: (cid: number, id: string) => WasmResult | undefined;
-  shut_down: (cid: number) => WasmResult | undefined;
-  abandon: (cid: number) => WasmResult | undefined;
-  complete_outbound_terminal_handoff: (cid: number) => WasmResult | undefined;
+  ) => WasmResult;
+  make_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
+  cheat: (cid: number, id: string, mover_share: string) => WasmResult;
+  accept_settlement: (cid: number, id: string) => WasmResult;
+  shut_down: (cid: number) => WasmResult;
+  abandon: (cid: number) => WasmResult;
+  complete_outbound_terminal_handoff: (cid: number) => WasmResult;
   pending_terminal_handoff: (cid: number) => { id: string; message: Uint8Array } | null;
-  go_on_chain: (cid: number) => WasmResult | undefined;
+  go_on_chain: (cid: number) => WasmResult;
   report_puzzle_and_solution: (
     cid: number,
     coin_hex: string,
     puzzle_hex: string | undefined,
     solution_hex: string | undefined,
-  ) => WasmResult | undefined;
-  deliver_message: (cid: number, inbound_message: Uint8Array) => WasmResult | undefined;
-  game_session_amount: (cid: number) => bigint;
-  game_session_our_share: (cid: number) => bigint;
-  game_session_their_share: (cid: number) => bigint;
+  ) => WasmResult;
+  deliver_message: (cid: number, inbound_message: Uint8Array) => WasmResult;
   get_identity: (cid: number) => IChiaIdentity;
-  get_game_state_id: (cid: number) => string | undefined;
   protocol_state_pretty: (cid: number) => string;
   historical_unroll_count: (cid: number) => number | undefined;
   coins_of_interest: (cid: number) => CoinOfInterestEntry[];
   serialize_game_session: (cid: number) => Uint8Array;
-  get_watching_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
 
   // Misc
   sha256bytes: (hex: string) => string;
@@ -399,36 +298,20 @@ export class ChiaGame {
   propose_games(
     games: Omit<ProposeGameParams, 'parameters'>[],
     parameters_list: Uint8Array[],
-  ): WasmResult | undefined {
+  ): WasmResult {
     return this.wasm.propose_games(this.session, games, parameters_list);
   }
 
-  accept_proposal(game_id: string): WasmResult | undefined {
+  accept_proposal(game_id: string): WasmResult {
     return this.wasm.accept_proposal(this.session, game_id);
   }
 
-  accept_proposal_and_move(game_id: string, readable: Uint8Array): WasmResult | undefined {
+  accept_proposal_and_move(game_id: string, readable: Uint8Array): WasmResult {
     return this.wasm.accept_proposal_and_move(this.session, game_id, readable);
   }
 
-  cancel_proposal(game_id: string): WasmResult | undefined {
+  cancel_proposal(game_id: string): WasmResult {
     return this.wasm.cancel_proposal(this.session, game_id);
-  }
-
-  amount(): bigint {
-    return BigInt(this.wasm.game_session_amount(this.session));
-  }
-
-  our_share(): bigint {
-    return BigInt(this.wasm.game_session_our_share(this.session));
-  }
-
-  their_share(): bigint {
-    return BigInt(this.wasm.game_session_their_share(this.session));
-  }
-
-  get_game_state_id(): string | undefined {
-    return this.wasm.get_game_state_id(this.session);
   }
 
   protocol_state_pretty(): string {
@@ -448,23 +331,19 @@ export class ChiaGame {
     return this.wasm.serialize_game_session(this.session);
   }
 
-  get_watching_coins(): Array<{ coin_name: string; coin_string: string }> {
-    return this.wasm.get_watching_coins(this.session);
-  }
-
-  acceptSettlement(id: string): WasmResult | undefined {
+  acceptSettlement(id: string): WasmResult {
     return this.wasm.accept_settlement(this.session, id);
   }
 
-  shut_down(): WasmResult | undefined {
+  shut_down(): WasmResult {
     return this.wasm.shut_down(this.session);
   }
 
-  abandon(): WasmResult | undefined {
+  abandon(): WasmResult {
     return this.wasm.abandon(this.session);
   }
 
-  completeOutboundTerminalHandoff(): WasmResult | undefined {
+  completeOutboundTerminalHandoff(): WasmResult {
     return this.wasm.complete_outbound_terminal_handoff(this.session);
   }
 
@@ -472,7 +351,7 @@ export class ChiaGame {
     return this.wasm.pending_terminal_handoff(this.session);
   }
 
-  go_on_chain(): WasmResult | undefined {
+  go_on_chain(): WasmResult {
     return this.wasm.go_on_chain(this.session);
   }
 
@@ -480,11 +359,11 @@ export class ChiaGame {
     coin_hex: string,
     puzzle_hex: string | undefined,
     solution_hex: string | undefined,
-  ): WasmResult | undefined {
+  ): WasmResult {
     return this.wasm.report_puzzle_and_solution(this.session, coin_hex, puzzle_hex, solution_hex);
   }
 
-  make_move(id: string, readable: Uint8Array): WasmResult | undefined {
+  make_move(id: string, readable: Uint8Array): WasmResult {
     return this.wasm.make_move(this.session, id, readable);
   }
 
@@ -492,79 +371,53 @@ export class ChiaGame {
     id: string,
     readable: Uint8Array,
     new_entropy: string,
-  ): WasmResult | undefined {
+  ): WasmResult {
     return this.wasm.make_move_with_entropy_for_testing(this.session, id, readable, new_entropy);
   }
 
-  cheat(game_id: string, mover_share: bigint): WasmResult | undefined {
+  cheat(game_id: string, mover_share: bigint): WasmResult {
     return this.wasm.cheat(this.session, game_id, String(mover_share));
   }
 
-  deliver_message(msg: Uint8Array): WasmResult | undefined {
+  deliver_message(msg: Uint8Array): WasmResult {
     return this.wasm.deliver_message(this.session, msg);
   }
 
-  set_funding_coin(coin_string: string): WasmResult | undefined {
+  set_funding_coin(coin_string: string): WasmResult {
     return this.wasm.set_funding_coin(this.session, coin_string);
   }
 
-  start_handshake(): WasmResult | undefined {
-    const maybeStart = (
-      this.wasm as unknown as { start_handshake?: (cid: number) => WasmResult | undefined }
-    ).start_handshake;
-    if (typeof maybeStart !== 'function') return undefined;
-    return maybeStart(this.session);
+  start_handshake(): WasmResult {
+    return this.wasm.start_handshake(this.session);
   }
 
-  provide_launcher_coin(hex_launcher_coin: string): WasmResult | undefined {
-    const maybeProvide = (
-      this.wasm as unknown as {
-        provide_launcher_coin?: (cid: number, coin: string) => WasmResult | undefined;
-      }
-    ).provide_launcher_coin;
-    if (typeof maybeProvide !== 'function') return undefined;
-    return maybeProvide(this.session, hex_launcher_coin);
+  provide_launcher_coin(hex_launcher_coin: string): WasmResult {
+    return this.wasm.provide_launcher_coin(this.session, hex_launcher_coin);
   }
 
-  provide_coin_spend_bundle(bundle_json: string): WasmResult | undefined {
-    const maybeProvide = (
-      this.wasm as unknown as {
-        provide_coin_spend_bundle?: (cid: number, bundle: string) => WasmResult | undefined;
-      }
-    ).provide_coin_spend_bundle;
-    if (typeof maybeProvide !== 'function') return undefined;
-    return maybeProvide(this.session, bundle_json);
+  provide_coin_spend_bundle(bundle_json: string): WasmResult {
+    return this.wasm.provide_coin_spend_bundle(this.session, bundle_json);
   }
 
-  provide_offer_bech32(offer_bech32: string): any {
+  provide_offer_bech32(offer_bech32: string): WasmResult {
     return this.wasm.provide_offer_bech32(this.session, offer_bech32);
   }
 
-  wallet_callback_failed(reason: string): WasmResult | undefined {
-    const maybeFail = (
-      this.wasm as unknown as {
-        wallet_callback_failed?: (cid: number, reason: string) => WasmResult | undefined;
-      }
-    ).wallet_callback_failed;
-    if (typeof maybeFail !== 'function') return undefined;
-    return maybeFail(this.session, reason);
+  wallet_callback_failed(reason: string): WasmResult {
+    return this.wasm.wallet_callback_failed(this.session, reason);
   }
 
   get_channel_puzzle_hash(): string | null {
-    const maybeGet = (
-      this.wasm as unknown as { get_channel_puzzle_hash?: (cid: number) => string | null }
-    ).get_channel_puzzle_hash;
-    if (typeof maybeGet !== 'function') return null;
-    return maybeGet(this.session);
+    return this.wasm.get_channel_puzzle_hash(this.session);
   }
 
   /** Report raw per-coin chain state; the manager computes the diff internally. */
-  report_coin_states(height: bigint, records: CoinStateRecord[]): WasmResult | undefined {
+  report_coin_states(height: bigint, records: CoinStateRecord[]): WasmResult {
     return this.wasm.report_coin_states(this.session, height, jsonStringify(records));
   }
 
   /** Advance protocol clocks without treating absent coin data as a snapshot. */
-  report_height(height: bigint): WasmResult | undefined {
+  report_height(height: bigint): WasmResult {
     return this.wasm.report_height(this.session, height);
   }
 

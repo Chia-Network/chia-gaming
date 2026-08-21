@@ -25,6 +25,7 @@ import {
   useTerminalSessionPresentation,
 } from '../lib/session/sessionResult';
 import type { SessionMachineEvent } from '../lib/session/sessionMachineTypes';
+import type { RegisteredGameType } from '../lib/session/types';
 import { REGISTERED_GAMES } from '../lib/gameRegistry';
 import { liveGameHandOrigin, type GameHandSource } from '@games/host';
 import { log } from '../services/log';
@@ -105,10 +106,6 @@ export function useGameSession(
   const { iStarted, perGameAmount } = params;
   const terminalState = useTerminalSessionPresentation(terminalPresentation);
   const terminalMode = terminalState.presentation != null;
-  const liveHandSource = useMemo<GameHandSource>(
-    () => ({ interactionMode: 'live', controller }),
-    [controller],
-  );
 
   const restoredModel = useMemo(
     () => (sessionSave ? sessionModelFromSave(sessionSave) : null),
@@ -155,6 +152,37 @@ export function useGameSession(
   }
   const runtime = runtimeRef.current;
   const [machineState, setMachineState] = useState(runtime.getState());
+  const liveGamePort = useMemo(
+    () => ({
+      isChannelReady: () => controller.isChannelReady(),
+      nerf: () => controller.nerf(),
+      transitionFeatureState: (gameType: string, id: string, state: unknown) =>
+        runtime.transitionFeatureState(gameType as RegisteredGameType, id, state),
+      transitionFeatureStateWithLocalTurn: (
+        gameType: string,
+        id: string,
+        state: unknown,
+        isMyTurn: boolean,
+      ) =>
+        runtime.transitionFeatureStateWithLocalTurn(
+          gameType as RegisteredGameType,
+          id,
+          state,
+          isMyTurn,
+        ),
+      commitLocalGameAction: (request: Parameters<typeof runtime.commitLocalGameAction>[0]) =>
+        runtime.commitLocalGameAction(request),
+    }),
+    [controller, runtime],
+  );
+  const liveHandSource = useMemo<GameHandSource>(
+    () => ({
+      interactionMode: 'live',
+      handState: machineState.model.game.handState,
+      port: liveGamePort,
+    }),
+    [liveGamePort, machineState.model.game.handState],
+  );
   useEffect(() => {
     runtime.setRender(setMachineState);
     return () => runtime.setRender(() => {});
@@ -185,20 +213,11 @@ export function useGameSession(
 
   useEffect(() => {
     if (terminalMode) return;
-    controller.onFeatureStateTransition = (gameType, id, state) => {
-      return runtime.transitionFeatureState(gameType, id, state);
-    };
-    controller.onFeatureStateWithLocalTurnTransition = (gameType, id, state, isMyTurn) =>
-      runtime.transitionFeatureStateWithLocalTurn(gameType, id, state, isMyTurn);
-    controller.onLocalGameAction = (request) => runtime.commitLocalGameAction(request);
     controller.onSaveNeeded = () => runtime.persist();
     return () => {
-      controller.onFeatureStateTransition = null;
-      controller.onFeatureStateWithLocalTurnTransition = null;
-      controller.onLocalGameAction = null;
       controller.onSaveNeeded = null;
     };
-  }, [controller, dispatch, runtime, terminalMode]);
+  }, [controller, runtime, terminalMode]);
 
   useEffect(() => {
     if (terminalMode) return;

@@ -19,7 +19,6 @@ import { formatMojos } from '../util';
 import { SessionPhase } from '../types/ChiaGaming';
 import { RestoreStatus, type SessionController } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
-import { requireLiveGameHandSource } from '../lib/gameMountRegistry';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
@@ -611,10 +610,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       onProtocolStateProviderChange(null);
       return;
     }
-    const gameObject = requireLiveGameHandSource(session.handSource);
-    onProtocolStateProviderChange(() => gameObject.getProtocolStatePretty());
+    onProtocolStateProviderChange(() => sessionController.getProtocolStatePretty());
     return () => onProtocolStateProviderChange(null);
-  }, [session.handSource, onProtocolStateProviderChange, terminalMode]);
+  }, [sessionController, onProtocolStateProviderChange, terminalMode]);
 
   useEffect(() => {
     if (!onCoinsProviderChange) return;
@@ -622,10 +620,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       onCoinsProviderChange(null);
       return;
     }
-    const gameObject = requireLiveGameHandSource(session.handSource);
-    onCoinsProviderChange(() => gameObject.getCoinsOfInterest());
+    onCoinsProviderChange(() => sessionController.getCoinsOfInterest());
     return () => onCoinsProviderChange(null);
-  }, [session.handSource, onCoinsProviderChange, terminalMode]);
+  }, [sessionController, onCoinsProviderChange, terminalMode]);
 
   const resolvedPhaseReportedRef = useRef(false);
   useEffect(() => {

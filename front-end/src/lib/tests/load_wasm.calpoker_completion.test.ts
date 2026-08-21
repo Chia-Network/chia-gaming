@@ -18,7 +18,7 @@ import {
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { HandProposal } from '../session/types';
-import type { GameplayEvent } from '@games/host';
+import type { GameplayEvent, LiveGamePort } from '@games/host';
 import {
   addActiveSubscription,
   createActivePair,
@@ -46,7 +46,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
   const gameplayEvents: GameplayEvent[][] = [[], []];
   const gameplaySubjects = [new Subject<GameplayEvent>(), new Subject<GameplayEvent>()];
   const statuses: Array<Array<{ id: string; moverShare: unknown }>> = [[], []];
-  const stageTrace: Array<Array<{ runtime: bigint; controller: bigint }>> = [[], []];
+  const stageTrace: bigint[][] = [[], []];
   const submittedMoves = [0, 0];
   let hookRenderer: ReactTestRenderer | null = null;
 
@@ -77,18 +77,9 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     );
     runtime.setRender((state) => {
       const runtimeHand = calpokerStateCodec.decode(state.model.game.handState);
-      const controllerHand = calpokerStateCodec.decode(controller.handState);
-      if (runtimeHand && controllerHand) {
-        stageTrace[index].push({
-          runtime: runtimeHand.moveNumber,
-          controller: controllerHand.moveNumber,
-        });
-      }
+      if (runtimeHand) stageTrace[index].push(runtimeHand.moveNumber);
     });
     runtimes.push(runtime);
-    controller.onFeatureStateTransition = (gameType, id, state) =>
-      runtime.transitionFeatureState(gameType, id, state);
-    controller.onLocalGameAction = (request) => runtime.commitLocalGameAction(request);
     controller.onSaveNeeded = () => Promise.resolve();
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
@@ -319,8 +310,22 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     const hookHands: Array<UseCalpokerHandResult | undefined> = [undefined, undefined];
     const hookOutcomes: Array<CalpokerOutcome | undefined> = [undefined, undefined];
     function HookHarness({ index }: { index: number }) {
+      const runtime = runtimes[index];
+      const controller = controllers[index];
+      const port = {
+        isChannelReady: () => controller.isChannelReady(),
+        nerf: () => controller.nerf(),
+        transitionFeatureState: runtime.transitionFeatureState.bind(runtime),
+        transitionFeatureStateWithLocalTurn:
+          runtime.transitionFeatureStateWithLocalTurn.bind(runtime),
+        commitLocalGameAction: runtime.commitLocalGameAction.bind(runtime),
+      } as LiveGamePort;
       hookHands[index] = useCalpokerHand(
-        { interactionMode: 'live', controller: controllers[index] },
+        {
+          interactionMode: 'live',
+          handState: runtime.getState().model.game.handState,
+          port,
+        },
         secondGameId,
         index === 0,
         gameplaySubjects[index],
@@ -332,13 +337,12 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
           });
         },
         (isMyTurn) =>
-          runtimes[index].dispatch({
+          runtime.dispatch({
             type: 'durable-local-turn',
             id: secondGameId,
             isMyTurn,
           }),
         INITIAL_GAME_TERMINAL_MODEL,
-        controllers[index].handState ?? undefined,
         'restored',
       );
       return null;
@@ -356,23 +360,20 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
 
     const stages = (index: number) => {
       const runtimeHand = hand(index);
-      const controllerHand = calpokerStateCodec.decode(controllers[index].handState);
-      assert.ok(controllerHand);
       assert.ok(hookHands[index]);
       return {
         runtime: runtimeHand.moveNumber,
-        controller: controllerHand.moveNumber,
         hook: hookHands[index].moveNumber,
       };
     };
-    assert.deepEqual(stages(0), { runtime: 1n, controller: 1n, hook: 1n });
-    assert.deepEqual(stages(1), { runtime: 1n, controller: 1n, hook: 1n });
+    assert.deepEqual(stages(0), { runtime: 1n, hook: 1n });
+    assert.deepEqual(stages(1), { runtime: 1n, hook: 1n });
 
     act(() => {
       hookHands[1]!.setCardSelections(secondAlice.playerHand.slice(0, 4));
       hookHands[1]!.handleMakeMove();
     });
-    assert.deepEqual(stages(1), { runtime: 2n, controller: 2n, hook: 2n });
+    assert.deepEqual(stages(1), { runtime: 2n, hook: 2n });
     await act(async () => {
       await exchange();
     });
@@ -381,7 +382,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
       hookHands[0]!.setCardSelections(hand(0).playerHand.slice(0, 4));
       hookHands[0]!.handleMakeMove();
     });
-    assert.deepEqual(stages(0), { runtime: 2n, controller: 2n, hook: 2n });
+    assert.deepEqual(stages(0), { runtime: 2n, hook: 2n });
 
     await act(async () => {
       await exchange();
@@ -393,21 +394,16 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.ok(hookOutcomes[0], 'Bob must receive Alice’s final move readable');
     assert.ok(hookOutcomes[1], 'Alice must receive Bob’s final-result readable');
     assert.ok(
-      stages(1).runtime >= 2n && stages(1).controller >= 2n && stages(1).hook >= 2n,
+      stages(1).runtime >= 2n && stages(1).hook >= 2n,
       'Alice selection stage must remain submitted through final-result delivery',
     );
     for (const trace of stageTrace) {
-      const submittedIndex = trace.findIndex((entry) => entry.runtime >= 2n);
+      const submittedIndex = trace.findIndex((moveNumber) => moveNumber >= 2n);
       if (submittedIndex >= 0) {
         assert.ok(
-          trace
-            .slice(submittedIndex)
-            .every((entry) => entry.runtime >= 2n && entry.controller >= 2n),
+          trace.slice(submittedIndex).every((moveNumber) => moveNumber >= 2n),
           `Calpoker durable stage regressed after selection submission: ${JSON.stringify(
-            trace.map((entry) => ({
-              runtime: String(entry.runtime),
-              controller: String(entry.controller),
-            })),
+            trace.map(String),
           )}`,
         );
       }
@@ -424,7 +420,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     if (hookRenderer) act(() => hookRenderer?.unmount());
     runtimes.forEach((runtime) => runtime.dispose());
     controllers.forEach((controller) => {
-      controller.onFeatureStateTransition = null;
       controller.onSaveNeeded = null;
     });
   }

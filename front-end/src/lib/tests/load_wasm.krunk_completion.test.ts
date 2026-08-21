@@ -83,7 +83,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       );
       const machine = runtime.getState();
       const currentHandIds = [...machine.model.game.currentHandIds];
-      const hand = krunkStateCodec.decode(controller.handState);
+      const hand = krunkStateCodec.decode(machine.model.game.handState);
       const payloadIds = hand ? Object.keys(hand.games) : [];
       traces[index].push({
         currentHandIds,
@@ -130,8 +130,6 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       },
     );
     runtimes.push(runtime);
-    controller.onFeatureStateTransition = (gameType, id, state) =>
-      runtime.transitionFeatureState(gameType, id, state);
     controller.onSaveNeeded = persist;
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
@@ -330,7 +328,6 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   } finally {
     runtimes.forEach((runtime) => runtime.dispose());
     controllers.forEach((controller) => {
-      controller.onFeatureStateTransition = null;
       controller.onSaveNeeded = null;
     });
   }

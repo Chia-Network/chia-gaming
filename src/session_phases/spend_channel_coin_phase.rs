@@ -182,27 +182,12 @@ impl SpendChannelCoinPhase {
         }
     }
 
-    // --- Delegated query methods ---
-
-    pub fn amount(&self) -> Amount {
-        self.base.amount()
-    }
-    pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.base.get_our_current_share()
-    }
-    pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.base.get_their_current_share()
-    }
     pub fn has_potato(&self) -> bool {
         self.base.has_potato()
     }
 
     pub fn get_reward_puzzle_hash(&self, env: &mut ChannelEnv<'_>) -> Result<PuzzleHash, Error> {
         self.base.get_reward_puzzle_hash(env)
-    }
-
-    pub fn get_game_state_id(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Hash>, Error> {
-        self.base.get_game_state_id(env)
     }
 
     pub fn take_next_phase(&mut self) -> Option<Box<OnChainPhase>> {

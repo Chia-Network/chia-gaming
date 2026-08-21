@@ -408,7 +408,6 @@ impl WalletSpendInterface for GameSessionState {
 pub struct GameSession {
     state: GameSessionState,
     peer: Box<dyn PeerLifecyclePhase>,
-    amount: Amount,
     last_channel_status: Option<ChannelStatusSnapshot>,
     #[cfg(test)]
     #[serde(skip)]
@@ -530,7 +529,6 @@ impl GameSession {
                     Box::new(HandshakeReceiverPhase::new(phi)) as Box<dyn PeerLifecyclePhase>
                 }
             },
-            amount: config.my_contribution + config.their_contribution,
             last_channel_status: None,
             #[cfg(test)]
             saved_unroll_snapshot: None,
@@ -654,10 +652,6 @@ impl GameSession {
         ph.force_stale_unroll_spend(&mut env, saved)
     }
 
-    pub fn amount(&self) -> Amount {
-        self.amount.clone()
-    }
-
     /// Render the current protocol-level peer state as indented text for the
     /// dashboard. The peer is serialized to bencodex (via typetag, so the
     /// concrete phase becomes the top-level tag) and re-read into an untyped
@@ -686,20 +680,6 @@ impl GameSession {
             .into_iter()
             .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
             .collect()
-    }
-
-    pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.peer
-            .channel_state()
-            .ok()
-            .map(|ch| ch.get_our_current_share())
-    }
-
-    pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.peer
-            .channel_state()
-            .ok()
-            .map(|ch| ch.get_their_current_share())
     }
 
     pub fn is_peer_disconnected(&self) -> bool {
@@ -1442,18 +1422,6 @@ impl GameSession {
         let mut env =
             ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
         self.peer.channel_state()?.get_reward_puzzle_hash(&mut env)
-    }
-
-    pub fn get_game_state_id(
-        &mut self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<Option<Hash>, Error> {
-        let mut env =
-            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-        match self.peer.channel_state() {
-            Ok(ch) => ch.get_game_state_id(&mut env).map(Some),
-            Err(_) => Ok(None),
-        }
     }
 
     pub fn set_funding_coin(

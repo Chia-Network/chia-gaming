@@ -429,13 +429,13 @@ export function sessionAmountsFromSave(save: SessionSave): {
   };
 }
 
-export interface ParsedSessionSaveV12 {
+export interface ParsedSessionSave {
   model: SessionModel;
   phase: SessionSave['phase'];
   save: SessionSave;
 }
 
-export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 {
+export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   const envelope = requireRecord(value, 'session envelope');
   if (envelope.schema !== SESSION_SAVE_SCHEMA) {
     throw new Error(`Garbled save: unsupported schema ${String(envelope.schema)}`);

@@ -18,9 +18,11 @@ import {
   EMPTY_GAME_TERMINAL_MODEL,
   isForfeitOutcome,
   type GameHandOrigin,
+  type GameHandSource,
   type GameplayEvent,
-  type LiveGameController,
+  type LiveGamePort,
   type LocalGameActionRequest,
+  type PersistedGameState,
 } from '../../host';
 import { calpokerStateCodec } from './serialize';
 import CaliforniaPoker from './components/CaliforniaPoker';
@@ -53,6 +55,11 @@ function makeLocalActionCommit(makeMove: jest.Mock) {
     }
     makeMove(request.id, request.command.readable);
   };
+}
+
+function liveSource(port: LiveGamePort): GameHandSource {
+  const handState = (port as LiveGamePort & { handState?: PersistedGameState | null }).handState;
+  return { interactionMode: 'live', handState: handState ?? null, port };
 }
 
 describe('Calpoker bigint domain helpers', () => {
@@ -140,11 +147,11 @@ describe('Calpoker fresh hand startup', () => {
       transitionFeatureState: () => true,
       commitLocalGameAction,
       makeMove,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
 
     function Harness() {
       useCalpokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         '7',
         false,
         EMPTY,
@@ -187,10 +194,10 @@ describe('Calpoker fresh hand startup', () => {
         throw new Error('opening rejected');
       },
       makeMove,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
     function Harness() {
       useCalpokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         '7',
         false,
         EMPTY,
@@ -224,11 +231,11 @@ describe('Calpoker fresh hand startup', () => {
       transitionFeatureState: () => true,
       commitLocalGameAction: makeLocalActionCommit(makeMove),
       makeMove,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
 
     function Harness() {
       useCalpokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         '7',
         false,
         EMPTY,
@@ -262,11 +269,11 @@ describe('Calpoker fresh hand startup', () => {
       transitionFeatureState: () => true,
       commitLocalGameAction: makeLocalActionCommit(makeMove),
       makeMove,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
 
     function Harness({ gameId, handOrigin }: { gameId: string; handOrigin: GameHandOrigin }) {
       useCalpokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         gameId,
         false,
         EMPTY,
@@ -324,12 +331,12 @@ describe('Calpoker terminal hand projection', () => {
       },
       commitLocalGameAction: makeLocalActionCommit(makeMove),
       makeMove,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
     let hand: ReturnType<typeof useCalpokerHand> | undefined;
 
     function Harness() {
       hand = useCalpokerHand(
-        { interactionMode: 'live', controller },
+        liveSource(controller),
         '7',
         false,
         EMPTY,
@@ -543,7 +550,7 @@ describe('Calpoker terminal hand projection', () => {
       transitionFeatureState,
       commitLocalGameAction: makeLocalActionCommit(makeMove),
       makeMove,
-    } as unknown as LiveGameController;
+    } as unknown as LiveGamePort;
     const gameplay = new Subject<GameplayEvent>();
     const onOutcome = jest.fn();
     const mountCount = jest.fn();
@@ -554,8 +561,11 @@ describe('Calpoker terminal hand projection', () => {
       }, []);
       const hand = useCalpokerHand(
         terminalOutcome === null
-          ? { interactionMode: 'live', controller }
-          : { interactionMode: 'terminal', handState: controller.handState },
+          ? liveSource(controller)
+          : {
+              interactionMode: 'terminal',
+              handState: (controller as LiveGamePort & { handState: PersistedGameState }).handState,
+            },
         '7',
         false,
         gameplay,

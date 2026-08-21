@@ -74,7 +74,7 @@ async function runWasmLoad(): Promise<WasmConnection> {
 
   if (!logInitialized) {
     logInitialized = true;
-    wasmConn.init((msg: string) => console.warn('wasm', msg));
+    wasmConn.init();
   }
 
   for (const { name, content } of presets) {

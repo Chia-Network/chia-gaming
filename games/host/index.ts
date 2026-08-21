@@ -319,10 +319,12 @@ export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase):
   );
 }
 
-export interface LiveGameController {
-  readonly handState: PersistedGameState | null;
+export interface LiveGameProtocolPort {
   isChannelReady(): boolean;
   nerf(): void;
+}
+
+export interface LiveGameFeatureActions {
   transitionFeatureState(gameType: string, gameId: string, state: unknown): boolean;
   transitionFeatureStateWithLocalTurn(
     gameType: string,
@@ -333,13 +335,16 @@ export interface LiveGameController {
   commitLocalGameAction(request: LocalGameActionRequest): void;
 }
 
+export type LiveGamePort = LiveGameProtocolPort & LiveGameFeatureActions;
+
 export type GameInteractionMode = 'live' | 'terminal';
 export type GameHandOrigin = 'fresh' | 'restored' | 'terminal';
 
 export type GameHandSource =
   | {
       readonly interactionMode: 'live';
-      readonly controller: LiveGameController;
+      readonly handState: Readonly<PersistedGameState> | null;
+      readonly port: LiveGamePort;
     }
   | {
       readonly interactionMode: 'terminal';
@@ -363,14 +368,14 @@ export function terminalGameHandSource(
 }
 
 export function gameHandState(source: GameHandSource): Readonly<PersistedGameState> | null {
-  return source.interactionMode === 'live' ? source.controller.handState : source.handState;
+  return source.handState;
 }
 
-export function requireLiveGameHandSource(source: GameHandSource): LiveGameController {
+export function requireLiveGameHandSource(source: GameHandSource): LiveGamePort {
   if (source.interactionMode !== 'live') {
     throw new Error('Protocol commands require a live game hand source');
   }
-  return source.controller;
+  return source.port;
 }
 
 export function liveGameHandOrigin(
