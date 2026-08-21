@@ -1,11 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Observable } from 'rxjs';
-import {
-  requireLiveGameHandSource,
-  type GameHandSource,
-} from '../../host';
-import type { GameTerminalModel, GameplayEvent } from '../../host';
-import { useCheatNerfKeys, useGameHost, useInitialGameHandState } from '../../host/ui';
+import { useEffect, useRef, useState } from 'react';
+import { gameHandState, type GameHandSource } from '../../host';
+import type { GameTerminalModel } from '../../host';
+import { useCheatKeys, useGameHost } from '../../host/ui';
 import { describeSpacePokerHand, formatSpacepokerHandLog } from './handPresentation';
 import { SpacePokerActionControls } from './SpacePokerActionControls';
 import { SpacePokerHandHistory, SpacePokerTable } from './SpacePokerTable';
@@ -26,12 +22,9 @@ import {
 export interface SpacePokerProps {
   handSource: GameHandSource;
   gameId: string;
-  iStarted: boolean;
-  gameplayEvent$: Observable<GameplayEvent>;
   betSize: string;
   unitSizeMojos: string;
-  onTurnChanged: (isMyTurn: boolean) => void;
-  onGameLog: (lines: string[]) => void;
+  onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
   terminal: GameTerminalModel;
@@ -40,11 +33,8 @@ export interface SpacePokerProps {
 export default function SpacePoker({
   handSource,
   gameId,
-  iStarted,
-  gameplayEvent$,
   betSize,
   unitSizeMojos,
-  onTurnChanged,
   onGameLog,
   myName,
   opponentName,
@@ -53,28 +43,20 @@ export default function SpacePoker({
   const interactive = handSource.interactionMode === 'live';
   const betSizeValue = BigInt(betSize);
   const unitSizeMojosValue = BigInt(unitSizeMojos);
-  const initialPersistedState = useInitialGameHandState(handSource);
   const sp = useSpacepokerHand(
     handSource,
     gameId,
-    iStarted,
-    gameplayEvent$,
     betSizeValue,
     unitSizeMojosValue,
-    onTurnChanged,
     terminal,
-    initialPersistedState ?? undefined,
   );
   const { handler, myTurn, N } = sp.gameState;
   const { currencyLabels: spCurrency, formatAmount } = useGameHost();
 
-  const handleNerf = useCallback(() => {
-    requireLiveGameHandSource(handSource).nerf();
-  }, [handSource]);
-  useCheatNerfKeys(sp.handleCheat, handleNerf, interactive);
+  useCheatKeys(sp.handleCheat, interactive);
 
   const [alreadyTerminalAtMount] = useState(() => {
-    const handState = initialPersistedState;
+    const handState = gameHandState(handSource);
     if (!handState || handState.gameType !== 'spacepoker') return false;
     const state = handState.state as SpacepokerHandState | undefined;
     return state?.terminalState != null && state.terminalState !== 'none';
@@ -84,7 +66,7 @@ export default function SpacePoker({
     if (sp.terminalState === 'none' || gameLogFiredRef.current || !sp.playerHoleCards) return;
     gameLogFiredRef.current = true;
     const stackSize = sp.betUnit > 0n ? betSizeValue / sp.betUnit : 0n;
-    onGameLog(
+    onGameLog?.(
       formatSpacepokerHandLog(
         sp.playerHoleCards,
         sp.playerBoost,
@@ -193,21 +175,6 @@ export default function SpacePoker({
       />
 
       <div className="flex min-h-[4.5rem] flex-col justify-center gap-2">
-        {sp.terminalRecovery && (
-          <div className="flex flex-col items-center gap-1">
-            <p className="text-sm text-alert-text">
-              Final {sp.terminalRecovery} was not submitted.
-            </p>
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40"
-              disabled={!interactive}
-              onClick={sp.retryTerminalAction}
-            >
-              Retry
-            </button>
-          </div>
-        )}
         <SpacePokerActionControls
           interactive={interactive}
           handler={handler}

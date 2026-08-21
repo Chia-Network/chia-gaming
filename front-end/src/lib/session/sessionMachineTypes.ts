@@ -1,5 +1,5 @@
 import type { ChannelStatus, GameConnectionState, WasmNotification } from '../../types/ChiaGaming';
-import type { ComposeDraftValue, GameplayEvent } from '@games/host';
+import type { ComposeDraftValue } from '@games/host';
 import type { ComposeDraftState } from './composeDraft';
 import type { GameSliceAction } from './gameSlice';
 import type {
@@ -14,6 +14,7 @@ import type {
 } from './types';
 import type { NonTerminalGameStatusPayload } from './presentation';
 import type { RestoreStatus } from '../../hooks/SessionController';
+import type { Program } from 'clvm-lib';
 
 export type OutcomeWin = 'win' | 'lose' | 'tie';
 
@@ -34,7 +35,17 @@ export interface SessionMachineState {
   coordination: SessionMachineCoordination;
 }
 
-export type { LocalGameCommand, LocalGameActionRequest } from '@games/host';
+export type LocalGameCommand =
+  | { type: 'make-move'; readable: Program | null }
+  | { type: 'accept-settlement' }
+  | { type: 'cheat'; moverShare: bigint };
+
+export interface LocalGameActionRequest {
+  gameType: RegisteredGameType;
+  id: string;
+  state: unknown;
+  command: LocalGameCommand;
+}
 
 export type SessionControllerCommand =
   | 'accept-proposal'
@@ -59,7 +70,6 @@ export type SessionMachineEffect =
   | { type: 'timer-schedule'; key: 'rejection-fallback'; generation: number; delayMs: number }
   | { type: 'timer-cancel'; key: 'rejection-fallback' }
   | { type: 'persist-session' }
-  | { type: 'emit-gameplay'; event: GameplayEvent }
   | {
       type: 'request-coin-enrichment';
       target: 'channel' | 'game' | 'settlement';
@@ -116,7 +126,6 @@ export type SessionMachineEvent =
   | { type: 'set-expecting-counter-proposal'; expecting: boolean }
   | { type: 'set-first-game-accepted'; accepted: boolean }
   | { type: 'set-last-outcome'; outcomeWin: OutcomeWin }
-  | { type: 'hand-outcome'; outcomeWin: OutcomeWin }
   | {
       type: 'notification-accepted-group';
       id: string;
@@ -135,6 +144,12 @@ export type SessionMachineEvent =
     }
   | { type: 'notification-game-terminal'; id: string; terminal: GameTerminalModel }
   | {
+      type: 'notification-move-rejected';
+      id: string;
+      tag: string;
+      message: string;
+    }
+  | {
       type: 'notification-insufficient-balance';
       id: string;
       notification: QueuedNotificationModel;
@@ -152,14 +167,6 @@ export type SessionMachineEvent =
       id: string;
       state: unknown;
     }
-  | {
-      type: 'feature-state-with-local-turn';
-      gameType: RegisteredGameType;
-      id: string;
-      state: unknown;
-      isMyTurn: boolean;
-    }
-  | { type: 'durable-local-turn'; id: string; isMyTurn: boolean; channelState: ChannelStatus }
   | { type: 'request-accept-proposal'; id: string }
   | { type: 'request-cancel-proposal'; id: string }
   | { type: 'request-propose-game'; handProposal: HandProposal }

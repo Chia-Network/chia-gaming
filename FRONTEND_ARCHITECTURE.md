@@ -518,21 +518,18 @@ two authoritative sources:
 
 The pure root reducer returns the next authority and ordered effects.
 `SessionMachineRuntime` publishes that authority, runs commands (including
-`persist-session`), and only then schedules React. Local game commands use the
-shared `commitLocalGameAction` boundary: Rust/WASM accepts the command first,
-then one machine transition commits the game-owned candidate state and local
-turn together. A synchronous rejection therefore cannot enter authority or a
-save. `assembleSessionSave` reads
+`persist-session`), and only then schedules React. Games dispatch a
+`GameIntent`; Rust/WASM accepts protocol commands first, then one machine
+transition commits the candidate state and local turn together. A synchronous
+failure or `MoveRejected` therefore cannot enter authority or a save.
+`assembleSessionSave` reads
 game-owned `handState` only from current machine authority and combines it with
-the controller's WASM-origin snapshot at effect execution time. Live game mounts
-receive a discriminated hand source containing the real controller; terminal
-mounts receive only readonly persisted hand state. There is no controller-owned
-feature-state mirror, render-driven save effect, or React/model mirror ref.
-Every game reads that hand source through `useInitialGameHandState` exactly once
-per keyed mount. The captured value is initialization/restore input only;
-subsequent canonical state transitions do not re-decode the source. A new
-`handKey` or a cold terminal mount creates the next lifetime and therefore the
-next snapshot.
+the controller's WASM-origin snapshot at effect execution time. Every package
+has one `render(view)` mount. Its `frozen` boolean is a type discriminant: only
+the live branch has an intent port. Games decode the current machine-owned hand
+state on every render; there is no controller-owned mirror, event stream,
+one-shot live snapshot, render-driven save effect, or React/model mirror ref.
+A new `handKey` still creates a fresh component lifetime.
 `SessionController.onSaveNeeded` invokes the same runtime persistence path for
 ordinary debounced WASM changes. Transaction submission and resubmission remain
 owned by Rust's `TransactionManager`, not by a frontend transaction field.
@@ -1390,10 +1387,9 @@ The cohesive session modules own those responsibilities:
 - `sessionMachineEffects.ts` enforces authority → commands/save → React
   ordering; saves combine WASM cradle bytes with machine-owned `handState`.
 - `sessionMachineInterpreter.ts` performs controller calls, timers,
-  persistence, gameplay emission, and async enrichment.
+  persistence, and async enrichment.
 - `sessionMachinePersist.ts` assembles and writes snapshots at effect time.
 - `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
-- `lib/wasm/gameplayEvents.ts` projects typed WASM payloads onto host `GameplayEvent` values.
 - `lib/gameProposalCodec.ts` encodes proposal factory parameters and decodes `ProposalMade` envelopes; `session/incomingProposal.ts` assembles `ProposalGroupModel`.
 
 The controller still waits for its normal macrotask boundary, then drains one
@@ -1408,8 +1404,9 @@ across unmounts and reloads.
 
 The active game UI is rendered inside `GameSession` from the selected
 `GamePackage`. `front-end/src/lib/gameRegistry.ts` looks packages up by catalog
-key only. `front-end/src/lib/gameMountRegistry.tsx` dispatches live/frozen
-mounts through that package. The first generated member's initial validation
+key only. `front-end/src/lib/gameMountRegistry.tsx` creates one
+boolean-discriminated mount view for active, in-session terminal, and
+cold-restored hands. The first generated member's initial validation
 puzzle hash is the protocol id at the WASM propose/notify boundary
 (`protocolIdForCatalog` out, `catalogGameTypeFromWire` in).
 `front-end/src/lib/gameProposalCodec.ts` is the inverse pair for that boundary:
@@ -1417,29 +1414,19 @@ puzzle hash is the protocol id at the WASM propose/notify boundary
 the way in. Each package still owns its `factoryParameters` codec and
 `decodeHandProposal`.
 
-`CalpokerHand` receives gameplay events via an RxJS observable and submits moves
-through the shared Rust-first local-action boundary.
+Each hook decodes the current machine-owned hand state on every render. It
+submits only `GameIntent` values through the shared Rust-first local-action
+boundary.
 
 Space Poker keeps its hand history and terminal presentation inside
 `useSpacepokerHand`. A betting-round fold, a showdown no-reveal concession, and
 a revealed showdown remain distinct displays. The hook attributes a terminal
 opponent action only when the current readable handler proves it; a
-`GameSettled` notification alone does not imply that either player folded. Its
-terminal reveal, concession, and fold entries are committed only after Rust
-accepts the local command. They are removed and the playable hand restored only
-when a later matching game-scoped
-`MoveRejected`, `game-action-error`, or context-bearing Rust `ActionFailed`
-event reports that `makeMove` or `acceptSettlement` failed. Rust preserves that
-context when a potato-gated queued move or settlement fails during a later
-flush; unscoped failures are never attributed to a hand. A failed automatic
-reveal or concession enters an explicit recovery state and waits for a user retry
-or authoritative update; it never resubmits on a React effect rerun. Generic
-terminal errors and non-voluntary settlements replace optimistic terminal state
-with the authoritative generic presentation. A revealed presentation survives
-only its voluntary settlement acknowledgement, never a timeout, slash, or other
-settlement outcome. This is UI state only: the session
-controller and Rust `GameSettled` outcome remain the authority, and the game
-component never observes the chain itself.
+`GameSettled` notification alone does not imply that either player folded.
+Terminal reveal, concession, and fold candidates commit only when Rust accepts
+the intent. `MoveRejected` leaves the candidate uncommitted. There is no
+optimistic rollback or retry-recovery subsystem; unexpected failures are shown
+by shared host error UX, and the game never observes the chain itself.
 
 The `useCalpokerHand` hook manages the five-step protocol:
 
@@ -1465,8 +1452,8 @@ What the game UI does **not** know about:
 
 `useGameSession` normalizes each WASM notification into a typed machine event.
 `sessionMachineNotifications.ts` then reduces it and emits ordered effects into
-the scoped queues, gameplay stream, controller, persistence path, or async
-enrichment boundary:
+the scoped queues, controller, persistence path, or async enrichment boundary.
+Normalized game inputs update `model.game.handState` before React renders:
 
 ### Channel notification queue
 
@@ -1509,25 +1496,21 @@ the notification reducer and never forwarded raw to the game UI:
   always-non-empty ordered `group_ids` (singleton ⇒ `[id]`), and triggers
   group auto-accept
 - `ProposalAccepted` — starts the accepted hand, initializes its durable game
-  state, and advances `handKey`; it is not a `GameplayEvent`
+  state, and advances `handKey`
 
-### Gameplay events (forwarded to game UI via observable)
+### Normalized game inputs
 
-These are the normal flow of play, forwarded to the active game UI component
-via the `gameplayEventSubject` RxJS stream:
+The machine applies exactly five package-facing inputs:
 
-- `OpponentMoved` — the opponent made a move (with readable data and
-  `moverShare`, our share after that move / on timeout from it)
-- `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
-- `MoveRejected` — a recoverable delayed rejection with game id, tag, and
-  message; game hooks roll back only the matching Rust-accepted local action
-- `Settled` — `{ gameId, outcome, ourShare }` from `GameSettled`; dual-delivered
-  to the session banner and the active game hook via `gameplayEvent$`
-- `GameError` — non-settlement terminals (`EndedCancelled`, `EndedError`,
-  `InsufficientBalance`) and unknown settlement outcomes
+- `hand-started`
+- `opponent-moved`
+- `game-message`
+- `move-rejected`
+- `hand-ended`
 
-Legacy `GameStatus` slash/timeout `Ended*` kinds are no longer forwarded to
-gameplay hooks; settlements use `GameSettled` only.
+There is no separate game-status event or action echo. Turn, replay, timeout,
+on-chain, proposal, removal, abandonment, and freezing transitions remain in
+the host model. `ActionFailed` and controller exceptions go to shared error UX.
 
 ## Single-Hand Enforcement
 
@@ -1611,8 +1594,7 @@ not to limit concurrency.
 | `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v14 presentation snapshot encoder                                                            |
 | `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup and game-owned codec/terms/compose dispatch                                                   |
 | `front-end/src/lib/gameProposalCodec.ts`         | Symmetric proposal encode/decode at the WASM `propose_games` / `ProposalMade` boundary                                 |
-| `front-end/src/lib/wasm/gameplayEvents.ts`       | WASM notification/event payloads → host `GameplayEvent`                                                                |
-| `front-end/src/lib/gameMountRegistry.tsx`        | Live/frozen mounts dispatched through the selected package                                                               |
+| `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                               |
 | `games/calpoker/ui/useCalpokerHand.ts`          | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
 | `front-end/src/hooks/SessionController.ts`       | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence   |
 | `front-end/src/hooks/WasmStateInit.ts`           | WASM bootstrap: page-load binary/preset fetch, background factory warm, create cradle                            |

@@ -69,6 +69,8 @@ const registration: GameFeatureRegistration<
   handMembershipDescription: 'exactly one currentHandGameId',
   validateHandMembership: (gameIds) => gameIds.length === 1,
   decodeFeatureState: (value) => (calpokerStateCodec.isState(value) ? value : null),
+  selectOutcome: (state) =>
+    state.outcome ? { my_win_outcome: state.outcome.my_win_outcome } : null,
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
   },
@@ -107,7 +109,13 @@ const registration: GameFeatureRegistration<
     },
   },
   durableState: {
-    reduceEvent: reduceCalpokerDurableState,
+    initialize(current, input) {
+      return reduceCalpokerDurableState(current, input)!;
+    },
+    reduceInput(current, input) {
+      return reduceCalpokerDurableState(current, input)!;
+    },
+    applyFeatureState: (_current, _gameId, state) => state,
   },
 };
 

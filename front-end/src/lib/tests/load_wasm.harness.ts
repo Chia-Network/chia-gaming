@@ -397,13 +397,15 @@ export function postMoveHandState(
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
   const accepted = reduceRegisteredGameState(handProposal.gameType, null, {
-    type: 'accepted-group',
-    id: ids[0],
-    groupIds: ids,
-    iStarted: false,
-    isMyTurn: true,
-    origin: 'peer',
-    handProposal,
+    type: 'hand-started',
+    init: {
+      id: ids[0],
+      gameIds: ids,
+      iStarted: false,
+      canAct: true,
+      origin: 'peer',
+      handProposal,
+    },
   });
   assert.ok(accepted, `${handProposal.gameType}: accepted group must create hand state`);
   if (handProposal.gameType === 'calpoker') {

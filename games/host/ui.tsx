@@ -12,10 +12,7 @@ import {
   DEFAULT_CURRENCY_LABELS,
   defaultFormatAmount,
   defaultFormatMojos,
-  gameHandState,
   type CurrencyLabels,
-  type GameHandSource,
-  type PersistedGameState,
 } from './index';
 
 export interface GameHostServices {
@@ -46,24 +43,11 @@ export function useGameHost(): GameHostServices {
   return useContext(GameHostContext);
 }
 
-export function useInitialGameHandState(
-  source: GameHandSource,
-): Readonly<PersistedGameState> | null {
-  const [initial] = useState(() => gameHandState(source));
-  return initial;
-}
-
-export function useCheatNerfKeys(
-  handleCheat: () => void,
-  handleNerf: () => void,
-  enabled = true,
-): void {
+export function useCheatKeys(handleCheat: () => void, enabled = true): void {
   const cheatBufRef = useRef('');
-  const nerfBufRef = useRef('');
   useEffect(() => {
     if (!enabled) return;
     const CHEAT_SEQ = 'cheat^';
-    const NERF_SEQ = 'nerf^';
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -80,20 +64,10 @@ export function useCheatNerfKeys(
         cheatBufRef.current = CHEAT_SEQ.startsWith(e.key) ? e.key : '';
       }
 
-      const nerfBuf = nerfBufRef.current + e.key;
-      if (NERF_SEQ.startsWith(nerfBuf)) {
-        nerfBufRef.current = nerfBuf;
-        if (nerfBuf === NERF_SEQ) {
-          nerfBufRef.current = '';
-          handleNerf();
-        }
-      } else {
-        nerfBufRef.current = NERF_SEQ.startsWith(e.key) ? e.key : '';
-      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [enabled, handleCheat, handleNerf]);
+  }, [enabled, handleCheat]);
 }
 
 function mojosToXchStr(mojos: bigint): string {

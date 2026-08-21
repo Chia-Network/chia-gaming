@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { EMPTY, Subject } from 'rxjs';
 import {
   createComposeDraftState,
   createSessionModel,
@@ -13,9 +12,8 @@ import {
   sessionModelFromSave,
   type HandProposal,
 } from '../lib/session/model';
-import type { ComposeDraftValue, GameplayEvent, HandWinOutcome } from '@games/host';
+import type { ComposeDraftValue, GameIntent } from '@games/host';
 import { dispatchWasmNotification } from '../lib/session/gameSessionEvents';
-import { gameplayEventForGameActionError } from '../lib/wasm/gameplayEvents';
 import { createSessionMachineState } from '../lib/session/sessionMachine';
 import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
 import {
@@ -140,8 +138,6 @@ export function useGameSession(
     [sessionSave],
   );
   const restoredHandKeyRef = useRef<number | null>(null);
-  const gameplaySubject = useRef(new Subject<GameplayEvent>()).current;
-  const gameplayEvent$ = useMemo(() => gameplaySubject.asObservable(), [gameplaySubject]);
   const initialState = useMemo(() => {
     const handProposal: HandProposal = {
       gameType: REGISTERED_GAMES[0].gameType,
@@ -174,7 +170,6 @@ export function useGameSession(
       restoring: params.restoring ?? false,
       getRestoreStatus: () => controller.getRestoreStatus(),
       getRestoreError: () => controller.getRestoreError(),
-      emitGameplay: (event) => gameplaySubject.next(event),
       onError: (error) => controller.reportRuntimeError(error),
     });
   }
@@ -184,36 +179,41 @@ export function useGameSession(
   const liveGamePort = useMemo(
     () => ({
       isChannelReady: () => controller.isChannelReady(),
-      nerf: () => controller.nerf(),
-      transitionFeatureState: (gameType: string, id: string, state: unknown) =>
-        runtime.transitionFeatureState(gameType as RegisteredGameType, id, state),
-      transitionFeatureStateWithLocalTurn: (
-        gameType: string,
-        id: string,
-        state: unknown,
-        isMyTurn: boolean,
-      ) =>
-        runtime.transitionFeatureStateWithLocalTurn(
-          gameType as RegisteredGameType,
-          id,
-          state,
-          isMyTurn,
-        ),
-      commitLocalGameAction: (request: LocalGameActionRequest) =>
+      dispatch: (intent: GameIntent<unknown>) => {
+        const game = runtime.getState().model.game;
+        const gameType = game.activeGameType as RegisteredGameType;
+        if (intent.type === 'update-local-state') {
+          if (game.currentHandIds.length !== 1) {
+            throw new Error('Local hand-state updates require a single-game hand');
+          }
+          runtime.transitionFeatureState(gameType, game.currentHandIds[0], intent.state);
+          return;
+        }
+        const request: LocalGameActionRequest = {
+          gameType,
+          id: intent.gameId,
+          state: intent.state,
+          command:
+            intent.type === 'make-move'
+              ? { type: 'make-move', readable: intent.readable }
+              : intent.type === 'accept-settlement'
+                ? { type: 'accept-settlement' }
+                : { type: 'cheat', moverShare: intent.moverShare },
+        };
         runLocalGameActionWithReporting(
           request,
           () => runtime.commitLocalGameAction(request),
-          ({ gameId, action, message }) => {
+          ({ action, message }) => {
             if (action === 'cheat') {
               dispatch({ type: 'enqueue-error', kind: 'infra-error', message });
               return;
             }
-            gameplaySubject.next(gameplayEventForGameActionError(gameId, action, message));
             dispatch({ type: 'enqueue-error', kind: 'action-failed', message });
           },
-        ),
+        );
+      },
     }),
-    [controller, dispatch, gameplaySubject, runtime],
+    [controller, dispatch, runtime],
   );
   const liveHandSource = useMemo<GameHandSource>(
     () => ({
@@ -276,11 +276,6 @@ export function useGameSession(
             dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
             break;
           case 'game-action-error':
-            if (event.action !== 'feature-state') {
-              gameplaySubject.next(
-                gameplayEventForGameActionError(event.gameId, event.action, event.error),
-              );
-            }
             dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
             break;
           case 'durability-error':
@@ -297,7 +292,7 @@ export function useGameSession(
     });
     if (!initStarted) setInitStarted(true);
     return () => subscription.unsubscribe();
-  }, [controller, dispatch, dispatchHostProjection, gameplaySubject, iStarted, terminalMode]);
+  }, [controller, dispatch, dispatchHostProjection, iStarted, terminalMode]);
 
   useEffect(() => {
     if (!blockchain || terminalMode) return;
@@ -328,21 +323,6 @@ export function useGameSession(
       dispatch({ type: 'update-selected-compose-draft', draft }),
     [dispatch],
   );
-  const onHandOutcome = useCallback(
-    (outcome: HandWinOutcome) =>
-      dispatch({ type: 'hand-outcome', outcomeWin: outcome.my_win_outcome }),
-    [dispatch],
-  );
-  const onTurnChanged = useCallback(
-    (id: string, isMyTurn: boolean) =>
-      dispatch({
-        type: 'durable-local-turn',
-        id,
-        isMyTurn,
-        channelState: runtime.getState().model.channel.status.state,
-      }),
-    [dispatch, runtime],
-  );
 
   const { model, coordination } = machineState;
   const view = selectGameSessionView(model);
@@ -370,10 +350,7 @@ export function useGameSession(
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
     handSource: liveHandSource,
-    gameplayEvent$,
     appendGameLog,
-    onHandOutcome,
-    onTurnChanged,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: view.incomingProposalGroup,
     lastHandProposal: model.betweenHand.lastHandProposal,
@@ -408,6 +385,6 @@ export function useGameSession(
     gameSpecificView,
   };
   return terminalState.presentation
-    ? projectTerminalSessionResult(liveResult, terminalState.presentation, EMPTY, terminalState)
+    ? projectTerminalSessionResult(liveResult, terminalState.presentation, terminalState)
     : liveResult;
 }

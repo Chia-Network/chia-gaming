@@ -1,17 +1,40 @@
 import {
   acceptedHandNeedsGameTabAttention,
   channelStateNeedsGameTabAttention,
-  gameplayEventNeedsGameTabAttention,
+  gameModelNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
 } from '../gameTabAttention';
-import type { GameplayEvent } from '@games/host';
+import { EMPTY_GAME_TERMINAL_MODEL } from '@games/host';
+import { createSessionModel } from '../session/model';
+
+function gameWith(
+  presentation: 'off-chain-my-turn' | 'off-chain-their-turn',
+  handState: object,
+  outcome: 'accept_settlement' | 'we_accepted' | 'settled_cleanly' | null = null,
+) {
+  const game = createSessionModel().game;
+  return {
+    ...game,
+    handState: handState as never,
+    instances: {
+      '1': {
+        id: '1',
+        amount: '50',
+        coinHex: null,
+        presentation,
+        terminal: { ...EMPTY_GAME_TERMINAL_MODEL, outcome },
+      },
+    },
+  };
+}
 
 describe('gameTabAttention', () => {
   it('marks opponent moves as attention', () => {
     expect(
-      gameplayEventNeedsGameTabAttention({
-        OpponentMoved: { readable: new Uint8Array([1]), moverShare: '0' },
-      }),
+      gameModelNeedsGameTabAttention(
+        gameWith('off-chain-their-turn', {}),
+        gameWith('off-chain-my-turn', {}),
+      ),
     ).toBe(true);
   });
 
@@ -23,37 +46,32 @@ describe('gameTabAttention', () => {
 
   it('marks settlement accepts as attention', () => {
     expect(
-      gameplayEventNeedsGameTabAttention({
-        Settled: { gameId: '1', outcome: 'accept_settlement', ourShare: '50' },
-      }),
+      gameModelNeedsGameTabAttention(
+        gameWith('off-chain-their-turn', {}),
+        gameWith('off-chain-their-turn', {}, 'accept_settlement'),
+      ),
     ).toBe(true);
     expect(
-      gameplayEventNeedsGameTabAttention({
-        Settled: { gameId: '1', outcome: 'we_accepted', ourShare: '50' },
-      }),
+      gameModelNeedsGameTabAttention(
+        gameWith('off-chain-their-turn', {}),
+        gameWith('off-chain-their-turn', {}, 'we_accepted'),
+      ),
     ).toBe(true);
   });
 
-  it('skips GameMessage and non-accept settlements', () => {
+  it('skips messages, rejections, and non-accept settlements', () => {
     expect(
-      gameplayEventNeedsGameTabAttention({
-        GameMessage: { readable: new Uint8Array([1]), gameId: '1' },
-      }),
+      gameModelNeedsGameTabAttention(
+        gameWith('off-chain-their-turn', {}),
+        gameWith('off-chain-their-turn', {}),
+      ),
     ).toBe(false);
     expect(
-      gameplayEventNeedsGameTabAttention({
-        Settled: { gameId: '1', outcome: 'settled_cleanly', ourShare: '50' },
-      }),
+      gameModelNeedsGameTabAttention(
+        gameWith('off-chain-their-turn', {}),
+        gameWith('off-chain-their-turn', {}, 'settled_cleanly'),
+      ),
     ).toBe(false);
-    expect(
-      gameplayEventNeedsGameTabAttention({
-        Settled: { gameId: '1', outcome: 'opponent_timed_out', ourShare: '50' },
-      }),
-    ).toBe(false);
-    const moveRejected: GameplayEvent = {
-      MoveRejected: { gameId: '1', tag: 'x', message: 'nope' },
-    };
-    expect(gameplayEventNeedsGameTabAttention(moveRejected)).toBe(false);
   });
 
   it('marks shutdown and on-chain channel states as attention', () => {

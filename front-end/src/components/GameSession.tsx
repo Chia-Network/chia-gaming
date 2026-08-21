@@ -24,7 +24,7 @@ import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
   acceptedHandNeedsGameTabAttention,
   channelStateNeedsGameTabAttention,
-  gameplayEventNeedsGameTabAttention,
+  gameModelNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
@@ -654,15 +654,14 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
     suppressPhaseReporting,
   ]);
 
+  const previousGameModel = useRef(session.sessionModel.game);
   useEffect(() => {
-    if (!onGameActivity) return;
-    const sub = session.gameplayEvent$.subscribe((evt) => {
-      if (gameplayEventNeedsGameTabAttention(evt)) {
-        onGameActivity();
-      }
-    });
-    return () => sub.unsubscribe();
-  }, [session.gameplayEvent$, onGameActivity]);
+    const previous = previousGameModel.current;
+    previousGameModel.current = session.sessionModel.game;
+    if (onGameActivity && gameModelNeedsGameTabAttention(previous, session.sessionModel.game)) {
+      onGameActivity();
+    }
+  }, [session.sessionModel.game, onGameActivity]);
 
   // A new accepted hand is session activity, not a gameplay event.
   const prevHandKey = useRef(session.handKey);

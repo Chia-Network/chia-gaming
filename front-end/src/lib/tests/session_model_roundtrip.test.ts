@@ -26,6 +26,7 @@ const CAL_HAND_STATE = calpokerStateCodec.encode({
   opponentHand: [],
   moveNumber: 0n,
   isPlayerTurn: true,
+  iStarted: true,
 });
 
 describe('session model round trips', () => {

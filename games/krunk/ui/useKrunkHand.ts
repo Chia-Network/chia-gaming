@@ -1,18 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
-import { Observable } from 'rxjs';
 import {
   DEFAULT_CURRENCY_LABELS,
+  gameHandState,
   requireLiveGameHandSource,
   type CurrencyLabels,
   type GameHandSource,
-  type GameplayEvent,
   type GameTerminalModel,
-  type LocalGameCommand,
-  type PersistedGameState,
 } from '../../host';
 import { krunkSettlementStatus } from './settlement';
-import { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './handProposal';
+import { krunkOutcomeFromPlay } from './handProposal';
 import {
   krunkGameStateFromPersisted,
   KrunkHandler,
@@ -21,7 +18,13 @@ import {
   type KrunkRole,
 } from './serialize';
 
+type LocalGameCommand =
+  | { type: 'make-move'; readable: Program | null }
+  | { type: 'accept-settlement' }
+  | { type: 'cheat'; moverShare: bigint };
+
 export { KrunkHandler };
+export { applyKrunkMoveRejected } from './serialize';
 export type { KrunkGameState, KrunkGuess, KrunkRole };
 
 export interface UseKrunkHandResult {
@@ -77,47 +80,6 @@ export function krunkGuessesWithQueued(
 /** True when gameState.error is a dictionary rejection (drop later queued guesses). */
 export function isKrunkDictionaryRejectionError(error: string | null): boolean {
   return error != null && error.endsWith(' is not in the dictionary.');
-}
-
-export function applyKrunkMoveRejected(
-  state: KrunkGameState,
-  rejection: { tag: string; message: string },
-): KrunkGameState {
-  if (rejection.tag !== 'not_in_dictionary') return state;
-  const word = rejection.message.toUpperCase();
-  const error = `${word} is not in the dictionary.`;
-
-  if (
-    state.role === 'alice' &&
-    state.handler === KrunkHandler.AliceWaiting &&
-    state.secretWord === word
-  ) {
-    return {
-      ...state,
-      handler: KrunkHandler.WaitingCommit,
-      myTurn: true,
-      secretWord: null,
-      error,
-    };
-  }
-
-  const lastGuess = state.guesses[state.guesses.length - 1];
-  if (
-    state.role === 'bob' &&
-    state.handler === KrunkHandler.BobWaiting &&
-    lastGuess?.word === word &&
-    lastGuess.clue.every((value) => value === -1n)
-  ) {
-    return {
-      ...state,
-      handler: KrunkHandler.BobGuess,
-      myTurn: true,
-      guesses: state.guesses.slice(0, -1),
-      error,
-    };
-  }
-
-  return state;
 }
 
 export interface KrunkBoardNotice {
@@ -280,136 +242,37 @@ function finishedKrunkState(
 
 export function useKrunkHand(
   handSource: GameHandSource,
-  _gameId: string,
+  gameId: string,
   iStarted: boolean,
-  gameplayEvent$: Observable<GameplayEvent>,
-  onTurnChanged: (isMyTurn: boolean) => void,
   active = true,
-  initialPersistedState?: Readonly<PersistedGameState>,
 ): UseKrunkHandResult {
   const interactive = handSource.interactionMode === 'live' && active;
   // Channel-level convention: iStarted=true → I'm second mover in
   // every game. Krunk's first mover is alice (the committer), so the
   // channel initiator plays bob and the receiver plays alice.
   const role: KrunkRole = iStarted ? 'bob' : 'alice';
+  const gameState = krunkGameStateFromPersisted(gameHandState(handSource), gameId, role);
 
-  const [initialState] = useState(() =>
-    krunkGameStateFromPersisted(initialPersistedState, _gameId, role),
-  );
-  const [gs, setGs] = useState<KrunkGameState>(initialState);
-
-  const gsRef = useRef(gs);
+  const gameStateRef = useRef(gameState);
   const handSourceRef = useRef(handSource);
-  const gameIdRef = useRef(_gameId);
-  const handFinishedRef = useRef(false);
+  const gameIdRef = useRef(gameId);
   const activeRef = useRef(interactive);
 
-  gsRef.current = gs;
+  gameStateRef.current = gameState;
   handSourceRef.current = handSource;
-  gameIdRef.current = _gameId;
+  gameIdRef.current = gameId;
   activeRef.current = interactive;
 
-  useEffect(() => {
-    if (!_gameId) return;
-    if (!interactive) {
-      handFinishedRef.current = true;
-      return;
-    }
-    // Clear a stale finished latch if the hand is live again and we have not
-    // actually reached Terminal (guards against transient active=false gaps).
-    if (gsRef.current.handler !== KrunkHandler.Terminal) {
-      handFinishedRef.current = false;
-    }
-  }, [_gameId, interactive]);
-
-  const projectState = useCallback(
-    (next: KrunkGameState) => {
-      gsRef.current = next;
-      setGs(next);
-      onTurnChanged(next.myTurn);
-    },
-    [onTurnChanged],
-  );
-
-  const transition = useCallback(
-    (next: KrunkGameState) => {
-      const controller = requireLiveGameHandSource(handSourceRef.current);
-      if (gameIdRef.current) {
-        if (!controller.transitionFeatureState('krunk', gameIdRef.current, next)) {
-          return false;
-        }
-      }
-      projectState(next);
-      return true;
-    },
-    [projectState],
-  );
-
-  const commitLocalAction = useCallback(
-    (next: KrunkGameState, command: LocalGameCommand): void => {
-      requireLiveGameHandSource(handSourceRef.current).commitLocalGameAction({
-        gameType: 'krunk',
-        id: gameIdRef.current,
-        state: next,
-        command,
-      });
-      projectState(next);
-    },
-    [projectState],
-  );
-
-  const finishGame = useCallback(
-    (
-      revealedWord: string | null,
-      lastClue: KrunkGuess['clue'] | null,
-      moverShare: string | null = null,
-    ) => {
-      const committed = transition(
-        finishedKrunkState(gsRef.current, revealedWord, lastClue, moverShare),
-      );
-      if (committed) handFinishedRef.current = true;
-      return committed;
-    },
-    [transition],
-  );
-
-  // ── OpponentMoved handling ──
-  useEffect(() => {
-    if (!interactive) return;
-    const sub = gameplayEvent$.subscribe({
-      next: (evt: GameplayEvent) => {
-        if ('OpponentMoved' in evt) {
-          const evtGameId = evt.OpponentMoved.gameId;
-          if (evtGameId && evtGameId !== gameIdRef.current) return;
-          if (handFinishedRef.current) return;
-          const next = reduceKrunkFeatureState(gsRef.current, {
-            type: 'opponent-moved',
-            readable: Uint8Array.from(evt.OpponentMoved.readable),
-            moverShare: evt.OpponentMoved.moverShare,
-          });
-          if (next.handler === KrunkHandler.Terminal) handFinishedRef.current = true;
-          projectState(next);
-        } else if ('MoveRejected' in evt) {
-          if (evt.MoveRejected.gameId !== gameIdRef.current) return;
-          if (handFinishedRef.current) return;
-          const next = applyKrunkMoveRejected(gsRef.current, evt.MoveRejected);
-          if (next !== gsRef.current) {
-            transition(next);
-          }
-        } else if ('Settled' in evt) {
-          if (evt.Settled.gameId !== gameIdRef.current) return;
-          handFinishedRef.current = true;
-          projectState(reduceKrunkFeatureState(gsRef.current, { type: 'settled' }));
-        } else if ('GameError' in evt) {
-          if (evt.GameError.gameId !== gameIdRef.current) return;
-          if (!handFinishedRef.current) {
-            finishGame(gsRef.current.revealedWord, null);
-          }
-        }
-      },
-    });
-    return () => sub.unsubscribe();
-  }, [gameplayEvent$, interactive, transition, finishGame, projectState]);
+  const commitLocalAction = useCallback((next: KrunkGameState, command: LocalGameCommand): void => {
+    const gameId = gameIdRef.current;
+    requireLiveGameHandSource(handSourceRef.current).dispatch(
+      command.type === 'make-move'
+        ? { type: 'make-move', gameId, readable: command.readable, state: next }
+        : command.type === 'accept-settlement'
+          ? { type: 'accept-settlement', gameId, state: next }
+          : { type: 'cheat', gameId, moverShare: command.moverShare, state: next },
+    );
+  }, []);
 
   // ── Auto-play ──
   // Alice's `krunk_alice_handler_clue` decides internally whether to
@@ -419,35 +282,35 @@ export function useKrunkHand(
     if (!interactive) return;
     if (
       !activeRef.current ||
-      gs.role !== 'alice' ||
-      gs.handler !== KrunkHandler.AliceClue ||
-      !gs.myTurn
+      gameState.role !== 'alice' ||
+      gameState.handler !== KrunkHandler.AliceClue ||
+      !gameState.myTurn
     )
       return;
     const gid = gameIdRef.current;
     if (!activeRef.current || !gid) return;
-    const latest = gs.guesses[gs.guesses.length - 1];
+    const latest = gameState.guesses[gameState.guesses.length - 1];
     const isReveal =
-      !!latest && (latest.clue.every((v) => v === 2n) || gs.guesses.length >= MAX_GUESSES);
+      !!latest && (latest.clue.every((v) => v === 2n) || gameState.guesses.length >= MAX_GUESSES);
     const next = isReveal
-      ? finishedKrunkState(gs, gs.secretWord, latest.clue)
-      : { ...gs, handler: KrunkHandler.AliceWaiting, myTurn: false };
+      ? finishedKrunkState(gameState, gameState.secretWord, latest.clue)
+      : { ...gameState, handler: KrunkHandler.AliceWaiting, myTurn: false };
     commitLocalAction(next, { type: 'make-move', readable: null });
-    if (isReveal) handFinishedRef.current = true;
-  }, [gs, interactive, commitLocalAction]);
+  }, [gameState, interactive, commitLocalAction]);
 
   const setSecretWord = useCallback(
     (word: string) => {
-      requireLiveGameHandSource(handSourceRef.current);
+      if (!activeRef.current) return;
       const gid = gameIdRef.current;
-      const cur = gsRef.current;
-      if (!activeRef.current || !gid) return;
+      const cur = gameStateRef.current;
+      if (!gid) return;
       if (cur.role !== 'alice' || cur.handler !== KrunkHandler.WaitingCommit) return;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {
         console.warn('[krunk] secret word must be 5 letters');
         return;
       }
+      requireLiveGameHandSource(handSourceRef.current);
       const next = {
         ...cur,
         secretWord: normalised,
@@ -465,16 +328,17 @@ export function useKrunkHand(
 
   const submitGuess = useCallback(
     (word: string) => {
-      requireLiveGameHandSource(handSourceRef.current);
+      if (!activeRef.current) return;
       const gid = gameIdRef.current;
-      const cur = gsRef.current;
-      if (!activeRef.current || !gid) return;
+      const cur = gameStateRef.current;
+      if (!gid) return;
       if (cur.role !== 'bob' || cur.handler !== KrunkHandler.BobGuess) return;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {
         console.warn('[krunk] guess must be 5 letters');
         return;
       }
+      requireLiveGameHandSource(handSourceRef.current);
       const next = {
         ...cur,
         guesses: [
@@ -496,7 +360,7 @@ export function useKrunkHand(
   );
 
   return {
-    gameState: gs,
+    gameState,
     setSecretWord,
     submitGuess,
   };

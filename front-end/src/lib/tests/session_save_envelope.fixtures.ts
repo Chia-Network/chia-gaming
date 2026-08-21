@@ -250,6 +250,7 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
       opponentHand: [3n, 4n],
       moveNumber: 1n,
       isPlayerTurn: true,
+      iStarted: true,
     }),
     betweenHandLastHandProposal: {
       my_contribution: '20',

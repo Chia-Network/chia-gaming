@@ -177,7 +177,6 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         restoring: true,
         getRestoreStatus: () => restored.getRestoreStatus(),
         getRestoreError: () => restored.getRestoreError(),
-        emitGameplay: () => {},
         onError: (error) => {
           throw error;
         },

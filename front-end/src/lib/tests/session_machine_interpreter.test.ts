@@ -109,7 +109,6 @@ describe('session machine effect interpreter', () => {
       persist: async () => {
         order.push('persist');
       },
-      emitGameplay: () => order.push('gameplay'),
       onError: (error) => {
         throw error;
       },
@@ -133,7 +132,6 @@ describe('session machine effect interpreter', () => {
       getState: () => createSessionMachineState(createSessionModel()),
       dispatch: (event) => events.push(event),
       persist: async () => {},
-      emitGameplay: () => {},
       onError: (error) => {
         throw error;
       },
@@ -221,7 +219,6 @@ describe('session machine causal sequences', () => {
           restoring: false,
           getRestoreStatus: () => 'idle',
           getRestoreError: () => null,
-          emitGameplay: () => {},
           onError: (error) => {
             throw error;
           },
@@ -296,7 +293,6 @@ describe('session machine causal sequences', () => {
         restoring: false,
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
-        emitGameplay: () => {},
         onError: (error) => {
           throw error;
         },
@@ -335,7 +331,7 @@ describe('session machine causal sequences', () => {
     expect(runtime.getState()).toBe(authority);
 
     expect(() => runtime.transitionFeatureState('calpoker', '7', { malformed: true })).toThrow(
-      'Internal feature-state payload is invalid for calpoker',
+      'Invalid calpoker feature-state payload',
     );
     expect(runtime.getState()).toBe(authority);
   });
@@ -384,7 +380,6 @@ describe('session machine causal sequences', () => {
         restoring: false,
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
-        emitGameplay: () => {},
         onError: (error) => {
           throw error;
         },
@@ -554,7 +549,6 @@ describe('session machine controller command failures', () => {
       restoring: false,
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
-      emitGameplay: () => {},
       onError: (error) => {
         throw error;
       },
@@ -635,7 +629,6 @@ describe('session machine controller command failures', () => {
       restoring: false,
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
-      emitGameplay: () => {},
       onError: (error) => {
         throw error;
       },
@@ -810,7 +803,6 @@ describe('session machine local game action boundary', () => {
       restoring: false,
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
-      emitGameplay: () => {},
       onError: (error) => {
         throw error;
       },
@@ -830,7 +822,7 @@ describe('session machine local game action boundary', () => {
   }
 
   it('uses ordered Rust authority for opposite-turn Krunk members before the first move', () => {
-    const makeMove = jest.fn();
+    const makeMove = jest.fn(() => true);
     const runtime = new SessionMachineRuntime(
       stateWithProposals([{ memberIds: ['2', '4'], handProposal: KRUNK_TERMS, origin: 'local' }]),
       {
@@ -839,7 +831,6 @@ describe('session machine local game action boundary', () => {
         restoring: false,
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
-        emitGameplay: () => {},
         onError: (error) => {
           throw error;
         },
@@ -881,7 +872,7 @@ describe('session machine local game action boundary', () => {
   });
 
   it('uses Rust acceptance authority for the first Space Poker action', () => {
-    const makeMove = jest.fn();
+    const makeMove = jest.fn(() => true);
     const runtime = new SessionMachineRuntime(
       stateWithProposals([{ memberIds: ['7'], handProposal: SPACEPOKER_TERMS, origin: 'local' }]),
       {
@@ -890,7 +881,6 @@ describe('session machine local game action boundary', () => {
         restoring: false,
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
-        emitGameplay: () => {},
         onError: (error) => {
           throw error;
         },
@@ -944,7 +934,7 @@ describe('session machine local game action boundary', () => {
   });
 
   it('commits accepted feature state and shared turn in one rendered transition', () => {
-    const makeMove = jest.fn();
+    const makeMove = jest.fn(() => true);
     const { runtime, persisted, rendered } = localActionHarness(makeMove);
     const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
 

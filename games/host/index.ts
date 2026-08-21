@@ -1,6 +1,5 @@
 import { type ComponentType, type ReactElement } from 'react';
 import { Program } from 'clvm-lib';
-import type { Observable } from 'rxjs';
 
 /** Compact settlement outcome ids (snake_case; match Rust `SettlementOutcome`). */
 export type SettlementOutcome =
@@ -238,60 +237,32 @@ export function defineGameStateCodec<T>(definition: {
   return codec;
 }
 
-export type GameplayEvent =
-  | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string; moverShare: string } }
-  | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
-  | { MoveRejected: { gameId: string; tag: string; message: string } }
-  | { Settled: { gameId: string; outcome: SettlementOutcome; ourShare: string } }
-  | {
-      GameError: {
-        gameId: string;
-        reason: string;
-        source: 'action' | 'terminal';
-        action?: 'make-move' | 'accept-settlement';
-      };
-    };
+export type GameIntent<TState> =
+  | { type: 'update-local-state'; state: TState }
+  | { type: 'make-move'; gameId: string; readable: Program | null; state: TState }
+  | { type: 'accept-settlement'; gameId: string; state: TState }
+  | { type: 'cheat'; gameId: string; moverShare: bigint; state: TState };
 
-export type LocalGameCommand =
-  | { type: 'make-move'; readable: Program | null }
-  | { type: 'accept-settlement' }
-  | { type: 'cheat'; moverShare: bigint };
-
-export interface LocalGameActionRequest {
-  gameType: RegisteredGameType;
+export interface GameHandInitialization {
   id: string;
-  state: unknown;
-  command: LocalGameCommand;
+  gameIds: readonly string[];
+  iStarted: boolean;
+  canAct: boolean;
+  origin: ProposalGroupOrigin;
+  handProposal: HandProposal;
 }
 
-export type DurableGameStateEvent =
+export type GameInput<TInit = GameHandInitialization> =
+  | { type: 'hand-started'; init: TInit }
   | {
-      type: 'accepted-group';
-      id: string;
-      groupIds: readonly string[];
-      iStarted: boolean;
-      isMyTurn: boolean;
-      origin: ProposalGroupOrigin;
-      handProposal: HandProposal;
+      type: 'opponent-moved';
+      gameId: string;
+      readable: Uint8Array;
+      moverShare: string;
     }
-  | {
-      type: 'game-status';
-      id: string;
-      status: GameTurnState;
-      readable: Uint8Array | null;
-      moverShare: string | null;
-      iStarted: boolean;
-    }
-  | { type: 'local-turn'; id: string; isMyTurn: boolean }
-  | { type: 'settled'; id: string; terminal: GameTerminalModel }
-  | { type: 'remove-group'; groupIds: readonly string[] }
-  | { type: 'abandoned' }
-  | {
-      type: 'feature-state';
-      gameType: RegisteredGameType;
-      id: string;
-      state: unknown;
-    };
+  | { type: 'game-message'; gameId: string; readable: Uint8Array }
+  | { type: 'move-rejected'; gameId: string; tag: string; message: string }
+  | { type: 'hand-ended'; gameId: string; terminal: GameTerminalModel };
 
 export type ComposeDraftValue = Record<string, bigint>;
 export type GameComposeDrafts = Record<string, ComposeDraftValue>;
@@ -321,21 +292,11 @@ export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase):
 
 export interface LiveGameProtocolPort {
   isChannelReady(): boolean;
-  nerf(): void;
 }
 
-export interface LiveGameFeatureActions {
-  transitionFeatureState(gameType: string, gameId: string, state: unknown): boolean;
-  transitionFeatureStateWithLocalTurn(
-    gameType: string,
-    gameId: string,
-    state: unknown,
-    isMyTurn: boolean,
-  ): boolean;
-  commitLocalGameAction(request: LocalGameActionRequest): void;
+export interface LiveGamePort extends LiveGameProtocolPort {
+  dispatch<TState>(intent: GameIntent<TState>): void;
 }
-
-export type LiveGamePort = LiveGameProtocolPort & LiveGameFeatureActions;
 
 export type GameInteractionMode = 'live' | 'terminal';
 export type GameHandOrigin = 'fresh' | 'restored' | 'terminal';
@@ -394,38 +355,34 @@ export interface FrozenGameMountOptions extends GameMountNames {
   iStarted: boolean;
 }
 
-export interface LiveGameView {
+interface GameMountViewBase extends GameMountNames {
+  handState: Readonly<PersistedGameState> | null;
   handOrigin: GameHandOrigin;
-  handSource: GameHandSource;
-  activeGameId: string | null;
-  activeGameIds: string[];
-  currentHandGameIds: string[];
+  lastDisplayedId: string | null;
+  activeIds: readonly string[];
+  currentHandIds: readonly string[];
+  canActById: Readonly<Record<string, boolean>>;
   iStarted: boolean;
   playerNumber: number;
-  gameplayEvent$: Observable<GameplayEvent>;
-  appendGameLog: (line: string) => void;
-  onHandOutcome: (outcome: HandWinOutcome) => void;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  gameSpecificView: {
-    gameType: string;
-    displayGameId: string | null;
-    terminal: GameTerminalModel;
-    terminalsById: Record<string, GameTerminalModel>;
-    amountsById: Record<string, string>;
-  };
+  instances: Readonly<Record<string, { terminal: GameTerminalModel; amount: string }>>;
 }
 
-export interface FrozenGameView {
-  lastDisplayedId: string | null;
-  currentHandIds: readonly string[];
-  activeIds: readonly string[];
-  handState: PersistedGameState | null;
-  instances: Record<string, { terminal: GameTerminalModel; amount: string }>;
+export type GameMountView =
+  | (GameMountViewBase & {
+      frozen: false;
+      port: LiveGamePort;
+      appendGameLog: (line: string) => void;
+    })
+  | (GameMountViewBase & { frozen: true });
+
+export function gameHandSourceFromMountView(view: GameMountView): GameHandSource {
+  return view.frozen
+    ? terminalGameHandSource(view.handState)
+    : { interactionMode: 'live', handState: view.handState, port: view.port };
 }
 
 export interface GameMountRegistration {
-  renderLive(session: LiveGameView, names: GameMountNames): ReactElement;
-  renderFrozen(view: FrozenGameView, options: FrozenGameMountOptions): ReactElement;
+  render(view: GameMountView): ReactElement;
 }
 
 export interface GameFeatureRegistration<
@@ -442,6 +399,7 @@ export interface GameFeatureRegistration<
   readonly handMembershipDescription: string;
   validateHandMembership(gameIds: readonly string[], state: TState | null): boolean;
   decodeFeatureState(value: unknown): TFeatureState | null;
+  selectOutcome(state: TState, gameId: string): HandWinOutcome | null;
   readonly lifecycle: {
     proposalSenderGoesFirst(iStarted: boolean): boolean;
   };
@@ -460,7 +418,15 @@ export interface GameFeatureRegistration<
     decodeExtras(base: HandProposalBase, extras: SavedHandProposalExtras): HandProposal | null;
   };
   readonly durableState: {
-    reduceEvent(current: TState | null, event: DurableGameStateEvent): TState | null;
+    initialize(
+      current: TState | null,
+      input: Extract<GameInput, { type: 'hand-started' }>,
+    ): TState;
+    reduceInput(
+      current: TState,
+      input: Exclude<GameInput, { type: 'hand-started' }>,
+    ): TState;
+    applyFeatureState(current: TState, gameId: string, state: TFeatureState): TState;
   };
 }
 

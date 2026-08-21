@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Observable } from 'rxjs';
 import {
   useKrunkHand,
   canDraftKrunkGuess,
@@ -13,21 +12,19 @@ import {
 } from './useKrunkHand';
 import {
   defaultFormatAmount,
+  gameHandState,
   type GameHandSource,
-  type GameplayEvent,
   type GameTerminalModel,
   type PersistedGameState,
 } from '../../host';
-import { useGameHost, useInitialGameHandState } from '../../host/ui';
+import { useGameHost } from '../../host/ui';
 import { krunkStateCodec } from './serialize';
 
 export interface KrunkProps {
   handSource: GameHandSource;
   currentHandGameIds: string[];
   activeGameIds: string[];
-  gameplayEvent$: Observable<GameplayEvent>;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  onGameLog: (lines: string[]) => void;
+  onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
   terminalsById: Record<string, GameTerminalModel>;
@@ -72,11 +69,7 @@ export function krunkGameSlots(
   }
   const persistedAlice = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'alice');
   const persistedBob = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'bob');
-  if (
-    !currentHandGameIds.every((id) => persistedGames[id]) ||
-    !persistedAlice ||
-    !persistedBob
-  ) {
+  if (!currentHandGameIds.every((id) => persistedGames[id]) || !persistedAlice || !persistedBob) {
     throw new Error('Krunk persisted roles must contain one alice and one bob');
   }
   return {
@@ -435,8 +428,6 @@ const Krunk: React.FC<KrunkProps> = ({
   handSource,
   currentHandGameIds,
   activeGameIds,
-  gameplayEvent$,
-  onTurnChanged,
   onGameLog,
   myName: _myName,
   opponentName,
@@ -445,11 +436,11 @@ const Krunk: React.FC<KrunkProps> = ({
 }) => {
   const { formatAmount } = useGameHost();
   const interactive = handSource.interactionMode === 'live';
-  const initialPersistedState = useInitialGameHandState(handSource) ?? undefined;
+  const persistedState = gameHandState(handSource);
   const { aliceGameId, bobGameId } = krunkGameSlots(
     currentHandGameIds,
     activeGameIds,
-    initialPersistedState,
+    persistedState,
   );
   const aliceId = aliceGameId ?? '';
   const bobId = bobGameId ?? '';
@@ -466,41 +457,13 @@ const Krunk: React.FC<KrunkProps> = ({
   const bobInHand = bobGameId !== null && currentHandGameIds.includes(bobGameId);
   const aliceInteractive = interactive && aliceInHand;
   const bobInteractive = interactive && bobInHand;
-  const onAliceTurnChanged = useCallback(
-    (isMyTurn: boolean) => {
-      if (aliceGameId !== null) onTurnChanged(aliceGameId, isMyTurn);
-    },
-    [aliceGameId, onTurnChanged],
-  );
-  const onBobTurnChanged = useCallback(
-    (isMyTurn: boolean) => {
-      if (bobGameId !== null) onTurnChanged(bobGameId, isMyTurn);
-    },
-    [bobGameId, onTurnChanged],
-  );
 
   // useKrunkHand maps iStarted → role: iStarted=true means bob, false means alice.
   // Alice game (I pick the word): iStarted=false → role='alice'.
   // Bob game (I guess): iStarted=true → role='bob'.
-  const aliceHand = useKrunkHand(
-    handSource,
-    aliceId,
-    false,
-    gameplayEvent$,
-    onAliceTurnChanged,
-    aliceInteractive,
-    initialPersistedState,
-  );
+  const aliceHand = useKrunkHand(handSource, aliceId, false, aliceInteractive);
 
-  const bobHand = useKrunkHand(
-    handSource,
-    bobId,
-    true,
-    gameplayEvent$,
-    onBobTurnChanged,
-    bobInteractive,
-    initialPersistedState,
-  );
+  const bobHand = useKrunkHand(handSource, bobId, true, bobInteractive);
   const setAliceSecretWord = aliceHand.setSecretWord;
   const submitBobGuessMove = bobHand.submitGuess;
 
@@ -513,7 +476,7 @@ const Krunk: React.FC<KrunkProps> = ({
       return;
     }
     aliceLogFiredRef.current = true;
-    onGameLog(
+    onGameLog?.(
       formatKrunkHandLog(
         'alice',
         betSize,
@@ -536,7 +499,7 @@ const Krunk: React.FC<KrunkProps> = ({
       return;
     }
     bobLogFiredRef.current = true;
-    onGameLog(
+    onGameLog?.(
       formatKrunkHandLog(
         'bob',
         betSize,

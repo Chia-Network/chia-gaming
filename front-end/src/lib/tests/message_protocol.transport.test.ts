@@ -591,6 +591,30 @@ describe('game action failure events', () => {
     subscription.unsubscribe();
     errorSpy.mockRestore();
   });
+
+  it('returns rejection before a local candidate can be committed', () => {
+    const { blob, cradle } = createReadyBlob();
+    const makeMove = jest.fn(() =>
+      wasmResult({
+        events: [
+          {
+            Notification: {
+              MoveRejected: { id: 41n, tag: 'illegal_move', message: 'not allowed' },
+            },
+          },
+        ],
+      }),
+    );
+    (
+      cradle as unknown as {
+        make_move: (gameId: string, readable: Uint8Array) => WasmResult;
+      }
+    ).make_move = makeMove;
+
+    expect(blob.makeMove('41', null)).toBe(false);
+    makeMove.mockReturnValue(wasmResult());
+    expect(blob.makeMove('41', null)).toBe(true);
+  });
 });
 
 describe('duplicate detection', () => {

@@ -51,6 +51,8 @@ describe('session machine behavior sequences', () => {
         moveNumber: 2n,
 
         isPlayerTurn: true,
+
+        iStarted: true,
       },
     });
 
@@ -143,6 +145,8 @@ describe('session machine behavior sequences', () => {
         moveNumber: 2n,
 
         isPlayerTurn: false,
+
+        iStarted: true,
       },
     });
 
@@ -184,19 +188,9 @@ describe('session machine behavior sequences', () => {
       opponentDisplayText: expect.stringMatching(/\S/),
     });
 
-    expect(readableTransition.effects).toContainEqual({
-      type: 'emit-gameplay',
-
-      event: {
-        OpponentMoved: {
-          gameId: '7',
-
-          readable: finalReadable,
-
-          moverShare: '0',
-        },
-      },
-    });
+    expect(readableTransition.effects.some((effect) => effect.type === 'emit-gameplay')).toBe(
+      false,
+    );
 
     expect(readableTransition.state.model.game.instances['7'].terminal.type).toBe('none');
 
@@ -220,19 +214,9 @@ describe('session machine behavior sequences', () => {
       reduceSessionMachine,
     );
 
-    expect(terminalTransition.effects).toContainEqual({
-      type: 'emit-gameplay',
-
-      event: {
-        Settled: {
-          gameId: '7',
-
-          outcome: 'lost',
-
-          ourShare: '0',
-        },
-      },
-    });
+    expect(terminalTransition.effects.some((effect) => effect.type === 'emit-gameplay')).toBe(
+      false,
+    );
 
     expect(
       calpokerStateCodec.decode(terminalTransition.state.model.game.handState)?.displaySnapshot,

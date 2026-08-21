@@ -8,7 +8,6 @@ import {
   parseGameStatusTerminalInfo,
   terminalInfoFromGameSettled,
 } from '../session/gameSessionEvents';
-import { gameplayEventForSettlement } from '../wasm/gameplayEvents';
 
 function keyedTerminalGame(
   outcome: SettlementOutcome,
@@ -140,19 +139,18 @@ describe('terminal session model', () => {
     });
 
     expect(
-      gameplayEventForSettlement(
-        '7',
-        terminalInfoFromGameSettled(
-          {
-            id: '7',
-            outcome: 'settled_cleanly',
-            our_share: '20',
-          },
-          null,
-        ),
+      terminalInfoFromGameSettled(
+        {
+          id: '7',
+          outcome: 'settled_cleanly',
+          our_share: '20',
+        },
+        null,
       ),
-    ).toEqual({
-      Settled: { gameId: '7', outcome: 'settled_cleanly', ourShare: '20' },
+    ).toMatchObject({
+      type: 'settled',
+      outcome: 'settled_cleanly',
+      myReward: '20',
     });
   });
 

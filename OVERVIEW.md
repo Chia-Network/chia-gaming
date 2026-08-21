@@ -596,7 +596,8 @@ Protocol lifetime ends only after queued terminal reductions and the durable
 terminal snapshot are flushed, at which point the real controller and transport
 attachments are destroyed. Visual lifetime can continue: the same React hand
 component and `handKey` remain mounted, but receive the finalized model through
-an inert frozen bridge. Cold restoration is separate again:
+the `frozen: true` branch of the same mount contract, which structurally has no
+intent port. Cold restoration is separate again:
 `FinishedSessionGameView` remounts a validated persisted Cal Poker, Space Poker,
 or Krunk hand only when no live tree survived (for example, after reload).
 

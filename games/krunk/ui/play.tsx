@@ -1,11 +1,8 @@
 import { lazy, useCallback } from 'react';
-import { EMPTY, type Observable } from 'rxjs';
 import {
-  terminalGameHandSource,
-  type FrozenGameView,
+  gameHandSourceFromMountView,
   type GameHandSource,
   type GameMountRegistration,
-  type GameplayEvent,
   type GameTerminalModel,
 } from '../../host';
 
@@ -15,9 +12,7 @@ export interface KrunkLiveMountProps {
   handSource: GameHandSource;
   currentHandGameIds: string[];
   activeGameIds: string[];
-  gameplayEvent$: Observable<GameplayEvent>;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  appendGameLog: (line: string) => void;
+  appendGameLog?: (line: string) => void;
   myName?: string;
   opponentName?: string;
   terminalsById: Record<string, GameTerminalModel>;
@@ -28,6 +23,7 @@ export function KrunkLiveMount(props: KrunkLiveMountProps) {
   const { appendGameLog, ...rest } = props;
   const handleGameLog = useCallback(
     (lines: string[]) => {
+      if (!appendGameLog) return;
       lines.forEach(appendGameLog);
       appendGameLog('');
     },
@@ -37,38 +33,21 @@ export function KrunkLiveMount(props: KrunkLiveMountProps) {
 }
 
 export const play: GameMountRegistration = {
-  renderLive(session, names) {
+  render(view) {
     return (
       <KrunkLiveMount
-        handSource={session.handSource}
-        currentHandGameIds={session.currentHandGameIds}
-        activeGameIds={session.activeGameIds}
-        gameplayEvent$={session.gameplayEvent$}
-        onTurnChanged={session.onTurnChanged}
-        appendGameLog={session.appendGameLog}
-        terminalsById={session.gameSpecificView.terminalsById}
-        amountsById={session.gameSpecificView.amountsById}
-        {...names}
-      />
-    );
-  },
-  renderFrozen(view: FrozenGameView, options) {
-    return (
-      <KrunkLiveMount
-        handSource={terminalGameHandSource(view.handState)}
+        handSource={gameHandSourceFromMountView(view)}
         currentHandGameIds={[...view.currentHandIds]}
         activeGameIds={[...view.activeIds]}
-        gameplayEvent$={EMPTY}
-        onTurnChanged={() => {}}
-        appendGameLog={() => {}}
+        appendGameLog={view.frozen ? undefined : view.appendGameLog}
         terminalsById={Object.fromEntries(
           Object.entries(view.instances).map(([id, instance]) => [id, instance.terminal]),
         )}
         amountsById={Object.fromEntries(
           Object.entries(view.instances).map(([id, instance]) => [id, instance.amount]),
         )}
-        myName={options.myName}
-        opponentName={options.opponentName}
+        myName={view.myName}
+        opponentName={view.opponentName}
       />
     );
   },

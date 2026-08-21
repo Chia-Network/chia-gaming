@@ -1,6 +1,5 @@
 import { createElement, type ComponentProps } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { EMPTY } from 'rxjs';
 
 jest.mock(
   '@/components/button',
@@ -192,12 +191,6 @@ describe('terminal game controls', () => {
           handSource: terminalGameHandSource(handState),
           currentHandGameIds: ['alice', 'bob'],
           activeGameIds: [],
-          iProposedHand: true,
-          gameplayEvent$: EMPTY,
-          betSize: 100n,
-          onTurnChanged: () => {
-            throw new Error('turn change invoked');
-          },
           onGameLog: () => {},
           terminalsById: { alice: NO_TERMINAL, bob: NO_TERMINAL },
           amountsById: { alice: '100', bob: '100' },
@@ -225,8 +218,6 @@ describe('terminal game controls', () => {
       handHistory: [{ player: 'you', action: 'raise', units: 2n }],
       outcome: null,
       terminalState: 'none',
-      terminalRecovery: null,
-      pendingTerminalAction: null,
       coinTossIOpen: true,
       unitSizeMojos: 10n,
       displayMode: 'mojos',
@@ -237,13 +228,8 @@ describe('terminal game controls', () => {
         createElement(SpacePoker, {
           handSource: terminalGameHandSource(handState),
           gameId: 'space',
-          iStarted: true,
-          gameplayEvent$: EMPTY,
           betSize: '100',
           unitSizeMojos: '10',
-          onTurnChanged: () => {
-            throw new Error('turn change invoked');
-          },
           onGameLog: () => {},
           terminal: NO_TERMINAL,
         }),

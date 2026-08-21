@@ -2,7 +2,7 @@ import { GENERATED_GAME_PACKAGES } from '../generated/gamePackages';
 import type { CatalogGameType } from '../generated/gamePresets';
 import type {
   ComposeDraftValue,
-  DurableGameStateEvent,
+  GameInput,
   GamePackage,
   HandProposal as HostHandProposal,
   SavedHandProposalExtras,
@@ -144,30 +144,58 @@ export function describeReceivedProposal(handProposal: HandProposal): string {
 export function reduceRegisteredGameState(
   gameType: RegisteredGameType,
   current: PersistedGameState | null,
-  event: DurableGameStateEvent,
+  input: GameInput,
 ): PersistedGameState | null {
   const registration = packageFor(gameType);
-  if (event.type === 'feature-state' && event.gameType !== gameType) {
-    throw new Error(
-      `Feature-state registration mismatch: event ${event.gameType}, reducer ${gameType}`,
-    );
-  }
-  if (event.type === 'feature-state' && current !== null && current.gameType !== gameType) {
-    throw new Error(`Feature-state current state does not belong to ${gameType}`);
-  }
   const decoded =
     current !== null && current.gameType === gameType
       ? registration.stateCodec.decode(current)
       : null;
-  if (event.type === 'feature-state' && decoded === null) {
-    throw new Error(`Feature-state current ${gameType} payload is invalid`);
-  }
-  const next = registration.durableState.reduceEvent(decoded, event);
-  if (next === null) return null;
+  const next =
+    input.type === 'hand-started'
+      ? registration.durableState.initialize(decoded, input)
+      : decoded === null
+        ? null
+        : registration.durableState.reduceInput(decoded, input);
+  if (next === null) return current;
   if (!registration.stateCodec.isState(next)) {
     throw new Error(`Internal ${gameType} reducer produced invalid feature state`);
   }
   return registration.stateCodec.encode(next);
+}
+
+export function applyRegisteredFeatureState(
+  gameType: RegisteredGameType,
+  current: PersistedGameState | null,
+  gameId: string,
+  value: unknown,
+): PersistedGameState {
+  const registration = packageFor(gameType);
+  const decoded = current?.gameType === gameType ? registration.stateCodec.decode(current) : null;
+  if (decoded === null) {
+    throw new Error(`Feature-state current ${gameType} payload is invalid`);
+  }
+  const featureState = registration.decodeFeatureState(value);
+  if (featureState === null) {
+    throw new Error(`Invalid ${gameType} feature-state payload`);
+  }
+  const next = registration.durableState.applyFeatureState(decoded, gameId, featureState);
+  if (!registration.stateCodec.isState(next)) {
+    throw new Error(`Internal ${gameType} reducer produced invalid feature state`);
+  }
+  return registration.stateCodec.encode(next);
+}
+
+export function selectRegisteredGameOutcome(
+  gameType: RegisteredGameType,
+  current: PersistedGameState | null,
+  gameId: string,
+): 'win' | 'lose' | 'tie' | null {
+  const registration = packageFor(gameType);
+  const decoded = current?.gameType === gameType ? registration.stateCodec.decode(current) : null;
+  return decoded === null
+    ? null
+    : (registration.selectOutcome(decoded, gameId)?.my_win_outcome ?? null);
 }
 
 export function defaultGameComposeDraft(

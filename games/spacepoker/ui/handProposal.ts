@@ -48,6 +48,10 @@ const registration: GameFeatureRegistration<
   handMembershipDescription: 'exactly one currentHandGameId',
   validateHandMembership: (gameIds) => gameIds.length === 1,
   decodeFeatureState: (value) => (spacepokerStateCodec.isState(value) ? value : null),
+  selectOutcome: (state) =>
+    state.outcome
+      ? { my_win_outcome: state.outcome.result > 0n ? 'win' : state.outcome.result < 0n ? 'lose' : 'tie' }
+      : null,
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
   },
@@ -123,7 +127,13 @@ const registration: GameFeatureRegistration<
     },
   },
   durableState: {
-    reduceEvent: reduceSpacepokerDurableState,
+    initialize(current, input) {
+      return reduceSpacepokerDurableState(current, input)!;
+    },
+    reduceInput(current, input) {
+      return reduceSpacepokerDurableState(current, input)!;
+    },
+    applyFeatureState: (_current, _gameId, state) => state,
   },
 };
 

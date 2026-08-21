@@ -1,9 +1,7 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { EMPTY, Subject } from 'rxjs';
 import {
   KrunkHandler,
-  applyKrunkMoveRejected,
   canDraftKrunkGuess,
   canQueueKrunkGuess,
   isKrunkDictionaryRejectionError,
@@ -23,13 +21,13 @@ import {
   type KrunkProps,
 } from './Krunk';
 import Krunk from './Krunk';
-import { initialKrunkGameState, krunkStateCodec } from './serialize';
 import {
-  type GameTerminalModel,
-  type GameplayEvent,
-  type LiveGamePort,
-  type LocalGameActionRequest,
-} from '../../host';
+  applyKrunkMoveRejected,
+  initialKrunkGameState,
+  krunkStateCodec,
+  type KrunkHandState,
+} from './serialize';
+import { type GameTerminalModel, type LiveGamePort } from '../../host';
 
 function terminal(
   outcome: GameTerminalModel['outcome'] = null,
@@ -77,20 +75,12 @@ describe('Krunk draft continuity', () => {
         },
       },
     });
-    const gameplay = new Subject<GameplayEvent>();
     const renderPhases: string[] = [];
-    const controller = {
-      handState: persisted,
-      makeMove: jest.fn(),
-      commitLocalGameAction: jest.fn(),
-      transitionFeatureState: jest.fn((_, __, state) => state),
-    } as unknown as LiveGamePort;
+    const controller = { dispatch: jest.fn() } as LiveGamePort;
     const baseProps = {
       handSource: { interactionMode: 'live' as const, handState: persisted, port: controller },
       currentHandGameIds: ['picker', 'guesser'],
       activeGameIds: ['picker', 'guesser'],
-      gameplayEvent$: gameplay,
-      onTurnChanged: () => {},
       onGameLog: () => {},
       terminalsById: {},
       amountsById: { picker: '100', guesser: '100' },
@@ -129,13 +119,27 @@ describe('Krunk draft continuity', () => {
     expect(draftLetters()).toEqual(['C', 'R', 'A']);
 
     const pickerTimeout = terminal('opponent_timed_out', '100');
+    const initial = krunkStateCodec.decode(persisted) as KrunkHandState;
+    const pickerSettled = krunkStateCodec.encode({
+      games: {
+        ...initial.games,
+        picker: {
+          ...initial.games.picker,
+          handler: KrunkHandler.Terminal,
+          myTurn: false,
+          outcome: 'win',
+        },
+      },
+    });
     act(() => {
-      gameplay.next({
-        Settled: { gameId: 'picker', outcome: 'opponent_timed_out', ourShare: '100' },
-      });
       renderer!.update(
         renderKrunk({
           ...baseProps,
+          handSource: {
+            interactionMode: 'live',
+            handState: pickerSettled,
+            port: controller,
+          },
           activeGameIds: ['guesser'],
           terminalsById: { picker: pickerTimeout },
         }),
@@ -146,17 +150,27 @@ describe('Krunk draft continuity', () => {
     ).toHaveLength(1);
 
     const guesserTimeout = terminal('timed_out_waiting_for_our_move', '0');
-    act(() => {
-      gameplay.next({
-        Settled: {
-          gameId: 'guesser',
-          outcome: 'timed_out_waiting_for_our_move',
-          ourShare: '0',
+    const pickerState = krunkStateCodec.decode(pickerSettled) as KrunkHandState;
+    const bothSettled = krunkStateCodec.encode({
+      games: {
+        ...pickerState.games,
+        guesser: {
+          ...pickerState.games.guesser,
+          handler: KrunkHandler.Terminal,
+          myTurn: false,
+          outcome: 'lose',
         },
-      });
+      },
+    });
+    act(() => {
       renderer!.update(
         renderKrunk({
           ...baseProps,
+          handSource: {
+            interactionMode: 'live',
+            handState: bothSettled,
+            port: controller,
+          },
           activeGameIds: [],
           terminalsById: { picker: pickerTimeout, guesser: guesserTimeout },
         }),
@@ -172,7 +186,7 @@ describe('Krunk draft continuity', () => {
           ...baseProps,
           activeGameIds: [],
           terminalsById: { picker: pickerTimeout, guesser: guesserTimeout },
-          handSource: { interactionMode: 'terminal', handState: persisted },
+          handSource: { interactionMode: 'terminal', handState: bothSettled },
         }),
       );
     });
@@ -190,7 +204,7 @@ describe('Krunk draft continuity', () => {
     }
   });
 
-  it('does not retry a feature transition when durable authority rejects the commit', () => {
+  it('does not keep a local durable projection when intent dispatch fails', () => {
     const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -199,9 +213,7 @@ describe('Krunk draft continuity', () => {
         removeEventListener: jest.fn(),
       },
     });
-    const makeMove = jest.fn();
-    const transitionFeatureState = jest.fn(() => false);
-    const commitLocalGameAction = jest.fn(() => {
+    const dispatch = jest.fn(() => {
       throw new Error('word rejected');
     });
     const persisted = krunkStateCodec.encode({
@@ -218,16 +230,10 @@ describe('Krunk draft continuity', () => {
           handSource: {
             interactionMode: 'live',
             handState: persisted,
-            port: {
-              makeMove,
-              commitLocalGameAction,
-              transitionFeatureState,
-            } as unknown as LiveGamePort,
+            port: { dispatch },
           },
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['picker', 'guesser'],
-          gameplayEvent$: EMPTY,
-          onTurnChanged: () => {},
           onGameLog: () => {},
           terminalsById: {},
           amountsById: { picker: '100', guesser: '100' },
@@ -243,9 +249,17 @@ describe('Krunk draft continuity', () => {
     const pick = root.findAllByType('button').find((button) => button.props.children === 'Pick');
     expect(() => act(() => pick!.props.onClick())).toThrow('word rejected');
 
-    expect(commitLocalGameAction).toHaveBeenCalledTimes(1);
-    expect(transitionFeatureState).not.toHaveBeenCalled();
-    expect(makeMove).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'make-move',
+        gameId: 'picker',
+        state: expect.objectContaining({
+          handler: KrunkHandler.AliceWaiting,
+          secretWord: 'CRANE',
+        }),
+      }),
+    );
     act(() => renderer!.unmount());
     if (windowDescriptor) {
       Object.defineProperty(globalThis, 'window', windowDescriptor);
@@ -263,12 +277,7 @@ describe('Krunk draft continuity', () => {
         removeEventListener: jest.fn(),
       },
     });
-    const makeMove = jest.fn();
-    const transitionFeatureState = jest.fn(() => true);
-    const commitLocalGameAction = jest.fn((request: LocalGameActionRequest) => {
-      if (request.command.type !== 'make-move') throw new Error('unexpected command');
-      makeMove(request.id, request.command.readable);
-    });
+    const dispatch = jest.fn();
     const persisted = krunkStateCodec.encode({
       games: {
         picker: initialKrunkGameState('alice'),
@@ -283,16 +292,10 @@ describe('Krunk draft continuity', () => {
           handSource: {
             interactionMode: 'live',
             handState: persisted,
-            port: {
-              makeMove,
-              commitLocalGameAction,
-              transitionFeatureState,
-            } as unknown as LiveGamePort,
+            port: { dispatch },
           },
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['guesser'],
-          gameplayEvent$: EMPTY,
-          onTurnChanged: () => {},
           onGameLog: () => {},
           terminalsById: {},
           amountsById: { picker: '100', guesser: '100' },
@@ -311,17 +314,16 @@ describe('Krunk draft continuity', () => {
     expect(pick!.props.disabled).toBe(false);
     act(() => pick!.props.onClick());
 
-    expect(commitLocalGameAction).toHaveBeenCalledWith(
+    expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        gameType: 'krunk',
-        id: 'picker',
+        type: 'make-move',
+        gameId: 'picker',
         state: expect.objectContaining({
           handler: KrunkHandler.AliceWaiting,
           secretWord: 'CRANE',
         }),
       }),
     );
-    expect(makeMove).toHaveBeenCalledWith('picker', expect.anything());
     act(() => renderer!.unmount());
     if (windowDescriptor) {
       Object.defineProperty(globalThis, 'window', windowDescriptor);

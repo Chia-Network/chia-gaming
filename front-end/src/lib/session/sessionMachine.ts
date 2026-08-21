@@ -118,16 +118,14 @@ export function reduceSessionMachine(
       return reduceProposalEvent(state, event);
 
     case 'game':
-    case 'hand-outcome':
     case 'notification-accepted-group':
     case 'notification-game-status':
     case 'notification-game-terminal':
+    case 'notification-move-rejected':
     case 'notification-insufficient-balance':
     case 'notification-abandoned':
     case 'feature-state':
-    case 'feature-state-with-local-turn':
     case 'local-game-action-committed':
-    case 'durable-local-turn':
       return reduceDurableGameEvent(state, event);
 
     default:

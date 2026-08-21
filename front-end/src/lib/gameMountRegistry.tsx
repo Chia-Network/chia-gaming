@@ -1,27 +1,30 @@
 import { cloneElement, type ReactElement } from 'react';
 import {
   type FrozenGameMountOptions,
-  type FrozenGameView,
   type GameMountNames,
-  type LiveGameView,
+  type GameMountView,
+  requireLiveGameHandSource,
 } from '@games/host';
 import { isCatalogGameType, packageFor } from './gameRegistry';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { SessionModel } from './session/model';
 
-export function frozenGameViewFromModel(model: SessionModel): FrozenGameView {
-  return {
-    lastDisplayedId: model.game.lastDisplayedId,
-    currentHandIds: model.game.currentHandIds,
-    activeIds: model.game.activeIds,
-    handState: model.game.handState,
-    instances: Object.fromEntries(
-      Object.entries(model.game.instances).map(([id, instance]) => [
-        id,
-        { terminal: instance.terminal, amount: instance.amount },
-      ]),
-    ),
-  };
+function gameInstances(model: SessionModel): GameMountView['instances'] {
+  return Object.fromEntries(
+    Object.entries(model.game.instances).map(([id, instance]) => [
+      id,
+      { terminal: instance.terminal, amount: instance.amount },
+    ]),
+  );
+}
+
+function canActById(model: SessionModel): GameMountView['canActById'] {
+  return Object.fromEntries(
+    Object.entries(model.game.instances).map(([id, instance]) => [
+      id,
+      instance.presentation === 'off-chain-my-turn' || instance.presentation === 'on-chain-my-turn',
+    ]),
+  );
 }
 
 export function renderLiveGameMount(
@@ -30,27 +33,28 @@ export function renderLiveGameMount(
 ): ReactElement {
   const gameType = session.gameSpecificView.gameType;
   if (!isCatalogGameType(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
-  const view: LiveGameView = {
+  const common = {
     handOrigin: session.handOrigin,
-    handSource: session.handSource,
-    activeGameId: session.activeGameId,
-    activeGameIds: session.activeGameIds,
-    currentHandGameIds: session.currentHandGameIds,
+    handState: session.sessionModel.game.handState,
+    lastDisplayedId: session.sessionModel.game.lastDisplayedId,
+    activeIds: session.sessionModel.game.activeIds,
+    currentHandIds: session.sessionModel.game.currentHandIds,
+    canActById: canActById(session.sessionModel),
     iStarted: session.iStarted,
     playerNumber: session.playerNumber,
-    gameplayEvent$: session.gameplayEvent$,
-    appendGameLog: session.appendGameLog,
-    onHandOutcome: session.onHandOutcome,
-    onTurnChanged: session.onTurnChanged,
-    gameSpecificView: {
-      gameType,
-      displayGameId: session.gameSpecificView.displayGameId,
-      terminal: session.gameSpecificView.terminal,
-      terminalsById: session.gameSpecificView.terminalsById,
-      amountsById: session.gameSpecificView.amountsById,
-    },
+    instances: gameInstances(session.sessionModel),
+    ...names,
   };
-  return cloneElement(packageFor(gameType).renderLive(view, names), {
+  const view: GameMountView =
+    session.handSource.interactionMode === 'terminal'
+      ? { ...common, frozen: true }
+      : {
+          ...common,
+          frozen: false,
+          port: requireLiveGameHandSource(session.handSource),
+          appendGameLog: session.appendGameLog,
+        };
+  return cloneElement(packageFor(gameType).render(view), {
     key: session.handKey,
   });
 }
@@ -61,7 +65,21 @@ export function renderFrozenGameMount(
 ): ReactElement {
   const gameType = model.game.handState?.gameType ?? model.game.activeGameType;
   if (!isCatalogGameType(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
-  return cloneElement(packageFor(gameType).renderFrozen(frozenGameViewFromModel(model), options), {
+  const view: GameMountView = {
+    frozen: true,
+    handOrigin: 'terminal',
+    handState: model.game.handState,
+    lastDisplayedId: model.game.lastDisplayedId,
+    currentHandIds: model.game.currentHandIds,
+    activeIds: model.game.activeIds,
+    canActById: canActById(model),
+    instances: gameInstances(model),
+    iStarted: options.iStarted,
+    playerNumber: options.iStarted ? 1 : 2,
+    myName: options.myName,
+    opponentName: options.opponentName,
+  };
+  return cloneElement(packageFor(gameType).render(view), {
     key: model.game.handKey,
   });
 }

@@ -827,6 +827,22 @@ export class SessionController implements PollingGameSession {
     this.assertActionSucceeded(result, action);
   }
 
+  private processGameCommandResult(
+    result: WasmResult | undefined,
+    action: string,
+    gameId: string,
+  ): boolean {
+    const required = requireWasmResult(result);
+    const rejected = required.events.some(
+      (event) =>
+        'Notification' in event &&
+        event.Notification.MoveRejected?.id != null &&
+        String(event.Notification.MoveRejected.id) === gameId,
+    );
+    this.processCommandResult(required, action);
+    return !rejected;
+  }
+
   private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
     return 'Notification' in event || 'Log' in event || 'ReceiveError' in event;
   }
@@ -1580,12 +1596,12 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  makeMove(gameId: string, readable: Program | null): void {
+  makeMove(gameId: string, readable: Program | null): boolean {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const bytes = clvmToBytes(readable);
       const result = this.cradle.make_move(gameId, bytes);
-      this.processCommandResult(result, 'make move');
+      return this.processGameCommandResult(result, 'make move', gameId);
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
@@ -1600,11 +1616,11 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  acceptSettlement(gameId: string): void {
+  acceptSettlement(gameId: string): boolean {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.acceptSettlement(gameId);
-      this.processCommandResult(result, 'accept settlement');
+      return this.processGameCommandResult(result, 'accept settlement', gameId);
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
@@ -1619,11 +1635,11 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  cheat(gameId: string, moverShare: bigint): void {
+  cheat(gameId: string, moverShare: bigint): boolean {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.cheat(gameId, moverShare);
-      this.processCommandResult(result, 'cheat');
+      return this.processGameCommandResult(result, 'cheat', gameId);
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cheat failed:', msg);

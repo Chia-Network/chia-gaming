@@ -1,13 +1,10 @@
 import { lazy, useCallback } from 'react';
-import { EMPTY, type Observable } from 'rxjs';
 import {
   EMPTY_GAME_TERMINAL_MODEL,
-  terminalGameHandSource,
-  type FrozenGameView,
+  gameHandSourceFromMountView,
   type GameHandOrigin,
   type GameHandSource,
   type GameMountRegistration,
-  type GameplayEvent,
   type GameTerminalModel,
 } from '../../host';
 import { useGameHost } from '../../host/ui';
@@ -17,7 +14,7 @@ import type {
 } from './types/CaliforniapokerProps';
 import { useCalpokerHand } from './useCalpokerHand';
 import type { CalpokerDisplaySnapshot } from './serialize';
-import type { CalpokerOutcome } from './outcome';
+import type { CalpokerOutcomeShape } from './outcome';
 
 const Calpoker = lazy(() => import('./Calpoker'));
 
@@ -34,10 +31,7 @@ export interface CalpokerLiveMountProps {
   gameId: string;
   iStarted: boolean;
   playerNumber: number;
-  gameplayEvent$: Observable<GameplayEvent>;
-  onOutcome: (outcome: CalpokerOutcome) => void;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
-  appendGameLog: (line: string) => void;
+  appendGameLog?: (line: string) => void;
   perGameAmount: bigint;
   myName?: string;
   opponentName?: string;
@@ -68,7 +62,9 @@ function snapshotModel(snapshot: CalpokerDisplaySnapshotView): CalpokerDisplaySn
   };
 }
 
-function outcomeView(outcome: CalpokerOutcome | undefined): CalpokerOutcomeView | undefined {
+function outcomeView(
+  outcome: CalpokerOutcomeShape<bigint> | undefined,
+): CalpokerOutcomeView | undefined {
   if (!outcome) return undefined;
   return {
     my_win_outcome: outcome.my_win_outcome,
@@ -89,9 +85,6 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     gameId,
     iStarted,
     playerNumber,
-    gameplayEvent$,
-    onOutcome,
-    onTurnChanged,
     appendGameLog,
     perGameAmount,
     myName,
@@ -100,22 +93,10 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
     handOrigin = 'fresh',
   } = props;
   const { formatAmount } = useGameHost();
-  const handleTurnChanged = useCallback(
-    (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
-    [gameId, onTurnChanged],
-  );
-  const hand = useCalpokerHand(
-    handSource,
-    gameId,
-    iStarted,
-    gameplayEvent$,
-    onOutcome,
-    handleTurnChanged,
-    terminal,
-    handOrigin,
-  );
+  const hand = useCalpokerHand(handSource, gameId, iStarted, terminal, handOrigin);
   const handleGameLog = useCallback(
     (lines: string[]) => {
+      if (!appendGameLog) return;
       appendGameLog(`California Poker ${formatAmount(perGameAmount)}`);
       lines.forEach(appendGameLog);
       appendGameLog('');
@@ -142,7 +123,6 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
       }
       handleMakeMove={hand.handleMakeMove}
       handleCheat={hand.handleCheat}
-      handleNerf={hand.handleNerf}
       onGameLog={handleGameLog}
       onSnapshotChange={(snapshot) => hand.saveDisplaySnapshot(snapshotModel(snapshot))}
       initialSnapshot={snapshotView(hand.initialDisplaySnapshot)}
@@ -155,38 +135,17 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
 }
 
 export const play: GameMountRegistration = {
-  renderLive(session, names) {
-    const gameId = session.activeGameId ?? session.gameSpecificView.displayGameId ?? '';
-    return (
-      <CalpokerLiveMount
-        handSource={session.handSource}
-        gameId={gameId}
-        iStarted={session.iStarted}
-        playerNumber={session.playerNumber}
-        gameplayEvent$={session.gameplayEvent$}
-        onOutcome={session.onHandOutcome}
-        onTurnChanged={session.onTurnChanged}
-        appendGameLog={session.appendGameLog}
-        perGameAmount={amountForGame(session.gameSpecificView.amountsById, gameId)}
-        terminal={session.gameSpecificView.terminal}
-        handOrigin={session.handOrigin}
-        {...names}
-      />
-    );
-  },
-  renderFrozen(view: FrozenGameView, options) {
+  render(view) {
     const gameId =
-      view.lastDisplayedId ?? view.currentHandIds[0] ?? view.activeIds[0] ?? 'finished';
+      view.activeIds[0] ?? view.lastDisplayedId ?? view.currentHandIds[0] ?? 'finished';
+    const source = gameHandSourceFromMountView(view);
     return (
       <CalpokerLiveMount
-        handSource={terminalGameHandSource(view.handState)}
+        handSource={source}
         gameId={gameId}
-        iStarted={options.iStarted}
-        playerNumber={options.iStarted ? 1 : 2}
-        gameplayEvent$={EMPTY}
-        onOutcome={() => {}}
-        onTurnChanged={() => {}}
-        appendGameLog={() => {}}
+        iStarted={view.iStarted}
+        playerNumber={view.playerNumber}
+        appendGameLog={view.frozen ? undefined : view.appendGameLog}
         perGameAmount={amountForGame(
           Object.fromEntries(
             Object.entries(view.instances).map(([id, instance]) => [id, instance.amount]),
@@ -194,9 +153,9 @@ export const play: GameMountRegistration = {
           gameId,
         )}
         terminal={view.instances[gameId]?.terminal ?? EMPTY_GAME_TERMINAL_MODEL}
-        handOrigin="terminal"
-        myName={options.myName}
-        opponentName={options.opponentName}
+        handOrigin={view.handOrigin}
+        myName={view.myName}
+        opponentName={view.opponentName}
       />
     );
   },

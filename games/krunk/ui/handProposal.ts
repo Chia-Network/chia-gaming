@@ -16,6 +16,7 @@ import {
 } from './serialize';
 
 export {
+  applyKrunkMoveRejected,
   krunkOutcomeFromPlay,
   reduceKrunkDurableState,
   reduceKrunkFeatureState,
@@ -73,6 +74,10 @@ const registration: GameFeatureRegistration<
     );
   },
   decodeFeatureState: decodeKrunkGameState,
+  selectOutcome: (state, gameId) => {
+    const outcome = state.games[gameId]?.outcome;
+    return outcome ? { my_win_outcome: outcome } : null;
+  },
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
   },
@@ -106,7 +111,15 @@ const registration: GameFeatureRegistration<
     },
   },
   durableState: {
-    reduceEvent: reduceKrunkDurableState,
+    initialize(current, input) {
+      return reduceKrunkDurableState(current, input)!;
+    },
+    reduceInput(current, input) {
+      return reduceKrunkDurableState(current, input)!;
+    },
+    applyFeatureState(current, gameId, state) {
+      return { games: { ...current.games, [gameId]: state } };
+    },
   },
 };
 

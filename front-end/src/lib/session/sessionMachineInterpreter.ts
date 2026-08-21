@@ -3,7 +3,6 @@ import { protocolIdForCatalog } from '../gameIdentities';
 import { encodeGameProposalParameters } from '../gameProposalCodec';
 import { validateHandProposal } from '../gameRegistry';
 import { coinIdHex } from './gameSessionEvents';
-import type { GameplayEvent } from '@games/host';
 import type {
   SessionMachineEffect,
   SessionMachineEvent,
@@ -20,7 +19,6 @@ export interface SessionMachineInterpreterDependencies {
   getState(): SessionMachineState;
   dispatch(event: SessionMachineEvent): void;
   persist(): Promise<void>;
-  emitGameplay(event: GameplayEvent): void;
   onError(error: unknown): void;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
@@ -32,17 +30,14 @@ export class SessionMachineInterpreter {
 
   constructor(private readonly dependencies: SessionMachineInterpreterDependencies) {}
 
-  runLocalGameCommand(command: LocalGameCommand, id: string): void {
+  runLocalGameCommand(command: LocalGameCommand, id: string): boolean {
     switch (command.type) {
       case 'make-move':
-        this.dependencies.controller.makeMove(id, command.readable);
-        return;
+        return this.dependencies.controller.makeMove(id, command.readable);
       case 'accept-settlement':
-        this.dependencies.controller.acceptSettlement(id);
-        return;
+        return this.dependencies.controller.acceptSettlement(id);
       case 'cheat':
-        this.dependencies.controller.cheat(id, command.moverShare);
-        return;
+        return this.dependencies.controller.cheat(id, command.moverShare);
     }
   }
 
@@ -147,9 +142,6 @@ export class SessionMachineInterpreter {
         return;
       case 'persist-session':
         void dependencies.persist().catch(dependencies.onError);
-        return;
-      case 'emit-gameplay':
-        dependencies.emitGameplay(effect.event);
         return;
       case 'request-coin-enrichment':
         void (dependencies.enrichCoin ?? coinIdHex)(effect.coin)

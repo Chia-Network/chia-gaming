@@ -1,5 +1,5 @@
-import type { GameplayEvent } from '@games/host';
 import type { ChannelStatus } from '../types/ChiaGaming';
+import type { SessionModel } from './session/types';
 
 /** Outcomes that mean a voluntary game-level accept (not a hand proposal). */
 const SETTLEMENT_ACCEPT_OUTCOMES = new Set(['accept_settlement', 'we_accepted']);
@@ -8,10 +8,26 @@ const SETTLEMENT_ACCEPT_OUTCOMES = new Set(['accept_settlement', 'we_accepted'])
  * Gameplay events that should set the Game tab unread badge when the user
  * is on another tab. In-game Message / GameMessage is intentionally excluded.
  */
-export function gameplayEventNeedsGameTabAttention(evt: GameplayEvent): boolean {
-  if ('OpponentMoved' in evt) return true;
-  if ('Settled' in evt) {
-    return SETTLEMENT_ACCEPT_OUTCOMES.has(evt.Settled.outcome);
+export function gameModelNeedsGameTabAttention(
+  previous: SessionModel['game'],
+  current: SessionModel['game'],
+): boolean {
+  for (const [id, instance] of Object.entries(current.instances)) {
+    const before = previous.instances[id];
+    const becameOurTurn =
+      before !== undefined &&
+      before.presentation !== instance.presentation &&
+      (instance.presentation === 'off-chain-my-turn' ||
+        instance.presentation === 'on-chain-my-turn');
+    if (becameOurTurn && previous.handState !== current.handState) return true;
+
+    if (
+      before?.terminal.outcome !== instance.terminal.outcome &&
+      instance.terminal.outcome != null &&
+      SETTLEMENT_ACCEPT_OUTCOMES.has(instance.terminal.outcome)
+    ) {
+      return true;
+    }
   }
   return false;
 }

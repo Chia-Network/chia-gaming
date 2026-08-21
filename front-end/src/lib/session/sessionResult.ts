@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Observable } from 'rxjs';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import { terminalGameHandSource, type GameHandOrigin, type GameHandSource } from '@games/host';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
-import type { ComposeDraftValue, GameplayEvent, HandWinOutcome } from '@games/host';
+import type { ComposeDraftValue } from '@games/host';
 import type {
   BetweenHandModeModel,
   ChannelStatusModel,
@@ -44,10 +43,7 @@ export interface UseGameSessionResult {
   activeGameType: HandProposal['gameType'];
   displayGameId: string | null;
   handSource: GameHandSource;
-  gameplayEvent$: Observable<GameplayEvent>;
   appendGameLog: (line: string) => void;
-  onHandOutcome: (outcome: HandWinOutcome) => void;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   betweenHandMode: BetweenHandModeModel;
   incomingProposalGroup: ProposalGroupModel | null;
   lastHandProposal: HandProposal | null;
@@ -137,7 +133,6 @@ export function useTerminalSessionPresentation(
 export function projectTerminalSessionResult(
   live: UseGameSessionResult,
   presentation: TerminalSessionPresentation,
-  gameplayEvent$: Observable<GameplayEvent>,
   dismissals?: Pick<TerminalSessionPresentationState, 'dismissChannel' | 'dismissGame'>,
 ): UseGameSessionResult {
   const { model, iStarted } = presentation;
@@ -163,10 +158,7 @@ export function projectTerminalSessionResult(
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
     handSource: terminalGameHandSource(model.game.handState),
-    gameplayEvent$,
     appendGameLog: NOOP,
-    onHandOutcome: NOOP,
-    onTurnChanged: NOOP,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: selectIncomingProposalGroup(model),
     lastHandProposal: model.betweenHand.lastHandProposal,

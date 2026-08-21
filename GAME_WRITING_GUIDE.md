@@ -162,6 +162,38 @@ export function HandProposalForm(props: HandProposalFormProps<MyDraft>) {
 }
 ```
 
+### Proposal form API
+
+The complete package-facing form contract is:
+
+```ts
+interface HandProposalFormProps<TDraft> {
+  draft: TDraft;
+  disabled: boolean;
+  maxPerHandMojos: bigint | null;
+  onChange: (update: Partial<TDraft>) => void;
+  onSubmit: () => void;
+}
+```
+
+- `draft` is the current game-specific draft. Treat it as immutable.
+- `disabled` is true after submission while the host is preventing another
+  proposal. Disable every editable control and submit action when it is true.
+- `maxPerHandMojos` is the largest currently available contribution per player,
+  in mojos. `null` means the host cannot provide a balance-derived limit; it
+  does not make an otherwise invalid draft valid.
+- `onChange(update)` sends a partial draft update to the host. The host passes
+  the current draft and this update to `draft.update`; the form must not assume
+  that a shallow merge is sufficient.
+- `onSubmit()` asks the host to submit. The host calls `draft.toHandProposal`,
+  validates the result and the balance limit again, and does nothing if those
+  checks fail. The form may use normal form submission or call this callback
+  from its submit button.
+
+The host owns the game selector and `gameTimeout`; they are deliberately absent
+from this interface. The game form owns only game-specific draft fields. A form
+must not send a proposal or call protocol APIs itself.
+
 Implement the conversion and validation in `handProposal.ts`. Its registration
 must provide:
 
@@ -191,6 +223,76 @@ The same registration translates between a `HandProposal` and CLVM:
 The host provides `readClvmProgram`, `readClvmAtom`, `readClvmFlag`, and
 `readClvmList` to help write strict decoders.
 
+### Proposal and factory-parameter decoder API
+
+Common proposal terms are always supplied separately from the game factory
+parameters:
+
+```ts
+interface HandProposalBase {
+  myContribution: bigint;
+  theirContribution: bigint;
+  gameTimeout: bigint;
+}
+
+type HandProposal = HandProposalBase & {
+  gameType: string;
+  // A package may add validated game-specific fields.
+};
+
+interface FactoryParameterCodec<TParams> {
+  decode(value: unknown): TParams | null;
+  encode(params: TParams): Program;
+}
+
+interface ProposalCodec<TParams> {
+  factoryParameters: FactoryParameterCodec<TParams>;
+  toFactoryParameters(handProposal: HandProposal, iStarted: boolean): TParams;
+  decodeHandProposal(base: HandProposalBase, params: TParams): HandProposal | null;
+}
+```
+
+`toFactoryParameters` receives validated proposal terms and whether this client
+started the session. It returns the typed game-specific value consumed by
+`factoryParameters.encode`. `encode` returns the CLVM `Program` passed to the
+factory; the host handles serialization.
+
+Decoding is intentionally two-stage:
+
+1. `factoryParameters.decode(value)` receives untrusted data, normally
+   serialized CLVM bytes. It must validate the complete CLVM shape and every
+   value, returning typed parameters or `null`. Malformed peer data is expected
+   at this boundary and must not throw.
+2. `decodeHandProposal(base, params)` combines the already-decoded common terms
+   with the typed parameters. It must reject contradictions between duplicated
+   values, add the package's `gameType` and game-specific proposal fields, run
+   the complete proposal validation, and return `null` on any mismatch.
+
+The host verifies that a non-null proposal has the registration's catalog
+`gameType`. Do not trust a type assertion or silently repair inconsistent peer
+data.
+
+The strict CLVM readers have these exact contracts:
+
+```ts
+readClvmProgram(value: unknown): Program | null;
+readClvmAtom(program: Program): bigint | null;
+readClvmFlag(program: Program): boolean | null;
+readClvmList(program: Program, length: number): readonly Program[] | null;
+```
+
+- `readClvmProgram` accepts only a `Uint8Array` containing one deserializable
+  program.
+- `readClvmAtom` accepts only a value convertible to a CLVM integer.
+- `readClvmFlag` accepts exactly integer `0` or `1`.
+- `readClvmList` accepts a proper list with exactly `length` members.
+
+These helpers validate representation, not game rules. The decoder must still
+check positivity, ranges, cross-field relationships, and consistency with
+`HandProposalBase`. Test a valid encode/decode round trip, malformed bytes,
+wrong list lengths and shapes, invalid values, and another game's parameter
+encoding.
+
 ## Step 5: Save and update the UI state
 
 The protocol state in Rust is not enough to restore every detail of a React
@@ -209,16 +311,13 @@ Create `stateCodec` with `defineGameStateCodec`. The codec:
 Do not accept malformed saved data by casting it. `decode` is a trust boundary,
 so `isState` must verify every field your UI relies on.
 
-Also implement `durableState.reduceEvent`. This reducer updates the saved UI
-state when the host reports:
+Also implement the three `durableState` operations:
 
-- `accepted-group`: the proposal was accepted and the hand started.
-- `game-status`: the protocol state or readable game data changed.
-- `local-turn`: the local turn flag changed.
-- `settled`: the game finished.
-- `remove-group`: this group was removed.
-- `abandoned`: the session was abandoned.
-- `feature-state`: the game UI committed one of its own state changes.
+- `initialize` creates one keyed hand from the normalized `hand-started` input.
+- `reduceInput` applies `opponent-moved`, `game-message`, `move-rejected`, and
+  `hand-ended`.
+- `applyFeatureState` places an accepted local feature state into the hand
+  envelope. This matters for a multi-ID package such as Krunk.
 
 Keep the reducer pure. Given the same current state and event, it must return
 the same next state.
@@ -231,18 +330,18 @@ in-progress or finished UI state.
 ## Step 6: Build the play UI
 
 Implement `play.tsx` and export a `GameMountRegistration` named `play`. It has
-two rendering functions:
+one `render(view)` function. Every render receives the current decoded-state
+envelope, ordered and active IDs, accepted amounts, terminal results, names, and
+`frozen`.
 
-- `renderLive(session, names)` renders a hand that can still send commands.
-- `renderFrozen(view, options)` renders a finished or restored hand without
-  allowing protocol commands.
+`frozen` is the type discriminant:
 
-The live view provides active game IDs, accepted game amounts, gameplay events,
-turn callbacks, durable game state, and display names. The frozen view provides
-the same accepted-game information in read-only form with final results.
-Neither view receives the `HandProposal`: use the `accepted-group` reducer to
-copy any game-specific proposal settings into durable state when the hand
-starts.
+- `frozen: false` includes the typed intent port.
+- `frozen: true` has no protocol capability.
+
+The host applies proposal terms through `durableState.initialize`; the mounted
+hand never receives proposal, group, abandonment, connection, or on-chain
+lifecycle objects.
 
 These functions return React elements; they are not imperative drawing
 callbacks. React may call them again when session state changes, then preserves
@@ -251,28 +350,127 @@ unchanged. The host applies its `handKey` to the returned element, which
 intentionally starts a fresh component lifecycle for each new hand. Game code
 does not need to add a React key or manage this lifecycle itself.
 
-Use `requireLiveGameHandSource` before sending a command. This prevents a
-finished or historical view from accidentally acting on the live protocol.
-Use `terminalGameHandSource` when constructing a read-only source.
+Use `requireLiveGameHandSource` before dispatching an intent. The complete
+outgoing contract is:
 
-The main command boundary is `commitLocalGameAction`. Submit one of these
-`LocalGameCommand` values:
+```ts
+type GameIntent<TState> =
+  | { type: 'update-local-state'; state: TState }
+  | { type: 'make-move'; gameId: string; readable: Program | null; state: TState }
+  | { type: 'accept-settlement'; gameId: string; state: TState }
+  | { type: 'cheat'; gameId: string; moverShare: bigint; state: TState };
+```
 
-- `make-move` for a normal game action.
-- `accept-settlement` when the player agrees to finish the game.
-- `cheat` only for game-specific testing or deliberate cheat controls.
+- `update-local-state` persists game-owned UI state without a protocol command.
+  It is currently available only to a single-ID hand; multi-ID packages update
+  a member through a protocol intent.
+- `make-move` asks the local CLVM handler to process `readable`. `null` means
+  CLVM nil. `state` is the candidate game-owned feature state for `gameId`.
+- `accept-settlement` accepts the result for `gameId` and carries the candidate
+  feature state to persist on acceptance.
+- `cheat` deliberately invokes the diagnostic illegal-move path with a
+  mojo-denominated `moverShare` and candidate feature state. It is not a normal
+  gameplay fallback.
 
-The host sends normalized `GameplayEvent` values to the UI:
+The command and candidate commit atomically: an immediate command failure
+throws, and `move-rejected` leaves the candidate uncommitted. Unexpected
+`ActionFailed` errors go to the shared host error UX, not back into game state.
+For accepted protocol intents, the host applies `state` through
+`durableState.applyFeatureState(currentHand, gameId, state)`. Therefore `state`
+is the state of the addressed game feature; it is the whole hand only when the
+package's hand and feature state are the same type.
 
-- `OpponentMoved` contains readable data from an opponent's move.
-- `GameMessage` contains an informational game message.
-- `MoveRejected` explains why a local move was rejected.
-- `Settled` reports the final settlement.
-- `GameError` reports a failed action or terminal operation.
+The complete incoming contract is:
 
-These events are intentionally independent of the raw WASM notification
-format. A game should not import frontend session code to interpret WASM
-messages.
+```ts
+type ProposalGroupOrigin = 'local' | 'peer';
+
+interface GameHandInitialization {
+  id: string;
+  gameIds: readonly string[];
+  iStarted: boolean;
+  canAct: boolean;
+  origin: ProposalGroupOrigin;
+  handProposal: HandProposal;
+}
+
+type GameInput<TInit = GameHandInitialization> =
+  | { type: 'hand-started'; init: TInit }
+  | {
+      type: 'opponent-moved';
+      gameId: string;
+      readable: Uint8Array;
+      moverShare: string;
+    }
+  | { type: 'game-message'; gameId: string; readable: Uint8Array }
+  | { type: 'move-rejected'; gameId: string; tag: string; message: string }
+  | { type: 'hand-ended'; gameId: string; terminal: GameTerminalModel };
+```
+
+- `hand-started` initializes or extends one accepted hand. `init.id` is the game
+  ID whose acceptance triggered this input; `gameIds` is the authoritative
+  ordered membership and may contain more than one ID. A multi-ID group can
+  receive this input as its member acceptances arrive, so `initialize(current,
+input)` must preserve already-initialized member state. `iStarted` identifies
+  the local session initiator, `canAct` is the initial local action capability,
+  `origin` says whether the accepted proposal was local or peer-authored, and
+  `handProposal` contains the validated accepted terms. These are normalized
+  initialization facts, not proposal-lifecycle events.
+- `opponent-moved` addresses one member of the hand. `readable` is the
+  serialized CLVM readable returned by the opponent-move handler.
+  `moverShare` is a decimal mojo string because it originated at the WASM
+  boundary.
+- `game-message` carries serialized advisory readable data for one member. It
+  does not itself imply a move, turn change, or protocol-state transition.
+- `move-rejected` reports an expected local-handler rejection for one member.
+  `tag` is the game-defined machine-readable category and `message` is its
+  displayable explanation. The candidate state from the rejected intent was not
+  committed.
+- `hand-ended` supplies the normalized terminal model for one member. Multi-ID
+  hands receive independent terminal inputs as their members finish.
+
+The exact terminal payload is:
+
+```ts
+type SettlementOutcome =
+  | 'accept_settlement'
+  | 'settled_cleanly'
+  | 'opponent_timed_out'
+  | 'forfeited_skipped_reveal'
+  | 'lost'
+  | 'forfeited_we_accepted'
+  | 'we_accepted'
+  | 'attempt_to_move_failed'
+  | 'timed_out_waiting_for_our_move'
+  | 'slashed_opponent'
+  | 'opponent_slashed_us'
+  | 'opponent_cheated';
+
+type GameTerminalType =
+  | 'none'
+  | 'settled'
+  | 'insufficient-balance'
+  | 'ended-cancelled'
+  | 'game-error';
+
+interface GameTerminalModel {
+  type: GameTerminalType;
+  outcome: SettlementOutcome | null;
+  label: string | null;
+  myReward: string | null;
+  rewardCoinHex: string | null;
+}
+```
+
+`outcome` is the normalized protocol settlement outcome when one exists.
+`myReward` is a decimal mojo string, and `rewardCoinHex` is the reward coin ID
+as hexadecimal. `label` is host-provided presentation text. A game should
+branch on structured `type` and `outcome`, not parse `label`.
+
+These inputs update the machine-owned hand model before React renders. There is
+no event observable or local echo. Protocol turn, timeout, replay, spending,
+freezing, proposal lifecycle, removal, abandonment, transport, persistence,
+and shared error reporting remain host-owned.
 
 The host also provides shared UI helpers through `games/host`, including
 `AmountInput`, `useGameHost`, amount formatting, settlement labels, and
@@ -284,7 +482,7 @@ Game UI code and game tests may import:
 
 - `games/host`, usually through `../../host`
 - Other files inside the same game package
-- `react`, `rxjs`, and `clvm-lib`
+- `react` and `clvm-lib`
 
 They must not import from `front-end/` or use the frontend `@/` alias. This
 keeps a game portable and prevents circular dependencies. The isolation test
@@ -296,7 +494,6 @@ The following are frontend implementation details, not APIs for games:
 
 - Raw WASM payload types such as `GameStatus`, `ActionFailed`, and
   `ProposalMade`
-- [`front-end/src/lib/wasm/gameplayEvents.ts`](front-end/src/lib/wasm/gameplayEvents.ts)
 - [`front-end/src/lib/gameProposalCodec.ts`](front-end/src/lib/gameProposalCodec.ts)
 - The session model, `useGameSession`, and the catalog-to-protocol-ID mapping
 
@@ -312,9 +509,11 @@ Before considering the game complete, check that:
 - The proposal form converts to and from `HandProposal` correctly.
 - Factory parameter encoding and decoding round-trip.
 - The state codec rejects malformed values and round-trips valid state.
-- `durableState.reduceEvent` handles starting, playing, settling, removing, and
-  restoring a hand.
-- Live and frozen views render the expected game state.
+- `durableState` handles every incoming input and validates every local state.
+- Every outgoing intent is tested for accepted, rejected, and unexpected-failure
+  behavior.
+- Live and frozen branches of the single mount render the expected game state,
+  and the frozen branch cannot dispatch.
 - The full project test suite passes through `./ct.sh`.
 
 For detailed handler and validator examples, see

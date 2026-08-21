@@ -39,12 +39,13 @@ const testIndexedDb = indexedDB;
 const liveCradle = new Uint8Array([1, 2, 3]);
 const handState = {
   gameType: 'calpoker',
-  version: 1n,
+  version: 2n,
   state: {
     playerHand: [8n, 7n, 6n, 5n],
     opponentHand: [4n, 3n, 2n, 1n],
     moveNumber: 1n,
     isPlayerTurn: true,
+    iStarted: true,
     cardSelections: [8n, 7n],
     displaySnapshot: {
       gameState: 'selecting',
@@ -648,7 +649,17 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   });
   let terminalHand = krunkStateCodec.decode(acceptedHandState)!;
   for (const settledId of ids) {
-    terminalHand = reduceKrunkDurableState(terminalHand, { type: 'settled', id: settledId })!;
+    terminalHand = reduceKrunkDurableState(terminalHand, {
+      type: 'hand-ended',
+      gameId: settledId,
+      terminal: {
+        type: 'settled',
+        outcome: 'opponent_timed_out',
+        label: 'Opponent timed out',
+        myReward: '100',
+        rewardCoinHex: null,
+      },
+    })!;
   }
   const terminalHandState = krunkStateCodec.encode(terminalHand);
   const timeoutModel = createSessionModel({

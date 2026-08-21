@@ -3,7 +3,6 @@ import { runSessionMachineTransition } from './sessionMachineEffects';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
 import { persistSessionSnapshot } from './sessionMachinePersist';
 import { reduceSessionMachine } from './sessionMachine';
-import type { GameplayEvent } from '@games/host';
 import type {
   LocalGameActionRequest,
   SessionMachineEvent,
@@ -19,7 +18,6 @@ export interface SessionMachineRuntimeDependencies {
   restoring: boolean;
   getRestoreStatus(): RestoreStatus;
   getRestoreError(): string | null;
-  emitGameplay(event: GameplayEvent): void;
   onError(error: unknown): void;
   persist?(): Promise<void>;
   enrichCoin?: typeof coinIdHex;
@@ -51,7 +49,6 @@ export class SessionMachineRuntime {
             getRestoreStatus: dependencies.getRestoreStatus,
             getRestoreError: dependencies.getRestoreError,
           })),
-      emitGameplay: dependencies.emitGameplay,
       onError: dependencies.onError,
       enrichCoin: dependencies.enrichCoin,
     });
@@ -100,18 +97,6 @@ export class SessionMachineRuntime {
     return true;
   }
 
-  transitionFeatureStateWithLocalTurn(
-    gameType: RegisteredGameType,
-    id: string,
-    state: unknown,
-    isMyTurn: boolean,
-  ): boolean {
-    const game = this.state.model.game;
-    if (game.activeGameType !== gameType || !game.currentHandIds.includes(id)) return false;
-    this.dispatch({ type: 'feature-state-with-local-turn', gameType, id, state, isMyTurn });
-    return true;
-  }
-
   commitLocalGameAction(request: LocalGameActionRequest): void {
     const game = this.state.model.game;
     if (game.activeGameType !== request.gameType) {
@@ -139,7 +124,7 @@ export class SessionMachineRuntime {
       throw new Error(`Internal local action payload is invalid for ${request.gameType}`);
     }
 
-    this.interpreter.runLocalGameCommand(request.command, request.id);
+    if (!this.interpreter.runLocalGameCommand(request.command, request.id)) return;
     this.dispatch({
       type: 'local-game-action-committed',
       gameType: request.gameType,

@@ -124,6 +124,7 @@ describe('session machine behavior sequences', () => {
           moveNumber: 0n,
 
           isPlayerTurn: false,
+          iStarted: true,
         }),
 
         proposalGroups: [

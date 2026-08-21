@@ -7,13 +7,6 @@ import type {
 import { coerceToBytes } from '../../util';
 import { handProposalsEqual } from '../gameRegistry';
 import { parseAmount } from '../wasm/parseAmount';
-import {
-  gameplayEventForActionFailed,
-  gameplayEventForEndedStatus,
-  gameplayEventForMoveRejected,
-  gameplayEventForSettlement,
-  gameplayEventsForGameStatus,
-} from '../wasm/gameplayEvents';
 import { durableNotificationKind } from './sessionTransition';
 import { proposalGroupFromProposalMade } from './incomingProposal';
 import { parseGameStatusTerminalInfo, terminalInfoFromGameSettled } from './gameSessionEvents';
@@ -308,10 +301,6 @@ export function reduceSessionNotification(
     const id = String(settled.id);
     const terminal = terminalInfoFromGameSettled(settled, null);
     step({ type: 'notification-game-terminal', id, terminal });
-    effects.push({
-      type: 'emit-gameplay',
-      event: gameplayEventForSettlement(id, terminal),
-    });
     if (current.model.game.activeIds.length === 0) {
       cancelStale();
       step({ type: 'clear-proposals' });
@@ -344,11 +333,6 @@ export function reduceSessionNotification(
     if (isTerminalGameStatus(status.status)) {
       const terminal = parseGameStatusTerminalInfo(status, null, 'their-turn');
       step({ type: 'notification-game-terminal', id, terminal });
-      for (const event of gameplayEventsForGameStatus(status, current.model.game.activeIds)) {
-        effects.push({ type: 'emit-gameplay', event });
-      }
-      const ended = gameplayEventForEndedStatus(id, terminal);
-      if (ended) effects.push({ type: 'emit-gameplay', event: ended });
       if (current.model.game.activeIds.length === 0) {
         cancelStale();
         step({ type: 'clear-proposals' });
@@ -369,9 +353,6 @@ export function reduceSessionNotification(
       moverShare: parseAmount(status.other_params?.mover_share),
       iStarted,
     });
-    for (const event of gameplayEventsForGameStatus(status, current.model.game.activeIds)) {
-      effects.push({ type: 'emit-gameplay', event });
-    }
     const generation = (current.coordination.gameEnrichmentGeneration[id] ?? 0) + 1;
     current = {
       ...current,
@@ -468,14 +449,14 @@ export function reduceSessionNotification(
   }
 
   if ('MoveRejected' in notification && notification.MoveRejected) {
-    effects.push({
-      type: 'emit-gameplay',
-      event: gameplayEventForMoveRejected(notification.MoveRejected),
+    step({
+      type: 'notification-move-rejected',
+      id: String(notification.MoveRejected.id),
+      tag: String(notification.MoveRejected.tag),
+      message: String(notification.MoveRejected.message),
     });
   } else if ('ActionFailed' in notification && notification.ActionFailed) {
     const failed = notification.ActionFailed as ActionFailedPayload;
-    const gameplay = gameplayEventForActionFailed(failed);
-    if (gameplay) effects.push({ type: 'emit-gameplay', event: gameplay });
     step({ type: 'enqueue-error', kind: 'action-failed', message: String(failed.reason) });
   }
   return { state: current, effects };

@@ -93,6 +93,7 @@ describe('durable game envelope round trips', () => {
         opponentHand: [5n, 6n, 7n, 8n],
         moveNumber: 1n,
         isPlayerTurn: true,
+        iStarted: true,
         cardSelections: [1n, 2n],
       }),
     },
@@ -112,8 +113,6 @@ describe('durable game envelope round trips', () => {
         handHistory: [],
         outcome: null,
         terminalState: 'none',
-        terminalRecovery: null,
-        pendingTerminalAction: null,
         coinTossIOpen: true,
         unitSizeMojos: 10n,
         displayMode: 'mojos',
@@ -268,6 +267,7 @@ describe('durable game envelope round trips', () => {
       opponentHand: [5n, 6n, 7n, 8n],
       moveNumber: 1n,
       isPlayerTurn: true,
+      iStarted: true,
       cardSelections: [1n, 2n],
     });
     setProtocolIds(hashes);

@@ -1,6 +1,5 @@
 import { createElement, StrictMode, useCallback, useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { EMPTY } from 'rxjs';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { destroySessionController } from '../../hooks/blobSingleton';
 import { useSessionControllerAfterCommit } from '../../hooks/useGameSession';
@@ -130,7 +129,7 @@ describe('GameSession render boundary', () => {
 
     function TerminalHarness() {
       const terminal = useTerminalSessionPresentation(source);
-      const projected = projectTerminalSessionResult(live, terminal.presentation!, EMPTY, terminal);
+      const projected = projectTerminalSessionResult(live, terminal.presentation!, terminal);
       observed = projected;
       return createElement(
         'button',

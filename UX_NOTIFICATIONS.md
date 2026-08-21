@@ -441,9 +441,9 @@ GameSettled { id, outcome: SettlementOutcome, our_share, coin_id? }
 `opponent_timed_out`, `forfeited_skipped_reveal`, …). `our_share` is always
 present, including `0`.
 
-**Dual delivery:** the same payload drives (1) the session banner / dashboard
-label and (2) the active reference-game UI via `GameplayEvent.Settled`.
-Neither sink may invent a parallel event shape or skip "boring" outcomes.
+The host normalizes the payload once into the terminal instance and
+`hand-ended` model input. Session banners and game mounts both render that
+machine-owned result; there is no second event delivery.
 
 Display labels come from `SETTLEMENT_OUTCOME_LABELS` in
 `front-end/src/lib/settlement.ts`.
@@ -690,30 +690,26 @@ These are not lifecycle invariants but important rules enforced in the code:
 
 ---
 
-## GameplayEvent Mapping
+## Game Model Input Mapping
 
-`front-end/src/lib/wasm/gameplayEvents.ts` translates typed WASM payloads into
-game-agnostic `GameplayEvent` variants. The session notification reducer and
-`useGameSession` call that adapter, then forward host events to game hooks
-(`useCalpokerHand`, `useSpacepokerHand`, `useKrunkHand`). Game hooks never see
-raw notifications; they receive one of:
+`sessionMachineNotifications.ts` normalizes raw notifications directly into
+the machine-owned hand model. Game hooks never see raw notifications or an
+observable. The package input list is:
 
-| Variant            | Shape                                              | When                                                                                                                                                                               |
-| ------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OpponentMoved`    | `{ readable, gameId?, moverShare: string }`        | Remapped from `GameStatus` with `other_params.readable` and `other_params.mover_share`. `moverShare` is our share after the opponent's move (including on timeout from that move). |
-| `GameMessage`      | `{ readable, gameId? }`                            | Remapped from `GameStatus` with readable but no `mover_share` (advisory / out-of-band message).                                                                                    |
-| `ProposalAccepted` | `{ id }`                                           | A new game is starting                                                                                                                                                             |
-| `Settled`          | `{ gameId, outcome, ourShare }`                    | From `GameSettled`; same payload drives session banner labels via `terminalInfoFromGameSettled`                                                                                    |
-| `MoveRejected`     | `{ gameId: string, tag: string, message: string }` | Recoverable local handler rejection routed only to the matching game hook                                                                                                          |
-| `GameError`        | `{ gameId, reason, source, action? }`              | `EndedCancelled`, `EndedError`, unknown settlement, scoped `ActionFailed`, or JS `game-action-error`                                                                                |
+- `hand-started`
+- `opponent-moved`
+- `game-message`
+- `move-rejected`
+- `hand-ended`
+
+`ActionFailed`, JavaScript command exceptions, proposal/session lifecycle, and
+infrastructure failures remain host-owned and use the shared notification
+queues.
 
 Settlement label helpers live in `front-end/src/lib/settlement.ts`
 (`settlementLabel`, `isForfeitOutcome`, game-specific copy helpers).
 
-Non-terminal move/status notifications are remapped by
-`gameplayEventsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
-above (including `moverShare` on `OpponentMoved`).
-
-**Key code:** `front-end/src/lib/wasm/gameplayEvents.ts`,
-`front-end/src/lib/session/gameSessionEvents.ts` (`terminalInfoFromGameSettled`),
+**Key code:** `front-end/src/lib/session/sessionMachineNotifications.ts`,
+`front-end/src/lib/session/sessionMachineGame.ts`,
+`front-end/src/lib/session/gameSessionEvents.ts`, and
 `front-end/src/lib/settlement.ts`

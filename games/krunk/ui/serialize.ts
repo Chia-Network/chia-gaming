@@ -1,5 +1,5 @@
 import { Program } from 'clvm-lib';
-import { defineGameStateCodec, type DurableGameStateEvent } from '../../host';
+import { defineGameStateCodec, type GameInput } from '../../host';
 
 export const KrunkHandler = {
   WaitingCommit: 0n,
@@ -297,52 +297,77 @@ export function reduceKrunkFeatureState(
   return game;
 }
 
+export function applyKrunkMoveRejected(
+  state: KrunkGameState,
+  rejection: { tag: string; message: string },
+): KrunkGameState {
+  if (rejection.tag !== 'not_in_dictionary') return state;
+  const word = rejection.message.toUpperCase();
+  const error = `${word} is not in the dictionary.`;
+
+  if (
+    state.role === 'alice' &&
+    state.handler === KrunkHandler.AliceWaiting &&
+    state.secretWord === word
+  ) {
+    return {
+      ...state,
+      handler: KrunkHandler.WaitingCommit,
+      myTurn: true,
+      secretWord: null,
+      error,
+    };
+  }
+
+  const lastGuess = state.guesses[state.guesses.length - 1];
+  if (
+    state.role === 'bob' &&
+    state.handler === KrunkHandler.BobWaiting &&
+    lastGuess?.word === word &&
+    lastGuess.clue.every((value) => value === -1n)
+  ) {
+    return {
+      ...state,
+      handler: KrunkHandler.BobGuess,
+      myTurn: true,
+      guesses: state.guesses.slice(0, -1),
+      error,
+    };
+  }
+
+  return state;
+}
+
 export function reduceKrunkDurableState(
   current: KrunkHandState | null,
-  event: DurableGameStateEvent,
+  event: GameInput,
 ): KrunkHandState | null {
-  if (event.type === 'abandoned') return null;
-  if (event.type === 'remove-group') {
-    if (!current) return null;
-    const removed = new Set(event.groupIds);
+  if (event.type === 'hand-started') {
     const games = Object.fromEntries(
-      Object.entries(current.games).filter(([id]) => !removed.has(id)),
-    );
-    return Object.keys(games).length ? { games } : null;
-  }
-  if (event.type === 'accepted-group') {
-    const games = Object.fromEntries(
-      event.groupIds.map((id, index) => {
+      event.init.gameIds.map((id, index) => {
         const proposerIsAlice = index === 0;
         const role =
-          proposerIsAlice === (event.origin === 'local') ? ('alice' as const) : ('bob' as const);
+          proposerIsAlice === (event.init.origin === 'local')
+            ? ('alice' as const)
+            : ('bob' as const);
         return [id, current?.games[id] ?? initialKrunkGameState(role)];
       }),
     );
     return { games };
   }
-  if (event.type === 'feature-state') {
-    const state = decodeKrunkGameState(event.state);
-    if (state === null) throw new Error('Invalid Krunk feature-state payload');
-    return { games: { ...(current?.games ?? {}), [event.id]: state } };
-  }
-  if (!current?.games[event.id]) return current;
-  const game = current.games[event.id];
+  if (!current?.games[event.gameId]) return current;
+  const game = current.games[event.gameId];
   let next = game;
-  if (event.type === 'local-turn') {
-    next = { ...game, myTurn: event.isMyTurn };
-  } else if (event.type === 'settled') {
+  if (event.type === 'hand-ended') {
     next = reduceKrunkFeatureState(game, { type: 'settled' });
-  } else if (event.type === 'game-status') {
-    if (!event.readable) {
-      next = { ...game, myTurn: event.status === 'my-turn' };
-    } else {
-      next = reduceKrunkFeatureState(game, {
-        type: 'opponent-moved',
-        readable: event.readable,
-        moverShare: event.moverShare,
-      });
-    }
+  } else if (event.type === 'opponent-moved') {
+    next = reduceKrunkFeatureState(game, {
+      type: 'opponent-moved',
+      readable: event.readable,
+      moverShare: event.moverShare,
+    });
+  } else if (event.type === 'move-rejected') {
+    next = applyKrunkMoveRejected(game, event);
   }
-  return { games: { ...current.games, [event.id]: next } };
+  return { games: { ...current.games, [event.gameId]: next } };
 }

@@ -421,7 +421,7 @@ describe('flat state', () => {
       },
       handState: {
         gameType: 'spacepoker',
-        version: 2n,
+        version: 3n,
         state: {
           gameState: { handler: 2n, myTurn: true, N: 4n },
           playerHoleCards: [1n, 2n],
@@ -435,8 +435,6 @@ describe('flat state', () => {
           handHistory: [],
           outcome: null,
           terminalState: 'none',
-          terminalRecovery: null,
-          pendingTerminalAction: null,
           coinTossIOpen: null,
           unitSizeMojos: 10n,
           displayMode: 'mojos',
@@ -487,12 +485,13 @@ describe('flat state', () => {
       },
       handState: {
         gameType: 'calpoker',
-        version: 1n,
+        version: 2n,
         state: {
           playerHand: [8n, 7n, 6n, 5n],
           opponentHand: [4n, 3n, 2n, 1n],
           moveNumber: 1n,
           isPlayerTurn: true,
+          iStarted: false,
           cardSelections: [8n, 7n],
           displaySnapshot: {
             gameState: 'selecting',

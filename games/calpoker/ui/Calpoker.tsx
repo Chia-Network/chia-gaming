@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { CaliforniaPoker } from './components';
-import { useCheatNerfKeys } from '../../host/ui';
+import { useCheatKeys } from '../../host/ui';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from './types/CaliforniapokerProps';
 import type { GameInteractionMode, SettlementOutcome } from '../../host';
 
@@ -16,7 +16,6 @@ export interface CalpokerProps {
   setHandOrder: (playerHand: string[], opponentHand?: string[]) => void;
   handleMakeMove: () => void;
   handleCheat: () => void;
-  handleNerf: () => void;
   onGameLog: (lines: string[]) => void;
   onSnapshotChange: (snapshot: CalpokerDisplaySnapshotView) => void;
   initialSnapshot?: CalpokerDisplaySnapshotView;
@@ -37,7 +36,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setHandOrder,
   handleMakeMove,
   handleCheat,
-  handleNerf,
   onGameLog,
   onSnapshotChange,
   initialSnapshot,
@@ -46,7 +44,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   terminalOutcome,
   interactionMode = 'live',
 }) => {
-  useCheatNerfKeys(handleCheat, handleNerf, interactionMode === 'live');
+  useCheatKeys(handleCheat, interactionMode === 'live');
 
   return (
     <div className="relative flex h-full w-full min-h-0 flex-col">

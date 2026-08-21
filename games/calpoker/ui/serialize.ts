@@ -1,6 +1,6 @@
 import { Program } from 'clvm-lib';
-import { defineGameStateCodec, type DurableGameStateEvent } from '../../host';
-import { CalpokerOutcome, projectCalpokerFinalDisplay } from './outcome';
+import { defineGameStateCodec, type GameInput } from '../../host';
+import { CalpokerOutcome, projectCalpokerFinalDisplay, type CalpokerOutcomeShape } from './outcome';
 
 export interface CalpokerDisplaySnapshot {
   gameState: string;
@@ -18,8 +18,10 @@ export interface CalpokerHandState {
   opponentHand: bigint[];
   moveNumber: bigint;
   isPlayerTurn: boolean;
+  iStarted: boolean;
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
+  outcome?: CalpokerOutcomeShape<bigint>;
 }
 
 function isCardArray(value: unknown): value is bigint[] {
@@ -42,6 +44,28 @@ function isDisplaySnapshot(value: unknown): value is CalpokerDisplaySnapshot {
     isCardArray(snapshot.opponentHaloCardIds) &&
     typeof snapshot.playerDisplayText === 'string' &&
     typeof snapshot.opponentDisplayText === 'string'
+  );
+}
+
+function isBigintArray(value: unknown): value is bigint[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'bigint');
+}
+
+function isCalpokerOutcome(value: unknown): value is CalpokerOutcomeShape<bigint> {
+  if (typeof value !== 'object' || value === null) return false;
+  const outcome = value as Partial<CalpokerOutcomeShape<bigint>>;
+  return (
+    (outcome.my_win_outcome === 'win' ||
+      outcome.my_win_outcome === 'lose' ||
+      outcome.my_win_outcome === 'tie') &&
+    isCardArray(outcome.my_cards) &&
+    isCardArray(outcome.their_cards) &&
+    isCardArray(outcome.my_final_hand) &&
+    isCardArray(outcome.their_final_hand) &&
+    isCardArray(outcome.my_used_cards) &&
+    isCardArray(outcome.their_used_cards) &&
+    isBigintArray(outcome.my_hand_value) &&
+    isBigintArray(outcome.their_hand_value)
   );
 }
 
@@ -68,24 +92,27 @@ function isCalpokerHandState(value: unknown): value is CalpokerHandState {
     state.moveNumber >= 0n &&
     state.moveNumber <= 3n &&
     typeof state.isPlayerTurn === 'boolean' &&
-    (state.displaySnapshot === undefined || isDisplaySnapshot(state.displaySnapshot))
+    typeof state.iStarted === 'boolean' &&
+    (state.displaySnapshot === undefined || isDisplaySnapshot(state.displaySnapshot)) &&
+    (state.outcome === undefined || isCalpokerOutcome(state.outcome))
   );
 }
 
 export const calpokerStateCodec = defineGameStateCodec<CalpokerHandState>({
   gameType: 'calpoker',
-  version: 1n,
+  version: 2n,
   canRemountFinished: true,
   isState: isCalpokerHandState,
 });
 
-function initialState(isMyTurn: boolean): CalpokerHandState {
+function initialState(isMyTurn: boolean, iStarted: boolean): CalpokerHandState {
   return {
     playerHand: [],
     opponentHand: [],
     cardSelections: [],
     moveNumber: 0n,
     isPlayerTurn: isMyTurn,
+    iStarted,
   };
 }
 
@@ -102,8 +129,8 @@ function cardsFromReadable(
 }
 
 type CalpokerFeatureEvent =
-  | { type: 'opponent-moved'; readable: Uint8Array; iStarted: boolean }
-  | { type: 'game-message'; readable: Uint8Array; iStarted: boolean };
+  | { type: 'opponent-moved'; readable: Uint8Array }
+  | { type: 'game-message'; readable: Uint8Array };
 
 function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigint {
   return hand.reduce(
@@ -152,16 +179,30 @@ export function calpokerOutcomeFromState(
   );
 }
 
+function calpokerOutcomeShape(outcome: CalpokerOutcome): CalpokerOutcomeShape<bigint> {
+  return {
+    my_win_outcome: outcome.my_win_outcome,
+    my_cards: outcome.my_cards,
+    their_cards: outcome.their_cards,
+    my_final_hand: outcome.my_final_hand,
+    their_final_hand: outcome.their_final_hand,
+    my_used_cards: outcome.my_used_cards,
+    their_used_cards: outcome.their_used_cards,
+    my_hand_value: outcome.my_hand_value,
+    their_hand_value: outcome.their_hand_value,
+  };
+}
+
 export function reduceCalpokerFeatureState(
   current: CalpokerHandState,
   event: CalpokerFeatureEvent,
 ): CalpokerHandState {
   if (event.type === 'game-message') {
-    return { ...current, ...cardsFromReadable(event.readable, event.iStarted) };
+    return { ...current, ...cardsFromReadable(event.readable, current.iStarted) };
   }
   if (isCalpokerOutcomeReadable(event.readable)) {
     assertCalpokerOutcomeStage(current);
-    const outcome = calpokerOutcomeFromState(current, event.readable, event.iStarted);
+    const outcome = calpokerOutcomeFromState(current, event.readable, current.iStarted);
     const display = projectCalpokerFinalDisplay(outcome);
     return {
       ...current,
@@ -169,6 +210,7 @@ export function reduceCalpokerFeatureState(
       opponentHand: display.opponentCards,
       cardSelections: [],
       isPlayerTurn: true,
+      outcome: calpokerOutcomeShape(outcome),
       displaySnapshot: {
         gameState: 'final',
         winner: display.winner,
@@ -183,8 +225,8 @@ export function reduceCalpokerFeatureState(
   }
   return {
     ...current,
-    ...(current.moveNumber === 1n && !event.iStarted
-      ? cardsFromReadable(event.readable, event.iStarted)
+    ...(current.moveNumber === 1n && !current.iStarted
+      ? cardsFromReadable(event.readable, current.iStarted)
       : {}),
     isPlayerTurn: true,
   };
@@ -192,26 +234,18 @@ export function reduceCalpokerFeatureState(
 
 export function reduceCalpokerDurableState(
   current: CalpokerHandState | null,
-  event: DurableGameStateEvent,
+  event: GameInput,
 ): CalpokerHandState | null {
-  if (event.type === 'abandoned' || event.type === 'remove-group') return null;
-  if (event.type === 'accepted-group') return current ?? initialState(event.isMyTurn);
-  if (event.type === 'feature-state') {
-    const state = calpokerStateCodec.isState(event.state) ? event.state : null;
-    if (state === null) throw new Error('Invalid Calpoker feature-state payload');
-    return state;
+  if (event.type === 'hand-started') {
+    return current ?? initialState(event.init.canAct, event.init.iStarted);
   }
   if (!current) return null;
-  if (event.type === 'local-turn') return { ...current, isPlayerTurn: event.isMyTurn };
-  if (event.type === 'settled') return { ...current, isPlayerTurn: false };
-  if (event.type === 'game-status') {
-    return event.readable
-      ? reduceCalpokerFeatureState(current, {
-          type: event.moverShare === null ? 'game-message' : 'opponent-moved',
-          readable: event.readable,
-          iStarted: event.iStarted,
-        })
-      : { ...current, isPlayerTurn: event.status === 'my-turn' };
+  if (event.type === 'hand-ended') return { ...current, isPlayerTurn: false };
+  if (event.type === 'opponent-moved' || event.type === 'game-message') {
+    return reduceCalpokerFeatureState(current, {
+      type: event.type,
+      readable: event.readable,
+    });
   }
   return current;
 }

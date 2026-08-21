@@ -116,6 +116,12 @@ describe('session machine behavior sequences', () => {
 
     const terminalPayload = krunkStateCodec.decode(state.model.game.handState)!.games['1'];
 
+    expect(state.model.game.activeIds).toEqual(['2']);
+    expect(state.model.game.currentHandIds).toEqual(['1', '2']);
+    expect(Object.keys(state.model.game.instances)).toEqual(['1', '2']);
+    expect(state.model.game.instances['1'].presentation).toBe('ended');
+    expect(state.model.game.instances['2'].presentation).not.toBe('ended');
+
     const staleReadable = Program.fromList([
       Program.fromBytes(new TextEncoder().encode('SLATE')),
 
@@ -148,7 +154,7 @@ describe('session machine behavior sequences', () => {
       terminalPayload,
     );
 
-    expect(stale.effects.filter((effect) => effect.type === 'emit-gameplay')).toEqual([]);
+    expect(stale.effects).toEqual([]);
 
     const sibling = reduceSessionNotification(
       stale.state,
@@ -176,19 +182,23 @@ describe('session machine behavior sequences', () => {
 
     expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.games['2'].handler).toBe(4n);
 
-    expect(sibling.effects).toContainEqual({
-      type: 'emit-gameplay',
-
-      event: {
-        OpponentMoved: {
-          gameId: '2',
-
-          readable: Program.fromBytes(new Uint8Array()).serialize(),
-
-          moverShare: '100',
-        },
+    expect(sibling.state.model.game.activeIds).toEqual(['2']);
+    expect(sibling.state.model.game.currentHandIds).toEqual(['1', '2']);
+    expect(Object.keys(krunkStateCodec.decode(sibling.state.model.game.handState)!.games)).toEqual([
+      '1',
+      '2',
+    ]);
+    expect(sibling.state.model.game.instances['1']).toEqual(terminalInstance);
+    expect(sibling.state.model.game.instances['2'].presentation).toBe('off-chain-my-turn');
+    expect(sibling.effects).toEqual([
+      {
+        type: 'request-coin-enrichment',
+        target: 'game',
+        id: '2',
+        coin: null,
+        generation: 1,
       },
-    });
+    ]);
   });
 
   it('keeps Krunk WaitingCommit durable state valid across post-unroll status projection', () => {
