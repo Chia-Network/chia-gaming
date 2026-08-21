@@ -24,9 +24,13 @@ import {
   type UseGameSessionResult,
   useTerminalSessionPresentation,
 } from '../lib/session/sessionResult';
-import type { SessionMachineEvent } from '../lib/session/sessionMachineTypes';
+import type {
+  LocalGameActionRequest,
+  SessionMachineEvent,
+} from '../lib/session/sessionMachineTypes';
 import type { RegisteredGameType } from '../lib/session/types';
 import { REGISTERED_GAMES } from '../lib/gameRegistry';
+import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 import { liveGameHandOrigin, type GameHandSource } from '@games/host';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
@@ -42,6 +46,30 @@ export type {
   QueuedNotification,
 } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
+
+export function runLocalGameActionWithReporting(
+  request: LocalGameActionRequest,
+  run: () => void,
+  report: (failure: {
+    gameId: string;
+    action: LocalGameActionRequest['command']['type'];
+    message: string;
+  }) => void,
+): void {
+  try {
+    run();
+  } catch (error) {
+    if (!wasClientErrorReported(error)) {
+      markClientErrorReported(error);
+      report({
+        gameId: request.id,
+        action: request.command.type,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw error;
+  }
+}
 
 export function useSessionControllerAfterCommit(
   params: GameSessionParams,
@@ -152,6 +180,7 @@ export function useGameSession(
   }
   const runtime = runtimeRef.current;
   const [machineState, setMachineState] = useState(runtime.getState());
+  const dispatch = useCallback((event: SessionMachineEvent) => runtime.dispatch(event), [runtime]);
   const liveGamePort = useMemo(
     () => ({
       isChannelReady: () => controller.isChannelReady(),
@@ -170,10 +199,21 @@ export function useGameSession(
           state,
           isMyTurn,
         ),
-      commitLocalGameAction: (request: Parameters<typeof runtime.commitLocalGameAction>[0]) =>
-        runtime.commitLocalGameAction(request),
+      commitLocalGameAction: (request: LocalGameActionRequest) =>
+        runLocalGameActionWithReporting(
+          request,
+          () => runtime.commitLocalGameAction(request),
+          ({ gameId, action, message }) => {
+            if (action === 'cheat') {
+              dispatch({ type: 'enqueue-error', kind: 'infra-error', message });
+              return;
+            }
+            gameplaySubject.next(gameplayEventForGameActionError(gameId, action, message));
+            dispatch({ type: 'enqueue-error', kind: 'action-failed', message });
+          },
+        ),
     }),
-    [controller, runtime],
+    [controller, dispatch, gameplaySubject, runtime],
   );
   const liveHandSource = useMemo<GameHandSource>(
     () => ({
@@ -187,7 +227,6 @@ export function useGameSession(
     runtime.setRender(setMachineState);
     return () => runtime.setRender(() => {});
   }, [runtime]);
-  const dispatch = useCallback((event: SessionMachineEvent) => runtime.dispatch(event), [runtime]);
   const dispatchHostProjection = useCallback(() => {
     const status = controller.getRestoreStatus();
     dispatch({

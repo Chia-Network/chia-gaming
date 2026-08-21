@@ -1,6 +1,8 @@
 import { SessionController } from '../../hooks/SessionController';
+import { runLocalGameActionWithReporting } from '../../hooks/useGameSession';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame } from '../../types/ChiaGaming';
+import { wasClientErrorReported } from '../clientError';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import {
@@ -162,6 +164,39 @@ describe('session machine effect interpreter', () => {
 
     expect(cleared).toEqual([1]);
     expect(events).toEqual([{ type: 'rejection-fallback-fired', generation: 2 }]);
+  });
+});
+
+describe('live game action error reporting', () => {
+  it('reports an unhandled runtime invariant once and rethrows it', () => {
+    const invariant = new Error('Internal local action for game 2 attempted outside our turn');
+    const reports: Array<{ gameId: string; action: string; message: string }> = [];
+    const request = {
+      gameType: 'spacepoker' as const,
+      id: '2',
+      state: { handler: 'betting' },
+      command: { type: 'make-move' as const, readable: null },
+    };
+    const run = () => {
+      throw invariant;
+    };
+
+    expect(() =>
+      runLocalGameActionWithReporting(request, run, (failure) => reports.push(failure)),
+    ).toThrow(invariant);
+    expect(reports).toEqual([
+      {
+        gameId: '2',
+        action: 'make-move',
+        message: invariant.message,
+      },
+    ]);
+    expect(wasClientErrorReported(invariant)).toBe(true);
+
+    expect(() =>
+      runLocalGameActionWithReporting(request, run, (failure) => reports.push(failure)),
+    ).toThrow(invariant);
+    expect(reports).toHaveLength(1);
   });
 });
 

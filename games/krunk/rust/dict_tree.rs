@@ -179,10 +179,8 @@ pub fn sigs_from_bytes(blob: &[u8]) -> Result<Vec<Aggsig>, Error> {
         )));
     }
     let mut sigs = Vec::with_capacity(blob.len() / 96);
-    for chunk in blob.chunks_exact(96) {
-        let mut fixed = [0u8; 96];
-        fixed.copy_from_slice(chunk);
-        sigs.push(Aggsig::from_bytes(fixed).unwrap_or_default());
+    for chunk in blob.as_chunks::<96>().0 {
+        sigs.push(Aggsig::from_bytes(*chunk).unwrap_or_default());
     }
     Ok(sigs)
 }

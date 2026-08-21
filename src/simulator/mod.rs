@@ -151,7 +151,7 @@ impl SimulatorState {
             true,
         );
 
-        let pending: Vec<PendingSpend> = self.mempool.drain(..).collect();
+        let pending = std::mem::take(&mut self.mempool);
         for spend in pending {
             self.confirmed_spend_fingerprints.insert(spend.fingerprint);
             for removal in &spend.removals {
