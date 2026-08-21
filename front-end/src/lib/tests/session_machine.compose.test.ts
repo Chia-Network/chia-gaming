@@ -1,5 +1,5 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
-import { applyTermsToComposeDraft } from '../session/composeDraft';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { applyHandProposalToComposeDraft } from '../session/composeDraft';
 import {
   createSessionModel,
   INITIAL_GAME_TERMINAL_MODEL,
@@ -14,7 +14,7 @@ describe('session machine behavior sequences', () => {
     let state = createSessionMachineState(
       createSessionModel({
         betweenHand: {
-          compose: applyTermsToComposeDraft(
+          compose: applyHandProposalToComposeDraft(
             createSessionModel().betweenHand.compose,
 
             CALPOKER_TERMS,
@@ -106,7 +106,7 @@ describe('session machine behavior sequences', () => {
 
         betweenHandMode: 'compose-proposal',
 
-        betweenHandLastTerms: {
+        betweenHandLastHandProposal: {
           my_contribution: '20',
 
           their_contribution: '20',
@@ -132,7 +132,7 @@ describe('session machine behavior sequences', () => {
             member_ids: ['11'],
             origin: 'local',
             disposition: 'outgoing',
-            terms: {
+            hand_proposal: {
               my_contribution: '10',
               their_contribution: '10',
               game_timeout: '15',

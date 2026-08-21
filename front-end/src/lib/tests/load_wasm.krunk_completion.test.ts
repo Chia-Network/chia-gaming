@@ -2,14 +2,14 @@ import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import { flushSessionSave, peekSession, saveSession } from '../../hooks/save';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
-import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/stateCodec';
+import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/serialize';
 import { terminalInfoFromGameSettled } from '../session/gameSessionEvents';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { persistSessionSnapshot } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { validateSessionSaveEnvelope } from '../session/persistence';
-import type { GameTerminalModel, HandTermsModel } from '../session/types';
+import type { GameTerminalModel, HandProposal } from '../session/types';
 import {
   addActiveSubscription,
   createActivePair,
@@ -36,7 +36,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     SessionController,
     SessionController,
   ];
-  const terms: HandTermsModel = {
+  const handProposal: HandProposal = {
     gameType: 'krunk',
     myContribution: 100n,
     theirContribution: 100n,
@@ -107,7 +107,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         createSessionModel({
           channel: { status: channelStatusModelFromPayload(status) },
           game: { handKey: 1 },
-          betweenHand: { mode: 'compose-proposal', lastTerms: terms },
+          betweenHand: { mode: 'compose-proposal', lastHandProposal: handProposal },
         }),
         { firstGameAccepted: true },
       ),
@@ -171,7 +171,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   const word = Program.fromBytes(new TextEncoder().encode('CRANE'));
 
   try {
-    runtimes[0].dispatch({ type: 'submit-compose', terms });
+    runtimes[0].dispatch({ type: 'submit-compose', handProposal });
     await exchangeAndPersist();
     const review = runtimes[1]
       .getState()

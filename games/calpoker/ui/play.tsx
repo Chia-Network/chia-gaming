@@ -16,10 +16,18 @@ import type {
   CalpokerOutcomeView,
 } from './types/CaliforniapokerProps';
 import { useCalpokerHand } from './useCalpokerHand';
-import type { CalpokerDisplaySnapshot } from './stateCodec';
+import type { CalpokerDisplaySnapshot } from './serialize';
 import type { CalpokerOutcome } from './outcome';
 
-const Calpoker = lazy(() => import('./index'));
+const Calpoker = lazy(() => import('./Calpoker'));
+
+function amountForGame(amountsById: Record<string, string>, gameId: string): bigint {
+  const amount = amountsById[gameId];
+  if (amount === undefined) {
+    throw new Error(`California Poker is missing the accepted amount for game ${gameId}`);
+  }
+  return BigInt(amount);
+}
 
 export interface CalpokerLiveMountProps {
   handSource: GameHandSource;
@@ -146,12 +154,11 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
   );
 }
 
-export const calpokerMountRegistration: GameMountRegistration = {
+export const play: GameMountRegistration = {
   renderLive(session, names) {
     const gameId = session.activeGameId ?? session.gameSpecificView.displayGameId ?? '';
     return (
       <CalpokerLiveMount
-        key={session.handKey}
         handSource={session.handSource}
         gameId={gameId}
         iStarted={session.iStarted}
@@ -160,7 +167,7 @@ export const calpokerMountRegistration: GameMountRegistration = {
         onOutcome={session.onHandOutcome}
         onTurnChanged={session.onTurnChanged}
         appendGameLog={session.appendGameLog}
-        perGameAmount={session.currentHandAmount}
+        perGameAmount={amountForGame(session.gameSpecificView.amountsById, gameId)}
         terminal={session.gameSpecificView.terminal}
         handOrigin={session.handOrigin}
         {...names}
@@ -180,7 +187,12 @@ export const calpokerMountRegistration: GameMountRegistration = {
         onOutcome={() => {}}
         onTurnChanged={() => {}}
         appendGameLog={() => {}}
-        perGameAmount={view.lastTerms.myContribution}
+        perGameAmount={amountForGame(
+          Object.fromEntries(
+            Object.entries(view.instances).map(([id, instance]) => [id, instance.amount]),
+          ),
+          gameId,
+        )}
         terminal={view.instances[gameId]?.terminal ?? EMPTY_GAME_TERMINAL_MODEL}
         handOrigin="terminal"
         myName={options.myName}

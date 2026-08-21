@@ -1,17 +1,83 @@
 import { Program } from 'clvm-lib';
-import {
-  equalBaseTerms,
-  readClvmAtom,
-  readClvmFlag,
-  readClvmList,
-  readClvmProgram,
-  type DurableGameStateEvent,
-  type FactoryParameterCodec,
-  type GameFeatureRegistration,
-  type HandTermsModel,
-} from '../../host';
+import { defineGameStateCodec, type DurableGameStateEvent } from '../../host';
 import { CalpokerOutcome, projectCalpokerFinalDisplay } from './outcome';
-import { calpokerStateCodec, type CalpokerHandState } from './stateCodec';
+
+export interface CalpokerDisplaySnapshot {
+  gameState: string;
+  winner: string | null;
+  playerBestHandCardIds: bigint[];
+  opponentBestHandCardIds: bigint[];
+  playerHaloCardIds: bigint[];
+  opponentHaloCardIds: bigint[];
+  playerDisplayText: string;
+  opponentDisplayText: string;
+}
+
+export interface CalpokerHandState {
+  playerHand: bigint[];
+  opponentHand: bigint[];
+  moveNumber: bigint;
+  isPlayerTurn: boolean;
+  cardSelections?: bigint[];
+  displaySnapshot?: CalpokerDisplaySnapshot;
+}
+
+function isCardArray(value: unknown): value is bigint[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === 'bigint' && item >= 0n && item < 52n) &&
+    new Set(value).size === value.length
+  );
+}
+
+function isDisplaySnapshot(value: unknown): value is CalpokerDisplaySnapshot {
+  if (typeof value !== 'object' || value === null) return false;
+  const snapshot = value as Partial<CalpokerDisplaySnapshot>;
+  return (
+    typeof snapshot.gameState === 'string' &&
+    (snapshot.winner === null || typeof snapshot.winner === 'string') &&
+    isCardArray(snapshot.playerBestHandCardIds) &&
+    isCardArray(snapshot.opponentBestHandCardIds) &&
+    isCardArray(snapshot.playerHaloCardIds) &&
+    isCardArray(snapshot.opponentHaloCardIds) &&
+    typeof snapshot.playerDisplayText === 'string' &&
+    typeof snapshot.opponentDisplayText === 'string'
+  );
+}
+
+function isCalpokerHandState(value: unknown): value is CalpokerHandState {
+  if (typeof value !== 'object' || value === null) return false;
+  const state = value as Partial<CalpokerHandState>;
+  if (!isCardArray(state.playerHand) || !isCardArray(state.opponentHand)) return false;
+  if (state.playerHand.length !== state.opponentHand.length) {
+    return false;
+  }
+  if (new Set([...state.playerHand, ...state.opponentHand]).size !== state.playerHand.length * 2) {
+    return false;
+  }
+  if (
+    state.cardSelections !== undefined &&
+    (!isCardArray(state.cardSelections) ||
+      state.cardSelections.length > 4 ||
+      state.cardSelections.some((card) => !state.playerHand!.includes(card)))
+  ) {
+    return false;
+  }
+  return (
+    typeof state.moveNumber === 'bigint' &&
+    state.moveNumber >= 0n &&
+    state.moveNumber <= 3n &&
+    typeof state.isPlayerTurn === 'boolean' &&
+    (state.displaySnapshot === undefined || isDisplaySnapshot(state.displaySnapshot))
+  );
+}
+
+export const calpokerStateCodec = defineGameStateCodec<CalpokerHandState>({
+  gameType: 'calpoker',
+  version: 1n,
+  canRemountFinished: true,
+  isState: isCalpokerHandState,
+});
 
 function initialState(isMyTurn: boolean): CalpokerHandState {
   return {
@@ -149,91 +215,3 @@ export function reduceCalpokerDurableState(
   }
   return current;
 }
-
-export type CalpokerFactoryParameters = {
-  perPlayerStake: bigint;
-  senderGoesFirst: boolean;
-};
-
-export const calpokerFactoryParameters: FactoryParameterCodec<CalpokerFactoryParameters> = {
-  decode(value) {
-    const program = readClvmProgram(value);
-    if (!program) return null;
-    const items = readClvmList(program, 2);
-    if (!items) return null;
-    const perPlayerStake = readClvmAtom(items[0]);
-    const senderGoesFirst = readClvmFlag(items[1]);
-    if (perPlayerStake === null || perPlayerStake <= 0n || senderGoesFirst === null) return null;
-    return { perPlayerStake, senderGoesFirst };
-  },
-  encode(params) {
-    return Program.fromList([
-      Program.fromBigInt(params.perPlayerStake),
-      Program.fromBigInt(params.senderGoesFirst ? 1n : 0n),
-    ]);
-  },
-};
-
-export function validateCalpokerTerms(terms: HandTermsModel): boolean {
-  return (
-    terms.myContribution === terms.theirContribution &&
-    terms.myContribution > 0n &&
-    terms.gameTimeout > 0n
-  );
-}
-
-export const calpokerRegistration: GameFeatureRegistration<
-  CalpokerHandState,
-  CalpokerHandState,
-  { amount: bigint },
-  CalpokerFactoryParameters
-> = {
-  gameType: 'calpoker',
-  displayName: 'California Poker',
-  stateCodec: calpokerStateCodec,
-  factoryParameters: calpokerFactoryParameters,
-  describeTerms: (terms, { formatMojos }) => `Stake ${formatMojos(terms.myContribution)} each`,
-  handMembershipDescription: 'exactly one currentHandGameId',
-  validateHandMembership: (gameIds) => gameIds.length === 1,
-  decodeFeatureState: (value) => (calpokerStateCodec.isState(value) ? value : null),
-  lifecycle: {
-    proposalSenderGoesFirst: (iStarted) => !iStarted,
-  },
-  compose: {
-    defaultDraft: (perGameAmount) => ({ amount: perGameAmount }),
-    draftFromTerms: (terms) => ({ amount: terms.myContribution }),
-    updateDraft: (current, update) => ({ ...current, ...update }),
-    toTerms(draft, gameTimeout) {
-      const terms = {
-        gameType: 'calpoker',
-        myContribution: draft.amount,
-        theirContribution: draft.amount,
-        gameTimeout,
-      };
-      return validateCalpokerTerms(terms) ? terms : null;
-    },
-  },
-  toFactoryParameters(terms, iStarted) {
-    return {
-      perPlayerStake: terms.myContribution,
-      senderGoesFirst: this.lifecycle.proposalSenderGoesFirst(iStarted),
-    };
-  },
-  decodeProposalTerms(base, params) {
-    if (params.perPlayerStake !== base.myContribution) return null;
-    const terms = { gameType: 'calpoker', ...base };
-    return validateCalpokerTerms(terms) ? terms : null;
-  },
-  validateTerms: validateCalpokerTerms,
-  termsEqual: equalBaseTerms,
-  persistence: {
-    encodeExtras: () => ({}),
-    decodeExtras(base) {
-      const terms = { gameType: 'calpoker', ...base };
-      return validateCalpokerTerms(terms) ? terms : null;
-    },
-  },
-  durableState: {
-    reduceEvent: reduceCalpokerDurableState,
-  },
-};

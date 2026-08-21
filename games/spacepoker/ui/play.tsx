@@ -2,25 +2,33 @@ import { lazy, useCallback } from 'react';
 import { EMPTY, type Observable } from 'rxjs';
 import {
   EMPTY_GAME_TERMINAL_MODEL,
+  gameHandState,
   terminalGameHandSource,
   type FrozenGameView,
   type GameHandSource,
   type GameMountRegistration,
   type GameplayEvent,
   type GameTerminalModel,
-  type HandTermsModel,
 } from '../../host';
 import { useGameHost } from '../../host/ui';
-import { spacepokerTermsOf } from './unitSize';
+import { spacepokerStateCodec } from './serialize';
 
 const SpacePoker = lazy(() => import('./SpacePoker'));
+
+function amountForGame(amountsById: Record<string, string>, gameId: string): bigint {
+  const amount = amountsById[gameId];
+  if (amount === undefined) {
+    throw new Error(`Space Poker is missing the accepted amount for game ${gameId}`);
+  }
+  return BigInt(amount);
+}
 
 export interface SpacepokerLiveMountProps {
   handSource: GameHandSource;
   gameId: string;
   iStarted: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
-  terms: HandTermsModel;
+  betSize: bigint;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   myName?: string;
@@ -34,7 +42,7 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
     gameId,
     iStarted,
     gameplayEvent$,
-    terms,
+    betSize,
     onTurnChanged,
     appendGameLog,
     myName,
@@ -42,12 +50,12 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
     terminal,
   } = props;
   const { formatAmount } = useGameHost();
-  const space = spacepokerTermsOf(terms);
-  if (!space) {
-    throw new Error('Space Poker mount requires one canonical positive unit size');
+  const handState = spacepokerStateCodec.decode(gameHandState(handSource));
+  if (!handState) {
+    throw new Error('Space Poker mount requires initialized durable game state');
   }
-  const unitSizeMojosValue = space.unitSizeMojos;
-  const stackSize = terms.myContribution / unitSizeMojosValue;
+  const unitSizeMojosValue = handState.unitSizeMojos;
+  const stackSize = betSize / unitSizeMojosValue;
   const handleTurnChanged = useCallback(
     (isMyTurn: boolean) => onTurnChanged(gameId, isMyTurn),
     [gameId, onTurnChanged],
@@ -67,7 +75,7 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
       gameId={gameId}
       iStarted={iStarted}
       gameplayEvent$={gameplayEvent$}
-      betSize={terms.myContribution.toString()}
+      betSize={betSize.toString()}
       unitSizeMojos={unitSizeMojosValue.toString()}
       onTurnChanged={handleTurnChanged}
       onGameLog={handleGameLog}
@@ -78,20 +86,16 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
   );
 }
 
-export const spacepokerMountRegistration: GameMountRegistration = {
+export const play: GameMountRegistration = {
   renderLive(session, names) {
-    const terms = session.lastHandTerms;
-    if (terms === null || terms.gameType !== 'spacepoker') {
-      throw new Error('Space Poker session is missing Space Poker terms');
-    }
+    const gameId = session.activeGameId ?? session.gameSpecificView.displayGameId ?? '';
     return (
       <SpacepokerLiveMount
-        key={session.handKey}
         handSource={session.handSource}
-        gameId={session.activeGameId ?? session.gameSpecificView.displayGameId ?? ''}
+        gameId={gameId}
         iStarted={session.iStarted}
         gameplayEvent$={session.gameplayEvent$}
-        terms={terms}
+        betSize={amountForGame(session.gameSpecificView.amountsById, gameId)}
         onTurnChanged={session.onTurnChanged}
         appendGameLog={session.appendGameLog}
         terminal={session.gameSpecificView.terminal}
@@ -100,18 +104,18 @@ export const spacepokerMountRegistration: GameMountRegistration = {
     );
   },
   renderFrozen(view: FrozenGameView, options) {
-    const terms = view.lastTerms;
-    if (terms.gameType !== 'spacepoker') {
-      throw new Error('Finished Space Poker session is missing Space Poker terms');
-    }
     const gameId = view.lastDisplayedId ?? view.currentHandIds[0] ?? view.activeIds[0] ?? 'finished';
+    const amount = view.instances[gameId]?.amount;
+    if (amount === undefined) {
+      throw new Error(`Space Poker is missing the accepted amount for game ${gameId}`);
+    }
     return (
       <SpacepokerLiveMount
         handSource={terminalGameHandSource(view.handState)}
         gameId={gameId}
         iStarted={options.iStarted}
         gameplayEvent$={EMPTY}
-        terms={terms}
+        betSize={BigInt(amount)}
         onTurnChanged={() => {}}
         appendGameLog={() => {}}
         terminal={view.instances[gameId]?.terminal ?? EMPTY_GAME_TERMINAL_MODEL}

@@ -47,6 +47,7 @@
     "coverage",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
+    "src/features",
     "src/lib/tests",
     "../games/**/*.test.ts",
     "../games/**/*.test.tsx"

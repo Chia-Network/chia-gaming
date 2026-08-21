@@ -1,7 +1,7 @@
 import { Program } from 'clvm-lib';
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
-import { krunkStateCodec } from '@games/krunk/ui/stateCodec';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { krunkStateCodec } from '@games/krunk/ui/serialize';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -245,7 +245,7 @@ describe('session machine behavior sequences', () => {
 
       ids: ['7'],
 
-      terms: CALPOKER_TERMS,
+      handProposal: CALPOKER_TERMS,
 
       moved: (state: ReturnType<typeof createSessionMachineState>) =>
         calpokerStateCodec.decode(state.model.game.handState)?.isPlayerTurn,
@@ -256,7 +256,7 @@ describe('session machine behavior sequences', () => {
 
       ids: ['7'],
 
-      terms: {
+      handProposal: {
         gameType: 'spacepoker' as const,
 
         myContribution: 100n,
@@ -277,7 +277,7 @@ describe('session machine behavior sequences', () => {
 
       ids: ['7', '9'],
 
-      terms: {
+      handProposal: {
         gameType: 'krunk' as const,
 
         myContribution: 100n,
@@ -293,13 +293,13 @@ describe('session machine behavior sequences', () => {
   ])(
     'atomically persists $gameType acceptance, move, settlement, balance failure, and abandonment',
 
-    ({ gameType, ids, terms, moved }) => {
+    ({ gameType, ids, handProposal, moved }) => {
       let state = createSessionMachineState(
         createSessionModel({
           channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
         }),
       );
-      state = trackProposal(state, ids, terms);
+      state = trackProposal(state, ids, handProposal);
 
       const acceptedOrder: string[] = [];
 
@@ -463,12 +463,12 @@ describe('session machine behavior sequences', () => {
   );
 
   it.each([
-    { gameType: 'calpoker' as const, terms: CALPOKER_TERMS },
+    { gameType: 'calpoker' as const, handProposal: CALPOKER_TERMS },
 
     {
       gameType: 'spacepoker' as const,
 
-      terms: {
+      handProposal: {
         gameType: 'spacepoker' as const,
 
         myContribution: 100n,
@@ -480,13 +480,13 @@ describe('session machine behavior sequences', () => {
         unitSizeMojos: 10n,
       },
     },
-  ])('does not invent $gameType durable turns from chain progress statuses', ({ terms }) => {
+  ])('does not invent $gameType durable turns from chain progress statuses', ({ handProposal }) => {
     let state = createSessionMachineState(
       createSessionModel({
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
       }),
     );
-    state = trackProposal(state, ['7'], terms);
+    state = trackProposal(state, ['7'], handProposal);
 
     state = run(state, {
       type: 'notification-accepted-group',

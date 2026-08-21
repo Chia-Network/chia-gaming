@@ -14,13 +14,7 @@ import {
   krunkWinMessage,
   type KrunkGameState,
 } from './useKrunkHand';
-import {
-  gameplayEventForMoveRejected,
-  gameplayEventsForGameStatus,
-  parseTermsFromNotificationValue,
-} from '@/hooks/useGameSession';
-import { createSessionModel, selectProposalGroupByMemberId } from '@/lib/session/model';
-import { isValidKrunkStake } from './adapter';
+import { isValidKrunkStake } from './handProposal';
 import {
   formatKrunkHandLog,
   krunkGameSlots,
@@ -29,9 +23,10 @@ import {
   type KrunkProps,
 } from './Krunk';
 import Krunk from './Krunk';
-import { initialKrunkGameState, krunkStateCodec } from './stateCodec';
+import { initialKrunkGameState, krunkStateCodec } from './serialize';
 import {
   type GameTerminalModel,
+  type GameplayEvent,
   type LiveGameController,
   type LocalGameActionRequest,
 } from '../../host';
@@ -50,56 +45,12 @@ function terminal(
 }
 
 describe('Krunk terms', () => {
-  it('derives both member lookups from one normalized group', () => {
-    const terms = {
-      gameType: 'krunk',
-      myContribution: 100n,
-      theirContribution: 100n,
-      gameTimeout: 15n,
-    } as const;
-    const model = createSessionModel({
-      betweenHand: {
-        proposalGroups: [
-          {
-            primaryId: '1',
-            memberIds: ['1', '3'],
-            terms,
-            origin: 'local',
-            disposition: 'outgoing',
-          },
-        ],
-      },
-    });
-
-    expect(selectProposalGroupByMemberId(model, '1')).toBe(
-      selectProposalGroupByMemberId(model, '3'),
-    );
-  });
-
   it('requires positive 100-mojo stake increments', () => {
     expect(isValidKrunkStake(0n)).toBe(false);
     expect(isValidKrunkStake(99n)).toBe(false);
     expect(isValidKrunkStake(100n)).toBe(true);
     expect(isValidKrunkStake(200n)).toBe(true);
     expect(isValidKrunkStake(201n)).toBe(false);
-  });
-
-  it('keeps the aggregate per-player contributions from a grouped proposal', () => {
-    expect(
-      parseTermsFromNotificationValue(
-        {
-          my_contribution: { Amount: '300' },
-          their_contribution: { Amount: '300' },
-          timeout: 15,
-        },
-        'krunk',
-      ),
-    ).toEqual({
-      gameType: 'krunk',
-      myContribution: 300n,
-      theirContribution: 300n,
-      gameTimeout: 15n,
-    });
   });
 });
 
@@ -126,7 +77,7 @@ describe('Krunk draft continuity', () => {
         },
       },
     });
-    const gameplay = new Subject<import('../../hooks/useGameSession').GameplayEvent>();
+    const gameplay = new Subject<GameplayEvent>();
     const renderPhases: string[] = [];
     const controller = {
       handState: persisted,
@@ -138,9 +89,7 @@ describe('Krunk draft continuity', () => {
       handSource: { interactionMode: 'live' as const, controller },
       currentHandGameIds: ['picker', 'guesser'],
       activeGameIds: ['picker', 'guesser'],
-      iProposedHand: true,
       gameplayEvent$: gameplay,
-      betSize: 100n,
       onTurnChanged: () => {},
       onGameLog: () => {},
       terminalsById: {},
@@ -277,9 +226,7 @@ describe('Krunk draft continuity', () => {
           },
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['picker', 'guesser'],
-          iProposedHand: true,
           gameplayEvent$: EMPTY,
-          betSize: 100n,
           onTurnChanged: () => {},
           onGameLog: () => {},
           terminalsById: {},
@@ -344,9 +291,7 @@ describe('Krunk draft continuity', () => {
           },
           currentHandGameIds: ['picker', 'guesser'],
           activeGameIds: ['guesser'],
-          iProposedHand: true,
           gameplayEvent$: EMPTY,
-          betSize: 100n,
           onTurnChanged: () => {},
           onGameLog: () => {},
           terminalsById: {},
@@ -391,17 +336,29 @@ describe('Krunk draft continuity', () => {
     expect(newlyResolvedKrunkIndex(2, 2)).toBeUndefined();
   });
 
-  it('keeps factory-order role slots stable after one sibling ends', () => {
+  it('keeps durable role slots stable after one sibling ends', () => {
     const current = ['0', '1'];
     const active = ['1'];
+    const aliceFirst = krunkStateCodec.encode({
+      games: {
+        '0': initialKrunkGameState('alice'),
+        '1': initialKrunkGameState('bob'),
+      },
+    });
 
-    expect(krunkGameSlots(current, true, active)).toEqual({
+    expect(krunkGameSlots(current, active, aliceFirst)).toEqual({
       aliceGameId: '0',
       bobGameId: '1',
       aliceActive: false,
       bobActive: true,
     });
-    expect(krunkGameSlots(current, false, active)).toEqual({
+    const bobFirst = krunkStateCodec.encode({
+      games: {
+        '0': initialKrunkGameState('bob'),
+        '1': initialKrunkGameState('alice'),
+      },
+    });
+    expect(krunkGameSlots(current, active, bobFirst)).toEqual({
       aliceGameId: '1',
       bobGameId: '0',
       aliceActive: true,
@@ -409,7 +366,7 @@ describe('Krunk draft continuity', () => {
     });
   });
 
-  it('uses persisted roles instead of stale proposal orientation on finished restore', () => {
+  it('uses persisted roles on finished restore', () => {
     const alice = {
       ...initialKrunkGameState('alice'),
       handler: KrunkHandler.Terminal,
@@ -425,7 +382,7 @@ describe('Krunk draft continuity', () => {
     };
     const persisted = krunkStateCodec.encode({ games: { '0': alice, '1': bob } });
 
-    expect(krunkGameSlots(['0', '1'], false, [], persisted)).toEqual({
+    expect(krunkGameSlots(['0', '1'], [], persisted)).toEqual({
       aliceGameId: '0',
       bobGameId: '1',
       aliceActive: false,
@@ -809,50 +766,6 @@ describe('Krunk draft continuity', () => {
       '⬛🟩🟩🟩🟩BROWN',
       '⬛🟩🟩🟩🟩DROWN',
       '🟩🟩🟩🟩🟩FROWN',
-    ]);
-  });
-
-  it('routes a typed move rejection with its game id, tag, and message', () => {
-    expect(
-      gameplayEventForMoveRejected({
-        id: 7n,
-        tag: 'not_in_dictionary',
-        message: 'xxxxx',
-      }),
-    ).toEqual({
-      MoveRejected: {
-        gameId: '7',
-        tag: 'not_in_dictionary',
-        message: 'xxxxx',
-      },
-    });
-  });
-
-  it('exposes the guesser game on the first atomic-group acceptance', () => {
-    // First ProposalAccepted seeds activeIds and currentHandGameIds with the
-    // full atomic group so both Krunk panels wire immediately.
-    const activeIds = ['1', '3'];
-    expect(activeIds).toEqual(['1', '3']);
-
-    const opponentCommit = {
-      GameStatus: {
-        id: '3',
-        status: 'my-turn',
-        coin_id: null,
-        other_params: {
-          readable: [0x80],
-          mover_share: '0',
-        },
-      },
-    };
-    expect(gameplayEventsForGameStatus(opponentCommit, activeIds, null)).toEqual([
-      {
-        OpponentMoved: {
-          readable: Uint8Array.from([0x80]),
-          gameId: '3',
-          moverShare: '0',
-        },
-      },
     ]);
   });
 });

@@ -1,13 +1,13 @@
 import { AmountInput, useGameHost } from '../../host/ui';
-import type { ComposeEditorProps } from '../../host';
+import type { HandProposalFormProps } from '../../host';
 
-export function SpacepokerComposeEditor({
+export function HandProposalForm({
   draft,
   disabled,
   maxPerHandMojos,
   onChange,
   onSubmit,
-}: ComposeEditorProps<{ unitSize: bigint; stackSize: bigint }>) {
+}: HandProposalFormProps<{ unitSize: bigint; stackSize: bigint }>) {
   const { formatMojos } = useGameHost();
   const betSize = draft.unitSize * draft.stackSize;
   const maxUnitSize =

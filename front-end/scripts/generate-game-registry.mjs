@@ -28,12 +28,20 @@ function extraPresets(key) {
 }
 
 const presetFiles = production.flatMap((key) => [factoryHex(key), ...extraPresets(key)]);
+function relTo(key, file) {
+  const rel = relative(join(FE, '../src/generated'), join(ROOT, 'games', key, 'ui', file))
+    .replace(/\\/g, '/')
+    .replace(/\.tsx?$/, '');
+  return rel.startsWith('.') ? rel : `./${rel}`;
+}
 const imports = production
   .map((key, index) => {
-    const rel = relative(join(FE, '../src/generated'), join(ROOT, 'games', key, 'ui/package.ts'))
-      .replace(/\\/g, '/')
-      .replace(/\.ts$/, '');
-    return `import pkg${index} from '${rel.startsWith('.') ? rel : `./${rel}`}';`;
+    return [
+      `import handProposal${index} from '${relTo(key, 'handProposal.ts')}';`,
+      `import { HandProposalForm as HandProposalForm${index} } from '${relTo(key, 'handProposalForm.tsx')}';`,
+      `import { play as play${index} } from '${relTo(key, 'play.tsx')}';`,
+      `const pkg${index} = Object.assign({}, handProposal${index}, { HandProposalForm: HandProposalForm${index}, ...play${index} });`,
+    ].join('\n');
   })
   .join('\n');
 const packageList = production.map((_, index) => `pkg${index}`).join(', ');

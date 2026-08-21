@@ -1,13 +1,13 @@
 import type { ComposeDraftValue, GameComposeDrafts } from '@games/host';
 import {
   defaultGameComposeDraft,
-  gameComposeDraftFromTerms,
-  gameTermsFromComposeDraft,
+  gameComposeDraftFromHandProposal,
+  handProposalFromComposeDraft,
   REGISTERED_GAMES,
   updateGameComposeDraft,
   type CatalogGameType,
 } from '../gameRegistry';
-import type { HandTermsModel, RegisteredGameType } from './types';
+import type { HandProposal, RegisteredGameType } from './types';
 
 export interface ComposeDraftState {
   selectedGame: RegisteredGameType;
@@ -47,32 +47,32 @@ export function emptyComposeDraftState(): ComposeDraftState {
 
 export function createComposeDraftState(
   perGameAmount: bigint,
-  lastTerms: HandTermsModel,
+  lastHandProposal: HandProposal,
 ): ComposeDraftState {
-  return applyTermsToComposeDraft(
+  return applyHandProposalToComposeDraft(
     {
-      selectedGame: lastTerms.gameType,
-      gameTimeout: lastTerms.gameTimeout,
+      selectedGame: lastHandProposal.gameType,
+      gameTimeout: lastHandProposal.gameTimeout,
       proposalSent: false,
       drafts: defaultComposeDrafts(perGameAmount),
     },
-    lastTerms,
+    lastHandProposal,
   );
 }
 
-export function applyTermsToComposeDraft(
+export function applyHandProposalToComposeDraft(
   state: ComposeDraftState,
-  terms: HandTermsModel | null,
+  handProposal: HandProposal | null,
 ): ComposeDraftState {
-  if (terms === null) return state;
+  if (handProposal === null) return state;
   return {
     ...state,
-    selectedGame: terms.gameType,
-    gameTimeout: terms.gameTimeout,
+    selectedGame: handProposal.gameType,
+    gameTimeout: handProposal.gameTimeout,
     proposalSent: false,
     drafts: {
       ...state.drafts,
-      [terms.gameType]: gameComposeDraftFromTerms(terms),
+      [handProposal.gameType]: gameComposeDraftFromHandProposal(handProposal),
     },
   };
 }
@@ -98,9 +98,9 @@ export function updateSelectedComposeDraft(
   };
 }
 
-export function composeDraftTerms(state: ComposeDraftState): HandTermsModel | null {
+export function composeDraftTerms(state: ComposeDraftState): HandProposal | null {
   const key = state.selectedGame;
-  return gameTermsFromComposeDraft(key, composeDraftValue(state, key), state.gameTimeout);
+  return handProposalFromComposeDraft(key, composeDraftValue(state, key), state.gameTimeout);
 }
 
 export function composeDraftCanSubmit(

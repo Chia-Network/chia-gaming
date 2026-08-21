@@ -1,4 +1,4 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import {
   flushSessionSave,
   hasSavedSessionMarker,
@@ -83,7 +83,7 @@ describe('save boundary enforcement', () => {
           moveNumber: 1n,
           isPlayerTurn: true,
         }),
-        betweenHandLastTerms: {
+        betweenHandLastHandProposal: {
           my_contribution: '20',
           their_contribution: '20',
           game_timeout: '15',

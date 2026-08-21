@@ -1,14 +1,14 @@
 import type { ChannelStatusPayload } from '../../types/ChiaGaming';
-import type { SavedHandTerms, SessionPresentationSave } from './saveEnvelope';
+import type { SavedHandProposal, SessionPresentationSave } from './saveEnvelope';
 import { encodeComposeDraftState } from './persistenceBetweenHands';
 import {
-  encodeGameTermsExtras,
+  encodeHandProposalExtras,
   isCatalogGameType,
   packageFor,
-  validateGameTerms,
+  validateHandProposal,
 } from '../gameRegistry';
 import { channelStatusPayloadFromModel } from './normalization';
-import type { HandTermsModel, RegisteredGameType, SessionModel } from './types';
+import type { HandProposal, RegisteredGameType, SessionModel } from './types';
 
 export interface SessionPresentationFacts {
   channelStatus?: ChannelStatusPayload | null;
@@ -28,16 +28,16 @@ export function snapshotFromSessionModel(
     return gameType;
   };
 
-  const termsSnapshot = (terms: HandTermsModel): SavedHandTerms => {
-    if (!validateGameTerms(terms)) {
-      throw new Error(`Session invariant broken: invalid ${terms.gameType} terms`);
+  const handProposalSnapshot = (handProposal: HandProposal): SavedHandProposal => {
+    if (!validateHandProposal(handProposal)) {
+      throw new Error(`Session invariant broken: invalid ${handProposal.gameType} hand proposal`);
     }
     return {
-      my_contribution: terms.myContribution.toString(),
-      their_contribution: terms.theirContribution.toString(),
-      game_timeout: terms.gameTimeout.toString(),
-      game_type: requireCatalogGameType(terms.gameType, 'terms.gameType'),
-      ...encodeGameTermsExtras(terms),
+      my_contribution: handProposal.myContribution.toString(),
+      their_contribution: handProposal.theirContribution.toString(),
+      game_timeout: handProposal.gameTimeout.toString(),
+      game_type: requireCatalogGameType(handProposal.gameType, 'handProposal.gameType'),
+      ...encodeHandProposalExtras(handProposal),
     };
   };
 
@@ -60,9 +60,11 @@ export function snapshotFromSessionModel(
   if (model.game.currentHandIds.length === 0 && model.game.currentHandOrigin !== null) {
     throw new Error('Session invariant broken: hand origin has no current hand');
   }
-  const lastTerms = model.betweenHand.lastTerms;
-  if (hasPersistedHand && lastTerms === null) {
-    throw new Error('Session invariant broken: persisted hand is missing betweenHandLastTerms');
+  const lastHandProposal = model.betweenHand.lastHandProposal;
+  if (hasPersistedHand && lastHandProposal === null) {
+    throw new Error(
+      'Session invariant broken: persisted hand is missing betweenHandLastHandProposal',
+    );
   }
   const proposalMemberIds = new Set<string>();
   let localOutgoingGroups = 0;
@@ -70,9 +72,9 @@ export function snapshotFromSessionModel(
     if (group.memberIds.length === 0 || group.primaryId !== group.memberIds[0]) {
       throw new Error('Session invariant broken: proposal primary ID must be its first member');
     }
-    if (!packageFor(group.terms.gameType).validateHandMembership(group.memberIds, null)) {
+    if (!packageFor(group.handProposal.gameType).validateHandMembership(group.memberIds, null)) {
       throw new Error(
-        `Session invariant broken: ${group.terms.gameType} proposal has ${group.memberIds.length} members`,
+        `Session invariant broken: ${group.handProposal.gameType} proposal has ${group.memberIds.length} members`,
       );
     }
     if (
@@ -147,19 +149,20 @@ export function snapshotFromSessionModel(
     cleanShutdownStarted: model.channel.cleanShutdownStarted,
     betweenHandMode: model.betweenHand.mode,
     betweenHandCompose: encodeComposeDraftState(model.betweenHand.compose),
-    betweenHandLastTerms: lastTerms === null ? null : termsSnapshot(lastTerms),
-    betweenHandRejectedOnceTerms: model.betweenHand.rejectedOnceTerms
-      ? termsSnapshot(model.betweenHand.rejectedOnceTerms)
+    betweenHandLastHandProposal:
+      lastHandProposal === null ? null : handProposalSnapshot(lastHandProposal),
+    betweenHandRejectedOnceHandProposal: model.betweenHand.rejectedOnceHandProposal
+      ? handProposalSnapshot(model.betweenHand.rejectedOnceHandProposal)
       : null,
-    betweenHandPendingRetryTerms: model.betweenHand.pendingRetryTerms
-      ? termsSnapshot(model.betweenHand.pendingRetryTerms)
+    betweenHandPendingRetryHandProposal: model.betweenHand.pendingRetryHandProposal
+      ? handProposalSnapshot(model.betweenHand.pendingRetryHandProposal)
       : null,
     proposalGroups: model.betweenHand.proposalGroups.map((group) => ({
       primary_id: group.primaryId,
       member_ids: [...group.memberIds],
       origin: group.origin,
       disposition: group.disposition,
-      terms: termsSnapshot(group.terms),
+      hand_proposal: handProposalSnapshot(group.handProposal),
     })),
     waitingStateEnteredAt: facts.waitingStateEnteredAt ?? null,
     cleanShutdownGraceStartedAt: facts.cleanShutdownGraceStartedAt ?? null,

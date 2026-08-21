@@ -5,10 +5,11 @@ used by the game framework. It covers how game logic is structured, how
 handlers produce moves, how validators enforce rules, and how the two systems
 connect through the referee puzzle.
 
-For the broader architecture (state channels, potato protocol, dispute
-resolution), see `OVERVIEW.md`. For the raw calling conventions, see
-`clsp/handler_api.md`. For DoS considerations (move size bounds, validation
-program cost, argument checking), see `CLVM_DOS.md`.
+For adding a game (package layout, registry, host APIs), see
+`GAME_WRITING_GUIDE.md`. For the broader architecture (state channels, potato
+protocol, dispute resolution), see `OVERVIEW.md`. For the raw calling
+conventions, see `clsp/handler_api.md`. For DoS considerations (move size
+bounds, validation program cost, argument checking), see `CLVM_DOS.md`.
 
 ## Table of Contents
 
@@ -38,16 +39,10 @@ Games are driven by two cooperating systems:
   are chialisp programs, curried with game-specific state.
 
 - **Validators** enforce the rules of each move. They are chialisp programs,
-  run both off-chain (to check a move before sending it) and on-chain (to
-  settle disputes).
-
-Each game is a package under `games/<key>/` with `clsp/factory.clsp`,
-`rust/mod.rs` (prepared factory + probe), `rust/tests/mod.rs`, and for
-production games `ui/package.ts`. Register the key in `games/registry.json`;
-do not hand-edit factory catalogs or frontend import lists.
   one per protocol step (e.g. `a.clsp` through `e.clsp` for calpoker). They
-  run both off-chain (for move verification during normal play) and on-chain
-  (inside the referee puzzle, for slash enforcement during disputes).
+  run both off-chain (to check a move before sending it) and on-chain (inside
+  the referee puzzle, for slash enforcement during disputes). Package layout
+  and registration are in `GAME_WRITING_GUIDE.md`.
 
 Handlers and validators are complementary: handlers decide *what* to play,
 validators prove *that it was legal*. A handler that produces an illegal

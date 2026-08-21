@@ -1,7 +1,9 @@
 import type { SessionController } from '../../hooks/SessionController';
 import { protocolIdForCatalog } from '../gameIdentities';
-import { encodeGameProposalParameters, validateGameTerms } from '../gameRegistry';
-import { coinIdHex, type GameplayEvent } from './gameSessionEvents';
+import { encodeGameProposalParameters } from '../gameProposalCodec';
+import { validateHandProposal } from '../gameRegistry';
+import { coinIdHex } from './gameSessionEvents';
+import type { GameplayEvent } from '@games/host';
 import type {
   SessionMachineEffect,
   SessionMachineEvent,
@@ -78,7 +80,7 @@ export class SessionMachineInterpreter {
           this.commandFailed('propose-game', new Error('channel is not active off-chain'));
           return;
         }
-        if (!validateGameTerms(effect.terms)) {
+        if (!validateHandProposal(effect.handProposal)) {
           this.commandFailed('propose-game', new Error('proposal terms are invalid'));
           return;
         }
@@ -90,11 +92,16 @@ export class SessionMachineInterpreter {
           'propose-game',
           () =>
             dependencies.controller.proposeGame({
-              game_type: protocolIdForCatalog(effect.terms.gameType),
-              timeout: effect.terms.gameTimeout,
-              parameters: encodeGameProposalParameters(effect.terms, dependencies.iStarted),
+              game_type: protocolIdForCatalog(effect.handProposal.gameType),
+              timeout: effect.handProposal.gameTimeout,
+              parameters: encodeGameProposalParameters(effect.handProposal, dependencies.iStarted),
             }),
-          (ids) => dependencies.dispatch({ type: 'proposal-sent', ids, terms: effect.terms }),
+          (ids) =>
+            dependencies.dispatch({
+              type: 'proposal-sent',
+              ids,
+              handProposal: effect.handProposal,
+            }),
         );
         return;
       }

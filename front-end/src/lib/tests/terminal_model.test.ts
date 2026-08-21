@@ -6,9 +6,9 @@ import {
 import type { SettlementOutcome } from '../settlement';
 import {
   parseGameStatusTerminalInfo,
-  settledEventForInfo,
   terminalInfoFromGameSettled,
-} from '../../hooks/useGameSession';
+} from '../session/gameSessionEvents';
+import { gameplayEventForSettlement } from '../wasm/gameplayEvents';
 
 function keyedTerminalGame(
   outcome: SettlementOutcome,
@@ -140,7 +140,7 @@ describe('terminal session model', () => {
     });
 
     expect(
-      settledEventForInfo(
+      gameplayEventForSettlement(
         '7',
         terminalInfoFromGameSettled(
           {

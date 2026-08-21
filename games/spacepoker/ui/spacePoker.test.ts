@@ -26,17 +26,13 @@ import {
   spacePokerTransitionCommentary,
 } from './statusPresentation';
 import {
-  gameplayEventForActionFailed,
-  gameplayEventForGameActionError,
-} from '@/hooks/useGameSession';
-import {
   EMPTY_GAME_TERMINAL_MODEL,
   type GameplayEvent,
   type LiveGameController,
   type LocalGameActionRequest,
 } from '../../host';
-import { spacepokerRegistration } from './adapter';
-import { spacepokerStateCodec, type SpacepokerHandState } from './stateCodec';
+import { spacepokerRegistration } from './handProposal';
+import { spacepokerStateCodec, type SpacepokerHandState } from './serialize';
 
 describe('Space Poker terminal UX', () => {
   it('uses a single-character ten rank', () => {
@@ -127,35 +123,6 @@ describe('Space Poker terminal UX', () => {
       player: 'win',
       opponent: null,
     });
-  });
-
-  it('forwards a scoped terminal action failure to gameplay', () => {
-    expect(gameplayEventForGameActionError('42', 'accept-settlement', 'cannot accept')).toEqual({
-      GameError: {
-        gameId: '42',
-        action: 'accept-settlement',
-        reason: 'cannot accept',
-        source: 'action',
-      },
-    });
-  });
-
-  it('forwards only scoped ActionFailed notifications to terminal rollback', () => {
-    expect(
-      gameplayEventForActionFailed({
-        id: '42',
-        action: 'make_move',
-        reason: 'cannot reveal',
-      }),
-    ).toEqual({
-      GameError: {
-        gameId: '42',
-        action: 'make-move',
-        reason: 'cannot reveal',
-        source: 'action',
-      },
-    });
-    expect(gameplayEventForActionFailed({ reason: 'unscoped failure' })).toBeNull();
   });
 
   it('maps only voluntary settlement outcomes to terminal poker actions', () => {

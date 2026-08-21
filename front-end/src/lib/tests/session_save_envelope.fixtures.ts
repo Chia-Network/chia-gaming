@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import {
   CURRENT_VERSION,
   _resetForTests,
@@ -74,9 +74,9 @@ const PRESENTATION_KEYS = new Set([
   'cleanShutdownStarted',
   'betweenHandMode',
   'betweenHandCompose',
-  'betweenHandLastTerms',
-  'betweenHandRejectedOnceTerms',
-  'betweenHandPendingRetryTerms',
+  'betweenHandLastHandProposal',
+  'betweenHandRejectedOnceHandProposal',
+  'betweenHandPendingRetryHandProposal',
   'proposalGroups',
   'waitingStateEnteredAt',
   'cleanShutdownGraceStartedAt',
@@ -144,14 +144,14 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
         spacepoker: { unitSize: '1', stackSize: '20' },
       },
     },
-    betweenHandLastTerms: {
+    betweenHandLastHandProposal: {
       my_contribution: perGameAmount,
       their_contribution: perGameAmount,
       game_timeout: '15',
       game_type: 'calpoker',
     },
-    betweenHandRejectedOnceTerms: null,
-    betweenHandPendingRetryTerms: null,
+    betweenHandRejectedOnceHandProposal: null,
+    betweenHandPendingRetryHandProposal: null,
     proposalGroups: [],
     waitingStateEnteredAt: null,
     cleanShutdownGraceStartedAt: null,
@@ -251,7 +251,7 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
       moveNumber: 1n,
       isPlayerTurn: true,
     }),
-    betweenHandLastTerms: {
+    betweenHandLastHandProposal: {
       my_contribution: '20',
       their_contribution: '20',
       game_timeout: '15',

@@ -14,13 +14,13 @@ export type {
   GameTurnState,
   GameTerminalType,
   GameTerminalModel,
-  HandTermsBaseModel,
+  HandProposalBase,
   ProposalGroupOrigin,
 } from '@games/host';
 import type {
   GameTerminalModel,
   GameTurnState,
-  HandTermsModel as HostHandTermsModel,
+  HandProposal as HostHandProposal,
   ProposalGroupOrigin,
 } from '@games/host';
 import type { CatalogGameType } from '../../generated/gamePresets';
@@ -28,7 +28,7 @@ import type { CatalogGameType } from '../../generated/gamePresets';
 export type RegisteredGameType = CatalogGameType;
 export type { CatalogGameType };
 
-export type HandTermsModel = Omit<HostHandTermsModel, 'gameType'> & {
+export type HandProposal = Omit<HostHandProposal, 'gameType'> & {
   gameType: CatalogGameType;
 };
 
@@ -131,7 +131,7 @@ export type ProposalGroupDisposition =
 export interface ProposalGroupModel {
   primaryId: string;
   memberIds: string[];
-  terms: HandTermsModel;
+  handProposal: HandProposal;
   origin: ProposalGroupOrigin;
   disposition: ProposalGroupDisposition;
 }
@@ -172,11 +172,11 @@ export interface GameModel {
 export interface BetweenHandModel {
   mode: BetweenHandModeModel;
   proposalGroups: ProposalGroupModel[];
-  rejectedOnceTerms: HandTermsModel | null;
-  lastTerms: HandTermsModel | null;
+  rejectedOnceHandProposal: HandProposal | null;
+  lastHandProposal: HandProposal | null;
   compose: ComposeDraftState;
   newHandRequested: boolean;
-  pendingRetryTerms: HandTermsModel | null;
+  pendingRetryHandProposal: HandProposal | null;
 }
 
 export interface SessionHistoryModel {

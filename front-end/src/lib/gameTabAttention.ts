@@ -1,4 +1,4 @@
-import type { GameplayEvent } from '../hooks/useGameSession';
+import type { GameplayEvent } from '@games/host';
 import type { ChannelStatus } from '../types/ChiaGaming';
 
 /** Outcomes that mean a voluntary game-level accept (not a hand proposal). */
@@ -9,11 +9,20 @@ const SETTLEMENT_ACCEPT_OUTCOMES = new Set(['accept_settlement', 'we_accepted'])
  * is on another tab. In-game Message / GameMessage is intentionally excluded.
  */
 export function gameplayEventNeedsGameTabAttention(evt: GameplayEvent): boolean {
-  if ('OpponentMoved' in evt || 'ProposalAccepted' in evt) return true;
+  if ('OpponentMoved' in evt) return true;
   if ('Settled' in evt) {
     return SETTLEMENT_ACCEPT_OUTCOMES.has(evt.Settled.outcome);
   }
   return false;
+}
+
+/** A changed hand key with accepted game ids means a new hand started. */
+export function acceptedHandNeedsGameTabAttention(
+  previousHandKey: number,
+  handKey: number,
+  currentHandGameIds: readonly string[],
+): boolean {
+  return handKey !== previousHandKey && currentHandGameIds.length > 0;
 }
 
 /** Channel states that should set the Game tab unread badge (rising edge). */

@@ -44,7 +44,7 @@ export function reduceBetweenHandEvent(
         ...state,
         model: {
           ...state.model,
-          betweenHand: { ...state.model.betweenHand, rejectedOnceTerms: event.terms },
+          betweenHand: { ...state.model.betweenHand, rejectedOnceHandProposal: event.handProposal },
         },
       };
       break;
@@ -53,7 +53,7 @@ export function reduceBetweenHandEvent(
         ...state,
         model: {
           ...state.model,
-          betweenHand: { ...state.model.betweenHand, lastTerms: event.terms },
+          betweenHand: { ...state.model.betweenHand, lastHandProposal: event.handProposal },
         },
       };
       break;
@@ -62,7 +62,7 @@ export function reduceBetweenHandEvent(
         ...state,
         model: {
           ...state.model,
-          betweenHand: { ...state.model.betweenHand, pendingRetryTerms: event.terms },
+          betweenHand: { ...state.model.betweenHand, pendingRetryHandProposal: event.handProposal },
         },
       };
       break;

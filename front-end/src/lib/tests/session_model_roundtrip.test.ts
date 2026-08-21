@@ -1,6 +1,6 @@
 import type { SessionSave } from '../../hooks/save';
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import {
   createSessionModel,
   INITIAL_GAME_TERMINAL_MODEL,
@@ -59,7 +59,7 @@ describe('session model round trips', () => {
           },
         },
       },
-      betweenHand: { lastTerms: CAL_TERMS },
+      betweenHand: { lastHandProposal: CAL_TERMS },
     });
 
     const snapshot = snapshotFromSessionModel(model);
@@ -77,7 +77,7 @@ describe('session model round trips', () => {
         lastDisplayedGameId: snapshot.lastDisplayedGameId,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
-        betweenHandLastTerms: snapshot.betweenHandLastTerms,
+        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: CAL_HAND_STATE,
       }),
     );
@@ -103,7 +103,7 @@ describe('session model round trips', () => {
           },
         },
       },
-      betweenHand: { lastTerms: CAL_TERMS },
+      betweenHand: { lastHandProposal: CAL_TERMS },
     });
 
     const snapshot = snapshotFromSessionModel(model);
@@ -115,7 +115,7 @@ describe('session model round trips', () => {
         lastDisplayedGameId: snapshot.lastDisplayedGameId,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
-        betweenHandLastTerms: snapshot.betweenHandLastTerms,
+        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: CAL_HAND_STATE,
       }),
     );
@@ -153,7 +153,7 @@ describe('session model round trips', () => {
         },
       },
       betweenHand: {
-        lastTerms: {
+        lastHandProposal: {
           gameType: 'krunk',
           myContribution: 100n,
           theirContribution: 100n,
@@ -170,7 +170,7 @@ describe('session model round trips', () => {
         currentHandOrigin: snapshot.currentHandOrigin,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
-        betweenHandLastTerms: snapshot.betweenHandLastTerms,
+        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: krunkStateCodec.encode({
           games: {
             '7': initialKrunkGameState('alice'),
@@ -252,7 +252,7 @@ describe('session model round trips', () => {
         instances: { active, terminal },
         lastDisplayedId: 'terminal',
       },
-      betweenHand: { lastTerms: CAL_TERMS },
+      betweenHand: { lastHandProposal: CAL_TERMS },
     });
 
     const snapshot = snapshotFromSessionModel(model);
@@ -269,7 +269,7 @@ describe('session model round trips', () => {
         lastDisplayedGameId: snapshot.lastDisplayedGameId,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
-        betweenHandLastTerms: snapshot.betweenHandLastTerms,
+        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: CAL_HAND_STATE,
       }),
     );
@@ -311,7 +311,7 @@ describe('session model round trips', () => {
           },
           lastDisplayedId: '7',
         },
-        betweenHand: { lastTerms: CAL_TERMS },
+        betweenHand: { lastHandProposal: CAL_TERMS },
       }),
     );
     expect(() =>

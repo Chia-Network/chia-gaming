@@ -15,9 +15,7 @@ export interface KrunkLiveMountProps {
   handSource: GameHandSource;
   currentHandGameIds: string[];
   activeGameIds: string[];
-  iProposedHand: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
-  betSize: bigint;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   myName?: string;
@@ -38,17 +36,14 @@ export function KrunkLiveMount(props: KrunkLiveMountProps) {
   return <Krunk {...rest} onGameLog={handleGameLog} />;
 }
 
-export const krunkMountRegistration: GameMountRegistration = {
+export const play: GameMountRegistration = {
   renderLive(session, names) {
     return (
       <KrunkLiveMount
-        key={session.handKey}
         handSource={session.handSource}
         currentHandGameIds={session.currentHandGameIds}
         activeGameIds={session.activeGameIds}
-        iProposedHand={session.iProposedHand}
         gameplayEvent$={session.gameplayEvent$}
-        betSize={session.currentHandAmount}
         onTurnChanged={session.onTurnChanged}
         appendGameLog={session.appendGameLog}
         terminalsById={session.gameSpecificView.terminalsById}
@@ -63,9 +58,7 @@ export const krunkMountRegistration: GameMountRegistration = {
         handSource={terminalGameHandSource(view.handState)}
         currentHandGameIds={[...view.currentHandIds]}
         activeGameIds={[...view.activeIds]}
-        iProposedHand={view.iProposedHand}
         gameplayEvent$={EMPTY}
-        betSize={view.lastTerms.myContribution}
         onTurnChanged={() => {}}
         appendGameLog={() => {}}
         terminalsById={Object.fromEntries(

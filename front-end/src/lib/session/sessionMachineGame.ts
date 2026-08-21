@@ -1,4 +1,4 @@
-import { applyTermsToComposeDraft } from './composeDraft';
+import { applyHandProposalToComposeDraft } from './composeDraft';
 import { gameSliceReducer, type GameSlice } from './gameSlice';
 import {
   decodeGameFeatureState,
@@ -51,7 +51,7 @@ function withDurableGameEvent(
 ): SessionMachineTransition {
   const rawGameType =
     event.type === 'accepted-group'
-      ? event.terms.gameType
+      ? event.handProposal.gameType
       : event.type === 'feature-state'
         ? event.gameType
         : state.model.game.activeGameType;
@@ -121,7 +121,7 @@ export function reduceDurableGameEvent(
         amount: event.amount,
         startTurn: event.isMyTurn ? 'my-turn' : 'their-turn',
         origin: proposal.origin,
-        gameType: proposal.terms.gameType,
+        gameType: proposal.handProposal.gameType,
       });
       const modelWithGame = withGameSlice(state.model, game);
       return withDurableGameEvent(
@@ -136,13 +136,13 @@ export function reduceDurableGameEvent(
               ...(first
                 ? {
                     mode: 'decision' as const,
-                    rejectedOnceTerms: null,
-                    pendingRetryTerms: null,
+                    rejectedOnceHandProposal: null,
+                    pendingRetryHandProposal: null,
                     newHandRequested: false,
-                    lastTerms: proposal.terms,
-                    compose: applyTermsToComposeDraft(
+                    lastHandProposal: proposal.handProposal,
+                    compose: applyHandProposalToComposeDraft(
                       state.model.betweenHand.compose,
-                      proposal.terms,
+                      proposal.handProposal,
                     ),
                   }
                 : {}),
@@ -166,7 +166,7 @@ export function reduceDurableGameEvent(
           iStarted: event.iStarted,
           isMyTurn: event.isMyTurn,
           origin: proposal.origin,
-          terms: proposal.terms,
+          handProposal: proposal.handProposal,
         },
       );
     }

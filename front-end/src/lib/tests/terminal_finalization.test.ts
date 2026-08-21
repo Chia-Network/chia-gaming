@@ -4,8 +4,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { SessionController } from '../../hooks/SessionController';
-import { initialKrunkGameState, krunkStateCodec, KrunkHandler } from '@games/krunk/ui/stateCodec';
-import { reduceKrunkDurableState } from '@games/krunk/ui/adapter';
+import { initialKrunkGameState, krunkStateCodec, KrunkHandler } from '@games/krunk/ui/serialize';
+import { reduceKrunkDurableState } from '@games/krunk/ui/handProposal';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
@@ -122,7 +122,7 @@ const model = createSessionModel({
     },
   },
   betweenHand: {
-    lastTerms: {
+    lastHandProposal: {
       gameType: 'calpoker',
       myContribution: 10n,
       theirContribution: 10n,
@@ -696,7 +696,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       },
     },
     betweenHand: {
-      lastTerms: {
+      lastHandProposal: {
         gameType: 'krunk',
         myContribution: 100n,
         theirContribution: 100n,

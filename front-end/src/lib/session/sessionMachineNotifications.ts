@@ -5,18 +5,18 @@ import type {
   WasmNotification,
 } from '../../types/ChiaGaming';
 import { coerceToBytes } from '../../util';
-import { gameTermsEqual } from '../gameRegistry';
-import { durableNotificationKind } from './sessionTransition';
+import { handProposalsEqual } from '../gameRegistry';
+import { parseAmount } from '../wasm/parseAmount';
 import {
   gameplayEventForActionFailed,
+  gameplayEventForEndedStatus,
   gameplayEventForMoveRejected,
+  gameplayEventForSettlement,
   gameplayEventsForGameStatus,
-  parseAmount,
-  parseGameStatusTerminalInfo,
-  parseIncomingProposal,
-  settledEventForInfo,
-  terminalInfoFromGameSettled,
-} from './gameSessionEvents';
+} from '../wasm/gameplayEvents';
+import { durableNotificationKind } from './sessionTransition';
+import { proposalGroupFromProposalMade } from './incomingProposal';
+import { parseGameStatusTerminalInfo, terminalInfoFromGameSettled } from './gameSessionEvents';
 import { channelStatusModelFromPayload } from './normalization';
 import { isTerminalGameStatus, type NonTerminalGameStatusPayload } from './presentation';
 import { selectProposalGroupByDisposition, selectProposalGroupByMemberId } from './selectors';
@@ -132,7 +132,7 @@ export function reduceSessionNotification(
   }
 
   if ('ProposalMade' in notification) {
-    const incoming = parseIncomingProposal(notification.ProposalMade);
+    const incoming = proposalGroupFromProposalMade(notification.ProposalMade);
     if (!incoming) {
       effects.push({ type: 'controller-go-on-chain' });
       return { state: current, effects };
@@ -152,7 +152,7 @@ export function reduceSessionNotification(
       return { state: current, effects };
     }
     const between = current.model.betweenHand;
-    const matchesLast = gameTermsEqual(incoming.terms, between.lastTerms);
+    const matchesLast = handProposalsEqual(incoming.handProposal, between.lastHandProposal);
     if (between.mode === 'decision') {
       if (current.coordination.expectingCounterProposal) {
         effects.push({ type: 'timer-cancel', key: 'rejection-fallback' });
@@ -163,7 +163,7 @@ export function reduceSessionNotification(
             ...current.model,
             betweenHand: {
               ...between,
-              pendingRetryTerms: null,
+              pendingRetryHandProposal: null,
               newHandRequested: false,
               proposalGroups: between.proposalGroups.map((group) =>
                 group.primaryId === incoming.primaryId
@@ -180,7 +180,7 @@ export function reduceSessionNotification(
           coordination: { ...current.coordination, sameTermsRequested: false },
           model: {
             ...current.model,
-            betweenHand: { ...between, pendingRetryTerms: null, newHandRequested: false },
+            betweenHand: { ...between, pendingRetryHandProposal: null, newHandRequested: false },
           },
         };
         effects.push({ type: 'controller-accept-proposal', id: incoming.primaryId });
@@ -206,7 +206,7 @@ export function reduceSessionNotification(
             ...current.model,
             betweenHand: {
               ...current.model.betweenHand,
-              pendingRetryTerms: null,
+              pendingRetryHandProposal: null,
               newHandRequested: false,
               proposalGroups: current.model.betweenHand.proposalGroups.map((group) =>
                 group.primaryId === incoming.primaryId
@@ -217,13 +217,13 @@ export function reduceSessionNotification(
             },
           },
         };
-      } else if (between.pendingRetryTerms) {
-        const retry = between.pendingRetryTerms;
-        step({ type: 'set-pending-retry-terms', terms: null });
+      } else if (between.pendingRetryHandProposal) {
+        const retry = between.pendingRetryHandProposal;
+        step({ type: 'set-pending-retry-terms', handProposal: null });
         if (matchesLast) {
           effects.push(
             { type: 'controller-cancel-proposal', id: incoming.primaryId },
-            { type: 'controller-propose-game', terms: retry },
+            { type: 'controller-propose-game', handProposal: retry },
           );
         } else {
           step({
@@ -237,13 +237,13 @@ export function reduceSessionNotification(
         // The normalized group already carries its cached disposition.
       }
     } else if (between.mode === 'compose-proposal') {
-      if (between.pendingRetryTerms) {
-        const retry = between.pendingRetryTerms;
-        step({ type: 'set-pending-retry-terms', terms: null });
+      if (between.pendingRetryHandProposal) {
+        const retry = between.pendingRetryHandProposal;
+        step({ type: 'set-pending-retry-terms', handProposal: null });
         if (matchesLast) {
           effects.push(
             { type: 'controller-cancel-proposal', id: incoming.primaryId },
-            { type: 'controller-propose-game', terms: retry },
+            { type: 'controller-propose-game', handProposal: retry },
           );
         } else {
           step({ type: 'set-compose-proposal-sent', sent: false });
@@ -254,9 +254,9 @@ export function reduceSessionNotification(
           });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         }
-      } else if (gameTermsEqual(incoming.terms, between.rejectedOnceTerms)) {
+      } else if (handProposalsEqual(incoming.handProposal, between.rejectedOnceHandProposal)) {
         effects.push({ type: 'controller-cancel-proposal', id: incoming.primaryId });
-        step({ type: 'set-rejected-terms', terms: null });
+        step({ type: 'set-rejected-terms', handProposal: null });
       } else {
         step({
           type: 'set-proposal-disposition',
@@ -299,7 +299,6 @@ export function reduceSessionNotification(
         (groupId, index) => groupId !== current.model.game.currentHandIds[index],
       );
     if (first) cancelStale(id);
-    effects.push({ type: 'emit-gameplay', event: { ProposalAccepted: { id: accepted.id } } });
     return { state: current, effects };
   }
 
@@ -309,16 +308,9 @@ export function reduceSessionNotification(
     const id = String(settled.id);
     const terminal = terminalInfoFromGameSettled(settled, null);
     step({ type: 'notification-game-terminal', id, terminal });
-    const gameplay = settledEventForInfo(id, terminal);
     effects.push({
       type: 'emit-gameplay',
-      event: gameplay ?? {
-        GameError: {
-          gameId: id,
-          reason: terminal.label ?? 'settlement error',
-          source: 'terminal',
-        },
-      },
+      event: gameplayEventForSettlement(id, terminal),
     });
     if (current.model.game.activeIds.length === 0) {
       cancelStale();
@@ -352,21 +344,11 @@ export function reduceSessionNotification(
     if (isTerminalGameStatus(status.status)) {
       const terminal = parseGameStatusTerminalInfo(status, null, 'their-turn');
       step({ type: 'notification-game-terminal', id, terminal });
-      for (const event of gameplayEventsForGameStatus(
-        notification,
-        current.model.game.activeIds,
-        null,
-      )) {
+      for (const event of gameplayEventsForGameStatus(status, current.model.game.activeIds)) {
         effects.push({ type: 'emit-gameplay', event });
       }
-      if (terminal.type === 'game-error' || terminal.type === 'ended-cancelled') {
-        effects.push({
-          type: 'emit-gameplay',
-          event: {
-            GameError: { gameId: id, reason: terminal.label ?? terminal.type, source: 'terminal' },
-          },
-        });
-      }
+      const ended = gameplayEventForEndedStatus(id, terminal);
+      if (ended) effects.push({ type: 'emit-gameplay', event: ended });
       if (current.model.game.activeIds.length === 0) {
         cancelStale();
         step({ type: 'clear-proposals' });
@@ -387,11 +369,7 @@ export function reduceSessionNotification(
       moverShare: parseAmount(status.other_params?.mover_share),
       iStarted,
     });
-    for (const event of gameplayEventsForGameStatus(
-      notification,
-      current.model.game.activeIds,
-      null,
-    )) {
+    for (const event of gameplayEventsForGameStatus(status, current.model.game.activeIds)) {
       effects.push({ type: 'emit-gameplay', event });
     }
     const generation = (current.coordination.gameEnrichmentGeneration[id] ?? 0) + 1;
@@ -439,7 +417,7 @@ export function reduceSessionNotification(
     );
     const before = current;
     const proposal = id ? selectProposalGroupByMemberId(before.model, id) : null;
-    const terms = proposal?.terms ?? null;
+    const terms = proposal?.handProposal ?? null;
     const wasOurs = proposal?.origin === 'local';
     if (id) {
       step({ type: 'clear-proposals', ids: proposal?.memberIds ?? [id] });
@@ -448,9 +426,9 @@ export function reduceSessionNotification(
       }
     }
     if (LOCAL_CANCEL_REASONS.has(reason) && terms) {
-      step({ type: 'set-pending-retry-terms', terms });
+      step({ type: 'set-pending-retry-terms', handProposal: terms });
     } else if (reason === 'CancelledByPeer') {
-      step({ type: 'set-pending-retry-terms', terms: null });
+      step({ type: 'set-pending-retry-terms', handProposal: null });
       step({ type: 'set-compose-proposal-sent', sent: false });
       const sameTerms = before.coordination.sameTermsRequested && wasOurs;
       step({ type: 'set-same-terms-requested', requested: false });
@@ -483,7 +461,7 @@ export function reduceSessionNotification(
         });
       }
     } else {
-      step({ type: 'set-pending-retry-terms', terms: null });
+      step({ type: 'set-pending-retry-terms', handProposal: null });
     }
     effects.push({ type: 'persist-session' });
     return { state: current, effects };

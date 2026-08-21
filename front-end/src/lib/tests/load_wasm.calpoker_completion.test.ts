@@ -3,7 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Subject } from 'rxjs';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { CalpokerOutcome } from '@games/calpoker/ui/outcome';
 import {
   shouldAutoFireCalpokerMove,
@@ -17,8 +17,8 @@ import {
 } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import type { HandTermsModel } from '../session/types';
-import type { GameplayEvent } from '../session/gameSessionEvents';
+import type { HandProposal } from '../session/types';
+import type { GameplayEvent } from '@games/host';
 import {
   addActiveSubscription,
   createActivePair,
@@ -35,7 +35,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     SessionController,
     SessionController,
   ];
-  const terms: HandTermsModel = {
+  const handProposal: HandProposal = {
     gameType: 'calpoker',
     myContribution: 20n,
     theirContribution: 20n,
@@ -58,7 +58,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         createSessionModel({
           channel: { status: channelStatusModelFromPayload(status) },
           game: { handKey: 1 },
-          betweenHand: { mode: 'compose-proposal', lastTerms: terms },
+          betweenHand: { mode: 'compose-proposal', lastHandProposal: handProposal },
         }),
       ),
       {
@@ -161,7 +161,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
   };
 
   try {
-    runtimes[0].dispatch({ type: 'submit-compose', terms });
+    runtimes[0].dispatch({ type: 'submit-compose', handProposal });
     await exchange();
     const review = runtimes[1]
       .getState()

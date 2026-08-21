@@ -127,11 +127,11 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
     betweenHand: {
       mode: 'decision',
       proposalGroups: [],
-      rejectedOnceTerms: null,
-      lastTerms: null,
+      rejectedOnceHandProposal: null,
+      lastHandProposal: null,
       compose: emptyComposeDraftState(),
       newHandRequested: false,
-      pendingRetryTerms: null,
+      pendingRetryHandProposal: null,
       ...partial.betweenHand,
     },
     history: {

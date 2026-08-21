@@ -22,7 +22,7 @@ import {
   type LiveGameController,
   type LocalGameActionRequest,
 } from '../../host';
-import { calpokerStateCodec } from './stateCodec';
+import { calpokerStateCodec } from './serialize';
 import CaliforniaPoker from './components/CaliforniaPoker';
 import {
   GAME_STATES,

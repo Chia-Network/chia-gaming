@@ -54,11 +54,17 @@
     "setupFilesAfterEnv": [
       "<rootDir>/scripts/testSetup.ts"
     ],
+    "roots": [
+      "<rootDir>/src",
+      "<rootDir>/../games"
+    ],
     "testMatch": [
       "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}",
       "<rootDir>/../games/*/ui/**/*.{spec,test}.{ts,tsx}"
     ],
-    "testPathIgnorePatterns": [],
+    "testPathIgnorePatterns": [
+      "<rootDir>/src/features/"
+    ],
     "moduleDirectories": [
       "node_modules",
       "node-pkg",

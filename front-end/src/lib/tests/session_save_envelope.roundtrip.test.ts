@@ -1,6 +1,6 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { _resetForTests, flushSessionSave, peekSession, saveSession } from '../../hooks/save';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog, resetProtocolIds, setProtocolIds } from '../gameIdentities';
@@ -153,7 +153,7 @@ describe('durable game envelope round trips', () => {
         activeGameType: gameType,
         gameInstances,
         handState,
-        betweenHandLastTerms: {
+        betweenHandLastHandProposal: {
           my_contribution: contribution,
           their_contribution: contribution,
           game_timeout: '15',
@@ -205,17 +205,17 @@ describe('durable game envelope round trips', () => {
     expect(sessionModelFromSave(loaded!).betweenHand.compose).toEqual(compose);
   });
 
-  it('round-trips a session with no lastTerms and an unsubmittable compose draft', () => {
+  it('round-trips a session with no lastHandProposal and an unsubmittable compose draft', () => {
     const model = createSessionModel();
     const snapshot = snapshotFromSessionModel(model);
-    expect(snapshot.betweenHandLastTerms).toBeNull();
+    expect(snapshot.betweenHandLastHandProposal).toBeNull();
     const restored = sessionModelFromSave(liveSave(snapshot));
-    expect(restored.betweenHand.lastTerms).toBeNull();
+    expect(restored.betweenHand.lastHandProposal).toBeNull();
     expect(restored.betweenHand.compose).toEqual(model.betweenHand.compose);
   });
 
-  it('keeps lastTerms when the compose draft is not currently submittable', () => {
-    const lastTerms = {
+  it('keeps lastHandProposal when the compose draft is not currently submittable', () => {
+    const lastHandProposal = {
       gameType: 'calpoker' as const,
       myContribution: 25n,
       theirContribution: 25n,
@@ -223,16 +223,16 @@ describe('durable game envelope round trips', () => {
     };
     const model = createSessionModel({
       betweenHand: {
-        lastTerms,
+        lastHandProposal,
         compose: updateSelectedComposeDraft(createSessionModel().betweenHand.compose, {
           amount: 0n,
         }),
       },
     });
     const snapshot = snapshotFromSessionModel(model);
-    expect(snapshot.betweenHandLastTerms?.game_type).toBe('calpoker');
+    expect(snapshot.betweenHandLastHandProposal?.game_type).toBe('calpoker');
     const restored = sessionModelFromSave(liveSave(snapshot));
-    expect(restored.betweenHand.lastTerms).toEqual(lastTerms);
+    expect(restored.betweenHand.lastHandProposal).toEqual(lastHandProposal);
     expect(restored.betweenHand.compose.drafts.calpoker.amount).toBe(0n);
   });
 
@@ -283,7 +283,7 @@ describe('durable game envelope round trips', () => {
       });
       const snapshot = snapshotFromSessionModel(sessionModelFromSave(save));
       expect(snapshot.activeGameType).toBe('calpoker');
-      expect(snapshot.betweenHandLastTerms?.game_type).toBe('calpoker');
+      expect(snapshot.betweenHandLastHandProposal?.game_type).toBe('calpoker');
       expect(snapshot.handState?.gameType).toBe('calpoker');
       expect(protocolIdForCatalog('calpoker')).toBe(hashes[0].id);
       resetProtocolIds();

@@ -1,13 +1,13 @@
 import { AmountInput } from '../../host/ui';
-import type { ComposeEditorProps } from '../../host';
+import type { HandProposalFormProps } from '../../host';
 
-export function CalpokerComposeEditor({
+export function HandProposalForm({
   draft,
   disabled,
   maxPerHandMojos,
   onChange,
   onSubmit,
-}: ComposeEditorProps<{ amount: bigint }>) {
+}: HandProposalFormProps<{ amount: bigint }>) {
   return (
     <AmountInput
       valueMojos={draft.amount}

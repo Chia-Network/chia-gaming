@@ -1,15 +1,14 @@
-import type { Program } from 'clvm-lib';
 import { GENERATED_GAME_PACKAGES } from '../generated/gamePackages';
 import type { CatalogGameType } from '../generated/gamePresets';
 import type {
   ComposeDraftValue,
   DurableGameStateEvent,
   GamePackage,
-  HandTermsModel as HostHandTermsModel,
-  SavedTermsExtras,
+  HandProposal as HostHandProposal,
+  SavedHandProposalExtras,
 } from '@games/host';
 import type { GameStateCodec, PersistedGameState } from './session/gameStateCodec';
-import type { HandTermsBaseModel, HandTermsModel } from './session/types';
+import type { HandProposalBase, HandProposal } from './session/types';
 import { formatMojos } from '../util';
 
 export type { CatalogGameType } from '../generated/gamePresets';
@@ -101,48 +100,45 @@ export function canRemountFinishedGameState(value: unknown): boolean {
   return decodePersistedGameState(value)?.canRemountFinished === true;
 }
 
-function termsWithCatalogType(
+function handProposalWithCatalogType(
   registration: GamePackage,
-  terms: HostHandTermsModel | null,
-): HandTermsModel | null {
-  if (terms === null) return null;
-  if (terms.gameType !== registration.gameType) {
-    throw new Error(`Package ${registration.gameType} decoded terms as ${terms.gameType}`);
+  handProposal: HostHandProposal | null,
+): HandProposal | null {
+  if (handProposal === null) return null;
+  if (handProposal.gameType !== registration.gameType) {
+    throw new Error(
+      `Package ${registration.gameType} decoded hand proposal as ${handProposal.gameType}`,
+    );
   }
-  if (!isCatalogGameType(terms.gameType)) {
+  if (!isCatalogGameType(handProposal.gameType)) {
     throw new Error(`Package ${registration.gameType} decoded a non-catalog gameType`);
   }
-  return { ...terms, gameType: terms.gameType };
+  return { ...handProposal, gameType: handProposal.gameType };
 }
 
-export function decodeGameTerms(
+export function decodeHandProposal(
   gameType: RegisteredGameType,
-  base: HandTermsBaseModel,
+  base: HandProposalBase,
   parameterState: unknown,
-): HandTermsModel | null {
+): HandProposal | null {
   const registration = packageFor(gameType);
   const params = registration.factoryParameters.decode(parameterState);
   return params === null
     ? null
-    : termsWithCatalogType(registration, registration.decodeProposalTerms(base, params));
+    : handProposalWithCatalogType(registration, registration.decodeHandProposal(base, params));
 }
 
-export function encodeGameProposalParameters(terms: HandTermsModel, iStarted: boolean): Program {
-  const registration = packageFor(terms.gameType);
-  return registration.factoryParameters.encode(registration.toFactoryParameters(terms, iStarted));
+export function validateHandProposal(handProposal: HandProposal): boolean {
+  return packageFor(handProposal.gameType).validateHandProposal(handProposal);
 }
 
-export function validateGameTerms(terms: HandTermsModel): boolean {
-  return packageFor(terms.gameType).validateTerms(terms);
-}
-
-export function gameTermsEqual(a: HandTermsModel | null, b: HandTermsModel | null): boolean {
+export function handProposalsEqual(a: HandProposal | null, b: HandProposal | null): boolean {
   if (!a || !b || a.gameType !== b.gameType) return false;
-  return packageFor(a.gameType).termsEqual(a, b);
+  return packageFor(a.gameType).handProposalsEqual(a, b);
 }
 
-export function describeReceivedProposal(terms: HandTermsModel): string {
-  return packageFor(terms.gameType).describeTerms(terms, { formatMojos });
+export function describeReceivedProposal(handProposal: HandProposal): string {
+  return packageFor(handProposal.gameType).describeHandProposal(handProposal, { formatMojos });
 }
 
 export function reduceRegisteredGameState(
@@ -178,11 +174,11 @@ export function defaultGameComposeDraft(
   gameType: RegisteredGameType,
   perGameAmount: bigint,
 ): ComposeDraftValue {
-  return packageFor(gameType).compose.defaultDraft(perGameAmount);
+  return packageFor(gameType).draft.default(perGameAmount);
 }
 
-export function gameComposeDraftFromTerms(terms: HandTermsModel): ComposeDraftValue {
-  return packageFor(terms.gameType).compose.draftFromTerms(terms);
+export function gameComposeDraftFromHandProposal(handProposal: HandProposal): ComposeDraftValue {
+  return packageFor(handProposal.gameType).draft.fromHandProposal(handProposal);
 }
 
 export function updateGameComposeDraft(
@@ -190,27 +186,33 @@ export function updateGameComposeDraft(
   current: ComposeDraftValue,
   update: Partial<ComposeDraftValue>,
 ): ComposeDraftValue {
-  return packageFor(gameType).compose.updateDraft(current, update);
+  return packageFor(gameType).draft.update(current, update);
 }
 
-export function gameTermsFromComposeDraft(
+export function handProposalFromComposeDraft(
   gameType: RegisteredGameType,
   draft: ComposeDraftValue,
   gameTimeout: bigint,
-): HandTermsModel | null {
+): HandProposal | null {
   const registration = packageFor(gameType);
-  return termsWithCatalogType(registration, registration.compose.toTerms(draft, gameTimeout));
+  return handProposalWithCatalogType(
+    registration,
+    registration.draft.toHandProposal(draft, gameTimeout),
+  );
 }
 
-export function encodeGameTermsExtras(terms: HandTermsModel): SavedTermsExtras {
-  return packageFor(terms.gameType).persistence.encodeExtras(terms);
+export function encodeHandProposalExtras(handProposal: HandProposal): SavedHandProposalExtras {
+  return packageFor(handProposal.gameType).persistence.encodeExtras(handProposal);
 }
 
-export function decodePersistedGameTerms(
+export function decodePersistedHandProposal(
   gameType: RegisteredGameType,
-  base: HandTermsBaseModel,
-  extras: SavedTermsExtras,
-): HandTermsModel | null {
+  base: HandProposalBase,
+  extras: SavedHandProposalExtras,
+): HandProposal | null {
   const registration = packageFor(gameType);
-  return termsWithCatalogType(registration, registration.persistence.decodeExtras(base, extras));
+  return handProposalWithCatalogType(
+    registration,
+    registration.persistence.decodeExtras(base, extras),
+  );
 }

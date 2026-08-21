@@ -4,7 +4,7 @@ import type {
   LiveSessionSave,
   PreHandshakeSessionSave,
   PreferencesSessionSave,
-  SavedHandTerms,
+  SavedHandProposal,
   SessionHistorySave,
   SessionIdentitySave,
   SessionPairingSave,
@@ -16,7 +16,7 @@ import type {
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
 import {
   decodePersistedGameState,
-  encodeGameTermsExtras,
+  encodeHandProposalExtras,
   gameHandMembershipDescription,
   isCatalogGameType,
   validateGameHandMembership,
@@ -33,14 +33,14 @@ import {
   INITIAL_CHANNEL_STATUS_MODEL,
   normalizeSessionPresentation,
 } from './normalization';
-import type { BetweenHandModeModel, HandTermsModel, SessionModel } from './types';
+import type { BetweenHandModeModel, HandProposal, SessionModel } from './types';
 import { isTerminalChannelSnapshot } from './selectors';
 import {
   parseComposeDraftState,
   encodeComposeDraftState,
-  parseOptionalTermsSnapshot,
+  parseOptionalHandProposalSnapshot,
   parseProposalGroups,
-  parseTermsSnapshot,
+  parseHandProposalSnapshot,
 } from './persistenceBetweenHands';
 import {
   BETWEEN_HAND_MODES,
@@ -280,13 +280,13 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
   };
 }
 
-function savedTermsFromModel(terms: HandTermsModel): SavedHandTerms {
+function savedHandProposalFromModel(handProposal: HandProposal): SavedHandProposal {
   return {
-    my_contribution: terms.myContribution.toString(),
-    their_contribution: terms.theirContribution.toString(),
-    game_timeout: terms.gameTimeout.toString(),
-    game_type: terms.gameType,
-    ...encodeGameTermsExtras(terms),
+    my_contribution: handProposal.myContribution.toString(),
+    their_contribution: handProposal.theirContribution.toString(),
+    game_timeout: handProposal.gameTimeout.toString(),
+    game_type: handProposal.gameType,
+    ...encodeHandProposalExtras(handProposal),
   };
 }
 
@@ -338,17 +338,20 @@ function parsePresentation(value: unknown): SessionPresentationSave {
           'dismissedChannelStatus',
         );
   const compose = parseComposeDraftState(fields.betweenHandCompose);
-  const lastTerms =
-    fields.betweenHandLastTerms === null
+  const lastHandProposal =
+    fields.betweenHandLastHandProposal === null
       ? null
-      : parseTermsSnapshot(fields.betweenHandLastTerms, 'betweenHandLastTerms');
-  const rejectedOnceTerms = parseOptionalTermsSnapshot(
-    fields.betweenHandRejectedOnceTerms,
-    'betweenHandRejectedOnceTerms',
+      : parseHandProposalSnapshot(
+          fields.betweenHandLastHandProposal,
+          'betweenHandLastHandProposal',
+        );
+  const rejectedOnceHandProposal = parseOptionalHandProposalSnapshot(
+    fields.betweenHandRejectedOnceHandProposal,
+    'betweenHandRejectedOnceHandProposal',
   );
-  const pendingRetryTerms = parseOptionalTermsSnapshot(
-    fields.betweenHandPendingRetryTerms,
-    'betweenHandPendingRetryTerms',
+  const pendingRetryHandProposal = parseOptionalHandProposalSnapshot(
+    fields.betweenHandPendingRetryHandProposal,
+    'betweenHandPendingRetryHandProposal',
   );
   const proposalGroups = parseProposalGroups(fields.proposalGroups, 'proposalGroups');
   const waitingStateEnteredAt =
@@ -383,17 +386,22 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       'betweenHandMode',
     ),
     betweenHandCompose: encodeComposeDraftState(compose),
-    betweenHandLastTerms: lastTerms === null ? null : savedTermsFromModel(lastTerms),
-    betweenHandRejectedOnceTerms:
-      rejectedOnceTerms === null ? null : savedTermsFromModel(rejectedOnceTerms),
-    betweenHandPendingRetryTerms:
-      pendingRetryTerms === null ? null : savedTermsFromModel(pendingRetryTerms),
+    betweenHandLastHandProposal:
+      lastHandProposal === null ? null : savedHandProposalFromModel(lastHandProposal),
+    betweenHandRejectedOnceHandProposal:
+      rejectedOnceHandProposal === null
+        ? null
+        : savedHandProposalFromModel(rejectedOnceHandProposal),
+    betweenHandPendingRetryHandProposal:
+      pendingRetryHandProposal === null
+        ? null
+        : savedHandProposalFromModel(pendingRetryHandProposal),
     proposalGroups: proposalGroups.map((group) => ({
       primary_id: group.primaryId,
       member_ids: group.memberIds,
       origin: group.origin,
       disposition: group.disposition,
-      terms: savedTermsFromModel(group.terms),
+      hand_proposal: savedHandProposalFromModel(group.handProposal),
     })),
     waitingStateEnteredAt,
     cleanShutdownGraceStartedAt,
@@ -626,21 +634,23 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
   }
 
   const compose = parseComposeDraftState(save.betweenHandCompose);
-  const lastTerms =
-    save.betweenHandLastTerms === null
+  const lastHandProposal =
+    save.betweenHandLastHandProposal === null
       ? null
-      : parseTermsSnapshot(save.betweenHandLastTerms, 'betweenHandLastTerms');
+      : parseHandProposalSnapshot(save.betweenHandLastHandProposal, 'betweenHandLastHandProposal');
   const hasPersistedHand = activeIds.length > 0 || currentHandIds.length > 0 || handState !== null;
-  if (hasPersistedHand && lastTerms === null) {
-    throw new Error('Garbled save: persisted hand is missing betweenHandLastTerms');
+  if (hasPersistedHand && lastHandProposal === null) {
+    throw new Error('Garbled save: persisted hand is missing betweenHandLastHandProposal');
   }
   if (
     hasPersistedHand &&
-    lastTerms !== null &&
+    lastHandProposal !== null &&
     isCatalogGameType(save.activeGameType) &&
-    lastTerms.gameType !== save.activeGameType
+    lastHandProposal.gameType !== save.activeGameType
   ) {
-    throw new Error('Garbled save: activeGameType does not match betweenHandLastTerms.game_type');
+    throw new Error(
+      'Garbled save: activeGameType does not match betweenHandLastHandProposal.game_type',
+    );
   }
   const restoredActiveIds = [...activeIds];
   const lastDisplayedId = save.lastDisplayedGameId;
@@ -668,7 +678,9 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
       },
       game: {
         handKey:
-          restoredActiveIds.length > 0 || save.handState || save.betweenHandLastTerms ? 1 : 0,
+          restoredActiveIds.length > 0 || save.handState || save.betweenHandLastHandProposal
+            ? 1
+            : 0,
         activeIds: restoredActiveIds,
         currentHandIds,
         currentHandOrigin: save.currentHandOrigin,
@@ -681,15 +693,15 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
       betweenHand: {
         mode,
         proposalGroups,
-        rejectedOnceTerms: parseOptionalTermsSnapshot(
-          save.betweenHandRejectedOnceTerms,
-          'betweenHandRejectedOnceTerms',
+        rejectedOnceHandProposal: parseOptionalHandProposalSnapshot(
+          save.betweenHandRejectedOnceHandProposal,
+          'betweenHandRejectedOnceHandProposal',
         ),
-        pendingRetryTerms: parseOptionalTermsSnapshot(
-          save.betweenHandPendingRetryTerms,
-          'betweenHandPendingRetryTerms',
+        pendingRetryHandProposal: parseOptionalHandProposalSnapshot(
+          save.betweenHandPendingRetryHandProposal,
+          'betweenHandPendingRetryHandProposal',
         ),
-        lastTerms,
+        lastHandProposal,
         compose,
         newHandRequested: hasOutgoing && mode === 'decision',
       },

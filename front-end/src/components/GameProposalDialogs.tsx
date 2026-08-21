@@ -19,7 +19,7 @@ export function ComposeProposalDialog({
   const compose = session.composeDraftState;
   const pkg = packageFor(compose.selectedGame);
   const canSubmit = composeDraftCanSubmit(compose, maxPerHandMojos);
-  const Editor = pkg.ComposeEditor;
+  const Editor = pkg.HandProposalForm;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -91,10 +91,12 @@ export function ReviewProposalDialog({ session }: { session: UseGameSessionResul
     <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4">
       <div className="flex flex-col gap-3">
         <p className="text-sm text-canvas-text-contrast">Do you want to accept this hand?</p>
-        <p className="text-xs text-canvas-text">Game: {gameDisplayName(review.terms.gameType)}</p>
-        <p className="text-xs text-canvas-text">{describeReceivedProposal(review.terms)}</p>
         <p className="text-xs text-canvas-text">
-          Timeout: {String(review.terms.gameTimeout)} blocks
+          Game: {gameDisplayName(review.handProposal.gameType)}
+        </p>
+        <p className="text-xs text-canvas-text">{describeReceivedProposal(review.handProposal)}</p>
+        <p className="text-xs text-canvas-text">
+          Timeout: {String(review.handProposal.gameTimeout)} blocks
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button

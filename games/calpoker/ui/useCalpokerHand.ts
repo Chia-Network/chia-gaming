@@ -18,14 +18,14 @@ import {
   calpokerOutcomeFromState,
   isCalpokerOutcomeReadable,
   reduceCalpokerFeatureState,
-} from './adapter';
+} from './handProposal';
 import {
   calpokerStateCodec,
   type CalpokerDisplaySnapshot,
   type CalpokerHandState,
-} from './stateCodec';
+} from './serialize';
 
-export type { CalpokerDisplaySnapshot, CalpokerHandState } from './stateCodec';
+export type { CalpokerDisplaySnapshot, CalpokerHandState } from './serialize';
 
 function calpokerStateFromPersisted(
   persisted: Readonly<PersistedGameState> | null | undefined,

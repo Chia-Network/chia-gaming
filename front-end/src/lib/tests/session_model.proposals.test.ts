@@ -18,8 +18,8 @@ import {
   projectGameStatus,
 } from '../session/model';
 import type { SessionSave } from '../../hooks/save';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
-import { dispatchWasmNotification } from '../../hooks/useGameSession';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
@@ -72,7 +72,7 @@ describe('session model proposal and normalization contracts', () => {
           {
             primaryId: memberIds[0],
             memberIds: [...memberIds],
-            terms,
+            handProposal: terms,
             origin: 'local',
             disposition: 'outgoing',
           },
@@ -131,7 +131,7 @@ describe('session model proposal and normalization contracts', () => {
           {
             primaryId: '11',
             memberIds: groupIds,
-            terms,
+            handProposal: terms,
             origin: 'local',
             disposition: 'accepted',
           },
@@ -143,7 +143,7 @@ describe('session model proposal and normalization contracts', () => {
     );
     expect(selectProposalGroupByMemberId(model, '13')).toMatchObject({
       memberIds: groupIds,
-      terms,
+      handProposal: terms,
     });
   });
 
@@ -172,7 +172,7 @@ describe('session model proposal and normalization contracts', () => {
         },
       },
       betweenHand: {
-        lastTerms: {
+        lastHandProposal: {
           gameType: 'krunk',
           myContribution: 100n,
           theirContribution: 100n,
@@ -182,7 +182,7 @@ describe('session model proposal and normalization contracts', () => {
           {
             primaryId: '11',
             memberIds: ['11', '13'],
-            terms: {
+            handProposal: {
               gameType: 'krunk',
               myContribution: 100n,
               theirContribution: 100n,
@@ -203,7 +203,7 @@ describe('session model proposal and normalization contracts', () => {
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
         proposalGroups: snapshot.proposalGroups,
-        betweenHandLastTerms: snapshot.betweenHandLastTerms,
+        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: krunkStateCodec.encode({
           games: {
             '11': initialKrunkGameState('alice'),
@@ -241,7 +241,7 @@ describe('session model proposal and normalization contracts', () => {
             member_ids: ['11'],
             origin: 'local',
             disposition: 'outgoing',
-            terms: {
+            hand_proposal: {
               my_contribution: '10',
               their_contribution: '10',
               game_timeout: '15',
@@ -253,7 +253,7 @@ describe('session model proposal and normalization contracts', () => {
             member_ids: ['23'],
             origin: 'peer',
             disposition: 'incoming-review',
-            terms: {
+            hand_proposal: {
               my_contribution: '30',
               their_contribution: '30',
               game_timeout: '25',
@@ -264,8 +264,8 @@ describe('session model proposal and normalization contracts', () => {
       }),
     );
     expect(restored.betweenHand.proposalGroups).toHaveLength(2);
-    expect(selectProposalGroupByMemberId(restored, '11')?.terms).toEqual(firstTerms);
-    expect(selectProposalGroupByMemberId(restored, '23')?.terms).toEqual(inboundTerms);
+    expect(selectProposalGroupByMemberId(restored, '11')?.handProposal).toEqual(firstTerms);
+    expect(selectProposalGroupByMemberId(restored, '23')?.handProposal).toEqual(inboundTerms);
     expect(snapshotFromSessionModel(restored).proposalGroups).toHaveLength(2);
   });
 
@@ -294,7 +294,7 @@ describe('session model proposal and normalization contracts', () => {
         },
       },
       betweenHand: {
-        lastTerms: {
+        lastHandProposal: {
           gameType: 'krunk',
           myContribution: 100n,
           theirContribution: 100n,
@@ -314,7 +314,7 @@ describe('session model proposal and normalization contracts', () => {
         activeGameType: snapshot.activeGameType,
         channelStatus: channelStatusPayloadFromModel(model.channel.status),
         coinsOfInterest: [],
-        betweenHandLastTerms: snapshot.betweenHandLastTerms,
+        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
       }),
     );
 
@@ -444,7 +444,7 @@ describe('session model proposal and normalization contracts', () => {
         channel: { status: abandonedStatus },
         game: staleGame,
         betweenHand: {
-          lastTerms: {
+          lastHandProposal: {
             gameType: 'calpoker',
             myContribution: 40n,
             theirContribution: 40n,
@@ -458,7 +458,7 @@ describe('session model proposal and normalization contracts', () => {
         channel: { status: abandonedStatus },
         game: staleGame,
         betweenHand: {
-          lastTerms: {
+          lastHandProposal: {
             gameType: 'calpoker',
             myContribution: 40n,
             theirContribution: 40n,
@@ -479,7 +479,7 @@ describe('session model proposal and normalization contracts', () => {
         activeGameType: staleSnapshot.activeGameType,
         channelStatus: channelStatusPayloadFromModel(abandonedStatus),
         coinsOfInterest: [],
-        betweenHandLastTerms: staleSnapshot.betweenHandLastTerms,
+        betweenHandLastHandProposal: staleSnapshot.betweenHandLastHandProposal,
       }),
     );
 

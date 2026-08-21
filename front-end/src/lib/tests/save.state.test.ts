@@ -443,7 +443,7 @@ describe('flat state', () => {
         },
       },
       activeGameType: 'spacepoker',
-      betweenHandLastTerms: {
+      betweenHandLastHandProposal: {
         my_contribution: '10',
         their_contribution: '10',
         game_timeout: '15',

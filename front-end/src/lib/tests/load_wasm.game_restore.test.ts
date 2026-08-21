@@ -7,7 +7,8 @@ import {
   peekSession,
   saveSession,
 } from '../../hooks/save';
-import { canRemountFinishedGameState, encodeGameProposalParameters } from '../gameRegistry';
+import { canRemountFinishedGameState } from '../gameRegistry';
+import { encodeGameProposalParameters } from '../gameProposalCodec';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import {
@@ -17,8 +18,8 @@ import {
   sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
-import { krunkStateCodec } from '@games/krunk/ui/stateCodec';
-import type { HandTermsModel } from '../session/types';
+import { krunkStateCodec } from '@games/krunk/ui/serialize';
+import type { HandProposal } from '../session/types';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import {
@@ -34,48 +35,49 @@ import { liveSave } from './session_save_envelope.fixtures';
 import * as assert from 'assert';
 
 async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> {
-  const cases: Array<{ terms: HandTermsModel; expectedMembers: number; canRemount: boolean }> = [
-    {
-      terms: {
-        gameType: 'calpoker',
-        myContribution: 100n,
-        theirContribution: 100n,
-        gameTimeout: 15n,
+  const cases: Array<{ handProposal: HandProposal; expectedMembers: number; canRemount: boolean }> =
+    [
+      {
+        handProposal: {
+          gameType: 'calpoker',
+          myContribution: 100n,
+          theirContribution: 100n,
+          gameTimeout: 15n,
+        },
+        expectedMembers: 1,
+        canRemount: true,
       },
-      expectedMembers: 1,
-      canRemount: true,
-    },
-    {
-      terms: {
-        gameType: 'spacepoker',
-        myContribution: 100n,
-        theirContribution: 100n,
-        gameTimeout: 15n,
-        unitSizeMojos: 10n,
+      {
+        handProposal: {
+          gameType: 'spacepoker',
+          myContribution: 100n,
+          theirContribution: 100n,
+          gameTimeout: 15n,
+          unitSizeMojos: 10n,
+        },
+        expectedMembers: 1,
+        canRemount: true,
       },
-      expectedMembers: 1,
-      canRemount: true,
-    },
-    {
-      terms: {
-        gameType: 'krunk',
-        myContribution: 100n,
-        theirContribution: 100n,
-        gameTimeout: 15n,
+      {
+        handProposal: {
+          gameType: 'krunk',
+          myContribution: 100n,
+          theirContribution: 100n,
+          gameTimeout: 15n,
+        },
+        expectedMembers: 2,
+        canRemount: true,
       },
-      expectedMembers: 2,
-      canRemount: true,
-    },
-  ];
+    ];
 
   for (const [index, testCase] of cases.entries()) {
     const cradles = await createActivePair(poller, index);
     const proposer = cradles[0].blob!;
     const mover = cradles[1].blob!;
     const ids = proposer.proposeGame({
-      game_type: protocolIdForCatalog(testCase.terms.gameType),
-      timeout: testCase.terms.gameTimeout,
-      parameters: encodeGameProposalParameters(testCase.terms, true),
+      game_type: protocolIdForCatalog(testCase.handProposal.gameType),
+      timeout: testCase.handProposal.gameTimeout,
+      parameters: encodeGameProposalParameters(testCase.handProposal, true),
     });
     assert.equal(ids.length, testCase.expectedMembers);
     await exchangeUntilIdle(cradles);
@@ -83,7 +85,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     await exchangeUntilIdle(cradles);
     assert.deepEqual(mover.activeGameIds, ids);
 
-    const postMove = postMoveHandState(testCase.terms, ids);
+    const postMove = postMoveHandState(testCase.handProposal, ids);
     const beforeMove = Uint8Array.from(mover.getWasmFields()!.serializedGameSession);
     mover.makeMove(postMove.moverId, postMove.move);
     await flushWrapperDrain([cradles[1]]);
@@ -91,10 +93,13 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     assert.notDeepEqual(
       afterMove.serializedGameSession,
       beforeMove,
-      `${testCase.terms.gameType}: actual WASM move must change serialized protocol state`,
+      `${testCase.handProposal.gameType}: actual WASM move must change serialized protocol state`,
     );
     const status = mover.lastChannelStatus;
-    assert.ok(status, `${testCase.terms.gameType}: active controller must have channel status`);
+    assert.ok(
+      status,
+      `${testCase.handProposal.gameType}: active controller must have channel status`,
+    );
     const model = createSessionModel({
       channel: { status: channelStatusModelFromPayload(status) },
       game: {
@@ -103,7 +108,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         currentHandIds: ids,
         currentHandOrigin: 'local',
         lastDisplayedId: postMove.moverId,
-        activeGameType: testCase.terms.gameType,
+        activeGameType: testCase.handProposal.gameType,
         handState: postMove.handState,
         instances: Object.fromEntries(
           ids.map((id) => [
@@ -118,11 +123,11 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
           ]),
         ),
       },
-      betweenHand: { lastTerms: testCase.terms },
+      betweenHand: { lastHandProposal: testCase.handProposal },
     });
     const save = liveSave({
       ...afterMove,
-      pairingToken: `real-restore-${testCase.terms.gameType}`,
+      pairingToken: `real-restore-${testCase.handProposal.gameType}`,
       ...snapshotFromSessionModel(model),
     });
     assert.equal(save.phase, 'live');
@@ -138,7 +143,10 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
 
     resetSaveState();
     const reloaded = await peekSession();
-    assert.ok(reloaded, `${testCase.terms.gameType}: IndexedDB peek must return saved session`);
+    assert.ok(
+      reloaded,
+      `${testCase.handProposal.gameType}: IndexedDB peek must return saved session`,
+    );
     assert.equal(reloaded.phase, 'live');
     if (reloaded.phase !== 'live') throw new Error('expected live reload');
     assert.deepEqual(reloaded.presentation.currentHandGameIds, ids);
@@ -180,7 +188,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       assert.deepEqual(restoredModel.game.handState, postMove.handState);
       assert.deepEqual(restored.handState, restoredModel.game.handState);
       assert.equal(canRemountFinishedGameState(restoredModel.game.handState), testCase.canRemount);
-      if (testCase.terms.gameType === 'krunk') {
+      if (testCase.handProposal.gameType === 'krunk') {
         const krunk = krunkStateCodec.decode(restoredModel.game.handState);
         assert.ok(krunk);
         assert.deepEqual(Object.keys(krunk.games), ids);

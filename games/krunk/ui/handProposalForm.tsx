@@ -1,14 +1,14 @@
 import { AmountInput, useGameHost } from '../../host/ui';
-import type { ComposeEditorProps } from '../../host';
-import { isValidKrunkStake } from './adapter';
+import type { HandProposalFormProps } from '../../host';
+import { isValidKrunkStake } from './handProposal';
 
-export function KrunkComposeEditor({
+export function HandProposalForm({
   draft,
   disabled,
   maxPerHandMojos,
   onChange,
   onSubmit,
-}: ComposeEditorProps<{ amount: bigint }>) {
+}: HandProposalFormProps<{ amount: bigint }>) {
   const { currencyLabels } = useGameHost();
   const maxMojos =
     maxPerHandMojos != null ? maxPerHandMojos - (maxPerHandMojos % 100n) : maxPerHandMojos;

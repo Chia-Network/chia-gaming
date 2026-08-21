@@ -4,12 +4,15 @@ import {
   reduceSpacepokerDurableState,
   reduceSpacepokerSettlementState,
   spacepokerRegistration,
-} from '@games/spacepoker/ui/adapter';
-import { reduceCalpokerDurableState, reduceCalpokerFeatureState } from '@games/calpoker/ui/adapter';
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
-import { reduceKrunkDurableState, reduceKrunkFeatureState } from '@games/krunk/ui/adapter';
-import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/stateCodec';
-import { spacepokerStateCodec, type SpacepokerHandState } from '@games/spacepoker/ui/stateCodec';
+} from '@games/spacepoker/ui/handProposal';
+import {
+  reduceCalpokerDurableState,
+  reduceCalpokerFeatureState,
+} from '@games/calpoker/ui/handProposal';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { reduceKrunkDurableState, reduceKrunkFeatureState } from '@games/krunk/ui/handProposal';
+import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { spacepokerStateCodec, type SpacepokerHandState } from '@games/spacepoker/ui/serialize';
 import type { DurableGameStateEvent } from '@games/host';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
@@ -44,7 +47,7 @@ const acceptedSpacepoker = (): DurableGameStateEvent => ({
   iStarted: false,
   isMyTurn: true,
   origin: 'local',
-  terms: {
+  handProposal: {
     gameType: 'spacepoker',
     myContribution: 1_000n,
     theirContribution: 1_000n,
@@ -75,7 +78,7 @@ describe('canonical feature gameplay reducers', () => {
       iStarted: false,
       isMyTurn: true,
       origin,
-      terms: {
+      handProposal: {
         gameType: 'krunk',
         myContribution: 100n,
         theirContribution: 100n,
@@ -731,7 +734,7 @@ describe('canonical feature gameplay reducers', () => {
       iStarted: true,
       isMyTurn: true,
       origin: 'local',
-      terms: {
+      handProposal: {
         gameType: 'krunk',
         myContribution: 100n,
         theirContribution: 100n,

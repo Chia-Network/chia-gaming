@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { cloneElement, type ReactElement } from 'react';
 import {
   requireLiveGameHandSource as requireLiveController,
   type FrozenGameMountOptions,
@@ -10,7 +10,6 @@ import {
 import { isCatalogGameType, packageFor } from './gameRegistry';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { SessionController } from '../hooks/SessionController';
-import { selectIProposedHand } from './session/selectors';
 import type { SessionModel } from './session/model';
 
 export function requireLiveGameHandSource(source: GameHandSource): SessionController {
@@ -18,23 +17,17 @@ export function requireLiveGameHandSource(source: GameHandSource): SessionContro
 }
 
 export function frozenGameViewFromModel(model: SessionModel): FrozenGameView {
-  const lastTerms = model.betweenHand.lastTerms;
-  if (lastTerms === null) {
-    throw new Error('Frozen game view requires lastTerms');
-  }
   return {
     lastDisplayedId: model.game.lastDisplayedId,
     currentHandIds: model.game.currentHandIds,
     activeIds: model.game.activeIds,
     handState: model.game.handState,
-    lastTerms,
     instances: Object.fromEntries(
       Object.entries(model.game.instances).map(([id, instance]) => [
         id,
         { terminal: instance.terminal, amount: instance.amount },
       ]),
     ),
-    iProposedHand: selectIProposedHand(model),
   };
 }
 
@@ -42,7 +35,31 @@ export function renderLiveGameMount(
   session: UseGameSessionResult,
   names: GameMountNames,
 ): ReactElement {
-  return packageFor(session.gameSpecificView.gameType).renderLive(session as LiveGameView, names);
+  const gameType = session.gameSpecificView.gameType;
+  if (!isCatalogGameType(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
+  const view: LiveGameView = {
+    handOrigin: session.handOrigin,
+    handSource: session.handSource,
+    activeGameId: session.activeGameId,
+    activeGameIds: session.activeGameIds,
+    currentHandGameIds: session.currentHandGameIds,
+    iStarted: session.iStarted,
+    playerNumber: session.playerNumber,
+    gameplayEvent$: session.gameplayEvent$,
+    appendGameLog: session.appendGameLog,
+    onHandOutcome: session.onHandOutcome,
+    onTurnChanged: session.onTurnChanged,
+    gameSpecificView: {
+      gameType,
+      displayGameId: session.gameSpecificView.displayGameId,
+      terminal: session.gameSpecificView.terminal,
+      terminalsById: session.gameSpecificView.terminalsById,
+      amountsById: session.gameSpecificView.amountsById,
+    },
+  };
+  return cloneElement(packageFor(gameType).renderLive(view, names), {
+    key: session.handKey,
+  });
 }
 
 export function renderFrozenGameMount(
@@ -51,5 +68,7 @@ export function renderFrozenGameMount(
 ): ReactElement {
   const gameType = model.game.handState?.gameType ?? model.game.activeGameType;
   if (!isCatalogGameType(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
-  return packageFor(gameType).renderFrozen(frozenGameViewFromModel(model), options);
+  return cloneElement(packageFor(gameType).renderFrozen(frozenGameViewFromModel(model), options), {
+    key: model.game.handKey,
+  });
 }

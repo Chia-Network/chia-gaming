@@ -6,19 +6,19 @@ import {
   readClvmProgram,
   type FactoryParameterCodec,
   type PersistedGameState,
-  type HandTermsModel,
+  type HandProposal,
 } from '../../host';
-import { spacepokerStateCodec } from './stateCodec';
+import { spacepokerStateCodec } from './serialize';
 function positive(value: bigint | undefined): bigint | null {
   return value !== undefined && value > 0n ? value : null;
 }
 
-export type SpacepokerTerms = HandTermsModel & { unitSizeMojos: bigint };
+export type SpacepokerTerms = HandProposal & { unitSizeMojos: bigint };
 
-export function spacepokerTermsOf(terms: HandTermsModel): SpacepokerTerms | null {
-  if (terms.gameType !== 'spacepoker') return null;
-  const unitSizeMojos = (terms as SpacepokerTerms).unitSizeMojos;
-  return positive(unitSizeMojos) ? (terms as SpacepokerTerms) : null;
+export function spacepokerTermsOf(handProposal: HandProposal): SpacepokerTerms | null {
+  if (handProposal.gameType !== 'spacepoker') return null;
+  const unitSizeMojos = (handProposal as SpacepokerTerms).unitSizeMojos;
+  return positive(unitSizeMojos) ? (handProposal as SpacepokerTerms) : null;
 }
 
 export type SpacepokerFactoryParameters = {
@@ -66,7 +66,7 @@ export function decodeSpacepokerUnitSize(value: unknown): bigint | null {
  * and multiple available sources must agree.
  */
 export function resolveSpacepokerUnitSize(input: {
-  terms?: HandTermsModel | null;
+  terms?: HandProposal | null;
   persistedState?: PersistedGameState | null;
   encodedParameterState?: unknown;
 }): bigint | null {

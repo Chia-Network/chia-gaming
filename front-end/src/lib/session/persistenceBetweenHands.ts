@@ -1,5 +1,5 @@
 import {
-  decodePersistedGameTerms,
+  decodePersistedHandProposal,
   isCatalogGameType,
   packageFor,
   REGISTERED_GAMES,
@@ -7,7 +7,7 @@ import {
 import type { ComposeDraftValue } from '@games/host';
 import { composeDraftValue, type ComposeDraftState } from './composeDraft';
 import type { SessionPresentationSave } from './saveEnvelope';
-import type { HandTermsModel, ProposalGroupModel } from './types';
+import type { HandProposal, ProposalGroupModel } from './types';
 import {
   parseDecimalString,
   requireBoolean,
@@ -63,7 +63,7 @@ export function parseComposeDraftState(value: unknown): ComposeDraftState {
   const savedDrafts = requireRecord(saved.drafts, 'betweenHandCompose.drafts');
   const drafts: Record<string, ComposeDraftValue> = {};
   for (const { gameType } of REGISTERED_GAMES) {
-    const fallback = packageFor(gameType).compose.defaultDraft(0n);
+    const fallback = packageFor(gameType).draft.default(0n);
     drafts[gameType] = parseDraftValue(
       savedDrafts[gameType],
       fallback,
@@ -87,14 +87,14 @@ function termsExtras(saved: Record<string, unknown>, label: string): Record<stri
   return extras;
 }
 
-export function parseTermsSnapshot(value: unknown, label: string): HandTermsModel {
+export function parseHandProposalSnapshot(value: unknown, label: string): HandProposal {
   const saved = requireRecord(value, label);
   const gameType = saved.game_type;
   if (!isCatalogGameType(gameType)) {
     throw new Error(`Garbled save: unknown ${label}.game_type ${String(gameType)}`);
   }
   const myContribution = parseDecimalString(saved.my_contribution, `${label}.my_contribution`, 0n);
-  const terms = decodePersistedGameTerms(
+  const terms = decodePersistedHandProposal(
     gameType,
     {
       myContribution,
@@ -111,8 +111,11 @@ export function parseTermsSnapshot(value: unknown, label: string): HandTermsMode
   return terms;
 }
 
-export function parseOptionalTermsSnapshot(saved: unknown, label: string): HandTermsModel | null {
-  return saved === null ? null : parseTermsSnapshot(saved, label);
+export function parseOptionalHandProposalSnapshot(
+  saved: unknown,
+  label: string,
+): HandProposal | null {
+  return saved === null ? null : parseHandProposalSnapshot(saved, label);
 }
 
 export function parseProposalGroups(value: unknown, label: string): ProposalGroupModel[] {
@@ -154,16 +157,19 @@ export function parseProposalGroups(value: unknown, label: string): ProposalGrou
       throw new Error(`Garbled save: incoming ${groupLabel} is not peer-originated`);
     }
     if (origin === 'local' && disposition === 'outgoing') localOutgoing += 1;
-    const terms = parseTermsSnapshot(saved.terms, `${groupLabel}.terms`);
-    if (!packageFor(terms.gameType).validateHandMembership(memberIds, null)) {
+    const handProposal = parseHandProposalSnapshot(
+      saved.hand_proposal,
+      `${groupLabel}.hand_proposal`,
+    );
+    if (!packageFor(handProposal.gameType).validateHandMembership(memberIds, null)) {
       throw new Error(
-        `Garbled save: ${groupLabel} has ${memberIds.length} members for ${terms.gameType}`,
+        `Garbled save: ${groupLabel} has ${memberIds.length} members for ${handProposal.gameType}`,
       );
     }
     return {
       primaryId,
       memberIds,
-      terms,
+      handProposal,
       origin,
       disposition,
     };

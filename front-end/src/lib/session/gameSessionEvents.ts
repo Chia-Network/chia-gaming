@@ -1,25 +1,11 @@
 import type {
-  ActionFailedPayload,
   GameSettledPayload,
   GameStatusPayload,
-  MoveRejectedPayload,
   WasmNotification,
 } from '../../types/ChiaGaming';
 import { coinIdFromBytes, coerceToBytes } from '../../util';
 import { isSettlementOutcome, parseSettlementShare, settlementLabel } from '../settlement';
-import { catalogGameTypeFromWire } from '../gameIdentities';
-import { decodeGameTerms } from '../gameRegistry';
-import { DEFAULT_GAME_TIMEOUT_BLOCKS } from './normalization';
-import type {
-  GameTerminalModel,
-  GameTurnState,
-  HandTermsModel,
-  ProposalGroupModel,
-  QueuedNotificationModel,
-} from './types';
-
-export type { GameplayEvent } from '@games/host';
-import type { GameplayEvent } from '@games/host';
+import type { GameTerminalModel, GameTurnState, QueuedNotificationModel } from './types';
 
 export type GameTerminalInfo = GameTerminalModel;
 export interface GameTerminalAttentionInfo {
@@ -27,16 +13,7 @@ export interface GameTerminalAttentionInfo {
   myReward: string | null;
   rewardCoinHex: string | null;
 }
-export type HandTerms = HandTermsModel;
 export type QueuedNotification = QueuedNotificationModel;
-
-export function parseAmount(value: unknown): string | null {
-  if (value == null) return null;
-  if (typeof value === 'object' && 'Amount' in (value as Record<string, unknown>)) {
-    return String((value as Record<string, unknown>).Amount);
-  }
-  return String(value);
-}
 
 export function dispatchWasmNotification(
   notification: WasmNotification,
@@ -48,66 +25,6 @@ export function dispatchWasmNotification(
   } catch (error) {
     onError(error);
   }
-}
-
-export function gameplayEventForMoveRejected(payload: MoveRejectedPayload): GameplayEvent {
-  return {
-    MoveRejected: {
-      gameId: String(payload.id),
-      tag: String(payload.tag),
-      message: String(payload.message),
-    },
-  };
-}
-
-export function gameplayEventForGameActionError(
-  gameId: string,
-  action: 'make-move' | 'accept-settlement',
-  reason: string,
-): GameplayEvent {
-  return { GameError: { gameId, action, reason, source: 'action' } };
-}
-
-export function gameplayEventForActionFailed(payload: ActionFailedPayload): GameplayEvent | null {
-  if (payload.id == null) return null;
-  const action =
-    payload.action === 'make_move'
-      ? 'make-move'
-      : payload.action === 'accept_settlement'
-        ? 'accept-settlement'
-        : null;
-  return action
-    ? gameplayEventForGameActionError(String(payload.id), action, String(payload.reason))
-    : null;
-}
-
-export function settledEventForInfo(gameId: string, info: GameTerminalInfo): GameplayEvent | null {
-  if (info.type !== 'settled' || info.outcome == null || info.myReward == null) return null;
-  return {
-    Settled: { gameId, outcome: info.outcome, ourShare: info.myReward },
-  };
-}
-
-export function gameplayEventsForGameStatus(
-  notification: WasmNotification,
-  activeIds: string[],
-  terminalEvent: GameplayEvent | null,
-): GameplayEvent[] {
-  const status = notification.GameStatus as GameStatusPayload | undefined;
-  if (!status) return [];
-  const id = String(status.id);
-  const readable = coerceToBytes(status.other_params?.readable);
-  const events: GameplayEvent[] = [];
-  if (readable) {
-    const moverShare = parseAmount(status.other_params?.mover_share);
-    if (moverShare != null) {
-      events.push({ OpponentMoved: { readable, gameId: id, moverShare } });
-    } else if (activeIds.includes(id)) {
-      events.push({ GameMessage: { readable, gameId: id } });
-    }
-  }
-  if (terminalEvent) events.push(terminalEvent);
-  return events;
 }
 
 export function terminalInfoFromGameSettled(
@@ -167,80 +84,6 @@ export function parseGameStatusTerminalInfo(
     };
   }
   return { type: 'none', outcome: null, label: null, myReward: null, rewardCoinHex: null };
-}
-
-function parseTimeout(value: unknown): bigint | null {
-  if (value == null) return DEFAULT_GAME_TIMEOUT_BLOCKS;
-  const raw =
-    typeof value === 'object' && value !== null && 'Timeout' in value
-      ? (value as Record<string, unknown>).Timeout
-      : value;
-  try {
-    const timeout = BigInt(String(raw));
-    return timeout > 0n ? timeout : null;
-  } catch {
-    return null;
-  }
-}
-
-function coerceParameterState(value: unknown): unknown {
-  if (value instanceof Uint8Array) return value;
-  if (Array.isArray(value) && value.every((item) => typeof item === 'number')) {
-    return Uint8Array.from(value);
-  }
-  if (typeof value === 'string' && /^[0-9a-f]*$/i.test(value) && value.length % 2 === 0) {
-    const bytes = value.match(/.{2}/g)?.map((part) => parseInt(part, 16)) ?? [];
-    return Uint8Array.from(bytes);
-  }
-  return value;
-}
-
-function gameTypeFromValue(value: Record<string, unknown>): HandTerms['gameType'] | null {
-  const raw = value.game_type;
-  if (typeof raw !== 'string') return null;
-  return catalogGameTypeFromWire(raw);
-}
-
-export function parseTermsFromNotificationValue(
-  value: unknown,
-  gameType?: HandTerms['gameType'],
-): HandTerms | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const object = value as Record<string, unknown>;
-  const mine = parseAmount(object.my_contribution);
-  const theirs = parseAmount(object.their_contribution);
-  const resolvedType = gameType ?? gameTypeFromValue(object);
-  const timeout = parseTimeout(object.timeout);
-  if (!mine || !theirs || !resolvedType || timeout == null) return null;
-  try {
-    return decodeGameTerms(
-      resolvedType,
-      {
-        myContribution: BigInt(mine),
-        theirContribution: BigInt(theirs),
-        gameTimeout: timeout,
-      },
-      coerceParameterState(object.parameters ?? object.initial_state),
-    );
-  } catch {
-    return null;
-  }
-}
-
-export function parseIncomingProposal(value: unknown): ProposalGroupModel | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const object = value as Record<string, unknown>;
-  const gameType = gameTypeFromValue(object);
-  const terms = gameType ? parseTermsFromNotificationValue(object, gameType) : null;
-  const memberIds = Array.isArray(object.group_ids) ? object.group_ids.map(String) : [];
-  if (!terms || object.id == null || memberIds.length === 0) return null;
-  return {
-    primaryId: String(object.id),
-    memberIds,
-    terms,
-    origin: 'peer',
-    disposition: 'incoming-cached',
-  };
 }
 
 export async function coinIdHex(value: unknown): Promise<string | null> {

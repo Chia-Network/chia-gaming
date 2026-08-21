@@ -1,6 +1,6 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/stateCodec';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/stateCodec';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { type SessionPresentationSave, type SessionSave } from '../../hooks/save';
 import {
   decodeSessionSaveEnvelope,
@@ -50,7 +50,7 @@ describe('validateSessionSaveEnvelope', () => {
           moveNumber: 1n,
           isPlayerTurn: true,
         }),
-        betweenHandLastTerms: {
+        betweenHandLastHandProposal: {
           my_contribution: '20',
           their_contribution: '20',
           game_timeout: '15',
@@ -77,7 +77,7 @@ describe('validateSessionSaveEnvelope', () => {
           moveNumber: 1n,
           isPlayerTurn: true,
         }),
-        betweenHandLastTerms: {
+        betweenHandLastHandProposal: {
           my_contribution: '20',
           their_contribution: '20',
           game_timeout: '15',
@@ -131,7 +131,7 @@ describe('validateSessionSaveEnvelope', () => {
       lastDisplayedGameId: 'game-1',
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
-      betweenHandLastTerms: {
+      betweenHandLastHandProposal: {
         my_contribution: '20',
         their_contribution: '20',
         game_timeout: '15',
@@ -183,9 +183,9 @@ describe('validateSessionSaveEnvelope', () => {
     'cleanShutdownStarted',
     'betweenHandMode',
     'betweenHandCompose',
-    'betweenHandLastTerms',
-    'betweenHandRejectedOnceTerms',
-    'betweenHandPendingRetryTerms',
+    'betweenHandLastHandProposal',
+    'betweenHandRejectedOnceHandProposal',
+    'betweenHandPendingRetryHandProposal',
     'proposalGroups',
     'waitingStateEnteredAt',
     'cleanShutdownGraceStartedAt',
@@ -273,7 +273,7 @@ describe('validateSessionSaveEnvelope', () => {
             games: { unrelated: initialKrunkGameState('alice') },
           }),
           activeGameType: 'krunk',
-          betweenHandLastTerms: {
+          betweenHandLastHandProposal: {
             my_contribution: '100',
             their_contribution: '100',
             game_timeout: '15',
@@ -301,7 +301,7 @@ describe('validateSessionSaveEnvelope', () => {
           handState: krunkStateCodec.encode({
             games: { 'game-1': initialKrunkGameState('alice') },
           }),
-          betweenHandLastTerms: {
+          betweenHandLastHandProposal: {
             my_contribution: '100',
             their_contribution: '100',
             game_timeout: '15',
@@ -359,7 +359,7 @@ describe('validateSessionSaveEnvelope', () => {
             'game-2': { ...ACTIVE_INSTANCE, id: 'game-2' },
           },
           handState,
-          betweenHandLastTerms: {
+          betweenHandLastHandProposal: {
             my_contribution: '100',
             their_contribution: '100',
             game_timeout: '15',
@@ -394,7 +394,7 @@ describe('validateSessionSaveEnvelope', () => {
             ids.map((id) => [id, { ...ACTIVE_INSTANCE, id, amount: '100' }]),
           ),
           handState: krunkStateCodec.encode({ games }),
-          betweenHandLastTerms: {
+          betweenHandLastHandProposal: {
             my_contribution: '100',
             their_contribution: '100',
             game_timeout: '15',
@@ -417,7 +417,7 @@ describe('validateSessionSaveEnvelope', () => {
         'game-1': { ...ACTIVE_INSTANCE, id: 'game-1', amount: '100' },
         'game-2': { ...ACTIVE_INSTANCE, id: 'game-2', amount: '100' },
       },
-      betweenHandLastTerms: {
+      betweenHandLastHandProposal: {
         my_contribution: '100',
         their_contribution: '100',
         game_timeout: '15',
@@ -481,7 +481,7 @@ describe('validateSessionSaveEnvelope', () => {
       lastDisplayedGameId: 'game-1',
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
-      betweenHandLastTerms: {
+      betweenHandLastHandProposal: {
         my_contribution: '20',
         their_contribution: '20',
         game_timeout: '15',
@@ -510,9 +510,9 @@ describe('validateSessionSaveEnvelope', () => {
   });
 
   it('rejects persisted hands without matching game terms', () => {
-    expect(() => validateSessionSaveEnvelope(activeSave({ betweenHandLastTerms: null }))).toThrow(
-      'betweenHandLastTerms',
-    );
+    expect(() =>
+      validateSessionSaveEnvelope(activeSave({ betweenHandLastHandProposal: null })),
+    ).toThrow('betweenHandLastHandProposal');
     expect(() =>
       validateSessionSaveEnvelope(
         activeSave({
@@ -536,7 +536,7 @@ describe('validateSessionSaveEnvelope', () => {
             unitSizeMojos: 10n,
             displayMode: 'mojos',
           }),
-          betweenHandLastTerms: {
+          betweenHandLastHandProposal: {
             my_contribution: '20',
             their_contribution: '20',
             game_timeout: '15',
@@ -544,7 +544,7 @@ describe('validateSessionSaveEnvelope', () => {
           },
         }),
       ),
-    ).toThrow('activeGameType does not match betweenHandLastTerms.game_type');
+    ).toThrow('activeGameType does not match betweenHandLastHandProposal.game_type');
   });
 
   it.each([
@@ -642,13 +642,13 @@ describe('validateSessionSaveEnvelope', () => {
     [
       'between-hand terms',
       {
-        betweenHandLastTerms: {
+        betweenHandLastHandProposal: {
           my_contribution: 'not-an-amount',
           their_contribution: '10',
           game_type: 'calpoker',
         },
       },
-      'betweenHandLastTerms.my_contribution',
+      'betweenHandLastHandProposal.my_contribution',
     ],
     [
       'peer proposal',
@@ -659,7 +659,7 @@ describe('validateSessionSaveEnvelope', () => {
             member_ids: [],
             origin: 'peer',
             disposition: 'incoming-cached',
-            terms: {
+            hand_proposal: {
               my_contribution: '10',
               their_contribution: '10',
               game_type: 'calpoker',
@@ -678,7 +678,7 @@ describe('validateSessionSaveEnvelope', () => {
             member_ids: ['proposal-1', 'proposal-1'],
             origin: 'local',
             disposition: 'outgoing',
-            terms: {
+            hand_proposal: {
               my_contribution: '100',
               their_contribution: '100',
               game_type: 'krunk',
@@ -760,7 +760,7 @@ describe('validateSessionSaveEnvelope', () => {
           spacepoker: { unitSize: '1', stackSize: '20' },
         },
       },
-      betweenHandLastTerms: {
+      betweenHandLastHandProposal: {
         my_contribution: '12',
         their_contribution: '12',
         game_timeout: '20',

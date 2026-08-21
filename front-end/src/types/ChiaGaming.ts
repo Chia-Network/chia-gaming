@@ -223,6 +223,17 @@ export interface ProposalAcceptedPayload {
   our_turn: boolean;
 }
 
+export interface ProposalMadePayload {
+  id: unknown;
+  group_ids: unknown;
+  my_contribution: unknown;
+  their_contribution: unknown;
+  timeout: unknown;
+  game_type: unknown;
+  parameters?: unknown;
+  initial_state?: unknown;
+}
+
 export interface MoveRejectedPayload {
   id: bigint | number | string;
   tag: string;
@@ -238,11 +249,12 @@ export interface ActionFailedPayload {
 export type WasmNotification = {
   [K in Exclude<
     WasmNotificationTag,
-    'ChannelStatus' | 'ProposalAccepted' | 'MoveRejected' | 'ActionFailed'
+    'ChannelStatus' | 'ProposalAccepted' | 'ProposalMade' | 'MoveRejected' | 'ActionFailed'
   >]?: Record<string, unknown>;
 } & {
   ChannelStatus?: ChannelStatusPayload;
   ProposalAccepted?: ProposalAcceptedPayload;
+  ProposalMade?: ProposalMadePayload;
   MoveRejected?: MoveRejectedPayload;
   ActionFailed?: ActionFailedPayload;
 };

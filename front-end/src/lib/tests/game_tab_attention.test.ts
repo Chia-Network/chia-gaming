@@ -1,22 +1,24 @@
 import {
+  acceptedHandNeedsGameTabAttention,
   channelStateNeedsGameTabAttention,
   gameplayEventNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
 } from '../gameTabAttention';
-import type { GameplayEvent } from '../../hooks/useGameSession';
+import type { GameplayEvent } from '@games/host';
 
 describe('gameTabAttention', () => {
-  it('marks opponent moves and proposal accepts as attention', () => {
+  it('marks opponent moves as attention', () => {
     expect(
       gameplayEventNeedsGameTabAttention({
         OpponentMoved: { readable: new Uint8Array([1]), moverShare: '0' },
       }),
     ).toBe(true);
-    expect(
-      gameplayEventNeedsGameTabAttention({
-        ProposalAccepted: { id: '1' },
-      }),
-    ).toBe(true);
+  });
+
+  it('marks a newly accepted hand without exposing it as a gameplay event', () => {
+    expect(acceptedHandNeedsGameTabAttention(3, 4, ['7'])).toBe(true);
+    expect(acceptedHandNeedsGameTabAttention(4, 4, ['7'])).toBe(false);
+    expect(acceptedHandNeedsGameTabAttention(3, 4, [])).toBe(false);
   });
 
   it('marks settlement accepts as attention', () => {

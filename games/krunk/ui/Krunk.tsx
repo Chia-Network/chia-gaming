@@ -19,15 +19,13 @@ import {
   type PersistedGameState,
 } from '../../host';
 import { useGameHost, useInitialGameHandState } from '../../host/ui';
-import { krunkStateCodec } from './stateCodec';
+import { krunkStateCodec } from './serialize';
 
 export interface KrunkProps {
   handSource: GameHandSource;
   currentHandGameIds: string[];
   activeGameIds: string[];
-  iProposedHand: boolean;
   gameplayEvent$: Observable<GameplayEvent>;
-  betSize: bigint;
   onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   onGameLog: (lines: string[]) => void;
   myName?: string;
@@ -60,38 +58,32 @@ export function formatKrunkHandLog(
 
 export function krunkGameSlots(
   currentHandGameIds: string[],
-  iProposedHand: boolean,
   activeGameIds: string[] = currentHandGameIds,
-  persistedState?: PersistedGameState,
+  persistedState?: PersistedGameState | null,
 ): {
   aliceGameId: string | null;
   bobGameId: string | null;
   aliceActive: boolean;
   bobActive: boolean;
 } {
-  const first = currentHandGameIds[0] ?? null;
-  const second = currentHandGameIds[1] ?? null;
   const persistedGames = krunkStateCodec.decode(persistedState)?.games;
+  if (!persistedGames) {
+    throw new Error('Krunk requires initialized durable game state');
+  }
   const persistedAlice = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'alice');
   const persistedBob = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'bob');
   if (
-    persistedGames &&
-    currentHandGameIds.every((id) => persistedGames[id]) &&
-    (!persistedAlice || !persistedBob)
+    !currentHandGameIds.every((id) => persistedGames[id]) ||
+    !persistedAlice ||
+    !persistedBob
   ) {
     throw new Error('Krunk persisted roles must contain one alice and one bob');
   }
-  const fallback = iProposedHand
-    ? { aliceGameId: first, bobGameId: second }
-    : { aliceGameId: second, bobGameId: first };
-  const slots =
-    persistedAlice && persistedBob
-      ? { aliceGameId: persistedAlice, bobGameId: persistedBob }
-      : fallback;
   return {
-    ...slots,
-    aliceActive: slots.aliceGameId !== null && activeGameIds.includes(slots.aliceGameId),
-    bobActive: slots.bobGameId !== null && activeGameIds.includes(slots.bobGameId),
+    aliceGameId: persistedAlice,
+    bobGameId: persistedBob,
+    aliceActive: activeGameIds.includes(persistedAlice),
+    bobActive: activeGameIds.includes(persistedBob),
   };
 }
 
@@ -443,9 +435,7 @@ const Krunk: React.FC<KrunkProps> = ({
   handSource,
   currentHandGameIds,
   activeGameIds,
-  iProposedHand,
   gameplayEvent$,
-  betSize,
   onTurnChanged,
   onGameLog,
   myName: _myName,
@@ -456,17 +446,18 @@ const Krunk: React.FC<KrunkProps> = ({
   const { formatAmount } = useGameHost();
   const interactive = handSource.interactionMode === 'live';
   const initialPersistedState = useInitialGameHandState(handSource) ?? undefined;
-  // The hand proposer sent game 0 with my_turn=true (proposer is alice)
-  // and game 1 with my_turn=false (proposer is bob). The acceptor's
-  // roles are flipped: they're bob in game 0 and alice in game 1.
   const { aliceGameId, bobGameId } = krunkGameSlots(
     currentHandGameIds,
-    iProposedHand,
     activeGameIds,
     initialPersistedState,
   );
   const aliceId = aliceGameId ?? '';
   const bobId = bobGameId ?? '';
+  const acceptedAmount = amountsById[aliceId] ?? amountsById[bobId];
+  if (acceptedAmount === undefined) {
+    throw new Error('Krunk is missing the accepted game amount');
+  }
+  const betSize = BigInt(acceptedAmount);
   // Keep each hand "live" for the whole atomic hand via currentHandGameIds.
   // activeGameIds can drop a sibling during turn/settle handoffs and was
   // latching useKrunkHand into a finished state (blocking clue updates and

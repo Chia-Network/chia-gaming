@@ -11,14 +11,11 @@ import {
   selectIProposedHand,
   selectSessionPhase,
   sessionModelFromSave,
-  type HandTermsModel,
+  type HandProposal,
 } from '../lib/session/model';
-import type { ComposeDraftValue, HandWinOutcome } from '@games/host';
-import {
-  dispatchWasmNotification,
-  gameplayEventForGameActionError,
-  type GameplayEvent,
-} from '../lib/session/gameSessionEvents';
+import type { ComposeDraftValue, GameplayEvent, HandWinOutcome } from '@games/host';
+import { dispatchWasmNotification } from '../lib/session/gameSessionEvents';
+import { gameplayEventForGameActionError } from '../lib/wasm/gameplayEvents';
 import { createSessionMachineState } from '../lib/session/sessionMachine';
 import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
 import {
@@ -39,22 +36,9 @@ import type { SessionSave } from './save';
 import { getDefaultFee, getPlayerId } from './save';
 
 export type {
-  GameplayEvent,
   GameTerminalAttentionInfo,
   GameTerminalInfo,
-  HandTerms,
   QueuedNotification,
-} from '../lib/session/gameSessionEvents';
-export {
-  dispatchWasmNotification,
-  gameplayEventForActionFailed,
-  gameplayEventForGameActionError,
-  gameplayEventForMoveRejected,
-  gameplayEventsForGameStatus,
-  parseGameStatusTerminalInfo,
-  parseTermsFromNotificationValue,
-  settledEventForInfo,
-  terminalInfoFromGameSettled,
 } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
 
@@ -134,7 +118,7 @@ export function useGameSession(
   const gameplaySubject = useRef(new Subject<GameplayEvent>()).current;
   const gameplayEvent$ = useMemo(() => gameplaySubject.asObservable(), [gameplaySubject]);
   const initialState = useMemo(() => {
-    const terms: HandTermsModel = {
+    const handProposal: HandProposal = {
       gameType: REGISTERED_GAMES[0].gameType,
       myContribution: perGameAmount,
       theirContribution: perGameAmount,
@@ -145,8 +129,8 @@ export function useGameSession(
         createSessionModel({
           channel: { cleanShutdownStarted: controller.cleanShutdownCalled },
           betweenHand: {
-            lastTerms: null,
-            compose: createComposeDraftState(perGameAmount, terms),
+            lastHandProposal: null,
+            compose: createComposeDraftState(perGameAmount, handProposal),
           },
         }),
       {
@@ -278,7 +262,7 @@ export function useGameSession(
     [dispatch],
   );
   const setComposeGameType = useCallback(
-    (gameType: HandTermsModel['gameType']) => dispatch({ type: 'select-compose-game', gameType }),
+    (gameType: HandProposal['gameType']) => dispatch({ type: 'select-compose-game', gameType }),
     [dispatch],
   );
   const updateSelectedComposeDraft = useCallback(
@@ -334,7 +318,7 @@ export function useGameSession(
     onTurnChanged,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: view.incomingProposalGroup,
-    lastHandTerms: model.betweenHand.lastTerms,
+    lastHandProposal: model.betweenHand.lastHandProposal,
     composeDraftState: compose,
     chooseNewHandSameTerms: () => dispatch({ type: 'choose-same-terms' }),
     chooseDoNotUseCurrentProposal: () => dispatch({ type: 'reject-current-proposal' }),
@@ -344,7 +328,7 @@ export function useGameSession(
     updateSelectedComposeDraft,
     composeProposalSent: compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
-    submitComposedProposal: (terms) => dispatch({ type: 'submit-compose', terms }),
+    submitComposedProposal: (handProposal) => dispatch({ type: 'submit-compose', handProposal }),
     acceptReviewedProposal: () => dispatch({ type: 'accept-review' }),
     rejectReviewedProposal: () => dispatch({ type: 'reject-review' }),
     startCleanShutdown: () => dispatch({ type: 'start-clean-shutdown' }),

@@ -13,7 +13,7 @@ function walk(dir: string, files: string[] = []): string[] {
 }
 
 describe('game package isolation', () => {
-  it('does not import this player app from production game UI', () => {
+  it('does not import this player app from game UI or game tests', () => {
     const keys = fs.readdirSync(GAMES_ROOT).filter((name) => {
       const ui = path.join(GAMES_ROOT, name, 'ui');
       return name !== 'host' && fs.existsSync(ui) && fs.statSync(ui).isDirectory();
@@ -23,7 +23,6 @@ describe('game package isolation', () => {
       const uiRoot = path.join(GAMES_ROOT, key, 'ui');
       for (const file of walk(uiRoot)) {
         if (!/\.(ts|tsx)$/.test(file)) continue;
-        if (/\.(spec|test)\.(ts|tsx)$/.test(file)) continue;
         const text = fs.readFileSync(file, 'utf8');
         if (/['"]@\//.test(text) || /from\s+['"]\.\.\/\.\.\/front-end/.test(text)) {
           offenders.push(path.relative(GAMES_ROOT, file));
@@ -43,7 +42,7 @@ describe('game package isolation', () => {
       if (file.endsWith(`${path.sep}generated${path.sep}gamePackages.ts`)) continue;
       const text = fs.readFileSync(file, 'utf8');
       const importRe =
-        /from\s+['"](@games\/(?:calpoker|krunk|spacepoker)[^'"]*|[^'"]*games\/(?:calpoker|krunk|spacepoker)\/ui\/(?!package)[^'"]*)['"]/g;
+        /from\s+['"](@games\/(?:calpoker|krunk|spacepoker)[^'"]*|[^'"]*games\/(?:calpoker|krunk|spacepoker)\/ui\/[^'"]*)['"]/g;
       let match: RegExpExecArray | null;
       while ((match = importRe.exec(text))) {
         offenders.push(`${path.relative(feRoot, file)}: ${match[0]}`);

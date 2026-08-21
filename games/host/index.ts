@@ -143,7 +143,7 @@ export interface GameHostText {
   formatMojos(mojos: bigint): string;
 }
 
-export interface HandTermsBaseModel {
+export interface HandProposalBase {
   myContribution: bigint;
   theirContribution: bigint;
   gameTimeout: bigint;
@@ -151,7 +151,7 @@ export interface HandTermsBaseModel {
 
 export type RegisteredGameType = string;
 
-export type HandTermsModel = HandTermsBaseModel & {
+export type HandProposal = HandProposalBase & {
   gameType: RegisteredGameType;
 };
 
@@ -239,7 +239,6 @@ export function defineGameStateCodec<T>(definition: {
 }
 
 export type GameplayEvent =
-  | { ProposalAccepted: { id: bigint | number | string } }
   | { OpponentMoved: { readable: Uint8Array | number[]; gameId?: string; moverShare: string } }
   | { GameMessage: { readable: Uint8Array | number[]; gameId?: string } }
   | { MoveRejected: { gameId: string; tag: string; message: string } }
@@ -273,7 +272,7 @@ export type DurableGameStateEvent =
       iStarted: boolean;
       isMyTurn: boolean;
       origin: ProposalGroupOrigin;
-      terms: HandTermsModel;
+      handProposal: HandProposal;
     }
   | {
       type: 'game-status';
@@ -296,11 +295,11 @@ export type DurableGameStateEvent =
 
 export type ComposeDraftValue = Record<string, bigint>;
 export type GameComposeDrafts = Record<string, ComposeDraftValue>;
-export type SavedTermsExtras = Readonly<Record<string, string | undefined>>;
+export type SavedHandProposalExtras = Readonly<Record<string, string | undefined>>;
 export type StateUpdate<T> = T | ((current: T) => T);
-export type TermsFor<T extends RegisteredGameType> = HandTermsModel & { gameType: T };
+export type HandProposalFor<T extends RegisteredGameType> = HandProposal & { gameType: T };
 
-export interface ComposeEditorProps<TDraft> {
+export interface HandProposalFormProps<TDraft> {
   draft: TDraft;
   disabled: boolean;
   maxPerHandMojos: bigint | null;
@@ -312,7 +311,7 @@ export function reduceGameStateSnapshot<T>(current: T, update: StateUpdate<T>): 
   return typeof update === 'function' ? (update as (value: T) => T)(current) : update;
 }
 
-export function equalBaseTerms(a: HandTermsBaseModel, b: HandTermsBaseModel): boolean {
+export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase): boolean {
   return (
     a.myContribution === b.myContribution &&
     a.theirContribution === b.theirContribution &&
@@ -391,7 +390,6 @@ export interface FrozenGameMountOptions extends GameMountNames {
 }
 
 export interface LiveGameView {
-  handKey: number;
   handOrigin: GameHandOrigin;
   handSource: GameHandSource;
   activeGameId: string | null;
@@ -399,9 +397,6 @@ export interface LiveGameView {
   currentHandGameIds: string[];
   iStarted: boolean;
   playerNumber: number;
-  iProposedHand: boolean;
-  currentHandAmount: bigint;
-  lastHandTerms: HandTermsModel | null;
   gameplayEvent$: Observable<GameplayEvent>;
   appendGameLog: (line: string) => void;
   onHandOutcome: (outcome: HandWinOutcome) => void;
@@ -420,9 +415,7 @@ export interface FrozenGameView {
   currentHandIds: readonly string[];
   activeIds: readonly string[];
   handState: PersistedGameState | null;
-  lastTerms: HandTermsModel;
   instances: Record<string, { terminal: GameTerminalModel; amount: string }>;
-  iProposedHand: boolean;
 }
 
 export interface GameMountRegistration {
@@ -440,26 +433,26 @@ export interface GameFeatureRegistration<
   readonly displayName: string;
   readonly stateCodec: GameStateCodec<TState>;
   readonly factoryParameters: FactoryParameterCodec<TParams>;
-  describeTerms(terms: HandTermsModel, text: GameHostText): string;
+  describeHandProposal(handProposal: HandProposal, text: GameHostText): string;
   readonly handMembershipDescription: string;
   validateHandMembership(gameIds: readonly string[], state: TState | null): boolean;
   decodeFeatureState(value: unknown): TFeatureState | null;
   readonly lifecycle: {
     proposalSenderGoesFirst(iStarted: boolean): boolean;
   };
-  readonly compose: {
-    defaultDraft(perGameAmount: bigint): TDraft;
-    draftFromTerms(terms: HandTermsModel): TDraft;
-    updateDraft(current: TDraft, update: Partial<TDraft>): TDraft;
-    toTerms(draft: TDraft, gameTimeout: bigint): HandTermsModel | null;
+  readonly draft: {
+    default(perGameAmount: bigint): TDraft;
+    fromHandProposal(handProposal: HandProposal): TDraft;
+    update(current: TDraft, update: Partial<TDraft>): TDraft;
+    toHandProposal(draft: TDraft, gameTimeout: bigint): HandProposal | null;
   };
-  toFactoryParameters(terms: HandTermsModel, iStarted: boolean): TParams;
-  decodeProposalTerms(base: HandTermsBaseModel, params: TParams): HandTermsModel | null;
-  validateTerms(terms: HandTermsModel): boolean;
-  termsEqual(a: HandTermsModel, b: HandTermsModel): boolean;
+  toFactoryParameters(handProposal: HandProposal, iStarted: boolean): TParams;
+  decodeHandProposal(base: HandProposalBase, params: TParams): HandProposal | null;
+  validateHandProposal(handProposal: HandProposal): boolean;
+  handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
   persistence: {
-    encodeExtras(terms: HandTermsModel): SavedTermsExtras;
-    decodeExtras(base: HandTermsBaseModel, extras: SavedTermsExtras): HandTermsModel | null;
+    encodeExtras(handProposal: HandProposal): SavedHandProposalExtras;
+    decodeExtras(base: HandProposalBase, extras: SavedHandProposalExtras): HandProposal | null;
   };
   readonly durableState: {
     reduceEvent(current: TState | null, event: DurableGameStateEvent): TState | null;
@@ -473,7 +466,7 @@ export interface GamePackage<
   TParams = unknown,
 >
   extends GameFeatureRegistration<TState, TFeatureState, TDraft, TParams>, GameMountRegistration {
-  ComposeEditor: ComponentType<ComposeEditorProps<TDraft>>;
+  HandProposalForm: ComponentType<HandProposalFormProps<TDraft>>;
 }
 
 export interface CurrencyLabels {

@@ -23,6 +23,7 @@ import { requireLiveGameHandSource } from '../lib/gameMountRegistry';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
+  acceptedHandNeedsGameTabAttention,
   channelStateNeedsGameTabAttention,
   gameplayEventNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
@@ -665,6 +666,16 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
     });
     return () => sub.unsubscribe();
   }, [session.gameplayEvent$, onGameActivity]);
+
+  // A new accepted hand is session activity, not a gameplay event.
+  const prevHandKey = useRef(session.handKey);
+  useEffect(() => {
+    const previous = prevHandKey.current;
+    prevHandKey.current = session.handKey;
+    if (acceptedHandNeedsGameTabAttention(previous, session.handKey, session.currentHandGameIds)) {
+      onGameActivity?.();
+    }
+  }, [session.handKey, session.currentHandGameIds, onGameActivity]);
 
   const prevGameQueueLen = useRef(session.gameQueue.length);
   const prevChannelQueueLen = useRef(session.channelQueue.length);

@@ -391,7 +391,7 @@ describe('active game tracking', () => {
         group: {
           primaryId: '1',
           memberIds: ['1', '3'],
-          terms,
+          handProposal: terms,
           origin: 'local',
           disposition: 'outgoing',
         },

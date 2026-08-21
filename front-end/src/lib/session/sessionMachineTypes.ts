@@ -1,12 +1,11 @@
 import type { ChannelStatus, GameConnectionState, WasmNotification } from '../../types/ChiaGaming';
-import type { ComposeDraftValue } from '@games/host';
+import type { ComposeDraftValue, GameplayEvent } from '@games/host';
 import type { ComposeDraftState } from './composeDraft';
 import type { GameSliceAction } from './gameSlice';
-import type { GameplayEvent } from './gameSessionEvents';
 import type {
   BetweenHandModeModel,
   GameTerminalModel,
-  HandTermsModel,
+  HandProposal,
   ProposalGroupDisposition,
   ProposalGroupModel,
   QueuedNotificationModel,
@@ -53,7 +52,7 @@ export type ProposalCommandContext =
 export type SessionMachineEffect =
   | { type: 'controller-accept-proposal'; id: string; context?: ProposalCommandContext }
   | { type: 'controller-cancel-proposal'; id: string; context?: ProposalCommandContext }
-  | { type: 'controller-propose-game'; terms: HandTermsModel }
+  | { type: 'controller-propose-game'; handProposal: HandProposal }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
   | { type: 'controller-set-last-outcome'; outcomeWin: OutcomeWin }
@@ -103,9 +102,9 @@ export type SessionMachineEvent =
       primaryId: string;
       disposition: ProposalGroupDisposition;
     }
-  | { type: 'set-rejected-terms'; terms: HandTermsModel | null }
-  | { type: 'set-last-terms'; terms: HandTermsModel }
-  | { type: 'set-pending-retry-terms'; terms: HandTermsModel | null }
+  | { type: 'set-rejected-terms'; handProposal: HandProposal | null }
+  | { type: 'set-last-terms'; handProposal: HandProposal }
+  | { type: 'set-pending-retry-terms'; handProposal: HandProposal | null }
   | { type: 'set-new-hand-requested'; requested: boolean }
   | { type: 'set-compose-draft'; compose: ComposeDraftState }
   | { type: 'select-compose-game'; gameType: RegisteredGameType }
@@ -163,8 +162,8 @@ export type SessionMachineEvent =
   | { type: 'durable-local-turn'; id: string; isMyTurn: boolean; channelState: ChannelStatus }
   | { type: 'request-accept-proposal'; id: string }
   | { type: 'request-cancel-proposal'; id: string }
-  | { type: 'request-propose-game'; terms: HandTermsModel }
-  | { type: 'proposal-sent'; ids: string[]; terms: HandTermsModel }
+  | { type: 'request-propose-game'; handProposal: HandProposal }
+  | { type: 'proposal-sent'; ids: string[]; handProposal: HandProposal }
   | {
       type: 'proposal-command-succeeded';
       command: 'accept-proposal' | 'cancel-proposal';
@@ -176,7 +175,7 @@ export type SessionMachineEvent =
   | { type: 'choose-same-terms' }
   | { type: 'reject-current-proposal' }
   | { type: 'open-compose' }
-  | { type: 'submit-compose'; terms: HandTermsModel }
+  | { type: 'submit-compose'; handProposal: HandProposal }
   | { type: 'accept-review' }
   | { type: 'reject-review' }
   | { type: 'start-clean-shutdown' }

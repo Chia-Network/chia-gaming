@@ -1,20 +1,20 @@
 import { Program } from 'clvm-lib';
-import calpokerPackage from '@games/calpoker/ui/package';
-import { calpokerRegistration } from '@games/calpoker/ui/adapter';
-import { krunkRegistration, isValidKrunkStake } from '@games/krunk/ui/adapter';
-import { spacepokerRegistration } from '@games/spacepoker/ui/adapter';
+import calpokerPackage from '@games/calpoker/ui/handProposal';
+import { calpokerRegistration } from '@games/calpoker/ui/handProposal';
+import { krunkRegistration, isValidKrunkStake } from '@games/krunk/ui/handProposal';
+import { spacepokerRegistration } from '@games/spacepoker/ui/handProposal';
 import { resolveSpacepokerUnitSize } from '@games/spacepoker/ui/unitSize';
 import {
-  decodeGameTerms,
-  decodePersistedGameTerms,
-  encodeGameProposalParameters,
-  encodeGameTermsExtras,
-  gameTermsEqual,
+  decodeHandProposal,
+  decodePersistedHandProposal,
+  encodeHandProposalExtras,
+  handProposalsEqual,
   packageFor,
   REGISTERED_GAMES,
   isCatalogGameType,
-  validateGameTerms,
+  validateHandProposal,
 } from '../gameRegistry';
+import { encodeGameProposalParameters, decodeProposalMadeTerms } from '../gameProposalCodec';
 import {
   catalogGameTypeFromWire,
   protocolIdForCatalog,
@@ -43,7 +43,8 @@ describe('pure game registrations', () => {
       { gameType: 'spacepoker', displayName: 'Space Poker' },
       { gameType: 'krunk', displayName: 'Krunk' },
     ]);
-    expect(packageFor('calpoker')).toBe(calpokerPackage);
+    expect(packageFor('calpoker').gameType).toBe(calpokerPackage.gameType);
+    expect(packageFor('calpoker').displayName).toBe(calpokerPackage.displayName);
   });
 
   it('exposes a factory-parameter codec on each game package', () => {
@@ -95,17 +96,17 @@ describe('pure game registrations', () => {
     ).toBeNull();
     const formatMojos = (mojos: bigint) => `${mojos} MOJO`;
     expect(
-      calpokerRegistration.describeTerms({ gameType: 'calpoker', ...base }, { formatMojos }),
+      calpokerRegistration.describeHandProposal({ gameType: 'calpoker', ...base }, { formatMojos }),
     ).toBe('Stake 100 MOJO each');
     expect(
-      spacepokerRegistration.describeTerms(
+      spacepokerRegistration.describeHandProposal(
         { gameType: 'spacepoker', ...base, unitSizeMojos: 10n },
         { formatMojos },
       ),
     ).toBe('Stake 100 MOJO each · unit 10 MOJO · stack 10');
-    expect(krunkRegistration.describeTerms({ gameType: 'krunk', ...base }, { formatMojos })).toBe(
-      'Stake 100 MOJO each',
-    );
+    expect(
+      krunkRegistration.describeHandProposal({ gameType: 'krunk', ...base }, { formatMojos }),
+    ).toBe('Stake 100 MOJO each');
   });
 
   it('encodes each factory parameter shape', () => {
@@ -129,22 +130,22 @@ describe('pure game registrations', () => {
       true,
     ).serialize();
     const krunk = encodeGameProposalParameters({ gameType: 'krunk', ...base }, true).serialize();
-    expect(decodeGameTerms('calpoker', base, cal)).toEqual({ gameType: 'calpoker', ...base });
-    expect(decodeGameTerms('spacepoker', base, space)).toEqual({
+    expect(decodeHandProposal('calpoker', base, cal)).toEqual({ gameType: 'calpoker', ...base });
+    expect(decodeHandProposal('spacepoker', base, space)).toEqual({
       gameType: 'spacepoker',
       ...base,
       unitSizeMojos: 10n,
     });
-    expect(decodeGameTerms('krunk', base, krunk)).toEqual({ gameType: 'krunk', ...base });
-    expect(decodeGameTerms('calpoker', base, space)).toBeNull();
-    expect(decodeGameTerms('calpoker', base, krunk)).toBeNull();
-    expect(decodeGameTerms('spacepoker', base, cal)).toBeNull();
-    expect(decodeGameTerms('spacepoker', base, krunk)).toBeNull();
-    expect(decodeGameTerms('krunk', base, cal)).toBeNull();
-    expect(decodeGameTerms('krunk', base, space)).toBeNull();
-    expect(decodeGameTerms('spacepoker', base, undefined)).toBeNull();
-    expect(decodeGameTerms('spacepoker', base, Program.fromBigInt(10n).serialize())).toBeNull();
-    expect(decodeGameTerms('spacepoker', base, Program.fromList([]).serialize())).toBeNull();
+    expect(decodeHandProposal('krunk', base, krunk)).toEqual({ gameType: 'krunk', ...base });
+    expect(decodeHandProposal('calpoker', base, space)).toBeNull();
+    expect(decodeHandProposal('calpoker', base, krunk)).toBeNull();
+    expect(decodeHandProposal('spacepoker', base, cal)).toBeNull();
+    expect(decodeHandProposal('spacepoker', base, krunk)).toBeNull();
+    expect(decodeHandProposal('krunk', base, cal)).toBeNull();
+    expect(decodeHandProposal('krunk', base, space)).toBeNull();
+    expect(decodeHandProposal('spacepoker', base, undefined)).toBeNull();
+    expect(decodeHandProposal('spacepoker', base, Program.fromBigInt(10n).serialize())).toBeNull();
+    expect(decodeHandProposal('spacepoker', base, Program.fromList([]).serialize())).toBeNull();
   });
 
   it('keeps package keys in the model after protocol identities are ready', () => {
@@ -166,7 +167,7 @@ describe('pure game registrations', () => {
         'krunk',
       ]);
       const cal = encodeGameProposalParameters({ gameType: 'calpoker', ...base }, true).serialize();
-      expect(decodeGameTerms('calpoker', base, cal)).toEqual({
+      expect(decodeHandProposal('calpoker', base, cal)).toEqual({
         gameType: 'calpoker',
         ...base,
       });
@@ -177,43 +178,47 @@ describe('pure game registrations', () => {
 
   it('validates and compares terms through their owning adapter', () => {
     const spaceTerms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos: 10n };
-    expect(validateGameTerms(spaceTerms)).toBe(true);
+    expect(validateHandProposal(spaceTerms)).toBe(true);
     expect(
-      calpokerRegistration.validateTerms({
+      calpokerRegistration.validateHandProposal({
         gameType: 'calpoker',
         ...base,
         theirContribution: 200n,
       }),
     ).toBe(false);
     expect(
-      decodeGameTerms(
+      decodeHandProposal(
         'calpoker',
         { ...base, theirContribution: 200n },
         encodeGameProposalParameters({ gameType: 'calpoker', ...base }, true).serialize(),
       ),
     ).toBeNull();
     expect(
-      decodePersistedGameTerms('calpoker', { ...base, theirContribution: 200n }, {}),
+      decodePersistedHandProposal('calpoker', { ...base, theirContribution: 200n }, {}),
     ).toBeNull();
     expect(
-      spacepokerRegistration.validateTerms({
+      spacepokerRegistration.validateHandProposal({
         ...spaceTerms,
         theirContribution: 200n,
       }),
     ).toBe(false);
     expect(
-      spacepokerRegistration.validateTerms({
+      spacepokerRegistration.validateHandProposal({
         ...spaceTerms,
         myContribution: 101n,
         theirContribution: 101n,
       }),
     ).toBe(false);
-    expect(gameTermsEqual(spaceTerms, { ...spaceTerms })).toBe(true);
-    expect(gameTermsEqual(spaceTerms, { ...spaceTerms, unitSizeMojos: 20n })).toBe(false);
+    expect(handProposalsEqual(spaceTerms, { ...spaceTerms })).toBe(true);
+    expect(handProposalsEqual(spaceTerms, { ...spaceTerms, unitSizeMojos: 20n })).toBe(false);
     expect(isValidKrunkStake(100n)).toBe(true);
     expect(isValidKrunkStake(101n)).toBe(false);
     expect(
-      krunkRegistration.validateTerms({ gameType: 'krunk', ...base, theirContribution: 200n }),
+      krunkRegistration.validateHandProposal({
+        gameType: 'krunk',
+        ...base,
+        theirContribution: 200n,
+      }),
     ).toBe(false);
     expect(calpokerRegistration.stateCodec.gameType).toBe('calpoker');
     expect(spacepokerRegistration.stateCodec.gameType).toBe('spacepoker');
@@ -221,10 +226,10 @@ describe('pure game registrations', () => {
 
   it('round-trips persistence extras without manufacturing a unit', () => {
     const terms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos: 25n };
-    const extras = encodeGameTermsExtras(terms);
+    const extras = encodeHandProposalExtras(terms);
     expect(extras).toEqual({ spacepoker_unit_size: '25' });
-    expect(decodePersistedGameTerms('spacepoker', base, extras)).toEqual(terms);
-    expect(decodePersistedGameTerms('spacepoker', base, {})).toBeNull();
+    expect(decodePersistedHandProposal('spacepoker', base, extras)).toEqual(terms);
+    expect(decodePersistedHandProposal('spacepoker', base, {})).toBeNull();
   });
 
   it.each([
@@ -232,7 +237,7 @@ describe('pure game registrations', () => {
     ['unequal contribution', { ...base, theirContribution: 99n }],
   ])('rejects invalid Calpoker %s in proposal and persistence decoders', (_label, invalid) => {
     expect(
-      decodeGameTerms(
+      decodeHandProposal(
         'calpoker',
         invalid,
         Program.fromList([
@@ -241,7 +246,7 @@ describe('pure game registrations', () => {
         ]).serialize(),
       ),
     ).toBeNull();
-    expect(decodePersistedGameTerms('calpoker', invalid, {})).toBeNull();
+    expect(decodePersistedHandProposal('calpoker', invalid, {})).toBeNull();
   });
 
   it.each([
@@ -263,9 +268,9 @@ describe('pure game registrations', () => {
             Program.fromBigInt(1n),
           ]).serialize()
         : new Uint8Array([0xff]);
-      expect(decodeGameTerms('spacepoker', invalid, parameterState)).toBeNull();
+      expect(decodeHandProposal('spacepoker', invalid, parameterState)).toBeNull();
       expect(
-        decodePersistedGameTerms('spacepoker', invalid, { spacepoker_unit_size: unit }),
+        decodePersistedHandProposal('spacepoker', invalid, { spacepoker_unit_size: unit }),
       ).toBeNull();
     },
   );
@@ -273,12 +278,12 @@ describe('pure game registrations', () => {
   it('keeps valid Calpoker and Space Poker terms round-trippable', () => {
     const calTerms = { gameType: 'calpoker' as const, ...base };
     const spaceTerms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos: 20n };
-    expect(decodePersistedGameTerms('calpoker', base, encodeGameTermsExtras(calTerms))).toEqual(
-      calTerms,
-    );
-    expect(decodePersistedGameTerms('spacepoker', base, encodeGameTermsExtras(spaceTerms))).toEqual(
-      spaceTerms,
-    );
+    expect(
+      decodePersistedHandProposal('calpoker', base, encodeHandProposalExtras(calTerms)),
+    ).toEqual(calTerms);
+    expect(
+      decodePersistedHandProposal('spacepoker', base, encodeHandProposalExtras(spaceTerms)),
+    ).toEqual(spaceTerms);
   });
 
   it('uses one resolver for terms, parameter bytes, and persisted state', () => {
@@ -299,5 +304,53 @@ describe('pure game registrations', () => {
         ).serialize(),
       }),
     ).toBeNull();
+  });
+
+  it('decodes ProposalMade envelopes through the proposal codec', () => {
+    setProtocolIds(BOUND_IDS);
+    try {
+      const terms = {
+        gameType: 'krunk' as const,
+        myContribution: 300n,
+        theirContribution: 300n,
+        gameTimeout: 15n,
+      };
+      const parameters = encodeGameProposalParameters(terms, true).serialize();
+      expect(
+        decodeProposalMadeTerms({
+          id: '1',
+          group_ids: ['1', '3'],
+          my_contribution: { Amount: '300' },
+          their_contribution: { Amount: '300' },
+          timeout: 15,
+          game_type: BOUND_IDS[2].id,
+          parameters,
+        }),
+      ).toEqual(terms);
+      expect(
+        decodeProposalMadeTerms({
+          id: '1',
+          group_ids: ['1', '3'],
+          my_contribution: '300',
+          their_contribution: '300',
+          timeout: { Timeout: '15' },
+          game_type: BOUND_IDS[2].id,
+          initial_state: parameters,
+        }),
+      ).toEqual(terms);
+      expect(
+        decodeProposalMadeTerms({
+          id: '1',
+          group_ids: ['1', '3'],
+          my_contribution: '300',
+          their_contribution: '300',
+          timeout: 15,
+          game_type: BOUND_IDS[2].id,
+          parameters: Program.fromList([]).serialize(),
+        }),
+      ).toBeNull();
+    } finally {
+      resetProtocolIds();
+    }
   });
 });

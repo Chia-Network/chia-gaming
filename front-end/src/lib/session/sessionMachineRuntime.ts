@@ -3,7 +3,7 @@ import { runSessionMachineTransition } from './sessionMachineEffects';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
 import { persistSessionSnapshot } from './sessionMachinePersist';
 import { reduceSessionMachine } from './sessionMachine';
-import type { GameplayEvent } from './gameSessionEvents';
+import type { GameplayEvent } from '@games/host';
 import type {
   LocalGameActionRequest,
   SessionMachineEvent,

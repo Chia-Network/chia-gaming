@@ -80,13 +80,13 @@ export interface SavedGameInstance {
   };
 }
 
-interface SavedHandTermsBase {
+interface SavedHandProposalBase {
   my_contribution: string;
   their_contribution: string;
   game_timeout: string;
 }
 
-export type SavedHandTerms = SavedHandTermsBase & {
+export type SavedHandProposal = SavedHandProposalBase & {
   game_type: RegisteredGameType;
 } & Record<string, string | undefined>;
 
@@ -119,15 +119,15 @@ export interface SessionPresentationSave {
     proposal_sent: boolean;
     drafts: Record<string, Record<string, string>>;
   };
-  betweenHandLastTerms: SavedHandTerms | null;
-  betweenHandRejectedOnceTerms: SavedHandTerms | null;
-  betweenHandPendingRetryTerms: SavedHandTerms | null;
+  betweenHandLastHandProposal: SavedHandProposal | null;
+  betweenHandRejectedOnceHandProposal: SavedHandProposal | null;
+  betweenHandPendingRetryHandProposal: SavedHandProposal | null;
   proposalGroups: Array<{
     primary_id: string;
     member_ids: string[];
     origin: ProposalGroupOrigin;
     disposition: ProposalGroupDisposition;
-    terms: SavedHandTerms;
+    hand_proposal: SavedHandProposal;
   }>;
   waitingStateEnteredAt: bigint | null;
   cleanShutdownGraceStartedAt: bigint | null;

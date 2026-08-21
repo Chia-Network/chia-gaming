@@ -11,7 +11,7 @@ import type {
   LocalGameCommand,
   SettlementOutcome,
 } from '../../host';
-import { reduceSpacepokerFeatureState, reduceSpacepokerSettlementState } from './adapter';
+import { reduceSpacepokerFeatureState, reduceSpacepokerSettlementState } from './handProposal';
 import {
   spacepokerStateCodec,
   type SpacepokerDisplayMode,
@@ -22,7 +22,7 @@ import {
   type SpHandler as SpHandlerType,
   type SpOutcome,
   type SpTerminalState,
-} from './stateCodec';
+} from './serialize';
 
 export type {
   SpacepokerDisplayMode,
@@ -32,7 +32,7 @@ export type {
   SpHandEntry,
   SpOutcome,
   SpTerminalState,
-} from './stateCodec';
+} from './serialize';
 const SPACEPOKER_XCH_DISPLAY_THRESHOLD_MOJOS = 1_000_000n;
 
 // These mirror the handler names in the Chialisp. The UX tracks which

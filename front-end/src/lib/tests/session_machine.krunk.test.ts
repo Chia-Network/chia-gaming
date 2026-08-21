@@ -1,5 +1,5 @@
 import { Program } from 'clvm-lib';
-import { krunkStateCodec } from '@games/krunk/ui/stateCodec';
+import { krunkStateCodec } from '@games/krunk/ui/serialize';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,

@@ -12,14 +12,14 @@ import {
   type PersistedGameState,
 } from '../../host';
 import { krunkSettlementStatus } from './settlement';
-import { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './adapter';
+import { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './handProposal';
 import {
   krunkGameStateFromPersisted,
   KrunkHandler,
   type KrunkGameState,
   type KrunkGuess,
   type KrunkRole,
-} from './stateCodec';
+} from './serialize';
 
 export { KrunkHandler };
 export type { KrunkGameState, KrunkGuess, KrunkRole };

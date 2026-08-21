@@ -4,7 +4,11 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { SessionController } from '../../hooks/SessionController';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
-import { frozenGameViewFromModel, requireLiveGameHandSource } from '../gameMountRegistry';
+import {
+  renderFrozenGameMount,
+  renderLiveGameMount,
+  requireLiveGameHandSource,
+} from '../gameMountRegistry';
 import { isCatalogGameType, packageFor } from '../gameRegistry';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
@@ -30,28 +34,48 @@ describe('game mount registry', () => {
     expect(isCatalogGameType('')).toBe(false);
   });
 
-  it('renders Space Poker after protocol identities are ready without renaming terms', () => {
+  it('renders Space Poker from accepted game state without proposal data', () => {
     setProtocolIds(TEST_PROTOCOL_IDS);
     try {
-      expect(packageFor('spacepoker').gameType).toBe('spacepoker');
+      const pkg = packageFor('spacepoker');
+      expect(pkg.gameType).toBe('spacepoker');
+      const handProposal = {
+        gameType: 'spacepoker',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+        unitSizeMojos: 10n,
+      };
+      const state = pkg.durableState.reduceEvent(null, {
+        type: 'accepted-group',
+        id: '1',
+        groupIds: ['1'],
+        iStarted: true,
+        isMyTurn: true,
+        origin: 'local',
+        handProposal,
+      });
+      const handState = pkg.stateCodec.encode(state);
       expect(() =>
-        packageFor('spacepoker').renderLive(
+        pkg.renderLive(
           {
-            lastHandTerms: {
-              gameType: 'spacepoker',
-              myContribution: 100n,
-              theirContribution: 100n,
-              gameTimeout: 15n,
-              unitSizeMojos: 10n,
-            },
-            handSource: { interactionMode: 'live', controller: {} },
-            handKey: 1,
+            handSource: { interactionMode: 'live', controller: { handState } },
             activeGameId: '1',
+            activeGameIds: ['1'],
+            currentHandGameIds: ['1'],
             gameplayEvent$: EMPTY,
             iStarted: true,
+            playerNumber: 1,
+            onHandOutcome: () => {},
             onTurnChanged: () => {},
             appendGameLog: () => {},
-            gameSpecificView: { displayGameId: '1', terminal: { type: 'none' } },
+            gameSpecificView: {
+              gameType: 'spacepoker',
+              displayGameId: '1',
+              terminal: { type: 'none' },
+              terminalsById: {},
+              amountsById: { '1': '100' },
+            },
           } as unknown as UseGameSessionResult,
           {},
         ),
@@ -61,25 +85,31 @@ describe('game mount registry', () => {
     }
   });
 
-  it('gives each Krunk hand a fresh React lifecycle', () => {
+  it('gives every game a host-owned lifecycle key for each hand', () => {
     const session = {
       handSource: { interactionMode: 'live', controller: {} },
+      handOrigin: 'fresh',
+      activeGameId: '1',
       currentHandGameIds: ['1', '3'],
       activeGameIds: ['1', '3'],
-      iProposedHand: true,
+      iStarted: true,
+      playerNumber: 1,
       gameplayEvent$: EMPTY,
-      currentHandAmount: 100n,
+      onHandOutcome: () => {},
       onTurnChanged: () => {},
       appendGameLog: () => {},
       gameSpecificView: {
+        gameType: 'krunk',
+        displayGameId: '1',
         handState: null,
+        terminal: { type: 'none' },
         terminalsById: {},
         amountsById: { '1': '100', '3': '100' },
       },
     } as unknown as UseGameSessionResult;
 
-    const first = packageFor('krunk').renderLive({ ...session, handKey: 1 }, {});
-    const second = packageFor('krunk').renderLive({ ...session, handKey: 2 }, {});
+    const first = renderLiveGameMount({ ...session, handKey: 1 }, {});
+    const second = renderLiveGameMount({ ...session, handKey: 2 }, {});
 
     expect(first.key).toBe('1');
     expect(second.key).toBe('2');
@@ -173,7 +203,7 @@ describe('game mount registry', () => {
                 {
                   primaryId: ids[0],
                   memberIds: [...ids],
-                  terms,
+                  handProposal: terms,
                   origin: 'local',
                   disposition: 'outgoing',
                 },
@@ -212,13 +242,10 @@ describe('game mount registry', () => {
           activeGameIds: [...ids],
           iStarted: true,
           playerNumber: 1,
-          iProposedHand: true,
           gameplayEvent$: EMPTY,
-          currentHandAmount: terms.myContribution,
           onHandOutcome: () => {},
           onTurnChanged: () => {},
           appendGameLog: () => {},
-          lastHandTerms: terms,
           gameSpecificView: {
             gameType,
             displayGameId: ids[0],
@@ -268,19 +295,21 @@ describe('game mount registry', () => {
   it('mounts finished Krunk hands without interactive protocol effects', () => {
     const model = {
       game: {
+        handKey: 9,
         currentHandIds: ['1', '3'],
         currentHandOrigin: 'local',
         activeIds: ['3'],
         handState: { gameType: 'krunk', version: 2n, state: { games: {} } },
         instances: {},
       },
-      betweenHand: { lastTerms: { myContribution: 100n } },
+      betweenHand: { lastHandProposal: { myContribution: 100n } },
     } as unknown as SessionModel;
 
-    const mount = packageFor('krunk').renderFrozen(frozenGameViewFromModel(model), {
+    const mount = renderFrozenGameMount(model, {
       iStarted: true,
     });
 
+    expect(mount.key).toBe('9');
     expect(mount.props).toMatchObject({
       currentHandGameIds: ['1', '3'],
       activeGameIds: ['3'],
@@ -331,7 +360,7 @@ describe('game mount registry', () => {
             },
           },
         },
-        betweenHand: { lastTerms: terms },
+        betweenHand: { lastHandProposal: terms },
       });
       const realMakeMove = jest.fn();
       const realController = { makeMove: realMakeMove } as unknown as SessionController;
@@ -344,13 +373,10 @@ describe('game mount registry', () => {
         activeGameId: '1',
         iStarted: true,
         playerNumber: 1,
-        iProposedHand: true,
         gameplayEvent$: EMPTY,
-        currentHandAmount: 100n,
         onHandOutcome: () => {},
         onTurnChanged: () => {},
         appendGameLog: () => {},
-        lastHandTerms: terms,
         gameSpecificView: {
           gameType,
           displayGameId: '1',
@@ -362,8 +388,8 @@ describe('game mount registry', () => {
       } as unknown as UseGameSessionResult;
       const terminal = projectTerminalSessionResult(live, { model, iStarted: true }, EMPTY);
 
-      const liveMount = packageFor(gameType).renderLive(live, {});
-      const terminalMount = packageFor(gameType).renderLive(terminal, {});
+      const liveMount = renderLiveGameMount(live, {});
+      const terminalMount = renderLiveGameMount(terminal, {});
 
       expect(terminalMount.type).toBe(liveMount.type);
       expect(terminalMount.key).toBe(liveMount.key);

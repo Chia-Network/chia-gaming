@@ -692,10 +692,11 @@ These are not lifecycle invariants but important rules enforced in the code:
 
 ## GameplayEvent Mapping
 
-The `useGameSession` hook translates raw `WasmNotification` events into
-game-agnostic `GameplayEvent` variants before forwarding them to
-game-specific hooks (`useCalpokerHand`, `useSpacepokerHand`, `useKrunkHand`).
-Game hooks never see raw notifications; they receive one of:
+`front-end/src/lib/wasm/gameplayEvents.ts` translates typed WASM payloads into
+game-agnostic `GameplayEvent` variants. The session notification reducer and
+`useGameSession` call that adapter, then forward host events to game hooks
+(`useCalpokerHand`, `useSpacepokerHand`, `useKrunkHand`). Game hooks never see
+raw notifications; they receive one of:
 
 | Variant            | Shape                                              | When                                                                                                                                                                               |
 | ------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -704,7 +705,7 @@ Game hooks never see raw notifications; they receive one of:
 | `ProposalAccepted` | `{ id }`                                           | A new game is starting                                                                                                                                                             |
 | `Settled`          | `{ gameId, outcome, ourShare }`                    | From `GameSettled`; same payload drives session banner labels via `terminalInfoFromGameSettled`                                                                                    |
 | `MoveRejected`     | `{ gameId: string, tag: string, message: string }` | Recoverable local handler rejection routed only to the matching game hook                                                                                                          |
-| `GameError`        | `{ gameId, reason }`                               | `EndedCancelled`, `EndedError`, `InsufficientBalance`, or unknown settlement outcome                                                                                               |
+| `GameError`        | `{ gameId, reason, source, action? }`              | `EndedCancelled`, `EndedError`, unknown settlement, scoped `ActionFailed`, or JS `game-action-error`                                                                                |
 
 Settlement label helpers live in `front-end/src/lib/settlement.ts`
 (`settlementLabel`, `isForfeitOutcome`, game-specific copy helpers).
@@ -713,6 +714,6 @@ Non-terminal move/status notifications are remapped by
 `gameplayEventsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
 above (including `moverShare` on `OpponentMoved`).
 
-**Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalInfoFromGameSettled`,
-`settledEventForInfo`, `gameplayEventsForGameStatus`),
+**Key code:** `front-end/src/lib/wasm/gameplayEvents.ts`,
+`front-end/src/lib/session/gameSessionEvents.ts` (`terminalInfoFromGameSettled`),
 `front-end/src/lib/settlement.ts`
