@@ -167,6 +167,38 @@ describe('Space Poker machine-owned hand state', () => {
     expect(intent.readable?.toBigInt()).toBe(9n);
   });
 
+  it('uses the per-player stack when formatting a terminal all-in log', () => {
+    const port = { isChannelReady: () => false, dispatch: jest.fn() } as LiveGamePort;
+    const onGameLog = jest.fn();
+    const render = (state: SpacepokerHandState) =>
+      React.createElement(SpacePoker, {
+        handSource: liveSource(port, spacepokerStateCodec.encode(state)),
+        gameId: '7',
+        betSize: '20',
+        unitSizeMojos: '1',
+        onGameLog,
+        terminal: EMPTY_GAME_TERMINAL_MODEL,
+      });
+    const initial = handState({ unitSizeMojos: 1n });
+
+    act(() => {
+      renderer = create(render(initial));
+    });
+    act(() => {
+      renderer?.update(
+        render({
+          ...initial,
+          gameState: { handler: SpHandler.Folded, myTurn: false, N: 1n },
+          handHistory: [{ player: 'you', action: 'raise', units: 9n }],
+          terminalState: 'folded-by-opponent',
+        }),
+      );
+    });
+
+    expect(onGameLog).toHaveBeenCalledTimes(1);
+    expect((onGameLog.mock.calls[0][0] as string[]).join(' ')).toContain('all');
+  });
+
   it('preserves delayed canonical gameplay state and displays the rejection', () => {
     const current = handState();
     const next = reduceSpacepokerDurableState(current, {

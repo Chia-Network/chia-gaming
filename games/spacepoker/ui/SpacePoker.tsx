@@ -59,7 +59,7 @@ export default function SpacePoker({
   useEffect(() => {
     if (sp.terminalState === 'none' || gameLogFiredRef.current || !sp.playerHoleCards) return;
     gameLogFiredRef.current = true;
-    const stackSize = sp.betUnit > 0n ? betSizeValue / sp.betUnit : 0n;
+    const stackSize = sp.betUnit > 0n ? betSizeValue / 2n / sp.betUnit : 0n;
     onGameLog?.(
       formatSpacepokerHandLog(
         sp.playerHoleCards,
