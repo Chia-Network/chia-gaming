@@ -258,8 +258,8 @@ export function reduceDurableGameEvent(
         effects: [{ type: 'controller-set-last-outcome', outcomeWin }, { type: 'persist-session' }],
       };
     }
-    case 'notification-move-rejected':
-      return withGameInput(
+    case 'notification-move-rejected': {
+      const transition = withGameInput(
         { ...state, model: withoutPendingIds(state.model, [event.id]) },
         {
           type: 'move-rejected',
@@ -268,6 +268,11 @@ export function reduceDurableGameEvent(
           message: event.message,
         },
       );
+      return {
+        ...transition,
+        effects: [...transition.effects, { type: 'persist-session' }],
+      };
+    }
     case 'notification-insufficient-balance': {
       const proposal = selectProposalGroupByMemberId(state.model, event.id);
       if (!proposal) {

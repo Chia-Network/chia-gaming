@@ -19,7 +19,7 @@ export function gameModelNeedsGameTabAttention(
       before.presentation !== instance.presentation &&
       (instance.presentation === 'off-chain-my-turn' ||
         instance.presentation === 'on-chain-my-turn');
-    if (becameOurTurn && previous.handState !== current.handState) return true;
+    if (becameOurTurn) return true;
 
     if (
       before?.terminal.outcome !== instance.terminal.outcome &&

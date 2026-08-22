@@ -1020,7 +1020,7 @@ describe('session machine local game action boundary', () => {
   });
 
   it('denies duplicate pending actions and reduces delayed rejection on canonical state', () => {
-    const { runtime } = localActionHarness(jest.fn(() => 'queued' as const));
+    const { runtime, persisted } = localActionHarness(jest.fn(() => 'queued' as const));
     const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
     const request = {
       gameType: 'calpoker' as const,
@@ -1045,6 +1045,9 @@ describe('session machine local game action boundary', () => {
         error: { tag: 'invalid', message: 'Try another move' },
       }),
     );
+    expect(persisted).toHaveLength(2);
+    expect(persisted[1].model.game.pendingCandidates).toEqual({});
+    expect(persisted[1].model.game.handState).toEqual(runtime.getState().model.game.handState);
   });
 
   it('discards a matching delayed cheat failure while retaining shared error UX', () => {

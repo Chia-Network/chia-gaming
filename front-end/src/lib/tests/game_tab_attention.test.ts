@@ -29,11 +29,12 @@ function gameWith(
 }
 
 describe('gameTabAttention', () => {
-  it('marks opponent moves as attention', () => {
+  it('marks becoming our turn as attention without requiring a hand-state change', () => {
+    const handState = {};
     expect(
       gameModelNeedsGameTabAttention(
-        gameWith('off-chain-their-turn', {}),
-        gameWith('off-chain-my-turn', {}),
+        gameWith('off-chain-their-turn', handState),
+        gameWith('off-chain-my-turn', handState),
       ),
     ).toBe(true);
   });
