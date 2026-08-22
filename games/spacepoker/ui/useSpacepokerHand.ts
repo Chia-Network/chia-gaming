@@ -108,7 +108,7 @@ export function useSpacepokerHand(
 
   const interactive = handSource.interactionMode === 'live';
   const betUnit = state.unitSizeMojos;
-  const stackSize = betSize / betUnit;
+  const stackSize = betSize / 2n / betUnit;
   const pot = 2n * state.halfPot + state.lastRaise;
   const playerStack = stackSize - state.halfPot - (state.iRaisedLast ? state.lastRaise : 0n);
   const opponentStack = stackSize - state.halfPot - (state.iRaisedLast ? 0n : state.lastRaise);

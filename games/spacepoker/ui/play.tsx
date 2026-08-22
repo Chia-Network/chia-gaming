@@ -38,7 +38,7 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
     throw new Error('Space Poker mount requires initialized durable game state');
   }
   const unitSizeMojosValue = handState.unitSizeMojos;
-  const stackSize = betSize / unitSizeMojosValue;
+  const stackSize = betSize / 2n / unitSizeMojosValue;
   const handleGameLog = useCallback(
     (lines: string[]) => {
       if (!appendGameLog) return;

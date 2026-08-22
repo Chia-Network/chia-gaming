@@ -131,6 +131,42 @@ describe('Space Poker machine-owned hand state', () => {
     Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow });
   });
 
+  it('derives each player stack and maximum opening raise from half the game amount', () => {
+    const persisted = spacepokerStateCodec.encode(
+      handState({
+        gameState: { handler: SpHandler.BeginRound, myTurn: true, N: 4n },
+        unitSizeMojos: 1n,
+      }),
+    );
+    const dispatch = jest.fn();
+    const port = { isChannelReady: () => true, dispatch } as unknown as LiveGamePort;
+    let hand: UseSpacepokerHandResult | undefined;
+
+    function Harness() {
+      hand = useSpacepokerHand(
+        liveSource(port, persisted),
+        '7',
+        20n,
+        1n,
+        EMPTY_GAME_TERMINAL_MODEL,
+      );
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    expect(hand?.playerStack).toBe(9n);
+    expect(hand?.opponentStack).toBe(9n);
+
+    act(() => hand!.handleRaise(hand!.playerStack));
+    const intent = dispatch.mock.calls[0][0] as Extract<
+      GameIntent<SpacepokerHandState>,
+      { type: 'make-move' }
+    >;
+    expect(intent.readable?.toBigInt()).toBe(9n);
+  });
+
   it('preserves delayed canonical gameplay state and displays the rejection', () => {
     const current = handState();
     const next = reduceSpacepokerDurableState(current, {
