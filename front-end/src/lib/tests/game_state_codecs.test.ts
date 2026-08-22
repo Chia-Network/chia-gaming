@@ -19,6 +19,7 @@ describe('game-owned state codecs', () => {
       isPlayerTurn: true,
       iStarted: true,
       cardSelections: [1n],
+      error: null,
     };
     const encoded = calpokerStateCodec.encode(state);
     expect(calpokerStateCodec.decode(encoded)).toEqual(state);
@@ -59,6 +60,7 @@ describe('game-owned state codecs', () => {
       coinTossIOpen: null,
       unitSizeMojos: 10n,
       displayMode: 'mojos' as const,
+      error: null,
     };
     const encoded = spacepokerStateCodec.encode(state);
     expect(spacepokerStateCodec.decode(encoded)).toEqual(state);
@@ -84,6 +86,12 @@ describe('game-owned state codecs', () => {
       spacepokerStateCodec.decode({
         ...encoded,
         state: { ...state, terminalState: 'revealed' },
+      }),
+    ).toBeNull();
+    expect(
+      spacepokerStateCodec.decode({
+        ...encoded,
+        state: { ...state, error: { tag: 'INVALID', message: '' } },
       }),
     ).toBeNull();
   });

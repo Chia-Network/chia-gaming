@@ -6,6 +6,7 @@ import type {
   BetweenHandModeModel,
   GameTerminalModel,
   HandProposal,
+  LocalActionKind,
   ProposalGroupDisposition,
   ProposalGroupModel,
   QueuedNotificationModel,
@@ -162,11 +163,21 @@ export type SessionMachineEvent =
       state: unknown;
     }
   | {
-      type: 'local-game-action-committed';
+      type: 'local-game-action-staged';
       gameType: RegisteredGameType;
       id: string;
+      action: LocalActionKind;
       state: unknown;
     }
+  | {
+      type: 'local-game-action-applied';
+      gameType: RegisteredGameType;
+      id: string;
+      action: LocalActionKind;
+      state: unknown;
+    }
+  | { type: 'local-action-applied'; id: string; action: LocalActionKind }
+  | { type: 'discard-pending-candidate'; id: string; action?: LocalActionKind }
   | { type: 'request-accept-proposal'; id: string }
   | { type: 'request-cancel-proposal'; id: string }
   | { type: 'request-propose-game'; handProposal: HandProposal }

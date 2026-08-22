@@ -125,7 +125,10 @@ export function reduceSessionMachine(
     case 'notification-insufficient-balance':
     case 'notification-abandoned':
     case 'feature-state':
-    case 'local-game-action-committed':
+    case 'local-game-action-staged':
+    case 'local-game-action-applied':
+    case 'local-action-applied':
+    case 'discard-pending-candidate':
       return reduceDurableGameEvent(state, event);
 
     default:

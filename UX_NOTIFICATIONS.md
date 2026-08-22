@@ -13,9 +13,10 @@ seed.
 
 Rust notifications are protocol facts. JavaScript renders and persists their
 browser envelope, but does not infer settlement, channel lifecycle, or
-protocol validity from display data. A UI action is an intent sent to Rust; its
-result becomes authoritative only when Rust emits the corresponding
-notification. The sole JS exception is explicit client capability policy, such
+protocol validity from display data. A UI action is an intent sent to Rust.
+`LocalActionApplied` is the host-only fact that an immediate or queued local
+action was actually applied; merely accepting an API call into Rust's queue is
+not enough. The sole JS exception is explicit client capability policy, such
 as declining a second concurrent proposal group while still supporting each
 independently progressing game within an accepted group.
 
@@ -40,7 +41,7 @@ like "OpponentMoved" for readability. The canonical wire model in Rust is
 
 - dedicated variants: `ProposalMade`, `ProposalAccepted`,
   `ProposalCancelled`, `InsufficientBalance`, `MoveRejected`, `ActionFailed`,
-  `ChannelStatus`
+  host-only `LocalActionApplied`, and `ChannelStatus`
 - gameplay lifecycle (non-terminal): `GameNotification::GameStatus { status:
 GameStatusKind, ... }`
 - **settlements (terminal):** `GameNotification::GameSettled { id, outcome,
@@ -383,6 +384,7 @@ These fire during active gameplay (after a game proposal has been accepted).
 | OpponentPlayedIllegalMove | `GameStatus { status: IllegalMoveDetected, ... }`                                       | Opponent's on-chain move detected as illegal                                           | Emitted before slash resolution                                                                                                                                                                                                                                                                                                     |
 | GameMessage               | `GameStatus { status: MyTurn/TheirTurn, other_params: { readable } }`                   | Informational game message                                                             | Decoded advisory/readable message payload                                                                                                                                                                                                                                                                                           |
 | MoveRejected              | `MoveRejected { id, tag, message }`                                                     | A local my-turn handler rejects user input                                             | Recoverable game-scoped rejection; no peer batch is sent for the rejected move                                                                                                                                                                                                                                                      |
+| LocalActionApplied        | `LocalActionApplied { id, action }`                                                     | A local move, settlement acceptance, or diagnostic cheat is actually applied           | Host-only candidate lifecycle signal. The host promotes the separately staged candidate exactly once; game packages never receive this notification.                                                                                                                                                                                |
 | GameOnChain               | `GameStatus { status: OnChainMyTurn / OnChainTheirTurn / Replaying, coin_id }`          | Game transitions on-chain                                                              | On-chain phase begins for this game. `Replaying` means a cached off-chain send-move exists for this game id and will be spent as an on-chain redo (same criterion as `take_cached_move_for_game`).                                                                                                                                  |
 | PlayingMove               | `GameStatus { status: PlayingMove, coin_id }`                                           | The host accepted an on-chain move for publication and we are waiting for confirmation | Transient pending-move status. In the browser, the preceding spend has entered the serialized wallet RPC submission lane; this does not claim that the asynchronous RPC succeeded, reached a full-node mempool, or confirmed on chain. In the simulator, the synchronous host boundary has already submitted it to the simulator mempool before delivering this notification. Followed by `OnChainTheirTurn { moved_by_us: true }` when the spend lands. Distinct from `Replaying`, which is a cached off-chain redo action being replayed on-chain. |
 | WeMoved                   | `GameStatus { status: OnChainTheirTurn, other_params: { moved_by_us: true }, coin_id }` | Our on-chain move confirms                                                             | New game coin is tracked in `coin_id`                                                                                                                                                                                                                                                                                               |

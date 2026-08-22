@@ -120,6 +120,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       lastDisplayedId: null,
       activeGameType: REGISTERED_GAMES[0].gameType,
       handState: null,
+      pendingCandidates: {},
       queue: [],
       ...game,
       instances,
@@ -156,6 +157,7 @@ export function clearDerivedGamePresentation(model: SessionModel): SessionModel 
       instances: {},
       lastDisplayedId: null,
       handState: null,
+      pendingCandidates: {},
     },
   };
 }

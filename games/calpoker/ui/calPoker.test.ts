@@ -150,6 +150,7 @@ describe('Calpoker fresh hand startup', () => {
         moveNumber: 0n,
         isPlayerTurn: true,
         iStarted: false,
+        error: null,
       }),
       isChannelReady: () => true,
       dispatch,
@@ -185,6 +186,7 @@ describe('Calpoker fresh hand startup', () => {
         moveNumber: 0n,
         isPlayerTurn: true,
         iStarted: false,
+        error: null,
       }),
       isChannelReady: () => true,
       dispatch: () => {
@@ -214,6 +216,7 @@ describe('Calpoker fresh hand startup', () => {
         moveNumber: 0n,
         isPlayerTurn: true,
         iStarted: false,
+        error: null,
       }),
       isChannelReady: () => true,
       dispatch: makeDispatch(makeMove),
@@ -241,6 +244,7 @@ describe('Calpoker fresh hand startup', () => {
         moveNumber: 0n,
         isPlayerTurn: true,
         iStarted: false,
+        error: null,
       }),
       isChannelReady: () => true,
       dispatch: makeDispatch(makeMove),
@@ -266,6 +270,103 @@ describe('Calpoker fresh hand startup', () => {
   });
 });
 
+describe('Calpoker move rejection feedback', () => {
+  it('preserves delayed canonical gameplay state and displays the rejection', () => {
+    const current: CalpokerHandState = {
+      playerHand: [0n, 1n],
+      opponentHand: [2n, 3n],
+      cardSelections: [0n],
+      moveNumber: 1n,
+      isPlayerTurn: true,
+      iStarted: false,
+      error: null,
+    };
+    const next = reduceCalpokerDurableState(current, {
+      type: 'move-rejected',
+      gameId: '7',
+      tag: 'ui_protocol_mismatch',
+      message: 'California Poker move was rejected.',
+    });
+
+    expect(next).toEqual({
+      ...current,
+      error: {
+        tag: 'ui_protocol_mismatch',
+        message: 'California Poker move was rejected.',
+      },
+    });
+
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CaliforniaPoker, {
+          outcome: undefined,
+          moveNumber: '1',
+          playerNumber: 1,
+          playerHand: ['0', '1'],
+          opponentHand: ['2', '3'],
+          cardSelections: ['0'],
+          setCardSelections: () => {},
+          setHandOrder: () => {},
+          handleMakeMove: () => {},
+          onGameLog: () => {},
+          onSnapshotChange: () => {},
+          error: next!.error,
+          interactionMode: 'terminal',
+        }),
+      );
+    });
+    expect(
+      renderer!.root.findAll(
+        (node) => node.props.children === 'California Poker move was rejected.',
+      ),
+    ).toHaveLength(1);
+    act(() => renderer!.unmount());
+  });
+
+  it('clears rejection feedback in the next valid local move candidate', () => {
+    const makeMove = jest.fn();
+    const controller = {
+      handState: calpokerStateCodec.encode({
+        playerHand: [0n, 1n, 2n, 3n],
+        opponentHand: [4n, 5n, 6n, 7n],
+        cardSelections: [0n, 1n, 2n, 3n],
+        moveNumber: 1n,
+        isPlayerTurn: true,
+        iStarted: false,
+        error: { tag: 'ui_protocol_mismatch', message: 'Rejected.' },
+      }),
+      isChannelReady: () => true,
+      dispatch: jest.fn(makeDispatch(makeMove)),
+    };
+    let hand: ReturnType<typeof useCalpokerHand> | undefined;
+    let renderer: ReactTestRenderer;
+    function Harness() {
+      hand = useCalpokerHand(
+        liveSource(controller),
+        '7',
+        false,
+        EMPTY_GAME_TERMINAL_MODEL,
+        'restored',
+      );
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    act(() => hand!.handleMakeMove());
+
+    expect(controller.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'make-move',
+        state: expect.objectContaining({ error: null }),
+      }),
+    );
+    act(() => renderer!.unmount());
+  });
+});
+
 describe('Calpoker terminal hand projection', () => {
   let renderer: ReactTestRenderer | null = null;
 
@@ -287,6 +388,7 @@ describe('Calpoker terminal hand projection', () => {
         moveNumber: 2n,
         isPlayerTurn: true,
         iStarted: false,
+        error: null,
       }),
       isChannelReady: () => true,
       dispatch: (intent: GameIntent<CalpokerHandState>) => {
@@ -512,6 +614,7 @@ describe('Calpoker terminal hand projection', () => {
         moveNumber: 2n,
         isPlayerTurn: false,
         iStarted: false,
+        error: null,
       }),
       isChannelReady: () => true,
       dispatch,
@@ -590,9 +693,7 @@ describe('Calpoker terminal hand projection', () => {
         renderer = create(React.createElement(Harness, { terminalOutcome: null }));
       });
       act(() => {
-        const current = calpokerStateCodec.decode(
-          controller.handState,
-        )!;
+        const current = calpokerStateCodec.decode(controller.handState)!;
         const next = reduceCalpokerDurableState(current, {
           type: 'opponent-moved',
           gameId: '7',

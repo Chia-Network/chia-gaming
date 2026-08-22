@@ -1,11 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import type { CalpokerOutcomeShape } from './outcome';
-import type {
-  GameHandOrigin,
-  GameHandSource,
-  GameTerminalModel,
-} from '../../host';
+import type { GameHandOrigin, GameHandSource, GameTerminalModel } from '../../host';
 import { gameHandState, requireLiveGameHandSource } from '../../host';
 import {
   calpokerStateCodec,
@@ -28,6 +24,7 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcomeShape<bigint> | undefined;
+  error: CalpokerHandState['error'];
   terminalOutcome: GameTerminalModel['outcome'];
   handleMakeMove: () => void;
   handleCheat: () => void;
@@ -110,7 +107,7 @@ export function useCalpokerHand(
       command: LocalGameCommand,
     ): void => {
       const controller = requireLiveGameHandSource(handSourceRef.current);
-      const next = update(currentState());
+      const next = { ...update(currentState()), error: null };
       controller.dispatch(
         command.type === 'make-move'
           ? {
@@ -220,9 +217,8 @@ export function useCalpokerHand(
     requireLiveGameHandSource(handSourceRef.current);
     const gid = gameIdRef.current;
     if (!gid) return;
-    // A cheat is just an (illegal) move; drive the same turn-change path a
-    // normal move uses so the status shows "Playing our move on-chain" while
-    // it lands, instead of staying on our turn.
+    // A cheat is still a local move candidate, so it uses the same game-state
+    // transition as a normal move while the host handles protocol execution.
     commitLocalAction((current) => ({ ...current, isPlayerTurn: false }), {
       type: 'cheat',
       moverShare: 0n,
@@ -273,6 +269,7 @@ export function useCalpokerHand(
     setHandOrder,
     moveNumber: handState.moveNumber,
     outcome: suppressInitialOutcomeRef.current ? undefined : handState.outcome,
+    error: handState.error,
     terminalOutcome: terminal.outcome,
     handleMakeMove,
     handleCheat,

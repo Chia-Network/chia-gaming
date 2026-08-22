@@ -17,6 +17,7 @@ import type { SessionMachineEvent } from '../session/sessionMachineTypes';
 import { krunkStateCodec } from '@games/krunk/ui/serialize';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
+import { projectRegisteredPendingCandidates } from '../gameRegistry';
 import { wasmResult } from './message_protocol.harness';
 
 const TERMS = {
@@ -792,8 +793,11 @@ describe('session machine controller command failures', () => {
 });
 
 describe('session machine local game action boundary', () => {
-  function localActionHarness(makeMove: SessionController['makeMove']) {
-    const controller = fakeController({ makeMove });
+  function localActionHarness(
+    makeMove: SessionController['makeMove'],
+    overrides: Partial<SessionController> = {},
+  ) {
+    const controller = fakeController({ makeMove, ...overrides });
     const initial = stateWithProposals([{ memberIds: ['7'], handProposal: TERMS }]);
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const rendered: ReturnType<typeof createSessionMachineState>[] = [];
@@ -822,7 +826,7 @@ describe('session machine local game action boundary', () => {
   }
 
   it('uses ordered Rust authority for opposite-turn Krunk members before the first move', () => {
-    const makeMove = jest.fn(() => true);
+    const makeMove = jest.fn(() => 'queued' as const);
     const runtime = new SessionMachineRuntime(
       stateWithProposals([{ memberIds: ['2', '4'], handProposal: KRUNK_TERMS, origin: 'local' }]),
       {
@@ -872,7 +876,7 @@ describe('session machine local game action boundary', () => {
   });
 
   it('uses Rust acceptance authority for the first Space Poker action', () => {
-    const makeMove = jest.fn(() => true);
+    const makeMove = jest.fn(() => 'queued' as const);
     const runtime = new SessionMachineRuntime(
       stateWithProposals([{ memberIds: ['7'], handProposal: SPACEPOKER_TERMS, origin: 'local' }]),
       {
@@ -933,10 +937,11 @@ describe('session machine local game action boundary', () => {
     expect(rendered).toHaveLength(0);
   });
 
-  it('commits accepted feature state and shared turn in one rendered transition', () => {
-    const makeMove = jest.fn(() => true);
+  it('stages after command success, projects optimistically, and promotes on applied', () => {
+    const makeMove = jest.fn(() => 'queued' as const);
     const { runtime, persisted, rendered } = localActionHarness(makeMove);
     const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+    const canonical = runtime.getState().model.game.handState;
 
     runtime.commitLocalGameAction({
       gameType: 'calpoker',
@@ -947,12 +952,209 @@ describe('session machine local game action boundary', () => {
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(rendered).toHaveLength(1);
-    expect(calpokerStateCodec.decode(rendered[0].model.game.handState)).toMatchObject({
+    expect(rendered[0].model.game.handState).toBe(canonical);
+    expect(rendered[0].model.game.pendingCandidates['7']).toMatchObject({
+      id: '7',
+      action: 'make_move',
+    });
+    expect(
+      calpokerStateCodec.decode(
+        projectRegisteredPendingCandidates(
+          'calpoker',
+          rendered[0].model.game.handState,
+          rendered[0].model.game.currentHandIds,
+          rendered[0].model.game.pendingCandidates,
+        ),
+      ),
+    ).toMatchObject({
       moveNumber: 1n,
       isPlayerTurn: false,
     });
-    expect(rendered[0].model.game.instances['7'].presentation).toBe('off-chain-their-turn');
-    expect(persisted).toHaveLength(0);
+    expect(rendered[0].model.game.instances['7'].presentation).toBe('off-chain-my-turn');
+    expect(persisted).toHaveLength(1);
+
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: false,
+      notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
+    });
+    expect(calpokerStateCodec.decode(runtime.getState().model.game.handState)).toMatchObject({
+      moveNumber: 1n,
+      isPlayerTurn: false,
+    });
+    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
+    expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
+    expect(persisted).toHaveLength(2);
+  });
+
+  it('commits an immediately applied candidate without entering pending state or save', () => {
+    const makeMove = jest.fn(() => 'applied' as const);
+    const { runtime, persisted, rendered } = localActionHarness(makeMove);
+    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+
+    runtime.commitLocalGameAction({
+      gameType: 'calpoker',
+      id: '7',
+      state: { ...current, moveNumber: 1n, isPlayerTurn: false },
+      command: { type: 'make-move', readable: null },
+    });
+
+    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
+    expect(calpokerStateCodec.decode(runtime.getState().model.game.handState)).toMatchObject({
+      moveNumber: 1n,
+      isPlayerTurn: false,
+    });
+    expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
+    expect(rendered).toHaveLength(1);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0].model.game.pendingCandidates).toEqual({});
+
+    const applied = runtime.getState();
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: false,
+      notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
+    });
+    expect(runtime.getState()).toBe(applied);
+    expect(persisted).toHaveLength(1);
+  });
+
+  it('denies duplicate pending actions and reduces delayed rejection on canonical state', () => {
+    const { runtime } = localActionHarness(jest.fn(() => 'queued' as const));
+    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+    const request = {
+      gameType: 'calpoker' as const,
+      id: '7',
+      state: { ...current, moveNumber: 1n, isPlayerTurn: false },
+      command: { type: 'make-move' as const, readable: null },
+    };
+    runtime.commitLocalGameAction(request);
+    expect(() => runtime.commitLocalGameAction(request)).toThrow('already has a pending candidate');
+
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: false,
+      notification: {
+        MoveRejected: { id: 7n, tag: 'invalid', message: 'Try another move' },
+      },
+    });
+    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
+    expect(runtime.getState().model.game.handState).toEqual(
+      calpokerStateCodec.encode({
+        ...current,
+        error: { tag: 'invalid', message: 'Try another move' },
+      }),
+    );
+  });
+
+  it('discards a matching delayed cheat failure while retaining shared error UX', () => {
+    const { runtime } = localActionHarness(
+      jest.fn(() => 'queued' as const),
+      {
+        cheat: jest.fn(() => 'queued'),
+      },
+    );
+    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+    runtime.commitLocalGameAction({
+      gameType: 'calpoker',
+      id: '7',
+      state: { ...current, moveNumber: 1n, isPlayerTurn: false },
+      command: { type: 'cheat', moverShare: 0n },
+    });
+
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: false,
+      notification: {
+        ActionFailed: { id: 7n, action: 'cheat', reason: 'queued cheat became stale' },
+      },
+    });
+    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
+    expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
+      kind: 'action-failed',
+      message: 'queued cheat became stale',
+    });
+  });
+
+  it('clears pending candidates when a hand is replaced or abandoned', () => {
+    const runtime = new SessionMachineRuntime(
+      stateWithProposals([
+        { memberIds: ['7'], handProposal: TERMS },
+        { memberIds: ['9'], handProposal: TERMS, origin: 'peer' },
+      ]),
+      {
+        controller: fakeController({
+          makeMove: () => 'queued',
+          clearDerivedGamePresentation: jest.fn(),
+        }),
+        iStarted: false,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        onError: (error) => {
+          throw error;
+        },
+        persist: async () => {},
+      },
+    );
+    runtime.dispatch({
+      type: 'notification-accepted-group',
+      id: '7',
+      amount: '20',
+      iStarted: false,
+      isMyTurn: true,
+    });
+    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+    runtime.commitLocalGameAction({
+      gameType: 'calpoker',
+      id: '7',
+      state: { ...current, moveNumber: 1n, isPlayerTurn: false },
+      command: { type: 'make-move', readable: null },
+    });
+    runtime.dispatch({
+      type: 'notification-accepted-group',
+      id: '9',
+      amount: '20',
+      iStarted: false,
+      isMyTurn: true,
+    });
+    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
+
+    const replacement = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+    runtime.commitLocalGameAction({
+      gameType: 'calpoker',
+      id: '9',
+      state: { ...replacement, moveNumber: 1n, isPlayerTurn: false },
+      command: { type: 'make-move', readable: null },
+    });
+    runtime.dispatch({ type: 'notification-abandoned' });
+    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
+  });
+
+  it('ignores an unmatched applied signal and fails fast on a mismatched pending action', () => {
+    const { runtime } = localActionHarness(jest.fn(() => 'queued' as const));
+    const before = runtime.getState();
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: false,
+      notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
+    });
+    expect(runtime.getState()).toBe(before);
+
+    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
+    runtime.commitLocalGameAction({
+      gameType: 'calpoker',
+      id: '7',
+      state: { ...current, moveNumber: 1n, isPlayerTurn: false },
+      command: { type: 'make-move', readable: null },
+    });
+    expect(() =>
+      runtime.dispatch({
+        type: 'wasm-notification',
+        iStarted: false,
+        notification: { LocalActionApplied: { id: 7n, action: 'accept_settlement' } },
+      }),
+    ).toThrow('does not match pending');
   });
 
   it.each([

@@ -65,6 +65,7 @@ const PRESENTATION_KEYS = new Set([
   'activeGameType',
   'gameInstances',
   'handState',
+  'pendingCandidates',
   'channelStatus',
   'lastOutcomeWin',
   'myRunningBalance',
@@ -126,6 +127,7 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
     gameInstances: {},
     activeGameType: 'calpoker',
     handState: null,
+    pendingCandidates: [],
     channelStatus: null,
     lastOutcomeWin: null,
     myRunningBalance: '0',
@@ -251,6 +253,7 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
       moveNumber: 1n,
       isPlayerTurn: true,
       iStarted: true,
+      error: null,
     }),
     betweenHandLastHandProposal: {
       my_contribution: '20',

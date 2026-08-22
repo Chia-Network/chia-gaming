@@ -17,6 +17,7 @@ import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { HandProposal } from '../session/types';
 import type { GameIntent, LiveGamePort } from '@games/host';
+import { projectRegisteredPendingCandidates } from '../gameRegistry';
 import {
   addActiveSubscription,
   createActivePair,
@@ -304,7 +305,13 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         {
           interactionMode: 'live',
           get handState() {
-            return runtime.getState().model.game.handState;
+            const game = runtime.getState().model.game;
+            return projectRegisteredPendingCandidates(
+              game.activeGameType,
+              game.handState,
+              game.currentHandIds,
+              game.pendingCandidates,
+            );
           },
           port: ports[index],
         },

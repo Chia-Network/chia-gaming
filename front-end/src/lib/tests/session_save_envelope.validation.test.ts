@@ -50,6 +50,7 @@ describe('validateSessionSaveEnvelope', () => {
           moveNumber: 1n,
           isPlayerTurn: true,
           iStarted: true,
+          error: null,
         }),
         betweenHandLastHandProposal: {
           my_contribution: '20',
@@ -78,6 +79,7 @@ describe('validateSessionSaveEnvelope', () => {
           moveNumber: 1n,
           isPlayerTurn: true,
           iStarted: true,
+          error: null,
         }),
         betweenHandLastHandProposal: {
           my_contribution: '20',
@@ -176,6 +178,7 @@ describe('validateSessionSaveEnvelope', () => {
     'gameInstances',
     'activeGameType',
     'handState',
+    'pendingCandidates',
     'channelStatus',
     'lastOutcomeWin',
     'myRunningBalance',
@@ -263,6 +266,7 @@ describe('validateSessionSaveEnvelope', () => {
             moveNumber: 1n,
             isPlayerTurn: true,
             iStarted: true,
+            error: null,
           }),
           activeGameType: 'spacepoker',
         }),
@@ -315,6 +319,33 @@ describe('validateSessionSaveEnvelope', () => {
     ).toThrow('exactly match currentHandGameIds');
   });
 
+  it('strictly validates pending candidate identity, action, membership, and feature state', () => {
+    const base = activeSave();
+    if (base.phase !== 'live') throw new Error('expected live fixture');
+    const featureState = calpokerStateCodec.decode(base.presentation.handState)!;
+    expect(() =>
+      validateSessionSaveEnvelope(
+        activeSave({
+          pendingCandidates: [
+            { gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState },
+          ],
+        }),
+      ),
+    ).not.toThrow();
+    for (const pendingCandidates of [
+      [
+        { gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState },
+        { gameType: 'calpoker', id: 'game-1', action: 'cheat', featureState },
+      ],
+      [{ gameType: 'calpoker', id: 'other', action: 'make_move', featureState }],
+      [{ gameType: 'calpoker', id: 'game-1', action: 'unknown', featureState }],
+      [{ gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState: {} }],
+      [{ gameType: 'spacepoker', id: 'game-1', action: 'make_move', featureState }],
+    ]) {
+      expect(() => validateSessionSaveEnvelope(activeSave({ pendingCandidates }))).toThrow();
+    }
+  });
+
   it.each([
     [
       'calpoker',
@@ -324,6 +355,7 @@ describe('validateSessionSaveEnvelope', () => {
         moveNumber: 1n,
         isPlayerTurn: true,
         iStarted: true,
+        error: null,
       }),
       {},
     ],
@@ -345,6 +377,7 @@ describe('validateSessionSaveEnvelope', () => {
         coinTossIOpen: null,
         unitSizeMojos: 10n,
         displayMode: 'mojos',
+        error: null,
       }),
       { spacepoker_unit_size: '10' },
     ],
@@ -504,6 +537,7 @@ describe('validateSessionSaveEnvelope', () => {
                   moveNumber: 1n,
                   isPlayerTurn: false,
                   iStarted: false,
+                  error: null,
                 }),
               },
             }
@@ -536,6 +570,7 @@ describe('validateSessionSaveEnvelope', () => {
             coinTossIOpen: true,
             unitSizeMojos: 10n,
             displayMode: 'mojos',
+            error: null,
           }),
           betweenHandLastHandProposal: {
             my_contribution: '20',

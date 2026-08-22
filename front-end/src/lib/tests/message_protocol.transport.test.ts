@@ -44,6 +44,19 @@ describe('WASM result boundary', () => {
     expect(() => requireWasmResult(result)).toThrow('unknown notification');
   });
 
+  it('accepts the host-only local action notification', () => {
+    const result = wasmResult({
+      events: [
+        {
+          Notification: {
+            LocalActionApplied: { id: 1n, action: 'make_move' },
+          },
+        },
+      ],
+    });
+    expect(requireWasmResult(result)).toBe(result);
+  });
+
   it('requires outbound protocol messages to remain bytes', () => {
     const result = wasmResult({
       events: [{ OutboundMessage: 'not bytes' } as unknown as WasmResult['events'][number]],
@@ -611,9 +624,21 @@ describe('game action failure events', () => {
       }
     ).make_move = makeMove;
 
-    expect(blob.makeMove('41', null)).toBe(false);
+    expect(blob.makeMove('41', null)).toBe('rejected');
     makeMove.mockReturnValue(wasmResult());
-    expect(blob.makeMove('41', null)).toBe(true);
+    expect(blob.makeMove('41', null)).toBe('queued');
+    makeMove.mockReturnValue(
+      wasmResult({
+        events: [
+          {
+            Notification: {
+              LocalActionApplied: { id: 41n, action: 'make_move' },
+            },
+          },
+        ],
+      }),
+    );
+    expect(blob.makeMove('41', null)).toBe('applied');
   });
 });
 

@@ -18,7 +18,8 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, SettlementOutcome,
+    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, LocalActionKind,
+    SettlementOutcome,
 };
 use crate::shutdown::get_conditions_with_channel_state;
 use crate::utils::proper_list;
@@ -135,6 +136,15 @@ pub struct OffChainPhase {
     #[serde(skip)]
     channel_spend_next_phase:
         Option<Box<crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase>>,
+}
+
+fn failed_game_action_context(action: &GameAction) -> Option<(GameID, FailedGameAction)> {
+    match action {
+        GameAction::Move(id, ..) => Some((*id, FailedGameAction::MakeMove)),
+        GameAction::AcceptSettlement(id) => Some((*id, FailedGameAction::AcceptSettlement)),
+        GameAction::Cheat(id, ..) => Some((*id, FailedGameAction::Cheat)),
+        _ => None,
+    }
 }
 
 fn format_batch_action(action: &BatchAction) -> String {
@@ -1040,13 +1050,10 @@ impl OffChainPhase {
         let mut clean_shutdown_data: Option<Box<(Aggsig, ProgramRef)>> = None;
         let mut pending_shutdown: Option<(CoinString, ProgramRef)> = None;
         let mut deferred = VecDeque::new();
+        let mut applied_actions = Vec::new();
 
         while let Some(action) = self.game_action_queue.pop_front() {
-            self.last_failed_queued_action = match &action {
-                GameAction::Move(id, ..) => Some((*id, FailedGameAction::MakeMove)),
-                GameAction::AcceptSettlement(id) => Some((*id, FailedGameAction::AcceptSettlement)),
-                _ => None,
-            };
+            self.last_failed_queued_action = failed_game_action_context(&action);
             match action {
                 GameAction::Move(game_id, readable_move, new_entropy) => {
                     let ch = self.channel_state_mut()?;
@@ -1056,6 +1063,7 @@ impl OffChainPhase {
                             Ok(move_result) => {
                                 batch_actions
                                     .push(BatchAction::Move(game_id, move_result.game_move));
+                                applied_actions.push((game_id, LocalActionKind::MakeMove));
                             }
                             Err(Error::GameMoveRejected { tag, message }) => {
                                 effects.push(Effect::Notify(GameNotification::MoveRejected {
@@ -1080,6 +1088,7 @@ impl OffChainPhase {
                         let move_result =
                             ch.send_move_no_finalize(env, &game_id, &readable_move, entropy)?;
                         batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
+                        applied_actions.push((game_id, LocalActionKind::Cheat));
                     } else {
                         deferred.push_back(GameAction::Cheat(game_id, mover_share, entropy));
                     }
@@ -1090,6 +1099,7 @@ impl OffChainPhase {
                         ch.send_accept_settlement_no_finalize(&game_id)?
                     };
                     batch_actions.push(BatchAction::AcceptSettlement(game_id, amount));
+                    applied_actions.push((game_id, LocalActionKind::AcceptSettlement));
                 }
                 GameAction::QueuedProposalGroup(my_games, their_wire) => {
                     let saved_channel = self.channel_state.clone();
@@ -1246,6 +1256,10 @@ impl OffChainPhase {
             let ch = self.channel_state_mut()?;
             ch.update_cached_unroll_state(env)?
         };
+
+        effects.extend(applied_actions.into_iter().map(|(id, action)| {
+            Effect::Notify(GameNotification::LocalActionApplied { id, action })
+        }));
 
         {
             let ch = self.channel_state()?;
@@ -1911,6 +1925,18 @@ impl PeerLifecyclePhase for OffChainPhase {
 #[cfg(test)]
 mod atomic_group_tests {
     use super::*;
+
+    #[test]
+    fn queued_cheat_failure_keeps_game_action_context() {
+        assert_eq!(
+            failed_game_action_context(&GameAction::Cheat(
+                GameID(7),
+                Amount::default(),
+                Hash::default(),
+            )),
+            Some((GameID(7), FailedGameAction::Cheat)),
+        );
+    }
 
     fn member(id: u64) -> WireGameSpec {
         WireGameSpec {

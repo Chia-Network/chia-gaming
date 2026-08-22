@@ -13,6 +13,11 @@ export interface CalpokerDisplaySnapshot {
   opponentDisplayText: string;
 }
 
+export interface CalpokerError {
+  tag: string;
+  message: string;
+}
+
 export interface CalpokerHandState {
   playerHand: bigint[];
   opponentHand: bigint[];
@@ -22,6 +27,7 @@ export interface CalpokerHandState {
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
   outcome?: CalpokerOutcomeShape<bigint>;
+  error: CalpokerError | null;
 }
 
 function isCardArray(value: unknown): value is bigint[] {
@@ -69,6 +75,18 @@ function isCalpokerOutcome(value: unknown): value is CalpokerOutcomeShape<bigint
   );
 }
 
+function isCalpokerError(value: unknown): value is CalpokerError {
+  if (typeof value !== 'object' || value === null) return false;
+  const error = value as Partial<CalpokerError>;
+  return (
+    Object.keys(value).length === 2 &&
+    typeof error.tag === 'string' &&
+    /^[a-z][a-z0-9_]*$/.test(error.tag) &&
+    typeof error.message === 'string' &&
+    error.message.length > 0
+  );
+}
+
 function isCalpokerHandState(value: unknown): value is CalpokerHandState {
   if (typeof value !== 'object' || value === null) return false;
   const state = value as Partial<CalpokerHandState>;
@@ -94,13 +112,14 @@ function isCalpokerHandState(value: unknown): value is CalpokerHandState {
     typeof state.isPlayerTurn === 'boolean' &&
     typeof state.iStarted === 'boolean' &&
     (state.displaySnapshot === undefined || isDisplaySnapshot(state.displaySnapshot)) &&
-    (state.outcome === undefined || isCalpokerOutcome(state.outcome))
+    (state.outcome === undefined || isCalpokerOutcome(state.outcome)) &&
+    (state.error === null || isCalpokerError(state.error))
   );
 }
 
 export const calpokerStateCodec = defineGameStateCodec<CalpokerHandState>({
   gameType: 'calpoker',
-  version: 2n,
+  version: 3n,
   canRemountFinished: true,
   isState: isCalpokerHandState,
 });
@@ -113,6 +132,7 @@ function initialState(isMyTurn: boolean, iStarted: boolean): CalpokerHandState {
     moveNumber: 0n,
     isPlayerTurn: isMyTurn,
     iStarted,
+    error: null,
   };
 }
 
@@ -241,6 +261,12 @@ export function reduceCalpokerDurableState(
   }
   if (!current) return null;
   if (event.type === 'hand-ended') return { ...current, isPlayerTurn: false };
+  if (event.type === 'move-rejected') {
+    return {
+      ...current,
+      error: { tag: event.tag, message: event.message },
+    };
+  }
   if (event.type === 'opponent-moved' || event.type === 'game-message') {
     return reduceCalpokerFeatureState(current, {
       type: event.type,

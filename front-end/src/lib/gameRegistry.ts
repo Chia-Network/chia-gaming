@@ -9,6 +9,7 @@ import type {
 } from '@games/host';
 import type { GameStateCodec, PersistedGameState } from './session/gameStateCodec';
 import type { HandProposalBase, HandProposal } from './session/types';
+import type { PendingGameCandidate } from './session/types';
 import { formatMojos } from '../util';
 
 export type { CatalogGameType } from '../generated/gamePresets';
@@ -184,6 +185,24 @@ export function applyRegisteredFeatureState(
     throw new Error(`Internal ${gameType} reducer produced invalid feature state`);
   }
   return registration.stateCodec.encode(next);
+}
+
+export function projectRegisteredPendingCandidates(
+  gameType: RegisteredGameType,
+  current: PersistedGameState | null,
+  currentHandIds: readonly string[],
+  pendingCandidates: Readonly<Record<string, PendingGameCandidate>>,
+): PersistedGameState | null {
+  let projected = current;
+  for (const id of currentHandIds) {
+    const pending = pendingCandidates[id];
+    if (!pending) continue;
+    if (pending.gameType !== gameType || pending.id !== id) {
+      throw new Error(`Internal pending candidate identity mismatch for game ${id}`);
+    }
+    projected = applyRegisteredFeatureState(gameType, projected, id, pending.featureState);
+  }
+  return projected;
 }
 
 export function selectRegisteredGameOutcome(

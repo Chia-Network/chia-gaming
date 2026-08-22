@@ -41,6 +41,7 @@ const WASM_NOTIFICATION_TAGS = new Set([
   'InsufficientBalance',
   'MoveRejected',
   'ActionFailed',
+  'LocalActionApplied',
 ]);
 
 function requireClosedNotification(value: unknown): void {

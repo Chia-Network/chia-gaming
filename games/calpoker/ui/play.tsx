@@ -130,6 +130,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
       opponentName={opponentName}
       terminalOutcome={hand.terminalOutcome}
       interactionMode={handSource.interactionMode}
+      error={hand.error}
     />
   );
 }

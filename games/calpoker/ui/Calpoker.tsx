@@ -4,6 +4,7 @@ import { CaliforniaPoker } from './components';
 import { useCheatKeys } from '../../host/ui';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from './types/CaliforniapokerProps';
 import type { GameInteractionMode, SettlementOutcome } from '../../host';
+import type { CalpokerError } from './serialize';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcomeView | undefined;
@@ -23,6 +24,7 @@ export interface CalpokerProps {
   opponentName?: string;
   terminalOutcome?: SettlementOutcome | null;
   interactionMode?: GameInteractionMode;
+  error: CalpokerError | null;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -43,6 +45,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   opponentName,
   terminalOutcome,
   interactionMode = 'live',
+  error,
 }) => {
   useCheatKeys(handleCheat, interactionMode === 'live');
 
@@ -67,6 +70,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           opponentName={opponentName}
           terminalOutcome={terminalOutcome}
           interactionMode={interactionMode}
+          error={error}
         />
       </div>
     </div>

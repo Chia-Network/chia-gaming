@@ -501,6 +501,7 @@ describe('canonical feature gameplay reducers', () => {
       moveNumber: 1n,
       isPlayerTurn: false,
       iStarted: false,
+      error: null,
     };
     const cards = readable(ints([0n, 1n, 2n]), ints([3n, 4n, 5n]));
     const projected = reduceCalpokerFeatureState(current, {
@@ -547,6 +548,7 @@ describe('canonical feature gameplay reducers', () => {
       moveNumber: testCase.moveNumber,
       isPlayerTurn: false,
       iStarted: testCase.iStarted,
+      error: null,
     };
 
     const projected = reduceCalpokerDurableState(current, {
@@ -585,6 +587,7 @@ describe('canonical feature gameplay reducers', () => {
           moveNumber: 1n,
           isPlayerTurn: false,
           iStarted: false,
+          error: null,
         },
         { ...status(finalReadable), id: 'calpoker-1', iStarted: false },
       ),
@@ -599,6 +602,7 @@ describe('canonical feature gameplay reducers', () => {
       moveNumber: 2n,
       isPlayerTurn: true,
       iStarted: true,
+      error: null,
     };
 
     expect(
@@ -625,6 +629,7 @@ describe('canonical feature gameplay reducers', () => {
       moveNumber: 1n,
       isPlayerTurn: false,
       iStarted: true,
+      error: null,
     };
     expect(
       reduceCalpokerDurableState(calpoker, {

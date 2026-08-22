@@ -43,6 +43,7 @@ function handState(overrides: Partial<SpacepokerHandState> = {}): SpacepokerHand
     coinTossIOpen: true,
     unitSizeMojos: 10n,
     displayMode: 'units',
+    error: null,
     ...overrides,
   };
 }
@@ -128,6 +129,67 @@ describe('Space Poker machine-owned hand state', () => {
   });
   afterAll(() => {
     Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow });
+  });
+
+  it('preserves delayed canonical gameplay state and displays the rejection', () => {
+    const current = handState();
+    const next = reduceSpacepokerDurableState(current, {
+      type: 'move-rejected',
+      gameId: '7',
+      tag: 'ui_protocol_mismatch',
+      message: 'Space Poker move was rejected.',
+    });
+    expect(next).toEqual({
+      ...current,
+      error: { tag: 'ui_protocol_mismatch', message: 'Space Poker move was rejected.' },
+    });
+
+    const port = { isChannelReady: () => true, dispatch: jest.fn() } as LiveGamePort;
+    act(() => {
+      renderer = create(
+        React.createElement(SpacePoker, {
+          handSource: liveSource(port, spacepokerStateCodec.encode(next!)),
+          gameId: '7',
+          betSize: '100',
+          unitSizeMojos: '10',
+          terminal: EMPTY_GAME_TERMINAL_MODEL,
+        }),
+      );
+    });
+    expect(
+      renderer!.root.findAll((node) => node.props.children === 'Space Poker move was rejected.'),
+    ).toHaveLength(1);
+  });
+
+  it('clears rejection feedback in the next valid local move candidate', () => {
+    const persisted = spacepokerStateCodec.encode(
+      handState({ error: { tag: 'ui_protocol_mismatch', message: 'Rejected.' } }),
+    );
+    let candidate: SpacepokerHandState | null = null;
+    const port = {
+      isChannelReady: () => true,
+      dispatch: (intent: GameIntent<SpacepokerHandState>) => {
+        candidate = intent.state;
+      },
+    } as LiveGamePort;
+    let hand: UseSpacepokerHandResult | undefined;
+    function Harness() {
+      hand = useSpacepokerHand(
+        liveSource(port, persisted),
+        '7',
+        100n,
+        10n,
+        EMPTY_GAME_TERMINAL_MODEL,
+      );
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    act(() => hand!.handleCheck());
+
+    expect(candidate).toMatchObject({ error: null });
   });
 
   it('leaves render state unchanged when a local command is rejected', () => {

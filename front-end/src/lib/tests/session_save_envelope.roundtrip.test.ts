@@ -15,6 +15,7 @@ import {
 } from '../session/model';
 import {
   ACTIVE_INSTANCE,
+  activeSave,
   baseSave,
   installSessionEnvelopeTestSetup,
   liveSave,
@@ -95,6 +96,7 @@ describe('durable game envelope round trips', () => {
         isPlayerTurn: true,
         iStarted: true,
         cardSelections: [1n, 2n],
+        error: null,
       }),
     },
     {
@@ -116,6 +118,7 @@ describe('durable game envelope round trips', () => {
         coinTossIOpen: true,
         unitSizeMojos: 10n,
         displayMode: 'mojos',
+        error: null,
       }),
     },
     {
@@ -204,6 +207,35 @@ describe('durable game envelope round trips', () => {
     expect(sessionModelFromSave(loaded!).betweenHand.compose).toEqual(compose);
   });
 
+  it('round-trips canonical hand state separately from a pending candidate', () => {
+    const save = activeSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    const canonical = save.presentation.handState;
+    const featureState = {
+      ...calpokerStateCodec.decode(canonical)!,
+      moveNumber: 2n,
+      isPlayerTurn: false,
+    };
+    const restored = sessionModelFromSave(
+      activeSave({
+        pendingCandidates: [
+          { gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState },
+        ],
+      }),
+    );
+
+    expect(restored.game.handState).toEqual(canonical);
+    expect(restored.game.pendingCandidates['game-1']).toEqual({
+      gameType: 'calpoker',
+      id: 'game-1',
+      action: 'make_move',
+      featureState,
+    });
+    expect(snapshotFromSessionModel(restored).pendingCandidates).toEqual([
+      { gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState },
+    ]);
+  });
+
   it('round-trips a session with no lastHandProposal and an unsubmittable compose draft', () => {
     const model = createSessionModel();
     const snapshot = snapshotFromSessionModel(model);
@@ -269,6 +301,7 @@ describe('durable game envelope round trips', () => {
       isPlayerTurn: true,
       iStarted: true,
       cardSelections: [1n, 2n],
+      error: null,
     });
     setProtocolIds(hashes);
     try {

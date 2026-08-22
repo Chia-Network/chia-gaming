@@ -1,4 +1,5 @@
 import type { GameInteractionMode, SettlementOutcome } from '../../../host';
+import type { CalpokerError } from '../serialize';
 
 export interface CalpokerOutcomeView {
   my_win_outcome: 'win' | 'lose' | 'tie';
@@ -40,4 +41,5 @@ export interface CaliforniapokerProps {
   opponentName?: string;
   terminalOutcome?: SettlementOutcome | null;
   interactionMode?: GameInteractionMode;
+  error?: CalpokerError | null;
 }

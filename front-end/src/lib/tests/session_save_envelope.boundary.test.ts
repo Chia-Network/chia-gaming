@@ -83,6 +83,7 @@ describe('save boundary enforcement', () => {
           moveNumber: 1n,
           isPlayerTurn: true,
           iStarted: true,
+          error: null,
         }),
         betweenHandLastHandProposal: {
           my_contribution: '20',
@@ -126,7 +127,7 @@ describe('save boundary enforcement', () => {
     errorSpy.mockRestore();
   });
 
-  it('deletes a malformed current-v14 metadata envelope read from IndexedDB', async () => {
+  it('deletes a malformed current-v15 metadata envelope read from IndexedDB', async () => {
     markSavedSession();
     await writeSessionRecord(
       baseSave({

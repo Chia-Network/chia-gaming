@@ -18,7 +18,7 @@ use crate::common::types::{
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
     CancelReason, ChannelStatus, ChannelStatusSnapshot, GameNotification, GameSessionEvent,
-    GameStatusKind, SettlementOutcome, UnrollInitiator,
+    GameStatusKind, LocalActionKind, SettlementOutcome, UnrollInitiator,
 };
 use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
@@ -521,6 +521,9 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
             GameNotification::ActionFailed { reason, .. } => format!("Notif(ActionFailed(reason={reason}))"),
             GameNotification::MoveRejected { id, tag, message } => format!("Notif(MoveRejected(id={id:?},tag={tag},message={message}))"),
+            GameNotification::LocalActionApplied { id, action } => {
+                format!("Notif(LocalActionApplied(id={id:?},action={action:?}))")
+            }
             GameNotification::ChannelStatus(ChannelStatusSnapshot { state, .. }) => format!("Notif(ChannelStatus(state={state:?}))"),
         },
     }
@@ -811,6 +814,10 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.notifications.push(notification.clone());
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
+            }
+            GameNotification::LocalActionApplied { .. } => {
+                self.assert_channel_created("local_action_applied");
+                self.notifications.push(notification.clone());
             }
             GameNotification::ChannelStatus(ChannelStatusSnapshot { state, .. }) => {
                 if matches!(state, ChannelStatus::Active) {
@@ -3989,6 +3996,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
 
         let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(p1_notifs.iter().any(|notification| matches!(
+            notification,
+            GameNotification::LocalActionApplied {
+                id: GameID(1),
+                action: LocalActionKind::Cheat,
+            }
+        )));
         assert!(
             p1_notifs
                 .iter()
@@ -4207,6 +4221,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 notification_coin_in_mempool,
                 "PlayingMove became observable before its spend reached the mempool: {host_events:?}"
             );
+            assert!(host_events[..playing_index].iter().any(|event| matches!(
+                event,
+                HostBoundaryEvent::Notification {
+                    notification: GameNotification::LocalActionApplied {
+                        id: GameID(1),
+                        action: LocalActionKind::MakeMove,
+                    },
+                    ..
+                }
+            )));
             assert!(
                 host_events[..playing_index].iter().any(|event| {
                     matches!(
@@ -4271,6 +4295,27 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         let p1_notifs = &outcome.local_uis[1].notifications;
+        let applied_index = p0_notifs
+            .iter()
+            .position(|notification| matches!(
+                notification,
+                GameNotification::LocalActionApplied {
+                    id: GameID(1),
+                    action: LocalActionKind::AcceptSettlement,
+                }
+            ))
+            .expect("on-chain accept should emit LocalActionApplied");
+        let terminal_index = p0_notifs
+            .iter()
+            .position(|notification| matches!(
+                notification,
+                GameNotification::GameSettled { id: GameID(1), .. }
+            ))
+            .expect("on-chain accept should eventually settle");
+        assert!(
+            applied_index < terminal_index,
+            "action-applied must precede its terminal notification: {p0_notifs:?}"
+        );
         assert_reward_coin_consistency(p0_notifs, "accept_finished p0");
         assert_reward_coin_consistency(p1_notifs, "accept_finished p1");
         assert!(

@@ -27,7 +27,7 @@ import type {
   SessionMachineEvent,
 } from '../lib/session/sessionMachineTypes';
 import type { RegisteredGameType } from '../lib/session/types';
-import { REGISTERED_GAMES } from '../lib/gameRegistry';
+import { projectRegisteredPendingCandidates, REGISTERED_GAMES } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 import { liveGameHandOrigin, type GameHandSource } from '@games/host';
 import { log } from '../services/log';
@@ -215,13 +215,22 @@ export function useGameSession(
     }),
     [controller, dispatch, runtime],
   );
+  const projectedHandState = useMemo(() => {
+    const game = machineState.model.game;
+    return projectRegisteredPendingCandidates(
+      game.activeGameType,
+      game.handState,
+      game.currentHandIds,
+      game.pendingCandidates,
+    );
+  }, [machineState.model.game]);
   const liveHandSource = useMemo<GameHandSource>(
     () => ({
       interactionMode: 'live',
-      handState: machineState.model.game.handState,
+      handState: projectedHandState,
       port: liveGamePort,
     }),
-    [liveGamePort, machineState.model.game.handState],
+    [liveGamePort, projectedHandState],
   );
   useEffect(() => {
     runtime.setRender(setMachineState);

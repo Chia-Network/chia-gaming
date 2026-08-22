@@ -21,6 +21,12 @@ import type {
 } from './sessionMachineTypes';
 
 const ERROR_CHANNEL_STATUSES = new Set(['ResolvedStale', 'Failed']);
+const TERMINAL_CHANNEL_STATUSES = new Set([
+  'ResolvedClean',
+  'ResolvedUnrolled',
+  'ResolvedStale',
+  'Failed',
+]);
 const LOCAL_CANCEL_REASONS = new Set(['SupersededByIncoming', 'PeerProposalPending', 'GameActive']);
 
 type Reducer = (state: SessionMachineState, event: SessionMachineEvent) => SessionMachineTransition;
@@ -62,6 +68,11 @@ export function reduceSessionNotification(
     if (!payload) return { state, effects: [] };
     const status = channelStatusModelFromPayload(payload);
     step({ type: 'channel-status', status });
+    if (TERMINAL_CHANNEL_STATUSES.has(payload.state)) {
+      for (const id of Object.keys(current.model.game.pendingCandidates)) {
+        step({ type: 'discard-pending-candidate', id });
+      }
+    }
     const generation = current.coordination.channelEnrichmentGeneration + 1;
     current = {
       ...current,
@@ -448,7 +459,13 @@ export function reduceSessionNotification(
     return { state: current, effects };
   }
 
-  if ('MoveRejected' in notification && notification.MoveRejected) {
+  if ('LocalActionApplied' in notification && notification.LocalActionApplied) {
+    step({
+      type: 'local-action-applied',
+      id: String(notification.LocalActionApplied.id),
+      action: notification.LocalActionApplied.action,
+    });
+  } else if ('MoveRejected' in notification && notification.MoveRejected) {
     step({
       type: 'notification-move-rejected',
       id: String(notification.MoveRejected.id),
@@ -457,6 +474,13 @@ export function reduceSessionNotification(
     });
   } else if ('ActionFailed' in notification && notification.ActionFailed) {
     const failed = notification.ActionFailed as ActionFailedPayload;
+    if (failed.id !== undefined && failed.action !== undefined) {
+      step({
+        type: 'discard-pending-candidate',
+        id: String(failed.id),
+        action: failed.action,
+      });
+    }
     step({ type: 'enqueue-error', kind: 'action-failed', message: String(failed.reason) });
   }
   return { state: current, effects };

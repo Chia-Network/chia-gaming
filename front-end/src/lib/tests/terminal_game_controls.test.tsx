@@ -221,6 +221,7 @@ describe('terminal game controls', () => {
       coinTossIOpen: true,
       unitSizeMojos: 10n,
       displayMode: 'mojos',
+      error: null,
     });
 
     act(() => {

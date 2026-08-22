@@ -434,46 +434,39 @@ describe('Krunk draft continuity', () => {
     expect(isKrunkDictionaryRejectionError(null)).toBe(false);
   });
 
-  it('rolls back optimistic dictionary-rejected commits and guesses', () => {
+  it('reports immediate dictionary rejection without changing canonical gameplay state', () => {
     const alice: KrunkGameState = {
-      handler: KrunkHandler.AliceWaiting,
-      myTurn: false,
+      handler: KrunkHandler.WaitingCommit,
+      myTurn: true,
       role: 'alice',
       guesses: [],
-      secretWord: 'XXXXX',
+      secretWord: null,
       revealedWord: null,
       outcome: null,
       moverShare: null,
       error: null,
     };
-    expect(
-      applyKrunkMoveRejected(alice, {
-        tag: 'not_in_dictionary',
-        message: 'xxxxx',
-      }),
-    ).toMatchObject({
-      handler: KrunkHandler.WaitingCommit,
-      myTurn: true,
-      secretWord: null,
+    const rejectedAlice = applyKrunkMoveRejected(alice, {
+      tag: 'not_in_dictionary',
+      message: 'xxxxx',
+    });
+    expect(rejectedAlice).toEqual({
+      ...alice,
       error: 'XXXXX is not in the dictionary.',
     });
 
     const bob: KrunkGameState = {
       ...alice,
-      handler: KrunkHandler.BobWaiting,
+      handler: KrunkHandler.BobGuess,
       role: 'bob',
       secretWord: null,
-      guesses: [{ word: 'XXXXX', clue: [-1n, -1n, -1n, -1n, -1n] }],
     };
-    expect(
-      applyKrunkMoveRejected(bob, {
-        tag: 'not_in_dictionary',
-        message: 'xxxxx',
-      }),
-    ).toMatchObject({
-      handler: KrunkHandler.BobGuess,
-      myTurn: true,
-      guesses: [],
+    const rejectedBob = applyKrunkMoveRejected(bob, {
+      tag: 'not_in_dictionary',
+      message: 'xxxxx',
+    });
+    expect(rejectedBob).toEqual({
+      ...bob,
       error: 'XXXXX is not in the dictionary.',
     });
   });

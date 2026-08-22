@@ -7,6 +7,10 @@ import {
 } from '../../host';
 
 export type SpacepokerDisplayMode = 'xch' | 'mojos' | 'units';
+export interface SpacepokerError {
+  tag: string;
+  message: string;
+}
 export type SpHandler = 0n | 1n | 2n | 3n | 4n | 5n | 6n;
 export interface SpGameState {
   handler: SpHandler;
@@ -52,6 +56,7 @@ export interface SpacepokerHandState {
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
   displayMode: SpacepokerDisplayMode;
+  error: SpacepokerError | null;
 }
 
 const HANDLERS = new Set([0n, 1n, 2n, 3n, 4n, 5n, 6n]);
@@ -137,6 +142,18 @@ function isOutcome(value: unknown): value is SpOutcome {
   );
 }
 
+function isSpacepokerError(value: unknown): value is SpacepokerError {
+  if (typeof value !== 'object' || value === null) return false;
+  const error = value as Partial<SpacepokerError>;
+  return (
+    Object.keys(value).length === 2 &&
+    typeof error.tag === 'string' &&
+    /^[a-z][a-z0-9_]*$/.test(error.tag) &&
+    typeof error.message === 'string' &&
+    error.message.length > 0
+  );
+}
+
 function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
   if (typeof value !== 'object' || value === null) return false;
   const state = value as Partial<SpacepokerHandState>;
@@ -179,13 +196,14 @@ function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
     typeof state.unitSizeMojos === 'bigint' &&
     state.unitSizeMojos > 0n &&
     typeof state.displayMode === 'string' &&
-    DISPLAY_MODES.has(state.displayMode)
+    DISPLAY_MODES.has(state.displayMode) &&
+    (state.error === null || isSpacepokerError(state.error))
   );
 }
 
 export const spacepokerStateCodec = defineGameStateCodec<SpacepokerHandState>({
   gameType: 'spacepoker',
-  version: 3n,
+  version: 4n,
   canRemountFinished: true,
   isState: isSpacepokerHandState,
 });
@@ -207,6 +225,7 @@ function initialState(isMyTurn: boolean, unitSizeMojos: bigint): SpacepokerHandS
     coinTossIOpen: null,
     unitSizeMojos,
     displayMode: unitSizeMojos >= 1_000_000n ? 'xch' : 'mojos',
+    error: null,
   };
 }
 
@@ -532,6 +551,12 @@ export function reduceSpacepokerDurableState(
     return event.terminal.outcome
       ? reduceSpacepokerSettlementState(current, event.terminal.outcome)
       : current;
+  }
+  if (event.type === 'move-rejected') {
+    return {
+      ...current,
+      error: { tag: event.tag, message: event.message },
+    };
   }
   if (event.type !== 'opponent-moved' && event.type !== 'game-message') return current;
   const readableEvent = {

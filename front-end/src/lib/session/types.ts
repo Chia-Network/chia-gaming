@@ -11,7 +11,6 @@ import type { ComposeDraftState } from './composeDraft';
 import type { PersistedGameState } from './gameStateCodec';
 
 export type {
-  GameTurnState,
   GameTerminalType,
   GameTerminalModel,
   HandProposalBase,
@@ -19,7 +18,6 @@ export type {
 } from '@games/host';
 import type {
   GameTerminalModel,
-  GameTurnState,
   HandProposal as HostHandProposal,
   ProposalGroupOrigin,
 } from '@games/host';
@@ -27,6 +25,27 @@ import type { CatalogGameType } from '../../generated/gamePresets';
 
 export type RegisteredGameType = CatalogGameType;
 export type { CatalogGameType };
+
+export type LocalActionKind = 'make_move' | 'accept_settlement' | 'cheat';
+
+export type GameTurnState =
+  | 'my-turn'
+  | 'their-turn'
+  | 'playing-on-chain'
+  | 'replaying'
+  | 'opponent-illegal-move'
+  | 'submitting-timeout'
+  | 'finishing'
+  | 'finishing-waiting-timeout'
+  | 'finishing-spending'
+  | 'ended';
+
+export interface PendingGameCandidate {
+  gameType: RegisteredGameType;
+  id: string;
+  action: LocalActionKind;
+  featureState: unknown;
+}
 
 export type HandProposal = Omit<HostHandProposal, 'gameType'> & {
   gameType: CatalogGameType;
@@ -166,6 +185,7 @@ export interface GameModel {
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
+  pendingCandidates: Record<string, PendingGameCandidate>;
   queue: QueuedNotificationModel[];
 }
 

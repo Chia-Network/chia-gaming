@@ -39,7 +39,7 @@ const testIndexedDb = indexedDB;
 const liveCradle = new Uint8Array([1, 2, 3]);
 const handState = {
   gameType: 'calpoker',
-  version: 2n,
+  version: 3n,
   state: {
     playerHand: [8n, 7n, 6n, 5n],
     opponentHand: [4n, 3n, 2n, 1n],
@@ -47,6 +47,7 @@ const handState = {
     isPlayerTurn: true,
     iStarted: true,
     cardSelections: [8n, 7n],
+    error: null,
     displaySnapshot: {
       gameState: 'selecting',
       winner: null,

@@ -103,18 +103,6 @@ export function parseSettlementShare(value: unknown): string | null {
   return String(value);
 }
 
-export type GameTurnState =
-  | 'my-turn'
-  | 'their-turn'
-  | 'playing-on-chain'
-  | 'replaying'
-  | 'opponent-illegal-move'
-  | 'submitting-timeout'
-  | 'finishing'
-  | 'finishing-waiting-timeout'
-  | 'finishing-spending'
-  | 'ended';
-
 export type GameTerminalType =
   | 'none'
   | 'settled'

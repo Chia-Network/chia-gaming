@@ -372,10 +372,16 @@ type GameIntent<TState> =
   mojo-denominated `moverShare` and candidate feature state. It is not a normal
   gameplay fallback.
 
-The command and candidate commit atomically: an immediate command failure
-throws, and `move-rejected` leaves the candidate uncommitted. Unexpected
-`ActionFailed` errors go to the shared host error UX, not back into game state.
-For accepted protocol intents, the host applies `state` through
+The host keeps command execution and candidate state atomic. If Rust applies the
+action immediately, the candidate commits immediately. If Rust queues it, the
+host persists the candidate separately from canonical `handState` and projects
+it for live rendering until Rust reports that the action was applied. The game
+does not observe whether this delay involved potato acquisition, on-chain
+progress, or protocol redo.
+
+`move-rejected` discards the pending projection without committing it.
+Unexpected `ActionFailed` errors discard the pending candidate and go to shared
+host error UX. For an applied intent, the host commits `state` through
 `durableState.applyFeatureState(currentHand, gameId, state)`. Therefore `state`
 is the state of the addressed game feature; it is the whole hand only when the
 package's hand and feature state are the same type.
@@ -425,7 +431,10 @@ input)` must preserve already-initialized member state. `iStarted` identifies
 - `move-rejected` reports an expected local-handler rejection for one member.
   `tag` is the game-defined machine-readable category and `message` is its
   displayable explanation. The candidate state from the rejected intent was not
-  committed.
+  committed. A game with expected validation feedback, such as Krunk, should
+  present it as domain feedback. A game that considers rejection unreachable
+  should still display the supplied error rather than silently ignoring it; it
+  must not add retry or redo behavior.
 - `hand-ended` supplies the normalized terminal model for one member. Multi-ID
   hands receive independent terminal inputs as their members finish.
 
@@ -492,8 +501,8 @@ enforces this rule.
 
 The following are frontend implementation details, not APIs for games:
 
-- Raw WASM payload types such as `GameStatus`, `ActionFailed`, and
-  `ProposalMade`
+- Raw WASM payload types such as `GameStatus`, `LocalActionApplied`,
+  `ActionFailed`, and `ProposalMade`
 - [`front-end/src/lib/gameProposalCodec.ts`](front-end/src/lib/gameProposalCodec.ts)
 - The session model, `useGameSession`, and the catalog-to-protocol-ID mapping
 

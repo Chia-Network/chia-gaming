@@ -110,6 +110,9 @@ export class SessionMachineRuntime {
     if (!game.activeIds.includes(request.id)) {
       throw new Error(`Internal local action game id ${request.id} is not active`);
     }
+    if (game.pendingCandidates[request.id]) {
+      throw new Error(`Internal local action game ${request.id} already has a pending candidate`);
+    }
     const instance = game.instances[request.id];
     if (!instance) {
       throw new Error(`Internal local action game id ${request.id} has no game instance`);
@@ -120,16 +123,25 @@ export class SessionMachineRuntime {
     ) {
       throw new Error(`Internal local action for game ${request.id} attempted outside our turn`);
     }
-    if (decodeGameFeatureState(request.gameType, request.state) === null) {
+    const featureState = decodeGameFeatureState(request.gameType, request.state);
+    if (featureState === null) {
       throw new Error(`Internal local action payload is invalid for ${request.gameType}`);
     }
 
-    if (!this.interpreter.runLocalGameCommand(request.command, request.id)) return;
+    const action =
+      request.command.type === 'make-move'
+        ? 'make_move'
+        : request.command.type === 'accept-settlement'
+          ? 'accept_settlement'
+          : 'cheat';
+    const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
+    if (disposition === 'rejected') return;
     this.dispatch({
-      type: 'local-game-action-committed',
+      type: disposition === 'applied' ? 'local-game-action-applied' : 'local-game-action-staged',
       gameType: request.gameType,
       id: request.id,
-      state: request.state,
+      action,
+      state: featureState,
     });
   }
 

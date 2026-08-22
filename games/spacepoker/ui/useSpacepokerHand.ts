@@ -64,6 +64,7 @@ export interface UseSpacepokerHandResult {
   betUnit: bigint;
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
+  error: SpacepokerHandState['error'];
   terminalOutcome: SettlementOutcome | null;
   terminalState: SpTerminalState;
   lastRaise: bigint;
@@ -132,7 +133,7 @@ export function useSpacepokerHand(
       const controller = requireLiveGameHandSource(handSourceRef.current);
       const id = gameIdRef.current;
       if (!id) return;
-      const next = update(currentDurableState());
+      const next = { ...update(currentDurableState()), error: null };
       controller.dispatch(
         command.type === 'make-move'
           ? { type: 'make-move', gameId: id, readable: command.readable, state: next }
@@ -349,6 +350,7 @@ export function useSpacepokerHand(
     betUnit,
     handHistory: state.handHistory,
     outcome: state.outcome,
+    error: state.error,
     terminalOutcome: terminal.outcome,
     terminalState: state.terminalState,
     lastRaise: state.lastRaise,

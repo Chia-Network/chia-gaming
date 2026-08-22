@@ -1,4 +1,4 @@
-import type { SessionController } from '../../hooks/SessionController';
+import type { GameCommandDisposition, SessionController } from '../../hooks/SessionController';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { encodeGameProposalParameters } from '../gameProposalCodec';
 import { validateHandProposal } from '../gameRegistry';
@@ -30,7 +30,7 @@ export class SessionMachineInterpreter {
 
   constructor(private readonly dependencies: SessionMachineInterpreterDependencies) {}
 
-  runLocalGameCommand(command: LocalGameCommand, id: string): boolean {
+  runLocalGameCommand(command: LocalGameCommand, id: string): GameCommandDisposition {
     switch (command.type) {
       case 'make-move':
         return this.dependencies.controller.makeMove(id, command.readable);

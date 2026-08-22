@@ -33,6 +33,8 @@ import { completeRegisteredGames } from '../lib/gameIdentities';
 import { catalogGameTypeFromWire } from '../lib/gameIdentities';
 import { markClientErrorReported } from '../lib/clientError';
 
+export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
+
 export interface WasmFields {
   serializedGameSession: Uint8Array;
   gameSessionSchemaVersion: bigint;
@@ -831,7 +833,8 @@ export class SessionController implements PollingGameSession {
     result: WasmResult | undefined,
     action: string,
     gameId: string,
-  ): boolean {
+    actionKind: 'make_move' | 'accept_settlement' | 'cheat',
+  ): GameCommandDisposition {
     const required = requireWasmResult(result);
     const rejected = required.events.some(
       (event) =>
@@ -839,8 +842,15 @@ export class SessionController implements PollingGameSession {
         event.Notification.MoveRejected?.id != null &&
         String(event.Notification.MoveRejected.id) === gameId,
     );
+    const applied = required.events.some(
+      (event) =>
+        'Notification' in event &&
+        event.Notification.LocalActionApplied?.id != null &&
+        String(event.Notification.LocalActionApplied.id) === gameId &&
+        event.Notification.LocalActionApplied.action === actionKind,
+    );
     this.processCommandResult(required, action);
-    return !rejected;
+    return rejected ? 'rejected' : applied ? 'applied' : 'queued';
   }
 
   private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
@@ -1596,12 +1606,12 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  makeMove(gameId: string, readable: Program | null): boolean {
+  makeMove(gameId: string, readable: Program | null): GameCommandDisposition {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const bytes = clvmToBytes(readable);
       const result = this.cradle.make_move(gameId, bytes);
-      return this.processGameCommandResult(result, 'make move', gameId);
+      return this.processGameCommandResult(result, 'make move', gameId, 'make_move');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
@@ -1616,11 +1626,16 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  acceptSettlement(gameId: string): boolean {
+  acceptSettlement(gameId: string): GameCommandDisposition {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.acceptSettlement(gameId);
-      return this.processGameCommandResult(result, 'accept settlement', gameId);
+      return this.processGameCommandResult(
+        result,
+        'accept settlement',
+        gameId,
+        'accept_settlement',
+      );
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
@@ -1635,11 +1650,11 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  cheat(gameId: string, moverShare: bigint): boolean {
+  cheat(gameId: string, moverShare: bigint): GameCommandDisposition {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.cheat(gameId, moverShare);
-      return this.processGameCommandResult(result, 'cheat', gameId);
+      return this.processGameCommandResult(result, 'cheat', gameId, 'cheat');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cheat failed:', msg);

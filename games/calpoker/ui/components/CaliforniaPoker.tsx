@@ -58,6 +58,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   opponentName,
   terminalOutcome,
   interactionMode = 'live',
+  error,
 }) => {
   const interactive = interactionMode === 'live';
   const settlementByUsFlag = terminalOutcome == null ? null : settlementByUs(terminalOutcome);
@@ -592,6 +593,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       data-calpoker-interaction-mode={interactionMode}
       className="relative flex flex-col w-full text-canvas-text"
     >
+      {error && (
+        <p role="alert" className="px-3 py-2 text-center text-sm font-semibold text-red-600">
+          {error.message}
+        </p>
+      )}
       <div className="flex flex-col gap-2">
         {/* Hands region */}
         <div className="flex flex-col gap-2">

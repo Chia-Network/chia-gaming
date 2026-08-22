@@ -53,6 +53,7 @@ describe('session machine behavior sequences', () => {
         isPlayerTurn: true,
 
         iStarted: true,
+        error: null,
       },
     });
 
@@ -147,6 +148,7 @@ describe('session machine behavior sequences', () => {
         isPlayerTurn: false,
 
         iStarted: true,
+        error: null,
       },
     });
 

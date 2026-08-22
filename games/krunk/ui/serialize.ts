@@ -303,39 +303,7 @@ export function applyKrunkMoveRejected(
 ): KrunkGameState {
   if (rejection.tag !== 'not_in_dictionary') return state;
   const word = rejection.message.toUpperCase();
-  const error = `${word} is not in the dictionary.`;
-
-  if (
-    state.role === 'alice' &&
-    state.handler === KrunkHandler.AliceWaiting &&
-    state.secretWord === word
-  ) {
-    return {
-      ...state,
-      handler: KrunkHandler.WaitingCommit,
-      myTurn: true,
-      secretWord: null,
-      error,
-    };
-  }
-
-  const lastGuess = state.guesses[state.guesses.length - 1];
-  if (
-    state.role === 'bob' &&
-    state.handler === KrunkHandler.BobWaiting &&
-    lastGuess?.word === word &&
-    lastGuess.clue.every((value) => value === -1n)
-  ) {
-    return {
-      ...state,
-      handler: KrunkHandler.BobGuess,
-      myTurn: true,
-      guesses: state.guesses.slice(0, -1),
-      error,
-    };
-  }
-
-  return state;
+  return { ...state, error: `${word} is not in the dictionary.` };
 }
 
 export function reduceKrunkDurableState(

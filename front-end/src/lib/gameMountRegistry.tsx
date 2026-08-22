@@ -18,11 +18,13 @@ function gameInstances(model: SessionModel): GameMountView['instances'] {
   );
 }
 
-function canActById(model: SessionModel): GameMountView['canActById'] {
+export function gameCanActById(model: SessionModel): GameMountView['canActById'] {
   return Object.fromEntries(
     Object.entries(model.game.instances).map(([id, instance]) => [
       id,
-      instance.presentation === 'off-chain-my-turn' || instance.presentation === 'on-chain-my-turn',
+      !model.game.pendingCandidates[id] &&
+        (instance.presentation === 'off-chain-my-turn' ||
+          instance.presentation === 'on-chain-my-turn'),
     ]),
   );
 }
@@ -35,11 +37,11 @@ export function renderLiveGameMount(
   if (!isCatalogGameType(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
   const common = {
     handOrigin: session.handOrigin,
-    handState: session.sessionModel.game.handState,
+    handState: session.handSource.handState,
     lastDisplayedId: session.sessionModel.game.lastDisplayedId,
     activeIds: session.sessionModel.game.activeIds,
     currentHandIds: session.sessionModel.game.currentHandIds,
-    canActById: canActById(session.sessionModel),
+    canActById: gameCanActById(session.sessionModel),
     iStarted: session.iStarted,
     playerNumber: session.playerNumber,
     instances: gameInstances(session.sessionModel),
@@ -72,7 +74,7 @@ export function renderFrozenGameMount(
     lastDisplayedId: model.game.lastDisplayedId,
     currentHandIds: model.game.currentHandIds,
     activeIds: model.game.activeIds,
-    canActById: canActById(model),
+    canActById: gameCanActById(model),
     instances: gameInstances(model),
     iStarted: options.iStarted,
     playerNumber: options.iStarted ? 1 : 2,

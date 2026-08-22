@@ -43,13 +43,7 @@ export default function SpacePoker({
   const interactive = handSource.interactionMode === 'live';
   const betSizeValue = BigInt(betSize);
   const unitSizeMojosValue = BigInt(unitSizeMojos);
-  const sp = useSpacepokerHand(
-    handSource,
-    gameId,
-    betSizeValue,
-    unitSizeMojosValue,
-    terminal,
-  );
+  const sp = useSpacepokerHand(handSource, gameId, betSizeValue, unitSizeMojosValue, terminal);
   const { handler, myTurn, N } = sp.gameState;
   const { currencyLabels: spCurrency, formatAmount } = useGameHost();
 
@@ -193,6 +187,11 @@ export default function SpacePoker({
         <p className="text-sm text-canvas-text-contrast font-medium text-center min-h-5">
           {footerStatus}
         </p>
+        {sp.error && (
+          <p role="alert" className="text-center text-sm font-semibold text-red-600">
+            {sp.error.message}
+          </p>
+        )}
       </div>
 
       <SpacePokerHandHistory history={sp.handHistory} formatBet={sp.formatBet} />

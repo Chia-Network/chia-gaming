@@ -914,11 +914,16 @@ mod gaming_wasm {
                 .parse::<u64>()
                 .map_err(|e| JsValue::from_str(&e.to_string()))?,
         );
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle
-                .cradle
-                .cheat(&mut cradle.allocator, &game_id, share)
-        })
+        with_game_action_drain(
+            cid,
+            game_id.clone(),
+            FailedGameAction::Cheat,
+            move |cradle: &mut JsGameSession| {
+                cradle
+                    .cradle
+                    .cheat(&mut cradle.allocator, &game_id, share)
+            },
+        )
     }
 
     #[wasm_bindgen]

@@ -66,7 +66,7 @@ export function finalizeTerminalSession(
     const handState = structuredClone(args.model.game.handState);
     const model: SessionModel = {
       ...args.model,
-      game: { ...args.model.game, handState },
+      game: { ...args.model.game, handState, pendingCandidates: {} },
     };
     const terminalFields = structuredClone({
       terminal: {

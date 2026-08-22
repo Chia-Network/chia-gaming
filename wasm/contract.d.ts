@@ -174,7 +174,7 @@ export interface InsufficientBalancePayload {
 
 export interface ActionFailedPayload {
   id?: bigint;
-  action?: 'make_move' | 'accept_settlement';
+  action?: 'make_move' | 'accept_settlement' | 'cheat';
   reason: string;
 }
 
@@ -182,6 +182,11 @@ export interface MoveRejectedPayload {
   id: bigint;
   tag: string;
   message: string;
+}
+
+export interface LocalActionAppliedPayload {
+  id: bigint;
+  action: 'make_move' | 'accept_settlement' | 'cheat';
 }
 
 export interface WasmNotificationMap {
@@ -194,6 +199,7 @@ export interface WasmNotificationMap {
   InsufficientBalance: InsufficientBalancePayload;
   MoveRejected: MoveRejectedPayload;
   ActionFailed: ActionFailedPayload;
+  LocalActionApplied: LocalActionAppliedPayload;
 }
 
 export type WasmNotification = {

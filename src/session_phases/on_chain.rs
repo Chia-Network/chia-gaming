@@ -18,7 +18,8 @@ use crate::referee::types::{
 use crate::referee::Referee;
 use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, GameNotification,
-    GameStatusKind, GameStatusOtherParams, SettlementOutcome, TimeoutClaimSemantic,
+    GameStatusKind, GameStatusOtherParams, LocalActionKind, SettlementOutcome,
+    TimeoutClaimSemantic,
 };
 use crate::session_phases::types::{validate_new_move_action, GameAction, PotatoState};
 
@@ -102,6 +103,7 @@ pub struct OnChainPhaseArgs {
 
 fn on_chain_move_submission_effects(
     game_id: GameID,
+    action: LocalActionKind,
     current_coin: &CoinString,
     transaction: Spend,
 ) -> Vec<Effect> {
@@ -116,6 +118,10 @@ fn on_chain_move_submission_effects(
             },
             None,
         ),
+        Effect::Notify(GameNotification::LocalActionApplied {
+            id: game_id,
+            action,
+        }),
         Effect::Notify(GameNotification::GameStatus {
             id: game_id,
             status: GameStatusKind::PlayingMove,
@@ -1523,6 +1529,7 @@ impl OnChainPhase {
         game_id: GameID,
         readable_move: ReadableMove,
         entropy: Hash,
+        action: LocalActionKind,
     ) -> Result<Vec<Effect>, Error> {
         let my_turn = self.my_move_in_game(&game_id);
         if my_turn.is_none() {
@@ -1561,12 +1568,18 @@ impl OnChainPhase {
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
-            return Ok(vec![Effect::Notify(GameNotification::game_settled(
-                game_id,
-                SettlementOutcome::ForfeitedSkippedReveal,
-                Amount::default(),
-                None,
-            ))]);
+            return Ok(vec![
+                Effect::Notify(GameNotification::LocalActionApplied {
+                    id: game_id,
+                    action,
+                }),
+                Effect::Notify(GameNotification::game_settled(
+                    game_id,
+                    SettlementOutcome::ForfeitedSkippedReveal,
+                    Amount::default(),
+                    None,
+                )),
+            ]);
         }
 
         let (post_referee, post_last_ph) = self.save_game_state(&game_id)?;
@@ -1595,6 +1608,7 @@ impl OnChainPhase {
 
         Ok(on_chain_move_submission_effects(
             game_id,
+            action,
             current_coin,
             transaction,
         ))
@@ -1629,7 +1643,14 @@ impl OnChainPhase {
                         )));
                     }
                     Ok(self
-                        .do_on_chain_move(env, &current_coin, game_id, readable_move, hash)?
+                        .do_on_chain_move(
+                            env,
+                            &current_coin,
+                            game_id,
+                            readable_move,
+                            hash,
+                            LocalActionKind::MakeMove,
+                        )?
                         .into_iter()
                         .collect())
                 }
@@ -1652,7 +1673,14 @@ impl OnChainPhase {
                         let readable_move =
                             ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
                         Ok(self
-                            .do_on_chain_move(env, &current_coin, game_id, readable_move, entropy)?
+                            .do_on_chain_move(
+                                env,
+                                &current_coin,
+                                game_id,
+                                readable_move,
+                                entropy,
+                                LocalActionKind::Cheat,
+                            )?
                             .into_iter()
                             .collect())
                     } else if my_turn.is_none() {
@@ -1681,12 +1709,18 @@ impl OnChainPhase {
                     let our_share = self.get_game_our_current_share(&game_id);
                     if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
                         self.game_map.remove(&current_coin);
-                        return Ok(vec![Effect::Notify(GameNotification::game_settled(
-                            game_id,
-                            SettlementOutcome::ForfeitedWeAccepted,
-                            Amount::default(),
-                            None,
-                        ))]);
+                        return Ok(vec![
+                            Effect::Notify(GameNotification::LocalActionApplied {
+                                id: game_id,
+                                action: LocalActionKind::AcceptSettlement,
+                            }),
+                            Effect::Notify(GameNotification::game_settled(
+                                game_id,
+                                SettlementOutcome::ForfeitedWeAccepted,
+                                Amount::default(),
+                                None,
+                            )),
+                        ]);
                     }
                 }
                 let gt = self
@@ -1713,6 +1747,10 @@ impl OnChainPhase {
                 if let Some(def) = self.game_map.get_mut(&current_coin) {
                     def.timeout_claim_armed = true;
                 }
+                effects.push(Effect::Notify(GameNotification::LocalActionApplied {
+                    id: game_id,
+                    action: LocalActionKind::AcceptSettlement,
+                }));
                 effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: game_id,
                     status: GameStatusKind::FinishingWaitingTimeout,
@@ -2009,12 +2047,20 @@ mod tests {
 
     #[test]
     fn on_chain_move_submission_precedes_playing_move_notification() {
-        let effects =
-            on_chain_move_submission_effects(GameID(7), &CoinString::default(), Spend::default());
+        let effects = on_chain_move_submission_effects(
+            GameID(7),
+            LocalActionKind::MakeMove,
+            &CoinString::default(),
+            Spend::default(),
+        );
         assert!(matches!(
             effects.as_slice(),
             [
                 Effect::SpendTransaction(_, _),
+                Effect::Notify(GameNotification::LocalActionApplied {
+                    id: GameID(7),
+                    action: LocalActionKind::MakeMove,
+                }),
                 Effect::Notify(GameNotification::GameStatus {
                     status: GameStatusKind::PlayingMove,
                     ..

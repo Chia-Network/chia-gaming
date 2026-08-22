@@ -7,7 +7,7 @@ import {
 } from '@games/host';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
 import { isCatalogGameType, packageFor } from '../gameRegistry';
-import { renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
+import { gameCanActById, renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
 import { createSessionModel } from '../session/model';
 
 const terminal = {
@@ -91,7 +91,21 @@ describe('game mount registry', () => {
   );
 
   it('passes the current machine snapshot and host-owned hand key to a live mount', () => {
-    const model = modelFor('calpoker');
+    const base = modelFor('calpoker');
+    const model = createSessionModel({
+      ...base,
+      game: {
+        ...base.game,
+        pendingCandidates: {
+          '1': {
+            gameType: 'calpoker',
+            id: '1',
+            action: 'make_move',
+            featureState: {},
+          },
+        },
+      },
+    });
     const port = { isChannelReady: () => true, dispatch: jest.fn() } as LiveGamePort;
     const session = {
       sessionModel: model,
@@ -109,6 +123,7 @@ describe('game mount registry', () => {
     expect(mount.key).toBe('7');
     expect(gameHandState(mount.props.handSource)).toBe(model.game.handState);
     expect(mount.props.handSource.interactionMode).toBe('live');
+    expect(gameCanActById(model)['1']).toBe(false);
   });
 
   it('cold-restores a frozen mount without protocol capabilities', () => {
