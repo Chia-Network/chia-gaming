@@ -19,7 +19,6 @@ export function ComposeProposalDialog({
   const compose = session.composeDraftState;
   const pkg = packageFor(compose.selectedGame);
   const canSubmit = composeDraftCanSubmit(compose, maxPerHandMojos);
-  const Editor = pkg.HandProposalForm;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -45,13 +44,13 @@ export function ComposeProposalDialog({
             </Button>
           ))}
         </div>
-        <Editor
-          draft={composeDraftValue(compose, compose.selectedGame)}
-          disabled={session.composeProposalSent}
-          maxPerHandMojos={maxPerHandMojos}
-          onChange={(update) => session.updateSelectedComposeDraft(update)}
-          onSubmit={submit}
-        />
+        {pkg.renderHandProposalForm({
+          draft: composeDraftValue(compose, compose.selectedGame),
+          disabled: session.composeProposalSent,
+          maxPerHandMojos,
+          onChange: (update) => session.updateSelectedComposeDraft(update),
+          onSubmit: submit,
+        })}
         <div className="flex w-full flex-col items-center gap-1">
           <label className="text-xs font-medium text-canvas-text">Timeout (blocks)</label>
           <input

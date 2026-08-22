@@ -1,4 +1,4 @@
-import { type ComponentType, type ReactElement } from 'react';
+import { createElement, type ComponentType, type ReactElement } from 'react';
 import { Program } from 'clvm-lib';
 
 /** Compact settlement outcome ids (snake_case; match Rust `SettlementOutcome`). */
@@ -171,7 +171,15 @@ export interface FactoryParameterCodec<TParams> {
 export function readClvmProgram(value: unknown): Program | null {
   if (!(value instanceof Uint8Array)) return null;
   try {
-    return Program.deserialize(value);
+    const program = Program.deserialize(value);
+    const canonical = program.serialize();
+    if (
+      canonical.length !== value.length ||
+      canonical.some((byte, index) => byte !== value[index])
+    ) {
+      return null;
+    }
+    return program;
   } catch {
     return null;
   }
@@ -194,8 +202,12 @@ export function readClvmFlag(program: Program): boolean | null {
 
 export function readClvmList(program: Program, length: number): readonly Program[] | null {
   if (!program.isCons) return null;
-  const items = program.toList();
-  return items.length === length ? items : null;
+  try {
+    const items = program.toList(true);
+    return items.length === length ? items : null;
+  } catch {
+    return null;
+  }
 }
 
 export function defineGameStateCodec<T>(definition: {
@@ -264,6 +276,12 @@ export interface HandProposalFormProps<TDraft> {
   maxPerHandMojos: bigint | null;
   onChange: (update: Partial<TDraft>) => void;
   onSubmit: () => void;
+}
+
+export interface HandProposalDecodeContext {
+  readonly origin: ProposalGroupOrigin;
+  readonly iStarted: boolean;
+  readonly expectedSenderGoesFirst: boolean;
 }
 
 export function reduceGameStateSnapshot<T>(current: T, update: StateUpdate<T>): T {
@@ -398,7 +416,11 @@ export interface GameFeatureRegistration<
     toHandProposal(draft: TDraft, gameTimeout: bigint): HandProposal | null;
   };
   toFactoryParameters(handProposal: HandProposal, iStarted: boolean): TParams;
-  decodeHandProposal(base: HandProposalBase, params: TParams): HandProposal | null;
+  decodeHandProposal(
+    base: HandProposalBase,
+    params: TParams,
+    context: HandProposalDecodeContext,
+  ): HandProposal | null;
   validateHandProposal(handProposal: HandProposal): boolean;
   handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
   persistence: {
@@ -418,14 +440,119 @@ export interface GameFeatureRegistration<
   };
 }
 
-export interface GamePackage<
-  TState = unknown,
-  TDraft = ComposeDraftValue,
-  TFeatureState = TState,
-  TParams = unknown,
->
-  extends GameFeatureRegistration<TState, TFeatureState, TDraft, TParams>, GameMountRegistration {
-  HandProposalForm: ComponentType<HandProposalFormProps<TDraft>>;
+export interface RegisteredGamePackage {
+  readonly gameType: string;
+  readonly displayName: string;
+  readonly stateCodec: GameStateCodec<unknown>;
+  describeHandProposal(handProposal: HandProposal, text: GameHostText): string;
+  readonly handMembershipDescription: string;
+  validateHandMembership(gameIds: readonly string[], state: unknown | null): boolean;
+  decodeFeatureState(value: unknown): unknown | null;
+  selectOutcome(state: unknown, gameId: string): HandWinOutcome | null;
+  readonly lifecycle: {
+    proposalSenderGoesFirst(iStarted: boolean): boolean;
+  };
+  readonly draft: {
+    default(perGameAmount: bigint): ComposeDraftValue;
+    fromHandProposal(handProposal: HandProposal): ComposeDraftValue;
+    update(current: ComposeDraftValue, update: Partial<ComposeDraftValue>): ComposeDraftValue;
+    toHandProposal(draft: ComposeDraftValue, gameTimeout: bigint): HandProposal | null;
+  };
+  encodeFactoryParameters(handProposal: HandProposal, iStarted: boolean): Program;
+  decodeHandProposal(
+    base: HandProposalBase,
+    parameterState: unknown,
+    context: HandProposalDecodeContext,
+  ): HandProposal | null;
+  validateHandProposal(handProposal: HandProposal): boolean;
+  handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
+  readonly persistence: {
+    encodeExtras(handProposal: HandProposal): SavedHandProposalExtras;
+    decodeExtras(base: HandProposalBase, extras: SavedHandProposalExtras): HandProposal | null;
+  };
+  readonly durableState: {
+    initialize(
+      current: unknown | null,
+      input: Extract<GameInput, { type: 'hand-started' }>,
+    ): unknown;
+    reduceInput(
+      current: unknown,
+      input: Exclude<GameInput, { type: 'hand-started' }>,
+    ): unknown;
+    applyFeatureState(current: unknown, gameId: string, state: unknown): unknown;
+  };
+  render(view: GameMountView): ReactElement;
+  renderHandProposalForm(props: HandProposalFormProps<ComposeDraftValue>): ReactElement;
+}
+
+export function defineGamePackage<
+  TState,
+  TFeatureState,
+  TDraft extends ComposeDraftValue,
+  TParams,
+>(
+  feature: GameFeatureRegistration<TState, TFeatureState, TDraft, TParams>,
+  HandProposalForm: ComponentType<HandProposalFormProps<TDraft>>,
+  mount: GameMountRegistration,
+): RegisteredGamePackage {
+  const requireState = (value: unknown): TState => {
+    if (!feature.stateCodec.isState(value)) {
+      throw new Error(`Invalid internal ${feature.gameType} state`);
+    }
+    return value;
+  };
+  const stateCodec: GameStateCodec<unknown> = {
+    ...feature.stateCodec,
+    gameIds: (state) => feature.stateCodec.gameIds(requireState(state)),
+    encode: (state) => feature.stateCodec.encode(requireState(state)),
+  };
+  return {
+    ...feature,
+    stateCodec,
+    validateHandMembership: (gameIds, state) =>
+      state === null
+        ? feature.validateHandMembership(gameIds, null)
+        : feature.validateHandMembership(gameIds, requireState(state)),
+    selectOutcome: (state, gameId) => feature.selectOutcome(requireState(state), gameId),
+    draft: {
+      default: feature.draft.default,
+      fromHandProposal: feature.draft.fromHandProposal,
+      update: (current, update) =>
+        feature.draft.update(current as TDraft, update as Partial<TDraft>),
+      toHandProposal: (draft, gameTimeout) =>
+        feature.draft.toHandProposal(draft as TDraft, gameTimeout),
+    },
+    encodeFactoryParameters: (handProposal, iStarted) =>
+      feature.factoryParameters.encode(feature.toFactoryParameters(handProposal, iStarted)),
+    decodeHandProposal: (base, parameterState, context) => {
+      const params = feature.factoryParameters.decode(parameterState);
+      return params === null ? null : feature.decodeHandProposal(base, params, context);
+    },
+    persistence: feature.persistence,
+    durableState: {
+      initialize: (current, input) =>
+        feature.durableState.initialize(current === null ? null : requireState(current), input),
+      reduceInput: (current, input) =>
+        feature.durableState.reduceInput(requireState(current), input),
+      applyFeatureState: (current, gameId, state) => {
+        const featureState = feature.decodeFeatureState(state);
+        if (featureState === null) {
+          throw new Error(`Invalid internal ${feature.gameType} feature state`);
+        }
+        return feature.durableState.applyFeatureState(
+          requireState(current),
+          gameId,
+          featureState,
+        );
+      },
+    },
+    render: mount.render,
+    renderHandProposalForm: (props) =>
+      createElement(HandProposalForm, {
+        ...props,
+        draft: props.draft as unknown as TDraft,
+      }),
+  };
 }
 
 export interface CurrencyLabels {

@@ -280,6 +280,25 @@ describe('session machine behavior sequences', () => {
       });
       expect(unreadable.effects.map((effect) => effect.type)).toContain('controller-go-on-chain');
 
+      const missingParameters = reduceSessionMachine(state, {
+        type: 'wasm-notification',
+        notification: {
+          ProposalMade: {
+            id: '9',
+            group_ids: ['9'],
+            my_contribution: '100',
+            their_contribution: '100',
+            timeout: '15',
+            game_type: testProtocolId('spacepoker'),
+            initial_state: encodeGameProposalParameters(terms, true).serialize(),
+          },
+        },
+        iStarted: false,
+      });
+      expect(missingParameters.effects.map((effect) => effect.type)).toContain(
+        'controller-go-on-chain',
+      );
+
       const readable = reduceSessionMachine(state, {
         type: 'wasm-notification',
         notification: {

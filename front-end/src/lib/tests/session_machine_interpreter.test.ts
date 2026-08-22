@@ -17,7 +17,7 @@ import type { SessionMachineEvent } from '../session/sessionMachineTypes';
 import { krunkStateCodec } from '@games/krunk/ui/serialize';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { projectRegisteredPendingCandidates } from '../gameRegistry';
+import { projectRegisteredPendingCandidates, reduceRegisteredGameState } from '../gameRegistry';
 import { wasmResult } from './message_protocol.harness';
 
 const TERMS = {
@@ -341,6 +341,17 @@ describe('session machine causal sequences', () => {
     const pending: Array<(coinHex: string | null) => void> = [];
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
+    const handState = reduceRegisteredGameState('calpoker', null, {
+      type: 'hand-started',
+      init: {
+        id: '7',
+        gameIds: ['7'],
+        iStarted: true,
+        canAct: true,
+        origin: 'local',
+        handProposal: TERMS,
+      },
+    });
     const runtime = new SessionMachineRuntime(
       createSessionMachineState(
         createSessionModel({
@@ -360,17 +371,7 @@ describe('session machine causal sequences', () => {
                 terminal: INITIAL_GAME_TERMINAL_MODEL,
               },
             },
-            handState: {
-              gameType: 'calpoker',
-              version: 1n,
-              state: {
-                playerHand: [],
-                opponentHand: [],
-                cardSelections: [],
-                moveNumber: 0n,
-                isPlayerTurn: true,
-              },
-            },
+            handState,
           },
           betweenHand: { lastHandProposal: TERMS },
         }),

@@ -94,8 +94,13 @@ const registration: GameFeatureRegistration<
       senderGoesFirst: this.lifecycle.proposalSenderGoesFirst(iStarted),
     };
   },
-  decodeHandProposal(base, params) {
-    if (params.perPlayerStake !== base.myContribution) return null;
+  decodeHandProposal(base, params, context) {
+    if (
+      params.perPlayerStake !== base.myContribution ||
+      params.senderGoesFirst !== context.expectedSenderGoesFirst
+    ) {
+      return null;
+    }
     const handProposal = { gameType: 'calpoker', ...base };
     return validateCalpokerHandProposal(handProposal) ? handProposal : null;
   },

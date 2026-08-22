@@ -136,7 +136,7 @@ export function reduceSessionNotification(
   }
 
   if ('ProposalMade' in notification) {
-    const incoming = proposalGroupFromProposalMade(notification.ProposalMade);
+    const incoming = proposalGroupFromProposalMade(notification.ProposalMade, iStarted);
     if (!incoming) {
       effects.push({ type: 'controller-go-on-chain' });
       return { state: current, effects };

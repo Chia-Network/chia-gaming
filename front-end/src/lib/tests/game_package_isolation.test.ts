@@ -13,6 +13,17 @@ function walk(dir: string, files: string[] = []): string[] {
 }
 
 describe('game package isolation', () => {
+  it('assembles generated packages through the typed keyed boundary', () => {
+    const generated = fs.readFileSync(
+      path.resolve(__dirname, '../../generated/gamePackages.ts'),
+      'utf8',
+    );
+    expect(generated).toContain('defineGamePackage(');
+    expect(generated).toContain('GENERATED_GAME_PACKAGES_BY_KEY');
+    expect(generated).not.toContain('Object.assign');
+    expect(generated).not.toContain('as unknown as GamePackage');
+  });
+
   it('does not import this player app from game UI or game tests', () => {
     const keys = fs.readdirSync(GAMES_ROOT).filter((name) => {
       const ui = path.join(GAMES_ROOT, name, 'ui');

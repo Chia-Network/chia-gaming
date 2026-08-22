@@ -1,10 +1,11 @@
-import { GENERATED_GAME_PACKAGES } from '../generated/gamePackages';
+import { GENERATED_GAME_PACKAGES, GENERATED_GAME_PACKAGES_BY_KEY } from '../generated/gamePackages';
 import type { CatalogGameType } from '../generated/gamePresets';
 import type {
   ComposeDraftValue,
   GameInput,
-  GamePackage,
+  HandProposalDecodeContext,
   HandProposal as HostHandProposal,
+  RegisteredGamePackage,
   SavedHandProposalExtras,
 } from '@games/host';
 import type { GameStateCodec, PersistedGameState } from './session/gameStateCodec';
@@ -15,19 +16,10 @@ import { formatMojos } from '../util';
 export type { CatalogGameType } from '../generated/gamePresets';
 export type RegisteredGameType = CatalogGameType;
 
-const packagesByCatalog = new Map<string, GamePackage>();
+export const GAME_PACKAGES: readonly RegisteredGamePackage[] = GENERATED_GAME_PACKAGES;
 
-for (const pkg of GENERATED_GAME_PACKAGES) {
-  packagesByCatalog.set(pkg.gameType, pkg as unknown as GamePackage);
-}
-
-export const GAME_PACKAGES: readonly GamePackage[] =
-  GENERATED_GAME_PACKAGES as unknown as GamePackage[];
-
-export function packageFor(gameType: CatalogGameType): GamePackage {
-  const pkg = packagesByCatalog.get(gameType);
-  if (!pkg) throw new Error(`Unsupported game package: ${gameType}`);
-  return pkg;
+export function packageFor(gameType: CatalogGameType): RegisteredGamePackage {
+  return GENERATED_GAME_PACKAGES_BY_KEY[gameType];
 }
 
 export function gameDisplayName(gameType: CatalogGameType): string {
@@ -36,7 +28,10 @@ export function gameDisplayName(gameType: CatalogGameType): string {
 
 /** Catalog names only (`calpoker`, …). Saves and mounts use this — hashes are garbled. */
 export function isCatalogGameType(value: unknown): value is CatalogGameType {
-  return typeof value === 'string' && packagesByCatalog.has(value);
+  return (
+    typeof value === 'string' &&
+    Object.prototype.hasOwnProperty.call(GENERATED_GAME_PACKAGES_BY_KEY, value)
+  );
 }
 
 export const REGISTERED_GAMES = GAME_PACKAGES.map((pkg) => {
@@ -102,7 +97,7 @@ export function canRemountFinishedGameState(value: unknown): boolean {
 }
 
 function handProposalWithCatalogType(
-  registration: GamePackage,
+  registration: RegisteredGamePackage,
   handProposal: HostHandProposal | null,
 ): HandProposal | null {
   if (handProposal === null) return null;
@@ -121,12 +116,18 @@ export function decodeHandProposal(
   gameType: RegisteredGameType,
   base: HandProposalBase,
   parameterState: unknown,
+  context: Pick<HandProposalDecodeContext, 'iStarted' | 'origin'>,
 ): HandProposal | null {
   const registration = packageFor(gameType);
-  const params = registration.factoryParameters.decode(parameterState);
-  return params === null
-    ? null
-    : handProposalWithCatalogType(registration, registration.decodeHandProposal(base, params));
+  const proposerStarted = context.origin === 'local' ? context.iStarted : !context.iStarted;
+  const decodeContext: HandProposalDecodeContext = {
+    ...context,
+    expectedSenderGoesFirst: registration.lifecycle.proposalSenderGoesFirst(proposerStarted),
+  };
+  return handProposalWithCatalogType(
+    registration,
+    registration.decodeHandProposal(base, parameterState, decodeContext),
+  );
 }
 
 export function validateHandProposal(handProposal: HandProposal): boolean {
@@ -152,13 +153,15 @@ export function reduceRegisteredGameState(
     current !== null && current.gameType === gameType
       ? registration.stateCodec.decode(current)
       : null;
-  const next =
-    input.type === 'hand-started'
-      ? registration.durableState.initialize(decoded, input)
-      : decoded === null
-        ? null
-        : registration.durableState.reduceInput(decoded, input);
-  if (next === null) return current;
+  let next: unknown;
+  if (input.type === 'hand-started') {
+    next = registration.durableState.initialize(decoded, input);
+  } else {
+    if (decoded === null) {
+      throw new Error(`Internal ${gameType} ${input.type} input requires valid hand state`);
+    }
+    next = registration.durableState.reduceInput(decoded, input);
+  }
   if (!registration.stateCodec.isState(next)) {
     throw new Error(`Internal ${gameType} reducer produced invalid feature state`);
   }

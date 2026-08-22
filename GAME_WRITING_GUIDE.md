@@ -64,6 +64,12 @@ file has a conventional export that the generator discovers:
 - `handProposalForm.tsx` exports `HandProposalForm`.
 - `play.tsx` exports `play`.
 
+The generator passes those three exports through `defineGamePackage`. This is
+the compile-time boundary that proves the proposal draft, state, feature state,
+factory parameters, form, and mount belong to one coherent package. The
+generated keyed registry exposes a non-generic runtime facade; game-specific
+types are not cast to a fictitious broad package type.
+
 ## Step 1: Register the game
 
 Add the key to [`games/registry.json`](games/registry.json):
@@ -94,6 +100,14 @@ same factory with the same parameters and must get the same result.
 Most factories create one game. A factory may create several games that must
 be accepted or cancelled together; the code calls these an atomic group.
 Krunk is the reference example for that case.
+
+Starting-player policy belongs to each factory record, not necessarily to one
+proposal-wide flag. Krunk emits two records with opposite
+`sender_goes_first` values so each player picks a word once. If a future game
+makes starting order a user-negotiated term, include it in that package's
+normalized proposal, description, equality, and persistence. If it is derived
+from session role, validate the encoded parameter against the supplied decode
+context instead of displaying it as a term.
 
 Each game returned by the factory includes its starting state, move handlers,
 and validation programs. See
@@ -217,8 +231,8 @@ The same registration translates between a `HandProposal` and CLVM:
   object for an outgoing proposal.
 - `factoryParameters.encode` converts that object into a CLVM program.
 - `factoryParameters.decode` safely parses an untrusted CLVM program.
-- `decodeHandProposal(base, params)` reconstructs and validates the proposal
-  received from the peer.
+- `decodeHandProposal(base, params, context)` reconstructs and validates the
+  proposal received from the peer.
 
 The host provides `readClvmProgram`, `readClvmAtom`, `readClvmFlag`, and
 `readClvmList` to help write strict decoders.
@@ -245,10 +259,20 @@ interface FactoryParameterCodec<TParams> {
   encode(params: TParams): Program;
 }
 
+interface HandProposalDecodeContext {
+  origin: 'local' | 'peer';
+  iStarted: boolean;
+  expectedSenderGoesFirst: boolean;
+}
+
 interface ProposalCodec<TParams> {
   factoryParameters: FactoryParameterCodec<TParams>;
   toFactoryParameters(handProposal: HandProposal, iStarted: boolean): TParams;
-  decodeHandProposal(base: HandProposalBase, params: TParams): HandProposal | null;
+  decodeHandProposal(
+    base: HandProposalBase,
+    params: TParams,
+    context: HandProposalDecodeContext,
+  ): HandProposal | null;
 }
 ```
 
@@ -263,14 +287,18 @@ Decoding is intentionally two-stage:
    serialized CLVM bytes. It must validate the complete CLVM shape and every
    value, returning typed parameters or `null`. Malformed peer data is expected
    at this boundary and must not throw.
-2. `decodeHandProposal(base, params)` combines the already-decoded common terms
-   with the typed parameters. It must reject contradictions between duplicated
-   values, add the package's `gameType` and game-specific proposal fields, run
-   the complete proposal validation, and return `null` on any mismatch.
+2. `decodeHandProposal(base, params, context)` combines the already-decoded
+   common terms with the typed parameters. It must reject contradictions
+   between duplicated values, validate any proposer-relative policy represented
+   by its parameters, add the package's `gameType` and game-specific proposal
+   fields, run the complete proposal validation, and return `null` on any
+   mismatch.
 
 The host verifies that a non-null proposal has the registration's catalog
 `gameType`. Do not trust a type assertion or silently repair inconsistent peer
-data.
+data. Incoming `ProposalMade` notifications must contain an explicit positive
+timeout and explicit factory `parameters`. Missing fields are decode failures;
+`initial_state` is factory output and is never a substitute for parameters.
 
 The strict CLVM readers have these exact contracts:
 
@@ -281,11 +309,12 @@ readClvmFlag(program: Program): boolean | null;
 readClvmList(program: Program, length: number): readonly Program[] | null;
 ```
 
-- `readClvmProgram` accepts only a `Uint8Array` containing one deserializable
-  program.
+- `readClvmProgram` accepts only a `Uint8Array` containing exactly one
+  canonically serialized program, with no trailing bytes.
 - `readClvmAtom` accepts only a value convertible to a CLVM integer.
 - `readClvmFlag` accepts exactly integer `0` or `1`.
-- `readClvmList` accepts a proper list with exactly `length` members.
+- `readClvmList` accepts a proper nil-terminated list with exactly `length`
+  members; dotted tails are rejected.
 
 These helpers validate representation, not game rules. The decoder must still
 check positivity, ranges, cross-field relationships, and consistency with
@@ -437,6 +466,11 @@ input)` must preserve already-initialized member state. `iStarted` identifies
   must not add retry or redo behavior.
 - `hand-ended` supplies the normalized terminal model for one member. Multi-ID
   hands receive independent terminal inputs as their members finish.
+
+`hand-started` is the only input allowed to initialize a null durable state.
+Every other input requires a valid current state, and every package transition
+must produce a state accepted by its codec. The host treats violations as
+internal errors rather than silently dropping the input.
 
 The exact terminal payload is:
 

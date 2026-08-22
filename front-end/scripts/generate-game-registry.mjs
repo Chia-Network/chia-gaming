@@ -31,6 +31,10 @@ function tsString(value) {
   return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 }
 
+function tsProperty(value) {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value) ? value : tsString(value);
+}
+
 function tsArray(values, multiline = false) {
   if (!multiline) return `[${values.join(', ')}]`;
   return `[\n${values.map((value) => `  ${value},`).join('\n')}\n]`;
@@ -49,13 +53,13 @@ const imports = production
       `import handProposal${index} from '${relTo(key, 'handProposal.ts')}';`,
       `import { HandProposalForm as HandProposalForm${index} } from '${relTo(key, 'handProposalForm.tsx')}';`,
       `import { play as play${index} } from '${relTo(key, 'play.tsx')}';`,
-      `const pkg${index} = Object.assign({}, handProposal${index}, { HandProposalForm: HandProposalForm${index}, ...play${index} });`,
+      `const pkg${index} = defineGamePackage(handProposal${index}, HandProposalForm${index}, play${index});`,
     ].join('\n');
   })
   .join('\n');
 const productionList = tsArray(production.map(tsString));
 const presetList = tsArray(presetFiles.map(tsString), true);
-const packageList = tsArray(production.map((_, index) => `pkg${index}`));
+const packageMap = production.map((key, index) => `  ${tsProperty(key)}: pkg${index},`).join('\n');
 
 const destDir = join(FE, '../src/generated');
 mkdirSync(destDir, { recursive: true });
@@ -77,11 +81,15 @@ export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
 writeFileSync(
   join(destDir, 'gamePackages.ts'),
   `// Generated from games/registry.json. Do not edit.
+import { defineGamePackage } from '../../../games/host';
 ${imports}
 
 export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;
 export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
-export const GENERATED_GAME_PACKAGES = ${packageList};
+export const GENERATED_GAME_PACKAGES_BY_KEY = {
+${packageMap}
+} as const;
+export const GENERATED_GAME_PACKAGES = Object.values(GENERATED_GAME_PACKAGES_BY_KEY);
 export { PRESET_FILES, GAME_PRESET_FILES, CORE_PRESET_FILES } from './gamePresets';
 `,
 );
