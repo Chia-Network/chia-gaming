@@ -19,12 +19,12 @@ use crate::common::types::{
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
     FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, LocalActionKind,
-    SettlementOutcome,
+    SettlementOutcome, TimeoutClaimSemantic,
 };
 use crate::shutdown::get_conditions_with_channel_state;
 use crate::utils::proper_list;
 
-use crate::game_session::PeerLifecyclePhase;
+use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::types::{
     validate_new_move_action, BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage,
     PotatoState, WireGameSpec, WireProposalGroup,
@@ -1766,11 +1766,20 @@ impl SpendWalletReceiver for OffChainPhase {
 
 #[typetag::serde]
 impl PeerLifecyclePhase for OffChainPhase {
+    fn phase_name(&self) -> &'static str {
+        "off-chain phase"
+    }
     fn has_queued_message(&self) -> bool {
         OffChainPhase::has_queued_message(self)
     }
     fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         OffChainPhase::process_queued_message(self, env)
+    }
+    fn has_queued_action(&self) -> bool {
+        false
+    }
+    fn process_queued_action(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
     }
     fn received_message(
         &mut self,
@@ -1849,8 +1858,51 @@ impl PeerLifecyclePhase for OffChainPhase {
         self.take_channel_spend_next_phase()
             .map(|h| h as Box<dyn PeerLifecyclePhase>)
     }
+    fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
+    }
     fn handshake_finished(&self) -> bool {
         OffChainPhase::handshake_finished(self)
+    }
+    fn is_on_chain(&self) -> bool {
+        false
+    }
+    fn start_handshake(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Option<Effect>, Error> {
+        Err(phase_operation_error(self.phase_name(), "start_handshake"))
+    }
+    fn channel_offer(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: SpendBundle,
+    ) -> Result<Option<Effect>, Error> {
+        Ok(None)
+    }
+    fn channel_transaction_completion(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: &SpendBundle,
+    ) -> Result<Option<Effect>, Error> {
+        Ok(None)
+    }
+    fn provide_launcher_coin(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _launcher_coin: CoinString,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "provide_launcher_coin",
+        ))
+    }
+    fn provide_coin_spend_bundle(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: SpendBundle,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "provide_coin_spend_bundle",
+        ))
     }
     fn propose_games(
         &mut self,
@@ -1914,11 +1966,51 @@ impl PeerLifecyclePhase for OffChainPhase {
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         OffChainPhase::channel_state(self)
     }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn wallet_callback_failed(&mut self, _reason: String) {}
+    fn has_active_on_chain_games(&self) -> bool {
+        false
     }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn timeout_claim_submitted(
+        &mut self,
+        _semantic: TimeoutClaimSemantic,
+    ) -> Result<Option<GameNotification>, Error> {
+        Ok(None)
+    }
+    fn timeout_claim_rearmed(
+        &mut self,
+        _semantic: TimeoutClaimSemantic,
+    ) -> Result<Option<GameNotification>, Error> {
+        Ok(None)
+    }
+    #[cfg(test)]
+    fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
+        OffChainPhase::corrupt_state_for_testing(self, new_sn)
+    }
+    #[cfg(test)]
+    fn force_unroll_spend_for_testing(
+        &self,
+        env: &mut ChannelEnv<'_>,
+    ) -> Result<SpendBundle, Error> {
+        OffChainPhase::force_unroll_spend(self, env)
+    }
+    #[cfg(test)]
+    fn last_channel_coin_spend_info_for_testing(&self) -> Option<ChannelCoinSpendInfo> {
+        self.get_last_channel_coin_spend_info().cloned()
+    }
+    #[cfg(test)]
+    fn force_stale_unroll_spend_for_testing(
+        &self,
+        env: &mut ChannelEnv<'_>,
+        saved: &ChannelCoinSpendInfo,
+    ) -> Result<SpendBundle, Error> {
+        OffChainPhase::force_stale_unroll_spend(self, env, saved)
+    }
+    #[cfg(test)]
+    fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase> {
+        None
+    }
+    fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
+        None
     }
 }
 

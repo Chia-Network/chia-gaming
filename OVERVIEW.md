@@ -532,11 +532,19 @@ All phases implement the `PeerLifecyclePhase` trait (defined in `src/game_sessio
 which provides a uniform interface for receiving messages, responding to
 coin-watching events, and performing game actions. The `GameSession`
 holds a single `Box<dyn PeerLifecyclePhase>` and routes all events through it.
+The trait has no behavioral defaults: every concrete phase explicitly defines
+every operation as valid behavior, an intentional no-op, or a phase-specific
+error. This keeps `GameSession` phase-agnostic and makes additions to the
+operation surface a compile-time checklist for every phase. Phase-specific
+operations such as handshake start and timeout status updates also use this
+interface rather than runtime type downcasts.
 
 When a phase is complete, it produces the next phase via
 `take_next_phase()`. The session detects this in `detect_phase_transition`
-and swaps in the new phase. This creates a linear progression through
-the channel lifecycle:
+and swaps in the new phase. Each concrete phase constructs its own successor
+because it owns the state-transfer knowledge; the successors deliberately have
+different constructor shapes. This creates a linear progression through the
+channel lifecycle:
 
 ```
 HandshakeInitiator ─┐
