@@ -7,6 +7,7 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { log } from '../services/log';
 import { normalizeHexString, toUint8, toHexString } from '../util';
+import { jsonStringify } from '../util/jsonSafe';
 import {
   beginOAuthPopupLogin,
   createAuthTokenProvider,
@@ -437,12 +438,26 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           id: string;
           status: string;
           coinSpends: any[] | null;
+          aggregatedSignature: string | null;
+          signedSpendBundle: {
+            aggregatedSignature: string;
+            coinSpends: any[];
+          } | null;
         } | null;
       }>(
         `query($id: ID!) {
           signatureRequest(id: $id) {
             id
             status
+            aggregatedSignature
+            signedSpendBundle {
+              aggregatedSignature
+              coinSpends {
+                coin { parentCoinInfo puzzleHash amount }
+                puzzleReveal
+                solution
+              }
+            }
             coinSpends {
               coin { parentCoinInfo puzzleHash amount }
               puzzleReveal
@@ -535,20 +550,31 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       }
     }
 
-    const coinSpends = sr.coinSpends;
+    // Prefer the complete signedSpendBundle: for vault wallets it includes the custody (singleton)
+    // coin spend that emits the SEND_MESSAGE paired with the inner p2 coin's RECEIVE_MESSAGE. Building
+    // from the filtered `coinSpends` alone drops that spend and the full node rejects the bundle with
+    // MESSAGE_NOT_SENT_OR_RECEIVED. Fall back to `coinSpends` for non-vault wallets / older APIs.
+    const signed = sr.signedSpendBundle;
+    const coinSpends =
+      Array.isArray(signed?.coinSpends) && signed.coinSpends.length > 0 ? signed.coinSpends : sr.coinSpends;
     if (!Array.isArray(coinSpends) || coinSpends.length === 0) {
       throw new Error(
         'Cloud Wallet signature request is signed but returned no coinSpends. Vault-less wallets may need a Cloud Wallet API fix.',
       );
     }
 
-    const bundle = coinSpendsToWalletBundle(coinSpends);
-    // Attach a synthetic name for logging / WC parity.
-    const nameBytes = new TextEncoder().encode(JSON.stringify(bundle));
+    // Use the vault's real aggregated signature from the signed request. Without it the wasm cradle
+    // rejects the bundle (StrErr("bad aggsig length")) and the funding spend would be invalid; the
+    // NIL fallback inside coinSpendsToWalletBundle only applies when the wallet cannot supply one.
+    const aggregatedSignature = signed?.aggregatedSignature ?? sr.aggregatedSignature;
+    const bundle = coinSpendsToWalletBundle(coinSpends, aggregatedSignature);
+    // Attach a synthetic name for logging / WC parity. Use the BigInt-safe serializer because the
+    // bundle carries coin amounts as bigint, which a raw JSON.stringify cannot serialize.
+    const nameBytes = new TextEncoder().encode(jsonStringify(bundle));
     const hashBuf = await crypto.subtle.digest('SHA-256', nameBytes);
     const name = toHexString(new Uint8Array(hashBuf));
     log(
-      `[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length}`,
+      `[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length} aggsig=${aggregatedSignature ? 'real' : 'nil'} source=${signed?.coinSpends?.length ? 'signedSpendBundle' : 'coinSpends'}`,
     );
     return bundle;
   }
