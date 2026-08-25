@@ -252,10 +252,9 @@ impl OffChainPhase {
 
     fn hydrate_wire_proposal_group(
         &mut self,
-        env: &mut ChannelEnv<'_>,
         wire: &WireProposalGroup,
+        factory_games: Vec<game::FactoryGame>,
     ) -> Result<(Vec<Rc<GameStartInfo>>, GameType), Error> {
-        let factory_games = self.factory_games(env, &wire.start)?;
         let ids = validate_wire_group_structure(wire, factory_games.len())?;
 
         let mut receiver_starts = Vec::with_capacity(factory_games.len());
@@ -697,8 +696,17 @@ impl OffChainPhase {
                             wire.start.game_type,
                         )));
                     } else {
+                        let factory_games = match self.factory_games(env, &wire.start) {
+                            Ok(games) => games,
+                            Err(error) => {
+                                effects.push(Effect::Log(format!(
+                                    "declining proposal because local factory rejected it: {error:?}"
+                                )));
+                                continue;
+                            }
+                        };
                         let (games, resolved_game_type) =
-                            self.hydrate_wire_proposal_group(env, wire)?;
+                            self.hydrate_wire_proposal_group(wire, factory_games)?;
                         for gsi in &games {
                             let ch = self.channel_state_mut()?;
                             ch.apply_received_proposal(env, gsi, wire.group_id)?;

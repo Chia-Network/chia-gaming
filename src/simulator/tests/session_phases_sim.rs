@@ -6911,7 +6911,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     }));
 
     res.push((
-        "test_spacepoker_invalid_proposal_params_disconnects_peer",
+        "test_spacepoker_invalid_proposal_params_decline_offer",
         &|| {
             let mut allocator = AllocEncoder::new();
 
@@ -6924,15 +6924,25 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let outcome = run_spacepoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                Some(&|_, cradles| cradles[1].is_peer_disconnected()),
+                Some(&|move_number, _| move_number >= moves.len()),
                 None,
             )
             .expect("should finish");
 
             assert!(
-            outcome.cradles[1].is_peer_disconnected(),
-            "player 1 should disconnect after receiving invalid Space Poker proposal parameters"
-        );
+                !outcome.cradles[1].is_peer_disconnected(),
+                "factory rejection should not disconnect player 1"
+            );
+            assert!(
+                !outcome.local_uis[1]
+                    .notifications
+                    .iter()
+                    .any(|notification| matches!(
+                        notification,
+                        GameNotification::ProposalMade { .. }
+                    )),
+                "factory-rejected proposal should not reach the UI"
+            );
         },
     ));
 

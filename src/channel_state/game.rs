@@ -157,6 +157,19 @@ impl Game {
                 .sha256tree(allocator)
                 .hash()
                 .clone();
+            let initial_mover_share = atom_from_clvm(allocator, fields[6])
+                .and_then(|a| u64_from_atom(&a))
+                .ok_or_else(|| {
+                    Error::StrErr(format!(
+                        "proposal factory game {index} has invalid mover share"
+                    ))
+                })?;
+            if Amount::new(initial_mover_share) > amount {
+                return Err(Error::StrErr(format!(
+                    "proposal factory game {index} mover share {initial_mover_share} exceeds amount {}",
+                    amount.to_u64()
+                )));
+            }
 
             games.push(FactoryGame {
                 sender_contribution,
@@ -179,13 +192,7 @@ impl Game {
                         ))
                     })?,
                 initial_state: Rc::new(Program::from_nodeptr(allocator, fields[5])?),
-                initial_mover_share: atom_from_clvm(allocator, fields[6])
-                    .and_then(|a| u64_from_atom(&a))
-                    .ok_or_else(|| {
-                        Error::StrErr(format!(
-                            "proposal factory game {index} has invalid mover share"
-                        ))
-                    })?,
+                initial_mover_share,
                 my_turn_handler: Program::from_nodeptr(allocator, fields[7])?,
                 their_turn_handler: Program::from_nodeptr(allocator, fields[8])?,
                 initial_validation_program,
@@ -199,6 +206,42 @@ impl Game {
 #[cfg(test)]
 mod atomic_factory_tests {
     use super::*;
+    use crate::common::types::Node;
+
+    #[test]
+    fn run_factory_rejects_initial_mover_share_above_amount() {
+        let mut allocator = AllocEncoder::new();
+        let record = (
+            10u64,
+            (
+                0u64,
+                (
+                    true,
+                    (
+                        Vec::<u8>::new(),
+                        (32u64, ((), (11u64, ((), ((), ((), ())))))),
+                    ),
+                ),
+            ),
+        )
+            .to_clvm(&mut allocator)
+            .unwrap();
+        let records = (Node(record), ()).to_clvm(&mut allocator).unwrap();
+        let quote = allocator.allocator().one();
+        let factory_node = allocator.allocator().new_pair(quote, records).unwrap();
+        let factory = Puzzle::from_nodeptr(&mut allocator, factory_node).unwrap();
+
+        let error = match Game::run_factory(&mut allocator, factory, &Program::from_bytes(&[0x80]))
+        {
+            Ok(_) => panic!("factory accepted mover share above amount"),
+            Err(error) => error,
+        };
+
+        assert!(
+            format!("{error:?}").contains("mover share 11 exceeds amount 10"),
+            "unexpected error: {error:?}"
+        );
+    }
 
     fn factory_game(sender_goes_first: bool) -> FactoryGame {
         FactoryGame {
