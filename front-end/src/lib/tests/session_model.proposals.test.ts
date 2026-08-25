@@ -351,7 +351,7 @@ describe('session model proposal and normalization contracts', () => {
           },
         },
         lastDisplayedId: '7',
-        handState: { gameType: 'calpoker', version: 1n, state: { cards: [1n] } },
+        handState: { gameType: 'calpoker', state: { cards: [1n] } },
       },
     });
 

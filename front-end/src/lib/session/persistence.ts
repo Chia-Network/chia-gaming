@@ -16,11 +16,8 @@ import type {
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
 import {
   decodePersistedGameState,
-  decodeGameFeatureState,
   encodeHandProposalExtras,
-  gameHandMembershipDescription,
   isCatalogGameType,
-  validateGameHandMembership,
 } from '../gameRegistry';
 import {
   DIAGNOSTIC_LOG_LIMIT,
@@ -336,9 +333,8 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       new Set(['make_move', 'accept_settlement', 'cheat']),
       `pendingCandidates[${index}].action`,
     );
-    const featureState = decodeGameFeatureState(pending.gameType, pending.featureState);
-    if (featureState === null) {
-      throw new Error(`Garbled save: invalid pendingCandidates[${index}].featureState`);
+    if (!Object.hasOwn(pending, 'state')) {
+      throw new Error(`Garbled save: pendingCandidates[${index}] is missing state`);
     }
     if (
       pending.gameType !== fields.activeGameType ||
@@ -347,7 +343,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     ) {
       throw new Error(`Garbled save: pending candidate ${id} is not an active hand member`);
     }
-    return { gameType: pending.gameType, id, action, featureState };
+    return { gameType: pending.gameType, id, action, state: pending.state };
   });
   if (new Set(pendingCandidates.map((pending) => pending.id)).size !== pendingCandidates.length) {
     throw new Error('Garbled save: duplicate pending candidate id');
@@ -655,16 +651,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   if (decodedHandState !== null && currentHandIds.length === 0) {
     throw new Error('Garbled save: handState requires currentHandGameIds');
   }
-  if (
-    currentHandIds.length > 0 &&
-    isCatalogGameType(save.activeGameType) &&
-    !validateGameHandMembership(save.activeGameType, currentHandIds, handState)
-  ) {
-    throw new Error(
-      `Garbled save: ${save.activeGameType} requires ${gameHandMembershipDescription(save.activeGameType)}`,
-    );
-  }
-
   const compose = parseComposeDraftState(save.betweenHandCompose);
   const lastHandProposal =
     save.betweenHandLastHandProposal === null

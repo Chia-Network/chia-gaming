@@ -28,7 +28,7 @@ import SpacePoker from '@games/spacepoker/ui/SpacePoker';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { UncaughtClientErrorReporter } from '../../components/GameSession';
 import { markClientErrorReported } from '../clientError';
-import { terminalGameHandSource } from '@games/host';
+import { createGameHand, terminalGameHandSource } from '@games/host';
 import type { GameTerminalModel } from '../session/types';
 
 const NO_TERMINAL: GameTerminalModel = {
@@ -188,7 +188,9 @@ describe('terminal game controls', () => {
     act(() => {
       renderer = create(
         createElement(Krunk, {
-          handSource: terminalGameHandSource(handState),
+          handSource: terminalGameHandSource(
+            createGameHand(krunkStateCodec.decode(handState)!, (current) => current),
+          ),
           currentHandGameIds: ['alice', 'bob'],
           activeGameIds: [],
           onGameLog: () => {},
@@ -227,7 +229,9 @@ describe('terminal game controls', () => {
     act(() => {
       renderer = create(
         createElement(SpacePoker, {
-          handSource: terminalGameHandSource(handState),
+          handSource: terminalGameHandSource(
+            createGameHand(spacepokerStateCodec.decode(handState)!, (current) => current),
+          ),
           gameId: 'space',
           betSize: '100',
           unitSizeMojos: '10',

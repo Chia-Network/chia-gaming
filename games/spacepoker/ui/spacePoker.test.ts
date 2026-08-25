@@ -4,13 +4,14 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import {
   EMPTY_GAME_TERMINAL_MODEL,
   terminalGameHandSource,
+  createGameHand,
   type GameIntent,
   type GameHandSource,
   type LiveGamePort,
   type PersistedGameState,
 } from '../../host';
 import SpacePoker from './SpacePoker';
-import { reduceSpacepokerDurableState, reduceSpacepokerSettlementState } from './handProposal';
+import { reduceSpacepokerSettlementState } from './handProposal';
 import { spacePokerRankLabel } from './handPresentation';
 import {
   spacePokerFooterStatus,
@@ -18,7 +19,12 @@ import {
   spacePokerTerminalCommentary,
   spacePokerTransitionCommentary,
 } from './statusPresentation';
-import { spacepokerStateCodec, type SpacepokerHandState } from './serialize';
+import {
+  createSpacepokerHand,
+  isSpacepokerHandState,
+  spacepokerStateCodec,
+  type SpacepokerHandState,
+} from './serialize';
 import {
   isTerminalSpacepokerHandler,
   SpHandler,
@@ -49,7 +55,8 @@ function handState(overrides: Partial<SpacepokerHandState> = {}): SpacepokerHand
 }
 
 function liveSource(port: LiveGamePort, state: PersistedGameState): GameHandSource {
-  return { interactionMode: 'live', handState: state, port };
+  const current = spacepokerStateCodec.decode(state)!;
+  return { interactionMode: 'live', hand: createGameHand(current, (value) => value), port };
 }
 
 describe('Space Poker terminal UX', () => {
@@ -100,16 +107,34 @@ describe('Space Poker terminal UX', () => {
     expect(reduceSpacepokerSettlementState(revealed, 'settled_cleanly')).toEqual(revealed);
   });
 
-  it('reduces current opponent input directly into durable state', () => {
+  it('receives an empty opponent readable through the game hand', () => {
     const current = handState({ gameState: { handler: SpHandler.CommitA, myTurn: false, N: 4n } });
-    const next = reduceSpacepokerDurableState(current, {
-      type: 'opponent-moved',
-      gameId: '7',
-      readable: new Uint8Array(),
-      moverShare: '0',
+    const hand = createSpacepokerHand({
+      id: '7',
+      gameIds: ['7'],
       iStarted: false,
+      canAct: false,
+      origin: 'local',
+      handProposal: {
+        gameType: 'spacepoker',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+        unitSizeMojos: 10n,
+      },
     });
-    expect(next?.gameState).toEqual({ handler: SpHandler.CommitB, myTurn: true, N: 4n });
+    hand.installState(current);
+    hand.receive({
+      type: 'move-readable',
+      gameId: '7',
+      readable: new Uint8Array([0x80]),
+      moverShare: '0',
+    });
+    expect(hand.getState().gameState).toEqual({
+      handler: SpHandler.CommitB,
+      myTurn: true,
+      N: 4n,
+    });
   });
 });
 
@@ -199,67 +224,6 @@ describe('Space Poker machine-owned hand state', () => {
     expect((onGameLog.mock.calls[0][0] as string[]).join(' ')).toContain('all');
   });
 
-  it('preserves delayed canonical gameplay state and displays the rejection', () => {
-    const current = handState();
-    const next = reduceSpacepokerDurableState(current, {
-      type: 'move-rejected',
-      gameId: '7',
-      tag: 'ui_protocol_mismatch',
-      message: 'Space Poker move was rejected.',
-    });
-    expect(next).toEqual({
-      ...current,
-      error: { tag: 'ui_protocol_mismatch', message: 'Space Poker move was rejected.' },
-    });
-
-    const port = { isChannelReady: () => true, dispatch: jest.fn() } as LiveGamePort;
-    act(() => {
-      renderer = create(
-        React.createElement(SpacePoker, {
-          handSource: liveSource(port, spacepokerStateCodec.encode(next!)),
-          gameId: '7',
-          betSize: '100',
-          unitSizeMojos: '10',
-          terminal: EMPTY_GAME_TERMINAL_MODEL,
-        }),
-      );
-    });
-    expect(
-      renderer!.root.findAll((node) => node.props.children === 'Space Poker move was rejected.'),
-    ).toHaveLength(1);
-  });
-
-  it('clears rejection feedback in the next valid local move candidate', () => {
-    const persisted = spacepokerStateCodec.encode(
-      handState({ error: { tag: 'ui_protocol_mismatch', message: 'Rejected.' } }),
-    );
-    let candidate: SpacepokerHandState | null = null;
-    const port = {
-      isChannelReady: () => true,
-      dispatch: (intent: GameIntent<SpacepokerHandState>) => {
-        candidate = intent.state;
-      },
-    } as LiveGamePort;
-    let hand: UseSpacepokerHandResult | undefined;
-    function Harness() {
-      hand = useSpacepokerHand(
-        liveSource(port, persisted),
-        '7',
-        100n,
-        10n,
-        EMPTY_GAME_TERMINAL_MODEL,
-      );
-      return null;
-    }
-
-    act(() => {
-      renderer = create(React.createElement(Harness));
-    });
-    act(() => hand!.handleCheck());
-
-    expect(candidate).toMatchObject({ error: null });
-  });
-
   it('leaves render state unchanged when a local command is rejected', () => {
     const persisted = spacepokerStateCodec.encode(handState());
     let rejected: GameIntent<SpacepokerHandState> | null = null;
@@ -329,7 +293,7 @@ describe('Space Poker machine-owned hand state', () => {
 
     expect(committed).toHaveLength(1);
     expect(committed[0]).toMatchObject({ type: 'accept-settlement', gameId: '7' });
-    expect(spacepokerStateCodec.isState(committed[0].state)).toBe(true);
+    expect(isSpacepokerHandState(committed[0].state)).toBe(true);
     expect(committed[0].state).toMatchObject({
       gameState: { handler: SpHandler.Folded, myTurn: false, N: 3n },
       handHistory: [{ player: 'you', action: 'fold' }],
@@ -373,7 +337,9 @@ describe('Space Poker machine-owned hand state', () => {
   });
 
   it('does not expose protocol actions from a terminal hand source', () => {
-    const source = terminalGameHandSource(spacepokerStateCodec.encode(handState()));
+    const source = terminalGameHandSource(
+      createGameHand(handState(), (current) => current),
+    );
     act(() => {
       renderer = create(
         React.createElement(SpacePoker, {

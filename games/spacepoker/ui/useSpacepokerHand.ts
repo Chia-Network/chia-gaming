@@ -1,15 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
-import {
-  gameHandState,
-  requireLiveGameHandSource,
-  type GameHandSource,
-  type PersistedGameState,
-} from '../../host';
+import { gameHandState, requireLiveGameHandSource, type GameHandSource } from '../../host';
 import { useGameHost } from '../../host/ui';
 import type { GameTerminalModel, SettlementOutcome } from '../../host';
 import {
-  spacepokerStateCodec,
   type SpacepokerDisplayMode,
   type SpacepokerHandState,
   type SpGameState,
@@ -64,7 +58,6 @@ export interface UseSpacepokerHandResult {
   betUnit: bigint;
   handHistory: SpHandEntry[];
   outcome: SpOutcome | null;
-  error: SpacepokerHandState['error'];
   terminalOutcome: SettlementOutcome | null;
   terminalState: SpTerminalState;
   lastRaise: bigint;
@@ -91,16 +84,14 @@ function formatXch(mojos: bigint, xchLabel: string): string {
 }
 
 export function useSpacepokerHand(
-  handSource: GameHandSource,
+  handSource: GameHandSource<SpacepokerHandState>,
   gameId: string,
   betSize: bigint,
   unitSizeMojos: bigint,
   terminal: GameTerminalModel,
 ): UseSpacepokerHandResult {
   const { currencyLabels } = useGameHost();
-  const persistedState = gameHandState(handSource);
-  const state = spacepokerStateCodec.decode(persistedState);
-  if (!state) throw new Error('Space Poker requires initialized durable game state');
+  const state = gameHandState(handSource);
   if (unitSizeMojos <= 0n) throw new Error('Space Poker requires a positive unit size');
   if (state.unitSizeMojos !== unitSizeMojos) {
     throw new Error('Space Poker persisted unit size does not match proposal terms');
@@ -123,9 +114,7 @@ export function useSpacepokerHand(
   const displayMode = interactive ? state.displayMode : (terminalDisplayMode ?? state.displayMode);
 
   const currentDurableState = useCallback((): SpacepokerHandState => {
-    const current = spacepokerStateCodec.decode(gameHandState(handSourceRef.current));
-    if (!current) throw new Error('Space Poker requires initialized durable game state');
-    return current;
+    return gameHandState(handSourceRef.current);
   }, []);
 
   const commitLocalAction = useCallback(
@@ -133,7 +122,7 @@ export function useSpacepokerHand(
       const controller = requireLiveGameHandSource(handSourceRef.current);
       const id = gameIdRef.current;
       if (!id) return;
-      const next = { ...update(currentDurableState()), error: null };
+      const next = update(currentDurableState());
       controller.dispatch(
         command.type === 'make-move'
           ? { type: 'make-move', gameId: id, readable: command.readable, state: next }
@@ -161,9 +150,9 @@ export function useSpacepokerHand(
     [currentDurableState],
   );
 
-  const autoFiredSnapshotRef = useRef<Readonly<PersistedGameState> | null>(null);
+  const autoFiredSnapshotRef = useRef<SpacepokerHandState | null>(null);
   useEffect(() => {
-    if (!interactive || !persistedState || terminal.type !== 'none') return;
+    if (!interactive || terminal.type !== 'none') return;
     if (state.terminalState !== 'none' || isTerminalSpacepokerHandler(state.gameState.handler))
       return;
     const { handler, myTurn, N } = state.gameState;
@@ -173,8 +162,8 @@ export function useSpacepokerHand(
       update: (current: SpacepokerHandState) => SpacepokerHandState,
       command: LocalGameCommand,
     ) => {
-      if (autoFiredSnapshotRef.current === persistedState) return;
-      autoFiredSnapshotRef.current = persistedState;
+      if (autoFiredSnapshotRef.current === state) return;
+      autoFiredSnapshotRef.current = state;
       commitLocalAction(update, command);
     };
 
@@ -255,7 +244,7 @@ export function useSpacepokerHand(
         );
       }
     }
-  }, [commitLocalAction, interactive, persistedState, playerStack, state, terminal.type]);
+  }, [commitLocalAction, interactive, playerStack, state, terminal.type]);
 
   const handleCheck = useCallback(() => {
     commitLocalAction(
@@ -350,7 +339,6 @@ export function useSpacepokerHand(
     betUnit,
     handHistory: state.handHistory,
     outcome: state.outcome,
-    error: state.error,
     terminalOutcome: terminal.outcome,
     terminalState: state.terminalState,
     lastRaise: state.lastRaise,

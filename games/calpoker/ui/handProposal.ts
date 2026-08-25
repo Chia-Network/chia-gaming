@@ -1,19 +1,15 @@
 import {
   equalHandProposalBase,
-  type GameFeatureRegistration,
+  type GamePackageRegistration,
   type HandProposal,
   type ProposalParameterCodec,
 } from '../../host';
-import {
-  calpokerStateCodec,
-  reduceCalpokerDurableState,
-  type CalpokerHandState,
-} from './serialize';
+import { createCalpokerHand, type CalpokerHandState } from './serialize';
 
 export {
   calpokerOutcomeFromState,
   isCalpokerOutcomeReadable,
-  reduceCalpokerDurableState,
+  reduceCalpokerHandState,
   reduceCalpokerFeatureState,
 } from './serialize';
 
@@ -47,21 +43,19 @@ export function validateCalpokerHandProposal(handProposal: HandProposal): boolea
   );
 }
 
-const registration: GameFeatureRegistration<
-  CalpokerHandState,
+const registration: GamePackageRegistration<
   CalpokerHandState,
   { amount: bigint },
   CalpokerFactoryParameters
 > = {
   gameType: 'calpoker',
   displayName: 'California Poker',
-  stateCodec: calpokerStateCodec,
+  canRemountFinished: true,
+  createHand: createCalpokerHand,
   proposalParameters: calpokerProposalParameters,
   describeHandProposal: (handProposal, { formatMojos }) =>
     `Stake ${formatMojos(handProposal.myContribution)} each`,
-  handMembershipDescription: 'exactly one currentHandGameId',
-  validateHandMembership: (gameIds) => gameIds.length === 1,
-  decodeFeatureState: (value) => (calpokerStateCodec.isState(value) ? value : null),
+  validateHandIds: (gameIds) => gameIds.length === 1,
   selectOutcome: (state) =>
     state.outcome ? { my_win_outcome: state.outcome.my_win_outcome } : null,
   lifecycle: {
@@ -105,15 +99,6 @@ const registration: GameFeatureRegistration<
       const handProposal = { gameType: 'calpoker', ...base };
       return validateCalpokerHandProposal(handProposal) ? handProposal : null;
     },
-  },
-  durableState: {
-    initialize(current, input) {
-      return reduceCalpokerDurableState(current, input)!;
-    },
-    reduceInput(current, input) {
-      return reduceCalpokerDurableState(current, input)!;
-    },
-    applyFeatureState: (_current, _gameId, state) => state,
   },
 };
 

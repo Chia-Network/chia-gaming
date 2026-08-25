@@ -1,7 +1,7 @@
 import { reduceBetweenHandEvent } from './sessionMachineBetweenHands';
 import { reduceChannelEvent } from './sessionMachineChannel';
 import { reduceSessionCommand } from './sessionMachineCommands';
-import { reduceDurableGameEvent } from './sessionMachineGame';
+import { reduceDurableGameEvent, type ActiveGameHandContext } from './sessionMachineGame';
 import { reduceSessionNotification } from './sessionMachineNotifications';
 import { reduceProposalEvent } from './sessionMachineProposals';
 import type {
@@ -51,6 +51,7 @@ function assertNever(event: never): never {
 export function reduceSessionMachine(
   state: SessionMachineState,
   event: SessionMachineEvent,
+  activeHand?: ActiveGameHandContext,
 ): SessionMachineTransition {
   switch (event.type) {
     case 'choose-same-terms':
@@ -67,7 +68,7 @@ export function reduceSessionMachine(
         state,
         event.notification,
         event.iStarted,
-        reduceSessionMachine,
+        (nextState, nextEvent) => reduceSessionMachine(nextState, nextEvent, activeHand),
       );
 
     case 'channel-status':
@@ -124,12 +125,12 @@ export function reduceSessionMachine(
     case 'notification-move-rejected':
     case 'notification-insufficient-balance':
     case 'notification-abandoned':
-    case 'feature-state':
+    case 'replace-hand-state':
     case 'local-game-action-staged':
     case 'local-game-action-applied':
     case 'local-action-applied':
     case 'discard-pending-candidate':
-      return reduceDurableGameEvent(state, event);
+      return reduceDurableGameEvent(state, event, activeHand);
 
     default:
       return assertNever(event);

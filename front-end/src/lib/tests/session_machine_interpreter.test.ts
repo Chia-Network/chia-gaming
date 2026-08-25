@@ -17,7 +17,7 @@ import type { SessionMachineEvent } from '../session/sessionMachineTypes';
 import { krunkStateCodec } from '@games/krunk/ui/serialize';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { projectRegisteredPendingCandidates, reduceRegisteredGameState } from '../gameRegistry';
+import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
 import { wasmResult } from './message_protocol.harness';
 
 const TERMS = {
@@ -243,19 +243,25 @@ describe('session machine causal sequences', () => {
         expect(game.handState?.gameType).toBe('krunk');
         expect(Object.keys(hand!.games)).toEqual(ids);
         expect(hand!.games[pickerId].role).toBe('alice');
-        return hand!.games[pickerId];
+        return hand!;
       };
       const pickWord = () => {
-        const picker = assertPickerAuthority();
+        const hand = assertPickerAuthority();
+        const picker = hand.games[pickerId];
         expect(
-          runtime.transitionFeatureState('krunk', pickerId, {
-            ...picker,
-            handler: 1n,
-            myTurn: false,
-            secretWord: 'CRANE',
+          runtime.replaceHandState('krunk', pickerId, {
+            games: {
+              ...hand.games,
+              [pickerId]: {
+                ...picker,
+                handler: 1n,
+                myTurn: false,
+                secretWord: 'CRANE',
+              },
+            },
           }),
         ).toBe(true);
-        expect(assertPickerAuthority().secretWord).toBe('CRANE');
+        expect(assertPickerAuthority().games[pickerId].secretWord).toBe('CRANE');
       };
 
       assertPickerAuthority();
@@ -282,7 +288,7 @@ describe('session machine causal sequences', () => {
     },
   );
 
-  it('drops a retired feature callback while current malformed callbacks still fail fast', () => {
+  it('drops retired replacements while current replacement state remains opaque', () => {
     const runtime = new SessionMachineRuntime(
       stateWithProposals([
         { memberIds: ['1', '2'], handProposal: KRUNK_TERMS },
@@ -327,31 +333,30 @@ describe('session machine causal sequences', () => {
     });
     const authority = runtime.getState();
 
-    expect(runtime.transitionFeatureState('calpoker', '2', { stale: true })).toBe(false);
-    expect(runtime.transitionFeatureState('krunk', '7', { stale: true })).toBe(false);
+    expect(runtime.replaceHandState('calpoker', '2', { stale: true })).toBe(false);
+    expect(runtime.replaceHandState('krunk', '7', { stale: true })).toBe(false);
     expect(runtime.getState()).toBe(authority);
 
-    expect(() => runtime.transitionFeatureState('calpoker', '7', { malformed: true })).toThrow(
-      'Invalid calpoker feature-state payload',
-    );
-    expect(runtime.getState()).toBe(authority);
+    expect(runtime.replaceHandState('calpoker', '7', { malformed: true })).toBe(true);
+    expect(runtime.getState().model.game.handState).toEqual({
+      gameType: 'calpoker',
+      state: { malformed: true },
+    });
   });
 
   it('persists each accepted deferred coin enrichment once and ignores stale generations', async () => {
     const pending: Array<(coinHex: string | null) => void> = [];
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
-    const handState = reduceRegisteredGameState('calpoker', null, {
-      type: 'hand-started',
-      init: {
-        id: '7',
-        gameIds: ['7'],
-        iStarted: true,
-        canAct: true,
-        origin: 'local',
-        handProposal: TERMS,
-      },
+    const hand = createRegisteredGameHand('calpoker', {
+      id: '7',
+      gameIds: ['7'],
+      iStarted: true,
+      canAct: true,
+      origin: 'local',
+      handProposal: TERMS,
     });
+    const handState = snapshotRegisteredGameHand('calpoker', hand);
     const runtime = new SessionMachineRuntime(
       createSessionMachineState(
         createSessionModel({
@@ -958,16 +963,7 @@ describe('session machine local game action boundary', () => {
       id: '7',
       action: 'make_move',
     });
-    expect(
-      calpokerStateCodec.decode(
-        projectRegisteredPendingCandidates(
-          'calpoker',
-          rendered[0].model.game.handState,
-          rendered[0].model.game.currentHandIds,
-          rendered[0].model.game.pendingCandidates,
-        ),
-      ),
-    ).toMatchObject({
+    expect(runtime.getGameHand()?.getState()).toMatchObject({
       moveNumber: 1n,
       isPlayerTurn: false,
     });
@@ -1040,12 +1036,8 @@ describe('session machine local game action boundary', () => {
       },
     });
     expect(runtime.getState().model.game.pendingCandidates).toEqual({});
-    expect(runtime.getState().model.game.handState).toEqual(
-      calpokerStateCodec.encode({
-        ...current,
-        error: { tag: 'invalid', message: 'Try another move' },
-      }),
-    );
+    expect(runtime.getState().model.game.handState).toEqual(calpokerStateCodec.encode(current));
+    expect(runtime.getGameHand()?.getState()).toEqual(current);
     expect(persisted).toHaveLength(2);
     expect(persisted[1].model.game.pendingCandidates).toEqual({});
     expect(persisted[1].model.game.handState).toEqual(runtime.getState().model.game.handState);
@@ -1074,6 +1066,7 @@ describe('session machine local game action boundary', () => {
       },
     });
     expect(runtime.getState().model.game.pendingCandidates).toEqual({});
+    expect(runtime.getGameHand()?.getState()).toEqual(current);
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
       message: 'queued cheat became stale',

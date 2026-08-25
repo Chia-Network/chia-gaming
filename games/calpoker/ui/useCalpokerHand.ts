@@ -3,11 +3,7 @@ import { Program } from 'clvm-lib';
 import type { CalpokerOutcomeShape } from './outcome';
 import type { GameHandOrigin, GameHandSource, GameTerminalModel } from '../../host';
 import { gameHandState, requireLiveGameHandSource } from '../../host';
-import {
-  calpokerStateCodec,
-  type CalpokerDisplaySnapshot,
-  type CalpokerHandState,
-} from './serialize';
+import { type CalpokerDisplaySnapshot, type CalpokerHandState } from './serialize';
 
 export type { CalpokerDisplaySnapshot, CalpokerHandState } from './serialize';
 
@@ -24,7 +20,6 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcomeShape<bigint> | undefined;
-  error: CalpokerHandState['error'];
   terminalOutcome: GameTerminalModel['outcome'];
   handleMakeMove: () => void;
   handleCheat: () => void;
@@ -60,17 +55,14 @@ export function calpokerResponderFinishesAtReveal(iStarted: boolean): boolean {
 }
 
 export function useCalpokerHand(
-  handSource: GameHandSource,
+  handSource: GameHandSource<CalpokerHandState>,
   gameId: string,
   iStarted: boolean,
   terminal: GameTerminalModel,
   handOrigin: GameHandOrigin = 'fresh',
 ): UseCalpokerHandResult {
   const interactive = handSource.interactionMode === 'live';
-  const handState = calpokerStateCodec.decode(gameHandState(handSource));
-  if (!handState) {
-    throw new Error('California Poker mount requires initialized durable game state');
-  }
+  const handState = gameHandState(handSource);
   const handSourceRef = useRef(handSource);
   const gameIdRef = useRef(gameId);
   const pendingPlayRef = useRef(false);
@@ -86,11 +78,7 @@ export function useCalpokerHand(
   gameIdRef.current = gameId;
 
   const currentState = useCallback((): CalpokerHandState => {
-    const current = calpokerStateCodec.decode(gameHandState(handSourceRef.current));
-    if (!current) {
-      throw new Error('California Poker action requires initialized durable game state');
-    }
-    return current;
+    return gameHandState(handSourceRef.current);
   }, []);
 
   const commitState = useCallback(
@@ -107,7 +95,7 @@ export function useCalpokerHand(
       command: LocalGameCommand,
     ): void => {
       const controller = requireLiveGameHandSource(handSourceRef.current);
-      const next = { ...update(currentState()), error: null };
+      const next = update(currentState());
       controller.dispatch(
         command.type === 'make-move'
           ? {
@@ -269,7 +257,6 @@ export function useCalpokerHand(
     setHandOrder,
     moveNumber: handState.moveNumber,
     outcome: suppressInitialOutcomeRef.current ? undefined : handState.outcome,
-    error: handState.error,
     terminalOutcome: terminal.outcome,
     handleMakeMove,
     handleCheat,

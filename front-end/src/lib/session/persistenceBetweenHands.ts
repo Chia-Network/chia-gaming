@@ -161,7 +161,7 @@ export function parseProposalGroups(value: unknown, label: string): ProposalGrou
       saved.hand_proposal,
       `${groupLabel}.hand_proposal`,
     );
-    if (!packageFor(handProposal.gameType).validateHandMembership(memberIds, null)) {
+    if (!packageFor(handProposal.gameType).validateHandIds(memberIds)) {
       throw new Error(
         `Garbled save: ${groupLabel} has ${memberIds.length} members for ${handProposal.gameType}`,
       );

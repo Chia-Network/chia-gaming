@@ -27,7 +27,7 @@ function amountForGame(amountsById: Record<string, string>, gameId: string): big
 }
 
 export interface CalpokerLiveMountProps {
-  handSource: GameHandSource;
+  handSource: GameHandSource<import('./serialize').CalpokerHandState>;
   gameId: string;
   iStarted: boolean;
   playerNumber: number;
@@ -130,7 +130,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
       opponentName={opponentName}
       terminalOutcome={hand.terminalOutcome}
       interactionMode={handSource.interactionMode}
-      error={hand.error}
+      error={null}
     />
   );
 }
@@ -139,7 +139,7 @@ export const play: GameMountRegistration = {
   render(view) {
     const gameId =
       view.activeIds[0] ?? view.lastDisplayedId ?? view.currentHandIds[0] ?? 'finished';
-    const source = gameHandSourceFromMountView(view);
+    const source = gameHandSourceFromMountView<import('./serialize').CalpokerHandState>(view);
     return (
       <CalpokerLiveMount
         handSource={source}

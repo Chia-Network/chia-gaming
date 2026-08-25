@@ -16,6 +16,7 @@ import type {
 import type { NonTerminalGameStatusPayload } from './presentation';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { Program } from 'clvm-lib';
+import type { PersistedGameState } from '@games/host';
 
 export type OutcomeWin = 'win' | 'lose' | 'tie';
 
@@ -133,6 +134,7 @@ export type SessionMachineEvent =
       amount: string;
       iStarted: boolean;
       isMyTurn: boolean;
+      handState?: PersistedGameState;
     }
   | {
       type: 'notification-game-status';
@@ -142,8 +144,14 @@ export type SessionMachineEvent =
       readable: Uint8Array | null;
       moverShare: string | null;
       iStarted: boolean;
+      handState?: PersistedGameState;
     }
-  | { type: 'notification-game-terminal'; id: string; terminal: GameTerminalModel }
+  | {
+      type: 'notification-game-terminal';
+      id: string;
+      terminal: GameTerminalModel;
+      handState?: PersistedGameState;
+    }
   | {
       type: 'notification-move-rejected';
       id: string;
@@ -157,10 +165,11 @@ export type SessionMachineEvent =
     }
   | { type: 'notification-abandoned' }
   | {
-      type: 'feature-state';
+      type: 'replace-hand-state';
       gameType: RegisteredGameType;
       id: string;
       state: unknown;
+      handState?: PersistedGameState;
     }
   | {
       type: 'local-game-action-staged';
@@ -168,6 +177,7 @@ export type SessionMachineEvent =
       id: string;
       action: LocalActionKind;
       state: unknown;
+      handState?: PersistedGameState;
     }
   | {
       type: 'local-game-action-applied';
@@ -175,6 +185,7 @@ export type SessionMachineEvent =
       id: string;
       action: LocalActionKind;
       state: unknown;
+      handState?: PersistedGameState;
     }
   | { type: 'local-action-applied'; id: string; action: LocalActionKind }
   | { type: 'discard-pending-candidate'; id: string; action?: LocalActionKind }

@@ -1,4 +1,3 @@
-import { EMPTY_GAME_TERMINAL_MODEL, type GameInput } from '@games/host';
 import calpokerPackage from '@games/calpoker/ui/handProposal';
 import { calpokerRegistration } from '@games/calpoker/ui/handProposal';
 import { krunkRegistration, isValidKrunkStake } from '@games/krunk/ui/handProposal';
@@ -10,7 +9,7 @@ import {
   encodeHandProposalExtras,
   handProposalsEqual,
   packageFor,
-  reduceRegisteredGameState,
+  createRegisteredGameHand,
   REGISTERED_GAMES,
   isCatalogGameType,
   validateHandProposal,
@@ -160,45 +159,19 @@ describe('pure game registrations', () => {
     expect(decodeHandProposal('spacepoker', base, [], peerSenderSecond)).toBeNull();
   });
 
-  it('only permits hand-started to initialize missing durable game state', () => {
+  it('creates a game-owned hand and restores complete state through its contract', () => {
     const handProposal = { gameType: 'calpoker' as const, ...base };
-    expect(
-      reduceRegisteredGameState('calpoker', null, {
-        type: 'hand-started',
-        init: {
-          id: '7',
-          gameIds: ['7'],
-          iStarted: true,
-          canAct: true,
-          origin: 'local',
-          handProposal,
-        },
-      }),
-    ).not.toBeNull();
-
-    const impossibleInputs: Exclude<GameInput, { type: 'hand-started' }>[] = [
-      {
-        type: 'opponent-moved',
-        gameId: '7',
-        readable: new Uint8Array(),
-        moverShare: '0',
-      },
-      { type: 'game-message', gameId: '7', readable: new Uint8Array() },
-      { type: 'move-rejected', gameId: '7', tag: 'invalid_move', message: 'invalid' },
-      { type: 'hand-ended', gameId: '7', terminal: EMPTY_GAME_TERMINAL_MODEL },
-    ];
-    for (const input of impossibleInputs) {
-      expect(() => reduceRegisteredGameState('calpoker', null, input)).toThrow(
-        `Internal calpoker ${input.type} input requires valid hand state`,
-      );
-    }
-    expect(() =>
-      reduceRegisteredGameState(
-        'calpoker',
-        { gameType: 'calpoker', version: -1n, state: {} },
-        impossibleInputs[0],
-      ),
-    ).toThrow('requires valid hand state');
+    const hand = createRegisteredGameHand('calpoker', {
+      id: '7',
+      gameIds: ['7'],
+      iStarted: true,
+      canAct: true,
+      origin: 'local',
+      handProposal,
+    });
+    const initial = hand.getState();
+    hand.installState(initial);
+    expect(hand.getState()).toEqual(initial);
   });
 
   it('keeps package keys in the model after protocol identities are ready', () => {
@@ -210,7 +183,7 @@ describe('pure game registrations', () => {
     try {
       expect(packageFor('calpoker').gameType).toBe('calpoker');
       expect(isCatalogGameType(BOUND_IDS[0].id)).toBe(false);
-      expect(calpokerRegistration.stateCodec.gameType).toBe('calpoker');
+      expect(calpokerRegistration.createHand).toEqual(expect.any(Function));
       expect(protocolIdForCatalog('calpoker')).toBe(BOUND_IDS[0].id);
       expect(catalogGameTypeFromWire('calpoker')).toBeNull();
       expect(catalogGameTypeFromWire(BOUND_IDS[0].id)).toBe('calpoker');
@@ -274,8 +247,8 @@ describe('pure game registrations', () => {
         theirContribution: 200n,
       }),
     ).toBe(false);
-    expect(calpokerRegistration.stateCodec.gameType).toBe('calpoker');
-    expect(spacepokerRegistration.stateCodec.gameType).toBe('spacepoker');
+    expect(calpokerRegistration.createHand).toEqual(expect.any(Function));
+    expect(spacepokerRegistration.createHand).toEqual(expect.any(Function));
   });
 
   it('round-trips persistence extras without manufacturing a unit', () => {

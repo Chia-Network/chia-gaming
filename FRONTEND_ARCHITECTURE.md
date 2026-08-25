@@ -415,11 +415,11 @@ resumable-session marker, and tab/reset coordination keys, inside the same-origi
 trust model described above.
 
 The current and only legal envelope schema is `chia-gaming-session` version
-`15`. Because the project is
+`16`. Because the project is
 still alpha, every other version is deleted wholesale without decoding or
-migration. A decoded v15 record must also satisfy the complete phase-owned
-envelope contract (keyed game membership, game-owned payload/type agreement,
-pending local candidates, terminal data, and frozen terminal coin list); malformed v15 records are
+migration. A decoded v16 record must also satisfy the complete phase-owned
+envelope contract (keyed game membership, generic game-state envelope agreement,
+pending local candidates, terminal data, and frozen terminal coin list); malformed v16 records are
 deleted rather than partially restored. The boot marker is retained after an
 incompatible or malformed resumable record is discarded so the failure remains
 visible at the Resume / Start Over boundary. The `version` field is kept as a
@@ -427,9 +427,9 @@ future migration hook for when there is an installed base to preserve.
 `decodeSessionSaveEnvelope` is the one envelope decoder used by both the
 pre-write check and the IndexedDB read check. Acceptance always constructs the
 normalized `SessionModel`; validation is not maintained as a second,
-shape-only parser. Game-owned `handState` likewise goes through one registered
-codec decode that returns its canonical envelope, referenced game IDs, and
-finished-remount capability together.
+shape-only parser. Game-owned `handState` is decoded only as the generic
+`{ gameType, state }` envelope. The owning package does not participate in
+persistence decoding.
 The envelope is a discriminated union. Every variant has `schema`, `version`,
 `phase`, `identity`, `preferences`, and `history`; `pre-handshake` adds
 `pairing`; `live` adds complete `pairing`, `live`, and `presentation` payloads;
@@ -443,7 +443,7 @@ are grouped under those phase-owned payloads:
 
 | Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `14`.                                                                                                                                                                                                                                                                          |
+| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `16`.                                                                                                                                                                                                                                                                          |
 | `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                     | `string?`                                                                                                  | Stable token linking the hub iframe and game-channel WebSocket.                                                                                                                                                                                                                                                 |
 | `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -483,7 +483,7 @@ are grouped under those phase-owned payloads:
 | `gameInstances`                 | `Record<string, …>`                                                                                        | Keyed-only per-game protocol snapshots: amount, coin, canonical `GameProtocolPresentation`, and terminal data.                                                                                                                                                                                                  |
 | `currentHandOrigin`             | `'local' \| 'peer' \| null`                                                                                | Canonical origin of the current hand, owned by the game slice and retained through independent member settlement and terminal display.                                                                                                                                                                          |
 | `activeGameType`                | `string`                                                                                                   | Current registered game type (`calpoker`, `spacepoker`, or `krunk`).                                                                                                                                                                                                                                            |
-| `handState`                     | `PersistedGameState \| null`                                                                               | Opaque game-owned state envelope (`gameType`, codec version, payload) for live restore or supported finished remounts.                                                                                                                                                                                          |
+| `handState`                     | `PersistedGameState \| null`                                                                               | Opaque game-owned state envelope (`gameType`, payload) for live restore or supported finished remounts.                                                                                                                                                                                                        |
 | `channelStatus`                 | `ChannelStatusPayload \| null`                                                                             | Last Rust-owned canonical snapshot for UI restore: actual channel lifecycle plus optional local `session_disposition`, advisory, coin identity/amount, balances, allocation, potato ownership, and `zero_payout`. It is normalized once into `ChannelStatusModel` before any view or lifecycle policy reads it. |
 | `myAlias`                       | `string?`                                                                                                  | Local player display name for the active pairing/session.                                                                                                                                                                                                                                                       |
 | `opponentAlias`                 | `string?`                                                                                                  | Opponent display name for the active pairing/session.                                                                                                                                                                                                                                                           |
@@ -520,21 +520,20 @@ The pure root reducer returns the next authority and ordered effects.
 `SessionMachineRuntime` publishes that authority, runs commands (including
 `persist-session`), and only then schedules React. Games dispatch a
 `GameIntent`. A command result distinguishes rejection, queueing, and actual
-application. Immediate application commits the candidate and local turn in one
-machine transition. A queued candidate is persisted separately from canonical
-`handState` and projected only for live rendering; the host promotes it when
-Rust emits host-only `LocalActionApplied`, or discards it on `MoveRejected` or
-`ActionFailed`. A rejected candidate therefore never enters canonical hand
-authority.
+application. Before installing a complete candidate in the live `GameHand`, the
+runtime retains canonical `handState` as a generic rollback checkpoint. A
+queued candidate and its checkpoint are both persisted. The host promotes the
+candidate when Rust emits host-only `LocalActionApplied`, or restores the
+checkpoint on `MoveRejected` or `ActionFailed`. Rejection is not sent to the
+game.
 `assembleSessionSave` reads
-game-owned canonical `handState` and separately validated pending candidates
+game-owned canonical `handState` and opaque complete pending candidates
 from current machine authority and combines them with
 the controller's WASM-origin snapshot at effect execution time. Every package
 has one `render(view)` mount. Its `frozen` boolean is a type discriminant: only
-the live branch has an intent port. Games decode the current machine-owned hand
-state on every render; there is no controller-owned mirror, event stream,
-one-shot live snapshot, render-driven save effect, or React/model mirror ref.
-A new `handKey` still creates a fresh component lifetime.
+the live branch has an intent port. The view reads typed state directly from
+the live or restored game-owned hand instance. A new `handKey` creates a fresh
+component and `GameHand` lifetime.
 `SessionController.onSaveNeeded` invokes the same runtime persistence path for
 ordinary debounced WASM changes. Transaction submission and resubmission remain
 owned by Rust's `TransactionManager`, not by a frontend transaction field.
@@ -548,11 +547,12 @@ instance's coin and protocol presentation together, so there are no separately
 mutable aggregate current-game fields that can drift across game IDs. A game
 instance's initial turn comes from Rust's per-game `ProposalAccepted.our_turn`
 fact; the frontend does not reconstruct it from channel role or factory order. A game
-hook computes a candidate state and submits it through `commitLocalGameAction`.
-The host either applies it immediately or stores one pending candidate per game
-ID until Rust reports application. Pending feature states are projected in
-ordered hand-ID order, never replace canonical `handState`, and make that ID
-non-actionable until application or rejection. Feature hooks never write
+hook computes a complete candidate hand state and submits it through
+`commitLocalGameAction`. The host either applies it immediately or stores one
+pending candidate per game ID until Rust reports application. Pending complete
+states are installed in the live hand, while canonical `handState` remains the
+rollback checkpoint; the pending ID is non-actionable until application or
+rejection. Game hooks never write
 controller persistence state, interpret protocol replay, or call persistence
 directly.
 `GameSettled` retires only its own game ID from the slice's active set.
@@ -569,7 +569,7 @@ same entry changes to `accepted`, preserving terms and ordered Krunk membership
 across both `ProposalAccepted` notifications. An `InsufficientBalance` removes
 the affected group atomically; successful Krunk members still settle
 independently, and the accepted entry is removed only after the hand is fully
-settled. The current v15 envelope makes
+settled. The current v16 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and keeps validated pending local candidates separate from game-owned
@@ -626,8 +626,8 @@ React-prop path: it bencodex-encodes the complete `SessionSave`, masks the
 salt-prefixed bytes, and stores that single `Uint8Array` as the IndexedDB value.
 
 This helper is an opaque persistence bridge, not a numeric conversion API.
-Game codecs, reducers, refs, and hook-local state retain canonical `bigint`
-values, including through game-component props. React 19.2.8 or newer is
+Game hand instances, reducers, refs, and hook-local state retain canonical
+`bigint` values, including through game-component props. React 19.2.8 or newer is
 required together with the checked-in `react-dom@19.2.8` pnpm patch. The patch
 applies React's upstream fix for development Performance Tracks incorrectly
 passing primitive BigInt arrays to native `JSON.stringify`, which crashed
@@ -664,8 +664,8 @@ React-only copy that restore has to reconstruct by hand.
 
 `SessionModel` is the generic shell boundary. It owns the canonical keyed
 protocol presentation and carries `handState` only as an opaque
-`PersistedGameState { gameType, version, state }` envelope. The shell does not
-interpret the payload. Production games export a `GamePackage`; the host
+`PersistedGameState { gameType, state }` envelope. The shell does not interpret
+or validate the payload. Production games export a `GamePackage`; the host
 contract, layout, and APIs are in [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md).
 `games/registry.json` is the only catalog. First-member initial validation
 puzzle hashes live in `gameIdentities.ts` (warmup fills the table by running
@@ -678,10 +678,10 @@ so the protocol id table is filled before play. Each game may ship
 `games/<key>/ui/styles.css`; the registry generator imports those files into
 the player-app stylesheet, and Tailwind scans `games/` for utility classes.
 Core never branches on Calpoker/Krunk/Space Poker when composing or reviewing a
-proposal. All three codecs support live restore. The codec's explicit
-`canRemountFinished` capability is `true` for Cal Poker, Space Poker, and
-Krunk, so cold finished-session rendering validates the game-owned payload
-before remounting instead of inferring support from payload presence alone.
+proposal. All three hand implementations support live restore. Package-level
+`canRemountFinished` is `true` for Cal Poker, Space Poker, and Krunk, so cold
+finished-session rendering creates a restored read-only hand only for packages
+that explicitly support it.
 
 **Game dashboard (status banner):** The compact strip above the Game tab content
 (`GameDashboard` in `Shell.tsx`) is selector-driven. `selectGameDashboardView`
@@ -1240,21 +1240,22 @@ boundaries:
 - The real `SessionController`, peer relay, callbacks, subscriptions, and
   blockchain attachment are a protocol lifetime. After the terminal reduction
   queue and atomic terminal save have flushed, they are detached and destroyed.
-  The retained feature receives a readonly terminal hand source, an empty
-  gameplay stream, and one selector projection built entirely from the
-  finalized `SessionModel`. Protocol access through a terminal source fails
+  The retained game receives its existing hand through a readonly terminal
+  source and one selector projection built entirely from the finalized
+  `SessionModel`. Protocol access through a terminal source fails
   immediately.
-- `FinishedSessionGameView` is cold-restoration infrastructure. It mounts a
-  validated persisted hand only when no live React tree survived, such as after
+- `FinishedSessionGameView` is cold-restoration infrastructure. It creates a
+  hand and installs its opaque saved state when no live React tree survived,
+  such as after
   a page reload. Its game controls remain disabled by terminal interaction mode,
   while scrolling, text selection, and copying remain available. Its
   error/fallback handling is isolated from the in-place terminal path.
 
 The terminal save retains only presentation payloads needed by supported
-game-specific rehydrators; an absent, unsupported, or stale payload renders the
-terminal summary instead. `selectFinishedSessionDisplay` consults the owning
-codec's explicit finished-remount capability. Cal Poker, Space Poker, and Krunk
-all provide validated cold terminal remounts.
+game-owned hands; an absent or unsupported payload renders the terminal summary
+instead. `selectFinishedSessionDisplay` consults package-level
+`canRemountFinished`. Cal Poker, Space Poker, and Krunk all provide cold
+terminal remounts.
 
 ### WalletConnect BigInt Serialization
 
@@ -1507,22 +1508,21 @@ the notification reducer and never forwarded raw to the game UI:
 - `ProposalMade` — one notification per factory group; carries the first ID and
   always-non-empty ordered `group_ids` (singleton ⇒ `[id]`), and triggers
   group auto-accept
-- `ProposalAccepted` — starts the accepted hand, initializes its durable game
-  state, and advances `handKey`
+- `ProposalAccepted` — creates one game-owned hand instance and advances
+  `handKey`
 
 ### Normalized game inputs
 
-The machine applies exactly five package-facing inputs:
+The runtime applies exactly three package-facing updates after construction:
 
-- `hand-started`
-- `opponent-moved`
-- `game-message`
-- `move-rejected`
+- `move-readable`
+- `message-readable`
 - `hand-ended`
 
 There is no separate game-status event or action echo. Turn, replay, timeout,
-on-chain, proposal, removal, abandonment, and freezing transitions remain in
-the host model. `ActionFailed` and controller exceptions go to shared error UX.
+on-chain, proposal, rejection, removal, abandonment, and freezing transitions
+remain in the host model. `MoveRejected`, `ActionFailed`, and controller
+exceptions restore host-owned checkpoints and go to shared error UX.
 
 ## Single-Hand Enforcement
 
@@ -1602,9 +1602,9 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v15 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v15 presentation snapshot encoder                                                            |
-| `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup and game-owned codec/terms/compose dispatch                                                   |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v16 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v16 presentation snapshot encoder                                                            |
+| `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup, per-hand instance creation, generic snapshots, and terms/compose dispatch                    |
 | `front-end/src/lib/gameProposalCodec.ts`         | Symmetric proposal encode/decode at the WASM `propose_games` / `ProposalMade` boundary                                 |
 | `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                               |
 | `games/calpoker/ui/useCalpokerHand.ts`          | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
@@ -1613,7 +1613,7 @@ not to limit concurrency.
 | `front-end/src/lib/gameIdentities.ts`            | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                  |
 | `front-end/src/hooks/blobSingleton.ts`           | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
 | `front-end/src/services/PeerSession.ts`          | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                          |
-| `front-end/src/hooks/save.ts`                    | v15 cache/write and live/terminal lifecycle facade                                                                      |
+| `front-end/src/hooks/save.ts`                    | v16 cache/write and live/terminal lifecycle facade                                                                      |
 | `front-end/src/hooks/saveCoordination.ts`        | Resume markers, active-tab lease, and cross-tab persistence fencing                                                     |
 | `front-end/src/hooks/saveHardReset.ts`           | Hard-reset and WalletConnect browser-storage cleanup                                                                     |
 | `front-end/src/hooks/savePreferences.ts`         | Local preference encoding and decoding                                                                                    |

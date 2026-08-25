@@ -6,7 +6,7 @@ import {
   type LiveGamePort,
 } from '@games/host';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
-import { isCatalogGameType, packageFor } from '../gameRegistry';
+import { createRegisteredGameHand, isCatalogGameType, packageFor } from '../gameRegistry';
 import { gameCanActById, renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
 import { createSessionModel } from '../session/model';
 
@@ -20,14 +20,33 @@ const terminal = {
 
 function modelFor(gameType: 'calpoker' | 'spacepoker' | 'krunk') {
   const ids = gameType === 'krunk' ? ['1', '2'] : ['1'];
+  const handProposal =
+    gameType === 'spacepoker'
+      ? {
+          gameType,
+          myContribution: 100n,
+          theirContribution: 100n,
+          gameTimeout: 15n,
+          unitSizeMojos: 10n,
+        }
+      : { gameType, myContribution: 100n, theirContribution: 100n, gameTimeout: 15n };
+  const hand = createRegisteredGameHand(gameType, {
+    id: ids[0],
+    gameIds: ids,
+    iStarted: true,
+    canAct: true,
+    origin: 'local',
+    handProposal,
+  });
   return createSessionModel({
+    betweenHand: { lastHandProposal: handProposal },
     game: {
       handKey: 7,
       currentHandIds: ids,
       activeIds: ids,
       lastDisplayedId: '1',
       activeGameType: gameType,
-      handState: { gameType, version: 1n, state: {} },
+      handState: { gameType, state: hand.getState() },
       instances: Object.fromEntries(
         ids.map((id) => [
           id,
@@ -59,7 +78,18 @@ describe('game mount registry', () => {
       const model = modelFor(gameType);
       const common = {
         handOrigin: 'fresh' as const,
-        handState: model.game.handState,
+        hand: createRegisteredGameHand(
+          gameType,
+          {
+            id: model.game.currentHandIds[0],
+            gameIds: model.game.currentHandIds,
+            iStarted: true,
+            canAct: true,
+            origin: 'local',
+            handProposal: model.betweenHand.lastHandProposal!,
+          },
+          model.game.handState,
+        ),
         lastDisplayedId: model.game.lastDisplayedId,
         activeIds: model.game.activeIds,
         currentHandIds: model.game.currentHandIds,
@@ -101,7 +131,7 @@ describe('game mount registry', () => {
             gameType: 'calpoker',
             id: '1',
             action: 'make_move',
-            featureState: {},
+            state: base.game.handState!.state,
           },
         },
       },
@@ -113,7 +143,22 @@ describe('game mount registry', () => {
       handOrigin: 'fresh',
       iStarted: true,
       playerNumber: 1,
-      handSource: { interactionMode: 'live', handState: model.game.handState, port },
+      handSource: {
+        interactionMode: 'live',
+        hand: createRegisteredGameHand(
+          'calpoker',
+          {
+            id: '1',
+            gameIds: ['1'],
+            iStarted: true,
+            canAct: true,
+            origin: 'local',
+            handProposal: model.betweenHand.lastHandProposal!,
+          },
+          model.game.handState,
+        ),
+        port,
+      },
       appendGameLog: jest.fn(),
       gameSpecificView: { gameType: 'calpoker' },
     } as unknown as UseGameSessionResult;
@@ -121,7 +166,7 @@ describe('game mount registry', () => {
     const mount = renderLiveGameMount(session, {});
 
     expect(mount.key).toBe('7');
-    expect(gameHandState(mount.props.handSource)).toBe(model.game.handState);
+    expect(gameHandState(mount.props.handSource)).toEqual(model.game.handState?.state);
     expect(mount.props.handSource.interactionMode).toBe('live');
     expect(gameCanActById(model)['1']).toBe(false);
   });
@@ -132,8 +177,5 @@ describe('game mount registry', () => {
 
     expect(mount.key).toBe('7');
     expect(mount.props.handSource.interactionMode).toBe('terminal');
-    expect(() => requireLiveGameHandSource(mount.props.handSource)).toThrow(
-      'Protocol commands require a live game hand source',
-    );
   });
 });

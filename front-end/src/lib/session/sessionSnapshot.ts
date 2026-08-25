@@ -3,7 +3,6 @@ import type { SavedHandProposal, SessionPresentationSave } from './saveEnvelope'
 import { encodeComposeDraftState } from './persistenceBetweenHands';
 import {
   encodeHandProposalExtras,
-  decodeGameFeatureState,
   isCatalogGameType,
   packageFor,
   validateHandProposal,
@@ -73,7 +72,7 @@ export function snapshotFromSessionModel(
     if (group.memberIds.length === 0 || group.primaryId !== group.memberIds[0]) {
       throw new Error('Session invariant broken: proposal primary ID must be its first member');
     }
-    if (!packageFor(group.handProposal.gameType).validateHandMembership(group.memberIds, null)) {
+    if (!packageFor(group.handProposal.gameType).validateHandIds(group.memberIds)) {
       throw new Error(
         `Session invariant broken: ${group.handProposal.gameType} proposal has ${group.memberIds.length} members`,
       );
@@ -109,8 +108,7 @@ export function snapshotFromSessionModel(
       pending.id !== id ||
       pending.gameType !== model.game.activeGameType ||
       !model.game.currentHandIds.includes(id) ||
-      !model.game.activeIds.includes(id) ||
-      decodeGameFeatureState(pending.gameType, pending.featureState) === null
+      !model.game.activeIds.includes(id)
     ) {
       throw new Error(`Session invariant broken: invalid pending candidate ${id}`);
     }
@@ -128,7 +126,7 @@ export function snapshotFromSessionModel(
               gameType: pending.gameType,
               id: pending.id,
               action: pending.action,
-              featureState: pending.featureState,
+              state: pending.state,
             },
           ]
         : [];

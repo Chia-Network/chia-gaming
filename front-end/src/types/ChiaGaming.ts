@@ -197,7 +197,7 @@ export type WasmEvent =
   | {
       type: 'game-action-error';
       gameId: string;
-      action: 'make-move' | 'accept-settlement' | 'feature-state';
+      action: 'make-move' | 'accept-settlement';
       error: string;
     }
   | { type: 'durability-error'; error: string }

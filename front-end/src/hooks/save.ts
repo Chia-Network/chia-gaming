@@ -73,7 +73,7 @@ export {
   releaseLeaseIfOwner,
 };
 
-export type { PersistedGameState } from '../lib/session/gameStateCodec';
+export type { PersistedGameState } from '@games/host';
 export type {
   LiveSessionSave,
   PreHandshakeSessionSave,

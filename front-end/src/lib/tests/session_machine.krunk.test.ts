@@ -1,16 +1,9 @@
 import { Program } from 'clvm-lib';
 import { krunkStateCodec } from '@games/krunk/ui/serialize';
-import {
-  createSessionModel,
-  INITIAL_CHANNEL_STATUS_MODEL,
-  sessionModelFromSave,
-  snapshotFromSessionModel,
-} from '../session/model';
+import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { CALPOKER_TERMS, KRUNK_TERMS, run, send, trackProposal } from './session_machine.harness';
-import { liveSave } from './session_save_envelope.fixtures';
-import { projectRegisteredPendingCandidates } from '../gameRegistry';
 
 describe('session machine behavior sequences', () => {
   it('atomically replaces Krunk authority when the next group arrives after one member settles', () => {
@@ -295,60 +288,28 @@ describe('session machine behavior sequences', () => {
 
     expect(() =>
       reduceSessionMachine(state, {
-        type: 'feature-state',
+        type: 'replace-hand-state',
 
         gameType: 'krunk',
 
         id: '7',
 
         state: {
-          ...decoded!.games['7'],
-
-          handler: 1n,
-
-          myTurn: false,
-
-          secretWord: 'CRANE',
+          games: {
+            ...decoded!.games,
+            '7': {
+              ...decoded!.games['7'],
+              handler: 1n,
+              myTurn: false,
+              secretWord: 'CRANE',
+            },
+          },
         },
       }),
     ).not.toThrow();
-
-    expect(() =>
-      sessionModelFromSave(
-        liveSave({
-          version: 11n,
-
-          playerId: 'p1',
-
-          serializedGameSession: new Uint8Array([1]),
-
-          gameSessionSchemaVersion: 3n,
-
-          pairingToken: 'pair',
-
-          messageNumber: 1n,
-
-          remoteNumber: 0n,
-
-          iStarted: false,
-
-          myContribution: '100',
-
-          theirContribution: '100',
-
-          perGameAmount: '100',
-
-          rewardPuzzleHash: '11'.repeat(32),
-
-          unackedMessages: [],
-
-          ...snapshotFromSessionModel(state.model),
-        }),
-      ),
-    ).not.toThrow();
   });
 
-  it('projects and promotes independent pending candidates for ordered Krunk IDs', () => {
+  it('stores complete independent Krunk hand candidates without merging siblings', () => {
     let state = createSessionMachineState(createSessionModel());
     state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
     state = send(state, {
@@ -366,28 +327,30 @@ describe('session machine behavior sequences', () => {
       gameType: 'krunk',
       id: '2',
       action: 'make_move',
-      state: { ...hand.games['2'], handler: 4n, myTurn: true },
+      state: {
+        games: { ...hand.games, '2': { ...hand.games['2'], handler: 4n, myTurn: true } },
+      },
     });
     state = send(state, {
       type: 'local-game-action-staged',
       gameType: 'krunk',
       id: '1',
       action: 'make_move',
-      state: { ...hand.games['1'], handler: 1n, myTurn: false, secretWord: 'CRANE' },
+      state: {
+        games: {
+          ...hand.games,
+          '1': { ...hand.games['1'], handler: 1n, myTurn: false, secretWord: 'CRANE' },
+        },
+      },
     });
 
     expect(state.model.game.handState).toBe(canonical);
-    const projected = krunkStateCodec.decode(
-      projectRegisteredPendingCandidates(
-        'krunk',
-        canonical,
-        state.model.game.currentHandIds,
-        state.model.game.pendingCandidates,
-      ),
-    )!;
+    const projected = state.model.game.pendingCandidates['1'].state as NonNullable<
+      ReturnType<typeof krunkStateCodec.decode>
+    >;
     expect(Object.keys(projected.games)).toEqual(['1', '2']);
     expect(projected.games['1'].secretWord).toBe('CRANE');
-    expect(projected.games['2'].handler).toBe(4n);
+    expect(projected.games['2'].handler).toBe(3n);
 
     state = send(state, { type: 'local-action-applied', id: '1', action: 'make_move' });
     expect(krunkStateCodec.decode(state.model.game.handState)!.games['1'].secretWord).toBe('CRANE');

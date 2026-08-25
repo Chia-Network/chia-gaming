@@ -1,5 +1,11 @@
 import { Program } from 'clvm-lib';
-import { defineGameStateCodec, type GameInput } from '../../host';
+import {
+  createGameHand,
+  type GameHand,
+  type GameHandInitialization,
+  type GameUpdate,
+  type PersistedGameState,
+} from '../../host';
 
 export const KrunkHandler = {
   WaitingCommit: 0n,
@@ -27,12 +33,26 @@ export interface KrunkGameState {
   revealedWord: string | null;
   outcome: 'win' | 'lose' | null;
   moverShare: string | null;
-  error: string | null;
 }
 
 export interface KrunkHandState {
   games: Record<string, KrunkGameState>;
 }
+
+/** Test/helper envelope only; persistence treats the state as opaque. */
+export const krunkStateCodec = {
+  gameType: 'krunk',
+  encode: (state: KrunkHandState): PersistedGameState<KrunkHandState> => ({
+    gameType: 'krunk',
+    state,
+  }),
+  decode: (value: unknown): KrunkHandState | null =>
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Partial<PersistedGameState>).gameType === 'krunk'
+      ? ((value as PersistedGameState<KrunkHandState>).state ?? null)
+      : null,
+};
 
 export function initialKrunkGameState(role: KrunkRole): KrunkGameState {
   return {
@@ -44,7 +64,6 @@ export function initialKrunkGameState(role: KrunkRole): KrunkGameState {
     revealedWord: null,
     outcome: null,
     moverShare: null,
-    error: null,
   };
 }
 
@@ -132,8 +151,7 @@ function isKrunkGameState(value: unknown): value is KrunkGameState {
     isNullableString(state.secretWord) &&
     isNullableString(state.revealedWord) &&
     (state.outcome === null || state.outcome === 'win' || state.outcome === 'lose') &&
-    isAmount(state.moverShare) &&
-    isNullableString(state.error)
+    isAmount(state.moverShare)
   );
 }
 
@@ -141,7 +159,7 @@ export function decodeKrunkGameState(value: unknown): KrunkGameState | null {
   return isKrunkGameState(value) ? value : null;
 }
 
-function isKrunkHandState(value: unknown): value is KrunkHandState {
+export function isKrunkHandState(value: unknown): value is KrunkHandState {
   if (typeof value !== 'object' || value === null) return false;
   const games = (value as Partial<KrunkHandState>).games;
   return (
@@ -154,34 +172,12 @@ function isKrunkHandState(value: unknown): value is KrunkHandState {
   );
 }
 
-export const krunkStateCodec = defineGameStateCodec<KrunkHandState>({
-  gameType: 'krunk',
-  version: 2n,
-  canRemountFinished: true,
-  isState: isKrunkHandState,
-  gameIds: (state) => Object.keys(state.games),
-});
-
-export function krunkGameStateFromPersisted(
-  persisted: unknown,
+export function krunkGameStateFromHand(
+  handState: KrunkHandState,
   gameId: string,
   role: KrunkRole,
 ): KrunkGameState {
-  return krunkStateCodec.decode(persisted)?.games[gameId] ?? initialKrunkGameState(role);
-}
-
-export function persistedKrunkGameState(
-  persisted: unknown,
-  gameId: string,
-  gameState: KrunkGameState,
-) {
-  const handState = krunkStateCodec.decode(persisted) ?? { games: {} };
-  return krunkStateCodec.encode({
-    games: {
-      ...handState.games,
-      [gameId]: gameState,
-    },
-  });
+  return handState.games[gameId] ?? initialKrunkGameState(role);
 }
 
 function parseReadable(readable: Uint8Array): {
@@ -265,11 +261,10 @@ export function reduceKrunkFeatureState(
       handler: KrunkHandler.AliceClue,
       myTurn: true,
       guesses: [...game.guesses, { word: parsed.word, clue: parsed.clue }],
-      error: null,
     };
   }
   if (game.role === 'bob' && !parsed.word && !parsed.clue) {
-    return { ...game, handler: KrunkHandler.BobGuess, myTurn: true, error: null };
+    return { ...game, handler: KrunkHandler.BobGuess, myTurn: true };
   }
   if (game.role === 'bob' && parsed.clue && !parsed.word) {
     const guesses = [...game.guesses];
@@ -283,7 +278,6 @@ export function reduceKrunkFeatureState(
       handler: terminalClue ? KrunkHandler.BobWaiting : KrunkHandler.BobGuess,
       myTurn: !terminalClue,
       guesses,
-      error: null,
     };
   }
   if (game.role === 'bob' && parsed.word && parsed.clue) {
@@ -297,45 +291,30 @@ export function reduceKrunkFeatureState(
   return game;
 }
 
-export function applyKrunkMoveRejected(
-  state: KrunkGameState,
-  rejection: { tag: string; message: string },
-): KrunkGameState {
-  if (rejection.tag !== 'not_in_dictionary') return state;
-  const word = rejection.message.toUpperCase();
-  return { ...state, error: `${word} is not in the dictionary.` };
-}
-
-export function reduceKrunkDurableState(
-  current: KrunkHandState | null,
-  event: GameInput,
-): KrunkHandState | null {
-  if (event.type === 'hand-started') {
-    const games = Object.fromEntries(
-      event.init.gameIds.map((id, index) => {
-        const proposerIsAlice = index === 0;
-        const role =
-          proposerIsAlice === (event.init.origin === 'local')
-            ? ('alice' as const)
-            : ('bob' as const);
-        return [id, current?.games[id] ?? initialKrunkGameState(role)];
-      }),
-    );
-    return { games };
-  }
-  if (!current?.games[event.gameId]) return current;
+export function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate): KrunkHandState {
+  if (!current.games[event.gameId]) return current;
   const game = current.games[event.gameId];
   let next = game;
   if (event.type === 'hand-ended') {
     next = reduceKrunkFeatureState(game, { type: 'settled' });
-  } else if (event.type === 'opponent-moved') {
+  } else if (event.type === 'move-readable') {
     next = reduceKrunkFeatureState(game, {
       type: 'opponent-moved',
       readable: event.readable,
       moverShare: event.moverShare,
     });
-  } else if (event.type === 'move-rejected') {
-    next = applyKrunkMoveRejected(game, event);
   }
   return { games: { ...current.games, [event.gameId]: next } };
+}
+
+export function createKrunkHand(init: GameHandInitialization): GameHand<KrunkHandState> {
+  const games = Object.fromEntries(
+    init.gameIds.map((id, index) => {
+      const proposerIsAlice = index === 0;
+      const role =
+        proposerIsAlice === (init.origin === 'local') ? ('alice' as const) : ('bob' as const);
+      return [id, initialKrunkGameState(role)];
+    }),
+  );
+  return createGameHand({ games }, reduceKrunkHandState);
 }

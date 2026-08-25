@@ -211,16 +211,14 @@ describe('durable game envelope round trips', () => {
     const save = activeSave();
     if (save.phase !== 'live') throw new Error('expected live fixture');
     const canonical = save.presentation.handState;
-    const featureState = {
+    const state = {
       ...calpokerStateCodec.decode(canonical)!,
       moveNumber: 2n,
       isPlayerTurn: false,
     };
     const restored = sessionModelFromSave(
       activeSave({
-        pendingCandidates: [
-          { gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState },
-        ],
+        pendingCandidates: [{ gameType: 'calpoker', id: 'game-1', action: 'make_move', state }],
       }),
     );
 
@@ -229,10 +227,10 @@ describe('durable game envelope round trips', () => {
       gameType: 'calpoker',
       id: 'game-1',
       action: 'make_move',
-      featureState,
+      state,
     });
     expect(snapshotFromSessionModel(restored).pendingCandidates).toEqual([
-      { gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState },
+      { gameType: 'calpoker', id: 'game-1', action: 'make_move', state },
     ]);
   });
 

@@ -3,7 +3,6 @@ import {
   useKrunkHand,
   canDraftKrunkGuess,
   canQueueKrunkGuess,
-  isKrunkDictionaryRejectionError,
   krunkBoardNotice,
   krunkGuessesWithQueued,
   KrunkHandler,
@@ -15,13 +14,12 @@ import {
   gameHandState,
   type GameHandSource,
   type GameTerminalModel,
-  type PersistedGameState,
 } from '../../host';
 import { useGameHost } from '../../host/ui';
-import { krunkStateCodec } from './serialize';
+import type { KrunkHandState } from './serialize';
 
 export interface KrunkProps {
-  handSource: GameHandSource;
+  handSource: GameHandSource<KrunkHandState>;
   currentHandGameIds: string[];
   activeGameIds: string[];
   onGameLog?: (lines: string[]) => void;
@@ -56,14 +54,14 @@ export function formatKrunkHandLog(
 export function krunkGameSlots(
   currentHandGameIds: string[],
   activeGameIds: string[] = currentHandGameIds,
-  persistedState?: PersistedGameState | null,
+  handState?: KrunkHandState,
 ): {
   aliceGameId: string | null;
   bobGameId: string | null;
   aliceActive: boolean;
   bobActive: boolean;
 } {
-  const persistedGames = krunkStateCodec.decode(persistedState)?.games;
+  const persistedGames = handState?.games;
   if (!persistedGames) {
     throw new Error('Krunk requires initialized durable game state');
   }
@@ -436,12 +434,8 @@ const Krunk: React.FC<KrunkProps> = ({
 }) => {
   const { formatAmount } = useGameHost();
   const interactive = handSource.interactionMode === 'live';
-  const persistedState = gameHandState(handSource);
-  const { aliceGameId, bobGameId } = krunkGameSlots(
-    currentHandGameIds,
-    activeGameIds,
-    persistedState,
-  );
+  const handState = gameHandState(handSource);
+  const { aliceGameId, bobGameId } = krunkGameSlots(currentHandGameIds, activeGameIds, handState);
   const aliceId = aliceGameId ?? '';
   const bobId = bobGameId ?? '';
   const acceptedAmount = amountsById[aliceId] ?? amountsById[bobId];
@@ -530,9 +524,7 @@ const Krunk: React.FC<KrunkProps> = ({
     (g) => !g.clue.every((v) => v === -1n),
   ).length;
   const newlyResolvedIndex = newlyResolvedKrunkIndex(resolvedCount, prevResolvedCountRef.current);
-  // Dictionary rejection rolls back the sent guess in gameState; hide any
-  // still-queued rows in the same render (don't wait for the clear effect).
-  const displayQueue = isKrunkDictionaryRejectionError(bobHand.gameState.error) ? [] : guessQueue;
+  const displayQueue = guessQueue;
   const displayedBobGuesses = krunkGuessesWithQueued(bobHand.gameState.guesses, displayQueue);
   const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
   useEffect(() => {
@@ -588,23 +580,12 @@ const Krunk: React.FC<KrunkProps> = ({
   // queued rather than auto-sending guesses that assumed the rejected word.
   useEffect(() => {
     if (!interactive) return;
-    if (isKrunkDictionaryRejectionError(bobHand.gameState.error)) {
-      if (guessQueue.length > 0) setGuessQueue([]);
-      return;
-    }
     if (!isBobGuessPhase || guessQueue.length === 0) return;
     if (bobHand.gameState.handler !== KrunkHandler.BobGuess) return;
     const next = guessQueue[0];
     setGuessQueue((rest) => rest.slice(1));
     submitBobGuessMove(next);
-  }, [
-    isBobGuessPhase,
-    interactive,
-    guessQueue,
-    bobHand.gameState.handler,
-    bobHand.gameState.error,
-    submitBobGuessMove,
-  ]);
+  }, [isBobGuessPhase, interactive, guessQueue, bobHand.gameState.handler, submitBobGuessMove]);
 
   useEffect(() => {
     if (bobGameOver && guessQueue.length > 0) setGuessQueue([]);

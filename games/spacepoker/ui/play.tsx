@@ -8,12 +8,12 @@ import {
   type GameTerminalModel,
 } from '../../host';
 import { useGameHost } from '../../host/ui';
-import { spacepokerStateCodec } from './serialize';
+import type { SpacepokerHandState } from './serialize';
 
 const SpacePoker = lazy(() => import('./SpacePoker'));
 
 export interface SpacepokerLiveMountProps {
-  handSource: GameHandSource;
+  handSource: GameHandSource<SpacepokerHandState>;
   gameId: string;
   betSize: bigint;
   appendGameLog?: (line: string) => void;
@@ -23,20 +23,9 @@ export interface SpacepokerLiveMountProps {
 }
 
 export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
-  const {
-    handSource,
-    gameId,
-    betSize,
-    appendGameLog,
-    myName,
-    opponentName,
-    terminal,
-  } = props;
+  const { handSource, gameId, betSize, appendGameLog, myName, opponentName, terminal } = props;
   const { formatAmount } = useGameHost();
-  const handState = spacepokerStateCodec.decode(gameHandState(handSource));
-  if (!handState) {
-    throw new Error('Space Poker mount requires initialized durable game state');
-  }
+  const handState = gameHandState(handSource);
   const unitSizeMojosValue = handState.unitSizeMojos;
   const stackSize = betSize / 2n / unitSizeMojosValue;
   const handleGameLog = useCallback(
@@ -73,7 +62,7 @@ export const play: GameMountRegistration = {
     }
     return (
       <SpacepokerLiveMount
-        handSource={gameHandSourceFromMountView(view)}
+        handSource={gameHandSourceFromMountView<SpacepokerHandState>(view)}
         gameId={gameId}
         betSize={BigInt(amount)}
         appendGameLog={view.frozen ? undefined : view.appendGameLog}

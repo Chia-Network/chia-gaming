@@ -12,15 +12,11 @@ import {
   spacePokerTerminalIndicators,
   spacePokerTurnLine,
 } from './statusPresentation';
-import {
-  SpHandler,
-  type SpacepokerDisplayMode,
-  type SpacepokerHandState,
-  useSpacepokerHand,
-} from './useSpacepokerHand';
+import { SpHandler, type SpacepokerDisplayMode, useSpacepokerHand } from './useSpacepokerHand';
+import type { SpacepokerHandState } from './serialize';
 
 export interface SpacePokerProps {
-  handSource: GameHandSource;
+  handSource: GameHandSource<SpacepokerHandState>;
   gameId: string;
   betSize: string;
   unitSizeMojos: string;
@@ -50,10 +46,8 @@ export default function SpacePoker({
   useCheatKeys(sp.handleCheat, interactive);
 
   const [alreadyTerminalAtMount] = useState(() => {
-    const handState = gameHandState(handSource);
-    if (!handState || handState.gameType !== 'spacepoker') return false;
-    const state = handState.state as SpacepokerHandState | undefined;
-    return state?.terminalState != null && state.terminalState !== 'none';
+    const state = gameHandState(handSource);
+    return state.terminalState !== 'none';
   });
   const gameLogFiredRef = useRef(alreadyTerminalAtMount);
   useEffect(() => {
@@ -187,11 +181,6 @@ export default function SpacePoker({
         <p className="text-sm text-canvas-text-contrast font-medium text-center min-h-5">
           {footerStatus}
         </p>
-        {sp.error && (
-          <p role="alert" className="text-center text-sm font-semibold text-red-600">
-            {sp.error.message}
-          </p>
-        )}
       </div>
 
       <SpacePokerHandHistory history={sp.handHistory} formatBet={sp.formatBet} />

@@ -1,9 +1,5 @@
-import {
-  equalHandProposalBase,
-  type GameFeatureRegistration,
-  type HandProposal,
-} from '../../host';
-import { reduceSpacepokerDurableState, spacepokerStateCodec, type SpacepokerHandState } from './serialize';
+import { equalHandProposalBase, type GamePackageRegistration, type HandProposal } from '../../host';
+import { createSpacepokerHand, type SpacepokerHandState } from './serialize';
 import {
   resolveSpacepokerUnitSize,
   spacepokerProposalParameters,
@@ -12,7 +8,7 @@ import {
 } from './unitSize';
 
 export {
-  reduceSpacepokerDurableState,
+  reduceSpacepokerHandState,
   reduceSpacepokerFeatureState,
   reduceSpacepokerSettlementState,
 } from './serialize';
@@ -29,15 +25,15 @@ export function validateSpacepokerHandProposal(handProposal: HandProposal): bool
   );
 }
 
-const registration: GameFeatureRegistration<
-  SpacepokerHandState,
+const registration: GamePackageRegistration<
   SpacepokerHandState,
   { unitSize: bigint; stackSize: bigint },
   SpacepokerFactoryParameters
 > = {
   gameType: 'spacepoker',
   displayName: 'Space Poker',
-  stateCodec: spacepokerStateCodec,
+  canRemountFinished: true,
+  createHand: createSpacepokerHand,
   proposalParameters: spacepokerProposalParameters,
   describeHandProposal(handProposal, { formatMojos }) {
     const space = spacepokerTermsOf(handProposal);
@@ -45,12 +41,13 @@ const registration: GameFeatureRegistration<
     const stack = space.myContribution / space.unitSizeMojos;
     return `Stake ${formatMojos(space.myContribution)} each · unit ${formatMojos(space.unitSizeMojos)} · stack ${String(stack)}`;
   },
-  handMembershipDescription: 'exactly one currentHandGameId',
-  validateHandMembership: (gameIds) => gameIds.length === 1,
-  decodeFeatureState: (value) => (spacepokerStateCodec.isState(value) ? value : null),
+  validateHandIds: (gameIds) => gameIds.length === 1,
   selectOutcome: (state) =>
     state.outcome
-      ? { my_win_outcome: state.outcome.result > 0n ? 'win' : state.outcome.result < 0n ? 'lose' : 'tie' }
+      ? {
+          my_win_outcome:
+            state.outcome.result > 0n ? 'win' : state.outcome.result < 0n ? 'lose' : 'tie',
+        }
       : null,
   lifecycle: {
     proposalSenderGoesFirst: (iStarted) => !iStarted,
@@ -130,15 +127,6 @@ const registration: GameFeatureRegistration<
         return null;
       }
     },
-  },
-  durableState: {
-    initialize(current, input) {
-      return reduceSpacepokerDurableState(current, input)!;
-    },
-    reduceInput(current, input) {
-      return reduceSpacepokerDurableState(current, input)!;
-    },
-    applyFeatureState: (_current, _gameId, state) => state,
   },
 };
 

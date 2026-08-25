@@ -1,5 +1,11 @@
 import { Program } from 'clvm-lib';
-import { defineGameStateCodec, type GameInput } from '../../host';
+import {
+  createGameHand,
+  type GameHand,
+  type GameHandInitialization,
+  type GameUpdate,
+  type PersistedGameState,
+} from '../../host';
 import { CalpokerOutcome, projectCalpokerFinalDisplay, type CalpokerOutcomeShape } from './outcome';
 
 export interface CalpokerDisplaySnapshot {
@@ -27,8 +33,22 @@ export interface CalpokerHandState {
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
   outcome?: CalpokerOutcomeShape<bigint>;
-  error: CalpokerError | null;
 }
+
+/** Test/helper envelope only; persistence treats the state as opaque. */
+export const calpokerStateCodec = {
+  gameType: 'calpoker',
+  encode: (state: CalpokerHandState): PersistedGameState<CalpokerHandState> => ({
+    gameType: 'calpoker',
+    state,
+  }),
+  decode: (value: unknown): CalpokerHandState | null =>
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Partial<PersistedGameState>).gameType === 'calpoker'
+      ? ((value as PersistedGameState<CalpokerHandState>).state ?? null)
+      : null,
+};
 
 function isCardArray(value: unknown): value is bigint[] {
   return (
@@ -75,19 +95,7 @@ function isCalpokerOutcome(value: unknown): value is CalpokerOutcomeShape<bigint
   );
 }
 
-function isCalpokerError(value: unknown): value is CalpokerError {
-  if (typeof value !== 'object' || value === null) return false;
-  const error = value as Partial<CalpokerError>;
-  return (
-    Object.keys(value).length === 2 &&
-    typeof error.tag === 'string' &&
-    /^[a-z][a-z0-9_]*$/.test(error.tag) &&
-    typeof error.message === 'string' &&
-    error.message.length > 0
-  );
-}
-
-function isCalpokerHandState(value: unknown): value is CalpokerHandState {
+export function isCalpokerHandState(value: unknown): value is CalpokerHandState {
   if (typeof value !== 'object' || value === null) return false;
   const state = value as Partial<CalpokerHandState>;
   if (!isCardArray(state.playerHand) || !isCardArray(state.opponentHand)) return false;
@@ -112,17 +120,9 @@ function isCalpokerHandState(value: unknown): value is CalpokerHandState {
     typeof state.isPlayerTurn === 'boolean' &&
     typeof state.iStarted === 'boolean' &&
     (state.displaySnapshot === undefined || isDisplaySnapshot(state.displaySnapshot)) &&
-    (state.outcome === undefined || isCalpokerOutcome(state.outcome)) &&
-    (state.error === null || isCalpokerError(state.error))
+    (state.outcome === undefined || isCalpokerOutcome(state.outcome))
   );
 }
-
-export const calpokerStateCodec = defineGameStateCodec<CalpokerHandState>({
-  gameType: 'calpoker',
-  version: 3n,
-  canRemountFinished: true,
-  isState: isCalpokerHandState,
-});
 
 function initialState(isMyTurn: boolean, iStarted: boolean): CalpokerHandState {
   return {
@@ -132,7 +132,6 @@ function initialState(isMyTurn: boolean, iStarted: boolean): CalpokerHandState {
     moveNumber: 0n,
     isPlayerTurn: isMyTurn,
     iStarted,
-    error: null,
   };
 }
 
@@ -252,26 +251,20 @@ export function reduceCalpokerFeatureState(
   };
 }
 
-export function reduceCalpokerDurableState(
-  current: CalpokerHandState | null,
-  event: GameInput,
-): CalpokerHandState | null {
-  if (event.type === 'hand-started') {
-    return current ?? initialState(event.init.canAct, event.init.iStarted);
-  }
-  if (!current) return null;
+export function reduceCalpokerHandState(
+  current: CalpokerHandState,
+  event: GameUpdate,
+): CalpokerHandState {
   if (event.type === 'hand-ended') return { ...current, isPlayerTurn: false };
-  if (event.type === 'move-rejected') {
-    return {
-      ...current,
-      error: { tag: event.tag, message: event.message },
-    };
-  }
-  if (event.type === 'opponent-moved' || event.type === 'game-message') {
+  if (event.type === 'move-readable' || event.type === 'message-readable') {
     return reduceCalpokerFeatureState(current, {
-      type: event.type,
+      type: event.type === 'move-readable' ? 'opponent-moved' : 'game-message',
       readable: event.readable,
     });
   }
   return current;
+}
+
+export function createCalpokerHand(init: GameHandInitialization): GameHand<CalpokerHandState> {
+  return createGameHand(initialState(init.canAct, init.iStarted), reduceCalpokerHandState);
 }

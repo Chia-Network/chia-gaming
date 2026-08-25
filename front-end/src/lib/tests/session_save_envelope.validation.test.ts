@@ -1,5 +1,4 @@
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { type SessionPresentationSave, type SessionSave } from '../../hooks/save';
 import {
@@ -256,7 +255,7 @@ describe('validateSessionSaveEnvelope', () => {
     ).toThrow('presentation and terminal state disagree');
   });
 
-  it('rejects mismatched hand types and unrelated Krunk payload IDs', () => {
+  it('rejects only a generic hand-envelope game type mismatch', () => {
     expect(() =>
       validateSessionSaveEnvelope(
         activeSave({
@@ -272,210 +271,38 @@ describe('validateSessionSaveEnvelope', () => {
         }),
       ),
     ).toThrow('activeGameType does not match');
+  });
 
+  it('validates pending candidate envelope fields while keeping game state opaque', () => {
+    const base = activeSave();
+    if (base.phase !== 'live') throw new Error('expected live fixture');
+    const state = calpokerStateCodec.decode(base.presentation.handState)!;
     expect(() =>
       validateSessionSaveEnvelope(
         activeSave({
-          handState: krunkStateCodec.encode({
-            games: { unrelated: initialKrunkGameState('alice') },
-          }),
-          activeGameType: 'krunk',
-          betweenHandLastHandProposal: {
-            my_contribution: '100',
-            their_contribution: '100',
-            game_timeout: '15',
-            game_type: 'krunk',
-          },
+          pendingCandidates: [{ gameType: 'calpoker', id: 'game-1', action: 'make_move', state }],
         }),
       ),
-    ).toThrow('exactly match currentHandGameIds');
-  });
-
-  it('rejects a partial Krunk payload for the current pair', () => {
-    const ids = ['game-1', 'game-2'];
-    expect(() =>
-      validateSessionSaveEnvelope(
-        liveSave({
-          activeGameIds: ids,
-          currentHandGameIds: ids,
-          currentHandOrigin: 'local',
-          lastDisplayedGameId: ids[0],
-          activeGameType: 'krunk',
-          gameInstances: {
-            'game-1': ACTIVE_INSTANCE,
-            'game-2': { ...ACTIVE_INSTANCE, id: 'game-2' },
-          },
-          handState: krunkStateCodec.encode({
-            games: { 'game-1': initialKrunkGameState('alice') },
-          }),
-          betweenHandLastHandProposal: {
-            my_contribution: '100',
-            their_contribution: '100',
-            game_timeout: '15',
-            game_type: 'krunk',
-          },
-        }),
-      ),
-    ).toThrow('exactly match currentHandGameIds');
-  });
-
-  it('strictly validates pending candidate identity, action, membership, and feature state', () => {
-    const base = activeSave();
-    if (base.phase !== 'live') throw new Error('expected live fixture');
-    const featureState = calpokerStateCodec.decode(base.presentation.handState)!;
+    ).not.toThrow();
     expect(() =>
       validateSessionSaveEnvelope(
         activeSave({
           pendingCandidates: [
-            { gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState },
+            { gameType: 'calpoker', id: 'game-1', action: 'make_move', state: {} },
           ],
         }),
       ),
     ).not.toThrow();
     for (const pendingCandidates of [
       [
-        { gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState },
-        { gameType: 'calpoker', id: 'game-1', action: 'cheat', featureState },
+        { gameType: 'calpoker', id: 'game-1', action: 'make_move', state },
+        { gameType: 'calpoker', id: 'game-1', action: 'cheat', state },
       ],
-      [{ gameType: 'calpoker', id: 'other', action: 'make_move', featureState }],
-      [{ gameType: 'calpoker', id: 'game-1', action: 'unknown', featureState }],
-      [{ gameType: 'calpoker', id: 'game-1', action: 'make_move', featureState: {} }],
-      [{ gameType: 'spacepoker', id: 'game-1', action: 'make_move', featureState }],
+      [{ gameType: 'calpoker', id: 'other', action: 'make_move', state }],
+      [{ gameType: 'calpoker', id: 'game-1', action: 'unknown', state }],
+      [{ gameType: 'spacepoker', id: 'game-1', action: 'make_move', state }],
     ]) {
       expect(() => validateSessionSaveEnvelope(activeSave({ pendingCandidates }))).toThrow();
-    }
-  });
-
-  it.each([
-    [
-      'calpoker',
-      calpokerStateCodec.encode({
-        playerHand: [1n, 2n],
-        opponentHand: [3n, 4n],
-        moveNumber: 1n,
-        isPlayerTurn: true,
-        iStarted: true,
-        error: null,
-      }),
-      {},
-    ],
-    [
-      'spacepoker',
-      spacepokerStateCodec.encode({
-        gameState: { handler: 2n, myTurn: true, N: 4n },
-        playerHoleCards: null,
-        playerBoost: false,
-        opponentHoleCards: null,
-        opponentBoost: null,
-        communityCards: [null, null, null, null, null],
-        halfPot: 1n,
-        lastRaise: 0n,
-        iRaisedLast: false,
-        handHistory: [],
-        outcome: null,
-        terminalState: 'none',
-        coinTossIOpen: null,
-        unitSizeMojos: 10n,
-        displayMode: 'mojos',
-        error: null,
-      }),
-      { spacepoker_unit_size: '10' },
-    ],
-  ] as const)('rejects multi-member %s singleton hands', (gameType, handState, extras) => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        liveSave({
-          activeGameIds: ['game-1', 'game-2'],
-          currentHandGameIds: ['game-1', 'game-2'],
-          currentHandOrigin: 'local',
-          activeGameType: gameType,
-          gameInstances: {
-            'game-1': ACTIVE_INSTANCE,
-            'game-2': { ...ACTIVE_INSTANCE, id: 'game-2' },
-          },
-          handState,
-          betweenHandLastHandProposal: {
-            my_contribution: '100',
-            their_contribution: '100',
-            game_timeout: '15',
-            game_type: gameType,
-            ...extras,
-          },
-        }),
-      ),
-    ).toThrow('exactly one currentHandGameId');
-  });
-
-  it.each([
-    [['game-1'], { 'game-1': initialKrunkGameState('alice') }],
-    [
-      ['game-1', 'game-2', 'game-3'],
-      {
-        'game-1': initialKrunkGameState('alice'),
-        'game-2': initialKrunkGameState('bob'),
-        'game-3': initialKrunkGameState('alice'),
-      },
-    ],
-  ])('rejects Krunk hands with invalid factory cardinality', (ids, games) => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        liveSave({
-          activeGameIds: ids,
-          currentHandGameIds: ids,
-          currentHandOrigin: 'local',
-          lastDisplayedGameId: ids[0],
-          activeGameType: 'krunk',
-          gameInstances: Object.fromEntries(
-            ids.map((id) => [id, { ...ACTIVE_INSTANCE, id, amount: '100' }]),
-          ),
-          handState: krunkStateCodec.encode({ games }),
-          betweenHandLastHandProposal: {
-            my_contribution: '100',
-            their_contribution: '100',
-            game_timeout: '15',
-            game_type: 'krunk',
-          },
-        }),
-      ),
-    ).toThrow('exactly two ordered currentHandGameIds');
-  });
-
-  it('rejects missing, extra, and reordered Krunk payload IDs', () => {
-    const ids = ['game-1', 'game-2'];
-    const baseFields = {
-      activeGameIds: ids,
-      currentHandGameIds: ids,
-      currentHandOrigin: 'local' as const,
-      lastDisplayedGameId: ids[0],
-      activeGameType: 'krunk' as const,
-      gameInstances: {
-        'game-1': { ...ACTIVE_INSTANCE, id: 'game-1', amount: '100' },
-        'game-2': { ...ACTIVE_INSTANCE, id: 'game-2', amount: '100' },
-      },
-      betweenHandLastHandProposal: {
-        my_contribution: '100',
-        their_contribution: '100',
-        game_timeout: '15',
-        game_type: 'krunk',
-      },
-    };
-    for (const games of [
-      { 'game-1': initialKrunkGameState('alice') },
-      {
-        'game-1': initialKrunkGameState('alice'),
-        'game-2': initialKrunkGameState('bob'),
-        extra: initialKrunkGameState('alice'),
-      },
-      {
-        'game-2': initialKrunkGameState('bob'),
-        'game-1': initialKrunkGameState('alice'),
-      },
-    ]) {
-      expect(() =>
-        validateSessionSaveEnvelope(
-          liveSave({ ...baseFields, handState: krunkStateCodec.encode({ games }) }),
-        ),
-      ).toThrow('exactly match currentHandGameIds in order');
     }
   });
 

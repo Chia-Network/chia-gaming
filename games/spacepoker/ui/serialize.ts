@@ -1,16 +1,15 @@
 import { Program } from 'clvm-lib';
 import {
-  defineGameStateCodec,
+  createGameHand,
   isForfeitOutcome,
-  type GameInput,
+  type GameHand,
+  type GameHandInitialization,
+  type GameUpdate,
+  type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
 
 export type SpacepokerDisplayMode = 'xch' | 'mojos' | 'units';
-export interface SpacepokerError {
-  tag: string;
-  message: string;
-}
 export type SpHandler = 0n | 1n | 2n | 3n | 4n | 5n | 6n;
 export interface SpGameState {
   handler: SpHandler;
@@ -56,8 +55,22 @@ export interface SpacepokerHandState {
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
   displayMode: SpacepokerDisplayMode;
-  error: SpacepokerError | null;
 }
+
+/** Test/helper envelope only; persistence treats the state as opaque. */
+export const spacepokerStateCodec = {
+  gameType: 'spacepoker',
+  encode: (state: SpacepokerHandState): PersistedGameState<SpacepokerHandState> => ({
+    gameType: 'spacepoker',
+    state,
+  }),
+  decode: (value: unknown): SpacepokerHandState | null =>
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Partial<PersistedGameState>).gameType === 'spacepoker'
+      ? ((value as PersistedGameState<SpacepokerHandState>).state ?? null)
+      : null,
+};
 
 const HANDLERS = new Set([0n, 1n, 2n, 3n, 4n, 5n, 6n]);
 const TERMINALS = new Set([
@@ -142,19 +155,7 @@ function isOutcome(value: unknown): value is SpOutcome {
   );
 }
 
-function isSpacepokerError(value: unknown): value is SpacepokerError {
-  if (typeof value !== 'object' || value === null) return false;
-  const error = value as Partial<SpacepokerError>;
-  return (
-    Object.keys(value).length === 2 &&
-    typeof error.tag === 'string' &&
-    /^[a-z][a-z0-9_]*$/.test(error.tag) &&
-    typeof error.message === 'string' &&
-    error.message.length > 0
-  );
-}
-
-function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
+export function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
   if (typeof value !== 'object' || value === null) return false;
   const state = value as Partial<SpacepokerHandState>;
   if (
@@ -196,17 +197,9 @@ function isSpacepokerHandState(value: unknown): value is SpacepokerHandState {
     typeof state.unitSizeMojos === 'bigint' &&
     state.unitSizeMojos > 0n &&
     typeof state.displayMode === 'string' &&
-    DISPLAY_MODES.has(state.displayMode) &&
-    (state.error === null || isSpacepokerError(state.error))
+    DISPLAY_MODES.has(state.displayMode)
   );
 }
-
-export const spacepokerStateCodec = defineGameStateCodec<SpacepokerHandState>({
-  gameType: 'spacepoker',
-  version: 4n,
-  canRemountFinished: true,
-  isState: isSpacepokerHandState,
-});
 
 function initialState(isMyTurn: boolean, unitSizeMojos: bigint): SpacepokerHandState {
   return {
@@ -225,7 +218,6 @@ function initialState(isMyTurn: boolean, unitSizeMojos: bigint): SpacepokerHandS
     coinTossIOpen: null,
     unitSizeMojos,
     displayMode: unitSizeMojos >= 1_000_000n ? 'xch' : 'mojos',
-    error: null,
   };
 }
 
@@ -533,35 +525,30 @@ export function reduceSpacepokerFeatureState(
   return current;
 }
 
-export function reduceSpacepokerDurableState(
-  current: SpacepokerHandState | null,
-  event: GameInput,
-): SpacepokerHandState | null {
-  if (event.type === 'hand-started') {
-    if (event.init.handProposal.gameType !== 'spacepoker') return current;
-    const unitSizeMojos =
-      'unitSizeMojos' in event.init.handProposal &&
-      typeof event.init.handProposal.unitSizeMojos === 'bigint'
-        ? event.init.handProposal.unitSizeMojos
-        : 1n;
-    return current ?? initialState(event.init.canAct, unitSizeMojos);
-  }
-  if (!current) return null;
+export function reduceSpacepokerHandState(
+  current: SpacepokerHandState,
+  event: GameUpdate,
+): SpacepokerHandState {
   if (event.type === 'hand-ended') {
     return event.terminal.outcome
       ? reduceSpacepokerSettlementState(current, event.terminal.outcome)
       : current;
   }
-  if (event.type === 'move-rejected') {
-    return {
-      ...current,
-      error: { tag: event.tag, message: event.message },
-    };
-  }
-  if (event.type !== 'opponent-moved' && event.type !== 'game-message') return current;
+  if (event.type !== 'move-readable' && event.type !== 'message-readable') return current;
   const readableEvent = {
-    type: event.type,
+    type: event.type === 'move-readable' ? 'opponent-moved' : 'game-message',
     readable: event.readable,
   } as const;
   return reduceSpacepokerFeatureState(current, readableEvent);
+}
+
+export function createSpacepokerHand(init: GameHandInitialization): GameHand<SpacepokerHandState> {
+  if (init.handProposal.gameType !== 'spacepoker') {
+    throw new Error('Space Poker hand requires Space Poker proposal terms');
+  }
+  const unitSizeMojos =
+    'unitSizeMojos' in init.handProposal && typeof init.handProposal.unitSizeMojos === 'bigint'
+      ? init.handProposal.unitSizeMojos
+      : 1n;
+  return createGameHand(initialState(init.canAct, unitSizeMojos), reduceSpacepokerHandState);
 }

@@ -27,7 +27,7 @@ import type {
   SessionMachineEvent,
 } from '../lib/session/sessionMachineTypes';
 import type { RegisteredGameType } from '../lib/session/types';
-import { projectRegisteredPendingCandidates, REGISTERED_GAMES } from '../lib/gameRegistry';
+import { REGISTERED_GAMES } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 import { liveGameHandOrigin, type GameHandSource } from '@games/host';
 import { log } from '../services/log';
@@ -186,7 +186,7 @@ export function useGameSession(
           if (game.currentHandIds.length !== 1) {
             throw new Error('Local hand-state updates require a single-game hand');
           }
-          runtime.transitionFeatureState(gameType, game.currentHandIds[0], intent.state);
+          runtime.replaceHandState(gameType, game.currentHandIds[0], intent.state);
           return;
         }
         const request: LocalGameActionRequest = {
@@ -215,23 +215,11 @@ export function useGameSession(
     }),
     [controller, dispatch, runtime],
   );
-  const projectedHandState = useMemo(() => {
-    const game = machineState.model.game;
-    return projectRegisteredPendingCandidates(
-      game.activeGameType,
-      game.handState,
-      game.currentHandIds,
-      game.pendingCandidates,
-    );
-  }, [machineState.model.game]);
-  const liveHandSource = useMemo<GameHandSource>(
-    () => ({
-      interactionMode: 'live',
-      handState: projectedHandState,
-      port: liveGamePort,
-    }),
-    [liveGamePort, projectedHandState],
-  );
+  const liveHandSource: GameHandSource = {
+    interactionMode: 'live',
+    hand: runtime.getGameHand(),
+    port: liveGamePort,
+  };
   useEffect(() => {
     runtime.setRender(setMachineState);
     return () => runtime.setRender(() => {});

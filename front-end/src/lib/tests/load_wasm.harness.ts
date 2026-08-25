@@ -10,7 +10,7 @@ import { SESSION_DB_NAME } from '../session/indexedDb';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
-import { reduceRegisteredGameState } from '../gameRegistry';
+import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
@@ -396,18 +396,15 @@ export function postMoveHandState(
   handProposal: HandProposal,
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
-  const accepted = reduceRegisteredGameState(handProposal.gameType, null, {
-    type: 'hand-started',
-    init: {
-      id: ids[0],
-      gameIds: ids,
-      iStarted: false,
-      canAct: true,
-      origin: 'peer',
-      handProposal,
-    },
+  const hand = createRegisteredGameHand(handProposal.gameType, {
+    id: ids[0],
+    gameIds: ids,
+    iStarted: false,
+    canAct: true,
+    origin: 'peer',
+    handProposal,
   });
-  assert.ok(accepted, `${handProposal.gameType}: accepted group must create hand state`);
+  const accepted = snapshotRegisteredGameHand(handProposal.gameType, hand);
   if (handProposal.gameType === 'calpoker') {
     const state = calpokerStateCodec.decode(accepted);
     assert.ok(state);

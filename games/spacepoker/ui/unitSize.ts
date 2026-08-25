@@ -1,9 +1,4 @@
-import {
-  type HandProposal,
-  type PersistedGameState,
-  type ProposalParameterCodec,
-} from '../../host';
-import { spacepokerStateCodec } from './serialize';
+import { type HandProposal, type ProposalParameterCodec } from '../../host';
 function positive(value: bigint | undefined): bigint | null {
   return value !== undefined && value > 0n ? value : null;
 }
@@ -52,7 +47,6 @@ export function decodeSpacepokerUnitSize(value: unknown): bigint | null {
  */
 export function resolveSpacepokerUnitSize(input: {
   terms?: HandProposal | null;
-  persistedState?: PersistedGameState | null;
   encodedParameterState?: unknown;
 }): bigint | null {
   const candidates: bigint[] = [];
@@ -60,15 +54,6 @@ export function resolveSpacepokerUnitSize(input: {
     const terms = spacepokerTermsOf(input.terms);
     if (!terms) return null;
     candidates.push(terms.unitSizeMojos);
-  }
-  if (input.persistedState) {
-    const state = spacepokerStateCodec.decode(input.persistedState);
-    if (input.persistedState.gameType === 'spacepoker' && !state) return null;
-    if (state) {
-      const value = positive(state.unitSizeMojos);
-      if (!value) return null;
-      candidates.push(value);
-    }
   }
   if (input.encodedParameterState !== undefined) {
     const value = decodeSpacepokerUnitSize(input.encodedParameterState);

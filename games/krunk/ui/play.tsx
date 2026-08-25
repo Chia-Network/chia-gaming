@@ -5,11 +5,12 @@ import {
   type GameMountRegistration,
   type GameTerminalModel,
 } from '../../host';
+import type { KrunkHandState } from './serialize';
 
 const Krunk = lazy(() => import('./Krunk'));
 
 export interface KrunkLiveMountProps {
-  handSource: GameHandSource;
+  handSource: GameHandSource<KrunkHandState>;
   currentHandGameIds: string[];
   activeGameIds: string[];
   appendGameLog?: (line: string) => void;
@@ -36,7 +37,7 @@ export const play: GameMountRegistration = {
   render(view) {
     return (
       <KrunkLiveMount
-        handSource={gameHandSourceFromMountView(view)}
+        handSource={gameHandSourceFromMountView<KrunkHandState>(view)}
         currentHandGameIds={[...view.currentHandIds]}
         activeGameIds={[...view.activeIds]}
         appendGameLog={view.frozen ? undefined : view.appendGameLog}

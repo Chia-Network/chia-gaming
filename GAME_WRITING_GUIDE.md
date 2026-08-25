@@ -67,7 +67,7 @@ file has a conventional export that the generator discovers:
 - `play.tsx` exports `play`.
 
 The generator passes those three exports through `defineGamePackage`. This is
-the compile-time boundary that proves the proposal draft, state, feature state,
+the compile-time boundary that proves the proposal draft, complete hand state,
 factory parameters, form, and mount belong to one coherent package. The
 generated keyed registry exposes a non-generic runtime facade; game-specific
 types are not cast to a fictitious broad package type.
@@ -332,55 +332,47 @@ types, positivity, cross-field relationships, and consistency with
 `HandProposalBase`. Test a valid encode/decode round trip, wrong list lengths
 and types, invalid values, and another game's parameter encoding.
 
-## Step 5: Save and update the UI state
+## Step 5: Own one hand instance
 
-The protocol state in Rust is not enough to restore every detail of a React
-UI. For example, a card game may need to save revealed cards or the currently
-selected cards. Define that game-owned UI state in `serialize.ts`.
+The protocol state in Rust is not enough to restore every detail of a React UI.
+For example, a card game may need revealed cards and current selections. Define
+one complete game-owned state type and implement `createHand(init)`. The host
+calls it once for each accepted hand.
 
-Create `stateCodec` with `defineGameStateCodec`. The codec:
+The returned `GameHand<TState>` exposes `receive(update)` and `getState()`.
+`setInitialState(state)` and `installState(state)` are host-only restoration and
+optimistic-state operations. `createGameHand(initialState, reducer)` supplies
+this small mutable shell around a pure reducer.
 
-- Identifies the state with your catalog key and a version.
-- Checks unknown data with `isState`.
-- Encodes and decodes `PersistedGameState`.
-- Lists the game IDs represented by the state.
-- Says whether a finished hand can be shown again after a refresh with
-  `canRemountFinished`.
+Multi-ID games keep all members in the one complete state; Krunk, for example,
+uses `{ games: Record<string, KrunkGameState> }`. The host treats `getState()` as
+opaque Bencodex-compatible data and saves `{ gameType, state }` generically.
+Games do not provide state serializers, versions, validators, restore decoders,
+or migrations.
 
-Do not accept malformed saved data by casting it. `decode` is a trust boundary,
-so `isState` must verify every field your UI relies on.
-
-Also implement the three `durableState` operations:
-
-- `initialize` creates one keyed hand from the normalized `hand-started` input.
-- `reduceInput` applies `opponent-moved`, `game-message`, `move-rejected`, and
-  `hand-ended`.
-- `applyFeatureState` places an accepted local feature state into the hand
-  envelope. This matters for a multi-ID package such as Krunk.
-
-Keep the reducer pure. Given the same current state and event, it must return
-the same next state.
+Set package-level `canRemountFinished` when the same hand UI can be mounted
+read-only from a terminal save.
 
 If your `HandProposal` has extra fields, implement
 `persistence.encodeExtras` and `persistence.decodeExtras` in
-`handProposal.ts`. This saves the proposal itself; `stateCodec` saves the
-in-progress or finished UI state.
+`handProposal.ts`. This saves the proposal itself; hand state is saved
+generically from `GameHand.getState()`.
 
 ## Step 6: Build the play UI
 
 Implement `play.tsx` and export a `GameMountRegistration` named `play`. It has
-one `render(view)` function. Every render receives the current decoded-state
-envelope, ordered and active IDs, accepted amounts, terminal results, names, and
-`frozen`.
+one `render(view)` function. Every render receives the live or restored
+`GameHand`, ordered and active IDs, accepted amounts, terminal results, names,
+and `frozen`.
 
 `frozen` is the type discriminant:
 
 - `frozen: false` includes the typed intent port.
 - `frozen: true` has no protocol capability.
 
-The host applies proposal terms through `durableState.initialize`; the mounted
-hand never receives proposal, group, abandonment, connection, or on-chain
-lifecycle objects.
+The host passes accepted terms to `createHand`; the mounted hand never receives
+proposal, group, rejection, abandonment, connection, or on-chain lifecycle
+objects.
 
 These functions return React elements; they are not imperative drawing
 callbacks. React may call them again when session state changes, then preserves
@@ -404,26 +396,23 @@ type GameIntent<TState> =
   It is currently available only to a single-ID hand; multi-ID packages update
   a member through a protocol intent.
 - `make-move` asks the local CLVM handler to process `readable`. `null` means
-  CLVM nil. `state` is the candidate game-owned feature state for `gameId`.
+  CLVM nil. `state` is the complete candidate hand state.
 - `accept-settlement` accepts the result for `gameId` and carries the candidate
-  feature state to persist on acceptance.
+  complete hand state to persist on acceptance.
 - `cheat` deliberately invokes the diagnostic illegal-move path with a
-  mojo-denominated `moverShare` and candidate feature state. It is not a normal
+  mojo-denominated `moverShare` and complete candidate state. It is not a normal
   gameplay fallback.
 
 The host keeps command execution and candidate state atomic. If Rust applies the
 action immediately, the candidate commits immediately. If Rust queues it, the
-host persists the candidate separately from canonical `handState` and projects
-it for live rendering until Rust reports that the action was applied. The game
+host checkpoints the prior state, installs the complete candidate in the live
+hand, and persists both until Rust reports that the action was applied. The game
 does not observe whether this delay involved potato acquisition, on-chain
 progress, or protocol redo.
 
-`move-rejected` discards the pending projection without committing it.
-Unexpected `ActionFailed` errors discard the pending candidate and go to shared
-host error UX. For an applied intent, the host commits `state` through
-`durableState.applyFeatureState(currentHand, gameId, state)`. Therefore `state`
-is the state of the addressed game feature; it is the whole hand only when the
-package's hand and feature state are the same type.
+Move rejection and unexpected `ActionFailed` restore the generic checkpoint and
+go to shared host UX. Rejection is never delivered to the game. On confirmation
+the installed candidate becomes canonical.
 
 The complete incoming contract is:
 
@@ -439,48 +428,30 @@ interface GameHandInitialization {
   handProposal: HandProposal;
 }
 
-type GameInput<TInit = GameHandInitialization> =
-  | { type: 'hand-started'; init: TInit }
+type GameUpdate =
   | {
-      type: 'opponent-moved';
+      type: 'move-readable';
       gameId: string;
       readable: Uint8Array;
       moverShare: string;
     }
-  | { type: 'game-message'; gameId: string; readable: Uint8Array }
-  | { type: 'move-rejected'; gameId: string; tag: string; message: string }
+  | { type: 'message-readable'; gameId: string; readable: Uint8Array }
   | { type: 'hand-ended'; gameId: string; terminal: GameTerminalModel };
 ```
 
-- `hand-started` initializes or extends one accepted hand. `init.id` is the game
-  ID whose acceptance triggered this input; `gameIds` is the authoritative
-  ordered membership and may contain more than one ID. A multi-ID group can
-  receive this input as its member acceptances arrive, so `initialize(current,
-input)` must preserve already-initialized member state. `iStarted` identifies
-  the local session initiator, `canAct` is the initial local action capability,
-  `origin` says whether the accepted proposal was local or peer-authored, and
-  `handProposal` contains the validated accepted terms. These are normalized
-  initialization facts, not proposal-lifecycle events.
-- `opponent-moved` addresses one member of the hand. `readable` is the
+`GameHandInitialization` is supplied once to `createHand`. `id` is the
+acceptance ID, `gameIds` is the authoritative ordered membership, `iStarted`
+identifies the local session initiator, `canAct` is initial local capability,
+`origin` identifies the proposal author, and `handProposal` contains validated
+accepted terms.
+- `move-readable` addresses one member of the hand. `readable` is the
   serialized CLVM readable returned by the opponent-move handler.
   `moverShare` is a decimal mojo string because it originated at the WASM
   boundary.
-- `game-message` carries serialized advisory readable data for one member. It
+- `message-readable` carries serialized advisory readable data for one member. It
   does not itself imply a move, turn change, or protocol-state transition.
-- `move-rejected` reports an expected local-handler rejection for one member.
-  `tag` is the game-defined machine-readable category and `message` is its
-  displayable explanation. The candidate state from the rejected intent was not
-  committed. A game with expected validation feedback, such as Krunk, should
-  present it as domain feedback. A game that considers rejection unreachable
-  should still display the supplied error rather than silently ignoring it; it
-  must not add retry or redo behavior.
 - `hand-ended` supplies the normalized terminal model for one member. Multi-ID
   hands receive independent terminal inputs as their members finish.
-
-`hand-started` is the only input allowed to initialize a null durable state.
-Every other input requires a valid current state, and every package transition
-must produce a state accepted by its codec. The host treats violations as
-internal errors rather than silently dropping the input.
 
 The exact terminal payload is:
 
@@ -561,8 +532,10 @@ Before considering the game complete, check that:
   moves.
 - The proposal form converts to and from `HandProposal` correctly.
 - Factory parameter encoding and decoding round-trip.
-- The state codec rejects malformed values and round-trips valid state.
-- `durableState` handles every incoming input and validates every local state.
+- A fresh `GameHand` initializes from accepted terms and a restored hand accepts
+  its generic saved state before updates.
+- `GameHand.receive` handles move, message, and terminal updates in order, and
+  `getState` returns the latest complete hand state.
 - Every outgoing intent is tested for accepted, rejected, and unexpected-failure
   behavior.
 - Live and frozen branches of the single mount render the expected game state,

@@ -4,7 +4,6 @@ import {
   KrunkHandler,
   canDraftKrunkGuess,
   canQueueKrunkGuess,
-  isKrunkDictionaryRejectionError,
   krunkBoardNotice,
   krunkGuessesWithQueued,
   krunkGuessSubmissionMode,
@@ -22,12 +21,15 @@ import {
 } from './Krunk';
 import Krunk from './Krunk';
 import {
-  applyKrunkMoveRejected,
   initialKrunkGameState,
   krunkStateCodec,
   type KrunkHandState,
 } from './serialize';
-import { type GameTerminalModel, type LiveGamePort } from '../../host';
+import { createGameHand, type GameHand, type GameTerminalModel, type LiveGamePort } from '../../host';
+
+function testHand(persisted: ReturnType<typeof krunkStateCodec.encode>): GameHand<KrunkHandState> {
+  return createGameHand(krunkStateCodec.decode(persisted)!, (current) => current);
+}
 
 function terminal(
   outcome: GameTerminalModel['outcome'] = null,
@@ -78,7 +80,7 @@ describe('Krunk draft continuity', () => {
     const renderPhases: string[] = [];
     const controller = { dispatch: jest.fn() } as LiveGamePort;
     const baseProps = {
-      handSource: { interactionMode: 'live' as const, handState: persisted, port: controller },
+      handSource: { interactionMode: 'live' as const, hand: testHand(persisted), port: controller },
       currentHandGameIds: ['picker', 'guesser'],
       activeGameIds: ['picker', 'guesser'],
       onGameLog: () => {},
@@ -137,7 +139,7 @@ describe('Krunk draft continuity', () => {
           ...baseProps,
           handSource: {
             interactionMode: 'live',
-            handState: pickerSettled,
+            hand: testHand(pickerSettled),
             port: controller,
           },
           activeGameIds: ['guesser'],
@@ -168,7 +170,7 @@ describe('Krunk draft continuity', () => {
           ...baseProps,
           handSource: {
             interactionMode: 'live',
-            handState: bothSettled,
+            hand: testHand(bothSettled),
             port: controller,
           },
           activeGameIds: [],
@@ -186,7 +188,7 @@ describe('Krunk draft continuity', () => {
           ...baseProps,
           activeGameIds: [],
           terminalsById: { picker: pickerTimeout, guesser: guesserTimeout },
-          handSource: { interactionMode: 'terminal', handState: bothSettled },
+          handSource: { interactionMode: 'terminal', hand: testHand(bothSettled) },
         }),
       );
     });
@@ -229,7 +231,7 @@ describe('Krunk draft continuity', () => {
         React.createElement(Krunk, {
           handSource: {
             interactionMode: 'live',
-            handState: persisted,
+            hand: testHand(persisted),
             port: { dispatch },
           },
           currentHandGameIds: ['picker', 'guesser'],
@@ -255,8 +257,12 @@ describe('Krunk draft continuity', () => {
         type: 'make-move',
         gameId: 'picker',
         state: expect.objectContaining({
-          handler: KrunkHandler.AliceWaiting,
-          secretWord: 'CRANE',
+          games: expect.objectContaining({
+            picker: expect.objectContaining({
+              handler: KrunkHandler.AliceWaiting,
+              secretWord: 'CRANE',
+            }),
+          }),
         }),
       }),
     );
@@ -291,7 +297,7 @@ describe('Krunk draft continuity', () => {
         React.createElement(Krunk, {
           handSource: {
             interactionMode: 'live',
-            handState: persisted,
+            hand: testHand(persisted),
             port: { dispatch },
           },
           currentHandGameIds: ['picker', 'guesser'],
@@ -319,8 +325,12 @@ describe('Krunk draft continuity', () => {
         type: 'make-move',
         gameId: 'picker',
         state: expect.objectContaining({
-          handler: KrunkHandler.AliceWaiting,
-          secretWord: 'CRANE',
+          games: expect.objectContaining({
+            picker: expect.objectContaining({
+              handler: KrunkHandler.AliceWaiting,
+              secretWord: 'CRANE',
+            }),
+          }),
         }),
       }),
     );
@@ -348,7 +358,7 @@ describe('Krunk draft continuity', () => {
       },
     });
 
-    expect(krunkGameSlots(current, active, aliceFirst)).toEqual({
+    expect(krunkGameSlots(current, active, krunkStateCodec.decode(aliceFirst))).toEqual({
       aliceGameId: '0',
       bobGameId: '1',
       aliceActive: false,
@@ -360,7 +370,7 @@ describe('Krunk draft continuity', () => {
         '1': initialKrunkGameState('alice'),
       },
     });
-    expect(krunkGameSlots(current, active, bobFirst)).toEqual({
+    expect(krunkGameSlots(current, active, krunkStateCodec.decode(bobFirst))).toEqual({
       aliceGameId: '1',
       bobGameId: '0',
       aliceActive: true,
@@ -384,7 +394,7 @@ describe('Krunk draft continuity', () => {
     };
     const persisted = krunkStateCodec.encode({ games: { '0': alice, '1': bob } });
 
-    expect(krunkGameSlots(['0', '1'], [], persisted)).toEqual({
+    expect(krunkGameSlots(['0', '1'], [], krunkStateCodec.decode(persisted))).toEqual({
       aliceGameId: '0',
       bobGameId: '1',
       aliceActive: false,
@@ -426,49 +436,6 @@ describe('Krunk draft continuity', () => {
       { word: 'AUDIO', clue: [-1n, -1n, -1n, -1n, -1n] },
     ]);
     expect(krunkGuessesWithQueued([], [])).toEqual([]);
-  });
-
-  it('treats dictionary rejection errors as a signal to drop later queued guesses', () => {
-    expect(isKrunkDictionaryRejectionError('XXXXX is not in the dictionary.')).toBe(true);
-    expect(isKrunkDictionaryRejectionError('network failed')).toBe(false);
-    expect(isKrunkDictionaryRejectionError(null)).toBe(false);
-  });
-
-  it('reports immediate dictionary rejection without changing canonical gameplay state', () => {
-    const alice: KrunkGameState = {
-      handler: KrunkHandler.WaitingCommit,
-      myTurn: true,
-      role: 'alice',
-      guesses: [],
-      secretWord: null,
-      revealedWord: null,
-      outcome: null,
-      moverShare: null,
-      error: null,
-    };
-    const rejectedAlice = applyKrunkMoveRejected(alice, {
-      tag: 'not_in_dictionary',
-      message: 'xxxxx',
-    });
-    expect(rejectedAlice).toEqual({
-      ...alice,
-      error: 'XXXXX is not in the dictionary.',
-    });
-
-    const bob: KrunkGameState = {
-      ...alice,
-      handler: KrunkHandler.BobGuess,
-      role: 'bob',
-      secretWord: null,
-    };
-    const rejectedBob = applyKrunkMoveRejected(bob, {
-      tag: 'not_in_dictionary',
-      message: 'xxxxx',
-    });
-    expect(rejectedBob).toEqual({
-      ...bob,
-      error: 'XXXXX is not in the dictionary.',
-    });
   });
 
   it('maps settlement outcomes to terminal status copy', () => {

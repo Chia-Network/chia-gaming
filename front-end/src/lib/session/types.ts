@@ -8,7 +8,7 @@ import type {
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { ComposeDraftState } from './composeDraft';
-import type { PersistedGameState } from './gameStateCodec';
+import type { PersistedGameState } from '@games/host';
 
 export type {
   GameTerminalType,
@@ -44,7 +44,7 @@ export interface PendingGameCandidate {
   gameType: RegisteredGameType;
   id: string;
   action: LocalActionKind;
-  featureState: unknown;
+  state: unknown;
 }
 
 export type HandProposal = Omit<HostHandProposal, 'gameType'> & {
@@ -268,4 +268,4 @@ export interface StatusBarBalanceSegment {
 }
 
 export type { PeerLiveness, SessionPhase };
-export type { GameStateCodec, PersistedGameState } from './gameStateCodec';
+export type { PersistedGameState } from '@games/host';

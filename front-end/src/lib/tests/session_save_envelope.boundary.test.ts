@@ -127,7 +127,7 @@ describe('save boundary enforcement', () => {
     errorSpy.mockRestore();
   });
 
-  it('deletes a malformed current-v15 metadata envelope read from IndexedDB', async () => {
+  it('deletes a malformed current-v16 metadata envelope read from IndexedDB', async () => {
     markSavedSession();
     await writeSessionRecord(
       baseSave({

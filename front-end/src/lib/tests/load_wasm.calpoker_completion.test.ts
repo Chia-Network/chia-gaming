@@ -17,7 +17,6 @@ import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { HandProposal } from '../session/types';
 import type { GameIntent, LiveGamePort } from '@games/host';
-import { projectRegisteredPendingCandidates } from '../gameRegistry';
 import {
   addActiveSubscription,
   createActivePair,
@@ -81,7 +80,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         assert.equal(game.activeGameType, 'calpoker');
         if (intent.type === 'update-local-state') {
           assert.equal(
-            runtime.transitionFeatureState('calpoker', game.currentHandIds[0], intent.state),
+            runtime.replaceHandState('calpoker', game.currentHandIds[0], intent.state),
             true,
           );
           return;
@@ -304,15 +303,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
       hookHands[index] = useCalpokerHand(
         {
           interactionMode: 'live',
-          get handState() {
-            const game = runtime.getState().model.game;
-            return projectRegisteredPendingCandidates(
-              game.activeGameType,
-              game.handState,
-              game.currentHandIds,
-              game.pendingCandidates,
-            );
-          },
+          hand: runtime.getGameHand(),
           port: ports[index],
         },
         secondGameId,

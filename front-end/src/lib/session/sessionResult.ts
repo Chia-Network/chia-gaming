@@ -22,6 +22,7 @@ import {
   selectGameSpecificView as selectTerminalGameSpecificView,
   selectSessionPhase,
 } from './selectors';
+import { restoreRegisteredGameHand } from '../gameRegistry';
 
 export interface UseGameSessionResult {
   sessionModel: SessionModel;
@@ -157,7 +158,9 @@ export function projectTerminalSessionResult(
     iProposedHand: selectIProposedHand(model),
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
-    handSource: terminalGameHandSource(model.game.handState),
+    handSource: terminalGameHandSource(
+      live.handSource.hand ?? restoreRegisteredGameHand(model, iStarted),
+    ),
     appendGameLog: NOOP,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: selectIncomingProposalGroup(model),

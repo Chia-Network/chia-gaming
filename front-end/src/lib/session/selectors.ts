@@ -4,7 +4,7 @@ import type {
   PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
-import type { PersistedGameState } from './gameStateCodec';
+import type { PersistedGameState } from '@games/host';
 import {
   DEFAULT_GAME_COIN_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,

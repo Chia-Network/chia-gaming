@@ -11,10 +11,11 @@ import {
 import { krunkSettlementStatus } from './settlement';
 import { krunkOutcomeFromPlay } from './handProposal';
 import {
-  krunkGameStateFromPersisted,
+  krunkGameStateFromHand,
   KrunkHandler,
   type KrunkGameState,
   type KrunkGuess,
+  type KrunkHandState,
   type KrunkRole,
 } from './serialize';
 
@@ -24,7 +25,6 @@ type LocalGameCommand =
   | { type: 'cheat'; moverShare: bigint };
 
 export { KrunkHandler };
-export { applyKrunkMoveRejected } from './serialize';
 export type { KrunkGameState, KrunkGuess, KrunkRole };
 
 export interface UseKrunkHandResult {
@@ -75,11 +75,6 @@ export function krunkGuessesWithQueued(
 ): KrunkGuess[] {
   if (queuedGuesses.length === 0) return guesses;
   return [...guesses, ...queuedGuesses.map((word) => ({ word, clue: PENDING_CLUE }))];
-}
-
-/** True when gameState.error is a dictionary rejection (drop later queued guesses). */
-export function isKrunkDictionaryRejectionError(error: string | null): boolean {
-  return error != null && error.endsWith(' is not in the dictionary.');
 }
 
 export interface KrunkBoardNotice {
@@ -181,7 +176,6 @@ export function krunkBoardNotice(
   terminal: GameTerminalModel,
   gameAmount: string | null = null,
 ): KrunkBoardNotice | null {
-  if (state.error) return { text: state.error, kind: 'error' };
   return krunkTerminalNotice(state, opponentLabel, terminal, gameAmount);
 }
 
@@ -241,7 +235,7 @@ function finishedKrunkState(
 }
 
 export function useKrunkHand(
-  handSource: GameHandSource,
+  handSource: GameHandSource<KrunkHandState>,
   gameId: string,
   iStarted: boolean,
   active = true,
@@ -251,7 +245,8 @@ export function useKrunkHand(
   // every game. Krunk's first mover is alice (the committer), so the
   // channel initiator plays bob and the receiver plays alice.
   const role: KrunkRole = iStarted ? 'bob' : 'alice';
-  const gameState = krunkGameStateFromPersisted(gameHandState(handSource), gameId, role);
+  const handState = gameHandState(handSource);
+  const gameState = krunkGameStateFromHand(handState, gameId, role);
 
   const gameStateRef = useRef(gameState);
   const handSourceRef = useRef(handSource);
@@ -265,12 +260,16 @@ export function useKrunkHand(
 
   const commitLocalAction = useCallback((next: KrunkGameState, command: LocalGameCommand): void => {
     const gameId = gameIdRef.current;
+    const currentHand = gameHandState(handSourceRef.current);
+    const nextHand: KrunkHandState = {
+      games: { ...currentHand.games, [gameId]: next },
+    };
     requireLiveGameHandSource(handSourceRef.current).dispatch(
       command.type === 'make-move'
-        ? { type: 'make-move', gameId, readable: command.readable, state: next }
+        ? { type: 'make-move', gameId, readable: command.readable, state: nextHand }
         : command.type === 'accept-settlement'
-          ? { type: 'accept-settlement', gameId, state: next }
-          : { type: 'cheat', gameId, moverShare: command.moverShare, state: next },
+          ? { type: 'accept-settlement', gameId, state: nextHand }
+          : { type: 'cheat', gameId, moverShare: command.moverShare, state: nextHand },
     );
   }, []);
 
@@ -316,7 +315,6 @@ export function useKrunkHand(
         secretWord: normalised,
         handler: KrunkHandler.AliceWaiting,
         myTurn: false,
-        error: null,
       } satisfies KrunkGameState;
       commitLocalAction(next, {
         type: 'make-move',
@@ -349,7 +347,6 @@ export function useKrunkHand(
         ],
         handler: KrunkHandler.BobWaiting,
         myTurn: false,
-        error: null,
       } satisfies KrunkGameState;
       commitLocalAction(next, {
         type: 'make-move',

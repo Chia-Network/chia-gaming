@@ -421,7 +421,6 @@ describe('flat state', () => {
       },
       handState: {
         gameType: 'spacepoker',
-        version: 4n,
         state: {
           gameState: { handler: 2n, myTurn: true, N: 4n },
           playerHoleCards: [1n, 2n],
@@ -486,7 +485,6 @@ describe('flat state', () => {
       },
       handState: {
         gameType: 'calpoker',
-        version: 3n,
         state: {
           playerHand: [8n, 7n, 6n, 5n],
           opponentHand: [4n, 3n, 2n, 1n],

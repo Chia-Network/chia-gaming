@@ -1,19 +1,25 @@
 import { Program } from 'clvm-lib';
 import {
   reduceSpacepokerFeatureState,
-  reduceSpacepokerDurableState,
   reduceSpacepokerSettlementState,
-  spacepokerRegistration,
 } from '@games/spacepoker/ui/handProposal';
-import {
-  reduceCalpokerDurableState,
-  reduceCalpokerFeatureState,
-} from '@games/calpoker/ui/handProposal';
+import { reduceCalpokerFeatureState } from '@games/calpoker/ui/handProposal';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { reduceKrunkDurableState, reduceKrunkFeatureState } from '@games/krunk/ui/handProposal';
-import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
-import { spacepokerStateCodec, type SpacepokerHandState } from '@games/spacepoker/ui/serialize';
-import type { GameInput } from '@games/host';
+import { reduceKrunkFeatureState } from '@games/krunk/ui/handProposal';
+import {
+  createKrunkHand,
+  initialKrunkGameState,
+  KrunkHandler,
+  krunkStateCodec,
+  type KrunkHandState,
+} from '@games/krunk/ui/serialize';
+import {
+  createSpacepokerHand,
+  spacepokerStateCodec,
+  type SpacepokerHandState,
+} from '@games/spacepoker/ui/serialize';
+import { createCalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
+import type { GameHandInitialization, GameUpdate } from '@games/host';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
@@ -21,11 +27,11 @@ const text = (value: string) => Program.fromBytes(new TextEncoder().encode(value
 const ints = (values: bigint[]) => Program.fromList(values.map(Program.fromBigInt));
 const readable = (...items: Program[]) => Program.fromList(items).serialize();
 
-const status = (payload: Uint8Array, moverShare: string | null = '0'): GameInput =>
+const status = (payload: Uint8Array, moverShare: string | null = '0'): GameUpdate =>
   moverShare === null
-    ? { type: 'game-message', gameId: 'space-1', readable: payload }
+    ? { type: 'message-readable', gameId: 'space-1', readable: payload }
     : {
-        type: 'opponent-moved',
+        type: 'move-readable',
         gameId: 'space-1',
         readable: payload,
         moverShare,
@@ -38,30 +44,81 @@ function assertCodecValid(state: SpacepokerHandState | null): SpacepokerHandStat
   return restored!;
 }
 
-const acceptedSpacepoker = (): GameInput => ({
-  type: 'hand-started',
-  init: {
-    id: 'space-1',
-    gameIds: ['space-1'],
+const spacepokerInit = (): GameHandInitialization => ({
+  id: 'space-1',
+  gameIds: ['space-1'],
+  iStarted: false,
+  canAct: true,
+  origin: 'local',
+  handProposal: {
+    gameType: 'spacepoker',
+    myContribution: 1_000n,
+    theirContribution: 1_000n,
+    gameTimeout: 15n,
+    unitSizeMojos: 10n,
+  },
+});
+
+function freshSpacepokerState(): SpacepokerHandState {
+  return createSpacepokerHand(spacepokerInit()).getState();
+}
+
+function advanceSpacepokerHand(
+  state: SpacepokerHandState,
+  update: GameUpdate,
+): SpacepokerHandState {
+  const hand = createSpacepokerHand(spacepokerInit());
+  hand.installState(state);
+  hand.receive(update);
+  return hand.getState();
+}
+
+function advanceCalpokerHand(state: CalpokerHandState, update: GameUpdate): CalpokerHandState {
+  const hand = createCalpokerHand({
+    ...spacepokerInit(),
+    gameIds: ['calpoker-1'],
+    id: 'calpoker-1',
+    handProposal: {
+      gameType: 'calpoker',
+      myContribution: 100n,
+      theirContribution: 100n,
+      gameTimeout: 15n,
+    },
+  });
+  hand.installState(state);
+  hand.receive(update);
+  return hand.getState();
+}
+
+function freshKrunkHand(init: GameHandInitialization): KrunkHandState {
+  return createKrunkHand(init).getState();
+}
+
+function advanceKrunkHand(state: KrunkHandState, update: GameUpdate): KrunkHandState {
+  const hand = createKrunkHand({
+    id: Object.keys(state.games)[0],
+    gameIds: Object.keys(state.games),
     iStarted: false,
     canAct: true,
     origin: 'local',
     handProposal: {
-      gameType: 'spacepoker',
-      myContribution: 1_000n,
-      theirContribution: 1_000n,
+      gameType: 'krunk',
+      myContribution: 100n,
+      theirContribution: 100n,
       gameTimeout: 15n,
-      unitSizeMojos: 10n,
     },
-  },
-});
+  });
+  hand.installState(state);
+  hand.receive(update);
+  return hand.getState();
+}
 
 function applyReadable(state: SpacepokerHandState, payload: Uint8Array): SpacepokerHandState {
   const projected = reduceSpacepokerFeatureState(state, {
     type: 'opponent-moved',
     readable: payload,
   });
-  const durable = reduceSpacepokerDurableState(state, status(payload));
+  const durable = advanceSpacepokerHand(state, status(payload));
   expect(durable).toEqual(projected);
   return assertCodecValid(durable);
 }
@@ -71,20 +128,17 @@ describe('canonical feature gameplay reducers', () => {
     ['local', 'alice', 'bob'],
     ['peer', 'bob', 'alice'],
   ] as const)('assigns ordered Krunk roles from %s proposal origin', (origin, first, second) => {
-    const state = reduceKrunkDurableState(null, {
-      type: 'hand-started',
-      init: {
-        id: 'krunk-1',
-        gameIds: ['krunk-1', 'krunk-2'],
-        iStarted: false,
-        canAct: true,
-        origin,
-        handProposal: {
-          gameType: 'krunk',
-          myContribution: 100n,
-          theirContribution: 100n,
-          gameTimeout: 15n,
-        },
+    const state = freshKrunkHand({
+      id: 'krunk-1',
+      gameIds: ['krunk-1', 'krunk-2'],
+      iStarted: false,
+      canAct: true,
+      origin,
+      handProposal: {
+        gameType: 'krunk',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
       },
     });
 
@@ -95,7 +149,7 @@ describe('canonical feature gameplay reducers', () => {
   it('initializes Space Poker while protocol identities are bound', () => {
     setProtocolIds(TEST_PROTOCOL_IDS);
     try {
-      const state = reduceSpacepokerDurableState(null, acceptedSpacepoker());
+      const state = freshSpacepokerState();
       expect(state?.unitSizeMojos).toBe(10n);
       expect(spacepokerStateCodec.gameType).toBe('spacepoker');
     } finally {
@@ -104,7 +158,7 @@ describe('canonical feature gameplay reducers', () => {
   });
 
   it('keeps Space Poker streets, board, betting, and codec projection identical at every step', () => {
-    let state = reduceSpacepokerDurableState(null, acceptedSpacepoker());
+    let state = freshSpacepokerState();
     state = assertCodecValid(state);
     state = applyReadable(state, readable());
     state = applyReadable(
@@ -169,7 +223,7 @@ describe('canonical feature gameplay reducers', () => {
   });
 
   it('accepts legal repeated Space Poker ranks through the flop and turn', () => {
-    let state = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
+    let state = assertCodecValid(freshSpacepokerState());
     state = applyReadable(state, readable());
     state = applyReadable(
       state,
@@ -207,7 +261,7 @@ describe('canonical feature gameplay reducers', () => {
   });
 
   it('accepts a turn advisory whose rank matches a visible hole card', () => {
-    let state = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
+    let state = assertCodecValid(freshSpacepokerState());
     state = applyReadable(state, readable());
     state = applyReadable(
       state,
@@ -236,7 +290,7 @@ describe('canonical feature gameplay reducers', () => {
       handHistory: [...state.handHistory, { player: 'you', action: 'check', endsStreet: true }],
     });
 
-    const next = reduceSpacepokerDurableState(
+    const next = advanceSpacepokerHand(
       state,
       status(readable(text('cards'), Program.fromBigInt(8n)), null),
     );
@@ -246,7 +300,7 @@ describe('canonical feature gameplay reducers', () => {
 
   it('places delayed Space Poker card advisories by street instead of duplicating a board card', () => {
     const current = assertCodecValid({
-      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      ...freshSpacepokerState()!,
       gameState: { handler: 2n, myTurn: true, N: 2n },
       playerHoleCards: [0n, 1n],
       communityCards: [2n, 3n, 4n, 5n, null],
@@ -263,7 +317,7 @@ describe('canonical feature gameplay reducers', () => {
   });
 
   it('keeps Bob-local winning call and end readables positively oriented', () => {
-    let state = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
+    let state = assertCodecValid(freshSpacepokerState());
     state = applyReadable(
       state,
       readable(text('deal'), ...[0n, 1n, 1n, 1n].map(Program.fromBigInt)),
@@ -330,12 +384,12 @@ describe('canonical feature gameplay reducers', () => {
     const settled = reduceSpacepokerSettlementState(state, 'settled_cleanly');
     expect(settled).toEqual(state);
 
-    const persisted = spacepokerRegistration.stateCodec.encode(settled);
-    expect(spacepokerRegistration.stateCodec.decode(persisted)).toEqual(settled);
+    const persisted = spacepokerStateCodec.encode(settled);
+    expect(spacepokerStateCodec.decode(persisted)).toEqual(settled);
   });
 
   it('preserves fold and concede terminal presentation through immediate settlement restore', () => {
-    let state = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
+    let state = assertCodecValid(freshSpacepokerState());
     state = applyReadable(
       state,
       readable(text('deal'), ...[0n, 1n, 0n, 1n].map(Program.fromBigInt)),
@@ -344,7 +398,7 @@ describe('canonical feature gameplay reducers', () => {
       state,
       readable(text('open'), Program.fromBigInt(10n), Program.fromBigInt(20n)),
     );
-    const folded = reduceSpacepokerDurableState(state, {
+    const folded = advanceSpacepokerHand(state, {
       type: 'hand-ended',
       gameId: 'space-1',
       terminal: {
@@ -365,7 +419,7 @@ describe('canonical feature gameplay reducers', () => {
 
   it('projects an on-chain Space Poker opponent timeout as a preserved-board action failure', () => {
     const state = assertCodecValid({
-      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      ...freshSpacepokerState()!,
       gameState: { handler: 3n, myTurn: false, N: 2n },
       playerHoleCards: [1n, 2n],
       communityCards: [3n, 4n, 5n, 6n, null],
@@ -396,7 +450,7 @@ describe('canonical feature gameplay reducers', () => {
       opponentHandEval: [5n, 13n],
     };
     const state = assertCodecValid({
-      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      ...freshSpacepokerState()!,
       gameState: { handler: 4n, myTurn: false, N: 1n },
       playerHoleCards: [8n, 9n],
       opponentHoleCards: [10n, 11n],
@@ -432,7 +486,7 @@ describe('canonical feature gameplay reducers', () => {
       opponentHandEval: [6n, 14n],
     };
     const state = assertCodecValid({
-      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      ...freshSpacepokerState()!,
       gameState: { handler: 4n, myTurn: false, N: 1n },
       playerHoleCards: [8n, 9n],
       opponentHoleCards: [10n, 11n],
@@ -464,7 +518,7 @@ describe('canonical feature gameplay reducers', () => {
       opponentHandEval: [5n, 13n],
     };
     const state = assertCodecValid({
-      ...reduceSpacepokerDurableState(null, acceptedSpacepoker())!,
+      ...freshSpacepokerState()!,
       gameState: { handler: 5n, myTurn: false, N: 1n },
       playerHoleCards: [8n, 9n],
       opponentHoleCards: [10n, 11n],
@@ -508,7 +562,7 @@ describe('canonical feature gameplay reducers', () => {
       type: 'opponent-moved',
       readable: cards,
     });
-    const durable = reduceCalpokerDurableState(current, status(cards));
+    const durable = advanceCalpokerHand(current, status(cards));
     expect(durable).toEqual(projected);
     expect(calpokerStateCodec.decode(calpokerStateCodec.encode(durable!))).toEqual(projected);
   });
@@ -551,7 +605,7 @@ describe('canonical feature gameplay reducers', () => {
       error: null,
     };
 
-    const projected = reduceCalpokerDurableState(current, {
+    const projected = advanceCalpokerHand(current, {
       ...status(finalReadable),
       gameId: 'calpoker-1',
     });
@@ -579,7 +633,7 @@ describe('canonical feature gameplay reducers', () => {
     );
 
     expect(() =>
-      reduceCalpokerDurableState(
+      advanceCalpokerHand(
         {
           playerHand,
           opponentHand: [32n, 36n, 41n, 49n, 33n, 37n, 42n, 50n],
@@ -606,7 +660,7 @@ describe('canonical feature gameplay reducers', () => {
     };
 
     expect(
-      reduceCalpokerDurableState(current, {
+      advanceCalpokerHand(current, {
         type: 'hand-ended',
         gameId: 'calpoker-1',
         terminal: {
@@ -632,7 +686,7 @@ describe('canonical feature gameplay reducers', () => {
       error: null,
     };
     expect(
-      reduceCalpokerDurableState(calpoker, {
+      advanceCalpokerHand(calpoker, {
         ...status(cards, null),
         iStarted: true,
       }),
@@ -644,7 +698,7 @@ describe('canonical feature gameplay reducers', () => {
       }),
     );
 
-    const accepted = assertCodecValid(reduceSpacepokerDurableState(null, acceptedSpacepoker()));
+    const accepted = assertCodecValid(freshSpacepokerState());
     const deal = readable(
       text('deal'),
       Program.fromBigInt(10n),
@@ -652,7 +706,7 @@ describe('canonical feature gameplay reducers', () => {
       Program.fromBigInt(1n),
       Program.fromBigInt(0n),
     );
-    expect(reduceSpacepokerDurableState(accepted, status(deal, null))).toEqual(
+    expect(advanceSpacepokerHand(accepted, status(deal, null))).toEqual(
       reduceSpacepokerFeatureState(accepted, {
         type: 'game-message',
         readable: deal,
@@ -673,14 +727,13 @@ describe('canonical feature gameplay reducers', () => {
       readable: clue,
       moverShare: '0',
     });
-    const durable = reduceKrunkDurableState(
+    const durable = advanceKrunkHand(
       { games: { 'krunk-1': pending } },
       {
-        type: 'opponent-moved',
+        type: 'move-readable',
         gameId: 'krunk-1',
         readable: clue,
         moverShare: '0',
-        iStarted: true,
       },
     );
     expect(durable?.games['krunk-1']).toEqual(projected);
@@ -700,7 +753,7 @@ describe('canonical feature gameplay reducers', () => {
     const projected = reduceKrunkFeatureState(terminal, {
       type: 'settled',
     });
-    const durable = reduceKrunkDurableState(
+    const durable = advanceKrunkHand(
       {
         games: {
           'krunk-1': terminal,
@@ -726,39 +779,23 @@ describe('canonical feature gameplay reducers', () => {
     expect(Object.keys(durable!.games)).toEqual(['krunk-1', 'krunk-2']);
   });
 
-  it('replaces a completed Krunk hand while preserving duplicate acceptance state', () => {
-    const completed = {
-      ...initialKrunkGameState('alice'),
-      handler: KrunkHandler.Terminal,
-      myTurn: false,
-      secretWord: 'CRANE',
-    };
-    const firstAcceptance: GameInput = {
-      type: 'hand-started',
-      init: {
-        id: 'krunk-3',
-        gameIds: ['krunk-3', 'krunk-4'],
-        iStarted: true,
-        canAct: true,
-        origin: 'local',
-        handProposal: {
-          gameType: 'krunk',
-          myContribution: 100n,
-          theirContribution: 100n,
-          gameTimeout: 15n,
-        },
+  it('creates a replacement Krunk hand and preserves installed local state', () => {
+    const init: GameHandInitialization = {
+      id: 'krunk-3',
+      gameIds: ['krunk-3', 'krunk-4'],
+      iStarted: true,
+      canAct: true,
+      origin: 'local',
+      handProposal: {
+        gameType: 'krunk',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
       },
     };
 
-    let state = reduceKrunkDurableState(
-      {
-        games: {
-          'krunk-1': completed,
-          'krunk-2': { ...completed, role: 'bob' },
-        },
-      },
-      firstAcceptance,
-    );
+    const hand = createKrunkHand(init);
+    let state = hand.getState();
     expect(Object.keys(state!.games)).toEqual(['krunk-3', 'krunk-4']);
 
     const progressed = {
@@ -766,10 +803,8 @@ describe('canonical feature gameplay reducers', () => {
       handler: KrunkHandler.AliceWaiting,
       secretWord: 'SLATE',
     };
-    state = reduceKrunkDurableState(
-      { games: { ...state!.games, 'krunk-3': progressed } },
-      { ...firstAcceptance, id: 'krunk-4' },
-    );
+    hand.installState({ games: { ...state.games, 'krunk-3': progressed } });
+    state = hand.getState();
 
     expect(Object.keys(state!.games)).toEqual(['krunk-3', 'krunk-4']);
     expect(state!.games['krunk-3']).toEqual(progressed);
