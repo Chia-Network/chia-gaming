@@ -151,9 +151,7 @@
             ;; move bytes
             (concat prefix (byteify mover-share) slash)
             (curry SELF_PROG "validator" curry-args)
-            (validator-hash curry-args)
             (curry SELF_PROG "validator" incr-curry-args)
-            (validator-hash incr-curry-args)
             512
             mover-share
             (curry SELF_PROG "theirturn" incr-curry-args)
@@ -216,17 +214,13 @@
   )
 
 (defun factory (sender_contribution receiver_contribution sender_goes_first (CURRY_PACK))
-  (assign
-   amount (+ sender_contribution receiver_contribution)
-   (assert
+  (assert
     (or (not sender_goes_first) (= sender_goes_first 1))
     (list
      (list
       sender_contribution
       receiver_contribution
-      amount
       sender_goes_first
-      (validator-hash curry-args)
       ()
       512
       (list () () ())
@@ -237,7 +231,6 @@
       )
      )
     )
-   )
   )
 
 (export (MODE (CURRY_PACK) . args)

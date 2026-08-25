@@ -17,8 +17,8 @@ use crate::referee::types::GameMoveDetails;
 // How to call the clvm program in this object:
 //
 // My turn handler takes (local_move amount state mover_share entropy) and returns
-//       (label move outgoing_validator outgoing_validator_hash incoming_validator
-//        incoming_validator_hash max_move_size mover_share their_turn_handler message_parser)
+//       (label move outgoing_validator incoming_validator max_move_size mover_share
+//        their_turn_handler message_parser)
 // Message parser takes (message state amount) and returns readable_info or raises
 //
 // Their turn handler takes (amount pre_state state move validation_program_hash mover_share) and returns
@@ -54,9 +54,7 @@ pub struct MyTurnResult {
     pub name: String,
     pub move_bytes: Vec<u8>,
     pub outgoing_move_state_update_program: StateUpdateProgram,
-    pub outgoing_move_state_update_program_hash: Hash,
     pub incoming_move_state_update_program: StateUpdateProgram,
-    pub incoming_move_state_update_program_hash: Hash,
     pub max_move_size: usize,
     pub mover_share: Amount,
     pub waiting_handler: Option<GameHandler>,
@@ -192,7 +190,7 @@ impl GameHandler {
             return Err(Error::GameMoveRejected { tag, message });
         }
 
-        if pl.len() < 9 {
+        if pl.len() < 7 {
             return Err(Error::StrErr(format!(
                 "bad result from game handler: {}",
                 Node(run_result).to_hex(allocator)?
@@ -204,36 +202,25 @@ impl GameHandler {
         let name = std::str::from_utf8(&name_atom)
             .map_err(|e| Error::StrErr(format!("game handler name is not valid UTF-8: {e}")))?;
         let max_move_size =
-            if let Some(mm) = atom_from_clvm(allocator, pl[6]).and_then(|a| usize_from_atom(&a)) {
+            if let Some(mm) = atom_from_clvm(allocator, pl[4]).and_then(|a| usize_from_atom(&a)) {
                 mm
             } else {
                 return Err(Error::StrErr("bad max move size".to_string()));
             };
         let mover_share =
-            if let Some(ms) = atom_from_clvm(allocator, pl[7]).and_then(|a| u64_from_atom(&a)) {
+            if let Some(ms) = atom_from_clvm(allocator, pl[5]).and_then(|a| u64_from_atom(&a)) {
                 Amount::new(ms)
             } else {
                 return Err(Error::StrErr(format!(
                     "bad share {}",
-                    Node(pl[7]).to_hex(allocator)?
+                    Node(pl[5]).to_hex(allocator)?
                 )));
             };
-        let message_parser = if pl.len() <= 9 || pl[9] == allocator.allocator().nil() {
+        let message_parser = if pl.len() <= 7 || pl[7] == allocator.allocator().nil() {
             None
         } else {
-            Some(MessageHandler::from_nodeptr(allocator, pl[9])?)
+            Some(MessageHandler::from_nodeptr(allocator, pl[7])?)
         };
-
-        let get_hash = |allocator: &mut AllocEncoder, loc: usize| {
-            if let Some(a) = atom_from_clvm(allocator, pl[loc]) {
-                Hash::from_slice(&a)
-            } else {
-                Err(Error::StrErr("bad hash".to_string()))
-            }
-        };
-
-        let outgoing_move_state_update_program_hash = get_hash(allocator, 3)?;
-        let incoming_move_state_update_program_hash = get_hash(allocator, 5)?;
         let move_data = if let Some(m) = atom_from_clvm(allocator, pl[1]).map(|a| a.to_vec()) {
             m
         } else {
@@ -247,19 +234,17 @@ impl GameHandler {
         let outgoing_move_state_update_program =
             get_state_update_program(allocator, name, "my turn", &pl, 2)?;
         let incoming_move_state_update_program =
-            get_state_update_program(allocator, name, "their_turn", &pl, 4)?;
+            get_state_update_program(allocator, name, "their_turn", &pl, 3)?;
 
         Ok(MyTurnResult {
             name: name.to_string(),
-            waiting_handler: if pl[8] == allocator.allocator().nil() {
+            waiting_handler: if pl[6] == allocator.allocator().nil() {
                 None
             } else {
-                Some(GameHandler::their_handler_from_nodeptr(allocator, pl[8])?)
+                Some(GameHandler::their_handler_from_nodeptr(allocator, pl[6])?)
             },
-            outgoing_move_state_update_program: outgoing_move_state_update_program,
-            outgoing_move_state_update_program_hash,
-            incoming_move_state_update_program: incoming_move_state_update_program,
-            incoming_move_state_update_program_hash,
+            outgoing_move_state_update_program,
+            incoming_move_state_update_program,
             move_bytes: move_data,
             mover_share,
             max_move_size,

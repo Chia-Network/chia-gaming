@@ -114,7 +114,9 @@ context instead of displaying it as a term.
 Each game returned by the factory includes its starting state, move handlers,
 and validation programs. See
 [the factory return format](clsp/handler_api.md#game-factory) for the exact
-fields.
+fields. Return each player's contribution separately; the host derives the
+total amount. Return the initial validator program itself; the host derives its
+tree hash and uses the first record's hash as the protocol game ID.
 
 During play, the engine uses:
 

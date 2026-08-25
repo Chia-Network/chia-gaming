@@ -363,17 +363,7 @@ impl MyTurnReferee {
                 mover_share: cheat_share.clone(),
                 max_move_size: args.game_move.basic.max_move_size,
                 outgoing_move_state_update_program: args.validation_program.clone(),
-                outgoing_move_state_update_program_hash: args
-                    .validation_program
-                    .sha256tree(allocator)
-                    .hash()
-                    .clone(),
                 incoming_move_state_update_program: args.validation_program.clone(),
-                incoming_move_state_update_program_hash: args
-                    .validation_program
-                    .sha256tree(allocator)
-                    .hash()
-                    .clone(),
                 waiting_handler: Some(game_handler.clone()),
                 message_parser: None,
             })

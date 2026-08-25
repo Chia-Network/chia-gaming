@@ -1,10 +1,10 @@
 (include *standard-cl-23*)
 
-(import games.spacepoker.clsp.onchain.commitA exposing (program as val_commitA) (program_hash as commitA_hash))
-(import games.spacepoker.clsp.onchain.commitB exposing (program as val_commitB) (program_hash as commitB_hash))
-(import games.spacepoker.clsp.onchain.begin_round exposing (program as val_begin) (program_hash as begin_hash))
-(import games.spacepoker.clsp.onchain.mid_round exposing (program as val_mid) (program_hash as mid_hash))
-(import games.spacepoker.clsp.onchain.end exposing (program as val_end) (program_hash as end_hash))
+(import games.spacepoker.clsp.onchain.commitA exposing (program as val_commitA))
+(import games.spacepoker.clsp.onchain.commitB exposing (program as val_commitB))
+(import games.spacepoker.clsp.onchain.begin_round exposing (program as val_begin))
+(import games.spacepoker.clsp.onchain.mid_round exposing (program as val_mid))
+(import games.spacepoker.clsp.onchain.end exposing (program as val_end))
 (import games.spacepoker.clsp.space_hand_calc exposing space_hand_calc)
 
 (import std.li)
@@ -101,7 +101,7 @@
 ; ─── deterministic factory ───────────────────────────────────────────
 
 ; Parameters: (per_player_stake bet_unit sender_goes_first).
-; Returns one canonical 12-field game record.
+; Returns one canonical 10-field game record.
 (defun spacepoker_factory (@ _args (per_player_stake bet_unit sender_goes_first))
     (assert
         (> per_player_stake 0)
@@ -113,9 +113,7 @@
             (li
                 per_player_stake
                 per_player_stake
-                (* 2 per_player_stake)
                 sender_goes_first
-                commitA_hash
                 0
                 32
                 bet_unit
@@ -141,9 +139,7 @@
             "spacepoker_alice_commitA"
             image_5
             val_commitA
-            commitA_hash
             val_commitB
-            commitB_hash
             32
             (/ amount 2)
             (curry spacepoker_alice_handler_commitB chain)
@@ -198,9 +194,7 @@
                     "spacepoker_alice_begin_round"
                     move_bytes
                     val_begin
-                    begin_hash
                     val_mid
-                    mid_hash
                     42
                     new_mover_share
                     (curry spacepoker_alice_handler_mid_round_their CHAIN BET_UNIT)
@@ -212,9 +206,7 @@
                     "spacepoker_alice_begin_round pong"
                     image_N
                     val_begin
-                    begin_hash
                     val_begin
-                    begin_hash
                     42
                     new_mover_share
                     (curry spacepoker_alice_handler_begin_round_their CHAIN BET_UNIT)
@@ -299,9 +291,7 @@
                     "spacepoker_alice_mid_round raise"
                     move_bytes
                     val_mid
-                    mid_hash
                     val_mid
-                    mid_hash
                     42
                     new_mover_share
                     (curry spacepoker_alice_handler_mid_round_their CHAIN BET_UNIT)
@@ -315,9 +305,7 @@
                     "spacepoker_alice_mid_round call"
                     preimage
                     val_mid
-                    mid_hash
                     (if (= N 1) val_end val_begin)
-                    (if (= N 1) end_hash begin_hash)
                     (if (= N 1) 17 42)
                     new_mover_share
                     (if (= N 1)
@@ -379,8 +367,6 @@
             "spacepoker_alice_end"
             move_bytes
             val_end
-            end_hash
-            0
             0
             0
             final_mover_share
@@ -483,9 +469,7 @@
             "spacepoker_bob_commitB"
             image_4
             val_commitB
-            commitB_hash
             val_begin
-            begin_hash
             42
             (- (/ amount 2) bet_unit)
             (curry spacepoker_bob_handler_begin_round_their chain bet_unit)
@@ -555,9 +539,7 @@
                     "spacepoker_bob_mid_round raise"
                     move_bytes
                     val_mid
-                    mid_hash
                     val_mid
-                    mid_hash
                     42
                     new_mover_share
                     (curry spacepoker_bob_handler_mid_round_their CHAIN BET_UNIT)
@@ -571,9 +553,7 @@
                     "spacepoker_bob_mid_round call"
                     preimage
                     val_mid
-                    mid_hash
                     (if (= N 1) val_end val_begin)
-                    (if (= N 1) end_hash begin_hash)
                     (if (= N 1) 17 42)
                     new_mover_share
                     (if (= N 1)
@@ -671,9 +651,7 @@
                     "spacepoker_bob_begin_round"
                     move_bytes
                     val_begin
-                    begin_hash
                     val_mid
-                    mid_hash
                     42
                     new_mover_share
                     (curry spacepoker_bob_handler_mid_round_their CHAIN BET_UNIT)
@@ -685,9 +663,7 @@
                     "spacepoker_bob_begin_round pong"
                     image_N
                     val_begin
-                    begin_hash
                     val_begin
-                    begin_hash
                     42
                     new_mover_share
                     (curry spacepoker_bob_handler_begin_round_their CHAIN BET_UNIT)
@@ -721,8 +697,6 @@
             "spacepoker_bob_end"
             move_bytes
             val_end
-            end_hash
-            0
             0
             0
             final_mover_share

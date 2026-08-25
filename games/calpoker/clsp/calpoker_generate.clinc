@@ -1,9 +1,9 @@
 
-(import games.calpoker.clsp.onchain.a exposing (program as pokera) (program_hash as pokera_hash))
-(import games.calpoker.clsp.onchain.b exposing (program as pokerb) (program_hash as pokerb_hash))
-(import games.calpoker.clsp.onchain.c exposing (program as pokerc) (program_hash as pokerc_hash))
-(import games.calpoker.clsp.onchain.d exposing (program as pokerd) (program_hash as pokerd_hash))
-(import games.calpoker.clsp.onchain.e exposing (program as pokere) (program_hash as pokere_hash))
+(import games.calpoker.clsp.onchain.a exposing (program as pokera))
+(import games.calpoker.clsp.onchain.b exposing (program as pokerb))
+(import games.calpoker.clsp.onchain.c exposing (program as pokerc))
+(import games.calpoker.clsp.onchain.d exposing (program as pokerd))
+(import games.calpoker.clsp.onchain.e exposing (program as pokere))
 
 (import std.li)
 (import std.curry)
@@ -21,7 +21,7 @@
 (import games.calpoker.clsp.onchain.onehandcalc exposing onehandcalc)
 
 ; Deterministic factory parameters: (per_player_stake sender_goes_first).
-; Returns one canonical 12-field game record.
+; Returns one canonical 10-field game record.
 (defun calpoker_factory (@ _args (per_player_stake sender_goes_first))
     (assert
         (> per_player_stake 0)
@@ -31,9 +31,7 @@
             (li
                 per_player_stake
                 per_player_stake
-                (* 2 per_player_stake)
                 sender_goes_first
-                pokera_hash
                 0
                 32
                 0
@@ -55,9 +53,7 @@
             "calpoker_alice_handler_a"
             (sha256 preimage)
             pokera
-            pokera_hash
             pokerb
-            pokerb_hash
             48
             0
             (curry calpoker_alice_handler_b preimage)
@@ -139,9 +135,7 @@
                 "calpoker_alice_handler_c"
                 (concat PREIMAGE new_commit)
                 pokerc
-                pokerc_hash
                 pokerd
-                pokerd_hash
                 1
                 0
                 (curry calpoker_alice_handler_d salt my_discards_bitfield)
@@ -199,8 +193,6 @@
         "calpoker_alice_handler_e"
         NEXT_MOVE
         pokere
-        pokere_hash
-        0
         0
         0
         SPLIT
@@ -223,9 +215,7 @@
         "calpoker_bob_handler_b"
         (substr entropy 0 16)
         pokerb
-        pokerb_hash
         pokerc
-        pokerc_hash
         48
         0
         calpoker_bob_handler_c
@@ -271,9 +261,7 @@
                 ))
             )
             pokerd
-            pokerd_hash
             pokere
-            pokere_hash
             18
             0
             calpoker_bob_handler_e

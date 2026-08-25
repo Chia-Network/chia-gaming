@@ -10,19 +10,23 @@ game-specific — calpoker is one implementation.
 ## Game Factory
 Both peers run the same deterministic factory with only the canonical
 parameters program. There is no proposal parser. A factory returns a proper,
-nonempty list of game records. Every record is a proper list with exactly 12
+nonempty list of game records. Every record is a proper list with exactly 10
 fields:
 
 ```
-(sender_contribution receiver_contribution amount sender_goes_first
- initial_validator_hash initial_move initial_max_move_size initial_state
- initial_mover_share my_turn_handler their_turn_handler initial_validator)
+(sender_contribution receiver_contribution sender_goes_first initial_move
+ initial_max_move_size initial_state initial_mover_share my_turn_handler
+ their_turn_handler initial_validator)
 ```
 
-`sender_goes_first` is canonical nil or `1`. Handler order is always
-my-turn followed by their-turn. Because both peers execute the identical
-factory output, sender/receiver and my/their are interpreted relative to the
-proposal sender when the records are installed.
+`sender_goes_first` is canonical nil or `1`. Handler order is always the
+handler for the player whose turn is first, followed by the handler for the
+waiting player. Both peers execute the identical factory output and select
+their initial handler from `sender_goes_first` and their side of the proposal.
+
+The host derives `amount` by adding the sender and receiver contributions. It
+also calculates the initial validator's tree hash, which is the protocol game
+ID for the first record. Factories do not return either redundant value.
 
 Canonical parameters, also exposed by each game's `factoryParameters` codec:
 
@@ -65,14 +69,12 @@ There are two kinds of handlers:
 
 ## Return values
 
-My-turn return (success, 9-10 elements):
+My-turn return (success, 7-8 elements):
   (
     label                          ; string, for UI/debug
     move                           ; bytes, the move to send on-chain
     outgoing_validator             ; program, validates THIS move
-    outgoing_validator_hash        ; hash of outgoing_validator
     incoming_validator             ; program, validates opponent's NEXT move
-    incoming_validator_hash        ; hash of incoming_validator
     max_move_size                  ; int, max bytes the opponent may send
     mover_share                    ; int, our share if opponent times out
     their_turn_handler             ; program, handler for opponent's turn
@@ -163,8 +165,9 @@ A handler returns two validators per move:
   - outgoing_validator: validates the move we just made
   - incoming_validator: validates the opponent's reply
 
-The outgoing_validator_hash must match what the previous incoming_validator
-specified, creating a chain of validated state transitions.
+The host hashes both returned validators. The outgoing validator's derived hash
+must match what the previous incoming validator committed to, creating a chain
+of validated state transitions.
 
 Validator return values are untagged: a non-nil payload list for valid moves
 `(next_validation_program_hash new_state max_move_size ...)`, or nil for slash.

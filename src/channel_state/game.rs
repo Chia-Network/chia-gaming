@@ -91,10 +91,10 @@ impl Game {
     /// Run the canonical atomic proposal factory.
     ///
     /// Parameters are the exact CLVM object sent over the wire. The result is a
-    /// non-empty proper list of 12-field game records:
-    /// (sender_contribution receiver_contribution amount sender_goes_first
-    ///  initial_validator_hash initial_move initial_max_move_size initial_state
-    ///  initial_mover_share my_turn_handler their_turn_handler initial_validator)
+    /// non-empty proper list of 10-field game records:
+    /// (sender_contribution receiver_contribution sender_goes_first initial_move
+    ///  initial_max_move_size initial_state initial_mover_share my_turn_handler
+    ///  their_turn_handler initial_validator)
     pub fn run_factory(
         allocator: &mut AllocEncoder,
         factory_program: Puzzle,
@@ -127,14 +127,14 @@ impl Game {
                     "proposal factory game {index} is not a proper list"
                 ))
             })?;
-            if fields.len() != 12 {
+            if fields.len() != 10 {
                 return Err(Error::StrErr(format!(
-                    "proposal factory game {index} has {} fields, expected 12",
+                    "proposal factory game {index} has {} fields, expected 10",
                     fields.len()
                 )));
             }
 
-            let turn_atom = atom_from_clvm(allocator, fields[3]).ok_or_else(|| {
+            let turn_atom = atom_from_clvm(allocator, fields[2]).ok_or_else(|| {
                 Error::StrErr(format!(
                     "proposal factory game {index} sender_goes_first is not an atom"
                 ))
@@ -149,45 +149,45 @@ impl Game {
                 }
             };
 
-            let initial_validation_program_hash = Hash::from_nodeptr(allocator, fields[4])?;
-            let initial_validation_program = Rc::new(Program::from_nodeptr(allocator, fields[11])?);
-            let actual_hash = initial_validation_program.sha256tree(allocator);
-            if actual_hash.hash() != &initial_validation_program_hash {
-                return Err(Error::StrErr(format!(
-                    "proposal factory game {index} initial validator hash mismatch"
-                )));
-            }
+            let sender_contribution = Amount::from_clvm(allocator, fields[0])?;
+            let receiver_contribution = Amount::from_clvm(allocator, fields[1])?;
+            let amount = sender_contribution.clone() + receiver_contribution.clone();
+            let initial_validation_program = Rc::new(Program::from_nodeptr(allocator, fields[9])?);
+            let initial_validation_program_hash = initial_validation_program
+                .sha256tree(allocator)
+                .hash()
+                .clone();
 
             games.push(FactoryGame {
-                sender_contribution: Amount::from_clvm(allocator, fields[0])?,
-                receiver_contribution: Amount::from_clvm(allocator, fields[1])?,
-                amount: Amount::from_clvm(allocator, fields[2])?,
+                sender_contribution,
+                receiver_contribution,
+                amount,
                 sender_goes_first,
                 initial_validation_program_hash,
-                initial_move: atom_from_clvm(allocator, fields[5])
+                initial_move: atom_from_clvm(allocator, fields[3])
                     .ok_or_else(|| {
                         Error::StrErr(format!(
                             "proposal factory game {index} initial_move is not an atom"
                         ))
                     })?
                     .to_vec(),
-                initial_max_move_size: atom_from_clvm(allocator, fields[6])
+                initial_max_move_size: atom_from_clvm(allocator, fields[4])
                     .and_then(|a| usize_from_atom(&a))
                     .ok_or_else(|| {
                         Error::StrErr(format!(
                             "proposal factory game {index} has invalid max move size"
                         ))
                     })?,
-                initial_state: Rc::new(Program::from_nodeptr(allocator, fields[7])?),
-                initial_mover_share: atom_from_clvm(allocator, fields[8])
+                initial_state: Rc::new(Program::from_nodeptr(allocator, fields[5])?),
+                initial_mover_share: atom_from_clvm(allocator, fields[6])
                     .and_then(|a| u64_from_atom(&a))
                     .ok_or_else(|| {
                         Error::StrErr(format!(
                             "proposal factory game {index} has invalid mover share"
                         ))
                     })?,
-                my_turn_handler: Program::from_nodeptr(allocator, fields[9])?,
-                their_turn_handler: Program::from_nodeptr(allocator, fields[10])?,
+                my_turn_handler: Program::from_nodeptr(allocator, fields[7])?,
+                their_turn_handler: Program::from_nodeptr(allocator, fields[8])?,
                 initial_validation_program,
             });
         }

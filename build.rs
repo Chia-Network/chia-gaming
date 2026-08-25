@@ -311,23 +311,13 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
             .ok_or_else(|| format!("factory {key} returned no games"))?;
         let fields = proper_list(&allocator, *first)
             .ok_or_else(|| format!("factory {key} first game is not a proper list"))?;
-        if fields.len() != 12 {
+        if fields.len() != 10 {
             return Err(format!(
-                "factory {key} first game has {} fields, expected 12",
+                "factory {key} first game has {} fields, expected 10",
                 fields.len()
             ));
         }
-        let id_atom = allocator.atom(fields[4]);
-        let id: [u8; 32] = id_atom.as_ref().try_into().map_err(|_| {
-            format!(
-                "factory {key} first validator hash has {} bytes, expected 32",
-                id_atom.len()
-            )
-        })?;
-        let actual = clvm_utils::tree_hash(&allocator, fields[11]).to_bytes();
-        if actual != id {
-            return Err(format!("factory {key} first validator hash mismatch"));
-        }
+        let id = clvm_utils::tree_hash(&allocator, fields[9]).to_bytes();
 
         package_ids.insert(key.clone(), id);
         manifest.push(serde_json::json!({

@@ -148,16 +148,22 @@ fn call_my_turn_handler(
 
     let result = run_clvm(allocator, handler, args);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert!(items.len() >= 8, "my_turn returned {} items", items.len());
+    assert!(items.len() >= 7, "my_turn returned {} items", items.len());
+    let validator_for_my_move_hash_bytes =
+        clvm_utils::tree_hash(allocator.allocator(), items[2]).to_bytes();
+    let validator_for_my_move_hash = allocator
+        .allocator()
+        .new_atom(&validator_for_my_move_hash_bytes)
+        .unwrap();
 
     MyTurnResult {
         move_bytes_node: items[1],
         validator_for_my_move: items[2],
-        validator_for_my_move_hash: items[3],
-        max_move_size: int_from_node(allocator, items[6]),
-        new_mover_share: int_from_node(allocator, items[7]),
-        their_turn_handler: if items.len() > 8 {
-            items[8]
+        validator_for_my_move_hash,
+        max_move_size: int_from_node(allocator, items[4]),
+        new_mover_share: int_from_node(allocator, items[5]),
+        their_turn_handler: if items.len() > 6 {
+            items[6]
         } else {
             NodePtr::NIL
         },
@@ -245,17 +251,19 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
     let records = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(records.len(), 2, "Krunk factory must return two records");
     let game_spec = proper_list(allocator.allocator(), records[0], true).unwrap();
-    assert_eq!(game_spec.len(), 12, "factory record must have 12 fields");
+    assert_eq!(game_spec.len(), 10, "factory record must have 10 fields");
+    let proposal_my_contribution = int_from_node(allocator, game_spec[0]);
+    let proposal_their_contribution = int_from_node(allocator, game_spec[1]);
 
     GameSetup {
-        alice_handler: game_spec[9],
-        bob_handler: game_spec[10],
-        proposal_my_contribution: int_from_node(allocator, game_spec[0]),
-        proposal_their_contribution: int_from_node(allocator, game_spec[1]),
-        proposal_amount: int_from_node(allocator, game_spec[2]),
-        initial_state: game_spec[7],
-        initial_max_move_size: int_from_node(allocator, game_spec[6]),
-        initial_mover_share: int_from_node(allocator, game_spec[8]),
+        alice_handler: game_spec[7],
+        bob_handler: game_spec[8],
+        proposal_my_contribution,
+        proposal_their_contribution,
+        proposal_amount: proposal_my_contribution + proposal_their_contribution,
+        initial_state: game_spec[5],
+        initial_max_move_size: int_from_node(allocator, game_spec[4]),
+        initial_mover_share: int_from_node(allocator, game_spec[6]),
     }
 }
 
@@ -311,50 +319,50 @@ fn test_krunk_guesser_funds_zero() {
     let records = proper_list(allocator.allocator(), result, true).unwrap();
     let slot0 = proper_list(allocator.allocator(), records[0], true).unwrap();
     let slot1 = proper_list(allocator.allocator(), records[1], true).unwrap();
-    assert_eq!(slot0.len(), 12);
-    assert_eq!(slot1.len(), 12);
+    assert_eq!(slot0.len(), 10);
+    assert_eq!(slot1.len(), 10);
     assert_eq!(int_from_node(&mut allocator, slot0[0]), BET_SIZE);
     assert_eq!(int_from_node(&mut allocator, slot0[1]), 0);
-    assert_eq!(int_from_node(&mut allocator, slot0[2]), BET_SIZE);
-    assert_eq!(int_from_node(&mut allocator, slot0[3]), 1);
-    assert_eq!(int_from_node(&mut allocator, slot0[5]), 0);
-    assert_eq!(int_from_node(&mut allocator, slot0[6]), 32);
-    assert_eq!(int_from_node(&mut allocator, slot0[8]), 0);
+    assert_eq!(
+        int_from_node(&mut allocator, slot0[0]) + int_from_node(&mut allocator, slot0[1]),
+        BET_SIZE
+    );
+    assert_eq!(int_from_node(&mut allocator, slot0[2]), 1);
+    assert_eq!(int_from_node(&mut allocator, slot0[3]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot0[4]), 32);
+    assert_eq!(int_from_node(&mut allocator, slot0[6]), 0);
     assert_eq!(int_from_node(&mut allocator, slot1[0]), 0);
     assert_eq!(int_from_node(&mut allocator, slot1[1]), BET_SIZE);
-    assert_eq!(int_from_node(&mut allocator, slot1[2]), BET_SIZE);
+    assert_eq!(
+        int_from_node(&mut allocator, slot1[0]) + int_from_node(&mut allocator, slot1[1]),
+        BET_SIZE
+    );
+    assert_eq!(int_from_node(&mut allocator, slot1[2]), 0);
     assert_eq!(int_from_node(&mut allocator, slot1[3]), 0);
-    assert_eq!(int_from_node(&mut allocator, slot1[5]), 0);
-    assert_eq!(int_from_node(&mut allocator, slot1[6]), 32);
-    assert_eq!(int_from_node(&mut allocator, slot1[8]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot1[4]), 32);
+    assert_eq!(int_from_node(&mut allocator, slot1[6]), 0);
     assert_clvm_eq(
         &mut allocator,
-        slot0[4],
-        slot1[4],
-        "validator hashes must match",
+        slot0[5],
+        slot1[5],
+        "initial states must match",
     );
     assert_clvm_eq(
         &mut allocator,
         slot0[7],
         slot1[7],
-        "initial states must match",
+        "Alice my-turn handlers must match",
+    );
+    assert_clvm_eq(
+        &mut allocator,
+        slot0[8],
+        slot1[8],
+        "Bob their-turn handlers must match",
     );
     assert_clvm_eq(
         &mut allocator,
         slot0[9],
         slot1[9],
-        "Alice my-turn handlers must match",
-    );
-    assert_clvm_eq(
-        &mut allocator,
-        slot0[10],
-        slot1[10],
-        "Bob their-turn handlers must match",
-    );
-    assert_clvm_eq(
-        &mut allocator,
-        slot0[11],
-        slot1[11],
         "validators must match",
     );
 }

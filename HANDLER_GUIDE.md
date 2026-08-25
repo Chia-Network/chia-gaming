@@ -87,16 +87,14 @@ move format.
 | `mover_share` | Current mover's share if timeout occurs |
 | `entropy` | 32 bytes of randomness for this turn |
 
-### Return: Success (9-10 elements)
+### Return: Success (7-8 elements)
 
 ```
 (
   label                    ; string, for UI/debug
   move                     ; bytes, the move to send on-chain
   outgoing_validator       ; program, validates THIS move
-  outgoing_validator_hash  ; sha256tree of outgoing_validator
   incoming_validator       ; program, validates opponent's NEXT move
-  incoming_validator_hash  ; sha256tree of incoming_validator (nil if game over)
   max_move_size            ; int, max bytes the opponent may send
   mover_share              ; int, our share if opponent times out
   their_turn_handler       ; program for processing opponent's response (nil if game over)
@@ -108,10 +106,11 @@ move format.
   will use this (via the referee) to verify our move was legal.
 - `incoming_validator` validates the move *the opponent will produce next*.
   This is passed forward so the referee knows how to validate the reply.
+- The host derives both validator hashes from the returned programs.
 - When `their_turn_handler` is nil, this is the final move of the game.
-  `incoming_validator_hash` should also be nil in this case.
-- `message_parser` is optional. It is the 10th element of the return list
-  (zero-based index 9 in Rust/vector access). If the element is absent or nil,
+  `incoming_validator` should also be nil in this case.
+- `message_parser` is optional. It is the 8th element of the return list
+  (zero-based index 7 in Rust/vector access). If the element is absent or nil,
   the game does not accept out-of-band readable messages for this state.
 
 ### Return: Rejection (2 elements)
@@ -243,15 +242,13 @@ The proposal API takes one atomic group request:
 game produced for the group. Each game package's `factoryParameters` codec is
 the parser for that object (see `clsp/handler_api.md`). Both peers look up and run the same registered,
 deterministic factory using those parameters. The factory returns a non-empty
-ordered list of canonical 12-field game records:
+ordered list of canonical 10-field game records:
 
 ```
 (
   sender_contribution
   receiver_contribution
-  amount
   sender_goes_first
-  initial_validator_hash
   initial_move
   initial_max_move_size
   initial_state
@@ -270,8 +267,8 @@ selects `my_turn_handler` or `their_turn_handler` according to whether that
 peer is the initial mover. The factory handlers themselves are not regenerated
 from peer-specific inputs.
 
-The validator program and its hash come from the same local factory execution,
-and the framework verifies that they match. The wire member metadata is checked
+The framework derives each game's amount from its two contributions and hashes
+the returned initial validator. The wire member metadata is checked
 against the receiver's independently derived factory output, including list
 order and cardinality. The current factories produce one game for Calpoker,
 one for Space Poker, and two for Krunk.
@@ -494,10 +491,10 @@ share.
 Validators form their own chain, parallel to the handler chain. Each move
 carries two validators:
 
-- **Outgoing validator**: Validates the move being made right now. Its hash
-  was committed by the *previous* move's `incoming_validator_hash`.
-- **Incoming validator**: Will validate the opponent's *next* move. Its hash
-  is committed in this move's on-chain state.
+- **Outgoing validator**: Validates the move being made right now. Its derived
+  hash was committed by the *previous* move's incoming validator.
+- **Incoming validator**: Will validate the opponent's *next* move. Its derived
+  hash is committed in this move's on-chain state.
 
 This creates a chain of commitments:
 
@@ -518,7 +515,7 @@ Move 2:
 
 Final move:
   outgoing_validator = e.clsp  (hash matches what the prior move committed)
-  incoming_validator_hash = nil  (no next move)
+  incoming_validator = nil  (no next move)
 ```
 
 The hash chain ensures that each player commits to the validation rules for
@@ -584,8 +581,8 @@ turn-taking protocol. The **message parser** mechanism enables this.
 
 ### How It Works
 
-1. A my-turn handler may return a `message_parser` program (element 10 of the
-   return list, zero-based index 9). This program knows how to decode advisory
+1. A my-turn handler may return a `message_parser` program (element 8 of the
+   return list, zero-based index 7). This program knows how to decode advisory
    messages for the current game state. If the element is absent or nil, no
    parser is installed.
 2. When the their-turn handler processes the opponent's reply, it can return
@@ -705,8 +702,8 @@ arrives, Bob independently verifies the same information.
 
 ### Mechanics
 
-1. A **my-turn handler** may return a `message_parser` as element 10 of the
-   return list (zero-based index 9). This parser knows how to decode messages
+1. A **my-turn handler** may return a `message_parser` as element 8 of the
+   return list (zero-based index 7). This parser knows how to decode messages
    for the current game state. If the element is absent or nil, no parser is
    installed.
 
@@ -775,7 +772,7 @@ unbreakable chain of verification.
 | e | Alice | `calpoker_alice_handler_e` | `e.clsp` | `salt\|\|discards\|\|selects` |
 
 After step e, Alice's my-turn handler returns nil for `their_turn_handler`
-and nil for `incoming_validator_hash`, signaling the game is over.
+and nil for `incoming_validator`, signaling the game is over.
 
 ### Key Code
 

@@ -342,10 +342,10 @@ they are only advanced after the received batch is valid.
 Proposal construction starts from exactly one group request:
 `game_type`, game-specific `parameters`, and one timeout shared by all games in
 the result. Both peers run the same registered deterministic factory. Its output
-is a non-empty ordered list of canonical 12-field records containing
-sender/receiver contributions, amount, `sender_goes_first`, the initial
-commitments, fixed my-turn and their-turn handlers, and the initial validator.
-The validator hash is checked against the validator program locally.
+is a non-empty ordered list of canonical 10-field records containing
+sender/receiver contributions, `sender_goes_first`, the initial state fields,
+fixed my-turn and their-turn handlers, and the initial validator. The host
+derives the amount from the contributions and hashes the validator locally.
 
 The result remains sender-oriented until the higher layer constructs local game
 state. At that point it selects the fixed handler matching the local initial
