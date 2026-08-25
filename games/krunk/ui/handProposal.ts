@@ -1,11 +1,8 @@
-import { Program } from 'clvm-lib';
 import {
   equalHandProposalBase,
-  readClvmAtom,
-  readClvmProgram,
-  type FactoryParameterCodec,
   type GameFeatureRegistration,
   type HandProposal,
+  type ProposalParameterCodec,
 } from '../../host';
 import {
   decodeKrunkGameState,
@@ -26,15 +23,11 @@ export type KrunkFactoryParameters = {
   stake: bigint;
 };
 
-export const krunkFactoryParameters: FactoryParameterCodec<KrunkFactoryParameters> = {
+export const krunkProposalParameters: ProposalParameterCodec<KrunkFactoryParameters> = {
   decode(value) {
-    const program = readClvmProgram(value);
-    if (!program || program.isCons) return null;
-    const stake = readClvmAtom(program);
-    if (stake === null || stake <= 0n) return null;
-    return { stake };
+    return typeof value === 'bigint' && value > 0n ? { stake: value } : null;
   },
-  encode: (params) => Program.fromBigInt(params.stake),
+  encode: (params) => params.stake,
 };
 
 export function isValidKrunkStake(stake: bigint): boolean {
@@ -58,7 +51,7 @@ const registration: GameFeatureRegistration<
   gameType: 'krunk',
   displayName: 'Krunk',
   stateCodec: krunkStateCodec,
-  factoryParameters: krunkFactoryParameters,
+  proposalParameters: krunkProposalParameters,
   describeHandProposal: (handProposal, { formatMojos }) =>
     `Stake ${formatMojos(handProposal.myContribution)} each`,
   handMembershipDescription:
@@ -95,7 +88,7 @@ const registration: GameFeatureRegistration<
       return validateKrunkHandProposal(handProposal) ? handProposal : null;
     },
   },
-  toFactoryParameters: (handProposal) => ({ stake: handProposal.myContribution }),
+  toProposalParameters: (handProposal) => ({ stake: handProposal.myContribution }),
   decodeHandProposal(base, params) {
     if (params.stake !== base.myContribution) return null;
     const handProposal = { gameType: 'krunk', ...base };

@@ -1,4 +1,3 @@
-import { Program } from 'clvm-lib';
 import { encodeGameProposalParameters } from '../gameProposalCodec';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { createSessionModel } from '../session/model';
@@ -273,7 +272,7 @@ describe('session machine behavior sequences', () => {
             their_contribution: '100',
             timeout: '15',
             game_type: testProtocolId('spacepoker'),
-            parameters: Program.fromList([]).serialize(),
+            parameters: [],
           },
         },
         iStarted: false,
@@ -290,7 +289,7 @@ describe('session machine behavior sequences', () => {
             their_contribution: '100',
             timeout: '15',
             game_type: testProtocolId('spacepoker'),
-            initial_state: encodeGameProposalParameters(terms, true).serialize(),
+            parameters: undefined as never,
           },
         },
         iStarted: false,
@@ -309,7 +308,7 @@ describe('session machine behavior sequences', () => {
             their_contribution: '100',
             timeout: '15',
             game_type: testProtocolId('spacepoker'),
-            parameters: encodeGameProposalParameters(terms, true).serialize(),
+            parameters: encodeGameProposalParameters(terms, true),
           },
         },
         iStarted: false,

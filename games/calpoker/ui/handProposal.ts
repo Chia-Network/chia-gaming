@@ -1,13 +1,8 @@
-import { Program } from 'clvm-lib';
 import {
   equalHandProposalBase,
-  readClvmAtom,
-  readClvmFlag,
-  readClvmList,
-  readClvmProgram,
-  type FactoryParameterCodec,
   type GameFeatureRegistration,
   type HandProposal,
+  type ProposalParameterCodec,
 } from '../../host';
 import {
   calpokerStateCodec,
@@ -27,23 +22,21 @@ export type CalpokerFactoryParameters = {
   senderGoesFirst: boolean;
 };
 
-export const calpokerFactoryParameters: FactoryParameterCodec<CalpokerFactoryParameters> = {
+export const calpokerProposalParameters: ProposalParameterCodec<CalpokerFactoryParameters> = {
   decode(value) {
-    const program = readClvmProgram(value);
-    if (!program) return null;
-    const items = readClvmList(program, 2);
-    if (!items) return null;
-    const perPlayerStake = readClvmAtom(items[0]);
-    const senderGoesFirst = readClvmFlag(items[1]);
-    if (perPlayerStake === null || perPlayerStake <= 0n || senderGoesFirst === null) return null;
+    if (
+      !Array.isArray(value) ||
+      value.length !== 2 ||
+      typeof value[0] !== 'bigint' ||
+      value[0] <= 0n ||
+      typeof value[1] !== 'boolean'
+    ) {
+      return null;
+    }
+    const [perPlayerStake, senderGoesFirst] = value;
     return { perPlayerStake, senderGoesFirst };
   },
-  encode(params) {
-    return Program.fromList([
-      Program.fromBigInt(params.perPlayerStake),
-      Program.fromBigInt(params.senderGoesFirst ? 1n : 0n),
-    ]);
-  },
+  encode: (params) => [params.perPlayerStake, params.senderGoesFirst],
 };
 
 export function validateCalpokerHandProposal(handProposal: HandProposal): boolean {
@@ -63,7 +56,7 @@ const registration: GameFeatureRegistration<
   gameType: 'calpoker',
   displayName: 'California Poker',
   stateCodec: calpokerStateCodec,
-  factoryParameters: calpokerFactoryParameters,
+  proposalParameters: calpokerProposalParameters,
   describeHandProposal: (handProposal, { formatMojos }) =>
     `Stake ${formatMojos(handProposal.myContribution)} each`,
   handMembershipDescription: 'exactly one currentHandGameId',
@@ -88,7 +81,7 @@ const registration: GameFeatureRegistration<
       return validateCalpokerHandProposal(handProposal) ? handProposal : null;
     },
   },
-  toFactoryParameters(handProposal, iStarted) {
+  toProposalParameters(handProposal, iStarted) {
     return {
       perPlayerStake: handProposal.myContribution,
       senderGoesFirst: this.lifecycle.proposalSenderGoesFirst(iStarted),

@@ -133,16 +133,22 @@ export interface GameSettledPayload {
   coin_id: unknown | null;
 }
 
+export type ProposalParameterValue =
+  | null
+  | boolean
+  | bigint
+  | string
+  | Uint8Array
+  | ProposalParameterValue[];
+
 export interface ProposalMadePayload {
   id: bigint;
   group_ids: bigint[];
   my_contribution: unknown;
   their_contribution: unknown;
   timeout: unknown;
-  initial_validation_program_hash: unknown;
-  initial_state: unknown;
   game_type: unknown;
-  parameters: unknown;
+  parameters: ProposalParameterValue;
 }
 
 export interface ProposalAcceptedPayload {

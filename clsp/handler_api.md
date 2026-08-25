@@ -28,7 +28,8 @@ The host derives `amount` by adding the sender and receiver contributions. It
 also calculates the initial validator's tree hash, which is the protocol game
 ID for the first record. Factories do not return either redundant value.
 
-Canonical parameters, also exposed by each game's `factoryParameters` codec:
+Canonical CLVM parameters, produced only inside the Rust host by converting the
+game's structured Bencodex proposal parameters:
 
 - Calpoker: proper list `(per_player_stake sender_goes_first)`.
 - Space Poker: proper list

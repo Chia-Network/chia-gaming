@@ -6,7 +6,7 @@ import {
 import { reduceSpacepokerDurableState, spacepokerStateCodec, type SpacepokerHandState } from './serialize';
 import {
   resolveSpacepokerUnitSize,
-  spacepokerFactoryParameters,
+  spacepokerProposalParameters,
   spacepokerTermsOf,
   type SpacepokerFactoryParameters,
 } from './unitSize';
@@ -38,7 +38,7 @@ const registration: GameFeatureRegistration<
   gameType: 'spacepoker',
   displayName: 'Space Poker',
   stateCodec: spacepokerStateCodec,
-  factoryParameters: spacepokerFactoryParameters,
+  proposalParameters: spacepokerProposalParameters,
   describeHandProposal(handProposal, { formatMojos }) {
     const space = spacepokerTermsOf(handProposal);
     if (!space) return `Stake ${formatMojos(handProposal.myContribution)} each`;
@@ -78,7 +78,7 @@ const registration: GameFeatureRegistration<
       return validateSpacepokerHandProposal(handProposal) ? handProposal : null;
     },
   },
-  toFactoryParameters(handProposal, iStarted) {
+  toProposalParameters(handProposal, iStarted) {
     const betUnit = resolveSpacepokerUnitSize({ terms: handProposal });
     if (!betUnit || !this.validateHandProposal(handProposal)) {
       throw new Error('Space Poker proposal requires a valid positive unit size');

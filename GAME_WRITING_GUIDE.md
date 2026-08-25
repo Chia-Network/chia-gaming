@@ -240,19 +240,21 @@ must provide:
 Use `equalHandProposalBase` when your equality check only needs to add
 game-specific fields to the common proposal comparison.
 
-The same registration translates between a `HandProposal` and CLVM:
+The same registration translates between a `HandProposal` and structured
+Bencodex proposal parameters:
 
-- `toFactoryParameters(handProposal, iStarted)` creates the typed parameter
+- `toProposalParameters(handProposal, iStarted)` creates the typed parameter
   object for an outgoing proposal.
-- `factoryParameters.encode` converts that object into a CLVM program.
-- `factoryParameters.decode` safely parses an untrusted CLVM program.
+- `proposalParameters.encode` converts that object into Bencodex-compatible
+  values.
+- `proposalParameters.decode` safely validates untrusted Bencodex values.
 - `decodeHandProposal(base, params, context)` reconstructs and validates the
   proposal received from the peer.
 
-The host provides `readClvmProgram`, `readClvmAtom`, `readClvmFlag`, and
-`readClvmList` to help write strict decoders.
+Game frontend code must not construct, deserialize, or inspect CLVM here. Rust
+converts the structured values to CLVM immediately before invoking the factory.
 
-### Proposal and factory-parameter decoder API
+### Proposal-parameter decoder API
 
 Common proposal terms are always supplied separately from the game factory
 parameters:
@@ -269,9 +271,17 @@ type HandProposal = HandProposalBase & {
   // A package may add validated game-specific fields.
 };
 
-interface FactoryParameterCodec<TParams> {
+type ProposalParameterValue =
+  | null
+  | boolean
+  | bigint
+  | string
+  | Uint8Array
+  | readonly ProposalParameterValue[];
+
+interface ProposalParameterCodec<TParams> {
   decode(value: unknown): TParams | null;
-  encode(params: TParams): Program;
+  encode(params: TParams): ProposalParameterValue;
 }
 
 interface HandProposalDecodeContext {
@@ -281,8 +291,8 @@ interface HandProposalDecodeContext {
 }
 
 interface ProposalCodec<TParams> {
-  factoryParameters: FactoryParameterCodec<TParams>;
-  toFactoryParameters(handProposal: HandProposal, iStarted: boolean): TParams;
+  proposalParameters: ProposalParameterCodec<TParams>;
+  toProposalParameters(handProposal: HandProposal, iStarted: boolean): TParams;
   decodeHandProposal(
     base: HandProposalBase,
     params: TParams,
@@ -291,17 +301,18 @@ interface ProposalCodec<TParams> {
 }
 ```
 
-`toFactoryParameters` receives validated proposal terms and whether this client
+`toProposalParameters` receives validated proposal terms and whether this client
 started the session. It returns the typed game-specific value consumed by
-`factoryParameters.encode`. `encode` returns the CLVM `Program` passed to the
-factory; the host handles serialization.
+`proposalParameters.encode`. `encode` returns only Bencodex-compatible values.
+The host carries those values across WASM and the peer wire and performs the
+generic conversion to the CLVM object passed to the factory.
 
 Decoding is intentionally two-stage:
 
-1. `factoryParameters.decode(value)` receives untrusted data, normally
-   serialized CLVM bytes. It must validate the complete CLVM shape and every
-   value, returning typed parameters or `null`. Malformed peer data is expected
-   at this boundary and must not throw.
+1. `proposalParameters.decode(value)` receives untrusted Bencodex values. It
+   must validate the complete list/scalar shape and every value, returning typed
+   parameters or `null`. Malformed peer data is expected at this boundary and
+   must not throw.
 2. `decodeHandProposal(base, params, context)` combines the already-decoded
    common terms with the typed parameters. It must reject contradictions
    between duplicated values, validate any proposer-relative policy represented
@@ -312,30 +323,14 @@ Decoding is intentionally two-stage:
 The host verifies that a non-null proposal has the registration's catalog
 `gameType`. Do not trust a type assertion or silently repair inconsistent peer
 data. Incoming `ProposalMade` notifications must contain an explicit positive
-timeout and explicit factory `parameters`. Missing fields are decode failures;
-`initial_state` is factory output and is never a substitute for parameters.
+timeout and explicit `parameters`; missing fields are decode failures.
 
-The strict CLVM readers have these exact contracts:
-
-```ts
-readClvmProgram(value: unknown): Program | null;
-readClvmAtom(program: Program): bigint | null;
-readClvmFlag(program: Program): boolean | null;
-readClvmList(program: Program, length: number): readonly Program[] | null;
-```
-
-- `readClvmProgram` accepts only a `Uint8Array` containing exactly one
-  canonically serialized program, with no trailing bytes.
-- `readClvmAtom` accepts only a value convertible to a CLVM integer.
-- `readClvmFlag` accepts exactly integer `0` or `1`.
-- `readClvmList` accepts a proper nil-terminated list with exactly `length`
-  members; dotted tails are rejected.
-
-These helpers validate representation, not game rules. The decoder must still
-check positivity, ranges, cross-field relationships, and consistency with
-`HandProposalBase`. Test a valid encode/decode round trip, malformed bytes,
-wrong list lengths and shapes, invalid values, and another game's parameter
-encoding.
+For example, Calpoker encodes `[perPlayerStake, senderGoesFirst]`, Space Poker
+encodes `[perPlayerStake, betUnit, senderGoesFirst]`, and Krunk encodes its stake
+as a single `bigint`. Their decoders check exact list lengths, JavaScript value
+types, positivity, cross-field relationships, and consistency with
+`HandProposalBase`. Test a valid encode/decode round trip, wrong list lengths
+and types, invalid values, and another game's parameter encoding.
 
 ## Step 5: Save and update the UI state
 

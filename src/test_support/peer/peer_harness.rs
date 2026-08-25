@@ -25,7 +25,7 @@ use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 #[cfg(test)]
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 #[cfg(test)]
-use crate::session_phases::proposal::GameProposal;
+use crate::session_phases::proposal::{GameProposal, ProposalParameters};
 use crate::session_phases::types::{
     ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
@@ -560,6 +560,9 @@ pub fn test_peer_smoke() {
                 .expect("encode proposal parameters");
             let parameters =
                 Program::from_nodeptr(&mut allocator, params_node).expect("proposal parameters");
+            let parameters =
+                ProposalParameters::from_program_for_testing(&mut allocator, &parameters)
+                    .expect("structured proposal parameters");
             let calpoker_type = game_collection::game_type_for_package(&mut allocator, "calpoker");
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
             let (game_ids, effects1) = FromLocalUI::propose_games(

@@ -3,13 +3,14 @@ use std::collections::VecDeque;
 use crate::channel_state::types::ReadableMove;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, Hash, Program, ProgramRef,
-    PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, ProgramRef, PuzzleHash,
+    SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
     CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE,
     HandshakePayloadF,
 };
+use crate::session_phases::proposal::ProposalParameters;
 use crate::session_phases::types::{BatchAction, PeerMessage};
 
 pub fn format_coin(coin: &CoinString) -> String {
@@ -254,10 +255,8 @@ pub enum GameNotification {
         my_contribution: Amount,
         their_contribution: Amount,
         timeout: Timeout,
-        initial_validation_program_hash: Hash,
-        initial_state: ProgramRef,
         game_type: GameType,
-        parameters: Program,
+        parameters: ProposalParameters,
     },
     ProposalAccepted {
         id: GameID,

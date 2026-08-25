@@ -22,7 +22,7 @@ use crate::session_phases::effects::{
 };
 use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
-use crate::session_phases::proposal::GameProposal;
+use crate::session_phases::proposal::{GameProposal, ProposalParameters};
 use crate::session_phases::types::{
     BatchAction, ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
@@ -2991,6 +2991,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .expect("encode debug parameters");
         let params1 =
             Program::from_nodeptr(&mut allocator, params1_node).expect("debug parameters");
+        let params1 = ProposalParameters::from_program_for_testing(&mut allocator, &params1)
+            .expect("structured debug parameters");
         let debug_type = crate::session_phases::game_collection::game_type_for_package(
             &mut allocator,
             package_key,
@@ -3015,6 +3017,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .expect("encode debug parameters");
         let params2 =
             Program::from_nodeptr(&mut allocator, params2_node).expect("debug parameters");
+        let params2 = ProposalParameters::from_program_for_testing(&mut allocator, &params2)
+            .expect("structured debug parameters");
         let result2 = outcome.cradles[1].propose_games(
             &mut allocator,
             &[GameProposal {
@@ -6945,6 +6949,28 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             );
         },
     ));
+
+    res.push(("test_generated_proposal_arguments_are_reverified", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::WaitBlocks(5, 0),
+            SimScriptAction::InvalidProposalArguments(0),
+            SimScriptAction::WaitBlocks(20, 0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[1].is_peer_disconnected()),
+            None,
+        )
+        .expect("should finish");
+
+        assert!(
+            outcome.cradles[1].is_peer_disconnected(),
+            "receiver should reject proposal arguments that differ from its factory output"
+        );
+    }));
 
     res.push(("test_invalid_proposal_timeout_disconnects_peer", &|| {
         let mut allocator = AllocEncoder::new();

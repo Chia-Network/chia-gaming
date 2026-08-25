@@ -241,6 +241,8 @@ pub(in super::super) fn run_script(
                         } else {
                             extras.clone()
                         };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
                         harness.propose_games(
                             allocator,
                             *who,
@@ -259,7 +261,7 @@ pub(in super::super) fn run_script(
                             &[GameProposal {
                                 game_type: krunk_type.clone(),
                                 timeout: Timeout::new(15),
-                                parameters: Program::from_hex("64")?,
+                                parameters: ProposalParameters::Integer(100),
                             }],
                         )?;
                         ()
@@ -412,6 +414,8 @@ pub(in super::super) fn run_script(
                         } else {
                             extras.clone()
                         };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
                         harness.propose_games(
                             allocator,
                             *who,
@@ -441,6 +445,8 @@ pub(in super::super) fn run_script(
                         } else {
                             extras.clone()
                         };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
                         harness.propose_games(
                             allocator,
                             *who,
@@ -451,7 +457,40 @@ pub(in super::super) fn run_script(
                             }],
                         )?;
                         harness.mutate_last_proposal(allocator, *who, |wire| {
-                            wire.start.parameters = Program::from_hex("80")?;
+                            wire.start.parameters = ProposalParameters::Null;
+                            Ok(())
+                        })?;
+                        ()
+                    }
+                    SimScriptAction::InvalidProposalArguments(who) => {
+                        let parameters = if package_key == "calpoker" {
+                            ProposalParameters::List(vec![
+                                ProposalParameters::Integer(100),
+                                ProposalParameters::Bool(true),
+                            ])
+                        } else if package_key == "spacepoker" {
+                            let extras =
+                                ProposalParameters::from_program_for_testing(allocator, extras)?;
+                            ProposalParameters::List(vec![
+                                ProposalParameters::Integer(100),
+                                extras,
+                                ProposalParameters::Bool(true),
+                            ])
+                        } else {
+                            ProposalParameters::from_program_for_testing(allocator, extras)?
+                        };
+                        harness.propose_games(
+                            allocator,
+                            *who,
+                            &[GameProposal {
+                                game_type: proposal_type.clone(),
+                                timeout: Timeout::new(15),
+                                parameters,
+                            }],
+                        )?;
+                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                            wire.members[0].sender_contribution =
+                                wire.members[0].sender_contribution.clone() + Amount::new(1);
                             Ok(())
                         })?;
                         ()
@@ -470,6 +509,8 @@ pub(in super::super) fn run_script(
                         } else {
                             extras.clone()
                         };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
                         harness.propose_games(
                             allocator,
                             *who,

@@ -162,10 +162,18 @@ export interface GameStateCodec<T> {
   decode(value: unknown): T | null;
 }
 
-/** Untrusted factory-parameter blob → game-owned parameter record. */
-export interface FactoryParameterCodec<TParams> {
+export type ProposalParameterValue =
+  | null
+  | boolean
+  | bigint
+  | string
+  | Uint8Array
+  | readonly ProposalParameterValue[];
+
+/** Untrusted Bencodex proposal parameters → game-owned parameter record. */
+export interface ProposalParameterCodec<TParams> {
   decode(value: unknown): TParams | null;
-  encode(params: TParams): Program;
+  encode(params: TParams): ProposalParameterValue;
 }
 
 export function readClvmProgram(value: unknown): Program | null {
@@ -400,7 +408,7 @@ export interface GameFeatureRegistration<
   gameType: string;
   readonly displayName: string;
   readonly stateCodec: GameStateCodec<TState>;
-  readonly factoryParameters: FactoryParameterCodec<TParams>;
+  readonly proposalParameters: ProposalParameterCodec<TParams>;
   describeHandProposal(handProposal: HandProposal, text: GameHostText): string;
   readonly handMembershipDescription: string;
   validateHandMembership(gameIds: readonly string[], state: TState | null): boolean;
@@ -415,7 +423,7 @@ export interface GameFeatureRegistration<
     update(current: TDraft, update: Partial<TDraft>): TDraft;
     toHandProposal(draft: TDraft, gameTimeout: bigint): HandProposal | null;
   };
-  toFactoryParameters(handProposal: HandProposal, iStarted: boolean): TParams;
+  toProposalParameters(handProposal: HandProposal, iStarted: boolean): TParams;
   decodeHandProposal(
     base: HandProposalBase,
     params: TParams,
@@ -458,7 +466,10 @@ export interface RegisteredGamePackage {
     update(current: ComposeDraftValue, update: Partial<ComposeDraftValue>): ComposeDraftValue;
     toHandProposal(draft: ComposeDraftValue, gameTimeout: bigint): HandProposal | null;
   };
-  encodeFactoryParameters(handProposal: HandProposal, iStarted: boolean): Program;
+  encodeProposalParameters(
+    handProposal: HandProposal,
+    iStarted: boolean,
+  ): ProposalParameterValue;
   decodeHandProposal(
     base: HandProposalBase,
     parameterState: unknown,
@@ -522,10 +533,10 @@ export function defineGamePackage<
       toHandProposal: (draft, gameTimeout) =>
         feature.draft.toHandProposal(draft as TDraft, gameTimeout),
     },
-    encodeFactoryParameters: (handProposal, iStarted) =>
-      feature.factoryParameters.encode(feature.toFactoryParameters(handProposal, iStarted)),
+    encodeProposalParameters: (handProposal, iStarted) =>
+      feature.proposalParameters.encode(feature.toProposalParameters(handProposal, iStarted)),
     decodeHandProposal: (base, parameterState, context) => {
-      const params = feature.factoryParameters.decode(parameterState);
+      const params = feature.proposalParameters.decode(parameterState);
       return params === null ? null : feature.decodeHandProposal(base, params, context);
     },
     persistence: feature.persistence,

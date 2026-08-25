@@ -1,12 +1,7 @@
-import { Program } from 'clvm-lib';
 import {
-  readClvmAtom,
-  readClvmFlag,
-  readClvmList,
-  readClvmProgram,
-  type FactoryParameterCodec,
-  type PersistedGameState,
   type HandProposal,
+  type PersistedGameState,
+  type ProposalParameterCodec,
 } from '../../host';
 import { spacepokerStateCodec } from './serialize';
 function positive(value: bigint | undefined): bigint | null {
@@ -27,38 +22,28 @@ export type SpacepokerFactoryParameters = {
   senderGoesFirst: boolean;
 };
 
-export const spacepokerFactoryParameters: FactoryParameterCodec<SpacepokerFactoryParameters> = {
+export const spacepokerProposalParameters: ProposalParameterCodec<SpacepokerFactoryParameters> = {
   decode(value) {
-    const program = readClvmProgram(value);
-    if (!program) return null;
-    const items = readClvmList(program, 3);
-    if (!items) return null;
-    const perPlayerStake = readClvmAtom(items[0]);
-    const betUnit = readClvmAtom(items[1]);
-    const senderGoesFirst = readClvmFlag(items[2]);
     if (
-      perPlayerStake === null ||
-      betUnit === null ||
-      senderGoesFirst === null ||
-      perPlayerStake <= 0n ||
-      betUnit <= 0n ||
-      perPlayerStake % betUnit !== 0n
+      !Array.isArray(value) ||
+      value.length !== 3 ||
+      typeof value[0] !== 'bigint' ||
+      typeof value[1] !== 'bigint' ||
+      typeof value[2] !== 'boolean' ||
+      value[0] <= 0n ||
+      value[1] <= 0n ||
+      value[0] % value[1] !== 0n
     ) {
       return null;
     }
+    const [perPlayerStake, betUnit, senderGoesFirst] = value;
     return { perPlayerStake, betUnit, senderGoesFirst };
   },
-  encode(params) {
-    return Program.fromList([
-      Program.fromBigInt(params.perPlayerStake),
-      Program.fromBigInt(params.betUnit),
-      Program.fromBigInt(params.senderGoesFirst ? 1n : 0n),
-    ]);
-  },
+  encode: (params) => [params.perPlayerStake, params.betUnit, params.senderGoesFirst],
 };
 
 export function decodeSpacepokerUnitSize(value: unknown): bigint | null {
-  return spacepokerFactoryParameters.decode(value)?.betUnit ?? null;
+  return spacepokerProposalParameters.decode(value)?.betUnit ?? null;
 }
 
 /**

@@ -39,7 +39,7 @@ mod gaming_wasm {
     };
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
-    use chia_gaming::session_phases::proposal::GameProposal;
+    use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -778,20 +778,20 @@ mod gaming_wasm {
     pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
         let js_games: Vec<JsGameProposal> =
             serde_wasm_bindgen::from_value(games).into_js()?;
-        let params_arr: Vec<Vec<u8>> =
+        let params_arr: Vec<ProposalParameters> =
             serde_wasm_bindgen::from_value(parameters_list).into_js()?;
         if js_games.len() != params_arr.len() {
             return Err(JsValue::from_str("games and parameters_list must have the same length"));
         }
         with_game(cid, move |cradle: &mut JsGameSession| {
             let mut game_starts = Vec::with_capacity(js_games.len());
-            for (g, p) in js_games.iter().zip(params_arr.iter()) {
+            for (g, parameters) in js_games.iter().zip(params_arr.iter()) {
                 let game_type = parse_game_type_hex(&g.game_type)
                     .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
                 game_starts.push(GameProposal {
                     game_type,
                     timeout: Timeout::new(g.timeout),
-                    parameters: Program::from_bytes(p),
+                    parameters: parameters.clone(),
                 });
             }
             let ids = cradle.cradle.propose_games(

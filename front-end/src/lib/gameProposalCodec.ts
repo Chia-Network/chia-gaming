@@ -1,4 +1,4 @@
-import type { Program } from 'clvm-lib';
+import type { ProposalParameterValue } from '@games/host';
 import type { ProposalMadePayload } from '../types/ChiaGaming';
 import { catalogGameTypeFromWire } from './gameIdentities';
 import { decodeHandProposal, packageFor } from './gameRegistry';
@@ -8,9 +8,9 @@ import type { HandProposal, RegisteredGameType } from './session/types';
 export function encodeGameProposalParameters(
   handProposal: HandProposal,
   iStarted: boolean,
-): Program {
+): ProposalParameterValue {
   const registration = packageFor(handProposal.gameType);
-  return registration.encodeFactoryParameters(handProposal, iStarted);
+  return registration.encodeProposalParameters(handProposal, iStarted);
 }
 
 function parseTimeout(value: unknown): bigint | null {
@@ -25,18 +25,6 @@ function parseTimeout(value: unknown): bigint | null {
   } catch {
     return null;
   }
-}
-
-function coerceParameterState(value: unknown): unknown {
-  if (value instanceof Uint8Array) return value;
-  if (Array.isArray(value) && value.every((item) => typeof item === 'number')) {
-    return Uint8Array.from(value);
-  }
-  if (typeof value === 'string' && /^[0-9a-f]*$/i.test(value) && value.length % 2 === 0) {
-    const bytes = value.match(/.{2}/g)?.map((part) => parseInt(part, 16)) ?? [];
-    return Uint8Array.from(bytes);
-  }
-  return value;
 }
 
 function catalogTypeFromPayload(
@@ -67,7 +55,7 @@ export function decodeProposalMadeTerms(
         theirContribution: BigInt(theirs),
         gameTimeout: timeout,
       },
-      coerceParameterState(payload.parameters),
+      payload.parameters,
       { iStarted, origin: 'peer' },
     );
   } catch {

@@ -31,6 +31,8 @@ use crate::session_phases::types::{
 };
 
 use crate::session_phases::proposal::GameProposal;
+#[cfg(test)]
+use crate::session_phases::proposal::ProposalParameters;
 
 pub mod effects;
 pub mod game_collection;
@@ -235,8 +237,8 @@ impl OffChainPhase {
             .game_types
             .get(&start.game_type)
             .ok_or_else(|| Error::StrErr(format!("no such game {:?}", start.game_type)))?;
-        let games =
-            game::Game::run_factory(env.allocator, factory.clone().into(), &start.parameters)?;
+        let parameters = start.parameters.to_program(env.allocator)?;
+        let games = game::Game::run_factory(env.allocator, factory.clone().into(), &parameters)?;
         let first_hash = games
             .first()
             .map(|g| g.initial_validation_program_hash.clone())
@@ -722,8 +724,6 @@ impl OffChainPhase {
                             games.iter().fold(Amount::default(), |sum, game| {
                                 sum + game.their_contribution_this_game.clone()
                             });
-                        let ivp_hash = first.initial_validation_program.hash().clone();
-                        let initial_state = first.initial_state.clone();
                         let group_ids: Vec<GameID> = games.iter().map(|g| g.game_id).collect();
                         effects.push(Effect::Notify(GameNotification::ProposalMade {
                             id: game_id,
@@ -731,8 +731,6 @@ impl OffChainPhase {
                             my_contribution,
                             their_contribution,
                             timeout: first.timeout.clone(),
-                            initial_validation_program_hash: ivp_hash,
-                            initial_state,
                             game_type: resolved_game_type,
                             parameters: wire.start.parameters.clone(),
                         }));
@@ -2033,7 +2031,7 @@ mod atomic_group_tests {
             start: GameProposal {
                 game_type: GameType::from_hash(Hash::default()),
                 timeout: Timeout::new(15),
-                parameters: Program::from_bytes(&[0x80]),
+                parameters: ProposalParameters::Null,
             },
             members,
             group_id,

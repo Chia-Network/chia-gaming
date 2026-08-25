@@ -1571,7 +1571,7 @@ export class SessionController implements PollingGameSession {
       throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
     }
     const games = paramsList.map(({ parameters: _p, ...wasmParams }) => wasmParams);
-    const parametersList = paramsList.map(({ parameters }) => clvmToBytes(parameters));
+    const parametersList = paramsList.map(({ parameters }) => parameters);
     const result = this.cradle.propose_games(games, parametersList);
     this.processCommandResult(result, 'propose game');
     if (!result?.ids) {

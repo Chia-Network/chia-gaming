@@ -1399,7 +1399,9 @@ The cohesive session modules own those responsibilities:
   persistence, and async enrichment.
 - `sessionMachinePersist.ts` assembles and writes snapshots at effect time.
 - `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
-- `lib/gameProposalCodec.ts` encodes proposal factory parameters and decodes `ProposalMade` envelopes; `session/incomingProposal.ts` assembles `ProposalGroupModel`.
+- `lib/gameProposalCodec.ts` encodes structured Bencodex proposal parameters
+  and decodes `ProposalMade` envelopes; `session/incomingProposal.ts` assembles
+  `ProposalGroupModel`. Rust alone converts proposal parameters to CLVM.
 
 The controller still waits for its normal macrotask boundary, then drains one
 active FIFO to quiescence so synchronously re-entrant WASM effects enter the
@@ -1420,8 +1422,8 @@ puzzle hash is the protocol id at the WASM propose/notify boundary
 (`protocolIdForCatalog` out, `catalogGameTypeFromWire` in).
 `front-end/src/lib/gameProposalCodec.ts` is the inverse pair for that boundary:
 `encodeGameProposalParameters` on the way out and `decodeProposalMadeTerms` on
-the way in. Each package still owns its `factoryParameters` codec and
-`decodeHandProposal`.
+the way in. Each package owns its Bencodex-only `proposalParameters` codec and
+`decodeHandProposal`; package frontend code never parses factory CLVM.
 
 Each hook decodes the current machine-owned hand state on every render. It
 submits only `GameIntent` values through the shared Rust-first local-action

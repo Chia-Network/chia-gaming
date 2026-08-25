@@ -238,11 +238,12 @@ The proposal API takes one atomic group request:
 (game_type parameters timeout)
 ```
 
-`parameters` is the game-specific CLVM object and `timeout` is shared by every
-game produced for the group. Each game package's `factoryParameters` codec is
-the parser for that object (see `clsp/handler_api.md`). Both peers look up and run the same registered,
-deterministic factory using those parameters. The factory returns a non-empty
-ordered list of canonical 10-field game records:
+`parameters` is the game-specific structured Bencodex value and `timeout` is
+shared by every game produced for the group. Game frontend code validates that
+value without handling CLVM. The Rust host converts it deterministically to the
+CLVM object documented in `clsp/handler_api.md`. Both peers then look up and run
+the same registered factory using those parameters. The factory returns a
+non-empty ordered list of canonical 10-field game records:
 
 ```
 (

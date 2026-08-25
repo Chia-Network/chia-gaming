@@ -1,5 +1,5 @@
 import { CoinRecord } from './rpc/CoinRecord';
-import { Program } from 'clvm-lib';
+import type { ProposalParameterValue } from '@games/host';
 import { jsonStringify } from '../util/jsonSafe';
 import type * as WasmContract from '../../../wasm/contract';
 
@@ -142,7 +142,7 @@ export interface ProposeGameParams {
   /** First generated member's initial validation puzzle hash (32-byte hex). */
   game_type: ProtocolGameId;
   timeout: bigint;
-  parameters: Program | null;
+  parameters: ProposalParameterValue;
 }
 
 type IChiaIdentity = WasmContract.IChiaIdentity;
@@ -248,7 +248,7 @@ export interface WasmConnection {
   propose_games: (
     cid: number,
     games: Omit<ProposeGameParams, 'parameters'>[],
-    parameters_list: Uint8Array[],
+    parameters_list: ProposalParameterValue[],
   ) => WasmResult;
   accept_proposal: (cid: number, game_id: string) => WasmResult;
   accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
@@ -297,7 +297,7 @@ export class ChiaGame {
 
   propose_games(
     games: Omit<ProposeGameParams, 'parameters'>[],
-    parameters_list: Uint8Array[],
+    parameters_list: ProposalParameterValue[],
   ): WasmResult {
     return this.wasm.propose_games(this.session, games, parameters_list);
   }

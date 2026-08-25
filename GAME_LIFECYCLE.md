@@ -23,8 +23,8 @@ Games are initiated through a propose/accept flow:
    `BatchAction::ProposeGroup`; both sides record all produced games in
    `proposed_games`. The receiver gets one `ProposalMade` notification for the
    group, with the member IDs in factory order; the proposer does not.
-   `ProposalMade` includes the canonical parameter bytes so the UI can decode
-   terms through the selected package.
+   `ProposalMade` includes the structured Bencodex parameters so the UI can
+   decode terms through the selected package without handling CLVM.
 2. **Accept:** The receiver (or proposer on a subsequent potato) sends
    `BatchAction::AcceptProposal` actions for every member in the same batch.
    Both sides instantiate every referee and game handler, moving the group into
@@ -37,7 +37,8 @@ Games are initiated through a propose/accept flow:
 ### Receiver-Side Proposal Validation
 
 When an incoming `ProposeGroup` is processed, the receiver first looks up the
-factory by the request's hash `game_type`, runs it with the exact `parameters`,
+factory by the request's hash `game_type`, converts the exact structured
+`parameters` to CLVM, runs the factory,
 and requires that the first returned record's `initial_validation_program_hash`
 equals that `game_type`. The wire member list must be non-empty and have the
 same ordered cardinality as the factory result. Each wire member must match the corresponding canonical factory
