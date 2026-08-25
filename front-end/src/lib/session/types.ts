@@ -227,7 +227,6 @@ export interface SessionModel {
   betweenHand: BetweenHandModel;
   history: SessionHistoryModel;
   myRunningBalance: bigint;
-  lastOutcomeWin?: 'win' | 'lose' | 'tie';
 }
 
 type LegacyGameInput = Omit<Partial<GameModel>, 'instances'> & {
@@ -242,7 +241,6 @@ export interface SessionModelInput {
   betweenHand?: Partial<BetweenHandModel>;
   history?: Partial<SessionHistoryModel>;
   myRunningBalance?: bigint;
-  lastOutcomeWin?: 'win' | 'lose' | 'tie';
 }
 
 export type GameDashboardActionKind =

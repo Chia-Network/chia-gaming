@@ -121,9 +121,6 @@ export class SessionMachineInterpreter {
         );
         return;
       }
-      case 'controller-set-last-outcome':
-        dependencies.controller.lastOutcomeWin = effect.outcomeWin;
-        return;
       case 'timer-schedule': {
         this.cancelTimer(effect.key);
         const timer = (dependencies.setTimer ?? setTimeout)(() => {

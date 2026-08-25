@@ -11,6 +11,7 @@ import {
   type CalpokerHandState,
 } from './serialize';
 import { formatCalpokerMojos } from './formatting';
+import { calpokerProposalSenderGoesFirst } from './firstPlayer';
 
 export {
   calpokerOutcomeFromState,
@@ -57,18 +58,11 @@ const registration: GamePackageRegistration<
 > = {
   gameType: 'calpoker',
   displayName: 'California Poker',
-  canRemountFinished: true,
   createHand: createCalpokerHand,
   restoreHand: restoreCalpokerHand,
   proposalParameters: calpokerProposalParameters,
   describeHandProposal: (handProposal) =>
     `Stake ${formatCalpokerMojos(handProposal.myContribution)} each`,
-  validateHandIds: (gameIds) => gameIds.length === 1,
-  selectOutcome: (state) =>
-    state.outcome ? { my_win_outcome: state.outcome.my_win_outcome } : null,
-  lifecycle: {
-    proposalSenderGoesFirst: (iStarted) => !iStarted,
-  },
   draft: {
     default: (perGameAmount) => ({ amount: perGameAmount }),
     fromHandProposal: (handProposal) => ({ amount: handProposal.myContribution }),
@@ -86,13 +80,14 @@ const registration: GamePackageRegistration<
   toProposalParameters(handProposal, iStarted) {
     return {
       perPlayerStake: handProposal.myContribution,
-      senderGoesFirst: this.lifecycle.proposalSenderGoesFirst(iStarted),
+      senderGoesFirst: calpokerProposalSenderGoesFirst(iStarted, 'local'),
     };
   },
   decodeHandProposal(base, params, context) {
     if (
       params.perPlayerStake !== base.myContribution ||
-      params.senderGoesFirst !== context.expectedSenderGoesFirst
+      params.senderGoesFirst !==
+        calpokerProposalSenderGoesFirst(context.iStarted, context.origin)
     ) {
       return null;
     }
@@ -101,13 +96,6 @@ const registration: GamePackageRegistration<
   },
   validateHandProposal: validateCalpokerHandProposal,
   handProposalsEqual: equalHandProposalBase,
-  persistence: {
-    encodeExtras: () => ({}),
-    decodeExtras(base) {
-      const handProposal = { gameType: 'calpoker', ...base };
-      return validateCalpokerHandProposal(handProposal) ? handProposal : null;
-    },
-  },
 };
 
 export const calpokerRegistration = registration;

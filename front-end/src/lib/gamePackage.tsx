@@ -11,9 +11,7 @@ import type {
   HandProposalBase,
   HandProposalDecodeContext,
   HandProposalFormProps,
-  HandWinOutcome,
   ProposalParameterValue,
-  SavedHandProposalExtras,
 } from '@games/host';
 
 export type RegisteredGameHand = GameHand<unknown>;
@@ -22,15 +20,9 @@ export type GameComposeDrafts = Record<string, ComposeDraftValue>;
 export interface RegisteredGamePackage {
   readonly gameType: string;
   readonly displayName: string;
-  readonly canRemountFinished: boolean;
   createHand(init: GameHandInitialization): RegisteredGameHand;
   restoreHand(savedState: unknown): RegisteredGameHand;
   describeHandProposal(handProposal: HandProposal): string;
-  validateHandIds(gameIds: readonly string[]): boolean;
-  selectOutcome(state: unknown, gameId: string): HandWinOutcome | null;
-  readonly lifecycle: {
-    proposalSenderGoesFirst(iStarted: boolean): boolean;
-  };
   readonly draft: {
     default(perGameAmount: bigint): ComposeDraftValue;
     fromHandProposal(handProposal: HandProposal): ComposeDraftValue;
@@ -45,10 +37,6 @@ export interface RegisteredGamePackage {
   ): HandProposal | null;
   validateHandProposal(handProposal: HandProposal): boolean;
   handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
-  readonly persistence: {
-    encodeExtras(handProposal: HandProposal): SavedHandProposalExtras;
-    decodeExtras(base: HandProposalBase, extras: SavedHandProposalExtras): HandProposal | null;
-  };
   render(view: GameMountView<GameHandState<unknown>>): ReactElement;
   renderHandProposalForm(props: HandProposalFormProps<ComposeDraftValue>): ReactElement;
 }
@@ -69,7 +57,6 @@ export function defineGamePackage<
     createHand: (init) => feature.createHand(init) as RegisteredGameHand,
     restoreHand: (savedState) =>
       feature.restoreHand(requireState(savedState)) as RegisteredGameHand,
-    selectOutcome: (state, gameId) => feature.selectOutcome(requireState(state), gameId),
     draft: {
       default: feature.draft.default,
       fromHandProposal: feature.draft.fromHandProposal,
@@ -84,7 +71,6 @@ export function defineGamePackage<
       const params = feature.proposalParameters.decode(parameterState);
       return params === null ? null : feature.decodeHandProposal(base, params, context);
     },
-    persistence: feature.persistence,
     render: (view) => mount.render(view as GameMountView<THand>),
     renderHandProposalForm: (props) =>
       createElement(HandProposalForm, {

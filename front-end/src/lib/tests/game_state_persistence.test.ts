@@ -2,7 +2,7 @@ import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import { SpHandler } from '@games/spacepoker/ui/useSpacepokerHand';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { canRemountFinishedGameState, decodePersistedGameState } from '../gameRegistry';
+import { decodePersistedGameState } from '../gameRegistry';
 
 describe('opaque persisted game state helpers', () => {
   it('round-trips Calpoker without validating game-owned state', () => {
@@ -54,8 +54,6 @@ describe('opaque persisted game state helpers', () => {
     });
     expect(decodePersistedGameState(encoded)).toEqual({
       persisted: encoded,
-      canRemountFinished: true,
     });
-    expect(canRemountFinishedGameState(encoded)).toBe(true);
   });
 });

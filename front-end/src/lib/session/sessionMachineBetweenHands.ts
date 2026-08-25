@@ -150,12 +150,6 @@ export function reduceBetweenHandEvent(
         coordination: { ...state.coordination, firstGameAccepted: event.accepted },
       };
       break;
-    case 'set-last-outcome':
-      next = {
-        ...state,
-        coordination: { ...state.coordination, lastOutcomeWin: event.outcomeWin },
-      };
-      break;
     default:
       return assertNever(event);
   }
@@ -164,8 +158,7 @@ export function reduceBetweenHandEvent(
     event.type === 'select-compose-game' ||
     event.type === 'set-compose-timeout' ||
     event.type === 'update-selected-compose-draft' ||
-    event.type === 'set-compose-draft' ||
-    event.type === 'set-last-outcome';
+    event.type === 'set-compose-draft';
   return {
     state: next,
     effects: shouldPersist && next !== state ? [{ type: 'persist-session' }] : [],

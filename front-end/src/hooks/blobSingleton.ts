@@ -190,7 +190,6 @@ export async function restoreSession(
   );
   sc.myAlias = save.pairing.myAlias;
   sc.opponentAlias = save.pairing.opponentAlias;
-  sc.lastOutcomeWin = save.presentation.lastOutcomeWin ?? undefined;
   if (!save.live.rewardPuzzleHash) {
     throw new Error('restoreSession: missing rewardPuzzleHash in persisted session');
   }

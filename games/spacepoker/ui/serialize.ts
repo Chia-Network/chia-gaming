@@ -7,6 +7,7 @@ import {
   type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
+import { spacepokerProposalSenderGoesFirst } from './firstPlayer';
 
 function isForfeitOutcome(outcome: SettlementOutcome): boolean {
   return outcome === 'forfeited_skipped_reveal' || outcome === 'forfeited_we_accepted';
@@ -220,9 +221,8 @@ function initialState(
   init: GameHandInitialization,
   unitSizeMojos: bigint,
 ): SpacepokerHandState {
-  const proposerStarted = init.origin === 'local' ? init.iStarted : !init.iStarted;
-  const proposerGoesFirst = !proposerStarted;
-  const isMyTurn = init.origin === 'local' ? proposerGoesFirst : !proposerGoesFirst;
+  const senderGoesFirst = spacepokerProposalSenderGoesFirst(init.iStarted, init.origin);
+  const isMyTurn = init.origin === 'local' ? senderGoesFirst : !senderGoesFirst;
   return {
     gameId: init.gameIds[0]!,
     perPlayerStake: init.handProposal.myContribution,

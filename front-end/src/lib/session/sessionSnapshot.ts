@@ -2,9 +2,8 @@ import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import type { SavedHandProposal, SessionPresentationSave } from './saveEnvelope';
 import { encodeComposeDraftState } from './persistenceBetweenHands';
 import {
-  encodeHandProposalExtras,
+  encodePersistedHandProposalParameters,
   isCatalogGameType,
-  packageFor,
   validateHandProposal,
 } from '../gameRegistry';
 import { channelStatusPayloadFromModel } from './normalization';
@@ -12,7 +11,6 @@ import type { HandProposal, RegisteredGameType, SessionModel } from './types';
 
 export interface SessionPresentationFacts {
   channelStatus?: ChannelStatusPayload | null;
-  lastOutcomeWin?: 'win' | 'lose' | 'tie' | null;
   waitingStateEnteredAt?: bigint | null;
   cleanShutdownGraceStartedAt?: bigint | null;
 }
@@ -37,7 +35,7 @@ export function snapshotFromSessionModel(
       their_contribution: handProposal.theirContribution.toString(),
       game_timeout: handProposal.gameTimeout.toString(),
       game_type: requireCatalogGameType(handProposal.gameType, 'handProposal.gameType'),
-      ...encodeHandProposalExtras(handProposal),
+      parameters: encodePersistedHandProposalParameters(handProposal),
     };
   };
 
@@ -71,11 +69,6 @@ export function snapshotFromSessionModel(
   for (const group of model.betweenHand.proposalGroups) {
     if (group.memberIds.length === 0 || group.primaryId !== group.memberIds[0]) {
       throw new Error('Session invariant broken: proposal primary ID must be its first member');
-    }
-    if (!packageFor(group.handProposal.gameType).validateHandIds(group.memberIds)) {
-      throw new Error(
-        `Session invariant broken: ${group.handProposal.gameType} proposal has ${group.memberIds.length} members`,
-      );
     }
     if (
       (group.disposition === 'incoming-cached' || group.disposition === 'incoming-review') &&
@@ -153,8 +146,6 @@ export function snapshotFromSessionModel(
       facts.channelStatus === undefined
         ? channelStatusPayloadFromModel(model.channel.status)
         : facts.channelStatus,
-    lastOutcomeWin:
-      facts.lastOutcomeWin === undefined ? (model.lastOutcomeWin ?? null) : facts.lastOutcomeWin,
     myRunningBalance: model.myRunningBalance.toString(),
     channelNotifQueue: model.channel.queue.map(({ id, kind, title, message }) => ({
       id,

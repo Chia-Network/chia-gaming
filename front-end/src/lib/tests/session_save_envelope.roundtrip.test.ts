@@ -160,7 +160,12 @@ describe('durable game envelope round trips', () => {
           their_contribution: contribution,
           game_timeout: '15',
           game_type: gameType,
-          ...(gameType === 'spacepoker' ? { spacepoker_unit_size: '10' } : {}),
+          parameters:
+            gameType === 'spacepoker'
+              ? [BigInt(contribution), 10n, true]
+              : gameType === 'krunk'
+                ? BigInt(contribution)
+                : [BigInt(contribution), true],
         },
       });
       await saveLiveEnvelope(save);

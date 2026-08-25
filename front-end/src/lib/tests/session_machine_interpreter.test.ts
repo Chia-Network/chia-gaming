@@ -479,7 +479,6 @@ describe('session machine causal sequences', () => {
       restore: { restoring: false, status: 'idle', error: null, hubReconciled: false },
       wasmNotificationHistory: ['notification'],
       diagnosticLog: ['line'],
-      lastOutcomeWin: undefined,
     });
     expect(transition.effects).toEqual([]);
     expect(transition.state.model.history.wasmNotificationHistory).toEqual(['notification']);

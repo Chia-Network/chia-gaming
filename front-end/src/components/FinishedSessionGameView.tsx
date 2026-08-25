@@ -115,7 +115,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
 
-  if (!display.canRemountHand || !handState) {
+  if (!display.hasSavedHand || !handState) {
     return <FinishedSessionFallback label={display.terminalLabel} reason="unavailable" />;
   }
 

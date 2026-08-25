@@ -64,7 +64,6 @@ const NOTIFICATION_KINDS = new Set([
 ]);
 const SESSION_DISPOSITIONS = new Set(['AwaitOutboundTerminal', 'Abandoned']);
 const CHANNEL_SEMANTIC_PHASE_SET = new Set<string>(CHANNEL_SEMANTIC_PHASES);
-const OUTCOME_FLAGS = new Set(['win', 'lose', 'tie']);
 const GAME_TERMINAL_TYPES: ReadonlySet<string> = new Set<GameTerminalType>([
   'none',
   'settled',
@@ -329,9 +328,6 @@ export function validatePresentationScalarFields(save: SessionPresentationSave):
     throw new Error('Garbled save: invalid currentHandOrigin');
   }
   requireBoolean(save.cleanShutdownStarted, 'cleanShutdownStarted');
-  if (save.lastOutcomeWin !== null && !OUTCOME_FLAGS.has(save.lastOutcomeWin)) {
-    throw new Error('Garbled save: invalid lastOutcomeWin');
-  }
 }
 
 export function validateChannelStatus(value: unknown): void {

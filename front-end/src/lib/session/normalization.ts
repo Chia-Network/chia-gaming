@@ -142,7 +142,6 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       ...partial.history,
     },
     myRunningBalance: partial.myRunningBalance ?? 0n,
-    lastOutcomeWin: partial.lastOutcomeWin,
   };
 }
 export function clearDerivedGamePresentation(model: SessionModel): SessionModel {

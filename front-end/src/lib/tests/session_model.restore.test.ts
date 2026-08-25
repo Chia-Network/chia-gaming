@@ -152,7 +152,7 @@ describe('session model restore, schema, and event contracts', () => {
         their_contribution: '10',
         game_timeout: '23',
         game_type: 'spacepoker',
-        spacepoker_unit_size: '1',
+        parameters: [10n, 1n, true],
       },
       proposalGroups: [
         {
@@ -165,7 +165,7 @@ describe('session model restore, schema, and event contracts', () => {
             their_contribution: '20',
             game_timeout: '31',
             game_type: 'spacepoker',
-            spacepoker_unit_size: '2',
+            parameters: [20n, 2n, true],
           },
         },
       ],

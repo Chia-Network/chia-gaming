@@ -3,10 +3,12 @@ import { calpokerRegistration } from '@games/calpoker/ui/handProposal';
 import { krunkRegistration, isValidKrunkStake } from '@games/krunk/ui/handProposal';
 import { spacepokerRegistration } from '@games/spacepoker/ui/handProposal';
 import { resolveSpacepokerUnitSize } from '@games/spacepoker/ui/unitSize';
+import { calpokerProposalSenderGoesFirst } from '@games/calpoker/ui/firstPlayer';
+import { spacepokerProposalSenderGoesFirst } from '@games/spacepoker/ui/firstPlayer';
 import {
   decodeHandProposal,
   decodePersistedHandProposal,
-  encodeHandProposalExtras,
+  encodePersistedHandProposalParameters,
   handProposalsEqual,
   packageFor,
   createRegisteredGameHand,
@@ -48,6 +50,13 @@ describe('pure game registrations', () => {
     ]);
     expect(packageFor('calpoker').gameType).toBe(calpokerPackage.gameType);
     expect(packageFor('calpoker').displayName).toBe(calpokerPackage.displayName);
+    for (const registration of [calpokerRegistration, spacepokerRegistration, krunkRegistration]) {
+      expect(registration).not.toHaveProperty('canRemountFinished');
+      expect(registration).not.toHaveProperty('validateHandIds');
+      expect(registration).not.toHaveProperty('selectOutcome');
+      expect(registration).not.toHaveProperty('persistence');
+      expect(registration).not.toHaveProperty('lifecycle');
+    }
   });
 
   it('exposes a structured proposal-parameter codec on each game package', () => {
@@ -211,6 +220,12 @@ describe('pure game registrations', () => {
         perPlayerStake: 100n,
         gameState: { myTurn: isMyTurn },
       });
+      expect(calpokerProposalSenderGoesFirst(iStarted, origin)).toBe(
+        origin === 'local' ? isMyTurn : !isMyTurn,
+      );
+      expect(spacepokerProposalSenderGoesFirst(iStarted, origin)).toBe(
+        origin === 'local' ? isMyTurn : !isMyTurn,
+      );
     },
   );
 
@@ -261,7 +276,10 @@ describe('pure game registrations', () => {
       ),
     ).toBeNull();
     expect(
-      decodePersistedHandProposal('calpoker', { ...base, theirContribution: 200n }, {}),
+      decodePersistedHandProposal('calpoker', { ...base, theirContribution: 200n }, [
+        base.myContribution,
+        true,
+      ]),
     ).toBeNull();
     expect(
       spacepokerRegistration.validateHandProposal({
@@ -291,12 +309,12 @@ describe('pure game registrations', () => {
     expect(spacepokerRegistration.createHand).toEqual(expect.any(Function));
   });
 
-  it('round-trips persistence extras without manufacturing a unit', () => {
+  it('round-trips generic persisted proposal parameters including Space Poker unit size', () => {
     const terms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos: 25n };
-    const extras = encodeHandProposalExtras(terms);
-    expect(extras).toEqual({ spacepoker_unit_size: '25' });
-    expect(decodePersistedHandProposal('spacepoker', base, extras)).toEqual(terms);
-    expect(decodePersistedHandProposal('spacepoker', base, {})).toBeNull();
+    const parameters = encodePersistedHandProposalParameters(terms);
+    expect(parameters).toEqual([100n, 25n, true]);
+    expect(decodePersistedHandProposal('spacepoker', base, parameters)).toEqual(terms);
+    expect(decodePersistedHandProposal('spacepoker', base, [])).toBeNull();
   });
 
   it.each([
@@ -306,7 +324,9 @@ describe('pure game registrations', () => {
     expect(
       decodeHandProposal('calpoker', invalid, [invalid.myContribution, true], peerSenderFirst),
     ).toBeNull();
-    expect(decodePersistedHandProposal('calpoker', invalid, {})).toBeNull();
+    expect(
+      decodePersistedHandProposal('calpoker', invalid, [invalid.myContribution, true]),
+    ).toBeNull();
   });
 
   it.each([
@@ -325,21 +345,31 @@ describe('pure game registrations', () => {
         ? [invalid.myContribution, BigInt(unit), true]
         : [invalid.myContribution, unit, true];
       expect(decodeHandProposal('spacepoker', invalid, parameterState, peerSenderFirst)).toBeNull();
-      expect(
-        decodePersistedHandProposal('spacepoker', invalid, { spacepoker_unit_size: unit }),
-      ).toBeNull();
+      expect(decodePersistedHandProposal('spacepoker', invalid, parameterState)).toBeNull();
     },
   );
 
-  it('keeps valid Calpoker and Space Poker terms round-trippable', () => {
+  it('keeps every current game proposal round-trippable', () => {
     const calTerms = { gameType: 'calpoker' as const, ...base };
     const spaceTerms = { gameType: 'spacepoker' as const, ...base, unitSizeMojos: 20n };
+    const krunkTerms = { gameType: 'krunk' as const, ...base };
     expect(
-      decodePersistedHandProposal('calpoker', base, encodeHandProposalExtras(calTerms)),
+      decodePersistedHandProposal(
+        'calpoker',
+        base,
+        encodePersistedHandProposalParameters(calTerms),
+      ),
     ).toEqual(calTerms);
     expect(
-      decodePersistedHandProposal('spacepoker', base, encodeHandProposalExtras(spaceTerms)),
+      decodePersistedHandProposal(
+        'spacepoker',
+        base,
+        encodePersistedHandProposalParameters(spaceTerms),
+      ),
     ).toEqual(spaceTerms);
+    expect(
+      decodePersistedHandProposal('krunk', base, encodePersistedHandProposalParameters(krunkTerms)),
+    ).toEqual(krunkTerms);
   });
 
   it('uses one resolver for terms, parameter values, and persisted state', () => {

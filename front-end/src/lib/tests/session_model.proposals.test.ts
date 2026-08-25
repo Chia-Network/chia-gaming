@@ -246,6 +246,7 @@ describe('session model proposal and normalization contracts', () => {
               their_contribution: '10',
               game_timeout: '15',
               game_type: 'calpoker',
+              parameters: [10n, true],
             },
           },
           {
@@ -258,6 +259,7 @@ describe('session model proposal and normalization contracts', () => {
               their_contribution: '30',
               game_timeout: '25',
               game_type: 'calpoker',
+              parameters: [30n, true],
             },
           },
         ],

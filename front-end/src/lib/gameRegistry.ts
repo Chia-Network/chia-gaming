@@ -6,7 +6,7 @@ import type {
   HandProposalDecodeContext,
   HandProposal as HostHandProposal,
   PersistedGameState,
-  SavedHandProposalExtras,
+  ProposalParameterValue,
 } from '@games/host';
 import type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
 export type { GameComposeDrafts, RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
@@ -43,7 +43,6 @@ export const REGISTERED_GAMES = GAME_PACKAGES.map((pkg) => {
 
 export interface DecodedPersistedGameState {
   persisted: PersistedGameState;
-  canRemountFinished: boolean;
 }
 
 /** Decode only the generic host envelope; the game-owned state remains opaque. */
@@ -53,7 +52,6 @@ export function decodePersistedGameState(value: unknown): DecodedPersistedGameSt
   if (!isCatalogGameType(persisted.gameType) || !Object.hasOwn(persisted, 'state')) return null;
   return {
     persisted: { gameType: persisted.gameType, state: persisted.state },
-    canRemountFinished: packageFor(persisted.gameType).canRemountFinished,
   };
 }
 
@@ -87,10 +85,6 @@ export function restoreRegisteredGameHand(model: SessionModel): RegisteredGameHa
   return restoreRegisteredGameHandState(game.activeGameType, game.handState);
 }
 
-export function canRemountFinishedGameState(value: unknown): boolean {
-  return decodePersistedGameState(value)?.canRemountFinished === true;
-}
-
 function handProposalWithCatalogType(
   registration: RegisteredGamePackage,
   handProposal: HostHandProposal | null,
@@ -114,14 +108,9 @@ export function decodeHandProposal(
   context: Pick<HandProposalDecodeContext, 'iStarted' | 'origin'>,
 ): HandProposal | null {
   const registration = packageFor(gameType);
-  const proposerStarted = context.origin === 'local' ? context.iStarted : !context.iStarted;
-  const decodeContext: HandProposalDecodeContext = {
-    ...context,
-    expectedSenderGoesFirst: registration.lifecycle.proposalSenderGoesFirst(proposerStarted),
-  };
   return handProposalWithCatalogType(
     registration,
-    registration.decodeHandProposal(base, parameterState, decodeContext),
+    registration.decodeHandProposal(base, parameterState, context),
   );
 }
 
@@ -136,17 +125,6 @@ export function handProposalsEqual(a: HandProposal | null, b: HandProposal | nul
 
 export function describeReceivedProposal(handProposal: HandProposal): string {
   return packageFor(handProposal.gameType).describeHandProposal(handProposal);
-}
-
-export function selectRegisteredGameOutcome(
-  gameType: RegisteredGameType,
-  current: PersistedGameState | null,
-  gameId: string,
-): 'win' | 'lose' | 'tie' | null {
-  const registration = packageFor(gameType);
-  return current?.gameType !== gameType
-    ? null
-    : (registration.selectOutcome(current.state, gameId)?.my_win_outcome ?? null);
 }
 
 export function defaultGameComposeDraft(
@@ -180,18 +158,28 @@ export function handProposalFromComposeDraft(
   );
 }
 
-export function encodeHandProposalExtras(handProposal: HandProposal): SavedHandProposalExtras {
-  return packageFor(handProposal.gameType).persistence.encodeExtras(handProposal);
+/**
+ * Deterministic codec context for persisted normalized proposal terms.
+ * It does not preserve or reconstruct the live proposal direction.
+ */
+const PERSISTED_HAND_PROPOSAL_CODEC_CONTEXT = {
+  origin: 'local',
+  iStarted: false,
+} as const;
+
+export function encodePersistedHandProposalParameters(
+  handProposal: HandProposal,
+): ProposalParameterValue {
+  return packageFor(handProposal.gameType).encodeProposalParameters(
+    handProposal,
+    PERSISTED_HAND_PROPOSAL_CODEC_CONTEXT.iStarted,
+  );
 }
 
 export function decodePersistedHandProposal(
   gameType: RegisteredGameType,
   base: HandProposalBase,
-  extras: SavedHandProposalExtras,
+  parameterState: unknown,
 ): HandProposal | null {
-  const registration = packageFor(gameType);
-  return handProposalWithCatalogType(
-    registration,
-    registration.persistence.decodeExtras(base, extras),
-  );
+  return decodeHandProposal(gameType, base, parameterState, PERSISTED_HAND_PROPOSAL_CODEC_CONTEXT);
 }

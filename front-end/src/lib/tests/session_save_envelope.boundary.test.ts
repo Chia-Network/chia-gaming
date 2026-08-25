@@ -90,6 +90,7 @@ describe('save boundary enforcement', () => {
           their_contribution: '20',
           game_timeout: '15',
           game_type: 'calpoker',
+          parameters: [20n, true],
         },
       }),
     );

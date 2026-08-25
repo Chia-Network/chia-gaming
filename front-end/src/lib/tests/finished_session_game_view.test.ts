@@ -41,7 +41,7 @@ describe('finished session shell display', () => {
     });
 
     expect(selectFinishedSessionDisplay(model)).toEqual({
-      canRemountHand: true,
+      hasSavedHand: true,
       terminalLabel: 'Opponent timed out',
     });
   });
@@ -61,7 +61,7 @@ describe('finished session shell display', () => {
       },
     });
 
-    expect(selectFinishedSessionDisplay(model).canRemountHand).toBe(true);
+    expect(selectFinishedSessionDisplay(model).hasSavedHand).toBe(true);
   });
 
   it('keeps the terminal hand wrapper available for pointer and text interaction', () => {

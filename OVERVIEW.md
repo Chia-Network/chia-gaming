@@ -607,6 +607,12 @@ host-delivered updates, while the browser rereads the complete hand after a
 state-change notification or protocol request and reconstructs it from the
 canonical checkpoint on rejection.
 
+Proposal persistence reuses each package's structured Bencodex parameter codec,
+with a private deterministic context used only while recovering normalized
+terms; there are no game-specific save keys or persisted live-direction fields.
+Proposal-group integrity remains a generic host concern, while each game asserts
+its factory topology when creating a fresh hand.
+
 | Concern | Owner |
 | --- | --- |
 | Protocol phases, game/channel facts, validation, lifecycle, spends; watch lifecycle and ordering | Rust |
@@ -620,8 +626,8 @@ attachments are destroyed. Visual lifetime can continue: the same React hand
 component and `handKey` remain mounted, but receive the finalized model through
 the `frozen: true` branch of the same mount contract, which structurally has no
 intent port. Cold restoration is separate again:
-`FinishedSessionGameView` remounts a validated persisted Cal Poker, Space Poker,
-or Krunk hand only when no live tree survived (for example, after reload).
+`FinishedSessionGameView` always attempts a package's frozen mount from valid
+persisted hand state when no live tree survived (for example, after reload).
 
 ### Handlers
 

@@ -77,7 +77,6 @@ export function finalizeTerminalSession(
       },
       presentation: snapshotFromSessionModel(model, {
         channelStatus: channelStatusPayloadFromModel(model.channel.status),
-        lastOutcomeWin: model.lastOutcomeWin ?? null,
         waitingStateEnteredAt: null,
         cleanShutdownGraceStartedAt: null,
       }),

@@ -16,7 +16,7 @@ import type {
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
 import {
   decodePersistedGameState,
-  encodeHandProposalExtras,
+  encodePersistedHandProposalParameters,
   isCatalogGameType,
 } from '../gameRegistry';
 import {
@@ -284,7 +284,7 @@ function savedHandProposalFromModel(handProposal: HandProposal): SavedHandPropos
     their_contribution: handProposal.theirContribution.toString(),
     game_timeout: handProposal.gameTimeout.toString(),
     game_type: handProposal.gameType,
-    ...encodeHandProposalExtras(handProposal),
+    parameters: encodePersistedHandProposalParameters(handProposal),
   };
 }
 
@@ -348,14 +348,6 @@ function parsePresentation(value: unknown): SessionPresentationSave {
   if (new Set(pendingCandidates.map((pending) => pending.id)).size !== pendingCandidates.length) {
     throw new Error('Garbled save: duplicate pending candidate id');
   }
-  const lastOutcomeWin =
-    fields.lastOutcomeWin === null
-      ? null
-      : parseDiscriminant<'win' | 'lose' | 'tie'>(
-          fields.lastOutcomeWin,
-          new Set(['win', 'lose', 'tie']),
-          'lastOutcomeWin',
-        );
   const dismissedChannelStatus =
     fields.dismissedChannelStatus === null
       ? null
@@ -399,7 +391,6 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     handState: decodedHandState?.persisted ?? null,
     pendingCandidates,
     channelStatus: decodeChannelStatusPayload(fields.channelStatus),
-    lastOutcomeWin,
     myRunningBalance: (() => {
       parseDecimalString(fields.myRunningBalance, 'myRunningBalance');
       return requireString(fields.myRunningBalance, 'myRunningBalance');
@@ -738,7 +729,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         ),
       },
       myRunningBalance: parseDecimalString(save.myRunningBalance, 'myRunningBalance'),
-      lastOutcomeWin: save.lastOutcomeWin ?? undefined,
     }),
   );
   return { model, phase: typedEnvelope.phase, save: typedEnvelope };

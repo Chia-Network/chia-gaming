@@ -18,13 +18,10 @@ import type { RestoreStatus } from '../../hooks/SessionController';
 import type { Program } from 'clvm-lib';
 import type { PersistedGameState } from '@games/host';
 
-export type OutcomeWin = 'win' | 'lose' | 'tie';
-
 export interface SessionMachineCoordination {
   firstGameAccepted: boolean;
   sameTermsRequested: boolean;
   expectingCounterProposal: boolean;
-  lastOutcomeWin?: OutcomeWin;
   nextNotificationId: bigint;
   rejectionTimerGeneration: number;
   channelEnrichmentGeneration: number;
@@ -67,7 +64,6 @@ export type SessionMachineEffect =
   | { type: 'controller-propose-game'; handProposal: HandProposal }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
-  | { type: 'controller-set-last-outcome'; outcomeWin: OutcomeWin }
   | { type: 'timer-schedule'; key: 'rejection-fallback'; generation: number; delayMs: number }
   | { type: 'timer-cancel'; key: 'rejection-fallback' }
   | { type: 'persist-session' }
@@ -96,7 +92,6 @@ export type SessionMachineEvent =
       };
       wasmNotificationHistory: string[];
       diagnosticLog: string[];
-      lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
     }
   | { type: 'clean-shutdown-started'; started: boolean }
   | { type: 'dismissed-channel-status'; status: ChannelStatus | null }
@@ -126,7 +121,6 @@ export type SessionMachineEvent =
   | { type: 'set-same-terms-requested'; requested: boolean }
   | { type: 'set-expecting-counter-proposal'; expecting: boolean }
   | { type: 'set-first-game-accepted'; accepted: boolean }
-  | { type: 'set-last-outcome'; outcomeWin: OutcomeWin }
   | {
       type: 'notification-accepted-group';
       id: string;

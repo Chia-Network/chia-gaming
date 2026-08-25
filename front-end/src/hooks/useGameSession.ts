@@ -233,7 +233,6 @@ export function useGameSession(
       },
       wasmNotificationHistory: controller.wasmNotificationHistory,
       diagnosticLog: controller.diagnosticLog,
-      lastOutcomeWin: controller.lastOutcomeWin,
     });
   }, [controller, dispatch, params.restoring]);
 
@@ -364,11 +363,6 @@ export function useGameSession(
     cleanShutdownStarted: model.channel.cleanShutdownStarted,
     goOnChain: () => dispatch({ type: 'go-on-chain' }),
     betweenHands: view.betweenHands,
-    lastOutcomeWin: coordination.lastOutcomeWin,
-    restoredOutcomeWin:
-      sessionSave?.phase === 'live' || sessionSave?.phase === 'terminal'
-        ? (sessionSave.presentation.lastOutcomeWin ?? undefined)
-        : undefined,
     restoreStatus: model.restore.status,
     restoreError: model.restore.error,
     sessionPhase,

@@ -45,20 +45,11 @@ const registration: GamePackageRegistration<
 > = {
   gameType: 'krunk',
   displayName: 'Krunk',
-  canRemountFinished: true,
   createHand: createKrunkHand,
   restoreHand: restoreKrunkHand,
   proposalParameters: krunkProposalParameters,
   describeHandProposal: (handProposal) =>
     `Stake ${formatKrunkMojos(handProposal.myContribution)} each`,
-  validateHandIds: (gameIds) => gameIds.length === 2,
-  selectOutcome: (state, gameId) => {
-    const outcome = state.games[gameId]?.outcome;
-    return outcome ? { my_win_outcome: outcome } : null;
-  },
-  lifecycle: {
-    proposalSenderGoesFirst: (iStarted) => !iStarted,
-  },
   draft: {
     default: () => ({ amount: 100n }),
     fromHandProposal: (handProposal) => ({ amount: handProposal.myContribution }),
@@ -81,13 +72,6 @@ const registration: GamePackageRegistration<
   },
   validateHandProposal: validateKrunkHandProposal,
   handProposalsEqual: equalHandProposalBase,
-  persistence: {
-    encodeExtras: () => ({}),
-    decodeExtras(base) {
-      const handProposal = { gameType: 'krunk', ...base };
-      return validateKrunkHandProposal(handProposal) ? handProposal : null;
-    },
-  },
 };
 
 export const krunkRegistration = registration;

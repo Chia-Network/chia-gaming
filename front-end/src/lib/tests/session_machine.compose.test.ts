@@ -114,6 +114,7 @@ describe('session machine behavior sequences', () => {
           game_timeout: '15',
 
           game_type: 'calpoker',
+          parameters: [20n, true],
         },
 
         handState: calpokerStateCodec.encode({
@@ -139,6 +140,7 @@ describe('session machine behavior sequences', () => {
               their_contribution: '10',
               game_timeout: '15',
               game_type: 'calpoker',
+              parameters: [10n, true],
             },
           },
         ],

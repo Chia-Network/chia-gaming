@@ -8,6 +8,7 @@ import {
   type SettlementOutcome,
 } from '../../host';
 import { CalpokerOutcome, projectCalpokerFinalDisplay, type CalpokerOutcomeShape } from './outcome';
+import { calpokerProposalSenderGoesFirst } from './firstPlayer';
 
 export interface CalpokerDisplaySnapshot {
   gameState: string;
@@ -138,9 +139,8 @@ export function isCalpokerHandState(value: unknown): value is CalpokerHandState 
 }
 
 function initialState(init: GameHandInitialization): CalpokerHandState {
-  const proposerStarted = init.origin === 'local' ? init.iStarted : !init.iStarted;
-  const proposerGoesFirst = !proposerStarted;
-  const isMyTurn = init.origin === 'local' ? proposerGoesFirst : !proposerGoesFirst;
+  const senderGoesFirst = calpokerProposalSenderGoesFirst(init.iStarted, init.origin);
+  const isMyTurn = init.origin === 'local' ? senderGoesFirst : !senderGoesFirst;
   return {
     gameId: init.gameIds[0]!,
     perPlayerStake: init.handProposal.myContribution,

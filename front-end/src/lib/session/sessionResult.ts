@@ -65,8 +65,6 @@ export interface UseGameSessionResult {
   cleanShutdownStarted: boolean;
   goOnChain: () => void;
   betweenHands: boolean;
-  lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
-  restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   restoreStatus: RestoreStatus;
   restoreError: string | null;
   sessionPhase: Exclude<SessionPhase, 'none'>;

@@ -46,8 +46,6 @@ export type HandProposal = HandProposalBase & {
   gameType: RegisteredGameType;
 };
 
-export type HandWinOutcome = { my_win_outcome: 'win' | 'lose' | 'tie' };
-
 export type ProposalGroupOrigin = 'local' | 'peer';
 
 export interface PersistedGameState<T = unknown> {
@@ -101,7 +99,6 @@ export interface GameHand<TState> extends GameHandState<TState> {
 }
 
 export type ComposeDraftValue = Record<string, bigint>;
-export type SavedHandProposalExtras = Readonly<Record<string, string | undefined>>;
 
 export interface HandProposalFormProps<TDraft> {
   draft: TDraft;
@@ -114,7 +111,6 @@ export interface HandProposalFormProps<TDraft> {
 export interface HandProposalDecodeContext {
   readonly origin: ProposalGroupOrigin;
   readonly iStarted: boolean;
-  readonly expectedSenderGoesFirst: boolean;
 }
 
 export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase): boolean {
@@ -191,16 +187,10 @@ export interface GamePackageRegistration<
 > {
   gameType: string;
   readonly displayName: string;
-  readonly canRemountFinished: boolean;
   createHand(init: GameHandInitialization): THand;
   restoreHand(savedState: TState): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;
   describeHandProposal(handProposal: HandProposal): string;
-  validateHandIds(gameIds: readonly string[]): boolean;
-  selectOutcome(state: TState, gameId: string): HandWinOutcome | null;
-  readonly lifecycle: {
-    proposalSenderGoesFirst(iStarted: boolean): boolean;
-  };
   readonly draft: {
     default(perGameAmount: bigint): TDraft;
     fromHandProposal(handProposal: HandProposal): TDraft;
@@ -215,8 +205,4 @@ export interface GamePackageRegistration<
   ): HandProposal | null;
   validateHandProposal(handProposal: HandProposal): boolean;
   handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
-  persistence: {
-    encodeExtras(handProposal: HandProposal): SavedHandProposalExtras;
-    decodeExtras(base: HandProposalBase, extras: SavedHandProposalExtras): HandProposal | null;
-  };
 }

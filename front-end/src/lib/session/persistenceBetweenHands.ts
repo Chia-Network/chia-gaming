@@ -16,8 +16,6 @@ import {
   requireUniqueIds,
 } from './persistencePrimitives';
 
-const TERMS_BASE = new Set(['game_type', 'my_contribution', 'their_contribution', 'game_timeout']);
-
 function encodeDraftValue(value: ComposeDraftValue): Record<string, string> {
   return Object.fromEntries(
     Object.entries(value).map(([key, field]) => [key, (field as bigint).toString()]),
@@ -78,15 +76,6 @@ export function parseComposeDraftState(value: unknown): ComposeDraftState {
   };
 }
 
-function termsExtras(saved: Record<string, unknown>, label: string): Record<string, string> {
-  const extras: Record<string, string> = {};
-  for (const [key, value] of Object.entries(saved)) {
-    if (TERMS_BASE.has(key) || value === undefined) continue;
-    extras[key] = requireString(value, `${label}.${key}`);
-  }
-  return extras;
-}
-
 export function parseHandProposalSnapshot(value: unknown, label: string): HandProposal {
   const saved = requireRecord(value, label);
   const gameType = saved.game_type;
@@ -105,7 +94,7 @@ export function parseHandProposalSnapshot(value: unknown, label: string): HandPr
       ),
       gameTimeout: parseDecimalString(saved.game_timeout, `${label}.game_timeout`, 1n),
     },
-    termsExtras(saved, label),
+    saved.parameters,
   );
   if (!terms) throw new Error(`Garbled save: invalid ${label} ${gameType} terms`);
   return terms;
@@ -161,11 +150,6 @@ export function parseProposalGroups(value: unknown, label: string): ProposalGrou
       saved.hand_proposal,
       `${groupLabel}.hand_proposal`,
     );
-    if (!packageFor(handProposal.gameType).validateHandIds(memberIds)) {
-      throw new Error(
-        `Garbled save: ${groupLabel} has ${memberIds.length} members for ${handProposal.gameType}`,
-      );
-    }
     return {
       primaryId,
       memberIds,

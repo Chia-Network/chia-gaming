@@ -743,7 +743,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   );
 
   expect(selectFinishedSessionDisplay(terminal.model)).toEqual({
-    canRemountHand: true,
+    hasSavedHand: true,
     terminalLabel: 'Opponent timed out',
   });
   const frozenHand = krunkStateCodec.decode(terminal.model.game.handState);

@@ -6,6 +6,7 @@ import {
   type SpacepokerHandState,
 } from './serialize';
 import { formatSpacepokerMojos } from './formatting';
+import { spacepokerProposalSenderGoesFirst } from './firstPlayer';
 import {
   resolveSpacepokerUnitSize,
   spacepokerProposalParameters,
@@ -39,7 +40,6 @@ const registration: GamePackageRegistration<
 > = {
   gameType: 'spacepoker',
   displayName: 'Space Poker',
-  canRemountFinished: true,
   createHand: createSpacepokerHand,
   restoreHand: restoreSpacepokerHand,
   proposalParameters: spacepokerProposalParameters,
@@ -48,17 +48,6 @@ const registration: GamePackageRegistration<
     if (!space) return `Stake ${formatSpacepokerMojos(handProposal.myContribution)} each`;
     const stack = space.myContribution / space.unitSizeMojos;
     return `Stake ${formatSpacepokerMojos(space.myContribution)} each · unit ${formatSpacepokerMojos(space.unitSizeMojos)} · stack ${String(stack)}`;
-  },
-  validateHandIds: (gameIds) => gameIds.length === 1,
-  selectOutcome: (state) =>
-    state.outcome
-      ? {
-          my_win_outcome:
-            state.outcome.result > 0n ? 'win' : state.outcome.result < 0n ? 'lose' : 'tie',
-        }
-      : null,
-  lifecycle: {
-    proposalSenderGoesFirst: (iStarted) => !iStarted,
   },
   draft: {
     default: () => ({ unitSize: 1n, stackSize: 10n }),
@@ -91,13 +80,14 @@ const registration: GamePackageRegistration<
     return {
       perPlayerStake: handProposal.myContribution,
       betUnit,
-      senderGoesFirst: this.lifecycle.proposalSenderGoesFirst(iStarted),
+      senderGoesFirst: spacepokerProposalSenderGoesFirst(iStarted, 'local'),
     };
   },
   decodeHandProposal(base, params, context) {
     if (
       params.perPlayerStake !== base.myContribution ||
-      params.senderGoesFirst !== context.expectedSenderGoesFirst
+      params.senderGoesFirst !==
+        spacepokerProposalSenderGoesFirst(context.iStarted, context.origin)
     ) {
       return null;
     }
@@ -118,23 +108,6 @@ const registration: GamePackageRegistration<
       equalHandProposalBase(left, right) &&
       left.unitSizeMojos === right.unitSizeMojos
     );
-  },
-  persistence: {
-    encodeExtras: (handProposal) => {
-      const space = spacepokerTermsOf(handProposal);
-      return space === null ? {} : { spacepoker_unit_size: space.unitSizeMojos.toString() };
-    },
-    decodeExtras(base, extras) {
-      const raw = extras.spacepoker_unit_size;
-      if (raw === undefined) return null;
-      try {
-        const unitSizeMojos = BigInt(raw);
-        const handProposal = { gameType: 'spacepoker', ...base, unitSizeMojos };
-        return validateSpacepokerHandProposal(handProposal) ? handProposal : null;
-      } catch {
-        return null;
-      }
-    },
   },
 };
 

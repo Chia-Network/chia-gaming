@@ -53,6 +53,7 @@ export const sampleSession = {
     their_contribution: '10',
     game_timeout: '15',
     game_type: 'calpoker',
+    parameters: [10n, true],
   },
   unackedMessages: [{ msgno: 4n, msg: new Uint8Array([3, 4, 5]) }],
   humanHistory: ['human1'],

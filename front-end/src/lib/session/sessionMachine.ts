@@ -105,7 +105,6 @@ export function reduceSessionMachine(
     case 'set-same-terms-requested':
     case 'set-expecting-counter-proposal':
     case 'set-first-game-accepted':
-    case 'set-last-outcome':
       return reduceBetweenHandEvent(state, event);
 
     case 'upsert-proposal-group':

@@ -446,7 +446,7 @@ describe('flat state', () => {
         their_contribution: '10',
         game_timeout: '15',
         game_type: 'spacepoker',
-        spacepoker_unit_size: '10',
+        parameters: [10n, 10n, true],
       },
     });
     await flushSessionSave();

@@ -241,7 +241,6 @@ must provide:
 - `handProposalsEqual` to compare two proposals.
 - `describeHandProposal` to write a short, readable summary for the receiving
   player.
-- `lifecycle.proposalSenderGoesFirst` to say which player takes the first turn.
 
 Use `equalHandProposalBase` when your equality check only needs to add
 game-specific fields to the common proposal comparison.
@@ -293,7 +292,6 @@ interface ProposalParameterCodec<TParams> {
 interface HandProposalDecodeContext {
   origin: 'local' | 'peer';
   iStarted: boolean;
-  expectedSenderGoesFirst: boolean;
 }
 
 interface ProposalCodec<TParams> {
@@ -311,7 +309,10 @@ interface ProposalCodec<TParams> {
 started the session. It returns the typed game-specific value consumed by
 `proposalParameters.encode`. `encode` returns only Bencodex-compatible values.
 The host carries those values across WASM and the peer wire and performs the
-generic conversion to the CLVM object passed to the factory.
+generic conversion to the CLVM object passed to the factory. The same encoded
+value is persisted, so game-specific proposal fields use one codec for wire and
+save round trips. Persistence uses a private deterministic codec context only to
+recover normalized proposal terms; it does not preserve live proposal direction.
 
 Decoding is intentionally two-stage:
 
@@ -337,6 +338,11 @@ as a single `bigint`. Their decoders check exact list lengths, JavaScript value
 types, positivity, cross-field relationships, and consistency with
 `HandProposalBase`. Test a valid encode/decode round trip, wrong list lengths
 and types, invalid values, and another game's parameter encoding.
+
+When parameters contain a proposal-wide first-player bit, define that policy in
+game-local code and use it for outgoing construction, incoming validation, and
+fresh-hand initial turn. Calpoker and Space Poker do this. Krunk does not expose
+a proposal-wide policy because its factory members have different roles.
 
 ## Step 5: Own one hand instance
 
@@ -368,12 +374,13 @@ Bencodex-compatible data and saves `{ gameType, state }` generically.
 Games do not provide envelope serializers, versions, compatibility decoders, or
 migrations.
 
-Set package-level `canRemountFinished` when the same hand UI can be mounted
-read-only from a terminal save.
+Every playable package must support a frozen mount and `restoreHand`. A finished
+session always attempts a cold read-only remount when a valid
+`PersistedGameState` exists.
 
-If your `HandProposal` has extra fields, implement
-`persistence.encodeExtras` and `persistence.decodeExtras` in
-`handProposal.ts`. This saves the proposal itself; hand state is saved
+Proposal snapshots persist the registration's structured
+`proposalParameters.encode` result and generic decode context. Do not add
+game-specific save keys or a second persistence codec. Hand state remains saved
 generically from `GameHand.getState()`.
 
 ## Step 6: Build the play UI

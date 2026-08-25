@@ -51,7 +51,6 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
       wasmNotificationHistory: wasm.wasmNotificationHistory,
       diagnosticLog: wasm.diagnosticLog,
     },
-    lastOutcomeWin: wasm.lastOutcomeWin,
   });
   const current = loadState();
   const currentPairing =
@@ -62,7 +61,6 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
   }
   const presentation = snapshotFromSessionModel(model, {
     channelStatus: wasm.channelStatus ?? null,
-    lastOutcomeWin: wasm.lastOutcomeWin ?? null,
     waitingStateEnteredAt: currentPresentation?.waitingStateEnteredAt ?? null,
     cleanShutdownGraceStartedAt: currentPresentation?.cleanShutdownGraceStartedAt ?? null,
   });

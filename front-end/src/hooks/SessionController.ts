@@ -54,7 +54,6 @@ export interface WasmFields {
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
   opponentAlias: string | undefined;
-  lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
 }
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -201,7 +200,6 @@ export class SessionController implements PollingGameSession {
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
-  lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
   durabilityWarning: string | undefined = undefined;
   onSaveNeeded: (() => void | Promise<void>) | null = null;
   getFee: () => bigint = () => 0n;
@@ -1516,7 +1514,6 @@ export class SessionController implements PollingGameSession {
       channelStatus: this.lastChannelStatus,
       myAlias: this.myAlias,
       opponentAlias: this.opponentAlias,
-      lastOutcomeWin: this.lastOutcomeWin,
     };
   }
 

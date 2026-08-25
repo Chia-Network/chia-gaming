@@ -7,7 +7,7 @@ import {
   peekSession,
   saveSession,
 } from '../../hooks/save';
-import { canRemountFinishedGameState } from '../gameRegistry';
+import { decodePersistedGameState } from '../gameRegistry';
 import { encodeGameProposalParameters } from '../gameProposalCodec';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SESSION_DB_NAME } from '../session/indexedDb';
@@ -35,40 +35,36 @@ import { liveSave } from './session_save_envelope.fixtures';
 import * as assert from 'assert';
 
 async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> {
-  const cases: Array<{ handProposal: HandProposal; expectedMembers: number; canRemount: boolean }> =
-    [
-      {
-        handProposal: {
-          gameType: 'calpoker',
-          myContribution: 100n,
-          theirContribution: 100n,
-          gameTimeout: 15n,
-        },
-        expectedMembers: 1,
-        canRemount: true,
+  const cases: Array<{ handProposal: HandProposal; expectedMembers: number }> = [
+    {
+      handProposal: {
+        gameType: 'calpoker',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
       },
-      {
-        handProposal: {
-          gameType: 'spacepoker',
-          myContribution: 100n,
-          theirContribution: 100n,
-          gameTimeout: 15n,
-          unitSizeMojos: 10n,
-        },
-        expectedMembers: 1,
-        canRemount: true,
+      expectedMembers: 1,
+    },
+    {
+      handProposal: {
+        gameType: 'spacepoker',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+        unitSizeMojos: 10n,
       },
-      {
-        handProposal: {
-          gameType: 'krunk',
-          myContribution: 100n,
-          theirContribution: 100n,
-          gameTimeout: 15n,
-        },
-        expectedMembers: 2,
-        canRemount: true,
+      expectedMembers: 1,
+    },
+    {
+      handProposal: {
+        gameType: 'krunk',
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
       },
-    ];
+      expectedMembers: 2,
+    },
+  ];
 
   for (const [index, testCase] of cases.entries()) {
     const cradles = await createActivePair(poller, index);
@@ -184,7 +180,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       });
       assert.deepEqual(restoredModel.game.currentHandIds, ids);
       assert.deepEqual(restoredModel.game.handState, postMove.handState);
-      assert.equal(canRemountFinishedGameState(restoredModel.game.handState), testCase.canRemount);
+      assert.ok(decodePersistedGameState(restoredModel.game.handState));
       if (testCase.handProposal.gameType === 'krunk') {
         const krunk = krunkStateCodec.decode(restoredModel.game.handState);
         assert.ok(krunk);

@@ -2,10 +2,8 @@ import { applyHandProposalToComposeDraft } from './composeDraft';
 import { gameSliceReducer, type GameSlice } from './gameSlice';
 import {
   createRegisteredGameHand,
-  isCatalogGameType,
   restoreRegisteredGameHandState,
   snapshotRegisteredGameHand,
-  selectRegisteredGameOutcome,
 } from '../gameRegistry';
 import type { GameHandInitialization, GameUpdate, PersistedGameState } from '@games/host';
 import { clearProposalIds } from './sessionMachineProposals';
@@ -294,21 +292,7 @@ export function reduceDurableGameEvent(
         base,
         event.handState ?? activeHand?.receive(update) ?? reduceWithTransientHand(base, update),
       );
-      const gameType = transition.state.model.game.activeGameType;
-      if (!isCatalogGameType(gameType)) return transition;
-      const outcomeWin = selectRegisteredGameOutcome(
-        gameType,
-        transition.state.model.game.handState,
-        event.id,
-      );
-      if (outcomeWin === null) return transition;
-      return {
-        state: {
-          ...transition.state,
-          coordination: { ...transition.state.coordination, lastOutcomeWin: outcomeWin },
-        },
-        effects: [{ type: 'controller-set-last-outcome', outcomeWin }, { type: 'persist-session' }],
-      };
+      return transition;
     }
     case 'notification-move-rejected': {
       activeHand?.restore(state.model.game.handState);
