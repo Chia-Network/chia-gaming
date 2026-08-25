@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import type { CalpokerOutcomeShape } from './outcome';
-import type { GameHandOrigin, GameHandSource, GameTerminalModel } from '../../host';
+import type { GameHandOrigin, GameHandSource, SettlementOutcome } from '../../host';
 import { gameHandState, requireLiveGameHandSource } from '../../host';
 import { type CalpokerDisplaySnapshot, type CalpokerHandState } from './serialize';
 
@@ -20,7 +20,7 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcomeShape<bigint> | undefined;
-  terminalOutcome: GameTerminalModel['outcome'];
+  terminalOutcome: SettlementOutcome | null;
   handleMakeMove: () => void;
   handleCheat: () => void;
   saveDisplaySnapshot: (snapshot: CalpokerDisplaySnapshot) => void;
@@ -56,17 +56,12 @@ export function calpokerResponderFinishesAtReveal(iStarted: boolean): boolean {
 
 export function useCalpokerHand(
   handSource: GameHandSource<CalpokerHandState>,
-  gameId: string,
-  iStarted: boolean,
-  terminal: GameTerminalModel,
   handOrigin: GameHandOrigin = 'fresh',
 ): UseCalpokerHandResult {
   const interactive = handSource.interactionMode === 'live';
   const handState = gameHandState(handSource);
   const handSourceRef = useRef(handSource);
-  const gameIdRef = useRef(gameId);
   const pendingPlayRef = useRef(false);
-  const restoredRef = useRef(handOrigin === 'restored');
   const autoSubmissionRef = useRef<string | null>(null);
   const suppressInitialOutcomeRef = useRef(
     handOrigin !== 'fresh' &&
@@ -75,7 +70,6 @@ export function useCalpokerHand(
   );
 
   handSourceRef.current = handSource;
-  gameIdRef.current = gameId;
 
   const currentState = useCallback((): CalpokerHandState => {
     return gameHandState(handSourceRef.current);
@@ -100,15 +94,15 @@ export function useCalpokerHand(
         command.type === 'make-move'
           ? {
               type: 'make-move',
-              gameId: gameIdRef.current,
+              gameId: next.gameId,
               readable: command.readable,
               state: next,
             }
           : command.type === 'accept-settlement'
-            ? { type: 'accept-settlement', gameId: gameIdRef.current, state: next }
+            ? { type: 'accept-settlement', gameId: next.gameId, state: next }
             : {
                 type: 'cheat',
-                gameId: gameIdRef.current,
+                gameId: next.gameId,
                 moverShare: command.moverShare,
                 state: next,
               },
@@ -120,8 +114,6 @@ export function useCalpokerHand(
   const submitMove1 = useCallback(() => {
     const controller = requireLiveGameHandSource(handSourceRef.current);
     if (!controller.isChannelReady()) return;
-    const gid = gameIdRef.current;
-    if (!gid) return;
     const current = currentState();
     if ((current.cardSelections ?? []).length !== 4) return;
     const cards = current.cardSelections ?? [];
@@ -135,13 +127,10 @@ export function useCalpokerHand(
   const handleMakeMove = useCallback(() => {
     const controller = requireLiveGameHandSource(handSourceRef.current);
     if (!controller.isChannelReady()) return;
-    const gid = gameIdRef.current;
-    if (!gid) return;
-
     const current = currentState();
     const handFinished =
-      terminal.outcome !== null ||
-      (current.outcome !== undefined && calpokerResponderFinishesAtReveal(iStarted));
+      current.settlementOutcome !== null ||
+      (current.outcome !== undefined && calpokerResponderFinishesAtReveal(current.iStarted));
     if (handFinished) return;
     const currentMove = current.moveNumber;
 
@@ -163,23 +152,19 @@ export function useCalpokerHand(
         readable: null,
       });
     }
-  }, [commitLocalAction, currentState, iStarted, submitMove1, terminal.outcome]);
+  }, [commitLocalAction, currentState, submitMove1]);
 
   // Autofire moves 0 and 2; auto-submit queued move 1
   useEffect(() => {
     if (!interactive) return;
-    if (restoredRef.current) {
-      restoredRef.current = false;
-      return;
-    }
     const handFinished =
-      terminal.outcome !== null ||
-      (handState.outcome !== undefined && calpokerResponderFinishesAtReveal(iStarted));
+      handState.settlementOutcome !== null ||
+      (handState.outcome !== undefined && calpokerResponderFinishesAtReveal(handState.iStarted));
     if (handFinished || !handState.isPlayerTurn) return;
     const controller = requireLiveGameHandSource(handSourceRef.current);
-    if (!controller.isChannelReady() || !gameId) return;
+    if (!controller.isChannelReady()) return;
     const m = handState.moveNumber;
-    const submissionKey = `${gameId}:${m}`;
+    const submissionKey = `${handState.gameId}:${m}`;
     if (autoSubmissionRef.current === submissionKey) return;
     if (shouldAutoFireCalpokerMove(handFinished, handState.isPlayerTurn, m)) {
       autoSubmissionRef.current = submissionKey;
@@ -189,22 +174,20 @@ export function useCalpokerHand(
       submitMove1();
     }
   }, [
-    gameId,
     handSource,
     handState.isPlayerTurn,
     handState.moveNumber,
     handState.outcome,
-    iStarted,
     interactive,
     handleMakeMove,
     submitMove1,
-    terminal.outcome,
+    handState.gameId,
+    handState.iStarted,
+    handState.settlementOutcome,
   ]);
 
   const handleCheat = useCallback(() => {
     requireLiveGameHandSource(handSourceRef.current);
-    const gid = gameIdRef.current;
-    if (!gid) return;
     // A cheat is still a local move candidate, so it uses the same game-state
     // transition as a normal move while the host handles protocol execution.
     commitLocalAction((current) => ({ ...current, isPlayerTurn: false }), {
@@ -257,7 +240,7 @@ export function useCalpokerHand(
     setHandOrder,
     moveNumber: handState.moveNumber,
     outcome: suppressInitialOutcomeRef.current ? undefined : handState.outcome,
-    terminalOutcome: terminal.outcome,
+    terminalOutcome: handState.settlementOutcome,
     handleMakeMove,
     handleCheat,
     saveDisplaySnapshot,

@@ -91,15 +91,12 @@ function fallbackHandInitialization(state: SessionMachineState): GameHandInitial
   if (handProposal === null) {
     throw new Error('Game update requires accepted hand terms');
   }
-  const id = state.model.game.currentHandIds[0];
-  if (id === undefined) {
+  if (state.model.game.currentHandIds[0] === undefined) {
     throw new Error('Game update requires a current hand member');
   }
   return {
-    id,
     gameIds: state.model.game.currentHandIds,
     iStarted: true,
-    canAct: false,
     origin: state.model.game.currentHandOrigin ?? 'local',
     handProposal,
   };
@@ -216,10 +213,8 @@ export function reduceDurableGameEvent(
       };
       if (!first) return { state: initialized, effects: [] };
       const init: GameHandInitialization = {
-        id: event.id,
         gameIds: proposal.memberIds,
         iStarted: event.iStarted,
-        canAct: event.isMyTurn,
         origin: proposal.origin,
         handProposal: proposal.handProposal,
       };
@@ -292,7 +287,7 @@ export function reduceDurableGameEvent(
       const update: GameUpdate = {
         type: 'hand-ended',
         gameId: event.id,
-        terminal: event.terminal,
+        outcome: event.terminal.outcome,
       };
       const transition = withHandState(
         base,

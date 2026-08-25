@@ -1,10 +1,12 @@
 import { Program } from 'clvm-lib';
 import {
   createGameHand,
+  isSettlementOutcome,
   type GameHand,
   type GameHandInitialization,
   type GameUpdate,
   type PersistedGameState,
+  type SettlementOutcome,
 } from '../../host';
 
 export const KrunkHandler = {
@@ -32,10 +34,13 @@ export interface KrunkGameState {
   secretWord: string | null;
   revealedWord: string | null;
   outcome: 'win' | 'lose' | null;
+  settlementOutcome: SettlementOutcome | null;
   moverShare: string | null;
 }
 
 export interface KrunkHandState {
+  gameIds: readonly string[];
+  perPlayerStake: bigint;
   games: Record<string, KrunkGameState>;
 }
 
@@ -63,6 +68,7 @@ export function initialKrunkGameState(role: KrunkRole): KrunkGameState {
     secretWord: null,
     revealedWord: null,
     outcome: null,
+    settlementOutcome: null,
     moverShare: null,
   };
 }
@@ -142,7 +148,10 @@ function isKrunkGameState(value: unknown): value is KrunkGameState {
   const terminal = state.handler === KrunkHandler.Terminal;
   if (
     (!terminal &&
-      (state.revealedWord !== null || state.outcome !== null || state.moverShare !== null)) ||
+      (state.revealedWord !== null ||
+        state.outcome !== null ||
+        state.settlementOutcome !== null ||
+        state.moverShare !== null)) ||
     (terminal && state.myTurn)
   ) {
     return false;
@@ -151,6 +160,7 @@ function isKrunkGameState(value: unknown): value is KrunkGameState {
     isNullableString(state.secretWord) &&
     isNullableString(state.revealedWord) &&
     (state.outcome === null || state.outcome === 'win' || state.outcome === 'lose') &&
+    (state.settlementOutcome === null || isSettlementOutcome(state.settlementOutcome)) &&
     isAmount(state.moverShare)
   );
 }
@@ -161,11 +171,18 @@ export function decodeKrunkGameState(value: unknown): KrunkGameState | null {
 
 export function isKrunkHandState(value: unknown): value is KrunkHandState {
   if (typeof value !== 'object' || value === null) return false;
-  const games = (value as Partial<KrunkHandState>).games;
+  const hand = value as Partial<KrunkHandState>;
+  const games = hand.games;
   return (
+    Array.isArray(hand.gameIds) &&
+    hand.gameIds.length === 2 &&
+    new Set(hand.gameIds).size === 2 &&
+    typeof hand.perPlayerStake === 'bigint' &&
+    hand.perPlayerStake > 0n &&
     typeof games === 'object' &&
     games !== null &&
-    Object.keys(games).length > 0 &&
+    Object.keys(games).length === hand.gameIds.length &&
+    hand.gameIds.every((gameId) => Object.hasOwn(games, gameId)) &&
     Object.entries(games).every(
       ([gameId, gameState]) => gameId.length > 0 && isKrunkGameState(gameState),
     )
@@ -175,9 +192,10 @@ export function isKrunkHandState(value: unknown): value is KrunkHandState {
 export function krunkGameStateFromHand(
   handState: KrunkHandState,
   gameId: string,
-  role: KrunkRole,
 ): KrunkGameState {
-  return handState.games[gameId] ?? initialKrunkGameState(role);
+  const game = handState.games[gameId];
+  if (!game) throw new Error(`Krunk hand is missing member ${gameId}`);
+  return game;
 }
 
 function parseReadable(readable: Uint8Array): {
@@ -233,7 +251,7 @@ function finishedState(
 
 type KrunkFeatureEvent =
   | { type: 'opponent-moved'; readable: Uint8Array; moverShare: string | null }
-  | { type: 'settled' };
+  | { type: 'settled'; outcome: SettlementOutcome | null };
 
 export function krunkOutcomeFromPlay(game: KrunkGameState): KrunkGameState['outcome'] {
   const bobWon = game.guesses.some((guess) => guess.clue.every((item) => item === 2n));
@@ -252,6 +270,7 @@ export function reduceKrunkFeatureState(
       handler: KrunkHandler.Terminal,
       myTurn: false,
       outcome: game.outcome ?? krunkOutcomeFromPlay(game),
+      settlementOutcome: event.outcome,
     };
   }
   const parsed = parseReadable(event.readable);
@@ -296,7 +315,7 @@ export function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate)
   const game = current.games[event.gameId];
   let next = game;
   if (event.type === 'hand-ended') {
-    next = reduceKrunkFeatureState(game, { type: 'settled' });
+    next = reduceKrunkFeatureState(game, { type: 'settled', outcome: event.outcome });
   } else if (event.type === 'move-readable') {
     next = reduceKrunkFeatureState(game, {
       type: 'opponent-moved',
@@ -304,10 +323,13 @@ export function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate)
       moverShare: event.moverShare,
     });
   }
-  return { games: { ...current.games, [event.gameId]: next } };
+  return { ...current, games: { ...current.games, [event.gameId]: next } };
 }
 
 export function createKrunkHand(init: GameHandInitialization): GameHand<KrunkHandState> {
+  if (init.gameIds.length !== 2 || init.handProposal.gameType !== 'krunk') {
+    throw new Error('Krunk requires two games and Krunk proposal terms');
+  }
   const games = Object.fromEntries(
     init.gameIds.map((id, index) => {
       const proposerIsAlice = index === 0;
@@ -316,5 +338,8 @@ export function createKrunkHand(init: GameHandInitialization): GameHand<KrunkHan
       return [id, initialKrunkGameState(role)];
     }),
   );
-  return createGameHand({ games }, reduceKrunkHandState);
+  return createGameHand(
+    { gameIds: [...init.gameIds], perPlayerStake: init.handProposal.myContribution, games },
+    reduceKrunkHandState,
+  );
 }

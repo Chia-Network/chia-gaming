@@ -45,10 +45,8 @@ function assertCodecValid(state: SpacepokerHandState | null): SpacepokerHandStat
 }
 
 const spacepokerInit = (): GameHandInitialization => ({
-  id: 'space-1',
   gameIds: ['space-1'],
   iStarted: false,
-  canAct: true,
   origin: 'local',
   handProposal: {
     gameType: 'spacepoker',
@@ -77,7 +75,6 @@ function advanceCalpokerHand(state: CalpokerHandState, update: GameUpdate): Calp
   const hand = createCalpokerHand({
     ...spacepokerInit(),
     gameIds: ['calpoker-1'],
-    id: 'calpoker-1',
     handProposal: {
       gameType: 'calpoker',
       myContribution: 100n,
@@ -96,10 +93,8 @@ function freshKrunkHand(init: GameHandInitialization): KrunkHandState {
 
 function advanceKrunkHand(state: KrunkHandState, update: GameUpdate): KrunkHandState {
   const hand = createKrunkHand({
-    id: Object.keys(state.games)[0],
-    gameIds: Object.keys(state.games),
+    gameIds: state.gameIds,
     iStarted: false,
-    canAct: true,
     origin: 'local',
     handProposal: {
       gameType: 'krunk',
@@ -129,10 +124,8 @@ describe('canonical feature gameplay reducers', () => {
     ['peer', 'bob', 'alice'],
   ] as const)('assigns ordered Krunk roles from %s proposal origin', (origin, first, second) => {
     const state = freshKrunkHand({
-      id: 'krunk-1',
       gameIds: ['krunk-1', 'krunk-2'],
       iStarted: false,
-      canAct: true,
       origin,
       handProposal: {
         gameType: 'krunk',
@@ -401,15 +394,12 @@ describe('canonical feature gameplay reducers', () => {
     const folded = advanceSpacepokerHand(state, {
       type: 'hand-ended',
       gameId: 'space-1',
-      terminal: {
-        type: 'settled',
-        outcome: 'we_accepted',
-        label: 'You accepted',
-        myReward: '0',
-        rewardCoinHex: null,
-      },
+      outcome: 'we_accepted',
     });
-    expect(folded).toEqual(reduceSpacepokerSettlementState(state, 'we_accepted'));
+    expect(folded).toEqual({
+      ...reduceSpacepokerSettlementState(state, 'we_accepted'),
+      settlementOutcome: 'we_accepted',
+    });
     expect(assertCodecValid(folded).terminalState).toBe('folded-by-you');
 
     const endState = { ...state, gameState: { handler: 4n as const, myTurn: true, N: 1n } };
@@ -549,6 +539,8 @@ describe('canonical feature gameplay reducers', () => {
 
   it('uses the same Calpoker reducer for durable and mounted readable projection', () => {
     const current = {
+      gameId: 'calpoker-1',
+      perPlayerStake: 100n,
       playerHand: [],
       opponentHand: [],
       cardSelections: [],
@@ -571,6 +563,7 @@ describe('canonical feature gameplay reducers', () => {
     {
       role: 'on-chain loser',
       iStarted: true,
+      settlementOutcome: null,
       playerHand: [32n, 36n, 41n, 49n, 33n, 37n, 42n, 50n],
       opponentHand: [2n, 6n, 9n, 13n, 3n, 7n, 10n, 14n],
       moveNumber: 2n,
@@ -663,15 +656,13 @@ describe('canonical feature gameplay reducers', () => {
       advanceCalpokerHand(current, {
         type: 'hand-ended',
         gameId: 'calpoker-1',
-        terminal: {
-          type: 'settled',
-          outcome: 'timed_out_waiting_for_our_move',
-          label: 'Timed out waiting for our move',
-          myReward: '0',
-          rewardCoinHex: null,
-        },
+        outcome: 'timed_out_waiting_for_our_move',
       }),
-    ).toEqual({ ...current, isPlayerTurn: false });
+    ).toEqual({
+      ...current,
+      isPlayerTurn: false,
+      settlementOutcome: 'timed_out_waiting_for_our_move',
+    });
   });
 
   it('durably applies Calpoker and Space Poker advisory messages with game-message semantics', () => {
@@ -728,7 +719,11 @@ describe('canonical feature gameplay reducers', () => {
       moverShare: '0',
     });
     const durable = advanceKrunkHand(
-      { games: { 'krunk-1': pending } },
+      {
+        gameIds: ['krunk-1', 'krunk-2'],
+        perPlayerStake: 100n,
+        games: { 'krunk-1': pending, 'krunk-2': initialKrunkGameState('alice') },
+      },
       {
         type: 'move-readable',
         gameId: 'krunk-1',
@@ -755,6 +750,8 @@ describe('canonical feature gameplay reducers', () => {
     });
     const durable = advanceKrunkHand(
       {
+        gameIds: ['krunk-1', 'krunk-2'],
+        perPlayerStake: 100n,
         games: {
           'krunk-1': terminal,
           'krunk-2': initialKrunkGameState('alice'),
@@ -763,28 +760,23 @@ describe('canonical feature gameplay reducers', () => {
       {
         type: 'hand-ended',
         gameId: 'krunk-1',
-        terminal: {
-          type: 'settled',
-          outcome: 'settled_cleanly',
-          label: 'Settled cleanly',
-          myReward: '100',
-          rewardCoinHex: null,
-        },
+        outcome: 'settled_cleanly',
       },
     );
 
     expect(projected.moverShare).toBe('20');
     expect(projected.outcome).toBe('win');
-    expect(durable?.games['krunk-1']).toEqual(projected);
+    expect(durable?.games['krunk-1']).toEqual({
+      ...projected,
+      settlementOutcome: 'settled_cleanly',
+    });
     expect(Object.keys(durable!.games)).toEqual(['krunk-1', 'krunk-2']);
   });
 
   it('creates a replacement Krunk hand and preserves installed local state', () => {
     const init: GameHandInitialization = {
-      id: 'krunk-3',
       gameIds: ['krunk-3', 'krunk-4'],
       iStarted: true,
-      canAct: true,
       origin: 'local',
       handProposal: {
         gameType: 'krunk',

@@ -646,16 +646,16 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     secretWord: 'CRANE',
   };
   const acceptedHandState = krunkStateCodec.encode({
+    gameIds: ids,
+    perPlayerStake: 100n,
     games: {
       picker: pickerBeforeTimeout,
       guesser: initialKrunkGameState('bob'),
     },
   });
   const gameHand = createKrunkHand({
-    id: ids[0],
     gameIds: ids,
     iStarted: true,
-    canAct: false,
     origin: 'local',
     handProposal: {
       gameType: 'krunk',
@@ -669,13 +669,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     gameHand.receive({
       type: 'hand-ended',
       gameId: settledId,
-      terminal: {
-        type: 'settled',
-        outcome: 'opponent_timed_out',
-        label: 'Opponent timed out',
-        myReward: '100',
-        rewardCoinHex: null,
-      },
+      outcome: 'opponent_timed_out',
     });
   }
   const terminalHand = gameHand.getState();
@@ -769,25 +763,11 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   expect(
     Object.values(frozenHand!.games).every((state) => state.handler === KrunkHandler.Terminal),
   ).toBe(true);
-  expect(
-    krunkBoardNotice(
-      frozenHand!.games.picker,
-      'Bob',
-      timeoutModel.game.instances.picker.terminal,
-      '100',
-    ),
-  ).toEqual({
+  expect(krunkBoardNotice(frozenHand!.games.picker, 'Bob', frozenHand!.perPlayerStake)).toEqual({
     text: 'Bob got nothing due to timeout.',
     kind: 'info',
   });
-  expect(
-    krunkBoardNotice(
-      frozenHand!.games.guesser,
-      'Bob',
-      timeoutModel.game.instances.guesser.terminal,
-      '100',
-    ),
-  ).toEqual({
+  expect(krunkBoardNotice(frozenHand!.games.guesser, 'Bob', frozenHand!.perPlayerStake)).toEqual({
     text: 'You got 100 mojo due to timeout.',
     kind: 'info',
   });
@@ -795,8 +775,6 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     iStarted: false,
   });
   expect(frozen.props).toMatchObject({
-    currentHandGameIds: ids,
-    activeGameIds: [],
     handSource: {
       interactionMode: 'terminal',
     },

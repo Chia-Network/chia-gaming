@@ -26,6 +26,7 @@ interface KrunkSettlementTrace {
   state: KrunkGameState;
   terminal: GameTerminalModel;
   amount: string;
+  perPlayerStake: bigint;
   myContribution: string;
   theirContribution: string;
 }
@@ -67,6 +68,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       state,
       terminal,
       amount,
+      perPlayerStake: hand.perPlayerStake,
       myContribution: state.role === 'alice' ? amount : '0',
       theirContribution: state.role === 'alice' ? '0' : amount,
     };
@@ -268,8 +270,8 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       );
 
       const notices = [
-        krunkBoardNotice(byPlayer[0].state, 'Bob', byPlayer[0].terminal, byPlayer[0].amount),
-        krunkBoardNotice(byPlayer[1].state, 'Alice', byPlayer[1].terminal, byPlayer[1].amount),
+        krunkBoardNotice(byPlayer[0].state, 'Bob', byPlayer[0].perPlayerStake),
+        krunkBoardNotice(byPlayer[1].state, 'Alice', byPlayer[1].perPlayerStake),
       ];
       const winner = byPlayer[0].state.outcome === 'win' ? 0 : 1;
       const loser = winner ^ 1;

@@ -7,7 +7,7 @@ import {
 } from '@games/host';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
 import { createRegisteredGameHand, isCatalogGameType, packageFor } from '../gameRegistry';
-import { gameCanActById, renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
+import { renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
 import { createSessionModel } from '../session/model';
 
 const terminal = {
@@ -31,10 +31,8 @@ function modelFor(gameType: 'calpoker' | 'spacepoker' | 'krunk') {
         }
       : { gameType, myContribution: 100n, theirContribution: 100n, gameTimeout: 15n };
   const hand = createRegisteredGameHand(gameType, {
-    id: ids[0],
     gameIds: ids,
     iStarted: true,
-    canAct: true,
     origin: 'local',
     handProposal,
   });
@@ -81,26 +79,12 @@ describe('game mount registry', () => {
         hand: createRegisteredGameHand(
           gameType,
           {
-            id: model.game.currentHandIds[0],
             gameIds: model.game.currentHandIds,
             iStarted: true,
-            canAct: true,
             origin: 'local',
             handProposal: model.betweenHand.lastHandProposal!,
           },
           model.game.handState,
-        ),
-        lastDisplayedId: model.game.lastDisplayedId,
-        activeIds: model.game.activeIds,
-        currentHandIds: model.game.currentHandIds,
-        canActById: Object.fromEntries(model.game.currentHandIds.map((id) => [id, true])),
-        iStarted: true,
-        playerNumber: 1,
-        instances: Object.fromEntries(
-          Object.entries(model.game.instances).map(([id, instance]) => [
-            id,
-            { amount: instance.amount, terminal: instance.terminal },
-          ]),
         ),
       };
       const live: GameMountView = {
@@ -148,10 +132,8 @@ describe('game mount registry', () => {
         hand: createRegisteredGameHand(
           'calpoker',
           {
-            id: '1',
             gameIds: ['1'],
             iStarted: true,
-            canAct: true,
             origin: 'local',
             handProposal: model.betweenHand.lastHandProposal!,
           },
@@ -168,7 +150,7 @@ describe('game mount registry', () => {
     expect(mount.key).toBe('7');
     expect(gameHandState(mount.props.handSource)).toEqual(model.game.handState?.state);
     expect(mount.props.handSource.interactionMode).toBe('live');
-    expect(gameCanActById(model)['1']).toBe(false);
+    expect(mount.props.gameId).toBeUndefined();
   });
 
   it('cold-restores a frozen mount without protocol capabilities', () => {

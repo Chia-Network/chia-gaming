@@ -344,9 +344,17 @@ The returned `GameHand<TState>` exposes `receive(update)` and `getState()`.
 optimistic-state operations. `createGameHand(initialState, reducer)` supplies
 this small mutable shell around a pure reducer.
 
+The initial state must copy every accepted fact the play UI needs from
+`GameHandInitialization`: ordered routing IDs, stakes and game-specific proposal
+terms, local role, and the initial game turn. Derive the initial turn from the
+validated proposal convention plus `origin` and `iStarted`; the host does not
+pass a second `canAct` answer.
+
 Multi-ID games keep all members in the one complete state; Krunk, for example,
-uses `{ games: Record<string, KrunkGameState> }`. The host treats `getState()` as
-opaque Bencodex-compatible data and saves `{ gameType, state }` generically.
+stores ordered `gameIds`, the accepted per-player stake, and
+`games: Record<string, KrunkGameState>`. Single-ID games likewise keep their
+routing ID and accepted terms in state. The host treats `getState()` as opaque
+Bencodex-compatible data and saves `{ gameType, state }` generically.
 Games do not provide state serializers, versions, validators, restore decoders,
 or migrations.
 
@@ -362,13 +370,33 @@ generically from `GameHand.getState()`.
 
 Implement `play.tsx` and export a `GameMountRegistration` named `play`. It has
 one `render(view)` function. Every render receives the live or restored
-`GameHand`, ordered and active IDs, accepted amounts, terminal results, names,
-and `frozen`.
+`GameHand`, player display names, and `frozen`. IDs, accepted stakes, current
+turn/handler, active members, and terminal results come from the complete hand
+state rather than parallel host projections.
 
 `frozen` is the type discriminant:
 
 - `frozen: false` includes the typed intent port.
 - `frozen: true` has no protocol capability.
+
+`frozen` distinguishes a live mount from a read-only terminal mount. It is not
+move permission. Your components decide whether each control is enabled from
+their own turn, handler, and terminal state; the frozen branch merely makes it
+structurally impossible to dispatch a protocol command. Detailed abnormal
+termination text remains in the player-app overlay rather than crossing this
+boundary.
+
+```ts
+type GameMountView = {
+  hand: GameHandState<unknown>;
+  handOrigin: 'fresh' | 'restored' | 'terminal';
+  myName?: string;
+  opponentName?: string;
+} & (
+  | { frozen: false; port: LiveGamePort; appendGameLog(line: string): void }
+  | { frozen: true }
+);
+```
 
 The host passes accepted terms to `createHand`; the mounted hand never receives
 proposal, group, rejection, abandonment, connection, or on-chain lifecycle
@@ -414,16 +442,20 @@ Move rejection and unexpected `ActionFailed` restore the generic checkpoint and
 go to shared host UX. Rejection is never delivered to the game. On confirmation
 the installed candidate becomes canonical.
 
+This is also the restart rule for automatic actions. After restoration, run the
+same ordinary state-driven effect as during live play. A restored pre-action
+state may issue the action; a restored queued or applied candidate already
+contains the advanced handler/turn and must not. Do not persist a separate
+“automatic action attempted” flag.
+
 The complete incoming contract is:
 
 ```ts
 type ProposalGroupOrigin = 'local' | 'peer';
 
 interface GameHandInitialization {
-  id: string;
   gameIds: readonly string[];
   iStarted: boolean;
-  canAct: boolean;
   origin: ProposalGroupOrigin;
   handProposal: HandProposal;
 }
@@ -436,24 +468,28 @@ type GameUpdate =
       moverShare: string;
     }
   | { type: 'message-readable'; gameId: string; readable: Uint8Array }
-  | { type: 'hand-ended'; gameId: string; terminal: GameTerminalModel };
+  | { type: 'hand-ended'; gameId: string; outcome: SettlementOutcome | null };
 ```
 
-`GameHandInitialization` is supplied once to `createHand`. `id` is the
-acceptance ID, `gameIds` is the authoritative ordered membership, `iStarted`
-identifies the local session initiator, `canAct` is initial local capability,
-`origin` identifies the proposal author, and `handProposal` contains validated
-accepted terms.
+`GameHandInitialization` is supplied once to `createHand`. `gameIds` is the
+authoritative ordered membership, `iStarted` identifies the local session
+initiator, `origin` identifies the proposal author, and `handProposal` contains
+validated accepted terms. A typical single-ID initialization copies
+`gameIds[0]` and `handProposal.myContribution` into state and computes whether
+the local player is the proposal's first mover. Assert your expected member
+count and proposal game type in `createHand`.
 - `move-readable` addresses one member of the hand. `readable` is the
   serialized CLVM readable returned by the opponent-move handler.
   `moverShare` is a decimal mojo string because it originated at the WASM
   boundary.
 - `message-readable` carries serialized advisory readable data for one member. It
   does not itself imply a move, turn change, or protocol-state transition.
-- `hand-ended` supplies the normalized terminal model for one member. Multi-ID
-  hands receive independent terminal inputs as their members finish.
+- `hand-ended` supplies the normalized settlement outcome, when one exists, for
+  one member. Multi-ID hands receive independent terminal inputs as their
+  members finish. Set that member's turn false and retain the outcome in the
+  complete state so a frozen mount renders without host terminal maps.
 
-The exact terminal payload is:
+The terminal outcome vocabulary is:
 
 ```ts
 type SettlementOutcome =
@@ -470,26 +506,11 @@ type SettlementOutcome =
   | 'opponent_slashed_us'
   | 'opponent_cheated';
 
-type GameTerminalType =
-  | 'none'
-  | 'settled'
-  | 'insufficient-balance'
-  | 'ended-cancelled'
-  | 'game-error';
-
-interface GameTerminalModel {
-  type: GameTerminalType;
-  outcome: SettlementOutcome | null;
-  label: string | null;
-  myReward: string | null;
-  rewardCoinHex: string | null;
-}
 ```
 
-`outcome` is the normalized protocol settlement outcome when one exists.
-`myReward` is a decimal mojo string, and `rewardCoinHex` is the reward coin ID
-as hexadecimal. `label` is host-provided presentation text. A game should
-branch on structured `type` and `outcome`, not parse `label`.
+The player app separately owns reward coin IDs, normalized reward amounts,
+terminal labels, cancellation/error classification, and abnormal-termination
+overlays. Games receive none of those bookkeeping fields.
 
 These inputs update the machine-owned hand model before React renders. There is
 no event observable or local echo. Protocol turn, timeout, replay, spending,
@@ -497,8 +518,7 @@ freezing, proposal lifecycle, removal, abandonment, transport, persistence,
 and shared error reporting remain host-owned.
 
 The host also provides shared UI helpers through `games/host`, including
-`AmountInput`, `useGameHost`, amount formatting, settlement labels, and
-`GameTerminalModel`.
+`AmountInput`, `useGameHost`, amount formatting, and settlement labels.
 
 ## Import boundaries
 

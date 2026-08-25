@@ -415,11 +415,11 @@ resumable-session marker, and tab/reset coordination keys, inside the same-origi
 trust model described above.
 
 The current and only legal envelope schema is `chia-gaming-session` version
-`16`. Because the project is
+`17`. Because the project is
 still alpha, every other version is deleted wholesale without decoding or
-migration. A decoded v16 record must also satisfy the complete phase-owned
+migration. A decoded v17 record must also satisfy the complete phase-owned
 envelope contract (keyed game membership, generic game-state envelope agreement,
-pending local candidates, terminal data, and frozen terminal coin list); malformed v16 records are
+pending local candidates, terminal data, and frozen terminal coin list); malformed v17 records are
 deleted rather than partially restored. The boot marker is retained after an
 incompatible or malformed resumable record is discarded so the failure remains
 visible at the Resume / Start Over boundary. The `version` field is kept as a
@@ -443,7 +443,7 @@ are grouped under those phase-owned payloads:
 
 | Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `16`.                                                                                                                                                                                                                                                                          |
+| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `17`.                                                                                                                                                                                                                                                                          |
 | `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                     | `string?`                                                                                                  | Stable token linking the hub iframe and game-channel WebSocket.                                                                                                                                                                                                                                                 |
 | `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -531,23 +531,30 @@ game-owned canonical `handState` and opaque complete pending candidates
 from current machine authority and combines them with
 the controller's WASM-origin snapshot at effect execution time. Every package
 has one `render(view)` mount. Its `frozen` boolean is a type discriminant: only
-the live branch has an intent port. The view reads typed state directly from
-the live or restored game-owned hand instance. A new `handKey` creates a fresh
-component and `GameHand` lifetime.
+the live branch has an intent port. It is not per-move permission; game controls
+derive availability from their own handler, turn, and terminal state. The view
+contains the hand, hand origin, player display names, and the live-only logging
+service. Routing IDs, accepted stakes, active members, and terminal outcomes are
+part of the complete hand state rather than parallel mount projections. A new
+`handKey` creates a fresh component and `GameHand` lifetime.
 `SessionController.onSaveNeeded` invokes the same runtime persistence path for
 ordinary debounced WASM changes. Transaction submission and resubmission remain
 owned by Rust's `TransactionManager`, not by a frontend transaction field.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
-frontend submits a semantic move once and does not persist a move journal,
-receive replay instructions, or reissue the move through WASM.
+frontend does not persist a move journal or receive replay instructions.
+Following browser restore, an ordinary game effect may submit an automatic move
+again only when the restored canonical state still precedes it; queued/applied
+candidate state already records the attempted transition.
 
 `GameSlice` atomically owns `activeIds`, `currentHandIds`, `currentHandOrigin`,
 keyed instances, `lastDisplayedId`, hand key, and active game type. Its reducer updates a game
 instance's coin and protocol presentation together, so there are no separately
 mutable aggregate current-game fields that can drift across game IDs. A game
-instance's initial turn comes from Rust's per-game `ProposalAccepted.our_turn`
-fact; the frontend does not reconstruct it from channel role or factory order. A game
-hook computes a complete candidate hand state and submits it through
+instance's initial turn is constructed by its package from the validated
+accepted proposal convention, proposal origin, and local session role.
+`ProposalAccepted.our_turn` remains host protocol presentation and an invariant,
+not a second game initialization field. A game hook computes a complete
+candidate hand state and submits it through
 `commitLocalGameAction`. The host either applies it immediately or stores one
 pending candidate per game ID until Rust reports application. Pending complete
 states are installed in the live hand, while canonical `handState` remains the
@@ -569,7 +576,7 @@ same entry changes to `accepted`, preserving terms and ordered Krunk membership
 across both `ProposalAccepted` notifications. An `InsufficientBalance` removes
 the affected group atomically; successful Krunk members still settle
 independently, and the accepted entry is removed only after the hand is fully
-settled. The current v16 envelope makes
+settled. The current v17 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and keeps validated pending local candidates separate from game-owned
@@ -1428,7 +1435,10 @@ the way in. Each package owns its Bencodex-only `proposalParameters` codec and
 
 Each hook decodes the current machine-owned hand state on every render. It
 submits only `GameIntent` values through the shared Rust-first local-action
-boundary.
+boundary. Automatic moves use the same path and have no separate retry journal.
+Restoration installs the host's canonical state or persisted pending candidate
+before mounting the package; the package's ordinary state-driven effect fires
+only when that restored handler/turn still requires the automatic action.
 
 Space Poker keeps its hand history and terminal presentation inside
 `useSpacepokerHand`. A betting-round fold, a showdown no-reveal concession, and
@@ -1519,6 +1529,11 @@ The runtime applies exactly three package-facing updates after construction:
 - `message-readable`
 - `hand-ended`
 
+`hand-ended` contains only the member ID and normalized settlement outcome.
+Reward amounts, coin IDs, labels, and abnormal-termination explanations remain
+in the host's keyed instances and notification overlays. The package stores the
+outcome and terminal/member activity it needs in its complete hand state.
+
 There is no separate game-status event or action echo. Turn, replay, timeout,
 on-chain, proposal, rejection, removal, abandonment, and freezing transitions
 remain in the host model. `MoveRejected`, `ActionFailed`, and controller
@@ -1602,8 +1617,8 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v16 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v16 presentation snapshot encoder                                                            |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v17 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v17 presentation snapshot encoder                                                            |
 | `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup, per-hand instance creation, generic snapshots, and terms/compose dispatch                    |
 | `front-end/src/lib/gameProposalCodec.ts`         | Symmetric proposal encode/decode at the WASM `propose_games` / `ProposalMade` boundary                                 |
 | `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                               |
@@ -1613,7 +1628,7 @@ not to limit concurrency.
 | `front-end/src/lib/gameIdentities.ts`            | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                  |
 | `front-end/src/hooks/blobSingleton.ts`           | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
 | `front-end/src/services/PeerSession.ts`          | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                          |
-| `front-end/src/hooks/save.ts`                    | v16 cache/write and live/terminal lifecycle facade                                                                      |
+| `front-end/src/hooks/save.ts`                    | v17 cache/write and live/terminal lifecycle facade                                                                      |
 | `front-end/src/hooks/saveCoordination.ts`        | Resume markers, active-tab lease, and cross-tab persistence fencing                                                     |
 | `front-end/src/hooks/saveHardReset.ts`           | Hard-reset and WalletConnect browser-storage cleanup                                                                     |
 | `front-end/src/hooks/savePreferences.ts`         | Local preference encoding and decoding                                                                                    |

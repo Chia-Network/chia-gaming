@@ -8,25 +8,39 @@ import type {
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { ComposeDraftState } from './composeDraft';
-import type { PersistedGameState } from '@games/host';
+import type { PersistedGameState, SettlementOutcome } from '@games/host';
 
-export type {
-  GameTerminalType,
-  GameTerminalModel,
-  HandProposalBase,
-  ProposalGroupOrigin,
-} from '@games/host';
-import type {
-  GameTerminalModel,
-  HandProposal as HostHandProposal,
-  ProposalGroupOrigin,
-} from '@games/host';
+export type { HandProposalBase, ProposalGroupOrigin } from '@games/host';
+import type { HandProposal as HostHandProposal, ProposalGroupOrigin } from '@games/host';
 import type { CatalogGameType } from '../../generated/gamePresets';
 
 export type RegisteredGameType = CatalogGameType;
 export type { CatalogGameType };
 
 export type LocalActionKind = 'make_move' | 'accept_settlement' | 'cheat';
+
+export type GameTerminalType =
+  | 'none'
+  | 'settled'
+  | 'insufficient-balance'
+  | 'ended-cancelled'
+  | 'game-error';
+
+export interface GameTerminalModel {
+  type: GameTerminalType;
+  outcome: SettlementOutcome | null;
+  label: string | null;
+  myReward: string | null;
+  rewardCoinHex: string | null;
+}
+
+export const EMPTY_GAME_TERMINAL_MODEL: GameTerminalModel = {
+  type: 'none',
+  outcome: null,
+  label: null,
+  myReward: null,
+  rewardCoinHex: null,
+};
 
 export type GameTurnState =
   | 'my-turn'

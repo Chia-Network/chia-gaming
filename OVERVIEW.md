@@ -590,8 +590,10 @@ observations, and projects Rust facts into UI. It may enforce explicit product
 capability policy—for example, this client currently starts at most one
 concurrent proposal group—but proposal groups are atomic only at formation and
 acceptance: Krunk's paired games still progress and settle independently.
-It does not replay game moves. Each semantic move is submitted once; post-unroll
-redo is reconstructed from Rust-owned channel and on-chain state.
+It does not maintain a game-move replay journal. Post-unroll redo is
+reconstructed from Rust-owned channel and on-chain state; after browser restore,
+a game's normal state-driven effect may resubmit an automatic action only when
+the restored canonical state still precedes that action.
 
 | Concern | Owner |
 | --- | --- |

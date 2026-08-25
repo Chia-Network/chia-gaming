@@ -29,15 +29,6 @@ import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { UncaughtClientErrorReporter } from '../../components/GameSession';
 import { markClientErrorReported } from '../clientError';
 import { createGameHand, terminalGameHandSource } from '@games/host';
-import type { GameTerminalModel } from '../session/types';
-
-const NO_TERMINAL: GameTerminalModel = {
-  type: 'none',
-  outcome: null,
-  label: null,
-  myReward: null,
-  rewardCoinHex: null,
-};
 
 describe('terminal game controls', () => {
   let renderer: ReactTestRenderer | null = null;
@@ -179,6 +170,8 @@ describe('terminal game controls', () => {
 
   it('disables Krunk keyboard and submit controls', () => {
     const handState = krunkStateCodec.encode({
+      gameIds: ['alice', 'bob'],
+      perPlayerStake: 100n,
       games: {
         alice: initialKrunkGameState('alice'),
         bob: initialKrunkGameState('bob'),
@@ -191,11 +184,7 @@ describe('terminal game controls', () => {
           handSource: terminalGameHandSource(
             createGameHand(krunkStateCodec.decode(handState)!, (current) => current),
           ),
-          currentHandGameIds: ['alice', 'bob'],
-          activeGameIds: [],
           onGameLog: () => {},
-          terminalsById: { alice: NO_TERMINAL, bob: NO_TERMINAL },
-          amountsById: { alice: '100', bob: '100' },
         }),
       );
     });
@@ -208,6 +197,8 @@ describe('terminal game controls', () => {
 
   it('freezes Space Poker protocol controls but keeps display toggles usable', () => {
     const handState = spacepokerStateCodec.encode({
+      gameId: 'space',
+      perPlayerStake: 50n,
       gameState: { handler: 2n, myTurn: true, N: 4n },
       playerHoleCards: [2n, 3n],
       playerBoost: false,
@@ -222,6 +213,7 @@ describe('terminal game controls', () => {
       terminalState: 'none',
       coinTossIOpen: true,
       unitSizeMojos: 10n,
+      settlementOutcome: null,
       displayMode: 'mojos',
       error: null,
     });
@@ -232,11 +224,7 @@ describe('terminal game controls', () => {
           handSource: terminalGameHandSource(
             createGameHand(spacepokerStateCodec.decode(handState)!, (current) => current),
           ),
-          gameId: 'space',
-          betSize: '100',
-          unitSizeMojos: '10',
           onGameLog: () => {},
-          terminal: NO_TERMINAL,
         }),
       );
     });

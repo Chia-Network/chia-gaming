@@ -190,15 +190,9 @@ export class SessionMachineRuntime {
     const handProposal = state.model.betweenHand.lastHandProposal;
     const id = game.currentHandIds[0];
     if (game.handState === null || handProposal === null || id === undefined) return;
-    const instance = game.instances[id];
-    const canAct =
-      instance?.presentation === 'off-chain-my-turn' ||
-      instance?.presentation === 'on-chain-my-turn';
     const init: GameHandInitialization = {
-      id,
       gameIds: game.currentHandIds,
       iStarted: this.iStarted,
-      canAct,
       origin: game.currentHandOrigin ?? 'local',
       handProposal,
     };

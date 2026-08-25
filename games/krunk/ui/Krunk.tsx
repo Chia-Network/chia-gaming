@@ -13,20 +13,15 @@ import {
   defaultFormatAmount,
   gameHandState,
   type GameHandSource,
-  type GameTerminalModel,
 } from '../../host';
 import { useGameHost } from '../../host/ui';
 import type { KrunkHandState } from './serialize';
 
 export interface KrunkProps {
   handSource: GameHandSource<KrunkHandState>;
-  currentHandGameIds: string[];
-  activeGameIds: string[];
   onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
-  terminalsById: Record<string, GameTerminalModel>;
-  amountsById: Record<string, string>;
 }
 
 const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;
@@ -53,7 +48,6 @@ export function formatKrunkHandLog(
 
 export function krunkGameSlots(
   currentHandGameIds: string[],
-  activeGameIds: string[] = currentHandGameIds,
   handState?: KrunkHandState,
 ): {
   aliceGameId: string | null;
@@ -73,8 +67,8 @@ export function krunkGameSlots(
   return {
     aliceGameId: persistedAlice,
     bobGameId: persistedBob,
-    aliceActive: activeGameIds.includes(persistedAlice),
-    bobActive: activeGameIds.includes(persistedBob),
+    aliceActive: persistedGames[persistedAlice].handler !== KrunkHandler.Terminal,
+    bobActive: persistedGames[persistedBob].handler !== KrunkHandler.Terminal,
   };
 }
 
@@ -424,40 +418,27 @@ function OnScreenKeyboard({
 
 const Krunk: React.FC<KrunkProps> = ({
   handSource,
-  currentHandGameIds,
-  activeGameIds,
   onGameLog,
   myName: _myName,
   opponentName,
-  terminalsById,
-  amountsById,
 }) => {
   const { formatAmount } = useGameHost();
   const interactive = handSource.interactionMode === 'live';
   const handState = gameHandState(handSource);
-  const { aliceGameId, bobGameId } = krunkGameSlots(currentHandGameIds, activeGameIds, handState);
+  const currentHandGameIds = [...handState.gameIds];
+  const { aliceGameId, bobGameId } = krunkGameSlots(currentHandGameIds, handState);
   const aliceId = aliceGameId ?? '';
   const bobId = bobGameId ?? '';
-  const acceptedAmount = amountsById[aliceId] ?? amountsById[bobId];
-  if (acceptedAmount === undefined) {
-    throw new Error('Krunk is missing the accepted game amount');
-  }
-  const betSize = BigInt(acceptedAmount);
-  // Keep each hand "live" for the whole atomic hand via currentHandGameIds.
-  // activeGameIds can drop a sibling during turn/settle handoffs and was
-  // latching useKrunkHand into a finished state (blocking clue updates and
-  // keyboard input while waiting on a clue).
-  const aliceInHand = aliceGameId !== null && currentHandGameIds.includes(aliceGameId);
-  const bobInHand = bobGameId !== null && currentHandGameIds.includes(bobGameId);
+  const betSize = handState.perPlayerStake * 2n;
+  const aliceInHand =
+    aliceGameId !== null && handState.games[aliceGameId].handler !== KrunkHandler.Terminal;
+  const bobInHand =
+    bobGameId !== null && handState.games[bobGameId].handler !== KrunkHandler.Terminal;
   const aliceInteractive = interactive && aliceInHand;
-  const bobInteractive = interactive && bobInHand;
 
-  // useKrunkHand maps iStarted → role: iStarted=true means bob, false means alice.
-  // Alice game (I pick the word): iStarted=false → role='alice'.
-  // Bob game (I guess): iStarted=true → role='bob'.
-  const aliceHand = useKrunkHand(handSource, aliceId, false, aliceInteractive);
+  const aliceHand = useKrunkHand(handSource, aliceId);
 
-  const bobHand = useKrunkHand(handSource, bobId, true, bobInteractive);
+  const bobHand = useKrunkHand(handSource, bobId);
   const setAliceSecretWord = aliceHand.setSecretWord;
   const submitBobGuessMove = bobHand.submitGuess;
 
@@ -652,10 +633,9 @@ const Krunk: React.FC<KrunkProps> = ({
       krunkBoardNotice(
         bobHand.gameState,
         themLabel,
-        terminalsById[bobId],
-        amountsById[bobId] ?? null,
+        handState.perPlayerStake,
       ),
-    [bobHand.gameState, themLabel, terminalsById, amountsById, bobId],
+    [bobHand.gameState, themLabel, handState.perPlayerStake],
   );
 
   const aliceBoardNotice = useMemo(
@@ -663,10 +643,9 @@ const Krunk: React.FC<KrunkProps> = ({
       krunkBoardNotice(
         aliceHand.gameState,
         themLabel,
-        terminalsById[aliceId],
-        amountsById[aliceId] ?? null,
+        handState.perPlayerStake,
       ),
-    [aliceHand.gameState, themLabel, terminalsById, amountsById, aliceId],
+    [aliceHand.gameState, themLabel, handState.perPlayerStake],
   );
 
   const sharedStatusNotice = useMemo(() => {

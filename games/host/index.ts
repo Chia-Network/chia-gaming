@@ -103,29 +103,6 @@ export function parseSettlementShare(value: unknown): string | null {
   return String(value);
 }
 
-export type GameTerminalType =
-  | 'none'
-  | 'settled'
-  | 'insufficient-balance'
-  | 'ended-cancelled'
-  | 'game-error';
-
-export interface GameTerminalModel {
-  type: GameTerminalType;
-  outcome: SettlementOutcome | null;
-  label: string | null;
-  myReward: string | null;
-  rewardCoinHex: string | null;
-}
-
-export const EMPTY_GAME_TERMINAL_MODEL: GameTerminalModel = {
-  type: 'none',
-  outcome: null,
-  label: null,
-  myReward: null,
-  rewardCoinHex: null,
-};
-
 export interface GameHostText {
   formatMojos(mojos: bigint): string;
 }
@@ -214,10 +191,8 @@ export type GameIntent<TState> =
   | { type: 'cheat'; gameId: string; moverShare: bigint; state: TState };
 
 export interface GameHandInitialization {
-  id: string;
   gameIds: readonly string[];
   iStarted: boolean;
-  canAct: boolean;
   origin: ProposalGroupOrigin;
   handProposal: HandProposal;
 }
@@ -230,7 +205,7 @@ export type GameUpdate =
       moverShare: string;
     }
   | { type: 'message-readable'; gameId: string; readable: Uint8Array }
-  | { type: 'hand-ended'; gameId: string; terminal: GameTerminalModel };
+  | { type: 'hand-ended'; gameId: string; outcome: SettlementOutcome | null };
 
 export interface GameHandState<TState> {
   getState(): TState;
@@ -358,13 +333,6 @@ export interface FrozenGameMountOptions extends GameMountNames {
 interface GameMountViewBase extends GameMountNames {
   hand: GameHandState<unknown>;
   handOrigin: GameHandOrigin;
-  lastDisplayedId: string | null;
-  activeIds: readonly string[];
-  currentHandIds: readonly string[];
-  canActById: Readonly<Record<string, boolean>>;
-  iStarted: boolean;
-  playerNumber: number;
-  instances: Readonly<Record<string, { terminal: GameTerminalModel; amount: string }>>;
 }
 
 export type GameMountView =

@@ -349,10 +349,8 @@ describe('session machine causal sequences', () => {
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
     const hand = createRegisteredGameHand('calpoker', {
-      id: '7',
       gameIds: ['7'],
       iStarted: true,
-      canAct: true,
       origin: 'local',
       handProposal: TERMS,
     });
@@ -905,7 +903,7 @@ describe('session machine local game action boundary', () => {
     });
 
     const hand = spacepokerStateCodec.decode(runtime.getState().model.game.handState)!;
-    expect(hand.gameState.myTurn).toBe(true);
+    expect(hand.gameState.myTurn).toBe(false);
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-my-turn');
 
     expect(() =>

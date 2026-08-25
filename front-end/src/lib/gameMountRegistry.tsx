@@ -9,26 +9,6 @@ import { isCatalogGameType, packageFor, restoreRegisteredGameHand } from './game
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { SessionModel } from './session/model';
 
-function gameInstances(model: SessionModel): GameMountView['instances'] {
-  return Object.fromEntries(
-    Object.entries(model.game.instances).map(([id, instance]) => [
-      id,
-      { terminal: instance.terminal, amount: instance.amount },
-    ]),
-  );
-}
-
-export function gameCanActById(model: SessionModel): GameMountView['canActById'] {
-  return Object.fromEntries(
-    Object.entries(model.game.instances).map(([id, instance]) => [
-      id,
-      !model.game.pendingCandidates[id] &&
-        (instance.presentation === 'off-chain-my-turn' ||
-          instance.presentation === 'on-chain-my-turn'),
-    ]),
-  );
-}
-
 export function renderLiveGameMount(
   session: UseGameSessionResult,
   names: GameMountNames,
@@ -41,13 +21,6 @@ export function renderLiveGameMount(
   const common = {
     handOrigin: session.handOrigin,
     hand: session.handSource.hand,
-    lastDisplayedId: session.sessionModel.game.lastDisplayedId,
-    activeIds: session.sessionModel.game.activeIds,
-    currentHandIds: session.sessionModel.game.currentHandIds,
-    canActById: gameCanActById(session.sessionModel),
-    iStarted: session.iStarted,
-    playerNumber: session.playerNumber,
-    instances: gameInstances(session.sessionModel),
     ...names,
   };
   const view: GameMountView =
@@ -76,13 +49,6 @@ export function renderFrozenGameMount(
     frozen: true,
     handOrigin: 'terminal',
     hand,
-    lastDisplayedId: model.game.lastDisplayedId,
-    currentHandIds: model.game.currentHandIds,
-    activeIds: model.game.activeIds,
-    canActById: gameCanActById(model),
-    instances: gameInstances(model),
-    iStarted: options.iStarted,
-    playerNumber: options.iStarted ? 1 : 2,
     myName: options.myName,
     opponentName: options.opponentName,
   };

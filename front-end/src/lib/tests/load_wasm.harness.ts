@@ -397,10 +397,8 @@ export function postMoveHandState(
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
   const hand = createRegisteredGameHand(handProposal.gameType, {
-    id: ids[0],
     gameIds: ids,
     iStarted: false,
-    canAct: true,
     origin: 'peer',
     handProposal,
   });

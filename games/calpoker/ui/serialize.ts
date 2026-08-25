@@ -1,10 +1,12 @@
 import { Program } from 'clvm-lib';
 import {
   createGameHand,
+  isSettlementOutcome,
   type GameHand,
   type GameHandInitialization,
   type GameUpdate,
   type PersistedGameState,
+  type SettlementOutcome,
 } from '../../host';
 import { CalpokerOutcome, projectCalpokerFinalDisplay, type CalpokerOutcomeShape } from './outcome';
 
@@ -25,11 +27,14 @@ export interface CalpokerError {
 }
 
 export interface CalpokerHandState {
+  gameId: string;
+  perPlayerStake: bigint;
   playerHand: bigint[];
   opponentHand: bigint[];
   moveNumber: bigint;
   isPlayerTurn: boolean;
   iStarted: boolean;
+  settlementOutcome: SettlementOutcome | null;
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
   outcome?: CalpokerOutcomeShape<bigint>;
@@ -114,24 +119,35 @@ export function isCalpokerHandState(value: unknown): value is CalpokerHandState 
     return false;
   }
   return (
+    typeof state.gameId === 'string' &&
+    state.gameId.length > 0 &&
+    typeof state.perPlayerStake === 'bigint' &&
+    state.perPlayerStake > 0n &&
     typeof state.moveNumber === 'bigint' &&
     state.moveNumber >= 0n &&
     state.moveNumber <= 3n &&
     typeof state.isPlayerTurn === 'boolean' &&
     typeof state.iStarted === 'boolean' &&
+    (state.settlementOutcome === null || isSettlementOutcome(state.settlementOutcome)) &&
     (state.displaySnapshot === undefined || isDisplaySnapshot(state.displaySnapshot)) &&
     (state.outcome === undefined || isCalpokerOutcome(state.outcome))
   );
 }
 
-function initialState(isMyTurn: boolean, iStarted: boolean): CalpokerHandState {
+function initialState(init: GameHandInitialization): CalpokerHandState {
+  const proposerStarted = init.origin === 'local' ? init.iStarted : !init.iStarted;
+  const proposerGoesFirst = !proposerStarted;
+  const isMyTurn = init.origin === 'local' ? proposerGoesFirst : !proposerGoesFirst;
   return {
+    gameId: init.gameIds[0]!,
+    perPlayerStake: init.handProposal.myContribution,
     playerHand: [],
     opponentHand: [],
     cardSelections: [],
     moveNumber: 0n,
     isPlayerTurn: isMyTurn,
-    iStarted,
+    iStarted: init.iStarted,
+    settlementOutcome: null,
   };
 }
 
@@ -255,7 +271,9 @@ export function reduceCalpokerHandState(
   current: CalpokerHandState,
   event: GameUpdate,
 ): CalpokerHandState {
-  if (event.type === 'hand-ended') return { ...current, isPlayerTurn: false };
+  if (event.type === 'hand-ended') {
+    return { ...current, isPlayerTurn: false, settlementOutcome: event.outcome };
+  }
   if (event.type === 'move-readable' || event.type === 'message-readable') {
     return reduceCalpokerFeatureState(current, {
       type: event.type === 'move-readable' ? 'opponent-moved' : 'game-message',
@@ -266,5 +284,8 @@ export function reduceCalpokerHandState(
 }
 
 export function createCalpokerHand(init: GameHandInitialization): GameHand<CalpokerHandState> {
-  return createGameHand(initialState(init.canAct, init.iStarted), reduceCalpokerHandState);
+  if (init.gameIds.length !== 1 || init.handProposal.gameType !== 'calpoker') {
+    throw new Error('California Poker requires one game and California Poker proposal terms');
+  }
+  return createGameHand(initialState(init), reduceCalpokerHandState);
 }

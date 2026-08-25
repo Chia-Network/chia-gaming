@@ -8,11 +8,7 @@ import {
   useCalpokerHand,
   type UseCalpokerHandResult,
 } from '@games/calpoker/ui/useCalpokerHand';
-import {
-  channelStatusModelFromPayload,
-  createSessionModel,
-  INITIAL_GAME_TERMINAL_MODEL,
-} from '../session/model';
+import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { HandProposal } from '../session/types';
@@ -306,10 +302,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
           hand: runtime.getGameHand(),
           port: ports[index],
         },
-        secondGameId,
-        index === 0,
-        runtime.getState().model.game.instances[secondGameId]?.terminal ??
-          INITIAL_GAME_TERMINAL_MODEL,
         'restored',
       );
       return null;

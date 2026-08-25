@@ -2,6 +2,7 @@ import { Program } from 'clvm-lib';
 import {
   createGameHand,
   isForfeitOutcome,
+  isSettlementOutcome,
   type GameHand,
   type GameHandInitialization,
   type GameUpdate,
@@ -40,6 +41,8 @@ export type SpTerminalState =
   | 'won-by-opponent-failure';
 
 export interface SpacepokerHandState {
+  gameId: string;
+  perPlayerStake: bigint;
   gameState: SpGameState;
   playerHoleCards: [bigint, bigint] | null;
   playerBoost: boolean;
@@ -54,6 +57,7 @@ export interface SpacepokerHandState {
   terminalState: SpTerminalState;
   coinTossIOpen: boolean | null;
   unitSizeMojos: bigint;
+  settlementOutcome: SettlementOutcome | null;
   displayMode: SpacepokerDisplayMode;
 }
 
@@ -159,6 +163,10 @@ export function isSpacepokerHandState(value: unknown): value is SpacepokerHandSt
   if (typeof value !== 'object' || value === null) return false;
   const state = value as Partial<SpacepokerHandState>;
   if (
+    typeof state.gameId !== 'string' ||
+    state.gameId.length === 0 ||
+    typeof state.perPlayerStake !== 'bigint' ||
+    state.perPlayerStake <= 0n ||
     !isGameState(state.gameState) ||
     (state.playerHoleCards !== null && !isCardPair(state.playerHoleCards)) ||
     (state.opponentHoleCards !== null && !isCardPair(state.opponentHoleCards)) ||
@@ -196,13 +204,22 @@ export function isSpacepokerHandState(value: unknown): value is SpacepokerHandSt
     (state.coinTossIOpen === null || typeof state.coinTossIOpen === 'boolean') &&
     typeof state.unitSizeMojos === 'bigint' &&
     state.unitSizeMojos > 0n &&
+    (state.settlementOutcome === null || isSettlementOutcome(state.settlementOutcome)) &&
     typeof state.displayMode === 'string' &&
     DISPLAY_MODES.has(state.displayMode)
   );
 }
 
-function initialState(isMyTurn: boolean, unitSizeMojos: bigint): SpacepokerHandState {
+function initialState(
+  init: GameHandInitialization,
+  unitSizeMojos: bigint,
+): SpacepokerHandState {
+  const proposerStarted = init.origin === 'local' ? init.iStarted : !init.iStarted;
+  const proposerGoesFirst = !proposerStarted;
+  const isMyTurn = init.origin === 'local' ? proposerGoesFirst : !proposerGoesFirst;
   return {
+    gameId: init.gameIds[0]!,
+    perPlayerStake: init.handProposal.myContribution,
     gameState: { handler: 0n, myTurn: isMyTurn, N: 4n },
     playerHoleCards: null,
     playerBoost: false,
@@ -217,6 +234,7 @@ function initialState(isMyTurn: boolean, unitSizeMojos: bigint): SpacepokerHandS
     terminalState: 'none',
     coinTossIOpen: null,
     unitSizeMojos,
+    settlementOutcome: null,
     displayMode: unitSizeMojos >= 1_000_000n ? 'xch' : 'mojos',
   };
 }
@@ -530,9 +548,12 @@ export function reduceSpacepokerHandState(
   event: GameUpdate,
 ): SpacepokerHandState {
   if (event.type === 'hand-ended') {
-    return event.terminal.outcome
-      ? reduceSpacepokerSettlementState(current, event.terminal.outcome)
-      : current;
+    const settled = event.outcome ? reduceSpacepokerSettlementState(current, event.outcome) : current;
+    return {
+      ...settled,
+      gameState: { ...settled.gameState, myTurn: false },
+      settlementOutcome: event.outcome,
+    };
   }
   if (event.type !== 'move-readable' && event.type !== 'message-readable') return current;
   const readableEvent = {
@@ -543,12 +564,12 @@ export function reduceSpacepokerHandState(
 }
 
 export function createSpacepokerHand(init: GameHandInitialization): GameHand<SpacepokerHandState> {
-  if (init.handProposal.gameType !== 'spacepoker') {
-    throw new Error('Space Poker hand requires Space Poker proposal terms');
+  if (init.gameIds.length !== 1 || init.handProposal.gameType !== 'spacepoker') {
+    throw new Error('Space Poker hand requires one game and Space Poker proposal terms');
   }
   const unitSizeMojos =
     'unitSizeMojos' in init.handProposal && typeof init.handProposal.unitSizeMojos === 'bigint'
       ? init.handProposal.unitSizeMojos
       : 1n;
-  return createGameHand(initialState(init.canAct, unitSizeMojos), reduceSpacepokerHandState);
+  return createGameHand(initialState(init, unitSizeMojos), reduceSpacepokerHandState);
 }

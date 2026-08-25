@@ -6,7 +6,6 @@ import {
   requireLiveGameHandSource,
   type CurrencyLabels,
   type GameHandSource,
-  type GameTerminalModel,
 } from '../../host';
 import { krunkSettlementStatus } from './settlement';
 import { krunkOutcomeFromPlay } from './handProposal';
@@ -85,50 +84,40 @@ export interface KrunkBoardNotice {
 function krunkTerminalNotice(
   state: KrunkGameState,
   opponentLabel: string,
-  terminal: GameTerminalModel,
-  gameAmount: string | null,
+  perPlayerStake: bigint,
 ): KrunkBoardNotice | null {
   if (state.handler !== KrunkHandler.Terminal) return null;
-  if (terminal.outcome != null) {
+  if (state.settlementOutcome != null) {
     if (
-      terminal.outcome === 'opponent_timed_out' ||
-      terminal.outcome === 'timed_out_waiting_for_our_move'
+      state.settlementOutcome === 'opponent_timed_out' ||
+      state.settlementOutcome === 'timed_out_waiting_for_our_move'
     ) {
-      const weTimedOut = terminal.outcome === 'timed_out_waiting_for_our_move';
+      const weTimedOut = state.settlementOutcome === 'timed_out_waiting_for_our_move';
       const guesserLabel = state.role === 'bob' ? 'You' : opponentLabel;
       const guesserTimedOut = state.role === 'bob' ? weTimedOut : !weTimedOut;
-      if (!guesserTimedOut && gameAmount === null) {
-        throw new Error('Krunk timeout winner is missing the game amount');
-      }
       return {
         text: `${guesserLabel} got ${
-          guesserTimedOut ? 'nothing' : krunkAmountLabel(gameAmount!)
+          guesserTimedOut ? 'nothing' : krunkAmountLabel(perPlayerStake.toString())
         } due to timeout.`,
         kind: 'info',
       };
     }
     const clean =
-      terminal.outcome === 'accept_settlement' ||
-      terminal.outcome === 'we_accepted' ||
-      terminal.outcome === 'settled_cleanly';
+      state.settlementOutcome === 'accept_settlement' ||
+      state.settlementOutcome === 'we_accepted' ||
+      state.settlementOutcome === 'settled_cleanly';
     if (!clean) {
-      return { text: krunkSettlementStatus(terminal.outcome, opponentLabel), kind: 'info' };
+      return { text: krunkSettlementStatus(state.settlementOutcome, opponentLabel), kind: 'info' };
     }
     const outcome = state.outcome ?? krunkOutcomeFromPlay(state);
-    const ourShare = terminal.myReward === null ? null : BigInt(terminal.myReward);
-    const amount = gameAmount === null ? null : BigInt(gameAmount);
     const winnerAmount =
-      outcome === 'win'
-        ? ourShare
-        : outcome === 'lose' && ourShare !== null && amount !== null && amount >= ourShare
-          ? amount - ourShare
-          : null;
+      state.moverShare === null ? perPlayerStake : BigInt(state.moverShare);
     if (outcome === 'win') {
       if (state.role === 'alice') {
         return { text: `${opponentLabel} didn't win anything.`, kind: 'info' };
       }
       return {
-        text: winnerAmount === null ? 'You won!' : krunkWinMessage(winnerAmount.toString()),
+        text: krunkWinMessage(winnerAmount.toString()),
         kind: 'win',
       };
     }
@@ -138,9 +127,7 @@ function krunkTerminalNotice(
       }
       return {
         text:
-          winnerAmount === null
-            ? `${opponentLabel} won.`
-            : krunkWinnerMessage(opponentLabel, winnerAmount.toString()),
+          krunkWinnerMessage(opponentLabel, winnerAmount.toString()),
         kind: 'info',
       };
     }
@@ -164,19 +151,17 @@ function krunkTerminalNotice(
 export function krunkTerminalStatus(
   state: KrunkGameState,
   opponentLabel: string,
-  terminal: GameTerminalModel,
-  gameAmount: string | null = null,
+  perPlayerStake: bigint,
 ): string | null {
-  return krunkTerminalNotice(state, opponentLabel, terminal, gameAmount)?.text ?? null;
+  return krunkTerminalNotice(state, opponentLabel, perPlayerStake)?.text ?? null;
 }
 
 export function krunkBoardNotice(
   state: KrunkGameState,
   opponentLabel: string,
-  terminal: GameTerminalModel,
-  gameAmount: string | null = null,
+  perPlayerStake: bigint,
 ): KrunkBoardNotice | null {
-  return krunkTerminalNotice(state, opponentLabel, terminal, gameAmount);
+  return krunkTerminalNotice(state, opponentLabel, perPlayerStake);
 }
 
 /** Win banner copy: mojo below 1e6, chia at/above (same crossover as formatAmount). */
@@ -237,16 +222,11 @@ function finishedKrunkState(
 export function useKrunkHand(
   handSource: GameHandSource<KrunkHandState>,
   gameId: string,
-  iStarted: boolean,
-  active = true,
 ): UseKrunkHandResult {
-  const interactive = handSource.interactionMode === 'live' && active;
-  // Channel-level convention: iStarted=true → I'm second mover in
-  // every game. Krunk's first mover is alice (the committer), so the
-  // channel initiator plays bob and the receiver plays alice.
-  const role: KrunkRole = iStarted ? 'bob' : 'alice';
   const handState = gameHandState(handSource);
-  const gameState = krunkGameStateFromHand(handState, gameId, role);
+  const gameState = krunkGameStateFromHand(handState, gameId);
+  const interactive =
+    handSource.interactionMode === 'live' && gameState.handler !== KrunkHandler.Terminal;
 
   const gameStateRef = useRef(gameState);
   const handSourceRef = useRef(handSource);
@@ -262,6 +242,7 @@ export function useKrunkHand(
     const gameId = gameIdRef.current;
     const currentHand = gameHandState(handSourceRef.current);
     const nextHand: KrunkHandState = {
+      ...currentHand,
       games: { ...currentHand.games, [gameId]: next },
     };
     requireLiveGameHandSource(handSourceRef.current).dispatch(
@@ -286,6 +267,7 @@ export function useKrunkHand(
       !gameState.myTurn
     )
       return;
+    if (!requireLiveGameHandSource(handSourceRef.current).isChannelReady()) return;
     const gid = gameIdRef.current;
     if (!activeRef.current || !gid) return;
     const latest = gameState.guesses[gameState.guesses.length - 1];

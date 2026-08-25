@@ -162,10 +162,8 @@ describe('pure game registrations', () => {
   it('creates a game-owned hand and restores complete state through its contract', () => {
     const handProposal = { gameType: 'calpoker' as const, ...base };
     const hand = createRegisteredGameHand('calpoker', {
-      id: '7',
       gameIds: ['7'],
       iStarted: true,
-      canAct: true,
       origin: 'local',
       handProposal,
     });
@@ -173,6 +171,44 @@ describe('pure game registrations', () => {
     hand.installState(initial);
     expect(hand.getState()).toEqual(initial);
   });
+
+  it.each([
+    { iStarted: false, origin: 'local' as const, isMyTurn: true },
+    { iStarted: false, origin: 'peer' as const, isMyTurn: true },
+    { iStarted: true, origin: 'local' as const, isMyTurn: false },
+    { iStarted: true, origin: 'peer' as const, isMyTurn: false },
+  ])(
+    'derives initial turns from accepted terms for $origin proposal with iStarted=$iStarted',
+    ({ iStarted, origin, isMyTurn }) => {
+      const calpoker = calpokerRegistration
+        .createHand({
+          gameIds: ['7'],
+          iStarted,
+          origin,
+          handProposal: { gameType: 'calpoker', ...base },
+        })
+        .getState();
+      const spacepoker = spacepokerRegistration
+        .createHand({
+          gameIds: ['9'],
+          iStarted,
+          origin,
+          handProposal: { gameType: 'spacepoker', ...base, unitSizeMojos: 10n },
+        })
+        .getState();
+
+      expect(calpoker).toMatchObject({
+        gameId: '7',
+        perPlayerStake: 100n,
+        isPlayerTurn: isMyTurn,
+      });
+      expect(spacepoker).toMatchObject({
+        gameId: '9',
+        perPlayerStake: 100n,
+        gameState: { myTurn: isMyTurn },
+      });
+    },
+  );
 
   it('keeps package keys in the model after protocol identities are ready', () => {
     resetProtocolIds();

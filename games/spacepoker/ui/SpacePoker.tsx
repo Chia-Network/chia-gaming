@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { gameHandState, type GameHandSource } from '../../host';
-import type { GameTerminalModel } from '../../host';
 import { useCheatKeys, useGameHost } from '../../host/ui';
 import { describeSpacePokerHand, formatSpacepokerHandLog } from './handPresentation';
 import { SpacePokerActionControls } from './SpacePokerActionControls';
@@ -17,29 +16,21 @@ import type { SpacepokerHandState } from './serialize';
 
 export interface SpacePokerProps {
   handSource: GameHandSource<SpacepokerHandState>;
-  gameId: string;
-  betSize: string;
-  unitSizeMojos: string;
   onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
-  terminal: GameTerminalModel;
 }
 
 export default function SpacePoker({
   handSource,
-  gameId,
-  betSize,
-  unitSizeMojos,
   onGameLog,
   myName,
   opponentName,
-  terminal,
 }: SpacePokerProps) {
   const interactive = handSource.interactionMode === 'live';
-  const betSizeValue = BigInt(betSize);
-  const unitSizeMojosValue = BigInt(unitSizeMojos);
-  const sp = useSpacepokerHand(handSource, gameId, betSizeValue, unitSizeMojosValue, terminal);
+  const state = gameHandState(handSource);
+  const betSizeValue = state.perPlayerStake * 2n;
+  const sp = useSpacepokerHand(handSource);
   const { handler, myTurn, N } = sp.gameState;
   const { currencyLabels: spCurrency, formatAmount } = useGameHost();
 

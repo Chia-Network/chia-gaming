@@ -88,16 +88,11 @@ export function restoreRegisteredGameHand(
   const handProposal = model.betweenHand.lastHandProposal;
   const id = game.currentHandIds[0];
   if (game.handState === null || handProposal === null || id === undefined) return null;
-  const instance = game.instances[id];
   return createRegisteredGameHand(
     game.activeGameType,
     {
-      id,
       gameIds: game.currentHandIds,
       iStarted,
-      canAct:
-        instance?.presentation === 'off-chain-my-turn' ||
-        instance?.presentation === 'on-chain-my-turn',
       origin: game.currentHandOrigin ?? 'local',
       handProposal,
     },

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import { gameHandState, requireLiveGameHandSource, type GameHandSource } from '../../host';
 import { useGameHost } from '../../host/ui';
-import type { GameTerminalModel, SettlementOutcome } from '../../host';
+import type { SettlementOutcome } from '../../host';
 import {
   type SpacepokerDisplayMode,
   type SpacepokerHandState,
@@ -85,17 +85,10 @@ function formatXch(mojos: bigint, xchLabel: string): string {
 
 export function useSpacepokerHand(
   handSource: GameHandSource<SpacepokerHandState>,
-  gameId: string,
-  betSize: bigint,
-  unitSizeMojos: bigint,
-  terminal: GameTerminalModel,
 ): UseSpacepokerHandResult {
   const { currencyLabels } = useGameHost();
   const state = gameHandState(handSource);
-  if (unitSizeMojos <= 0n) throw new Error('Space Poker requires a positive unit size');
-  if (state.unitSizeMojos !== unitSizeMojos) {
-    throw new Error('Space Poker persisted unit size does not match proposal terms');
-  }
+  const betSize = state.perPlayerStake * 2n;
 
   const interactive = handSource.interactionMode === 'live';
   const betUnit = state.unitSizeMojos;
@@ -104,9 +97,7 @@ export function useSpacepokerHand(
   const playerStack = stackSize - state.halfPot - (state.iRaisedLast ? state.lastRaise : 0n);
   const opponentStack = stackSize - state.halfPot - (state.iRaisedLast ? 0n : state.lastRaise);
   const handSourceRef = useRef(handSource);
-  const gameIdRef = useRef(gameId);
   handSourceRef.current = handSource;
-  gameIdRef.current = gameId;
 
   const [terminalDisplayMode, setTerminalDisplayMode] = useState<SpacepokerDisplayMode | null>(
     null,
@@ -120,15 +111,13 @@ export function useSpacepokerHand(
   const commitLocalAction = useCallback(
     (update: (current: SpacepokerHandState) => SpacepokerHandState, command: LocalGameCommand) => {
       const controller = requireLiveGameHandSource(handSourceRef.current);
-      const id = gameIdRef.current;
-      if (!id) return;
       const next = update(currentDurableState());
       controller.dispatch(
         command.type === 'make-move'
-          ? { type: 'make-move', gameId: id, readable: command.readable, state: next }
+          ? { type: 'make-move', gameId: next.gameId, readable: command.readable, state: next }
           : command.type === 'accept-settlement'
-            ? { type: 'accept-settlement', gameId: id, state: next }
-            : { type: 'cheat', gameId: id, moverShare: command.moverShare, state: next },
+            ? { type: 'accept-settlement', gameId: next.gameId, state: next }
+            : { type: 'cheat', gameId: next.gameId, moverShare: command.moverShare, state: next },
       );
     },
     [currentDurableState],
@@ -152,7 +141,7 @@ export function useSpacepokerHand(
 
   const autoFiredSnapshotRef = useRef<SpacepokerHandState | null>(null);
   useEffect(() => {
-    if (!interactive || terminal.type !== 'none') return;
+    if (!interactive || state.settlementOutcome !== null) return;
     if (state.terminalState !== 'none' || isTerminalSpacepokerHandler(state.gameState.handler))
       return;
     const { handler, myTurn, N } = state.gameState;
@@ -244,7 +233,7 @@ export function useSpacepokerHand(
         );
       }
     }
-  }, [commitLocalAction, interactive, playerStack, state, terminal.type]);
+  }, [commitLocalAction, interactive, playerStack, state]);
 
   const handleCheck = useCallback(() => {
     commitLocalAction(
@@ -339,7 +328,7 @@ export function useSpacepokerHand(
     betUnit,
     handHistory: state.handHistory,
     outcome: state.outcome,
-    terminalOutcome: terminal.outcome,
+    terminalOutcome: state.settlementOutcome,
     terminalState: state.terminalState,
     lastRaise: state.lastRaise,
     coinTossIOpen: state.coinTossIOpen,
