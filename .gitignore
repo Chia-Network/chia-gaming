@@ -40,6 +40,7 @@ pnpm-store/
 # Deploy output
 deploy_player_app/
 deploy_hub/
+desktop/release/
 
 # macos
 .DS_Store

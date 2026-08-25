@@ -1,0 +1,182 @@
+:root {
+  color-scheme: light;
+  font-family: 'Avenir Next', Avenir, 'Segoe UI', sans-serif;
+  background: #f9faf8;
+  color: #191a18;
+  --canvas-base: #f9faf8;
+  --canvas-bg-subtle: #eceee9;
+  --canvas-line: #c7cac4;
+  --canvas-text: #4f524d;
+  --canvas-text-contrast: #191a18;
+  --canvas-solid-hover: #757874;
+  --accent: #30a46c;
+  --accent-text: #18794e;
+  --accent-on-soft: #153226;
+  --detail-surface: rgb(255 255 255 / 72%);
+  --scanline: rgb(25 26 24 / 3%);
+}
+
+:root.dark {
+  color-scheme: dark;
+  background: #0d120f;
+  color: #eaeee9;
+  --canvas-base: #0d120f;
+  --canvas-bg-subtle: #151a17;
+  --canvas-line: #2f3b34;
+  --canvas-text: #a4b5ac;
+  --canvas-text-contrast: #eaeee9;
+  --canvas-solid-hover: #687c70;
+  --accent-text: #4cc38a;
+  --accent-on-soft: #e5fbeb;
+  --detail-surface: rgb(21 26 23 / 72%);
+  --scanline: rgb(255 255 255 / 3%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 8%, rgb(48 164 108 / 13%), transparent 38%),
+    linear-gradient(145deg, var(--canvas-bg-subtle) 0%, var(--canvas-base) 70%);
+}
+
+body::before {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  content: '';
+  opacity: 0.22;
+  background-image: linear-gradient(var(--scanline) 1px, transparent 1px);
+  background-size: 100% 4px;
+}
+
+[data-slot='about-card'] {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  padding: 44px 54px 34px;
+  align-items: center;
+  flex-direction: column;
+  text-align: center;
+}
+
+[data-slot='brand-mark'] {
+  display: grid;
+  width: 112px;
+  height: 112px;
+  margin-bottom: 22px;
+  place-items: center;
+  filter: drop-shadow(0 18px 30px rgb(0 0 0 / 35%));
+}
+
+[data-slot='app-icon'] {
+  display: block;
+  width: 112px;
+  height: 112px;
+}
+
+[data-slot='app-name'] {
+  margin: 0;
+  font-size: 38px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+}
+
+[data-slot='tagline'] {
+  max-width: 350px;
+  margin: 13px 0 26px;
+  color: var(--canvas-text);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+[data-slot='build-details'] {
+  display: grid;
+  width: 100%;
+  margin: 0 0 22px;
+  padding: 15px 18px;
+  grid-template-columns: 0.8fr 1.2fr;
+  border: 1px solid var(--canvas-line);
+  border-radius: 12px;
+  background: var(--detail-surface);
+}
+
+[data-slot='build-detail'] {
+  min-width: 0;
+}
+
+[data-slot='build-detail'] + [data-slot='build-detail'] {
+  border-left: 1px solid var(--canvas-line);
+}
+
+[data-slot='build-label'] {
+  margin-bottom: 5px;
+  color: var(--canvas-solid-hover);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+[data-slot='build-value'] {
+  margin: 0;
+  overflow: hidden;
+  color: var(--canvas-text-contrast);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-slot='project-link'] {
+  display: inline-flex;
+  min-height: 42px;
+  padding: 0 19px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent-on-soft);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+[data-slot='project-link']:hover {
+  background: rgb(48 164 108 / 14%);
+  box-shadow: 0 8px 24px rgb(48 164 108 / 14%);
+  transform: translateY(-1px);
+}
+
+[data-slot='project-link']:focus-visible {
+  outline: 3px solid rgb(48 164 108 / 35%);
+  outline-offset: 3px;
+}
+
+[data-slot='external-mark'] {
+  color: var(--accent-text);
+  font-size: 15px;
+}
+
+[data-slot='about-footer'] {
+  display: flex;
+  width: calc(100% - 108px);
+  margin-top: auto;
+  padding-top: 22px;
+  justify-content: space-between;
+  border-top: 1px solid var(--canvas-line);
+  color: var(--canvas-solid-hover);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}

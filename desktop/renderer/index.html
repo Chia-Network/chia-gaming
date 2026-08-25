@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <title>Chia Gaming</title>
+    <!--
+      The browser deploy resolves assets through a /build-meta.json fetch and an
+      injected <base href> so a redeploy can flip nonce directories under a live
+      static server. The desktop bundle ships as one immutable tree, so assets
+      are referenced directly. That also removes the inline <script>, which lets
+      the Content-Security-Policy served with this document forbid inline script
+      outright instead of carrying a hash or nonce for it.
+    -->
+    <link rel="preload" as="fetch" href="chia_gaming_wasm_bg.wasm" crossorigin="anonymous" />
+    <link rel="stylesheet" href="index.css" />
+  </head>
+  <body id="body">
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script type="module" src="bootstrap.mjs"></script>
+    <script type="module" src="index.js"></script>
+  </body>
+</html>

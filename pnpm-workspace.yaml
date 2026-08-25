@@ -1,4 +1,6 @@
+minimumReleaseAge: 1440 # 24 hours
 packages:
+  - "desktop"
   - "front-end"
   - "hub/hub-frontend"
   - "hub/hub-service"
@@ -15,6 +17,7 @@ confirmModulesPurge: false
 allowBuilds:
   "@parcel/watcher": true
   esbuild: true
+  electron: true
   unrs-resolver: false
 
 patchedDependencies:
