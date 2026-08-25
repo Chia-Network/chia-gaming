@@ -1,4 +1,4 @@
-import { createSpacepokerHand, type SpacepokerHandState } from '@games/spacepoker/ui/serialize';
+import { restoreSpacepokerHand, type SpacepokerHandState } from '@games/spacepoker/ui/serialize';
 import { SpHandler } from '@games/spacepoker/ui/useSpacepokerHand';
 
 function handState(overrides: Partial<SpacepokerHandState>): SpacepokerHandState {
@@ -26,19 +26,7 @@ function handState(overrides: Partial<SpacepokerHandState>): SpacepokerHandState
 }
 
 function opponentAccepted(current: SpacepokerHandState): SpacepokerHandState {
-  const hand = createSpacepokerHand({
-    gameIds: ['7'],
-    iStarted: false,
-    origin: 'local',
-    handProposal: {
-      gameType: 'spacepoker',
-      myContribution: 100n,
-      theirContribution: 100n,
-      gameTimeout: 15n,
-      unitSizeMojos: 10n,
-    },
-  });
-  hand.installState(current);
+  const hand = restoreSpacepokerHand(current);
   hand.receive({
     type: 'hand-ended',
     gameId: '7',

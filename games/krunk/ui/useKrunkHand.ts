@@ -10,6 +10,7 @@ import { krunkOutcomeFromPlay } from './handProposal';
 import {
   krunkGameStateFromHand,
   KrunkHandler,
+  type KrunkHand,
   type KrunkGameState,
   type KrunkGuess,
   type KrunkHandState,
@@ -214,7 +215,7 @@ function finishedKrunkState(
 }
 
 export function useKrunkHand(
-  handSource: GameHandSource<KrunkHandState>,
+  handSource: GameHandSource<KrunkHandState, KrunkHand>,
   gameId: string,
 ): UseKrunkHandResult {
   const handState = gameHandState(handSource);
@@ -234,15 +235,13 @@ export function useKrunkHand(
 
   const commitLocalAction = useCallback((next: KrunkGameState, command: LocalGameCommand): void => {
     const gameId = gameIdRef.current;
-    const currentHand = gameHandState(handSourceRef.current);
-    const nextHand: KrunkHandState = {
-      ...currentHand,
-      games: { ...currentHand.games, [gameId]: next },
-    };
+    const hand = handSourceRef.current.hand;
+    if (hand === null) throw new Error('Krunk hand is unavailable');
+    hand.updateGame(gameId, () => next);
     requireLiveGameHandSource(handSourceRef.current).dispatch(
       command.type === 'make-move'
-        ? { type: 'make-move', gameId, readable: command.readable, state: nextHand }
-        : { type: 'accept-settlement', gameId, state: nextHand },
+        ? { type: 'make-move', gameId, readable: command.readable }
+        : { type: 'accept-settlement', gameId },
     );
   }, []);
 

@@ -1,15 +1,11 @@
 import { lazy, useCallback } from 'react';
-import {
-  gameHandSourceFromMountView,
-  type GameHandSource,
-  type GameMountRegistration,
-} from '../../host';
-import type { KrunkHandState } from './serialize';
+import { type GameHandSource, type GameMountRegistration } from '../../host';
+import type { KrunkHand, KrunkHandState } from './serialize';
 
 const Krunk = lazy(() => import('./Krunk'));
 
 export interface KrunkLiveMountProps {
-  handSource: GameHandSource<KrunkHandState>;
+  handSource: GameHandSource<KrunkHandState, KrunkHand>;
   appendGameLog?: (line: string) => void;
   myName?: string;
   opponentName?: string;
@@ -28,11 +24,14 @@ export function KrunkLiveMount(props: KrunkLiveMountProps) {
   return <Krunk {...rest} onGameLog={handleGameLog} />;
 }
 
-export const play: GameMountRegistration = {
+export const play: GameMountRegistration<KrunkHand> = {
   render(view) {
+    const handSource: GameHandSource<KrunkHandState, KrunkHand> = view.frozen
+      ? { interactionMode: 'terminal', hand: view.hand }
+      : { interactionMode: 'live', hand: view.hand, port: view.port };
     return (
       <KrunkLiveMount
-        handSource={gameHandSourceFromMountView<KrunkHandState>(view)}
+        handSource={handSource}
         appendGameLog={view.frozen ? undefined : view.appendGameLog}
         myName={view.myName}
         opponentName={view.opponentName}

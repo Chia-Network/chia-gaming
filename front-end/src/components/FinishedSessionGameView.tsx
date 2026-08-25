@@ -1,7 +1,7 @@
 import React, { Component, Suspense } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
-import type { FrozenGameMountOptions } from '@games/host';
+import type { FrozenGameMountOptions } from '../lib/gameMountRegistry';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
 import { renderFrozenGameMount } from '../lib/gameMountRegistry';

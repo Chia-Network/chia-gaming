@@ -11,10 +11,10 @@ import {
 } from './useKrunkHand';
 import { gameHandState, type GameHandSource } from '../../host';
 import { formatKrunkAmount } from './formatting';
-import type { KrunkHandState } from './serialize';
+import type { KrunkHand, KrunkHandState } from './serialize';
 
 export interface KrunkProps {
-  handSource: GameHandSource<KrunkHandState>;
+  handSource: GameHandSource<KrunkHandState, KrunkHand>;
   onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;

@@ -29,7 +29,8 @@ import type {
 import type { RegisteredGameType } from '../lib/session/types';
 import { REGISTERED_GAMES } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
-import { liveGameHandOrigin, type GameHandSource } from '@games/host';
+import type { GameHandSource } from '@games/host';
+import { liveGameHandOrigin } from '../lib/gameHandSource';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
@@ -179,20 +180,16 @@ export function useGameSession(
   const liveGamePort = useMemo(
     () => ({
       isChannelReady: () => controller.isChannelReady(),
-      dispatch: (intent: GameIntent<unknown>) => {
+      dispatch: (intent: GameIntent) => {
         const game = runtime.getState().model.game;
         const gameType = game.activeGameType as RegisteredGameType;
-        if (intent.type === 'update-local-state') {
-          if (game.currentHandIds.length !== 1) {
-            throw new Error('Local hand-state updates require a single-game hand');
-          }
-          runtime.replaceHandState(gameType, game.currentHandIds[0], intent.state);
+        if (intent.type === 'state-changed') {
+          runtime.commitHandStateChanged(gameType);
           return;
         }
         const request: LocalGameActionRequest = {
           gameType,
           id: intent.gameId,
-          state: intent.state,
           command:
             intent.type === 'make-move'
               ? { type: 'make-move', readable: intent.readable }

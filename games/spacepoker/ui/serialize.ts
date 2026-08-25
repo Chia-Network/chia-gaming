@@ -1,6 +1,5 @@
 import { Program } from 'clvm-lib';
 import {
-  createGameHand,
   isSettlementOutcome,
   type GameHand,
   type GameHandInitialization,
@@ -62,6 +61,10 @@ export interface SpacepokerHandState {
   unitSizeMojos: bigint;
   settlementOutcome: SettlementOutcome | null;
   displayMode: SpacepokerDisplayMode;
+}
+
+export interface SpacepokerHand extends GameHand<SpacepokerHandState> {
+  update(reducer: (current: SpacepokerHandState) => SpacepokerHandState): void;
 }
 
 /** Test/helper envelope only; persistence treats the state as opaque. */
@@ -566,7 +569,20 @@ export function reduceSpacepokerHandState(
   return reduceSpacepokerFeatureState(current, readableEvent);
 }
 
-export function createSpacepokerHand(init: GameHandInitialization): GameHand<SpacepokerHandState> {
+function spacepokerHandFromState(initial: SpacepokerHandState): SpacepokerHand {
+  let state = initial;
+  return {
+    getState: () => state,
+    receive: (update) => {
+      state = reduceSpacepokerHandState(state, update);
+    },
+    update: (reducer) => {
+      state = reducer(state);
+    },
+  };
+}
+
+export function createSpacepokerHand(init: GameHandInitialization): SpacepokerHand {
   if (init.gameIds.length !== 1 || init.handProposal.gameType !== 'spacepoker') {
     throw new Error('Space Poker hand requires one game and Space Poker proposal terms');
   }
@@ -574,5 +590,9 @@ export function createSpacepokerHand(init: GameHandInitialization): GameHand<Spa
     'unitSizeMojos' in init.handProposal && typeof init.handProposal.unitSizeMojos === 'bigint'
       ? init.handProposal.unitSizeMojos
       : 1n;
-  return createGameHand(initialState(init, unitSizeMojos), reduceSpacepokerHandState);
+  return spacepokerHandFromState(initialState(init, unitSizeMojos));
+}
+
+export function restoreSpacepokerHand(savedState: SpacepokerHandState): SpacepokerHand {
+  return spacepokerHandFromState(savedState);
 }

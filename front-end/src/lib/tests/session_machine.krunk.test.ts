@@ -288,11 +288,9 @@ describe('session machine behavior sequences', () => {
 
     expect(() =>
       reduceSessionMachine(state, {
-        type: 'replace-hand-state',
+        type: 'hand-state-changed',
 
         gameType: 'krunk',
-
-        id: '7',
 
         state: {
           games: {

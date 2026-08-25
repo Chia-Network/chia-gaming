@@ -11,7 +11,6 @@ import {
 import { calpokerSettlementVerb, calpokerTimeoutBadge, isForfeitOutcome } from './settlement';
 import {
   type GameHandOrigin,
-  type GameHand,
   type GameHandSource,
   type GameIntent,
   type LiveGamePort,
@@ -19,8 +18,9 @@ import {
 } from '../../host';
 import {
   calpokerStateCodec,
-  createCalpokerHand,
   isCalpokerHandState,
+  restoreCalpokerHand,
+  type CalpokerHand,
   type CalpokerHandState,
 } from './serialize';
 import CaliforniaPoker from './components/CaliforniaPoker';
@@ -49,15 +49,11 @@ jest.mock('./components/components', () => {
 type TestLiveGamePort = LiveGamePort & {
   handState: PersistedGameState<CalpokerHandState>;
 };
-const testHands = new WeakMap<TestLiveGamePort, GameHand<CalpokerHandState>>();
+const testHands = new WeakMap<TestLiveGamePort, CalpokerHand>();
 
-function makeDispatch(
-  makeMove: jest.Mock,
-  applyState: (state: CalpokerHandState) => void = () => {},
-) {
-  return (intent: GameIntent<CalpokerHandState>) => {
-    applyState(intent.state);
-    if (intent.type === 'update-local-state') return;
+function makeDispatch(makeMove: jest.Mock) {
+  return (intent: GameIntent) => {
+    if (intent.type === 'state-changed') return;
     if (intent.type !== 'make-move') {
       throw new Error(`Unexpected test intent ${intent.type}`);
     }
@@ -69,13 +65,16 @@ function liveSource(port: TestLiveGamePort): GameHandSource {
   let hand = testHands.get(port);
   if (!hand) {
     hand = {
-      receive: () => {},
-      getState: () => calpokerStateCodec.decode(port.handState)!,
-      installState: (state) => {
-        port.handState = calpokerStateCodec.encode(state);
+      receive: (update) => {
+        const restored = restoreCalpokerHand(calpokerStateCodec.decode(port.handState)!);
+        restored.receive(update);
+        port.handState = calpokerStateCodec.encode(restored.getState());
       },
-      setInitialState: (state) => {
-        port.handState = calpokerStateCodec.encode(state);
+      getState: () => calpokerStateCodec.decode(port.handState)!,
+      update: (reducer) => {
+        port.handState = calpokerStateCodec.encode(
+          reducer(calpokerStateCodec.decode(port.handState)!),
+        );
       },
     };
     testHands.set(port, hand);
@@ -337,12 +336,11 @@ describe('Calpoker terminal hand projection', () => {
         error: null,
       }),
       isChannelReady: () => true,
-      dispatch: (intent: GameIntent<CalpokerHandState>) => {
-        if (!isCalpokerHandState(intent.state)) {
-          rejectedPayloads.push(intent.state);
+      dispatch: (intent: GameIntent) => {
+        if (!isCalpokerHandState(controller.handState.state)) {
+          rejectedPayloads.push(controller.handState.state);
           throw new Error('Calpoker test received invalid local action state');
         }
-        controller.handState = calpokerStateCodec.encode(intent.state);
         if (intent.type === 'make-move') {
           makeMove(intent.gameId, intent.readable);
         }
@@ -627,18 +625,7 @@ describe('Calpoker terminal hand projection', () => {
       });
       act(() => {
         const current = calpokerStateCodec.decode(controller.handState)!;
-        const gameHand = createCalpokerHand({
-          gameIds: ['7'],
-          iStarted: false,
-          origin: 'local',
-          handProposal: {
-            gameType: 'calpoker',
-            myContribution: 100n,
-            theirContribution: 100n,
-            gameTimeout: 15n,
-          },
-        });
-        gameHand.installState(current);
+        const gameHand = restoreCalpokerHand(current);
         gameHand.receive({
           type: 'move-readable',
           gameId: '7',

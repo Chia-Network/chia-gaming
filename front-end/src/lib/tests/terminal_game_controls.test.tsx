@@ -23,12 +23,15 @@ import CaliforniaPoker from '@games/calpoker/ui/components/CaliforniaPoker';
 import { HandDisplay } from '@games/calpoker/ui/components/components';
 import { GAME_STATES } from '@games/calpoker/ui/components/constants/constants';
 import Krunk from '@games/krunk/ui/Krunk';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import {
+  initialKrunkGameState,
+  krunkStateCodec,
+  restoreKrunkHand,
+} from '@games/krunk/ui/serialize';
 import SpacePoker from '@games/spacepoker/ui/SpacePoker';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
+import { restoreSpacepokerHand, spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { UncaughtClientErrorReporter } from '../../components/GameSession';
 import { markClientErrorReported } from '../clientError';
-import { createGameHand, terminalGameHandSource } from '@games/host';
 
 describe('terminal game controls', () => {
   let renderer: ReactTestRenderer | null = null;
@@ -181,9 +184,10 @@ describe('terminal game controls', () => {
     act(() => {
       renderer = create(
         createElement(Krunk, {
-          handSource: terminalGameHandSource(
-            createGameHand(krunkStateCodec.decode(handState)!, (current) => current),
-          ),
+          handSource: {
+            interactionMode: 'terminal',
+            hand: restoreKrunkHand(krunkStateCodec.decode(handState)!),
+          },
           onGameLog: () => {},
         }),
       );
@@ -221,9 +225,10 @@ describe('terminal game controls', () => {
     act(() => {
       renderer = create(
         createElement(SpacePoker, {
-          handSource: terminalGameHandSource(
-            createGameHand(spacepokerStateCodec.decode(handState)!, (current) => current),
-          ),
+          handSource: {
+            interactionMode: 'terminal',
+            hand: restoreSpacepokerHand(spacepokerStateCodec.decode(handState)!),
+          },
           onGameLog: () => {},
         }),
       );

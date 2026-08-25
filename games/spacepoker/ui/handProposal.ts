@@ -1,5 +1,10 @@
 import { equalHandProposalBase, type GamePackageRegistration, type HandProposal } from '../../host';
-import { createSpacepokerHand, type SpacepokerHandState } from './serialize';
+import {
+  createSpacepokerHand,
+  restoreSpacepokerHand,
+  type SpacepokerHand,
+  type SpacepokerHandState,
+} from './serialize';
 import { formatSpacepokerMojos } from './formatting';
 import {
   resolveSpacepokerUnitSize,
@@ -28,6 +33,7 @@ export function validateSpacepokerHandProposal(handProposal: HandProposal): bool
 
 const registration: GamePackageRegistration<
   SpacepokerHandState,
+  SpacepokerHand,
   { unitSize: bigint; stackSize: bigint },
   SpacepokerFactoryParameters
 > = {
@@ -35,6 +41,7 @@ const registration: GamePackageRegistration<
   displayName: 'Space Poker',
   canRemountFinished: true,
   createHand: createSpacepokerHand,
+  restoreHand: restoreSpacepokerHand,
   proposalParameters: spacepokerProposalParameters,
   describeHandProposal(handProposal) {
     const space = spacepokerTermsOf(handProposal);

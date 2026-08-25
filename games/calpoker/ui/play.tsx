@@ -1,7 +1,6 @@
 import { lazy, useCallback } from 'react';
 import {
   gameHandState,
-  gameHandSourceFromMountView,
   type GameHandOrigin,
   type GameHandSource,
   type GameMountRegistration,
@@ -11,14 +10,14 @@ import type {
   CalpokerOutcomeView,
 } from './types/CaliforniapokerProps';
 import { useCalpokerHand } from './useCalpokerHand';
-import type { CalpokerDisplaySnapshot } from './serialize';
+import type { CalpokerDisplaySnapshot, CalpokerHand, CalpokerHandState } from './serialize';
 import type { CalpokerOutcomeShape } from './outcome';
 import { formatCalpokerAmount } from './formatting';
 
 const Calpoker = lazy(() => import('./Calpoker'));
 
 export interface CalpokerLiveMountProps {
-  handSource: GameHandSource<import('./serialize').CalpokerHandState>;
+  handSource: GameHandSource<CalpokerHandState, CalpokerHand>;
   appendGameLog?: (line: string) => void;
   myName?: string;
   opponentName?: string;
@@ -115,9 +114,11 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
   );
 }
 
-export const play: GameMountRegistration = {
+export const play: GameMountRegistration<CalpokerHand> = {
   render(view) {
-    const source = gameHandSourceFromMountView<import('./serialize').CalpokerHandState>(view);
+    const source: GameHandSource<CalpokerHandState, CalpokerHand> = view.frozen
+      ? { interactionMode: 'terminal', hand: view.hand }
+      : { interactionMode: 'live', hand: view.hand, port: view.port };
     return (
       <CalpokerLiveMount
         handSource={source}

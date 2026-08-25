@@ -45,7 +45,6 @@ export type LocalGameCommand =
 export interface LocalGameActionRequest {
   gameType: RegisteredGameType;
   id: string;
-  state: unknown;
   command: LocalGameCommand;
 }
 
@@ -165,9 +164,8 @@ export type SessionMachineEvent =
     }
   | { type: 'notification-abandoned' }
   | {
-      type: 'replace-hand-state';
+      type: 'hand-state-changed';
       gameType: RegisteredGameType;
-      id: string;
       state: unknown;
       handState?: PersistedGameState;
     }

@@ -1,4 +1,4 @@
-import { createElement, type ComponentType, type ReactElement } from 'react';
+import type { ReactElement } from 'react';
 import { Program } from 'clvm-lib';
 
 /** Compact settlement outcome ids (snake_case; match Rust `SettlementOutcome`). */
@@ -69,11 +69,11 @@ export interface ProposalParameterCodec<TParams> {
   encode(params: TParams): ProposalParameterValue;
 }
 
-export type GameIntent<TState> =
-  | { type: 'update-local-state'; state: TState }
-  | { type: 'make-move'; gameId: string; readable: Program | null; state: TState }
-  | { type: 'accept-settlement'; gameId: string; state: TState }
-  | { type: 'cheat'; gameId: string; moverShare: bigint; state: TState };
+export type GameIntent =
+  | { type: 'state-changed' }
+  | { type: 'make-move'; gameId: string; readable: Program | null }
+  | { type: 'accept-settlement'; gameId: string }
+  | { type: 'cheat'; gameId: string; moverShare: bigint };
 
 export interface GameHandInitialization {
   gameIds: readonly string[];
@@ -98,36 +98,10 @@ export interface GameHandState<TState> {
 
 export interface GameHand<TState> extends GameHandState<TState> {
   receive(update: GameUpdate): void;
-  /** Host-only: install a complete accepted or optimistic hand state. */
-  installState(state: TState): void;
-  /** Host-only: set the saved state before delivering runtime updates. */
-  setInitialState(state: TState): void;
 }
 
-export type RegisteredGameHand = GameHand<unknown>;
-
-export function createGameHand<TState>(
-  initialState: TState,
-  reduce: (current: TState, update: GameUpdate) => TState,
-): GameHand<TState> {
-  let state = initialState;
-  return {
-    receive(update) {
-      state = reduce(state, update);
-    },
-    getState: () => state,
-    installState(next) {
-      state = next;
-    },
-    setInitialState(next) {
-      state = next;
-    },
-  };
-}
 export type ComposeDraftValue = Record<string, bigint>;
-export type GameComposeDrafts = Record<string, ComposeDraftValue>;
 export type SavedHandProposalExtras = Readonly<Record<string, string | undefined>>;
-export type HandProposalFor<T extends RegisteredGameType> = HandProposal & { gameType: T };
 
 export interface HandProposalFormProps<TDraft> {
   draft: TDraft;
@@ -151,33 +125,27 @@ export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase):
   );
 }
 
-export interface LiveGameProtocolPort {
+export interface LiveGamePort {
   isChannelReady(): boolean;
-}
-
-export interface LiveGamePort extends LiveGameProtocolPort {
-  dispatch<TState>(intent: GameIntent<TState>): void;
+  dispatch(intent: GameIntent): void;
 }
 
 export type GameInteractionMode = 'live' | 'terminal';
 export type GameHandOrigin = 'fresh' | 'restored' | 'terminal';
 
-export type GameHandSource<TState = unknown> =
+export type GameHandSource<
+  TState = unknown,
+  THand extends GameHandState<TState> = GameHandState<TState>,
+> =
   | {
       readonly interactionMode: 'live';
-      readonly hand: GameHandState<TState> | null;
+      readonly hand: THand | null;
       readonly port: LiveGamePort;
     }
   | {
       readonly interactionMode: 'terminal';
-      readonly hand: GameHandState<TState> | null;
+      readonly hand: THand | null;
     };
-
-export function terminalGameHandSource<TState>(
-  hand: GameHandState<TState> | null,
-): Extract<GameHandSource<TState>, { interactionMode: 'terminal' }> {
-  return Object.freeze({ interactionMode: 'terminal', hand });
-}
 
 export function gameHandState<TState>(source: GameHandSource<TState>): TState {
   if (source.hand === null) {
@@ -193,51 +161,39 @@ export function requireLiveGameHandSource(source: GameHandSource<unknown>): Live
   return source.port;
 }
 
-export function liveGameHandOrigin(
-  restoredHandKey: number | null,
-  currentHandKey: number,
-): Exclude<GameHandOrigin, 'terminal'> {
-  return restoredHandKey === currentHandKey ? 'restored' : 'fresh';
-}
-
 export interface GameMountNames {
   myName?: string;
   opponentName?: string;
 }
 
-export interface FrozenGameMountOptions extends GameMountNames {
-  iStarted: boolean;
-}
-
-interface GameMountViewBase extends GameMountNames {
-  hand: GameHandState<unknown>;
+interface GameMountViewBase<THand extends GameHandState<unknown>> extends GameMountNames {
+  hand: THand;
   handOrigin: GameHandOrigin;
 }
 
-export type GameMountView =
-  | (GameMountViewBase & {
+export type GameMountView<THand extends GameHandState<unknown>> =
+  | (GameMountViewBase<THand> & {
       frozen: false;
       port: LiveGamePort;
       appendGameLog: (line: string) => void;
     })
-  | (GameMountViewBase & { frozen: true });
+  | (GameMountViewBase<THand> & { frozen: true });
 
-export function gameHandSourceFromMountView<TState>(view: GameMountView): GameHandSource<TState> {
-  const hand = view.hand as GameHandState<TState>;
-  return view.frozen
-    ? terminalGameHandSource(hand)
-    : { interactionMode: 'live', hand, port: view.port };
+export interface GameMountRegistration<THand extends GameHandState<unknown>> {
+  render(view: GameMountView<THand>): ReactElement;
 }
 
-export interface GameMountRegistration {
-  render(view: GameMountView): ReactElement;
-}
-
-export interface GamePackageRegistration<TState, TDraft = ComposeDraftValue, TParams = unknown> {
+export interface GamePackageRegistration<
+  TState,
+  THand extends GameHand<TState>,
+  TDraft = ComposeDraftValue,
+  TParams = unknown,
+> {
   gameType: string;
   readonly displayName: string;
   readonly canRemountFinished: boolean;
-  createHand(init: GameHandInitialization): GameHand<TState>;
+  createHand(init: GameHandInitialization): THand;
+  restoreHand(savedState: TState): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;
   describeHandProposal(handProposal: HandProposal): string;
   validateHandIds(gameIds: readonly string[]): boolean;
@@ -262,72 +218,5 @@ export interface GamePackageRegistration<TState, TDraft = ComposeDraftValue, TPa
   persistence: {
     encodeExtras(handProposal: HandProposal): SavedHandProposalExtras;
     decodeExtras(base: HandProposalBase, extras: SavedHandProposalExtras): HandProposal | null;
-  };
-}
-
-export interface RegisteredGamePackage {
-  readonly gameType: string;
-  readonly displayName: string;
-  readonly canRemountFinished: boolean;
-  createHand(init: GameHandInitialization): RegisteredGameHand;
-  describeHandProposal(handProposal: HandProposal): string;
-  validateHandIds(gameIds: readonly string[]): boolean;
-  selectOutcome(state: unknown, gameId: string): HandWinOutcome | null;
-  readonly lifecycle: {
-    proposalSenderGoesFirst(iStarted: boolean): boolean;
-  };
-  readonly draft: {
-    default(perGameAmount: bigint): ComposeDraftValue;
-    fromHandProposal(handProposal: HandProposal): ComposeDraftValue;
-    update(current: ComposeDraftValue, update: Partial<ComposeDraftValue>): ComposeDraftValue;
-    toHandProposal(draft: ComposeDraftValue, gameTimeout: bigint): HandProposal | null;
-  };
-  encodeProposalParameters(handProposal: HandProposal, iStarted: boolean): ProposalParameterValue;
-  decodeHandProposal(
-    base: HandProposalBase,
-    parameterState: unknown,
-    context: HandProposalDecodeContext,
-  ): HandProposal | null;
-  validateHandProposal(handProposal: HandProposal): boolean;
-  handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
-  readonly persistence: {
-    encodeExtras(handProposal: HandProposal): SavedHandProposalExtras;
-    decodeExtras(base: HandProposalBase, extras: SavedHandProposalExtras): HandProposal | null;
-  };
-  render(view: GameMountView): ReactElement;
-  renderHandProposalForm(props: HandProposalFormProps<ComposeDraftValue>): ReactElement;
-}
-
-export function defineGamePackage<TState, TDraft extends ComposeDraftValue, TParams>(
-  feature: GamePackageRegistration<TState, TDraft, TParams>,
-  HandProposalForm: ComponentType<HandProposalFormProps<TDraft>>,
-  mount: GameMountRegistration,
-): RegisteredGamePackage {
-  const requireState = (value: unknown): TState => value as TState;
-  return {
-    ...feature,
-    createHand: (init) => feature.createHand(init) as RegisteredGameHand,
-    selectOutcome: (state, gameId) => feature.selectOutcome(requireState(state), gameId),
-    draft: {
-      default: feature.draft.default,
-      fromHandProposal: feature.draft.fromHandProposal,
-      update: (current, update) =>
-        feature.draft.update(current as TDraft, update as Partial<TDraft>),
-      toHandProposal: (draft, gameTimeout) =>
-        feature.draft.toHandProposal(draft as TDraft, gameTimeout),
-    },
-    encodeProposalParameters: (handProposal, iStarted) =>
-      feature.proposalParameters.encode(feature.toProposalParameters(handProposal, iStarted)),
-    decodeHandProposal: (base, parameterState, context) => {
-      const params = feature.proposalParameters.decode(parameterState);
-      return params === null ? null : feature.decodeHandProposal(base, params, context);
-    },
-    persistence: feature.persistence,
-    render: mount.render,
-    renderHandProposalForm: (props) =>
-      createElement(HandProposalForm, {
-        ...props,
-        draft: props.draft as unknown as TDraft,
-      }),
   };
 }

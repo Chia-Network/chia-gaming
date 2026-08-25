@@ -4,7 +4,12 @@ import {
   type HandProposal,
   type ProposalParameterCodec,
 } from '../../host';
-import { createKrunkHand, type KrunkHandState } from './serialize';
+import {
+  createKrunkHand,
+  restoreKrunkHand,
+  type KrunkHand,
+  type KrunkHandState,
+} from './serialize';
 import { formatKrunkMojos } from './formatting';
 
 export { krunkOutcomeFromPlay, reduceKrunkHandState, reduceKrunkFeatureState } from './serialize';
@@ -34,6 +39,7 @@ export function validateKrunkHandProposal(handProposal: HandProposal): boolean {
 
 const registration: GamePackageRegistration<
   KrunkHandState,
+  KrunkHand,
   { amount: bigint },
   KrunkFactoryParameters
 > = {
@@ -41,6 +47,7 @@ const registration: GamePackageRegistration<
   displayName: 'Krunk',
   canRemountFinished: true,
   createHand: createKrunkHand,
+  restoreHand: restoreKrunkHand,
   proposalParameters: krunkProposalParameters,
   describeHandProposal: (handProposal) =>
     `Stake ${formatKrunkMojos(handProposal.myContribution)} each`,

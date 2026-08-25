@@ -1,4 +1,5 @@
-import type { ComposeDraftValue, GameComposeDrafts } from '@games/host';
+import type { ComposeDraftValue } from '@games/host';
+import type { GameComposeDrafts } from '../gamePackage';
 import {
   defaultGameComposeDraft,
   gameComposeDraftFromHandProposal,

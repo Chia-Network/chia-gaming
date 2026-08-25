@@ -76,7 +76,7 @@ export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
 writeFileSync(
   join(destDir, 'gamePackages.ts'),
   `// Generated from games/registry.json. Do not edit.
-import { defineGamePackage } from '../../../games/host';
+import { defineGamePackage } from '../lib/gamePackage';
 ${imports}
 
 export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;

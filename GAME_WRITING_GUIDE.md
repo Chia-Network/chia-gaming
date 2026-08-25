@@ -66,11 +66,11 @@ file has a conventional export that the generator discovers:
 - `handProposalForm.tsx` exports `HandProposalForm`.
 - `play.tsx` exports `play`.
 
-The generator passes those three exports through `defineGamePackage`. This is
-the compile-time boundary that proves the proposal draft, complete hand state,
-factory parameters, form, and mount belong to one coherent package. The
-generated keyed registry exposes a non-generic runtime facade; game-specific
-types are not cast to a fictitious broad package type.
+The generator passes those three exports through the frontend-owned
+`defineGamePackage`. This is the compile-time boundary that proves the proposal
+draft, complete hand state, concrete hand type, factory parameters, form, and
+mount belong to one coherent package. The generated keyed registry then exposes
+a frontend-only erased runtime facade.
 
 ## Step 1: Register the game
 
@@ -342,13 +342,17 @@ and types, invalid values, and another game's parameter encoding.
 
 The protocol state in Rust is not enough to restore every detail of a React UI.
 For example, a card game may need revealed cards and current selections. Define
-one complete game-owned state type and implement `createHand(init)`. The host
-calls it once for each accepted hand.
+one complete game-owned state type and implement both `createHand(init)` and
+`restoreHand(savedState)`. The first receives accepted initialization terms for
+a new hand. The second receives only the saved game state—never proposal or
+initialization data.
 
-The returned `GameHand<TState>` exposes `receive(update)` and `getState()`.
-`setInitialState(state)` and `installState(state)` are host-only restoration and
-optimistic-state operations. `createGameHand(initialState, reducer)` supplies
-this small mutable shell around a pure reducer.
+The shared `GameHand<TState>` exposes only `receive(update)` and `getState()`.
+Define any local mutation method on your package's concrete hand type. The
+typed package/mount assembly lets your UI call that private method without
+adding setters to the shared API. `restoreHand` constructs a replacement hand
+directly from the complete saved state; it does not create a fresh hand and
+overwrite it.
 
 The initial state must copy every accepted fact the play UI needs from
 `GameHandInitialization`: ordered routing IDs, stakes and game-specific proposal
@@ -361,8 +365,8 @@ stores ordered `gameIds`, the accepted per-player stake, and
 `games: Record<string, KrunkGameState>`. Single-ID games likewise keep their
 routing ID and accepted terms in state. The host treats `getState()` as opaque
 Bencodex-compatible data and saves `{ gameType, state }` generically.
-Games do not provide state serializers, versions, validators, restore decoders,
-or migrations.
+Games do not provide envelope serializers, versions, compatibility decoders, or
+migrations.
 
 Set package-level `canRemountFinished` when the same hand UI can be mounted
 read-only from a terminal save.
@@ -394,7 +398,7 @@ boundary.
 
 ```ts
 type GameMountView = {
-  hand: GameHandState<unknown>;
+  hand: ConcretePackageHand;
   handOrigin: 'fresh' | 'restored' | 'terminal';
   myName?: string;
   opponentName?: string;
@@ -404,9 +408,9 @@ type GameMountView = {
 );
 ```
 
-The host passes accepted terms to `createHand`; the mounted hand never receives
-proposal, group, rejection, abandonment, connection, or on-chain lifecycle
-objects.
+The host passes accepted terms only to `createHand`; `restoreHand` and the
+mounted hand never receive proposal, group, rejection, abandonment, connection,
+or on-chain lifecycle objects.
 
 These functions return React elements; they are not imperative drawing
 callbacks. React may call them again when session state changes, then preserves
@@ -419,35 +423,35 @@ Use `requireLiveGameHandSource` before dispatching an intent. The complete
 outgoing contract is:
 
 ```ts
-type GameIntent<TState> =
-  | { type: 'update-local-state'; state: TState }
-  | { type: 'make-move'; gameId: string; readable: Program | null; state: TState }
-  | { type: 'accept-settlement'; gameId: string; state: TState }
-  | { type: 'cheat'; gameId: string; moverShare: bigint; state: TState };
+type GameIntent =
+  | { type: 'state-changed' }
+  | { type: 'make-move'; gameId: string; readable: Program | null }
+  | { type: 'accept-settlement'; gameId: string }
+  | { type: 'cheat'; gameId: string; moverShare: bigint };
 ```
 
-- `update-local-state` persists game-owned UI state without a protocol command.
-  It is currently available only to a single-ID hand; multi-ID packages update
-  a member through a protocol intent.
+- Mutate the concrete hand first. `state-changed` tells the player app to reread
+  the entire hand and persist a local-only durable change; it works for both
+  single- and multi-ID hands.
 - `make-move` asks the local CLVM handler to process `readable`. `null` means
-  CLVM nil. `state` is the complete candidate hand state.
-- `accept-settlement` accepts the result for `gameId` and carries the candidate
-  complete hand state to persist on acceptance.
+  CLVM nil.
+- `accept-settlement` accepts the result for `gameId`.
 - `cheat` deliberately invokes the diagnostic illegal-move path with a
-  mojo-denominated `moverShare` and complete candidate state. It is not a normal
-  gameplay fallback. It is optional; among the reference games only Space Poker
-  exposes it, including its game-local `cheat^` keyboard shortcut.
+  mojo-denominated `moverShare`. It is not a normal gameplay fallback. It is
+  optional; among the reference games only Space Poker exposes it, including
+  its game-local `cheat^` keyboard shortcut.
 
-The host keeps command execution and candidate state atomic. If Rust applies the
-action immediately, the candidate commits immediately. If Rust queues it, the
-host checkpoints the prior state, installs the complete candidate in the live
-hand, and persists both until Rust reports that the action was applied. The game
-does not observe whether this delay involved potato acquisition, on-chain
-progress, or protocol redo.
+Protocol calls remain Rust-first. After Rust accepts or queues the request, the
+runtime rereads `getState()` as the complete candidate. An immediately applied
+candidate becomes canonical. A queued candidate is persisted beside the
+unchanged canonical checkpoint until Rust reports application. The game does
+not observe whether this delay involved potato acquisition, on-chain progress,
+or protocol redo.
 
 Move rejection and unexpected `ActionFailed` restore the generic checkpoint and
-go to shared host UX. Rejection is never delivered to the game. On confirmation
-the installed candidate becomes canonical.
+go to shared host UX. Synchronous command rejection and cleanup do the same.
+Restoration replaces the hand through `restoreHand(checkpoint)`; there is no
+shared mutation setter. Rejection is never delivered to the game.
 
 This is also the restart rule for automatic actions. After restoration, run the
 same ordinary state-driven effect as during live play. A restored pre-action
@@ -478,7 +482,7 @@ type GameUpdate =
   | { type: 'hand-ended'; gameId: string; outcome: SettlementOutcome | null };
 ```
 
-`GameHandInitialization` is supplied once to `createHand`. `gameIds` is the
+`GameHandInitialization` is supplied only to `createHand`. `gameIds` is the
 authoritative ordered membership, `iStarted` identifies the local session
 initiator, `origin` identifies the proposal author, and `handProposal` contains
 validated accepted terms. A typical single-ID initialization copies
@@ -561,8 +565,8 @@ Before considering the game complete, check that:
   moves.
 - The proposal form converts to and from `HandProposal` correctly.
 - Factory parameter encoding and decoding round-trip.
-- A fresh `GameHand` initializes from accepted terms and a restored hand accepts
-  its generic saved state before updates.
+- A fresh `GameHand` initializes from accepted terms and `restoreHand` constructs
+  directly from only its generic saved state.
 - `GameHand.receive` handles move, message, and terminal updates in order, and
   `getState` returns the latest complete hand state.
 - Every outgoing intent is tested for accepted, rejected, and unexpected-failure

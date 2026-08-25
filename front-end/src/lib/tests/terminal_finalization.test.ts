@@ -5,10 +5,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { SessionController } from '../../hooks/SessionController';
 import {
-  createKrunkHand,
   initialKrunkGameState,
   krunkStateCodec,
   KrunkHandler,
+  restoreKrunkHand,
 } from '@games/krunk/ui/serialize';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
@@ -653,18 +653,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       guesser: initialKrunkGameState('bob'),
     },
   });
-  const gameHand = createKrunkHand({
-    gameIds: ids,
-    iStarted: true,
-    origin: 'local',
-    handProposal: {
-      gameType: 'krunk',
-      myContribution: 100n,
-      theirContribution: 100n,
-      gameTimeout: 15n,
-    },
-  });
-  gameHand.installState(krunkStateCodec.decode(acceptedHandState)!);
+  const gameHand = restoreKrunkHand(krunkStateCodec.decode(acceptedHandState)!);
   for (const settledId of ids) {
     gameHand.receive({
       type: 'hand-ended',

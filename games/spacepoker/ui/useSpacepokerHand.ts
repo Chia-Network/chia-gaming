@@ -5,6 +5,7 @@ import type { SettlementOutcome } from '../../host';
 import { formatSpacepokerXch } from './formatting';
 import {
   type SpacepokerDisplayMode,
+  type SpacepokerHand,
   type SpacepokerHandState,
   type SpGameState,
   type SpHandEntry,
@@ -75,7 +76,7 @@ export interface UseSpacepokerHandResult {
 }
 
 export function useSpacepokerHand(
-  handSource: GameHandSource<SpacepokerHandState>,
+  handSource: GameHandSource<SpacepokerHandState, SpacepokerHand>,
 ): UseSpacepokerHandResult {
   const state = gameHandState(handSource);
   const betSize = state.perPlayerStake * 2n;
@@ -94,23 +95,22 @@ export function useSpacepokerHand(
   );
   const displayMode = interactive ? state.displayMode : (terminalDisplayMode ?? state.displayMode);
 
-  const currentDurableState = useCallback((): SpacepokerHandState => {
-    return gameHandState(handSourceRef.current);
-  }, []);
-
   const commitLocalAction = useCallback(
     (update: (current: SpacepokerHandState) => SpacepokerHandState, command: LocalGameCommand) => {
       const controller = requireLiveGameHandSource(handSourceRef.current);
-      const next = update(currentDurableState());
+      const hand = handSourceRef.current.hand;
+      if (hand === null) throw new Error('Space Poker hand is unavailable');
+      hand.update(update);
+      const next = hand.getState();
       controller.dispatch(
         command.type === 'make-move'
-          ? { type: 'make-move', gameId: next.gameId, readable: command.readable, state: next }
+          ? { type: 'make-move', gameId: next.gameId, readable: command.readable }
           : command.type === 'accept-settlement'
-            ? { type: 'accept-settlement', gameId: next.gameId, state: next }
-            : { type: 'cheat', gameId: next.gameId, moverShare: command.moverShare, state: next },
+            ? { type: 'accept-settlement', gameId: next.gameId }
+            : { type: 'cheat', gameId: next.gameId, moverShare: command.moverShare },
       );
     },
-    [currentDurableState],
+    [],
   );
 
   const setDisplayMode = useCallback(
@@ -120,13 +120,12 @@ export function useSpacepokerHand(
         return;
       }
       const controller = requireLiveGameHandSource(handSourceRef.current);
-      const current = currentDurableState();
-      controller.dispatch({
-        type: 'update-local-state',
-        state: { ...current, displayMode: mode },
-      });
+      const hand = handSourceRef.current.hand;
+      if (hand === null) throw new Error('Space Poker hand is unavailable');
+      hand.update((current) => ({ ...current, displayMode: mode }));
+      controller.dispatch({ type: 'state-changed' });
     },
-    [currentDurableState],
+    [],
   );
 
   const autoFiredSnapshotRef = useRef<SpacepokerHandState | null>(null);

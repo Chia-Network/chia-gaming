@@ -1,17 +1,16 @@
 import { lazy, useCallback } from 'react';
 import {
   gameHandState,
-  gameHandSourceFromMountView,
   type GameHandSource,
   type GameMountRegistration,
 } from '../../host';
-import type { SpacepokerHandState } from './serialize';
+import type { SpacepokerHand, SpacepokerHandState } from './serialize';
 import { formatSpacepokerAmount } from './formatting';
 
 const SpacePoker = lazy(() => import('./SpacePoker'));
 
 export interface SpacepokerLiveMountProps {
-  handSource: GameHandSource<SpacepokerHandState>;
+  handSource: GameHandSource<SpacepokerHandState, SpacepokerHand>;
   appendGameLog?: (line: string) => void;
   myName?: string;
   opponentName?: string;
@@ -43,11 +42,14 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
   );
 }
 
-export const play: GameMountRegistration = {
+export const play: GameMountRegistration<SpacepokerHand> = {
   render(view) {
+    const handSource: GameHandSource<SpacepokerHandState, SpacepokerHand> = view.frozen
+      ? { interactionMode: 'terminal', hand: view.hand }
+      : { interactionMode: 'live', hand: view.hand, port: view.port };
     return (
       <SpacepokerLiveMount
-        handSource={gameHandSourceFromMountView<SpacepokerHandState>(view)}
+        handSource={handSource}
         appendGameLog={view.frozen ? undefined : view.appendGameLog}
         myName={view.myName}
         opponentName={view.opponentName}

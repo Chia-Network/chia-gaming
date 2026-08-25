@@ -10,6 +10,7 @@ import {
   handProposalsEqual,
   packageFor,
   createRegisteredGameHand,
+  restoreRegisteredGameHandState,
   REGISTERED_GAMES,
   isCatalogGameType,
   validateHandProposal,
@@ -168,8 +169,11 @@ describe('pure game registrations', () => {
       handProposal,
     });
     const initial = hand.getState();
-    hand.installState(initial);
-    expect(hand.getState()).toEqual(initial);
+    const restored = restoreRegisteredGameHandState('calpoker', {
+      gameType: 'calpoker',
+      state: initial,
+    });
+    expect(restored.getState()).toEqual(initial);
   });
 
   it.each([

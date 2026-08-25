@@ -1,12 +1,16 @@
 import {
-  gameHandSourceFromMountView,
   gameHandState,
   requireLiveGameHandSource,
   type GameMountView,
   type LiveGamePort,
 } from '@games/host';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
-import { createRegisteredGameHand, isCatalogGameType, packageFor } from '../gameRegistry';
+import {
+  createRegisteredGameHand,
+  isCatalogGameType,
+  packageFor,
+  restoreRegisteredGameHandState,
+} from '../gameRegistry';
 import { renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
 import { createSessionModel } from '../session/model';
 
@@ -76,16 +80,7 @@ describe('game mount registry', () => {
       const model = modelFor(gameType);
       const common = {
         handOrigin: 'fresh' as const,
-        hand: createRegisteredGameHand(
-          gameType,
-          {
-            gameIds: model.game.currentHandIds,
-            iStarted: true,
-            origin: 'local',
-            handProposal: model.betweenHand.lastHandProposal!,
-          },
-          model.game.handState,
-        ),
+        hand: restoreRegisteredGameHandState(gameType, model.game.handState!),
       };
       const live: GameMountView = {
         ...common,
@@ -97,10 +92,16 @@ describe('game mount registry', () => {
 
       expect(() => packageFor(gameType).render(live)).not.toThrow();
       expect(() => packageFor(gameType).render(frozen)).not.toThrow();
-      expect(requireLiveGameHandSource(gameHandSourceFromMountView(live))).toBe(port);
-      expect(() => requireLiveGameHandSource(gameHandSourceFromMountView(frozen))).toThrow(
-        'Protocol commands require a live game hand source',
-      );
+      expect(
+        requireLiveGameHandSource({
+          interactionMode: 'live',
+          hand: live.hand,
+          port: live.port,
+        }),
+      ).toBe(port);
+      expect(() =>
+        requireLiveGameHandSource({ interactionMode: 'terminal', hand: frozen.hand }),
+      ).toThrow('Protocol commands require a live game hand source');
     },
   );
 

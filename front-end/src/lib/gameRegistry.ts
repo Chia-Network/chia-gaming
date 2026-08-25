@@ -6,10 +6,10 @@ import type {
   HandProposalDecodeContext,
   HandProposal as HostHandProposal,
   PersistedGameState,
-  RegisteredGameHand,
-  RegisteredGamePackage,
   SavedHandProposalExtras,
 } from '@games/host';
+import type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
+export type { GameComposeDrafts, RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
 import type { HandProposalBase, HandProposal } from './session/types';
 import type { SessionModel } from './session/types';
 
@@ -60,16 +60,18 @@ export function decodePersistedGameState(value: unknown): DecodedPersistedGameSt
 export function createRegisteredGameHand(
   gameType: RegisteredGameType,
   init: GameHandInitialization,
-  persisted: PersistedGameState | null = null,
 ): RegisteredGameHand {
-  const hand = packageFor(gameType).createHand(init);
-  if (persisted !== null) {
-    if (persisted.gameType !== gameType) {
-      throw new Error(`Saved ${persisted.gameType} state cannot initialize ${gameType}`);
-    }
-    hand.setInitialState(persisted.state);
+  return packageFor(gameType).createHand(init);
+}
+
+export function restoreRegisteredGameHandState(
+  gameType: RegisteredGameType,
+  persisted: PersistedGameState,
+): RegisteredGameHand {
+  if (persisted.gameType !== gameType) {
+    throw new Error(`Saved ${persisted.gameType} state cannot restore ${gameType}`);
   }
-  return hand;
+  return packageFor(gameType).restoreHand(persisted.state);
 }
 
 export function snapshotRegisteredGameHand(
@@ -79,24 +81,10 @@ export function snapshotRegisteredGameHand(
   return { gameType, state: hand.getState() };
 }
 
-export function restoreRegisteredGameHand(
-  model: SessionModel,
-  iStarted: boolean,
-): RegisteredGameHand | null {
+export function restoreRegisteredGameHand(model: SessionModel): RegisteredGameHand | null {
   const { game } = model;
-  const handProposal = model.betweenHand.lastHandProposal;
-  const id = game.currentHandIds[0];
-  if (game.handState === null || handProposal === null || id === undefined) return null;
-  return createRegisteredGameHand(
-    game.activeGameType,
-    {
-      gameIds: game.currentHandIds,
-      iStarted,
-      origin: game.currentHandOrigin ?? 'local',
-      handProposal,
-    },
-    game.handState,
-  );
+  if (game.handState === null) return null;
+  return restoreRegisteredGameHandState(game.activeGameType, game.handState);
 }
 
 export function canRemountFinishedGameState(value: unknown): boolean {

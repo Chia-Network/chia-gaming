@@ -28,12 +28,10 @@ describe('session machine behavior sequences', () => {
       isPlayerTurn: false,
     });
 
-    state = send(state, {
-      type: 'replace-hand-state',
+    const changed = reduceSessionMachine(state, {
+      type: 'hand-state-changed',
 
       gameType: 'calpoker',
-
-      id: '7',
 
       state: {
         playerHand: [],
@@ -50,6 +48,8 @@ describe('session machine behavior sequences', () => {
         error: null,
       },
     });
+    expect(changed.effects).toEqual([{ type: 'persist-session' }]);
+    state = changed.state;
 
     const progressed = state.model.game.handState;
 
@@ -124,11 +124,9 @@ describe('session machine behavior sequences', () => {
     });
 
     state = send(state, {
-      type: 'replace-hand-state',
+      type: 'hand-state-changed',
 
       gameType: 'calpoker',
-
-      id: '7',
 
       state: {
         playerHand,
@@ -313,11 +311,9 @@ describe('session machine behavior sequences', () => {
 
       expect(() =>
         reduceSessionMachine(state, {
-          type: 'replace-hand-state',
+          type: 'hand-state-changed',
 
           gameType,
-
-          id: ids[0],
 
           state: decodedAccepted,
         }),
@@ -472,7 +468,7 @@ describe('session machine behavior sequences', () => {
     }
   });
 
-  it('rejects mismatched replacement identity while keeping replacement state opaque', () => {
+  it('rejects a mismatched game type while keeping changed hand state opaque', () => {
     let initial = createSessionMachineState(
       createSessionModel({
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
@@ -491,34 +487,18 @@ describe('session machine behavior sequences', () => {
 
     expect(() =>
       reduceSessionMachine(state, {
-        type: 'replace-hand-state',
+        type: 'hand-state-changed',
 
         gameType: 'spacepoker',
-
-        id: '7',
 
         state: {},
       }),
     ).toThrow('gameType');
 
-    expect(() =>
-      reduceSessionMachine(state, {
-        type: 'replace-hand-state',
-
-        gameType: 'calpoker',
-
-        id: 'unrelated',
-
-        state: calpokerStateCodec.decode(state.model.game.handState),
-      }),
-    ).toThrow('game id');
-
     const replaced = reduceSessionMachine(state, {
-      type: 'replace-hand-state',
+      type: 'hand-state-changed',
 
       gameType: 'calpoker',
-
-      id: '7',
 
       state: { malformed: true },
     });

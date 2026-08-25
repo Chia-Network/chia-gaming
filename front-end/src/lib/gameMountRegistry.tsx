@@ -1,6 +1,6 @@
 import { cloneElement, type ReactElement } from 'react';
 import {
-  type FrozenGameMountOptions,
+  type GameHandState,
   type GameMountNames,
   type GameMountView,
   requireLiveGameHandSource,
@@ -8,6 +8,10 @@ import {
 import { isCatalogGameType, packageFor, restoreRegisteredGameHand } from './gameRegistry';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { SessionModel } from './session/model';
+
+export interface FrozenGameMountOptions extends GameMountNames {
+  iStarted: boolean;
+}
 
 export function renderLiveGameMount(
   session: UseGameSessionResult,
@@ -23,7 +27,7 @@ export function renderLiveGameMount(
     hand: session.handSource.hand,
     ...names,
   };
-  const view: GameMountView =
+  const view: GameMountView<GameHandState<unknown>> =
     session.handSource.interactionMode === 'terminal'
       ? { ...common, frozen: true }
       : {
@@ -43,9 +47,9 @@ export function renderFrozenGameMount(
 ): ReactElement {
   const gameType = model.game.handState?.gameType ?? model.game.activeGameType;
   if (!isCatalogGameType(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
-  const hand = restoreRegisteredGameHand(model, options.iStarted);
+  const hand = restoreRegisteredGameHand(model);
   if (hand === null) throw new Error('Cannot mount a frozen game without saved hand state');
-  const view: GameMountView = {
+  const view: GameMountView<GameHandState<unknown>> = {
     frozen: true,
     handOrigin: 'terminal',
     hand,

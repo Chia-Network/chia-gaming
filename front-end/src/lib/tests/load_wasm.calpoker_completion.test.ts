@@ -2,7 +2,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
-import { calpokerStateCodec, type CalpokerHandState } from '@games/calpoker/ui/serialize';
+import { calpokerStateCodec, type CalpokerHand } from '@games/calpoker/ui/serialize';
 import {
   shouldAutoFireCalpokerMove,
   useCalpokerHand,
@@ -71,21 +71,17 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     runtimes.push(runtime);
     ports.push({
       isChannelReady: () => controller.isChannelReady(),
-      dispatch: (intent: GameIntent<unknown>) => {
+      dispatch: (intent: GameIntent) => {
         const game = runtime.getState().model.game;
         assert.equal(game.activeGameType, 'calpoker');
-        if (intent.type === 'update-local-state') {
-          assert.equal(
-            runtime.replaceHandState('calpoker', game.currentHandIds[0], intent.state),
-            true,
-          );
+        if (intent.type === 'state-changed') {
+          runtime.commitHandStateChanged('calpoker');
           return;
         }
         submittedMoves[index] += intent.type === 'make-move' ? 1 : 0;
         runtime.commitLocalGameAction({
           gameType: 'calpoker',
           id: intent.gameId,
-          state: intent.state,
           command:
             intent.type === 'make-move'
               ? { type: 'make-move', readable: intent.readable }
@@ -126,28 +122,28 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     return state;
   };
   const submitSelections = (index: number, gameId: string, selections: bigint[]) => {
-    ports[index].dispatch<CalpokerHandState>({
+    (runtimes[index].getGameHand() as CalpokerHand).update((state) => ({
+      ...state,
+      cardSelections: selections,
+      moveNumber: 2n,
+      isPlayerTurn: false,
+    }));
+    ports[index].dispatch({
       type: 'make-move',
       gameId,
       readable: Program.fromList(selections.map((card) => Program.fromBigInt(card))),
-      state: {
-        ...hand(index),
-        cardSelections: selections,
-        moveNumber: 2n,
-        isPlayerTurn: false,
-      },
     });
   };
   const submitNil = (index: number, gameId: string, moveNumber: bigint) => {
-    ports[index].dispatch<CalpokerHandState>({
+    (runtimes[index].getGameHand() as CalpokerHand).update((state) => ({
+      ...state,
+      moveNumber,
+      isPlayerTurn: false,
+    }));
+    ports[index].dispatch({
       type: 'make-move',
       gameId,
       readable: null,
-      state: {
-        ...hand(index),
-        moveNumber,
-        isPlayerTurn: false,
-      },
     });
   };
   const autofireOpening = (index: number, gameId: string) => {

@@ -600,6 +600,13 @@ reconstructed from Rust-owned channel and on-chain state; after browser restore,
 a game's normal state-driven effect may resubmit an automatic action only when
 the restored canonical state still precedes that action.
 
+Each game package owns its concrete mutable hand. Fresh hands are created from
+accepted initialization terms; restored hands are constructed directly from
+only their saved state. The shared hand boundary exposes `getState()` plus
+host-delivered updates, while the browser rereads the complete hand after a
+state-change notification or protocol request and reconstructs it from the
+canonical checkpoint on rejection.
+
 | Concern | Owner |
 | --- | --- |
 | Protocol phases, game/channel facts, validation, lifecycle, spends; watch lifecycle and ordering | Rust |

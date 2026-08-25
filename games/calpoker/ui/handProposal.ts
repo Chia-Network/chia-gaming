@@ -4,7 +4,12 @@ import {
   type HandProposal,
   type ProposalParameterCodec,
 } from '../../host';
-import { createCalpokerHand, type CalpokerHandState } from './serialize';
+import {
+  createCalpokerHand,
+  restoreCalpokerHand,
+  type CalpokerHand,
+  type CalpokerHandState,
+} from './serialize';
 import { formatCalpokerMojos } from './formatting';
 
 export {
@@ -46,6 +51,7 @@ export function validateCalpokerHandProposal(handProposal: HandProposal): boolea
 
 const registration: GamePackageRegistration<
   CalpokerHandState,
+  CalpokerHand,
   { amount: bigint },
   CalpokerFactoryParameters
 > = {
@@ -53,6 +59,7 @@ const registration: GamePackageRegistration<
   displayName: 'California Poker',
   canRemountFinished: true,
   createHand: createCalpokerHand,
+  restoreHand: restoreCalpokerHand,
   proposalParameters: calpokerProposalParameters,
   describeHandProposal: (handProposal) =>
     `Stake ${formatCalpokerMojos(handProposal.myContribution)} each`,

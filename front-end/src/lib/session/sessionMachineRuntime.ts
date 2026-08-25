@@ -11,8 +11,12 @@ import type {
 } from './sessionMachineTypes';
 import type { RegisteredGameType } from './types';
 import type { coinIdHex } from './gameSessionEvents';
-import { createRegisteredGameHand, packageFor, snapshotRegisteredGameHand } from '../gameRegistry';
-import type { GameHandInitialization, RegisteredGameHand } from '@games/host';
+import {
+  packageFor,
+  restoreRegisteredGameHandState,
+  snapshotRegisteredGameHand,
+  type RegisteredGameHand,
+} from '../gameRegistry';
 
 export interface SessionMachineRuntimeDependencies {
   controller: SessionController;
@@ -30,7 +34,6 @@ export class SessionMachineRuntime {
   private render: (state: SessionMachineState) => void = () => {};
   private readonly interpreter: SessionMachineInterpreter;
   private readonly controller: SessionController;
-  private readonly iStarted: boolean;
   private activeHand: RegisteredGameHand | null = null;
   private activeHandGameType: RegisteredGameType | null = null;
   private readonly activeHandContext: ActiveGameHandContext = {
@@ -44,9 +47,7 @@ export class SessionMachineRuntime {
       return this.snapshotActiveHand();
     },
     restore: (checkpoint) => {
-      if (checkpoint !== null && this.activeHand !== null) {
-        this.activeHand.installState(checkpoint.state);
-      }
+      this.restoreHandFrom(checkpoint);
     },
     clear: () => {
       this.activeHand = null;
@@ -59,7 +60,6 @@ export class SessionMachineRuntime {
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
     this.state = initial;
     this.controller = dependencies.controller;
-    this.iStarted = dependencies.iStarted;
     this.restoreActiveHand(initial);
     this.interpreter = new SessionMachineInterpreter({
       controller: dependencies.controller,
@@ -121,54 +121,68 @@ export class SessionMachineRuntime {
     return this.activeHand;
   }
 
-  replaceHandState(gameType: RegisteredGameType, id: string, state: unknown): boolean {
+  commitHandStateChanged(gameType: RegisteredGameType): void {
     const game = this.state.model.game;
-    if (game.activeGameType !== gameType || !game.currentHandIds.includes(id)) return false;
-    this.dispatch({ type: 'replace-hand-state', gameType, id, state });
-    return true;
+    if (game.activeGameType !== gameType) {
+      throw new Error(
+        `Internal hand state gameType ${gameType} does not match active ${game.activeGameType}`,
+      );
+    }
+    const state = this.requireActiveHand().getState();
+    this.dispatch({ type: 'hand-state-changed', gameType, state });
   }
 
   commitLocalGameAction(request: LocalGameActionRequest): void {
-    const game = this.state.model.game;
-    if (game.activeGameType !== request.gameType) {
-      throw new Error(
-        `Internal local action gameType ${request.gameType} does not match active ${game.activeGameType}`,
-      );
+    const checkpoint = this.state.model.game.handState;
+    try {
+      const game = this.state.model.game;
+      if (game.activeGameType !== request.gameType) {
+        throw new Error(
+          `Internal local action gameType ${request.gameType} does not match active ${game.activeGameType}`,
+        );
+      }
+      if (!game.currentHandIds.includes(request.id)) {
+        throw new Error(`Internal local action game id ${request.id} is not a current hand member`);
+      }
+      if (!game.activeIds.includes(request.id)) {
+        throw new Error(`Internal local action game id ${request.id} is not active`);
+      }
+      if (game.pendingCandidates[request.id]) {
+        throw new Error(`Internal local action game ${request.id} already has a pending candidate`);
+      }
+      const instance = game.instances[request.id];
+      if (!instance) {
+        throw new Error(`Internal local action game id ${request.id} has no game instance`);
+      }
+      if (
+        instance.presentation !== 'off-chain-my-turn' &&
+        instance.presentation !== 'on-chain-my-turn'
+      ) {
+        throw new Error(`Internal local action for game ${request.id} attempted outside our turn`);
+      }
+      const action =
+        request.command.type === 'make-move'
+          ? 'make_move'
+          : request.command.type === 'accept-settlement'
+            ? 'accept_settlement'
+            : 'cheat';
+      const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
+      if (disposition === 'rejected') {
+        this.restoreAndRender(checkpoint);
+        return;
+      }
+      const candidate = this.snapshotActiveHand();
+      this.dispatch({
+        type: disposition === 'applied' ? 'local-game-action-applied' : 'local-game-action-staged',
+        gameType: request.gameType,
+        id: request.id,
+        action,
+        state: candidate.state,
+      });
+    } catch (error) {
+      this.restoreAndRender(checkpoint);
+      throw error;
     }
-    if (!game.currentHandIds.includes(request.id)) {
-      throw new Error(`Internal local action game id ${request.id} is not a current hand member`);
-    }
-    if (!game.activeIds.includes(request.id)) {
-      throw new Error(`Internal local action game id ${request.id} is not active`);
-    }
-    if (game.pendingCandidates[request.id]) {
-      throw new Error(`Internal local action game ${request.id} already has a pending candidate`);
-    }
-    const instance = game.instances[request.id];
-    if (!instance) {
-      throw new Error(`Internal local action game id ${request.id} has no game instance`);
-    }
-    if (
-      instance.presentation !== 'off-chain-my-turn' &&
-      instance.presentation !== 'on-chain-my-turn'
-    ) {
-      throw new Error(`Internal local action for game ${request.id} attempted outside our turn`);
-    }
-    const action =
-      request.command.type === 'make-move'
-        ? 'make_move'
-        : request.command.type === 'accept-settlement'
-          ? 'accept_settlement'
-          : 'cheat';
-    const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
-    if (disposition === 'rejected') return;
-    this.dispatch({
-      type: disposition === 'applied' ? 'local-game-action-applied' : 'local-game-action-staged',
-      gameType: request.gameType,
-      id: request.id,
-      action,
-      state: request.state,
-    });
   }
 
   persist(): Promise<void> {
@@ -187,21 +201,11 @@ export class SessionMachineRuntime {
 
   private restoreActiveHand(state: SessionMachineState): void {
     const game = state.model.game;
-    const handProposal = state.model.betweenHand.lastHandProposal;
-    const id = game.currentHandIds[0];
-    if (game.handState === null || handProposal === null || id === undefined) return;
-    const init: GameHandInitialization = {
-      gameIds: game.currentHandIds,
-      iStarted: this.iStarted,
-      origin: game.currentHandOrigin ?? 'local',
-      handProposal,
-    };
-    this.activeHand = createRegisteredGameHand(game.activeGameType, init, game.handState);
     const pending = game.currentHandIds
       .map((gameId) => game.pendingCandidates[gameId])
       .find((candidate) => candidate !== undefined);
-    if (pending) this.activeHand.installState(pending.state);
-    this.activeHandGameType = game.activeGameType;
+    const saved = pending ? { gameType: pending.gameType, state: pending.state } : game.handState;
+    this.restoreHandFrom(saved);
   }
 
   private requireActiveHand(): RegisteredGameHand {
@@ -217,13 +221,28 @@ export class SessionMachineRuntime {
 
   private prepareGameEvent(event: SessionMachineEvent): SessionMachineEvent {
     switch (event.type) {
-      case 'replace-hand-state':
+      case 'hand-state-changed':
       case 'local-game-action-staged':
       case 'local-game-action-applied':
-        this.requireActiveHand().installState(event.state);
         return { ...event, handState: this.snapshotActiveHand() } as SessionMachineEvent;
       default:
         return event;
     }
+  }
+
+  private restoreHandFrom(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {
+    if (checkpoint === null) {
+      this.activeHand = null;
+      this.activeHandGameType = null;
+      return;
+    }
+    const gameType = checkpoint.gameType as RegisteredGameType;
+    this.activeHand = restoreRegisteredGameHandState(gameType, checkpoint);
+    this.activeHandGameType = gameType;
+  }
+
+  private restoreAndRender(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {
+    this.restoreHandFrom(checkpoint);
+    this.render({ ...this.state });
   }
 }

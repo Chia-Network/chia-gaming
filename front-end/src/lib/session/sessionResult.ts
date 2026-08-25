@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import { terminalGameHandSource, type GameHandOrigin, type GameHandSource } from '@games/host';
+import type { GameHandOrigin, GameHandSource } from '@games/host';
+import { terminalGameHandSource } from '../gameHandSource';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
 import type { ComposeDraftValue } from '@games/host';
@@ -158,9 +159,7 @@ export function projectTerminalSessionResult(
     iProposedHand: selectIProposedHand(model),
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
-    handSource: terminalGameHandSource(
-      live.handSource.hand ?? restoreRegisteredGameHand(model, iStarted),
-    ),
+    handSource: terminalGameHandSource(live.handSource.hand ?? restoreRegisteredGameHand(model)),
     appendGameLog: NOOP,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: selectIncomingProposalGroup(model),

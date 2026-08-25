@@ -12,10 +12,10 @@ import {
   spacePokerTurnLine,
 } from './statusPresentation';
 import { SpHandler, type SpacepokerDisplayMode, useSpacepokerHand } from './useSpacepokerHand';
-import type { SpacepokerHandState } from './serialize';
+import type { SpacepokerHand, SpacepokerHandState } from './serialize';
 
 export interface SpacePokerProps {
-  handSource: GameHandSource<SpacepokerHandState>;
+  handSource: GameHandSource<SpacepokerHandState, SpacepokerHand>;
   onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;

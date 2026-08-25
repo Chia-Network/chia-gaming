@@ -3,6 +3,7 @@ import { gameSliceReducer, type GameSlice } from './gameSlice';
 import {
   createRegisteredGameHand,
   isCatalogGameType,
+  restoreRegisteredGameHandState,
   snapshotRegisteredGameHand,
   selectRegisteredGameOutcome,
 } from '../gameRegistry';
@@ -25,7 +26,7 @@ export type DurableGameEvent = Extract<
   | { type: 'notification-move-rejected' }
   | { type: 'notification-insufficient-balance' }
   | { type: 'notification-abandoned' }
-  | { type: 'replace-hand-state' }
+  | { type: 'hand-state-changed' }
   | { type: 'local-game-action-staged' }
   | { type: 'local-game-action-applied' }
   | { type: 'local-action-applied' }
@@ -107,11 +108,11 @@ function reduceWithTransientHand(
   update: GameUpdate,
 ): PersistedGameState {
   const gameType = state.model.game.activeGameType;
-  const hand = createRegisteredGameHand(
-    gameType,
-    fallbackHandInitialization(state),
-    state.model.game.handState,
-  );
+  const saved = state.model.game.handState;
+  const hand =
+    saved === null
+      ? createRegisteredGameHand(gameType, fallbackHandInitialization(state))
+      : restoreRegisteredGameHandState(gameType, saved);
   hand.receive(update);
   return snapshotRegisteredGameHand(gameType, hand);
 }
@@ -378,14 +379,11 @@ export function reduceDurableGameEvent(
         effects: [{ type: 'clear-derived-game-presentation' }],
       };
     }
-    case 'replace-hand-state': {
+    case 'hand-state-changed': {
       if (event.gameType !== state.model.game.activeGameType) {
         throw new Error(
           `Internal hand state gameType ${event.gameType} does not match active ${state.model.game.activeGameType}`,
         );
-      }
-      if (!state.model.game.currentHandIds.includes(event.id)) {
-        throw new Error(`Internal hand state game id ${event.id} is not a current hand member`);
       }
       const handState = event.handState ?? { gameType: event.gameType, state: event.state };
       return {
@@ -393,7 +391,7 @@ export function reduceDurableGameEvent(
           ...state,
           model: { ...state.model, game: { ...state.model.game, handState } },
         },
-        effects: [],
+        effects: [{ type: 'persist-session' }],
       };
     }
     case 'local-game-action-staged': {

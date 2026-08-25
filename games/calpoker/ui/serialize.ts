@@ -1,6 +1,5 @@
 import { Program } from 'clvm-lib';
 import {
-  createGameHand,
   isSettlementOutcome,
   type GameHand,
   type GameHandInitialization,
@@ -38,6 +37,10 @@ export interface CalpokerHandState {
   cardSelections?: bigint[];
   displaySnapshot?: CalpokerDisplaySnapshot;
   outcome?: CalpokerOutcomeShape<bigint>;
+}
+
+export interface CalpokerHand extends GameHand<CalpokerHandState> {
+  update(reducer: (current: CalpokerHandState) => CalpokerHandState): void;
 }
 
 /** Test/helper envelope only; persistence treats the state as opaque. */
@@ -283,9 +286,26 @@ export function reduceCalpokerHandState(
   return current;
 }
 
-export function createCalpokerHand(init: GameHandInitialization): GameHand<CalpokerHandState> {
+function calpokerHandFromState(initial: CalpokerHandState): CalpokerHand {
+  let state = initial;
+  return {
+    getState: () => state,
+    receive: (update) => {
+      state = reduceCalpokerHandState(state, update);
+    },
+    update: (reducer) => {
+      state = reducer(state);
+    },
+  };
+}
+
+export function createCalpokerHand(init: GameHandInitialization): CalpokerHand {
   if (init.gameIds.length !== 1 || init.handProposal.gameType !== 'calpoker') {
     throw new Error('California Poker requires one game and California Poker proposal terms');
   }
-  return createGameHand(initialState(init), reduceCalpokerHandState);
+  return calpokerHandFromState(initialState(init));
+}
+
+export function restoreCalpokerHand(savedState: CalpokerHandState): CalpokerHand {
+  return calpokerHandFromState(savedState);
 }

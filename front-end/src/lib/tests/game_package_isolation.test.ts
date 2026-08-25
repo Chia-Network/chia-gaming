@@ -19,6 +19,8 @@ describe('game package isolation', () => {
       'utf8',
     );
     expect(generated).toContain('defineGamePackage(');
+    expect(generated).toContain("from '../lib/gamePackage'");
+    expect(generated).not.toContain("from '../../../games/host'");
     expect(generated).toContain('GENERATED_GAME_PACKAGES_BY_KEY');
     expect(generated).not.toContain('Object.assign');
     expect(generated).not.toContain('as unknown as GamePackage');
@@ -35,7 +37,13 @@ describe('game package isolation', () => {
       for (const file of walk(uiRoot)) {
         if (!/\.(ts|tsx)$/.test(file)) continue;
         const text = fs.readFileSync(file, 'utf8');
-        if (/['"]@\//.test(text) || /from\s+['"]\.\.\/\.\.\/front-end/.test(text)) {
+        if (
+          /['"]@\//.test(text) ||
+          /from\s+['"][^'"]*front-end\//.test(text) ||
+          /from\s+['"][^'"]*(?:gamePackage|gameRegistry|gameMountRegistry|gameHandSource)['"]/.test(
+            text,
+          )
+        ) {
           offenders.push(path.relative(GAMES_ROOT, file));
         }
       }

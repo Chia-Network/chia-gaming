@@ -24,12 +24,13 @@ import Krunk from './Krunk';
 import {
   initialKrunkGameState,
   krunkStateCodec,
-  type KrunkHandState,
+  restoreKrunkHand,
+  type KrunkHand,
 } from './serialize';
-import { createGameHand, type GameHand, type LiveGamePort } from '../../host';
+import type { LiveGamePort } from '../../host';
 
-function testHand(persisted: ReturnType<typeof krunkStateCodec.encode>): GameHand<KrunkHandState> {
-  return createGameHand(krunkStateCodec.decode(persisted)!, (current) => current);
+function testHand(persisted: ReturnType<typeof krunkStateCodec.encode>): KrunkHand {
+  return restoreKrunkHand(krunkStateCodec.decode(persisted)!);
 }
 
 describe('Krunk terms', () => {
@@ -87,14 +88,6 @@ describe('Krunk automatic moves', () => {
         type: 'make-move',
         gameId: 'picker',
         readable: null,
-        state: expect.objectContaining({
-          games: expect.objectContaining({
-            picker: expect.objectContaining({
-              handler: KrunkHandler.AliceWaiting,
-              myTurn: false,
-            }),
-          }),
-        }),
       }),
     );
   });
@@ -294,14 +287,6 @@ describe('Krunk draft continuity', () => {
       expect.objectContaining({
         type: 'make-move',
         gameId: 'picker',
-        state: expect.objectContaining({
-          games: expect.objectContaining({
-            picker: expect.objectContaining({
-              handler: KrunkHandler.AliceWaiting,
-              secretWord: 'CRANE',
-            }),
-          }),
-        }),
       }),
     );
     act(() => renderer!.unmount());
@@ -360,14 +345,6 @@ describe('Krunk draft continuity', () => {
       expect.objectContaining({
         type: 'make-move',
         gameId: 'picker',
-        state: expect.objectContaining({
-          games: expect.objectContaining({
-            picker: expect.objectContaining({
-              handler: KrunkHandler.AliceWaiting,
-              secretWord: 'CRANE',
-            }),
-          }),
-        }),
       }),
     );
     act(() => renderer!.unmount());

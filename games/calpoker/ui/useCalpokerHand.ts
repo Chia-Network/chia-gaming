@@ -3,7 +3,11 @@ import { Program } from 'clvm-lib';
 import type { CalpokerOutcomeShape } from './outcome';
 import type { GameHandOrigin, GameHandSource, SettlementOutcome } from '../../host';
 import { gameHandState, requireLiveGameHandSource } from '../../host';
-import { type CalpokerDisplaySnapshot, type CalpokerHandState } from './serialize';
+import {
+  type CalpokerDisplaySnapshot,
+  type CalpokerHand,
+  type CalpokerHandState,
+} from './serialize';
 
 export type { CalpokerDisplaySnapshot, CalpokerHandState } from './serialize';
 
@@ -53,7 +57,7 @@ export function calpokerResponderFinishesAtReveal(iStarted: boolean): boolean {
 }
 
 export function useCalpokerHand(
-  handSource: GameHandSource<CalpokerHandState>,
+  handSource: GameHandSource<CalpokerHandState, CalpokerHand>,
   handOrigin: GameHandOrigin = 'fresh',
 ): UseCalpokerHandResult {
   const interactive = handSource.interactionMode === 'live';
@@ -76,9 +80,12 @@ export function useCalpokerHand(
   const commitState = useCallback(
     (update: (current: CalpokerHandState) => CalpokerHandState): void => {
       const controller = requireLiveGameHandSource(handSourceRef.current);
-      controller.dispatch({ type: 'update-local-state', state: update(currentState()) });
+      const hand = handSourceRef.current.hand;
+      if (hand === null) throw new Error('California Poker hand is unavailable');
+      hand.update(update);
+      controller.dispatch({ type: 'state-changed' });
     },
-    [currentState],
+    [],
   );
 
   const commitLocalAction = useCallback(
@@ -87,19 +94,21 @@ export function useCalpokerHand(
       command: LocalGameCommand,
     ): void => {
       const controller = requireLiveGameHandSource(handSourceRef.current);
-      const next = update(currentState());
+      const hand = handSourceRef.current.hand;
+      if (hand === null) throw new Error('California Poker hand is unavailable');
+      hand.update(update);
+      const next = hand.getState();
       controller.dispatch(
         command.type === 'make-move'
           ? {
               type: 'make-move',
               gameId: next.gameId,
               readable: command.readable,
-              state: next,
             }
-          : { type: 'accept-settlement', gameId: next.gameId, state: next },
+          : { type: 'accept-settlement', gameId: next.gameId },
       );
     },
-    [currentState],
+    [],
   );
 
   const submitMove1 = useCallback(() => {

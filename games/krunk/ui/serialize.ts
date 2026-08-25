@@ -1,6 +1,5 @@
 import { Program } from 'clvm-lib';
 import {
-  createGameHand,
   isSettlementOutcome,
   type GameHand,
   type GameHandInitialization,
@@ -42,6 +41,10 @@ export interface KrunkHandState {
   gameIds: readonly string[];
   perPlayerStake: bigint;
   games: Record<string, KrunkGameState>;
+}
+
+export interface KrunkHand extends GameHand<KrunkHandState> {
+  updateGame(gameId: string, reducer: (current: KrunkGameState) => KrunkGameState): void;
 }
 
 /** Test/helper envelope only; persistence treats the state as opaque. */
@@ -326,7 +329,21 @@ export function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate)
   return { ...current, games: { ...current.games, [event.gameId]: next } };
 }
 
-export function createKrunkHand(init: GameHandInitialization): GameHand<KrunkHandState> {
+function krunkHandFromState(initial: KrunkHandState): KrunkHand {
+  let state = initial;
+  return {
+    getState: () => state,
+    receive: (update) => {
+      state = reduceKrunkHandState(state, update);
+    },
+    updateGame: (gameId, reducer) => {
+      const game = krunkGameStateFromHand(state, gameId);
+      state = { ...state, games: { ...state.games, [gameId]: reducer(game) } };
+    },
+  };
+}
+
+export function createKrunkHand(init: GameHandInitialization): KrunkHand {
   if (init.gameIds.length !== 2 || init.handProposal.gameType !== 'krunk') {
     throw new Error('Krunk requires two games and Krunk proposal terms');
   }
@@ -338,8 +355,13 @@ export function createKrunkHand(init: GameHandInitialization): GameHand<KrunkHan
       return [id, initialKrunkGameState(role)];
     }),
   );
-  return createGameHand(
-    { gameIds: [...init.gameIds], perPlayerStake: init.handProposal.myContribution, games },
-    reduceKrunkHandState,
-  );
+  return krunkHandFromState({
+    gameIds: [...init.gameIds],
+    perPlayerStake: init.handProposal.myContribution,
+    games,
+  });
+}
+
+export function restoreKrunkHand(savedState: KrunkHandState): KrunkHand {
+  return krunkHandFromState(savedState);
 }

@@ -125,7 +125,7 @@ export function reduceSessionMachine(
     case 'notification-move-rejected':
     case 'notification-insufficient-balance':
     case 'notification-abandoned':
-    case 'replace-hand-state':
+    case 'hand-state-changed':
     case 'local-game-action-staged':
     case 'local-game-action-applied':
     case 'local-action-applied':

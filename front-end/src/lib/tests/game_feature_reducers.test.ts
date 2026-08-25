@@ -11,14 +11,16 @@ import {
   initialKrunkGameState,
   KrunkHandler,
   krunkStateCodec,
+  restoreKrunkHand,
   type KrunkHandState,
 } from '@games/krunk/ui/serialize';
 import {
   createSpacepokerHand,
+  restoreSpacepokerHand,
   spacepokerStateCodec,
   type SpacepokerHandState,
 } from '@games/spacepoker/ui/serialize';
-import { createCalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
+import { restoreCalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
 import type { GameHandInitialization, GameUpdate } from '@games/host';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
@@ -65,24 +67,13 @@ function advanceSpacepokerHand(
   state: SpacepokerHandState,
   update: GameUpdate,
 ): SpacepokerHandState {
-  const hand = createSpacepokerHand(spacepokerInit());
-  hand.installState(state);
+  const hand = restoreSpacepokerHand(state);
   hand.receive(update);
   return hand.getState();
 }
 
 function advanceCalpokerHand(state: CalpokerHandState, update: GameUpdate): CalpokerHandState {
-  const hand = createCalpokerHand({
-    ...spacepokerInit(),
-    gameIds: ['calpoker-1'],
-    handProposal: {
-      gameType: 'calpoker',
-      myContribution: 100n,
-      theirContribution: 100n,
-      gameTimeout: 15n,
-    },
-  });
-  hand.installState(state);
+  const hand = restoreCalpokerHand(state);
   hand.receive(update);
   return hand.getState();
 }
@@ -92,18 +83,7 @@ function freshKrunkHand(init: GameHandInitialization): KrunkHandState {
 }
 
 function advanceKrunkHand(state: KrunkHandState, update: GameUpdate): KrunkHandState {
-  const hand = createKrunkHand({
-    gameIds: state.gameIds,
-    iStarted: false,
-    origin: 'local',
-    handProposal: {
-      gameType: 'krunk',
-      myContribution: 100n,
-      theirContribution: 100n,
-      gameTimeout: 15n,
-    },
-  });
-  hand.installState(state);
+  const hand = restoreKrunkHand(state);
   hand.receive(update);
   return hand.getState();
 }
@@ -773,7 +753,7 @@ describe('canonical feature gameplay reducers', () => {
     expect(Object.keys(durable!.games)).toEqual(['krunk-1', 'krunk-2']);
   });
 
-  it('creates a replacement Krunk hand and preserves installed local state', () => {
+  it('restores a replacement Krunk hand directly from complete local state', () => {
     const init: GameHandInitialization = {
       gameIds: ['krunk-3', 'krunk-4'],
       iStarted: true,
@@ -786,8 +766,8 @@ describe('canonical feature gameplay reducers', () => {
       },
     };
 
-    const hand = createKrunkHand(init);
-    let state = hand.getState();
+    const fresh = createKrunkHand(init);
+    let state = fresh.getState();
     expect(Object.keys(state!.games)).toEqual(['krunk-3', 'krunk-4']);
 
     const progressed = {
@@ -795,7 +775,10 @@ describe('canonical feature gameplay reducers', () => {
       handler: KrunkHandler.AliceWaiting,
       secretWord: 'SLATE',
     };
-    hand.installState({ games: { ...state.games, 'krunk-3': progressed } });
+    const hand = restoreKrunkHand({
+      ...state,
+      games: { ...state.games, 'krunk-3': progressed },
+    });
     state = hand.getState();
 
     expect(Object.keys(state!.games)).toEqual(['krunk-3', 'krunk-4']);

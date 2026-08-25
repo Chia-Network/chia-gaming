@@ -520,12 +520,14 @@ The pure root reducer returns the next authority and ordered effects.
 `SessionMachineRuntime` publishes that authority, runs commands (including
 `persist-session`), and only then schedules React. Games dispatch a
 `GameIntent`. A command result distinguishes rejection, queueing, and actual
-application. Before installing a complete candidate in the live `GameHand`, the
-runtime retains canonical `handState` as a generic rollback checkpoint. A
-queued candidate and its checkpoint are both persisted. The host promotes the
-candidate when Rust emits host-only `LocalActionApplied`, or restores the
-checkpoint on `MoveRejected` or `ActionFailed`. Rejection is not sent to the
-game.
+application. A game mutates its concrete hand before requesting an action; the
+public intent carries no state. After the Rust-first call succeeds, the runtime
+rereads `getState()` as the complete candidate while retaining canonical
+`handState` as the rollback checkpoint. A queued candidate and its checkpoint
+are both persisted. The host promotes the candidate when Rust emits host-only
+`LocalActionApplied`, or reconstructs the hand from the checkpoint on
+synchronous rejection, `MoveRejected`, `ActionFailed`, or cleanup. Rejection is
+not sent to the game.
 `assembleSessionSave` reads
 game-owned canonical `handState` and opaque complete pending candidates
 from current machine authority and combines them with
@@ -554,12 +556,14 @@ instance's initial turn is constructed by its package from the validated
 accepted proposal convention, proposal origin, and local session role.
 `ProposalAccepted.our_turn` remains host protocol presentation and an invariant,
 not a second game initialization field. A game hook computes a complete
-candidate hand state and submits it through
-`commitLocalGameAction`. The host either applies it immediately or stores one
-pending candidate per game ID until Rust reports application. Pending complete
-states are installed in the live hand, while canonical `handState` remains the
-rollback checkpoint; the pending ID is non-actionable until application or
-rejection. Game hooks never write
+candidate by mutating its concrete hand, then submits a state-free protocol
+request. `commitLocalGameAction` rereads `getState()` after Rust accepts the
+request. The host either applies that snapshot immediately or stores one pending
+candidate per game ID until Rust reports application. The live hand already
+contains the candidate, while canonical `handState` remains the rollback
+checkpoint; browser recovery restores directly from the pending state, and
+rejection reconstructs the hand from the checkpoint. The pending ID is
+non-actionable until application or rejection. Game hooks never write
 controller persistence state, interpret protocol replay, or call persistence
 directly.
 `GameSettled` retires only its own game ID from the slice's active set.
@@ -1423,7 +1427,9 @@ across unmounts and reloads.
 
 The active game UI is rendered inside `GameSession` from the selected
 `GamePackage`. `front-end/src/lib/gameRegistry.ts` looks packages up by catalog
-key only. `front-end/src/lib/gameMountRegistry.tsx` creates one
+key only. Frontend-only package erasure and React assembly live in
+`front-end/src/lib/gamePackage.tsx`; they are not part of `games/host`.
+`front-end/src/lib/gameMountRegistry.tsx` creates one
 boolean-discriminated mount view for active, in-session terminal, and
 cold-restored hands. The first generated member's initial validation
 puzzle hash is the protocol id at the WASM propose/notify boundary
@@ -1441,12 +1447,14 @@ app separately owns network-aware formatting and terminal notification policy.
 Only Space Poker currently exposes the optional shared `cheat` intent, with its
 `cheat^` listener implemented inside that package.
 
-Each hook decodes the current machine-owned hand state on every render. It
-submits only `GameIntent` values through the shared Rust-first local-action
-boundary. Automatic moves use the same path and have no separate retry journal.
-Restoration installs the host's canonical state or persisted pending candidate
-before mounting the package; the package's ordinary state-driven effect fires
-only when that restored handler/turn still requires the automatic action.
+Each hook reads its concrete game-owned hand on every render. Local actions
+mutate that package-private hand first, then submit a no-state `GameIntent`
+through the shared Rust-first boundary; local-only durable changes emit
+`state-changed`. Automatic moves use the same path and have no separate retry
+journal. Browser restoration calls the package's `restoreHand` directly with a
+persisted pending candidate when present, otherwise canonical saved state. The
+package's ordinary state-driven effect fires only when that restored
+handler/turn still requires the automatic action.
 
 Space Poker keeps its hand history and terminal presentation inside
 `useSpacepokerHand`. A betting-round fold, a showdown no-reveal concession, and
