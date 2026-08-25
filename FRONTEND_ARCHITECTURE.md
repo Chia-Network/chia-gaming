@@ -1159,10 +1159,15 @@ and poll interval; the rest of the flow is generic.
    Cloud Wallet (the latter is `skipQr` yet still collects OAuth config first).
 4. If `setup.skipQr` is set with no fields (a restored WC/Cloud session), Shell
    awaits `setup.finalize()` without showing a QR panel or modal.
-5. If `setup.fields` is absent and QR is required (WalletConnect pairing), Shell
+5. If `setup.skipQr` is set *with* fields (Cloud Wallet, no stored auth), Shell
+   shows `ConnectionSetupModal` and does **not** call `finalize()` from silent
+   `handleConnect` or `performResume`. Auto-finalize would open an OAuth popup
+   or fail when no client id is configured; the user must submit the form (or
+   use an explicit Reconnect).
+6. If `setup.fields` is absent and QR is required (WalletConnect pairing), Shell
    renders the QR code and awaits `setup.finalize()`, which resolves when the
    wallet scans.
-6. After finalize resolves, `completeConnection()` activates polling and
+7. After finalize resolves, `completeConnection()` activates polling and
    switches to the Hub tab. Connect/finalize failures are surfaced on the Choose
    Connection screen and inside the setup modal via `connectError`, rather than
    silently resetting the chooser.
@@ -1174,8 +1179,12 @@ Shell's `onConnectionChange` callback handles UI state
 transitions (connected ↔ disconnected) generically. On page load, if the
 user chooses to resume a pre-game save (one with `blockchainType` but no
 `serializedGameSession`), Shell calls `handleConnect(bcType, true)` (silent mode)
-to re-establish the connection automatically — no modals or QR codes are shown,
-consistent with the principle that a reload should be invisible to the user.
+to re-establish the connection automatically — no QR codes are shown, and the
+simulator balance modal is skipped, consistent with the principle that a reload
+should be invisible to the user. Cloud Wallet without stored auth is the
+exception: `beginConnect` returns `skipQr` plus `fields`, so silent reconnect
+and `performResume` keep `ConnectionSetupModal` (with a wallet alert) rather
+than calling `finalize()` with no values.
 
 **Session persistence:** `blockchainType` is written via
 `saveSession({ blockchainType })` as soon as the wallet connection completes,
