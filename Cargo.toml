@@ -49,7 +49,9 @@ axum = { version = "=0.8.9", features = ["ws"], optional = true }
 
 [build-dependencies]
 chialisp = "0.5.0"
+clvm-utils = "=0.38.2"
 clvmr = { version = "=0.17.7" }
+hex = "=0.4.3"
 serde_json = "=1.0.145"
 toml = "=0.8.23"
 

@@ -140,10 +140,12 @@ Run commands from the repo root unless noted.
 
 This is the sole entry point for compiling `.clsp` sources. The Chialisp
 compiler emits `.hex`; the build then decodes each output into a
-`.clvm.bin` runtime artifact. It content-hashes the sources, compiler inputs,
-and generated outputs, rebuilding only when an input changes or an output is
-missing or modified. Ordinary Cargo commands do not compile Chialisp. Only the
-binary artifacts are loaded by the WASM module over HTTP.
+`.clvm.bin` artifact. For each game it also curries any factory arguments,
+runs the build-only probe, records the protocol ID, and emits one prepared
+runtime factory. It content-hashes the sources, compiler inputs, and generated
+outputs, rebuilding only when an input changes or an output is missing or
+modified. Ordinary Cargo commands do not compile Chialisp. Only prepared
+factories and core runtime programs are loaded by the WASM module over HTTP.
 
 ### 2. WASM (browser target)
 

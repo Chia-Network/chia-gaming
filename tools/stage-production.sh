@@ -50,9 +50,7 @@ while IFS= read -r -d '' f; do
        -o -name '*.svg' \) -print0)
 
 echo "=== Sanity-checking Krunk files ==="
-for f in \
-    "games/krunk/clsp/factory_krunk_factory.clvm.bin" \
-    "games/krunk/clsp/krunk_signed_dict_tree.clvm.bin"
+for f in "games/krunk/clsp/factory_prepared.clvm.bin"
 do
     if [ ! -f "$PLAYER_STAGE/$f" ]; then
         echo "ERROR: missing $f in player staging"

@@ -23,7 +23,7 @@ mod gaming_wasm {
     use chia_gaming::common::types::{
         convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend,
         CoinString, CoinsetCoin, CoinsetSpendBundle,
-        CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, PublicKey,
+        CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, ProgramRef, PublicKey,
         Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
@@ -40,7 +40,6 @@ mod gaming_wasm {
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::GameProposal;
-    use chia_gaming::session_phases::types::GameFactory;
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -139,7 +138,7 @@ mod gaming_wasm {
     }
 
     struct GameConfigPartial {
-        game_types: BTreeMap<GameType, GameFactory>,
+        game_types: BTreeMap<GameType, ProgramRef>,
         have_potato: bool,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
@@ -759,7 +758,7 @@ mod gaming_wasm {
     }
 
     /// Bootstrap metadata: catalog `key` plus first-member validation puzzle hash `id`.
-    /// Registration discovers `id` by running the factory with representative parameters.
+    /// Package build discovers `id` by running the factory with representative parameters.
     /// Peer/WASM wire uses `id` (the hash). The JS session model and saves use catalog keys.
     #[wasm_bindgen]
     pub fn registered_game_packages() -> Result<JsValue, JsValue> {
@@ -773,20 +772,6 @@ mod gaming_wasm {
             })
             .collect();
         serde_wasm_bindgen::to_value(&list).map_err(|e| JsValue::from_str(&format!("{e}")))
-    }
-
-    /// Probe one production factory into the process-wide cache. Idempotent.
-    /// The host yields between calls so the browser event loop can stay responsive.
-    #[wasm_bindgen]
-    pub fn warm_game_package(key: String) -> Result<JsValue, JsValue> {
-        let mut allocator = AllocEncoder::new();
-        let id = game_collection::warm_production_package(&mut allocator, &key)
-            .map_err(|e| JsValue::from_str(&e))?;
-        serde_wasm_bindgen::to_value(&JsPackageIdentity {
-            key,
-            id: id.to_string(),
-        })
-        .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
     #[wasm_bindgen]

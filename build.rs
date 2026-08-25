@@ -3,6 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clvmr::allocator::Allocator;
+use clvmr::chia_dialect::ChiaDialect;
+use clvmr::serde::{node_from_bytes, node_to_bytes};
+use clvmr::{run_program, NodePtr, SExp};
 use serde_json::Value as JsonValue;
 use toml::{Table, Value};
 
@@ -96,6 +99,7 @@ fn validate_package(key: &str, production: bool) {
     let rust_mod = root.join("rust/mod.rs");
     let rust_tests = root.join("rust/tests/mod.rs");
     let factory = root.join("clsp/factory.clsp");
+    let factory_probe = root.join("clsp/factory_probe.clsp");
     if !rust_mod.is_file() {
         panic!("game package {key} missing rust/mod.rs");
     }
@@ -106,6 +110,9 @@ fn validate_package(key: &str, production: bool) {
         panic!("game package {key} missing clsp/factory.clsp");
     }
     if production {
+        if !factory_probe.is_file() {
+            panic!("production game package {key} missing clsp/factory_probe.clsp");
+        }
         for rel in [
             "ui/handProposal.ts",
             "ui/handProposalForm.tsx",
@@ -122,6 +129,10 @@ fn package_clsp_entrypoints(key: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let factory = format!("games/{key}/clsp/factory.clsp");
     out.push((format!("{key}-factory"), factory));
+    let factory_probe = format!("games/{key}/clsp/factory_probe.clsp");
+    if Path::new(&factory_probe).is_file() {
+        out.push((format!("{key}-factory-probe"), factory_probe));
+    }
     let onchain = PathBuf::from(format!("games/{key}/clsp/onchain"));
     if onchain.is_dir() {
         let mut files: Vec<PathBuf> = fs::read_dir(&onchain)
@@ -182,6 +193,193 @@ fn compile_chialisp(registry: &GameRegistry) -> Result<(), CompileError> {
     Ok(())
 }
 
+fn proper_list(allocator: &Allocator, mut node: NodePtr) -> Option<Vec<NodePtr>> {
+    let mut items = Vec::new();
+    loop {
+        match allocator.sexp(node) {
+            SExp::Pair(first, rest) => {
+                items.push(first);
+                node = rest;
+            }
+            SExp::Atom if allocator.atom(node).is_empty() => return Some(items),
+            SExp::Atom => return None,
+        }
+    }
+}
+
+fn list_from_nodes(allocator: &mut Allocator, nodes: &[NodePtr]) -> Result<NodePtr, String> {
+    let mut tail = NodePtr::NIL;
+    for node in nodes.iter().rev() {
+        tail = allocator
+            .new_pair(*node, tail)
+            .map_err(|e| format!("building list: {e:?}"))?;
+    }
+    Ok(tail)
+}
+
+fn curry_program(
+    allocator: &mut Allocator,
+    program: NodePtr,
+    args: &[NodePtr],
+) -> Result<NodePtr, String> {
+    let quote = allocator.one();
+    let apply = allocator
+        .new_atom(&[2])
+        .map_err(|e| format!("allocating apply atom: {e:?}"))?;
+    let cons = allocator
+        .new_atom(&[4])
+        .map_err(|e| format!("allocating cons atom: {e:?}"))?;
+    let mut curried_args = quote;
+    for arg in args.iter().rev() {
+        let quoted_arg = allocator
+            .new_pair(quote, *arg)
+            .map_err(|e| format!("quoting curry argument: {e:?}"))?;
+        curried_args = list_from_nodes(allocator, &[cons, quoted_arg, curried_args])?;
+    }
+    let quoted_program = allocator
+        .new_pair(quote, program)
+        .map_err(|e| format!("quoting factory: {e:?}"))?;
+    list_from_nodes(allocator, &[apply, quoted_program, curried_args])
+}
+
+fn read_hex_node(allocator: &mut Allocator, path: &Path) -> Result<NodePtr, String> {
+    let encoded = fs::read_to_string(path)
+        .map_err(|e| format!("reading compiled Chialisp {}: {e}", path.display()))?;
+    let bytes = hex::decode(encoded.trim())
+        .map_err(|e| format!("decoding compiled Chialisp {}: {e}", path.display()))?;
+    node_from_bytes(allocator, &bytes)
+        .map_err(|e| format!("parsing compiled Chialisp {}: {e:?}", path.display()))
+}
+
+fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8; 32]>, String> {
+    let mut package_ids = HashMap::new();
+    let mut manifest = Vec::new();
+
+    for key in &registry.production {
+        let root = PathBuf::from("games").join(key).join("clsp");
+        let raw_factory_path = root.join(format!("factory_{key}_factory.hex"));
+        let mut allocator = Allocator::new();
+        let raw_factory = read_hex_node(&mut allocator, &raw_factory_path)?;
+
+        let args_path = root.join("factory_args.clvm.bin");
+        let prepared_factory = if args_path.is_file() {
+            let bytes = fs::read(&args_path)
+                .map_err(|e| format!("reading factory arguments {}: {e}", args_path.display()))?;
+            let args_node = node_from_bytes(&mut allocator, &bytes)
+                .map_err(|e| format!("parsing factory arguments {}: {e:?}", args_path.display()))?;
+            let args = proper_list(&allocator, args_node).ok_or_else(|| {
+                format!(
+                    "factory arguments {} are not a proper list",
+                    args_path.display()
+                )
+            })?;
+            curry_program(&mut allocator, raw_factory, &args)?
+        } else {
+            raw_factory
+        };
+
+        let prepared_path = root.join("factory_prepared.clvm.bin");
+        let prepared_bytes = node_to_bytes(&allocator, prepared_factory)
+            .map_err(|e| format!("serializing prepared factory for {key}: {e:?}"))?;
+        fs::write(&prepared_path, prepared_bytes)
+            .map_err(|e| format!("writing prepared factory {}: {e}", prepared_path.display()))?;
+
+        let probe_path = root.join("factory_probe.hex");
+        let probe_program = read_hex_node(&mut allocator, &probe_path)?;
+        let probe_parameters = run_program(
+            &mut allocator,
+            &ChiaDialect::default(),
+            probe_program,
+            NodePtr::NIL,
+            11_000_000_000,
+        )
+        .map_err(|e| format!("running factory probe for {key}: {e:?}"))?
+        .1;
+        let factory_result = run_program(
+            &mut allocator,
+            &ChiaDialect::default(),
+            prepared_factory,
+            probe_parameters,
+            11_000_000_000,
+        )
+        .map_err(|e| format!("running prepared factory for {key}: {e:?}"))?
+        .1;
+        let records = proper_list(&allocator, factory_result)
+            .ok_or_else(|| format!("factory {key} did not return a proper list"))?;
+        let first = records
+            .first()
+            .ok_or_else(|| format!("factory {key} returned no games"))?;
+        let fields = proper_list(&allocator, *first)
+            .ok_or_else(|| format!("factory {key} first game is not a proper list"))?;
+        if fields.len() != 12 {
+            return Err(format!(
+                "factory {key} first game has {} fields, expected 12",
+                fields.len()
+            ));
+        }
+        let id_atom = allocator.atom(fields[4]);
+        let id: [u8; 32] = id_atom.as_ref().try_into().map_err(|_| {
+            format!(
+                "factory {key} first validator hash has {} bytes, expected 32",
+                id_atom.len()
+            )
+        })?;
+        let actual = clvm_utils::tree_hash(&allocator, fields[11]).to_bytes();
+        if actual != id {
+            return Err(format!("factory {key} first validator hash mismatch"));
+        }
+
+        package_ids.insert(key.clone(), id);
+        manifest.push(serde_json::json!({
+            "key": key,
+            "id": hex::encode(id),
+            "factory": format!("games/{key}/clsp/factory_prepared.clvm.bin"),
+        }));
+    }
+
+    let manifest_path = Path::new("games/package_manifest.json");
+    let manifest_json = serde_json::to_vec_pretty(&serde_json::json!({ "production": manifest }))
+        .map_err(|e| format!("serializing game package manifest: {e}"))?;
+    fs::write(manifest_path, manifest_json)
+        .map_err(|e| format!("writing {}: {e}", manifest_path.display()))?;
+    Ok(package_ids)
+}
+
+fn load_package_ids(registry: &GameRegistry) -> HashMap<String, [u8; 32]> {
+    let path = Path::new("games/package_manifest.json");
+    let text = fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}; run ./cb.sh", path.display()));
+    let json: JsonValue =
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("invalid {}: {e}", path.display()));
+    let entries = json
+        .get("production")
+        .and_then(JsonValue::as_array)
+        .unwrap_or_else(|| panic!("{} missing production array", path.display()));
+    let mut ids = HashMap::new();
+    for entry in entries {
+        let key = entry
+            .get("key")
+            .and_then(JsonValue::as_str)
+            .unwrap_or_else(|| panic!("{} package missing key", path.display()));
+        let id = entry
+            .get("id")
+            .and_then(JsonValue::as_str)
+            .unwrap_or_else(|| panic!("{} package {key} missing id", path.display()));
+        let bytes = hex::decode(id)
+            .unwrap_or_else(|e| panic!("{} package {key} invalid id: {e}", path.display()));
+        let id: [u8; 32] = bytes.try_into().unwrap_or_else(|v: Vec<u8>| {
+            panic!("{} package {key} id has {} bytes", path.display(), v.len())
+        });
+        ids.insert(key.to_string(), id);
+    }
+    for key in &registry.production {
+        if !ids.contains_key(key) {
+            panic!("{} missing production package {key}", path.display());
+        }
+    }
+    ids
+}
+
 fn emit_rerun_directives(dir: &Path) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -189,7 +387,9 @@ fn emit_rerun_directives(dir: &Path) {
             if path.is_dir() {
                 emit_rerun_directives(&path);
             } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if ext == "clsp" || ext == "clinc" || ext == "json" || ext == "rs" {
+                if (ext == "clsp" || ext == "clinc" || ext == "json" || ext == "rs")
+                    && path != Path::new("games/package_manifest.json")
+                {
                     println!("cargo:rerun-if-changed={}", path.display());
                 }
             }
@@ -197,7 +397,11 @@ fn emit_rerun_directives(dir: &Path) {
     }
 }
 
-fn generate_package_modules(registry: &GameRegistry, out_dir: &Path) {
+fn generate_package_modules(
+    registry: &GameRegistry,
+    package_ids: &HashMap<String, [u8; 32]>,
+    out_dir: &Path,
+) {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let mut packages = String::new();
     for key in registry.production.iter().chain(registry.test.iter()) {
@@ -214,6 +418,22 @@ fn generate_package_modules(registry: &GameRegistry, out_dir: &Path) {
     for key in &registry.production {
         register.push_str(&format!("\"{key}\", "));
     }
+    register.push_str(
+        "]\n}\n\npub fn built_production_package_ids() -> Vec<(String, crate::common::types::GameType)> {\n    vec![",
+    );
+    for key in &registry.production {
+        let id = package_ids
+            .get(key)
+            .unwrap_or_else(|| panic!("missing generated protocol id for package {key}"));
+        let id_bytes = id
+            .iter()
+            .map(|byte| format!("0x{byte:02x}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        register.push_str(&format!(
+            "(\"{key}\".to_string(), crate::common::types::GameType::from_hash(crate::common::types::Hash::from_bytes([{id_bytes}]))), "
+        ));
+    }
     register.push_str("]\n}\n\npub fn test_package_keys() -> &'static [&'static str] {\n    &[");
     for key in &registry.test {
         register.push_str(&format!("\"{key}\", "));
@@ -227,14 +447,27 @@ pub fn register_one_package(
     key: &str,
     factories: &mut std::collections::BTreeMap<
         crate::common::types::GameType,
-        crate::session_phases::types::GameFactory,
+        crate::common::types::ProgramRef,
     >,
     package_ids: &mut Vec<(String, crate::common::types::GameType)>,
 ) {
     match key {
 "#,
     );
-    for key in registry.production.iter().chain(registry.test.iter()) {
+    for key in &registry.production {
+        let id = package_ids
+            .get(key)
+            .unwrap_or_else(|| panic!("missing generated protocol id for package {key}"));
+        let id_bytes = id
+            .iter()
+            .map(|byte| format!("0x{byte:02x}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        register.push_str(&format!(
+            "        \"{key}\" => crate::session_phases::game_collection::register_built_package(\n            allocator,\n            \"{key}\",\n            crate::common::types::GameType::from_hash(crate::common::types::Hash::from_bytes([{id_bytes}])),\n            factories,\n            package_ids,\n        ),\n"
+        ));
+    }
+    for key in &registry.test {
         register.push_str(&format!(
             "        \"{key}\" => {{\n            let factory = crate::games::{key}::prepared_factory(allocator).unwrap_or_else(|e| panic!(\"package {key} factory: {{e:?}}\"));\n            let probe = crate::games::{key}::probe_parameters(allocator).unwrap_or_else(|e| panic!(\"package {key} probe: {{e:?}}\"));\n            crate::session_phases::game_collection::register_package(\n                allocator,\n                \"{key}\",\n                factory,\n                probe,\n                factories,\n                package_ids,\n            );\n        }}\n"
         ));
@@ -276,11 +509,14 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CHIALISP_COMPILE");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    generate_package_modules(&registry, &out_dir);
-
-    if std::env::var("CHIALISP_COMPILE").is_ok() {
+    let package_ids = if std::env::var("CHIALISP_COMPILE").is_ok() {
         if let Err(e) = compile_chialisp(&registry) {
             panic!("error compiling chialisp: {e:?}");
         }
-    }
+        prepare_game_packages(&registry)
+            .unwrap_or_else(|e| panic!("error preparing game packages: {e}"))
+    } else {
+        load_package_ids(&registry)
+    };
+    generate_package_modules(&registry, &package_ids, &out_dir);
 }

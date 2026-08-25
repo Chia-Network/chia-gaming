@@ -44,10 +44,12 @@ such as `calpoker`.
 games/<key>/
   clsp/
     factory.clsp          # Creates the initial game program and state
+    factory_probe.clsp    # Returns one representative valid parameter value
+    factory_args.clvm.bin # Optional generated curry arguments
     onchain/              # Checks moves during an on-chain dispute
     *_generate.clinc      # Handles moves while the game is off-chain
   rust/
-    mod.rs                # Loads the compiled factory for the Rust engine
+    mod.rs                # Optional Rust helpers; no factory loading
     tests/                # CLVM, handler, validator, and simulator tests
   ui/
     handProposalForm.tsx  # Form used to propose a new hand
@@ -130,20 +132,31 @@ Read [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) for an explanation and worked
 examples. Use [`clsp/handler_api.md`](clsp/handler_api.md) for exact argument
 and return shapes. [`CLVM_DOS.md`](CLVM_DOS.md) covers cost and size limits.
 
-## Step 3: Add the Rust loader
+## Step 3: Add the factory probe
 
-The Rust engine cannot execute a `.clsp` source file directly. Implement
-`games/<key>/rust/mod.rs` so it can load the compiled factory:
+Add `games/<key>/clsp/factory_probe.clsp`, a no-argument Chialisp program
+which returns one representative valid parameter value for `factory.clsp`.
+For example, Calpoker's probe is:
 
-- `prepared_factory(allocator)` returns the factory used for real proposals.
-- `probe_parameters(allocator)` returns one representative, valid parameter
-  value. During registration, the engine runs the factory with those parameters
-  and reads the first returned game's initial validation puzzle hash. That is
-  the protocol ID; the factory itself is never hashed as an identifier.
+```clojure
+(include *standard-cl-23*)
 
-For most games, this module only loads the compiled binary factory. It should not duplicate
-the game rules; those remain in CLVM. Krunk is an unusual example because its
-loader also supplies a compiled dictionary tree.
+(export () (list 1 1))
+```
+
+The build compiles both files, curries any `factory_args.clvm.bin` into the
+factory, and runs the probe against that prepared factory. It records the first
+returned game's initial validation puzzle hash as the protocol ID and emits one
+prepared binary factory for runtime use. The factory itself is never hashed as
+an identifier.
+
+Factory loading, binary serialization, caching, and registration are player
+implementation details. A game package does not implement Rust loader
+functions. If a generated external data set must be curried into the factory,
+write it as a proper list of arguments at
+`games/<key>/clsp/factory_args.clvm.bin`; Krunk's signed dictionary generator
+is the example. Probe programs and factory-argument files are build inputs;
+the browser downloads neither of them.
 
 Add handler and validator tests under `games/<key>/rust/tests/`. Use
 [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) when a test needs the blockchain

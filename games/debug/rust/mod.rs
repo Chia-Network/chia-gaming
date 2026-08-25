@@ -23,7 +23,6 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::session_phases::types::GameFactory;
 use crate::referee::types::{
     canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, ValidationInfoHash,
 };
@@ -76,7 +75,7 @@ where
 
 pub const FACTORY_BINARY: &str = "games/debug/clsp/factory.clvm.bin";
 
-pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<GameFactory, Error> {
+pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<ProgramRef, Error> {
     let raw_program = read_binary_puzzle(allocator, FACTORY_BINARY)?;
     let node = CurriedProgram {
         program: raw_program,
@@ -85,9 +84,7 @@ pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<GameFactory, Err
     .to_clvm(allocator)
     .into_gen()?;
     let program = Program::from_nodeptr(allocator, node)?;
-    Ok(GameFactory {
-        program: Some(program.into()),
-    })
+    Ok(program.into())
 }
 
 /// Canonical probe: 1-mojo contributions, sender goes first, dummy keys.

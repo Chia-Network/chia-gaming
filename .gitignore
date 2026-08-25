@@ -2,7 +2,8 @@
 *.hex
 *.sym
 *.clvm.bin
-!games/krunk/clsp/krunk_signed_dict_tree.clvm.bin
+!games/krunk/clsp/factory_args.clvm.bin
+games/package_manifest.json
 .build-chialisp.state
 .build-chialisp.cache
 

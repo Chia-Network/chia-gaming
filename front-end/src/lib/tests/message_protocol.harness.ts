@@ -13,7 +13,7 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { _resetForTests as resetSaveState, saveSession } from '../../hooks/save';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
-import { mockGamePackageIdentity, TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
   get: (target, property) =>
@@ -55,9 +55,6 @@ export const mockWasmConnection = new Proxy({} as WasmConnection, {
     if (property === 'game_session_serialization_schema') return () => 1;
     if (property === 'registered_game_packages') {
       return () => [...TEST_PROTOCOL_IDS];
-    }
-    if (property === 'warm_game_package') {
-      return (key: string) => mockGamePackageIdentity(key);
     }
     return () => undefined;
   },

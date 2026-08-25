@@ -221,7 +221,6 @@ export interface WasmConnection {
   game_session_serialization_schema: () => number;
   cache_file: (name: string, data: Uint8Array) => void;
   registered_game_packages: () => Array<{ key: string; id: string }>;
-  warm_game_package: (key: string) => { key: string; id: string };
 
   // Blockchain
   set_funding_coin: (cid: number, coinstring: string) => WasmResult;

@@ -761,10 +761,9 @@ leftover preferences.
 #### Boot state machine
 
 On page load, `index.tsx` starts WASM bootstrap in parallel with React:
-fetch the module and binary CLVM presets, then probe each production
-factory one at a time (yielding between packages). Handshake uses that
-already-loaded module for BLS identity only. Protocol game identities are
-bound when the channel becomes `Active`, from the warmed cache.
+fetch the module and binary CLVM presets, then bind the protocol game
+identities calculated by the package build. Handshake uses that already-loaded
+module for BLS identity only.
 
 On page load, `Shell.tsx` runs a boot sequence that determines which dialog
 (if any) to show before the app becomes interactive. The initializer never

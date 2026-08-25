@@ -1,0 +1,3 @@
+(include *standard-cl-23*)
+
+(export () 100)

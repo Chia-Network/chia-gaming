@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use std::rc::Rc;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game;
 use crate::channel_state::game_start_info::GameStartInfo;
@@ -26,8 +26,8 @@ use crate::utils::proper_list;
 
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::types::{
-    validate_new_move_action, BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage,
-    PotatoState, WireGameSpec, WireProposalGroup,
+    validate_new_move_action, BatchAction, FromLocalUI, GameAction, PeerMessage, PotatoState,
+    WireGameSpec, WireProposalGroup,
 };
 
 use crate::session_phases::proposal::GameProposal;
@@ -46,27 +46,6 @@ pub mod wallet_traits;
 
 pub use game_collection::game_collection;
 pub use wallet_traits::{ChannelFundingWallet, SpendWalletReceiver, WalletSpendInterface};
-
-fn serialize_game_type_map<S: Serializer>(
-    map: &BTreeMap<GameType, GameFactory>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    map.iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect::<Vec<(GameType, GameFactory)>>()
-        .serialize(s)
-}
-
-fn deserialize_game_type_map<'de, D>(
-    deserializer: D,
-) -> Result<BTreeMap<GameType, GameFactory>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let v = Vec::<(GameType, GameFactory)>::deserialize(deserializer)?;
-    let b: BTreeMap<GameType, GameFactory> = v.iter().cloned().collect();
-    Ok(b)
-}
 
 /// Handle potato in flight when I request potato:
 ///
@@ -107,11 +86,8 @@ pub struct OffChainPhase {
 
     channel_state: Option<ChannelState>,
 
-    #[serde(
-        serialize_with = "serialize_game_type_map",
-        deserialize_with = "deserialize_game_type_map"
-    )]
-    game_types: BTreeMap<GameType, GameFactory>,
+    #[serde(skip, default)]
+    game_types: BTreeMap<GameType, ProgramRef>,
 
     private_keys: ChannelPrivateKeys,
 
@@ -243,26 +219,24 @@ pub(crate) fn make_send_log(
 }
 
 impl OffChainPhase {
+    fn ensure_game_types(&mut self, allocator: &mut AllocEncoder) {
+        if self.game_types.is_empty() {
+            self.game_types = crate::session_phases::game_collection::game_collection(allocator);
+        }
+    }
+
     fn factory_games(
         &mut self,
         env: &mut ChannelEnv<'_>,
         start: &GameProposal,
     ) -> Result<Vec<game::FactoryGame>, Error> {
-        if self.game_types.is_empty() {
-            // Restored handshake-era sessions may still serialize an empty map.
-            self.game_types =
-                crate::session_phases::game_collection::game_collection(env.allocator);
-        }
+        self.ensure_game_types(env.allocator);
         let factory = self
             .game_types
             .get(&start.game_type)
             .ok_or_else(|| Error::StrErr(format!("no such game {:?}", start.game_type)))?;
-        let program = factory
-            .program
-            .as_ref()
-            .ok_or_else(|| Error::StrErr("GameFactory program missing".to_string()))?
-            .clone();
-        let games = game::Game::run_factory(env.allocator, program.into(), &start.parameters)?;
+        let games =
+            game::Game::run_factory(env.allocator, factory.clone().into(), &start.parameters)?;
         let first_hash = games
             .first()
             .map(|g| g.initial_validation_program_hash.clone())
@@ -322,7 +296,7 @@ impl OffChainPhase {
         initiator: bool,
         channel_state: ChannelState,
         have_potato: PotatoState,
-        game_types: BTreeMap<GameType, GameFactory>,
+        game_types: BTreeMap<GameType, ProgramRef>,
         private_keys: ChannelPrivateKeys,
         my_contribution: Amount,
         their_contribution: Amount,
@@ -716,6 +690,7 @@ impl OffChainPhase {
                         }));
                     }
 
+                    self.ensure_game_types(env.allocator);
                     if !self.game_types.contains_key(&wire.start.game_type) {
                         effects.push(Effect::Log(format!(
                             "declining proposal for unknown game type {:?}",

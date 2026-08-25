@@ -14,7 +14,7 @@ fn main() {
     let output_path = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("games/krunk/clsp/krunk_signed_dict_tree.clvm.bin"));
+        .unwrap_or_else(|| PathBuf::from("games/krunk/clsp/factory_args.clvm.bin"));
     let sk: PrivateKey = rand::rng().random();
     let pk = private_to_public_key(&sk);
 

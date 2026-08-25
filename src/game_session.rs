@@ -28,8 +28,8 @@ use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
-    ChannelFundingWallet, GameFactory, OffChainPhaseInit, PacketSender, PeerMessage,
-    SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    ChannelFundingWallet, OffChainPhaseInit, PacketSender, PeerMessage, SpendWalletReceiver,
+    ToLocalUI, WalletSpendInterface,
 };
 
 #[cfg(test)]
@@ -387,7 +387,7 @@ pub struct GameSession {
 
 #[derive(Debug, Clone)]
 pub struct GameSessionConfig {
-    pub game_types: BTreeMap<GameType, GameFactory>,
+    pub game_types: BTreeMap<GameType, ProgramRef>,
     pub have_potato: bool,
     pub identity: ChiaIdentity,
     pub my_contribution: Amount,
@@ -1803,7 +1803,7 @@ mod genesis_challenge_tests {
         let identity = ChiaIdentity::new(&mut allocator, private_key).expect("identity");
         let testnet = Hash::from_bytes([0x11; 32]);
         let config = GameSessionConfig {
-            game_types: BTreeMap::new(),
+            game_types: crate::session_phases::game_collection::game_collection(&mut allocator),
             have_potato: true,
             identity,
             my_contribution: Amount::new(100),
@@ -1818,6 +1818,17 @@ mod genesis_challenge_tests {
         assert_eq!(session.state.agg_sig_me_additional_data, testnet);
 
         let bytes = bencodex::to_vec(&session).expect("serialize");
+        assert!(
+            bytes.len() < 100_000,
+            "serialized session unexpectedly contains package factories: {} bytes",
+            bytes.len()
+        );
+        assert!(
+            !bytes
+                .windows(b"game_types".len())
+                .any(|window| window == b"game_types"),
+            "immutable package factories must not be persisted"
+        );
         let restored: GameSession = bencodex::from_slice(&bytes).expect("deserialize");
         assert_eq!(restored.state.agg_sig_me_additional_data, testnet);
         assert_ne!(

@@ -319,7 +319,7 @@ describe('protocol identity loading', () => {
     blob.flushDeferredWork();
     expect(protocolIdentitiesReady()).toBe(false);
     expect(tags).toEqual(['ChannelStatus']);
-    expect(errors.some((error) => error.includes('Missing warmed identity'))).toBe(true);
+    expect(errors.some((error) => error.includes('Missing built identity'))).toBe(true);
   });
 });
 

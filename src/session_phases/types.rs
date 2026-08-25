@@ -240,16 +240,11 @@ mod move_authority_tests {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameFactory {
-    pub program: Option<Rc<Program>>,
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct OffChainPhaseInit {
     pub have_potato: bool,
     pub private_keys: ChannelPrivateKeys,
-    pub game_types: BTreeMap<GameType, GameFactory>,
+    pub game_types: BTreeMap<GameType, ProgramRef>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub channel_timeout: Timeout,

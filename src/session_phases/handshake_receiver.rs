@@ -13,7 +13,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash, IntoErr,
-    Program, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
+    Program, ProgramRef, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
@@ -26,7 +26,7 @@ use crate::session_phases::handshake::{
 };
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
-    GameFactory, OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,
+    OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,
 };
 use crate::session_phases::OffChainPhase;
 
@@ -40,28 +40,6 @@ enum ReceiverState {
     Done,
 }
 
-fn serialize_game_type_map<S: serde::Serializer>(
-    map: &BTreeMap<GameType, GameFactory>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    use serde::Serialize;
-    map.iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect::<Vec<(GameType, GameFactory)>>()
-        .serialize(s)
-}
-
-fn deserialize_game_type_map<'de, D>(
-    deserializer: D,
-) -> Result<BTreeMap<GameType, GameFactory>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::Deserialize;
-    let v = Vec::<(GameType, GameFactory)>::deserialize(deserializer)?;
-    Ok(v.into_iter().collect())
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct HandshakeReceiverPhase {
     state: ReceiverState,
@@ -72,11 +50,8 @@ pub struct HandshakeReceiverPhase {
     launcher_coin: Option<CoinString>,
 
     private_keys: ChannelPrivateKeys,
-    #[serde(
-        serialize_with = "serialize_game_type_map",
-        deserialize_with = "deserialize_game_type_map"
-    )]
-    game_types: BTreeMap<GameType, GameFactory>,
+    #[serde(skip, default)]
+    game_types: BTreeMap<GameType, ProgramRef>,
     my_contribution: Amount,
     their_contribution: Amount,
     channel_timeout: Timeout,

@@ -24,6 +24,7 @@ find_chialisp() {
 clsp_sources() {
     {
         find_chialisp -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
+        find_chialisp -type f -name 'factory_args.clvm.bin' -print
         for file in \
             build.rs Cargo.toml Cargo.lock chialisp.toml \
             games/registry.json \
@@ -45,10 +46,15 @@ clsp_binary() {
     done
 }
 
+prepared_packages() {
+    find_chialisp -type f -name 'factory_prepared.clvm.bin' -print | LC_ALL=C sort
+    [ -f games/package_manifest.json ] && printf '%s\n' games/package_manifest.json
+}
+
 write_state() {
     local destination=$1
     {
-        echo "version 2"
+        echo "version 3"
         clsp_sources | while IFS= read -r file; do
             printf 'input %s  %s\n' "$(git hash-object "$file")" "$file"
         done
@@ -56,6 +62,9 @@ write_state() {
             printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
         done
         clsp_binary | while IFS= read -r file; do
+            printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
+        done
+        prepared_packages | while IFS= read -r file; do
             printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
         done
     } > "$destination"
@@ -72,6 +81,9 @@ elif [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
 fi
 
 SECONDS=0
+prepared_packages | while IFS= read -r file; do
+    rm -f "$file"
+done
 clsp_hex | while IFS= read -r file; do
     rm -f "${file%.hex}.clvm.bin"
 done

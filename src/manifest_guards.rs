@@ -208,6 +208,7 @@ fn every_game_package_is_registered() {
         }
         if production.iter().any(|k| k == key) {
             for rel in [
+                "clsp/factory_probe.clsp",
                 "ui/handProposal.ts",
                 "ui/handProposalForm.tsx",
                 "ui/play.tsx",
@@ -249,14 +250,14 @@ fn every_game_package_test_module_is_aggregated() {
     );
 }
 
-/// Production factory binaries must exist after the Chialisp build so the
+/// Prepared production factories must exist after the Chialisp build so the
 /// frontend generator's preset list is not hollow.
 #[test]
 fn every_production_package_preset_exists() {
     let (production, _) = registry_keys();
     let mut missing = Vec::new();
     for key in production {
-        let factory = PathBuf::from(format!("games/{key}/clsp/factory_{key}_factory.clvm.bin"));
+        let factory = PathBuf::from(format!("games/{key}/clsp/factory_prepared.clvm.bin"));
         if !factory.is_file() {
             missing.push(factory.display().to_string());
         }

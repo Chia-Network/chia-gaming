@@ -1,31 +1,25 @@
 #!/usr/bin/env node
 // Generates front-end/src/generated/gamePackages.ts from games/registry.json.
-import { mkdirSync, readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const FE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(FE, '..', '..');
 const registry = JSON.parse(readFileSync(join(ROOT, 'games', 'registry.json'), 'utf8'));
+const manifest = JSON.parse(readFileSync(join(ROOT, 'games', 'package_manifest.json'), 'utf8'));
 const production = registry.production;
 if (!Array.isArray(production) || production.length === 0) {
   throw new Error('games/registry.json production list is empty');
 }
 
+const manifestByKey = new Map(manifest.production.map((entry) => [entry.key, entry]));
 function factoryBinary(key) {
-  return `games/${key}/clsp/factory_${key}_factory.clvm.bin`;
-}
-
-function extraPresets(key) {
-  const clsp = join(ROOT, 'games', key, 'clsp');
-  const factory = `factory_${key}_factory.clvm.bin`;
-  try {
-    return readdirSync(clsp)
-      .filter((name) => name.endsWith('.clvm.bin') && name !== factory)
-      .map((name) => `games/${key}/clsp/${name}`);
-  } catch {
-    return [];
+  const entry = manifestByKey.get(key);
+  if (!entry || typeof entry.factory !== 'string' || typeof entry.id !== 'string') {
+    throw new Error(`games/package_manifest.json missing valid production package ${key}`);
   }
+  return entry.factory;
 }
 
 function tsString(value) {
@@ -41,7 +35,7 @@ function tsArray(values, multiline = false) {
   return `[\n${values.map((value) => `  ${value},`).join('\n')}\n]`;
 }
 
-const presetFiles = production.flatMap((key) => [factoryBinary(key), ...extraPresets(key)]);
+const presetFiles = production.map(factoryBinary);
 function relTo(key, file) {
   const rel = relative(join(FE, '../src/generated'), join(ROOT, 'games', key, 'ui', file))
     .replace(/\\/g, '/')
