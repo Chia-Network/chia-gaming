@@ -556,7 +556,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     // MESSAGE_NOT_SENT_OR_RECEIVED. Fall back to `coinSpends` for non-vault wallets / older APIs.
     const signed = sr.signedSpendBundle;
     const coinSpends =
-      Array.isArray(signed?.coinSpends) && signed.coinSpends.length > 0 ? signed.coinSpends : sr.coinSpends;
+      Array.isArray(signed?.coinSpends) && signed.coinSpends.length > 0
+        ? signed.coinSpends
+        : sr.coinSpends;
     if (!Array.isArray(coinSpends) || coinSpends.length === 0) {
       throw new Error(
         'Cloud Wallet signature request is signed but returned no coinSpends. Vault-less wallets may need a Cloud Wallet API fix.',
