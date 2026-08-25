@@ -297,15 +297,23 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         { walletId, names: uniqueNames },
       );
 
-      return (data.coinRecordsByNames ?? []).map((r) => {
+      const records: CoinRecord[] = [];
+      for (const r of data.coinRecordsByNames ?? []) {
         const spentHeight = r.spentBlockHeight == null ? 0n : BigInt(r.spentBlockHeight);
         const confirmed = r.createdBlockHeight == null ? 0n : BigInt(r.createdBlockHeight);
-        // parentCoinName may be the parent coin id; CoinRecord expects parentCoinInfo.
+        // parentCoinName is the parent coin id; CoinRecord expects parentCoinInfo.
         const parent = normalizeHex(r.parentCoinName);
-        return {
+        const puzzleHash = normalizeHex(r.puzzleHash);
+        if (parent.length !== 64 || puzzleHash.length !== 64) {
+          log(
+            `[cloud-blockchain] getCoinRecordsByNames skipping record with incomplete coin identity name=${normalizeHex(r.name)} parentLen=${parent.length} phLen=${puzzleHash.length}`,
+          );
+          continue;
+        }
+        records.push({
           coin: {
-            parentCoinInfo: parent || '0'.repeat(64),
-            puzzleHash: normalizeHex(r.puzzleHash),
+            parentCoinInfo: parent,
+            puzzleHash,
             amount: BigInt(r.amount),
           },
           confirmedBlockIndex: confirmed,
@@ -313,8 +321,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           spent: spentHeight > 0n,
           coinbase: false,
           timestamp: 0n,
-        };
-      });
+        });
+      }
+      return records;
     } catch (e) {
       log(`[cloud-blockchain] getCoinRecordsByNames error: ${String(e)}`);
       return [];
