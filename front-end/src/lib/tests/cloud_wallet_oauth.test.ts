@@ -60,6 +60,7 @@ import {
   oauthRedirectUri,
   signatureRequestApproveUrl,
   waitForGamingConsentWalletId,
+  waitForOAuthCode,
   with0x,
   GAMING_CONSENT_MESSAGE_TYPE,
   OAUTH_MESSAGE_TYPE,
@@ -349,6 +350,75 @@ describe('waitForGamingConsentWalletId grace period', () => {
     notifyCodeReceived();
     jest.advanceTimersByTime(500);
     await expect(promise).resolves.toBeUndefined();
+  });
+});
+
+describe('waitForOAuthCode grace period', () => {
+  const origin = 'http://127.0.0.1';
+  let fakeWindow: ReturnType<typeof makeFakeWindow> & { location: { origin: string } };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    fakeWindow = Object.assign(makeFakeWindow(), { location: { origin } });
+    setTestGlobal('window', fakeWindow);
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    setTestGlobal('window', globalThis);
+  });
+
+  const codeEvent = (code: string, state = 'st1', eventOrigin = origin) => ({
+    origin: eventOrigin,
+    data: { type: OAUTH_MESSAGE_TYPE, code, state },
+  });
+
+  it('resolves immediately when the code message arrives', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const promise = waitForOAuthCode('st1', popup, 60_000, 500);
+    fakeWindow.emit('message', codeEvent('authcode'));
+    await expect(promise).resolves.toBe('authcode');
+  });
+
+  it('resolves a late code posted during the popup-close grace period', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const promise = waitForOAuthCode('st1', popup, 60_000, 500);
+    popup.closed = true;
+    jest.advanceTimersByTime(400); // close poll detects close -> grace begins
+    fakeWindow.emit('message', codeEvent('late-code'));
+    await expect(promise).resolves.toBe('late-code');
+  });
+
+  it('rejects only after the grace period elapses with no message', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const promise = waitForOAuthCode('st1', popup, 60_000, 500);
+    popup.closed = true;
+    jest.advanceTimersByTime(400); // detect close, start 500ms grace
+    let settled = false;
+    void promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    jest.advanceTimersByTime(499);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    jest.advanceTimersByTime(1);
+    await expect(promise).rejects.toThrow(/popup was closed/);
+  });
+
+  it('ignores code messages from an unexpected origin during grace', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const promise = waitForOAuthCode('st1', popup, 60_000, 500);
+    popup.closed = true;
+    jest.advanceTimersByTime(400);
+    fakeWindow.emit('message', codeEvent('stolen', 'st1', 'http://evil.example'));
+    jest.advanceTimersByTime(500);
+    await expect(promise).rejects.toThrow(/popup was closed/);
   });
 });
 

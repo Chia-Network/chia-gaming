@@ -260,18 +260,30 @@ export function waitForGamingConsentWalletId(
   return { promise, notifyCodeReceived: () => startGrace() };
 }
 
-/** Wait for OAuth callback postMessage from /oauth/callback. */
+/**
+ * Wait for OAuth callback postMessage from /oauth/callback.
+ *
+ * The callback page posts the authorization code then auto-closes after a short
+ * delay. Across windows (especially Electron IPC), `popup.closed` can become
+ * true before the opener receives that message. Rather than rejecting the
+ * instant the popup reports closed, we start a short grace period so a late
+ * postMessage can still resolve — the same race the consent waiter already
+ * covers.
+ */
 export function waitForOAuthCode(
   expectedState: string,
   popup: Window | null,
   timeoutMs = 5 * 60 * 1000,
+  graceMs = 700,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (graceTimer) clearTimeout(graceTimer);
       clearInterval(closePoll);
       window.removeEventListener('message', onMessage);
       fn();
@@ -280,6 +292,16 @@ export function waitForOAuthCode(
     const timer = setTimeout(() => {
       finish(() => reject(new Error('Cloud Wallet OAuth timed out')));
     }, timeoutMs);
+
+    const startGrace = () => {
+      if (settled || graceTimer) return;
+      // Stop polling for popup close; a late code message can still resolve
+      // during the grace window via onMessage.
+      clearInterval(closePoll);
+      graceTimer = setTimeout(() => {
+        finish(() => reject(new Error('Cloud Wallet OAuth popup was closed')));
+      }, graceMs);
+    };
 
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
@@ -301,7 +323,7 @@ export function waitForOAuthCode(
 
     const closePoll = setInterval(() => {
       if (popup && popup.closed) {
-        finish(() => reject(new Error('Cloud Wallet OAuth popup was closed')));
+        startGrace();
       }
     }, 400);
   });
