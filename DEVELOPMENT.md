@@ -132,17 +132,18 @@ canonical reference for the full build sequence.
 
 Run commands from the repo root unless noted.
 
-### 1. Chialisp (.hex files)
+### 1. Chialisp
 
 ```bash
 ./tools/build-chialisp.sh
 ```
 
-This is the sole entry point for compiling `.clsp` sources to `.hex`. It
-content-hashes the sources, compiler inputs, and generated outputs, rebuilding
-only when an input changes or an output is missing or modified. Ordinary Cargo
-commands do not compile Chialisp. The hex files are loaded by the WASM module at
-runtime over HTTP.
+This is the sole entry point for compiling `.clsp` sources. The Chialisp
+compiler emits `.hex`; the build then decodes each output into a
+`.clvm.bin` runtime artifact. It content-hashes the sources, compiler inputs,
+and generated outputs, rebuilding only when an input changes or an output is
+missing or modified. Ordinary Cargo commands do not compile Chialisp. Only the
+binary artifacts are loaded by the WASM module over HTTP.
 
 ### 2. WASM (browser target)
 
@@ -327,9 +328,9 @@ Set `--self` to the hub's public URL. The same `--dir`, `--self`,
 - **Separate origins.** The player app and hub must be served from
 different origins. The hub loads inside an iframe from the hub's
 origin; same-origin would break the security boundary.
-- **Asset co-location.** WASM files and `.hex` chialisp files must be
+- **Asset co-location.** WASM files and `.clvm.bin` Chialisp artifacts must be
 under the same `basePath` as `index.js`. The player app prefetches the
-WASM module and game/factory `.hex` (and krunk `.dat`) presets at page
+WASM module and binary game/factory presets at page
 load — not when a session is accepted — via relative paths under
 `basePath`.
 - `**--self` must match the public URL.** The hub uses it to derive

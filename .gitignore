@@ -1,6 +1,8 @@
 #Chialisp / CLVM output
 *.hex
 *.sym
+*.clvm.bin
+!games/krunk/clsp/krunk_signed_dict_tree.clvm.bin
 .build-chialisp.state
 .build-chialisp.cache
 

@@ -15,7 +15,7 @@ use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
-use crate::common::load_clvm::read_hex_puzzle;
+use crate::common::load_clvm::read_binary_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]
 use crate::common::types::PrivateKey;
@@ -48,7 +48,8 @@ impl DebugGameCurry {
         mover_pk: &PublicKey,
         waiter_pk: &PublicKey,
     ) -> Result<DebugGameCurry, Error> {
-        let raw_program = read_hex_puzzle(allocator, "games/debug/clsp/factory.hex")?;
+        let raw_program =
+            read_binary_puzzle(allocator, "games/debug/clsp/factory.clvm.bin")?;
         let prog_hash = raw_program.sha256tree(allocator);
         Ok(DebugGameCurry {
             count: 0,
@@ -73,10 +74,10 @@ where
     }
 }
 
-pub const FACTORY_HEX: &str = "games/debug/clsp/factory.hex";
+pub const FACTORY_BINARY: &str = "games/debug/clsp/factory.clvm.bin";
 
 pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<GameFactory, Error> {
-    let raw_program = read_hex_puzzle(allocator, FACTORY_HEX)?;
+    let raw_program = read_binary_puzzle(allocator, FACTORY_BINARY)?;
     let node = CurriedProgram {
         program: raw_program,
         args: clvm_curried_args!("factory", ()),
@@ -623,7 +624,8 @@ pub fn make_debug_games_with_contributions(
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.random()).collect();
     let gid = GameID(nonce);
-    let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
+    let referee_coin =
+        read_binary_puzzle(allocator, "clsp/referee/onchain/referee.clvm.bin")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameHandler::new_with_contributions(
         allocator,

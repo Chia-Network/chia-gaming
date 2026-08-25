@@ -38,14 +38,24 @@ clsp_hex() {
     find_chialisp -type f -name '*.hex' -print | LC_ALL=C sort
 }
 
+clsp_binary() {
+    clsp_hex | while IFS= read -r file; do
+        binary="${file%.hex}.clvm.bin"
+        [ -f "$binary" ] && printf '%s\n' "$binary"
+    done
+}
+
 write_state() {
     local destination=$1
     {
-        echo "version 1"
+        echo "version 2"
         clsp_sources | while IFS= read -r file; do
             printf 'input %s  %s\n' "$(git hash-object "$file")" "$file"
         done
         clsp_hex | while IFS= read -r file; do
+            printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
+        done
+        clsp_binary | while IFS= read -r file; do
             printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
         done
     } > "$destination"
@@ -62,6 +72,9 @@ elif [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
 fi
 
 SECONDS=0
+clsp_hex | while IFS= read -r file; do
+    rm -f "${file%.hex}.clvm.bin"
+done
 find_chialisp -name '*.hex' -delete
 
 # CHIALISP_COMPILE is deliberately unique. Cargo tracks it as a build-script
@@ -71,6 +84,15 @@ CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --features sim-server
 
 if ! { find_chialisp -type f -name '*.hex' -print | head -n 1 | grep -q .; }; then
     echo "Error: Chialisp build produced no .hex files" >&2
+    exit 1
+fi
+
+clsp_hex | while IFS= read -r file; do
+    xxd -r -p "$file" "${file%.hex}.clvm.bin"
+done
+
+if ! { find_chialisp -type f -name '*.clvm.bin' -print | head -n 1 | grep -q .; }; then
+    echo "Error: Chialisp build produced no binary CLVM files" >&2
     exit 1
 fi
 

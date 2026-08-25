@@ -1,13 +1,13 @@
 use clvm_traits::ToClvm;
 
-use crate::common::load_clvm::read_hex_puzzle;
+use crate::common::load_clvm::read_binary_puzzle;
 use crate::common::types::{AllocEncoder, Error, IntoErr, Program};
 use crate::session_phases::types::GameFactory;
 
-pub const FACTORY_HEX: &str = "games/spacepoker/clsp/factory_spacepoker_factory.hex";
+pub const FACTORY_BINARY: &str = "games/spacepoker/clsp/factory_spacepoker_factory.clvm.bin";
 
 pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<GameFactory, Error> {
-    let factory = read_hex_puzzle(allocator, FACTORY_HEX)?;
+    let factory = read_binary_puzzle(allocator, FACTORY_BINARY)?;
     Ok(GameFactory {
         program: Some(factory.to_program()),
     })

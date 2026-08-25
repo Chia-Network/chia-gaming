@@ -141,7 +141,7 @@ The Rust engine cannot execute a `.clsp` source file directly. Implement
   and reads the first returned game's initial validation puzzle hash. That is
   the protocol ID; the factory itself is never hashed as an identifier.
 
-For most games, this module only loads compiled hex. It should not duplicate
+For most games, this module only loads the compiled binary factory. It should not duplicate
 the game rules; those remain in CLVM. Krunk is an unusual example because its
 loader also supplies a compiled dictionary tree.
 

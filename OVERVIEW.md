@@ -659,7 +659,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `games/spacepoker/clsp/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
 | `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
 | `games/krunk/clsp/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
-| `games/krunk/clsp/krunk_signed_dict_tree.dat`| Generated: pubkey + signed dict tree, binary |
+| `games/krunk/clsp/krunk_signed_dict_tree.clvm.bin`| Generated binary CLVM object: `(pubkey signed_dict_tree)` |
 | `games/debug/clsp/factory.clsp`             | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 

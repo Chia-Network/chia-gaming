@@ -12,15 +12,16 @@ if (!Array.isArray(production) || production.length === 0) {
   throw new Error('games/registry.json production list is empty');
 }
 
-function factoryHex(key) {
-  return `games/${key}/clsp/factory_${key}_factory.hex`;
+function factoryBinary(key) {
+  return `games/${key}/clsp/factory_${key}_factory.clvm.bin`;
 }
 
 function extraPresets(key) {
   const clsp = join(ROOT, 'games', key, 'clsp');
+  const factory = `factory_${key}_factory.clvm.bin`;
   try {
     return readdirSync(clsp)
-      .filter((name) => name.endsWith('.dat'))
+      .filter((name) => name.endsWith('.clvm.bin') && name !== factory)
       .map((name) => `games/${key}/clsp/${name}`);
   } catch {
     return [];
@@ -40,7 +41,7 @@ function tsArray(values, multiline = false) {
   return `[\n${values.map((value) => `  ${value},`).join('\n')}\n]`;
 }
 
-const presetFiles = production.flatMap((key) => [factoryHex(key), ...extraPresets(key)]);
+const presetFiles = production.flatMap((key) => [factoryBinary(key), ...extraPresets(key)]);
 function relTo(key, file) {
   const rel = relative(join(FE, '../src/generated'), join(ROOT, 'games', key, 'ui', file))
     .replace(/\\/g, '/')
@@ -70,8 +71,8 @@ writeFileSync(
 export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;
 export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
 export const CORE_PRESET_FILES = [
-  'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
-  'clsp/referee/onchain/referee.hex',
+  'clsp/unroll/unroll_puzzle_state_channel_unrolling.clvm.bin',
+  'clsp/referee/onchain/referee.clvm.bin',
 ] as const;
 export const GAME_PRESET_FILES = ${presetList} as const;
 export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];

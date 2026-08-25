@@ -6,9 +6,15 @@ use chia_gaming::games::krunk_dict_tree::{
     reachable_gap_mask, sign_gap_evidence,
 };
 use chia_gaming::games::krunk_dictionary;
+use clvmr::NodePtr;
 use rand::prelude::*;
+use std::path::PathBuf;
 
 fn main() {
+    let output_path = std::env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("games/krunk/clsp/krunk_signed_dict_tree.clvm.bin"));
     let sk: PrivateKey = rand::rng().random();
     let pk = private_to_public_key(&sk);
 
@@ -23,27 +29,33 @@ fn main() {
     let mut allocator = AllocEncoder::new();
     let tree_node = build_signed_dict_tree_from_bytes(&mut allocator, &dictionary, &expanded)
         .expect("build signed dict tree");
-    let tree_program = Program::from_nodeptr(&allocator, tree_node).expect("tree to program");
 
     let pk_bytes = pk.bytes();
-    let tree_bytes = tree_program.bytes();
+    let pubkey_node = allocator
+        .allocator()
+        .new_atom(&pk_bytes)
+        .expect("public key atom");
+    let tree_tail = allocator
+        .allocator()
+        .new_pair(tree_node, NodePtr::NIL)
+        .expect("dictionary tree list");
+    let package_node = allocator
+        .allocator()
+        .new_pair(pubkey_node, tree_tail)
+        .expect("dictionary package list");
+    let package =
+        Program::from_nodeptr(&allocator, package_node).expect("dictionary package to program");
 
     let mask = reachable_gap_mask(&word_refs);
     let reachable_count = mask.iter().filter(|r| **r).count();
 
-    // .dat format: 48-byte BLS public key followed by serialized CLVM tree.
-    let mut dat = Vec::with_capacity(pk_bytes.len() + tree_bytes.len());
-    dat.extend_from_slice(&pk_bytes);
-    dat.extend_from_slice(tree_bytes);
-
-    let dat_path = "games/krunk/clsp/krunk_signed_dict_tree.dat";
-    std::fs::write(dat_path, &dat).expect("write dat");
+    // One binary-serialized CLVM object: (dictionary_public_key dictionary_tree).
+    std::fs::write(&output_path, package.bytes()).expect("write dictionary package");
 
     eprintln!(
-        "Wrote {} ({} bytes: 48 pubkey + {} tree, {} words, {} reachable gaps)",
-        dat_path,
-        dat.len(),
-        tree_bytes.len(),
+        "Wrote {} ({} bytes, {} words, {} reachable gaps)",
+        output_path.display(),
+        package.bytes().len(),
         dictionary.len(),
         reachable_count,
     );

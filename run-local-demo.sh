@@ -151,16 +151,16 @@ cp "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
 cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"
 echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm.map"
 echo "{\"hub\": \"http://localhost:$HUB_PORT\"}" > "$GAME_NONCE_DIR/urls"
-(cd "$CLSP_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
+(cd "$CLSP_DIR" && find . -name '*.clvm.bin' | while read -r f; do
     mkdir -p "$GAME_NONCE_DIR/clsp/$(dirname "$f")"
     cp "$f" "$GAME_NONCE_DIR/clsp/$f"
 done)
-(cd "$GAMES_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
+(cd "$GAMES_DIR" && find . -name '*.clvm.bin' | while read -r f; do
     mkdir -p "$GAME_NONCE_DIR/games/$(dirname "$f")"
     cp "$f" "$GAME_NONCE_DIR/games/$f"
 done)
-if ! find "$GAME_NONCE_DIR/games" -name '*.hex' | grep -q .; then
-    echo "Error: no game factory .hex files copied into $GAME_NONCE_DIR/games" >&2
+if ! find "$GAME_NONCE_DIR/games" -name '*.clvm.bin' | grep -q .; then
+    echo "Error: no binary game artifacts copied into $GAME_NONCE_DIR/games" >&2
     exit 1
 fi
 if [ -d "$FE_DIR/public/images" ]; then
