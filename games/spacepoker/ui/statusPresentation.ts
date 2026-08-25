@@ -1,7 +1,22 @@
-import { settlementLabel, type SettlementOutcome } from '../../host';
+import type { SettlementOutcome } from '../../host';
 import { isTerminalSpacepokerHandler, SpHandler, type SpTerminalState } from './useSpacepokerHand';
 
 export type HoleCardsBannerKind = 'fold' | 'concede' | 'win' | 'tie' | null;
+
+const SETTLEMENT_LABELS: Record<SettlementOutcome, string> = {
+  accept_settlement: 'Accepted',
+  settled_cleanly: 'Settled cleanly',
+  opponent_timed_out: 'Opponent timed out',
+  forfeited_skipped_reveal: 'Forfeited',
+  lost: 'Lost',
+  forfeited_we_accepted: 'Forfeited',
+  we_accepted: 'Accepted',
+  attempt_to_move_failed: 'Attempt to move failed',
+  timed_out_waiting_for_our_move: 'Timed out waiting for our move',
+  slashed_opponent: 'Slashed opponent',
+  opponent_slashed_us: 'Opponent slashed us',
+  opponent_cheated: 'Opponent cheated',
+};
 
 export function spacePokerTerminalBanners(
   terminalState: SpTerminalState,
@@ -99,7 +114,7 @@ export function spacePokerTerminalCommentary(
     if (showdownResult < 0n) return 'The opponent won at showdown.';
     return 'The showdown ended in a tie.';
   }
-  if (terminalOutcome !== null) return `${settlementLabel(terminalOutcome)}.`;
+  if (terminalOutcome !== null) return `${SETTLEMENT_LABELS[terminalOutcome]}.`;
   if (terminalState !== 'none') return 'The hand ended.';
   return '';
 }

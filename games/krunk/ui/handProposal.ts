@@ -5,6 +5,7 @@ import {
   type ProposalParameterCodec,
 } from '../../host';
 import { createKrunkHand, type KrunkHandState } from './serialize';
+import { formatKrunkMojos } from './formatting';
 
 export { krunkOutcomeFromPlay, reduceKrunkHandState, reduceKrunkFeatureState } from './serialize';
 
@@ -41,8 +42,8 @@ const registration: GamePackageRegistration<
   canRemountFinished: true,
   createHand: createKrunkHand,
   proposalParameters: krunkProposalParameters,
-  describeHandProposal: (handProposal, { formatMojos }) =>
-    `Stake ${formatMojos(handProposal.myContribution)} each`,
+  describeHandProposal: (handProposal) =>
+    `Stake ${formatKrunkMojos(handProposal.myContribution)} each`,
   validateHandIds: (gameIds) => gameIds.length === 2,
   selectOutcome: (state, gameId) => {
     const outcome = state.games[gameId]?.outcome;

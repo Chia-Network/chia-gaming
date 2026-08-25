@@ -5,8 +5,8 @@ import {
   type GameHandSource,
   type GameMountRegistration,
 } from '../../host';
-import { useGameHost } from '../../host/ui';
 import type { SpacepokerHandState } from './serialize';
+import { formatSpacepokerAmount } from './formatting';
 
 const SpacePoker = lazy(() => import('./SpacePoker'));
 
@@ -19,7 +19,6 @@ export interface SpacepokerLiveMountProps {
 
 export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
   const { handSource, appendGameLog, myName, opponentName } = props;
-  const { formatAmount } = useGameHost();
   const handState = gameHandState(handSource);
   const betSize = handState.perPlayerStake * 2n;
   const unitSizeMojosValue = handState.unitSizeMojos;
@@ -27,11 +26,11 @@ export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
   const handleGameLog = useCallback(
     (lines: string[]) => {
       if (!appendGameLog) return;
-      appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitSizeMojosValue)})`);
+      appendGameLog(`Space Poker ${stackSize} (${formatSpacepokerAmount(unitSizeMojosValue)})`);
       lines.forEach(appendGameLog);
       appendGameLog('');
     },
-    [appendGameLog, formatAmount, stackSize, unitSizeMojosValue],
+    [appendGameLog, stackSize, unitSizeMojosValue],
   );
 
   return (

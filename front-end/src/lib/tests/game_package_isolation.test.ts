@@ -43,6 +43,25 @@ describe('game package isolation', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('does not expose a shared game presentation module', () => {
+    expect(fs.existsSync(path.join(GAMES_ROOT, 'host', 'ui.tsx'))).toBe(false);
+    const offenders = walk(GAMES_ROOT)
+      .filter((file) => /\.(ts|tsx)$/.test(file))
+      .filter((file) => /from\s+['"][^'"]*host\/ui['"]/.test(fs.readFileSync(file, 'utf8')))
+      .map((file) => path.relative(GAMES_ROOT, file));
+    expect(offenders).toEqual([]);
+  });
+
+  it('constructs cheat intents only in Space Poker', () => {
+    const constructors = walk(GAMES_ROOT)
+      .filter((file) => /\.(ts|tsx)$/.test(file))
+      .filter((file) => !file.startsWith(path.join(GAMES_ROOT, 'host')))
+      .filter((file) => /type:\s*['"]cheat['"]/.test(fs.readFileSync(file, 'utf8')))
+      .map((file) => path.relative(GAMES_ROOT, file));
+    expect(constructors.length).toBeGreaterThan(0);
+    expect(constructors.every((file) => file.startsWith(`spacepoker${path.sep}`))).toBe(true);
+  });
+
   it('does not import game internals from player-app production code', () => {
     const feRoot = path.resolve(__dirname, '../..');
     const offenders: string[] = [];

@@ -1433,6 +1433,14 @@ puzzle hash is the protocol id at the WASM propose/notify boundary
 the way in. Each package owns its Bencodex-only `proposalParameters` codec and
 `decodeHandProposal`; package frontend code never parses factory CLVM.
 
+Game packages share protocol/package types through `games/host`, but do not
+share a React context, amount controls, currency formatting, settlement copy, or
+keyboard shortcuts. Mojo values are absolute; each package owns its small
+presentation implementation even when that duplicates another game. The player
+app separately owns network-aware formatting and terminal notification policy.
+Only Space Poker currently exposes the optional shared `cheat` intent, with its
+`cheat^` listener implemented inside that package.
+
 Each hook decodes the current machine-owned hand state on every render. It
 submits only `GameIntent` values through the shared Rust-first local-action
 boundary. Automatic moves use the same path and have no separate retry journal.

@@ -102,19 +102,19 @@ describe('pure game registrations', () => {
     expect(calpokerRegistration.proposalParameters.decode([100n, 0n])).toBeNull();
     expect(calpokerRegistration.proposalParameters.decode([100n, false, 1n])).toBeNull();
     expect(spacepokerRegistration.proposalParameters.decode([100n, 10n, 0n])).toBeNull();
-    const formatMojos = (mojos: bigint) => `${mojos} MOJO`;
+    expect(calpokerRegistration.describeHandProposal({ gameType: 'calpoker', ...base })).toBe(
+      'Stake 100 mojos each',
+    );
     expect(
-      calpokerRegistration.describeHandProposal({ gameType: 'calpoker', ...base }, { formatMojos }),
-    ).toBe('Stake 100 MOJO each');
-    expect(
-      spacepokerRegistration.describeHandProposal(
-        { gameType: 'spacepoker', ...base, unitSizeMojos: 10n },
-        { formatMojos },
-      ),
-    ).toBe('Stake 100 MOJO each · unit 10 MOJO · stack 10');
-    expect(
-      krunkRegistration.describeHandProposal({ gameType: 'krunk', ...base }, { formatMojos }),
-    ).toBe('Stake 100 MOJO each');
+      spacepokerRegistration.describeHandProposal({
+        gameType: 'spacepoker',
+        ...base,
+        unitSizeMojos: 10n,
+      }),
+    ).toBe('Stake 100 mojos each · unit 10 mojos · stack 10');
+    expect(krunkRegistration.describeHandProposal({ gameType: 'krunk', ...base })).toBe(
+      'Stake 100 mojos each',
+    );
   });
 
   it('encodes each structured proposal parameter shape', () => {

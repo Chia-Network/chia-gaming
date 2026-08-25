@@ -9,8 +9,7 @@ export type { CalpokerDisplaySnapshot, CalpokerHandState } from './serialize';
 
 type LocalGameCommand =
   | { type: 'make-move'; readable: Program | null }
-  | { type: 'accept-settlement' }
-  | { type: 'cheat'; moverShare: bigint };
+  | { type: 'accept-settlement' };
 
 export interface UseCalpokerHandResult {
   playerHand: bigint[];
@@ -22,7 +21,6 @@ export interface UseCalpokerHandResult {
   outcome: CalpokerOutcomeShape<bigint> | undefined;
   terminalOutcome: SettlementOutcome | null;
   handleMakeMove: () => void;
-  handleCheat: () => void;
   saveDisplaySnapshot: (snapshot: CalpokerDisplaySnapshot) => void;
   initialDisplaySnapshot: CalpokerDisplaySnapshot | undefined;
 }
@@ -98,14 +96,7 @@ export function useCalpokerHand(
               readable: command.readable,
               state: next,
             }
-          : command.type === 'accept-settlement'
-            ? { type: 'accept-settlement', gameId: next.gameId, state: next }
-            : {
-                type: 'cheat',
-                gameId: next.gameId,
-                moverShare: command.moverShare,
-                state: next,
-              },
+          : { type: 'accept-settlement', gameId: next.gameId, state: next },
       );
     },
     [currentState],
@@ -186,16 +177,6 @@ export function useCalpokerHand(
     handState.settlementOutcome,
   ]);
 
-  const handleCheat = useCallback(() => {
-    requireLiveGameHandSource(handSourceRef.current);
-    // A cheat is still a local move candidate, so it uses the same game-state
-    // transition as a normal move while the host handles protocol execution.
-    commitLocalAction((current) => ({ ...current, isPlayerTurn: false }), {
-      type: 'cheat',
-      moverShare: 0n,
-    });
-  }, [commitLocalAction]);
-
   const setCardSelections = useCallback(
     (selectionsOrFn: bigint[] | ((prev: bigint[]) => bigint[])) => {
       if (typeof selectionsOrFn === 'function') {
@@ -242,7 +223,6 @@ export function useCalpokerHand(
     outcome: suppressInitialOutcomeRef.current ? undefined : handState.outcome,
     terminalOutcome: handState.settlementOutcome,
     handleMakeMove,
-    handleCheat,
     saveDisplaySnapshot,
     initialDisplaySnapshot: handState.displaySnapshot,
   };

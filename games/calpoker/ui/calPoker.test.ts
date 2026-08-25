@@ -8,9 +8,8 @@ import {
   shouldRestoreCalpokerSelection,
   useCalpokerHand,
 } from './useCalpokerHand';
-import { calpokerSettlementVerb, calpokerTimeoutBadge } from './settlement';
+import { calpokerSettlementVerb, calpokerTimeoutBadge, isForfeitOutcome } from './settlement';
 import {
-  isForfeitOutcome,
   type GameHandOrigin,
   type GameHand,
   type GameHandSource,

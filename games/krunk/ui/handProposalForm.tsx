@@ -1,5 +1,5 @@
-import { AmountInput, useGameHost } from '../../host/ui';
 import type { HandProposalFormProps } from '../../host';
+import { AmountInput } from './AmountInput';
 import { isValidKrunkStake } from './handProposal';
 
 export function HandProposalForm({
@@ -9,7 +9,6 @@ export function HandProposalForm({
   onChange,
   onSubmit,
 }: HandProposalFormProps<{ amount: bigint }>) {
-  const { currencyLabels } = useGameHost();
   const maxMojos =
     maxPerHandMojos != null ? maxPerHandMojos - (maxPerHandMojos % 100n) : maxPerHandMojos;
   return (
@@ -30,7 +29,7 @@ export function HandProposalForm({
       />
       {draft.amount > 0n && !isValidKrunkStake(draft.amount) && (
         <p className="text-xs text-alert-text">
-          Krunk stakes must be multiples of 100 {currencyLabels.mojos}.
+          Krunk stakes must be multiples of 100 mojos.
         </p>
       )}
     </>

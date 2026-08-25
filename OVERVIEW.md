@@ -507,6 +507,11 @@ The repository includes three production reference games:
 - **Space Poker** — Texas Hold'em-style with messages and a terminal.
 - **Krunk** — Wordle-style atomic pair; illegal input surfaces as `MoveRejected`.
 
+Reference games share protocol/package contracts, not frontend presentation
+utilities. Each owns its amount controls, mojo formatting, settlement copy, and
+keyboard behavior. Space Poker is the only reference game that currently
+exposes the diagnostic cheat action.
+
 Each game lives in one top-level package under `games/<key>/`, registered only
 in [`games/registry.json`](games/registry.json) (`production` vs `test`). Package
 keys are build/bootstrap identifiers. The protocol identity is the first

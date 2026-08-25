@@ -9,12 +9,8 @@ import {
   KrunkGuess,
   KrunkRole,
 } from './useKrunkHand';
-import {
-  defaultFormatAmount,
-  gameHandState,
-  type GameHandSource,
-} from '../../host';
-import { useGameHost } from '../../host/ui';
+import { gameHandState, type GameHandSource } from '../../host';
+import { formatKrunkAmount } from './formatting';
 import type { KrunkHandState } from './serialize';
 
 export interface KrunkProps {
@@ -32,7 +28,7 @@ export function formatKrunkHandLog(
   betSize: bigint,
   guesses: KrunkGuess[],
   revealedWord: string | null,
-  formatAmount: (mojos: bigint) => string = defaultFormatAmount,
+  formatAmount: (mojos: bigint) => string = formatKrunkAmount,
 ): string[] {
   const roleLabel = role === 'alice' ? 'picking' : 'guessing';
   const lines = [`Krunk (${roleLabel}) ${formatAmount(betSize)}`];
@@ -422,7 +418,6 @@ const Krunk: React.FC<KrunkProps> = ({
   myName: _myName,
   opponentName,
 }) => {
-  const { formatAmount } = useGameHost();
   const interactive = handSource.interactionMode === 'live';
   const handState = gameHandState(handSource);
   const currentHandGameIds = [...handState.gameIds];
@@ -457,7 +452,7 @@ const Krunk: React.FC<KrunkProps> = ({
         betSize,
         aliceHand.gameState.guesses,
         aliceHand.gameState.revealedWord ?? aliceHand.gameState.secretWord,
-        formatAmount,
+        formatKrunkAmount,
       ),
     );
   }, [
@@ -466,7 +461,6 @@ const Krunk: React.FC<KrunkProps> = ({
     aliceHand.gameState.revealedWord,
     aliceHand.gameState.secretWord,
     betSize,
-    formatAmount,
     onGameLog,
   ]);
   useEffect(() => {
@@ -480,7 +474,7 @@ const Krunk: React.FC<KrunkProps> = ({
         betSize,
         bobHand.gameState.guesses,
         bobHand.gameState.revealedWord,
-        formatAmount,
+        formatKrunkAmount,
       ),
     );
   }, [
@@ -488,7 +482,6 @@ const Krunk: React.FC<KrunkProps> = ({
     bobHand.gameState.guesses,
     bobHand.gameState.revealedWord,
     betSize,
-    formatAmount,
     onGameLog,
   ]);
 

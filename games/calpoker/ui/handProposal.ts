@@ -5,6 +5,7 @@ import {
   type ProposalParameterCodec,
 } from '../../host';
 import { createCalpokerHand, type CalpokerHandState } from './serialize';
+import { formatCalpokerMojos } from './formatting';
 
 export {
   calpokerOutcomeFromState,
@@ -53,8 +54,8 @@ const registration: GamePackageRegistration<
   canRemountFinished: true,
   createHand: createCalpokerHand,
   proposalParameters: calpokerProposalParameters,
-  describeHandProposal: (handProposal, { formatMojos }) =>
-    `Stake ${formatMojos(handProposal.myContribution)} each`,
+  describeHandProposal: (handProposal) =>
+    `Stake ${formatCalpokerMojos(handProposal.myContribution)} each`,
   validateHandIds: (gameIds) => gameIds.length === 1,
   selectOutcome: (state) =>
     state.outcome ? { my_win_outcome: state.outcome.my_win_outcome } : null,

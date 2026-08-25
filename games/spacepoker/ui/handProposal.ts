@@ -1,5 +1,6 @@
 import { equalHandProposalBase, type GamePackageRegistration, type HandProposal } from '../../host';
 import { createSpacepokerHand, type SpacepokerHandState } from './serialize';
+import { formatSpacepokerMojos } from './formatting';
 import {
   resolveSpacepokerUnitSize,
   spacepokerProposalParameters,
@@ -35,11 +36,11 @@ const registration: GamePackageRegistration<
   canRemountFinished: true,
   createHand: createSpacepokerHand,
   proposalParameters: spacepokerProposalParameters,
-  describeHandProposal(handProposal, { formatMojos }) {
+  describeHandProposal(handProposal) {
     const space = spacepokerTermsOf(handProposal);
-    if (!space) return `Stake ${formatMojos(handProposal.myContribution)} each`;
+    if (!space) return `Stake ${formatSpacepokerMojos(handProposal.myContribution)} each`;
     const stack = space.myContribution / space.unitSizeMojos;
-    return `Stake ${formatMojos(space.myContribution)} each · unit ${formatMojos(space.unitSizeMojos)} · stack ${String(stack)}`;
+    return `Stake ${formatSpacepokerMojos(space.myContribution)} each · unit ${formatSpacepokerMojos(space.unitSizeMojos)} · stack ${String(stack)}`;
   },
   validateHandIds: (gameIds) => gameIds.length === 1,
   selectOutcome: (state) =>

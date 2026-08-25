@@ -9,7 +9,7 @@ import {
   type LiveGamePort,
   type PersistedGameState,
 } from '../../host';
-import SpacePoker from './SpacePoker';
+import SpacePoker, { advanceSpacepokerCheatSequence } from './SpacePoker';
 import { reduceSpacepokerSettlementState } from './handProposal';
 import { spacePokerRankLabel } from './handPresentation';
 import {
@@ -62,6 +62,19 @@ function liveSource(port: LiveGamePort, state: PersistedGameState): GameHandSour
 }
 
 describe('Space Poker terminal UX', () => {
+  it('recognizes its game-local cheat shortcut', () => {
+    let buffer = '';
+    for (const key of 'cheat') {
+      const next = advanceSpacepokerCheatSequence(buffer, key);
+      expect(next.triggered).toBe(false);
+      buffer = next.buffer;
+    }
+    expect(advanceSpacepokerCheatSequence(buffer, '^')).toEqual({
+      buffer: '',
+      triggered: true,
+    });
+  });
+
   it('uses a single-character ten rank and recognizes terminal handlers', () => {
     expect(spacePokerRankLabel(10n)).toBe('T');
     expect(isTerminalSpacepokerHandler(SpHandler.Folded)).toBe(true);

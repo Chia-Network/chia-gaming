@@ -1,5 +1,6 @@
-import { AmountInput, useGameHost } from '../../host/ui';
 import type { HandProposalFormProps } from '../../host';
+import { AmountInput } from './AmountInput';
+import { formatSpacepokerMojos } from './formatting';
 
 export function HandProposalForm({
   draft,
@@ -8,7 +9,6 @@ export function HandProposalForm({
   onChange,
   onSubmit,
 }: HandProposalFormProps<{ unitSize: bigint; stackSize: bigint }>) {
-  const { formatMojos } = useGameHost();
   const betSize = draft.unitSize * draft.stackSize;
   const maxUnitSize =
     maxPerHandMojos != null && draft.stackSize > 0n ? maxPerHandMojos / draft.stackSize : null;
@@ -48,7 +48,8 @@ export function HandProposalForm({
         />
       </div>
       <div className="text-xs text-canvas-text">
-        Per-player stake: {formatMojos(betSize)} · Total game size: {formatMojos(betSize * 2n)}
+        Per-player stake: {formatSpacepokerMojos(betSize)} · Total game size:{' '}
+        {formatSpacepokerMojos(betSize * 2n)}
       </div>
     </>
   );

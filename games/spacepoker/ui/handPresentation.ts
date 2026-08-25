@@ -1,4 +1,4 @@
-import { defaultFormatAmount } from '../../host';
+import { formatSpacepokerAmount } from './formatting';
 import type { SpHandEntry, SpOutcome, SpTerminalState } from './useSpacepokerHand';
 
 const RANK_LABELS: Record<number, string> = {
@@ -141,7 +141,7 @@ export function formatSpacepokerHandLog(
   coinTossIOpen: boolean | null,
   betUnit: bigint,
   stackSize: bigint,
-  formatAmount: (mojos: bigint) => string = defaultFormatAmount,
+  formatAmount: (mojos: bigint) => string = formatSpacepokerAmount,
 ): string[] {
   const weOpenFirst = coinTossIOpen === true;
   const posLabel = weOpenFirst ? '1st' : '2nd';

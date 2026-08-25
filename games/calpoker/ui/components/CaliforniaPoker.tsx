@@ -20,8 +20,7 @@ import { HandDisplay, MovingCard } from './components';
 import { SuitName } from '../types/CardValueSuit';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from '../types/CaliforniapokerProps';
 import GameBottomBar from './components/GameBottomBar';
-import { settlementByUs } from '../../../host';
-import { calpokerSettlementVerb, calpokerTimeoutBadge } from '../settlement';
+import { calpokerSettlementVerb, calpokerTimeoutBadge, settlementByUs } from '../settlement';
 import { shouldRestoreCalpokerSelection } from '../useCalpokerHand';
 import { projectCalpokerFinalDisplay } from '../outcome';
 

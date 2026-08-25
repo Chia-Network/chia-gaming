@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { gameHandState, type GameHandSource } from '../../host';
-import { useCheatKeys, useGameHost } from '../../host/ui';
 import { describeSpacePokerHand, formatSpacepokerHandLog } from './handPresentation';
+import { formatSpacepokerAmount } from './formatting';
 import { SpacePokerActionControls } from './SpacePokerActionControls';
 import { SpacePokerHandHistory, SpacePokerTable } from './SpacePokerTable';
 import {
@@ -21,6 +21,35 @@ export interface SpacePokerProps {
   opponentName?: string;
 }
 
+export function advanceSpacepokerCheatSequence(
+  current: string,
+  key: string,
+): { buffer: string; triggered: boolean } {
+  const sequence = 'cheat^';
+  const next = current + key;
+  if (next === sequence) return { buffer: '', triggered: true };
+  if (sequence.startsWith(next)) return { buffer: next, triggered: false };
+  return { buffer: sequence.startsWith(key) ? key : '', triggered: false };
+}
+
+function useSpacepokerCheatKeys(handleCheat: () => void, enabled: boolean): void {
+  const buffer = useRef('');
+  useEffect(() => {
+    if (!enabled) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
+        return;
+      if (event.key.length !== 1) return;
+      const next = advanceSpacepokerCheatSequence(buffer.current, event.key);
+      buffer.current = next.buffer;
+      if (next.triggered) handleCheat();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [enabled, handleCheat]);
+}
+
 export default function SpacePoker({
   handSource,
   onGameLog,
@@ -32,9 +61,7 @@ export default function SpacePoker({
   const betSizeValue = state.perPlayerStake * 2n;
   const sp = useSpacepokerHand(handSource);
   const { handler, myTurn, N } = sp.gameState;
-  const { currencyLabels: spCurrency, formatAmount } = useGameHost();
-
-  useCheatKeys(sp.handleCheat, interactive);
+  useSpacepokerCheatKeys(sp.handleCheat, interactive);
 
   const [alreadyTerminalAtMount] = useState(() => {
     const state = gameHandState(handSource);
@@ -58,7 +85,7 @@ export default function SpacePoker({
         sp.coinTossIOpen,
         sp.betUnit,
         stackSize,
-        formatAmount,
+        formatSpacepokerAmount,
       ),
     );
   }, [
@@ -74,7 +101,6 @@ export default function SpacePoker({
     sp.betUnit,
     betSizeValue,
     onGameLog,
-    formatAmount,
   ]);
 
   const inBetting = handler === SpHandler.BeginRound || handler === SpHandler.MidRound;
@@ -126,7 +152,7 @@ export default function SpacePoker({
             className={`rounded px-2 py-0.5 ${sp.displayMode === mode ? 'bg-canvas-solid text-canvas-bg' : 'border border-canvas-line text-canvas-text-contrast'}`}
             onClick={() => sp.setDisplayMode(mode)}
           >
-            {mode === 'xch' ? spCurrency.xch : mode === 'mojos' ? spCurrency.mojos : mode}
+            {mode === 'xch' ? 'XCH' : mode}
           </button>
         ))}
       </div>

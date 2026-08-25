@@ -1,7 +1,6 @@
 import { Program } from 'clvm-lib';
 import {
   createGameHand,
-  isForfeitOutcome,
   isSettlementOutcome,
   type GameHand,
   type GameHandInitialization,
@@ -9,6 +8,10 @@ import {
   type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
+
+function isForfeitOutcome(outcome: SettlementOutcome): boolean {
+  return outcome === 'forfeited_skipped_reveal' || outcome === 'forfeited_we_accepted';
+}
 
 export type SpacepokerDisplayMode = 'xch' | 'mojos' | 'units';
 export type SpHandler = 0n | 1n | 2n | 3n | 4n | 5n | 6n;

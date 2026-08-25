@@ -1,5 +1,5 @@
-import { AmountInput } from '../../host/ui';
 import type { HandProposalFormProps } from '../../host';
+import { AmountInput } from './AmountInput';
 
 export function HandProposalForm({
   draft,

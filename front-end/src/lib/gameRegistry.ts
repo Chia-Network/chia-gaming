@@ -12,7 +12,6 @@ import type {
 } from '@games/host';
 import type { HandProposalBase, HandProposal } from './session/types';
 import type { SessionModel } from './session/types';
-import { formatMojos } from '../util';
 
 export type { CatalogGameType } from '../generated/gamePresets';
 export type RegisteredGameType = CatalogGameType;
@@ -148,7 +147,7 @@ export function handProposalsEqual(a: HandProposal | null, b: HandProposal | nul
 }
 
 export function describeReceivedProposal(handProposal: HandProposal): string {
-  return packageFor(handProposal.gameType).describeHandProposal(handProposal, { formatMojos });
+  return packageFor(handProposal.gameType).describeHandProposal(handProposal);
 }
 
 export function selectRegisteredGameOutcome(

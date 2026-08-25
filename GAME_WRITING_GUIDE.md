@@ -13,9 +13,9 @@ A game has three main parts:
    it after a refresh.
 
 You do not need to understand every part of the player application. Game code
-uses the public interfaces in [`games/host/index.ts`](games/host/index.ts) and
-[`games/host/ui.tsx`](games/host/ui.tsx). Keep your game behind those
-interfaces so it remains independent of this particular frontend.
+uses the protocol and package interfaces in
+[`games/host/index.ts`](games/host/index.ts). Keep your game behind that
+interface so it remains independent of this particular frontend.
 
 If state channels are new to you, read [`OVERVIEW.md`](OVERVIEW.md) first. For
 the detailed CLVM function signatures, use
@@ -223,6 +223,12 @@ The host owns the game selector and `gameTimeout`; they are deliberately absent
 from this interface. The game form owns only game-specific draft fields. A form
 must not send a proposal or call protocol APIs itself.
 
+The game also owns its form controls, amount-unit choices, formatting, and
+validation copy. Amounts cross the package boundary as absolute mojo `bigint`
+values. There is deliberately no shared game UI component or currency-formatting
+service: reference games may duplicate small controls so their presentation
+implementations remain independent.
+
 Implement the conversion and validation in `handProposal.ts`. Its registration
 must provide:
 
@@ -429,7 +435,8 @@ type GameIntent<TState> =
   complete hand state to persist on acceptance.
 - `cheat` deliberately invokes the diagnostic illegal-move path with a
   mojo-denominated `moverShare` and complete candidate state. It is not a normal
-  gameplay fallback.
+  gameplay fallback. It is optional; among the reference games only Space Poker
+  exposes it, including its game-local `cheat^` keyboard shortcut.
 
 The host keeps command execution and candidate state atomic. If Rust applies the
 action immediately, the candidate commits immediately. If Rust queues it, the
@@ -517,8 +524,10 @@ no event observable or local echo. Protocol turn, timeout, replay, spending,
 freezing, proposal lifecycle, removal, abandonment, transport, persistence,
 and shared error reporting remain host-owned.
 
-The host also provides shared UI helpers through `games/host`, including
-`AmountInput`, `useGameHost`, amount formatting, and settlement labels.
+`games/host` contains shared protocol vocabulary, not shared game
+presentation. Each package owns its controls, amount formatting, settlement
+labels, and keyboard shortcuts. `appendGameLog` is the narrow exception: it is
+an explicit live-mount callback into the player app's persisted hand history.
 
 ## Import boundaries
 

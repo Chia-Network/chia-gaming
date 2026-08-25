@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import { gameHandState, requireLiveGameHandSource, type GameHandSource } from '../../host';
-import { useGameHost } from '../../host/ui';
 import type { SettlementOutcome } from '../../host';
+import { formatSpacepokerXch } from './formatting';
 import {
   type SpacepokerDisplayMode,
   type SpacepokerHandState,
@@ -74,19 +74,9 @@ export interface UseSpacepokerHandResult {
   handleCheat: () => void;
 }
 
-function formatXch(mojos: bigint, xchLabel: string): string {
-  const sign = mojos < 0n ? '-' : '';
-  const abs = mojos < 0n ? -mojos : mojos;
-  const s = abs.toString().padStart(13, '0');
-  const whole = s.slice(0, -12).replace(/^0+/, '') || '0';
-  const frac = s.slice(-12).replace(/0+$/, '');
-  return `${sign}${frac ? `${whole}.${frac}` : whole} ${xchLabel}`;
-}
-
 export function useSpacepokerHand(
   handSource: GameHandSource<SpacepokerHandState>,
 ): UseSpacepokerHandResult {
-  const { currencyLabels } = useGameHost();
   const state = gameHandState(handSource);
   const betSize = state.perPlayerStake * 2n;
 
@@ -309,10 +299,10 @@ export function useSpacepokerHand(
     (units: bigint): string => {
       if (displayMode === 'units') return String(units);
       const mojos = units * betUnit;
-      if (displayMode === 'mojos') return `${mojos.toLocaleString()} ${currencyLabels.mojos}`;
-      return formatXch(mojos, currencyLabels.xch);
+      if (displayMode === 'mojos') return `${mojos.toLocaleString()} mojos`;
+      return formatSpacepokerXch(mojos);
     },
-    [betUnit, currencyLabels, displayMode],
+    [betUnit, displayMode],
   );
 
   return {

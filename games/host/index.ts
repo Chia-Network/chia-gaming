@@ -31,82 +31,9 @@ const ALL_OUTCOMES: ReadonlySet<string> = new Set<SettlementOutcome>([
   'opponent_cheated',
 ]);
 
-export const SETTLEMENT_OUTCOME_LABELS: Record<SettlementOutcome, string> = {
-  accept_settlement: 'Accepted',
-  settled_cleanly: 'Settled cleanly',
-  opponent_timed_out: 'Opponent timed out',
-  forfeited_skipped_reveal: 'Forfeited',
-  lost: 'Lost',
-  forfeited_we_accepted: 'Forfeited',
-  we_accepted: 'Accepted',
-  attempt_to_move_failed: 'Attempt to move failed',
-  timed_out_waiting_for_our_move: 'Timed out waiting for our move',
-  slashed_opponent: 'Slashed opponent',
-  opponent_slashed_us: 'Opponent slashed us',
-  opponent_cheated: 'Opponent cheated',
-};
-
 export function isSettlementOutcome(value: unknown): value is SettlementOutcome {
   return typeof value === 'string' && ALL_OUTCOMES.has(value);
 }
-
-export function settlementLabel(outcome: SettlementOutcome): string {
-  return SETTLEMENT_OUTCOME_LABELS[outcome];
-}
-
-export function isForfeitOutcome(outcome: SettlementOutcome): boolean {
-  return outcome === 'forfeited_skipped_reveal' || outcome === 'forfeited_we_accepted';
-}
-
-export function isErrorSettlementOutcome(outcome: SettlementOutcome): boolean {
-  return (
-    isForfeitOutcome(outcome) ||
-    outcome === 'timed_out_waiting_for_our_move' ||
-    outcome === 'attempt_to_move_failed' ||
-    outcome === 'opponent_slashed_us' ||
-    outcome === 'opponent_cheated'
-  );
-}
-
-export function settlementByUs(outcome: SettlementOutcome): boolean | null {
-  switch (outcome) {
-    case 'accept_settlement':
-    case 'we_accepted':
-    case 'forfeited_skipped_reveal':
-    case 'forfeited_we_accepted':
-    case 'lost':
-    case 'timed_out_waiting_for_our_move':
-    case 'attempt_to_move_failed':
-    case 'slashed_opponent':
-      return true;
-    case 'opponent_timed_out':
-    case 'opponent_slashed_us':
-    case 'opponent_cheated':
-      return false;
-    case 'settled_cleanly':
-      return null;
-  }
-}
-
-export function parseSettlementShare(value: unknown): string | null {
-  if (value == null) return null;
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    'Amount' in (value as Record<string, unknown>)
-  ) {
-    return String((value as Record<string, unknown>).Amount);
-  }
-  if (typeof value === 'object' && value !== null && 'amt' in (value as Record<string, unknown>)) {
-    return String((value as Record<string, unknown>).amt);
-  }
-  return String(value);
-}
-
-export interface GameHostText {
-  formatMojos(mojos: bigint): string;
-}
-
 export interface HandProposalBase {
   myContribution: bigint;
   theirContribution: bigint;
@@ -140,48 +67,6 @@ export type ProposalParameterValue =
 export interface ProposalParameterCodec<TParams> {
   decode(value: unknown): TParams | null;
   encode(params: TParams): ProposalParameterValue;
-}
-
-export function readClvmProgram(value: unknown): Program | null {
-  if (!(value instanceof Uint8Array)) return null;
-  try {
-    const program = Program.deserialize(value);
-    const canonical = program.serialize();
-    if (
-      canonical.length !== value.length ||
-      canonical.some((byte, index) => byte !== value[index])
-    ) {
-      return null;
-    }
-    return program;
-  } catch {
-    return null;
-  }
-}
-
-export function readClvmAtom(program: Program): bigint | null {
-  try {
-    return program.toBigInt();
-  } catch {
-    return null;
-  }
-}
-
-export function readClvmFlag(program: Program): boolean | null {
-  const value = readClvmAtom(program);
-  if (value === 0n) return false;
-  if (value === 1n) return true;
-  return null;
-}
-
-export function readClvmList(program: Program, length: number): readonly Program[] | null {
-  if (!program.isCons) return null;
-  try {
-    const items = program.toList(true);
-    return items.length === length ? items : null;
-  } catch {
-    return null;
-  }
 }
 
 export type GameIntent<TState> =
@@ -239,11 +124,9 @@ export function createGameHand<TState>(
     },
   };
 }
-
 export type ComposeDraftValue = Record<string, bigint>;
 export type GameComposeDrafts = Record<string, ComposeDraftValue>;
 export type SavedHandProposalExtras = Readonly<Record<string, string | undefined>>;
-export type StateUpdate<T> = T | ((current: T) => T);
 export type HandProposalFor<T extends RegisteredGameType> = HandProposal & { gameType: T };
 
 export interface HandProposalFormProps<TDraft> {
@@ -258,10 +141,6 @@ export interface HandProposalDecodeContext {
   readonly origin: ProposalGroupOrigin;
   readonly iStarted: boolean;
   readonly expectedSenderGoesFirst: boolean;
-}
-
-export function reduceGameStateSnapshot<T>(current: T, update: StateUpdate<T>): T {
-  return typeof update === 'function' ? (update as (value: T) => T)(current) : update;
 }
 
 export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase): boolean {
@@ -360,7 +239,7 @@ export interface GamePackageRegistration<TState, TDraft = ComposeDraftValue, TPa
   readonly canRemountFinished: boolean;
   createHand(init: GameHandInitialization): GameHand<TState>;
   readonly proposalParameters: ProposalParameterCodec<TParams>;
-  describeHandProposal(handProposal: HandProposal, text: GameHostText): string;
+  describeHandProposal(handProposal: HandProposal): string;
   validateHandIds(gameIds: readonly string[]): boolean;
   selectOutcome(state: TState, gameId: string): HandWinOutcome | null;
   readonly lifecycle: {
@@ -391,7 +270,7 @@ export interface RegisteredGamePackage {
   readonly displayName: string;
   readonly canRemountFinished: boolean;
   createHand(init: GameHandInitialization): RegisteredGameHand;
-  describeHandProposal(handProposal: HandProposal, text: GameHostText): string;
+  describeHandProposal(handProposal: HandProposal): string;
   validateHandIds(gameIds: readonly string[]): boolean;
   selectOutcome(state: unknown, gameId: string): HandWinOutcome | null;
   readonly lifecycle: {
@@ -451,53 +330,4 @@ export function defineGamePackage<TState, TDraft extends ComposeDraftValue, TPar
         draft: props.draft as unknown as TDraft,
       }),
   };
-}
-
-export interface CurrencyLabels {
-  xch: string;
-  chia: string;
-  mojo: string;
-  mojos: string;
-  MOJO: string;
-}
-
-export const DEFAULT_CURRENCY_LABELS: CurrencyLabels = {
-  xch: 'XCH',
-  chia: 'chia',
-  mojo: 'mojo',
-  mojos: 'mojos',
-  MOJO: 'MOJO',
-};
-
-export function formatAmountWithLabels(mojos: bigint, labels: CurrencyLabels): string {
-  if (mojos < 1_000_000n) {
-    return `${mojos} ${labels.MOJO}`;
-  }
-  const TRILLION = 1_000_000_000_000n;
-  const whole = mojos / TRILLION;
-  const frac = mojos % TRILLION;
-  if (frac === 0n) return `${whole} ${labels.xch}`;
-  const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
-  return `${whole}.${fracStr} ${labels.xch}`;
-}
-
-export function formatMojosWithLabels(mojos: bigint, labels: CurrencyLabels): string {
-  const TRILLION = 1_000_000_000_000n;
-  const absMojos = mojos < 0n ? -mojos : mojos;
-  if (absMojos >= 100_000_000n) {
-    const sign = mojos < 0n ? '-' : '';
-    const whole = absMojos / TRILLION;
-    const frac = absMojos % TRILLION;
-    const fracStr = frac.toString().padStart(12, '0').slice(0, 4);
-    return `${sign}${whole.toLocaleString()}.${fracStr} ${labels.xch}`;
-  }
-  return `${mojos.toLocaleString()} ${labels.mojos}`;
-}
-
-export function defaultFormatAmount(mojos: bigint): string {
-  return formatAmountWithLabels(mojos, DEFAULT_CURRENCY_LABELS);
-}
-
-export function defaultFormatMojos(mojos: bigint): string {
-  return formatMojosWithLabels(mojos, DEFAULT_CURRENCY_LABELS);
 }

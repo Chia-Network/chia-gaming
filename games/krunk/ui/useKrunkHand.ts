@@ -1,10 +1,8 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import {
-  DEFAULT_CURRENCY_LABELS,
   gameHandState,
   requireLiveGameHandSource,
-  type CurrencyLabels,
   type GameHandSource,
 } from '../../host';
 import { krunkSettlementStatus } from './settlement';
@@ -20,8 +18,7 @@ import {
 
 type LocalGameCommand =
   | { type: 'make-move'; readable: Program | null }
-  | { type: 'accept-settlement' }
-  | { type: 'cheat'; moverShare: bigint };
+  | { type: 'accept-settlement' };
 
 export { KrunkHandler };
 export type { KrunkGameState, KrunkGuess, KrunkRole };
@@ -169,18 +166,15 @@ export function krunkWinMessage(moverShare: string): string {
   return krunkWinnerMessage('You', moverShare);
 }
 
-function krunkAmountLabel(
-  amount: string,
-  labels: CurrencyLabels = DEFAULT_CURRENCY_LABELS,
-): string {
+function krunkAmountLabel(amount: string): string {
   const mojos = BigInt(amount);
-  if (mojos < 1_000_000n) return `${mojos} ${labels.mojo}`;
+  if (mojos < 1_000_000n) return `${mojos} mojo`;
   const TRILLION = 1_000_000_000_000n;
   const whole = mojos / TRILLION;
   const frac = mojos % TRILLION;
-  if (frac === 0n) return `${whole} ${labels.chia}`;
+  if (frac === 0n) return `${whole} chia`;
   const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
-  return `${whole}.${fracStr} ${labels.chia}`;
+  return `${whole}.${fracStr} chia`;
 }
 
 export function krunkWinnerMessage(winner: string, amount: string): string {
@@ -248,9 +242,7 @@ export function useKrunkHand(
     requireLiveGameHandSource(handSourceRef.current).dispatch(
       command.type === 'make-move'
         ? { type: 'make-move', gameId, readable: command.readable, state: nextHand }
-        : command.type === 'accept-settlement'
-          ? { type: 'accept-settlement', gameId, state: nextHand }
-          : { type: 'cheat', gameId, moverShare: command.moverShare, state: nextHand },
+        : { type: 'accept-settlement', gameId, state: nextHand },
     );
   }, []);
 
