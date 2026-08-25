@@ -243,7 +243,7 @@ describe('CloudBlockchainInterface beginConnect', () => {
     clearCloudWalletAuth();
   });
 
-  it('fresh connect exposes string setup fields for OAuth', async () => {
+  it('fresh connect exposes skipQr setup fields so Shell prompts instead of silent-finalize', async () => {
     const iface = new CloudBlockchainInterface();
     const setup = await iface.beginConnect('uid', true);
     expect(setup.skipQr).toBe(true);
@@ -251,6 +251,19 @@ describe('CloudBlockchainInterface beginConnect', () => {
     expect(setup.fields?.clientId?.type).toBe('string');
     expect(setup.fields?.apiUrl?.type).toBe('string');
     expect(setup.fields?.uiUrl?.type).toBe('string');
+  });
+
+  it('stored auth skips setup fields so silent reconnect can finalize', async () => {
+    saveCloudWalletAuth({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      expiresAt: Date.now() + 60_000,
+      walletId: 'wallet-1',
+    });
+    const iface = new CloudBlockchainInterface();
+    const setup = await iface.beginConnect('uid');
+    expect(setup.skipQr).toBe(true);
+    expect(setup.fields).toBeUndefined();
   });
 
   it('finalize persists config before attempting OAuth', async () => {

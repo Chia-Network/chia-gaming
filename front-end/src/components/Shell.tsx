@@ -153,6 +153,10 @@ import {
 } from '../lib/session/historyLimits';
 import { log } from '../services/log';
 import { formatMojos } from '../util';
+import {
+  needsConnectionSetupPrompt,
+  needsWalletPairing,
+} from '../util/connectionSetup';
 import { isElectronDistribution } from '../util/distribution';
 import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
@@ -2296,8 +2300,9 @@ const Shell = () => {
   );
 
   // --- Unified connection flow ---
-  // silent: skip the modal on reconnect (e.g. auto-reconnect after completed connection)
-  // fresh: wipe stale WC storage before connecting (user explicitly starting a new pairing)
+  // silent: skip the simulator balance modal on reconnect. skipQr+fields still
+  // prompts (Cloud Wallet OAuth) — auto-finalize would open a popup or fail
+  // with no client id. fresh: wipe stale WC/Cloud storage before connecting.
   const handleConnect = useCallback(
     async (bcType: ShellBlockchainType, silent = false, fresh = false) => {
       log(`[Shell] handleConnect: bcType=${bcType} silent=${silent} fresh=${fresh}`);
@@ -2312,8 +2317,7 @@ const Shell = () => {
         const setup = await iface.beginConnect(uniqueId, fresh);
         if (wcAbortRef.current) return;
         // QR pairing (WalletConnect): show QR and wait for the wallet; do not finalize yet.
-        const needsWalletPairing = !setup.skipQr && !setup.fields;
-        if (needsWalletPairing) {
+        if (needsWalletPairing(setup)) {
           setConnectionSetup(setup);
           setWalletConnected(false);
           setConnecting(false);
@@ -2325,12 +2329,13 @@ const Shell = () => {
         // Retain the setup whenever we need the user to act on it: QR pairing or
         // a setup-fields modal (which may be skipQr, e.g. Cloud Wallet OAuth).
         if (!setup.skipQr || setup.fields) setConnectionSetup(setup);
-        if (setup.fields && !silent) {
+        // skipQr + fields: always collect config (Cloud Wallet OAuth). Silent
+        // reconnect must not call finalize() without values.
+        // fields without skipQr (simulator): skip the modal on silent reconnect.
+        if (setup.fields && (!silent || needsConnectionSetupPrompt(setup))) {
           setShowConnectionSetupModal(true);
           setConnecting(false);
-          return;
-        }
-        if (silent && !setup.skipQr && !setup.fields) {
+          if (silent) setWalletAlert(true);
           return;
         }
         log(`[Shell] handleConnect: calling finalize`);
@@ -2906,9 +2911,18 @@ const Shell = () => {
         try {
           const setup = await iface.beginConnect(uniqueId);
           // QR pairing (WalletConnect): show QR and wait for the wallet; do not finalize yet.
-          const needsWalletPairing = !setup.skipQr && !setup.fields;
-          if (needsWalletPairing) {
+          if (needsWalletPairing(setup)) {
             setConnectionSetup(setup);
+            setWalletConnected(false);
+            setConnecting(false);
+            setWalletAlert(true);
+            return;
+          }
+          // skipQr + fields: Cloud Wallet needs OAuth config. Do not finalize
+          // without values — that would open a popup or fail with no client id.
+          if (needsConnectionSetupPrompt(setup)) {
+            setConnectionSetup(setup);
+            setShowConnectionSetupModal(true);
             setWalletConnected(false);
             setConnecting(false);
             setWalletAlert(true);
