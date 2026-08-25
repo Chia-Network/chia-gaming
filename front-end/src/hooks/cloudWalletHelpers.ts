@@ -52,14 +52,14 @@ export function selectCoinStringForAmount(
     if (aa > bb) return 1;
     return 0;
   });
-  const selected = sorted.find((c) => BigInt(c.amount ?? 0) >= amount) ?? null;
-  if (!selected) return null;
-
-  const parent = normalizeHex(selected.parentCoinInfo);
-  const ph = normalizeHex(selected.puzzleHash);
-  const amt = BigInt(selected.amount ?? 0);
-  if (parent && ph && parent.length === 64 && ph.length === 64) {
-    return `${parent}${ph}${encodeU64AsClvmHex(amt)}`;
+  for (const selected of sorted) {
+    const amt = BigInt(selected.amount ?? 0);
+    if (amt < amount) continue;
+    const parent = normalizeHex(selected.parentCoinInfo);
+    const ph = normalizeHex(selected.puzzleHash);
+    if (parent.length === 64 && ph.length === 64) {
+      return `${parent}${ph}${encodeU64AsClvmHex(amt)}`;
+    }
   }
   return null;
 }

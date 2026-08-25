@@ -69,6 +69,7 @@ import {
   saveOAuthPending,
   clearOAuthPending,
   clearCloudWalletAuth,
+  saveCloudWalletAuth,
 } from '../../hooks/cloudWalletAuth';
 import {
   clearCloudWalletConfig,
@@ -518,5 +519,124 @@ describe('CloudBlockchainInterface helpers', () => {
         100n,
       ),
     ).toBeNull();
+  });
+
+  it('selectCoinStringForAmount returns null when the sufficient coin has no parent', () => {
+    expect(
+      selectCoinStringForAmount(
+        [
+          {
+            puzzleHash: '22'.repeat(32),
+            amount: 100n,
+          },
+        ],
+        50n,
+      ),
+    ).toBeNull();
+  });
+
+  it('selectCoinStringForAmount skips an incomplete coin and picks the next valid one', () => {
+    const coin = selectCoinStringForAmount(
+      [
+        {
+          puzzleHash: '22'.repeat(32),
+          amount: 80n,
+        },
+        {
+          parentCoinInfo: '33'.repeat(32),
+          puzzleHash: '44'.repeat(32),
+          amount: 100n,
+        },
+      ],
+      50n,
+    );
+    expect(coin).not.toBeNull();
+    expect(coin!.startsWith('33'.repeat(32) + '44'.repeat(32))).toBe(true);
+  });
+});
+
+describe('CloudBlockchainInterface coin records', () => {
+  beforeEach(() => {
+    setTestGlobal('localStorage', makeStorage());
+    setTestGlobal('sessionStorage', makeStorage());
+    clearCloudWalletAuth();
+    saveCloudWalletAuth({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      expiresAt: Date.now() + 10 * 60_000,
+      walletId: 'Wallet_1',
+    });
+  });
+
+  afterEach(() => {
+    setTestGlobal('fetch', undefined);
+  });
+
+  function mockGraphql(handler: (query: string) => unknown) {
+    const fetchMock = jest.fn(async (_url: string, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { query?: string };
+      return {
+        status: 200,
+        ok: true,
+        text: async () => JSON.stringify({ data: handler(body.query ?? '') }),
+      };
+    });
+    setTestGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('getCoinRecordsByNames omits records missing parentCoinName instead of inventing a parent', async () => {
+    mockGraphql(() => ({
+      coinRecordsByNames: [
+        {
+          name: 'aa'.repeat(32),
+          amount: '100',
+          puzzleHash: 'bb'.repeat(32),
+        },
+        {
+          name: 'cc'.repeat(32),
+          amount: '200',
+          puzzleHash: 'dd'.repeat(32),
+          parentCoinName: 'ee'.repeat(32),
+        },
+      ],
+    }));
+    const iface = new CloudBlockchainInterface();
+    const records = await iface.getCoinRecordsByNames(['aa'.repeat(32), 'cc'.repeat(32)]);
+    expect(records).toHaveLength(1);
+    expect(records[0].coin.parentCoinInfo).toBe('ee'.repeat(32));
+    expect(records[0].coin.puzzleHash).toBe('dd'.repeat(32));
+    expect(records[0].coin.amount).toBe(200n);
+  });
+
+  it('selectCoins returns null when coin records have no parent identity', async () => {
+    mockGraphql((query) => {
+      if (query.includes('coinRecordsByNames')) {
+        return {
+          coinRecordsByNames: [
+            {
+              name: 'aa'.repeat(32),
+              amount: '100',
+              puzzleHash: 'bb'.repeat(32),
+            },
+          ],
+        };
+      }
+      return {
+        coins: {
+          edges: [
+            {
+              node: {
+                name: 'aa'.repeat(32),
+                amount: '100',
+                puzzleHash: 'bb'.repeat(32),
+              },
+            },
+          ],
+        },
+      };
+    });
+    const iface = new CloudBlockchainInterface();
+    await expect(iface.selectCoins('uid', 50n)).resolves.toBeNull();
   });
 });
