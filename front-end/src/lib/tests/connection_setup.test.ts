@@ -1,7 +1,4 @@
-import {
-  needsConnectionSetupPrompt,
-  needsWalletPairing,
-} from '../../util/connectionSetup';
+import { needsConnectionSetupPrompt, needsWalletPairing } from '../../util/connectionSetup';
 import type { ConnectionField } from '../../types/ChiaGaming';
 
 const stringField: ConnectionField = { type: 'string', label: 'Client ID', default: '' };
