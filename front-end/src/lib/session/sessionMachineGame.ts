@@ -118,18 +118,49 @@ function memberIndexForProtocolId(state: SessionMachineState, id: string): numbe
   return matches[0]!;
 }
 
-function reduceWithTransientHand(
+function reduceHandSnapshot(
   state: SessionMachineState,
+  saved: PersistedGameState | null,
   update: GameUpdate,
 ): PersistedGameState {
   const gameType = state.model.game.activeGameType;
-  const saved = state.model.game.handState;
   const hand =
     saved === null
       ? createRegisteredGameHand(gameType, fallbackHandInitialization(state))
       : restoreRegisteredGameHandState(gameType, saved);
   hand.receive(update);
   return snapshotRegisteredGameHand(gameType, hand);
+}
+
+function reduceHandUpdateAcrossSnapshots(
+  state: SessionMachineState,
+  update: GameUpdate,
+  suppliedHandState: PersistedGameState | null | undefined,
+  activeHand?: ActiveGameHandContext,
+): SessionMachineTransition {
+  activeHand?.receive(update);
+  const handState =
+    suppliedHandState ?? reduceHandSnapshot(state, state.model.game.handState, update);
+  const pendingCandidates = Object.fromEntries(
+    Object.entries(state.model.game.pendingCandidates).map(([id, pending]) => {
+      const updated = reduceHandSnapshot(
+        state,
+        { gameType: pending.gameType, state: pending.state },
+        update,
+      );
+      return [id, { ...pending, state: updated.state }];
+    }),
+  );
+  return {
+    state: {
+      ...state,
+      model: {
+        ...state.model,
+        game: { ...state.model.game, handState, pendingCandidates },
+      },
+    },
+    effects: [],
+  };
 }
 
 function assertNever(event: never): never {
@@ -280,12 +311,7 @@ export function reduceDurableGameEvent(
               readable: event.readable,
               moverShare: event.moverShare,
             };
-      return withHandState(
-        projected,
-        event.handState ??
-          activeHand?.receive(update) ??
-          reduceWithTransientHand(projected, update),
-      );
+      return reduceHandUpdateAcrossSnapshots(projected, update, event.handState, activeHand);
     }
     case 'notification-game-terminal': {
       if (state.model.game.pendingCandidates[event.id]) {
@@ -318,11 +344,7 @@ export function reduceDurableGameEvent(
         memberIndex: memberIndexForProtocolId(base, event.id),
         outcome: event.terminal.outcome,
       };
-      const transition = withHandState(
-        base,
-        event.handState ?? activeHand?.receive(update) ?? reduceWithTransientHand(base, update),
-      );
-      return transition;
+      return reduceHandUpdateAcrossSnapshots(base, update, event.handState, activeHand);
     }
     case 'notification-move-rejected': {
       activeHand?.restore(state.model.game.handState);

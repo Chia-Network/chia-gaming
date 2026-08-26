@@ -55,6 +55,8 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: "clippy, rustfmt"
+      - name: Build hex files
+        run: tools/build-chialisp.sh
       - name: clippy
         run: |
           set -x

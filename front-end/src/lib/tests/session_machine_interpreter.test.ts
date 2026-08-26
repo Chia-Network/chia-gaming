@@ -1,3 +1,4 @@
+import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import { runLocalGameActionWithReporting } from '../../hooks/useGameSession';
 import { expectConsoleError } from '../../../scripts/testSetup';
@@ -14,7 +15,7 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { SessionMachineInterpreter } from '../session/sessionMachineInterpreter';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionMachineEvent } from '../session/sessionMachineTypes';
-import { krunkStateCodec, type KrunkHand } from '@games/krunk/ui/serialize';
+import { KrunkHandler, krunkStateCodec, type KrunkHand } from '@games/krunk/ui/serialize';
 import {
   calpokerStateCodec,
   type CalpokerHand,
@@ -824,6 +825,42 @@ describe('session machine local game action boundary', () => {
     (runtime.getGameHand() as CalpokerHand).update(reducer);
   }
 
+  function stagedKrunkRuntime(): SessionMachineRuntime {
+    const runtime = new SessionMachineRuntime(
+      stateWithProposals([{ memberIds: ['2', '4'], handProposal: KRUNK_TERMS, origin: 'local' }]),
+      {
+        controller: fakeController({ makeMove: () => 'queued' }),
+        iStarted: true,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        onError: (error) => {
+          throw error;
+        },
+        persist: async () => {},
+      },
+    );
+    runtime.dispatch({
+      type: 'notification-accepted-group',
+      members: [
+        { id: '2', amount: '100', ourTurn: true },
+        { id: '4', amount: '100', ourTurn: false },
+      ],
+    });
+    (runtime.getGameHand() as KrunkHand).updateGame(0, (game) => ({
+      ...game,
+      handler: KrunkHandler.AliceWaiting,
+      myTurn: false,
+      secretWord: 'CRANE',
+    }));
+    runtime.commitLocalGameAction({
+      gameType: 'krunk',
+      id: '2',
+      command: { type: 'make-move', readable: null },
+    });
+    return runtime;
+  }
+
   it('uses ordered Rust authority for opposite-turn Krunk members before the first move', () => {
     const makeMove = jest.fn(() => 'queued' as const);
     const runtime = new SessionMachineRuntime(
@@ -874,6 +911,150 @@ describe('session machine local game action boundary', () => {
       }),
     ).not.toThrow();
     expect(makeMove).toHaveBeenCalledWith('2', null);
+  });
+
+  it.each(['acknowledgement', 'rejection'] as const)(
+    'merges a sibling Krunk update through pending candidate %s',
+    (outcome) => {
+      const runtime = stagedKrunkRuntime();
+
+      runtime.dispatch({
+        type: 'wasm-notification',
+        iStarted: true,
+        notification: {
+          GameStatus: {
+            id: '4',
+            status: 'my-turn',
+            coin_id: null,
+            other_params: {
+              readable: Program.fromBytes(new Uint8Array()).serialize(),
+              mover_share: '100',
+            },
+          },
+        },
+      });
+
+      const afterInbound = runtime.getState().model.game;
+      const canonicalAfterInbound = krunkStateCodec.decode(afterInbound.handState)!;
+      const pendingAfterInbound = afterInbound.pendingCandidates['2'];
+      const pendingHandAfterInbound = krunkStateCodec.decode({
+        gameType: pendingAfterInbound.gameType,
+        state: pendingAfterInbound.state,
+      })!;
+      expect(canonicalAfterInbound.members[0].secretWord).toBeNull();
+      expect(canonicalAfterInbound.members[1].handler).toBe(4n);
+      expect(pendingHandAfterInbound.members[0].secretWord).toBe('CRANE');
+      expect(pendingHandAfterInbound.members[1].handler).toBe(4n);
+      expect(runtime.getGameHand()!.getState()).toEqual(pendingHandAfterInbound);
+
+      runtime.dispatch({
+        type: 'wasm-notification',
+        iStarted: true,
+        notification:
+          outcome === 'acknowledgement'
+            ? { LocalActionApplied: { id: 2n, action: 'make_move' } }
+            : { MoveRejected: { id: 2n, tag: 'invalid', message: 'Try another move' } },
+      });
+
+      const finalGame = runtime.getState().model.game;
+      const finalCanonical = krunkStateCodec.decode(finalGame.handState)!;
+      expect(finalCanonical.members[0].secretWord).toBe(
+        outcome === 'acknowledgement' ? 'CRANE' : null,
+      );
+      expect(finalCanonical.members[1].handler).toBe(4n);
+      expect(finalGame.pendingCandidates).toEqual({});
+      expect(runtime.getGameHand()!.getState()).toEqual(finalCanonical);
+    },
+  );
+
+  it.each(['acknowledgement', 'rejection'] as const)(
+    'merges a sibling Krunk terminal through pending candidate %s',
+    (outcome) => {
+      const runtime = stagedKrunkRuntime();
+
+      runtime.dispatch({
+        type: 'wasm-notification',
+        iStarted: true,
+        notification: {
+          GameSettled: {
+            id: 4n,
+            outcome: 'opponent_timed_out',
+            our_share: '100',
+            coin_id: null,
+          },
+        },
+      });
+
+      const afterTerminal = runtime.getState().model.game;
+      const canonicalAfterTerminal = krunkStateCodec.decode(afterTerminal.handState)!;
+      const pendingAfterTerminal = afterTerminal.pendingCandidates['2'];
+      const pendingHandAfterTerminal = krunkStateCodec.decode({
+        gameType: pendingAfterTerminal.gameType,
+        state: pendingAfterTerminal.state,
+      })!;
+      expect(afterTerminal.activeIds).toEqual(['2']);
+      expect(afterTerminal.instances['4'].presentation).toBe('ended');
+      expect(Object.keys(afterTerminal.pendingCandidates)).toEqual(['2']);
+      expect(canonicalAfterTerminal.members[0].secretWord).toBeNull();
+      expect(canonicalAfterTerminal.members[1]).toMatchObject({
+        handler: KrunkHandler.Terminal,
+        settlementOutcome: 'opponent_timed_out',
+      });
+      expect(pendingHandAfterTerminal.members[0].secretWord).toBe('CRANE');
+      expect(pendingHandAfterTerminal.members[1]).toEqual(canonicalAfterTerminal.members[1]);
+      expect(runtime.getGameHand()!.getState()).toEqual(pendingHandAfterTerminal);
+
+      runtime.dispatch({
+        type: 'wasm-notification',
+        iStarted: true,
+        notification:
+          outcome === 'acknowledgement'
+            ? { LocalActionApplied: { id: 2n, action: 'make_move' } }
+            : { MoveRejected: { id: 2n, tag: 'invalid', message: 'Try another move' } },
+      });
+
+      const finalGame = runtime.getState().model.game;
+      const finalCanonical = krunkStateCodec.decode(finalGame.handState)!;
+      expect(finalGame.activeIds).toEqual(['2']);
+      expect(finalGame.instances['4'].presentation).toBe('ended');
+      expect(finalGame.pendingCandidates).toEqual({});
+      expect(finalCanonical.members[0].secretWord).toBe(
+        outcome === 'acknowledgement' ? 'CRANE' : null,
+      );
+      expect(finalCanonical.members[1]).toMatchObject({
+        handler: KrunkHandler.Terminal,
+        settlementOutcome: 'opponent_timed_out',
+      });
+      expect(runtime.getGameHand()!.getState()).toEqual(finalCanonical);
+    },
+  );
+
+  it('discards a Krunk candidate before reducing its own terminal', () => {
+    const runtime = stagedKrunkRuntime();
+
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: {
+        GameSettled: {
+          id: 2n,
+          outcome: 'lost',
+          our_share: '0',
+          coin_id: null,
+        },
+      },
+    });
+
+    const game = runtime.getState().model.game;
+    const canonical = krunkStateCodec.decode(game.handState)!;
+    expect(game.activeIds).toEqual(['4']);
+    expect(game.pendingCandidates).toEqual({});
+    expect(canonical.members[0]).toMatchObject({
+      handler: KrunkHandler.Terminal,
+      secretWord: null,
+      settlementOutcome: 'lost',
+    });
+    expect(runtime.getGameHand()!.getState()).toEqual(canonical);
   });
 
   it('uses Rust acceptance authority for the first Space Poker action', () => {
