@@ -235,6 +235,11 @@ mod tests {
     fn bencodex_round_trips_structured_parameters() {
         let parameters = ProposalParameters::List(vec![
             ProposalParameters::Integer(42),
+            ProposalParameters::List(vec![
+                ProposalParameters::Integer(i128::MIN),
+                ProposalParameters::Integer(i128::from(i64::MAX) + 1),
+                ProposalParameters::Integer(i128::MAX),
+            ]),
             ProposalParameters::Bool(true),
             ProposalParameters::Bytes(vec![0, 255]),
             ProposalParameters::Text("unit".to_string()),
@@ -244,6 +249,23 @@ mod tests {
         let decoded: ProposalParameters =
             bencodex::from_slice(&encoded).expect("decode parameters");
         assert_eq!(decoded, parameters);
+    }
+
+    #[test]
+    fn bencodex_rejects_proposal_parameter_integers_outside_i128() {
+        for encoded in [
+            b"i170141183460469231731687303715884105728e".as_slice(),
+            b"i-170141183460469231731687303715884105729e".as_slice(),
+            b"li170141183460469231731687303715884105728ee".as_slice(),
+        ] {
+            let result =
+                std::panic::catch_unwind(|| bencodex::from_slice::<ProposalParameters>(encoded));
+            assert!(result.is_ok(), "malformed peer value must not panic");
+            assert!(
+                result.expect("checked above").is_err(),
+                "out-of-range proposal parameter must be rejected"
+            );
+        }
     }
 
     #[test]

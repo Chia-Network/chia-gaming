@@ -1,9 +1,4 @@
-import {
-  gameHandState,
-  requireLiveGameHandSource,
-  type GameMountView,
-  type LiveGamePort,
-} from '@games/host';
+import { type GameMountView, type LiveGamePort } from '@games/host';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
 import {
   createRegisteredGameHand,
@@ -101,16 +96,8 @@ describe('game mount registry', () => {
 
       expect(() => packageFor(gameType).render(live)).not.toThrow();
       expect(() => packageFor(gameType).render(frozen)).not.toThrow();
-      expect(
-        requireLiveGameHandSource({
-          interactionMode: 'live',
-          hand: live.hand,
-          port: live.port,
-        }),
-      ).toBe(port);
-      expect(() =>
-        requireLiveGameHandSource({ interactionMode: 'terminal', hand: frozen.hand }),
-      ).toThrow('Protocol commands require a live game hand source');
+      expect(live.port).toBe(port);
+      expect(frozen).not.toHaveProperty('port');
     },
   );
 
@@ -138,7 +125,7 @@ describe('game mount registry', () => {
       iStarted: true,
       playerNumber: 1,
       handSource: {
-        interactionMode: 'live',
+        frozen: false,
         hand: createRegisteredGameHand(
           'calpoker',
           {
@@ -156,8 +143,8 @@ describe('game mount registry', () => {
     const mount = renderLiveGameMount(session, {});
 
     expect(mount.key).toBe('7');
-    expect(gameHandState(mount.props.handSource)).toEqual(model.game.handState?.state);
-    expect(mount.props.handSource.interactionMode).toBe('live');
+    expect(mount.props.view.hand.getState()).toEqual(model.game.handState?.state);
+    expect(mount.props.view.frozen).toBe(false);
     expect(mount.props.gameId).toBeUndefined();
   });
 
@@ -166,6 +153,7 @@ describe('game mount registry', () => {
     const mount = renderFrozenGameMount(model, { iStarted: false });
 
     expect(mount.key).toBe('7');
-    expect(mount.props.handSource.interactionMode).toBe('terminal');
+    expect(mount.props.view.frozen).toBe(true);
+    expect(mount.props.view).not.toHaveProperty('port');
   });
 });

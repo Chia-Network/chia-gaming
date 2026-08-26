@@ -361,6 +361,9 @@ export function createKrunkHand(init: GameHandInitialization): KrunkHand {
   });
 }
 
-export function restoreKrunkHand(savedState: KrunkHandState): KrunkHand {
+export function restoreKrunkHand(savedState: unknown): KrunkHand {
+  if (!isKrunkHandState(savedState)) {
+    throw new Error('Cannot restore Krunk hand: saved state is invalid');
+  }
   return krunkHandFromState(savedState);
 }

@@ -27,11 +27,47 @@ import {
   restoreKrunkHand,
   type KrunkHand,
 } from './serialize';
-import type { LiveGamePort } from '../../host';
+import type { GameMountView, LiveGamePort } from '../../host';
 
 function testHand(persisted: ReturnType<typeof krunkStateCodec.encode>): KrunkHand {
   return restoreKrunkHand(krunkStateCodec.decode(persisted)!);
 }
+
+function liveView(
+  persisted: ReturnType<typeof krunkStateCodec.encode>,
+  port: LiveGamePort,
+): GameMountView<KrunkHand> {
+  return {
+    frozen: false,
+    hand: testHand(persisted),
+    handOrigin: 'fresh',
+    port,
+    appendGameLog: jest.fn(),
+  };
+}
+
+function frozenView(
+  persisted: ReturnType<typeof krunkStateCodec.encode>,
+): GameMountView<KrunkHand> {
+  return { frozen: true, hand: testHand(persisted), handOrigin: 'terminal' };
+}
+
+describe('Krunk hand restoration', () => {
+  const savedState = {
+    perPlayerStake: 100n,
+    members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
+  } as const;
+
+  it('restores a valid saved state', () => {
+    expect(restoreKrunkHand(savedState).getState()).toBe(savedState);
+  });
+
+  it('rejects malformed saved state before constructing a hand', () => {
+    expect(() => restoreKrunkHand({ ...savedState, members: savedState.members.slice(0, 1) })).toThrow(
+      'Cannot restore Krunk hand: saved state is invalid',
+    );
+  });
+});
 
 describe('Krunk terms', () => {
   it('requires positive 100-mojo stake increments', () => {
@@ -67,11 +103,7 @@ describe('Krunk automatic moves', () => {
 
     function Harness() {
       useKrunkHand(
-        {
-          interactionMode: 'live',
-          hand: testHand(persisted),
-          port: { isChannelReady: () => true, dispatch },
-        },
+        liveView(persisted, { isChannelReady: () => true, dispatch }),
         0,
       );
       return null;
@@ -119,10 +151,10 @@ describe('Krunk draft continuity', () => {
     const renderPhases: string[] = [];
     const controller = { dispatch: jest.fn() } as LiveGamePort;
     const baseProps = {
-      handSource: { interactionMode: 'live' as const, hand: testHand(persisted), port: controller },
+      view: liveView(persisted, controller),
       onGameLog: () => {},
-      opponentName: 'Peer',
     };
+    baseProps.view.opponentName = 'Peer';
     const renderKrunk = (props: KrunkProps) =>
       React.createElement(
         React.Profiler,
@@ -173,11 +205,7 @@ describe('Krunk draft continuity', () => {
       renderer!.update(
         renderKrunk({
           ...baseProps,
-          handSource: {
-            interactionMode: 'live',
-            hand: testHand(pickerSettled),
-            port: controller,
-          },
+          view: { ...liveView(pickerSettled, controller), opponentName: 'Peer' },
         }),
       );
     });
@@ -203,11 +231,7 @@ describe('Krunk draft continuity', () => {
       renderer!.update(
         renderKrunk({
           ...baseProps,
-          handSource: {
-            interactionMode: 'live',
-            hand: testHand(bothSettled),
-            port: controller,
-          },
+          view: { ...liveView(bothSettled, controller), opponentName: 'Peer' },
         }),
       );
     });
@@ -219,7 +243,7 @@ describe('Krunk draft continuity', () => {
       renderer!.update(
         renderKrunk({
           ...baseProps,
-          handSource: { interactionMode: 'terminal', hand: testHand(bothSettled) },
+          view: { ...frozenView(bothSettled), opponentName: 'Peer' },
         }),
       );
     });
@@ -258,11 +282,7 @@ describe('Krunk draft continuity', () => {
     act(() => {
       renderer = create(
         React.createElement(Krunk, {
-          handSource: {
-            interactionMode: 'live',
-            hand: testHand(persisted),
-            port: { dispatch },
-          },
+          view: liveView(persisted, { isChannelReady: () => true, dispatch }),
           onGameLog: () => {},
         }),
       );
@@ -310,11 +330,7 @@ describe('Krunk draft continuity', () => {
     act(() => {
       renderer = create(
         React.createElement(Krunk, {
-          handSource: {
-            interactionMode: 'live',
-            hand: testHand(persisted),
-            port: { dispatch },
-          },
+          view: liveView(persisted, { isChannelReady: () => true, dispatch }),
           onGameLog: () => {},
         }),
       );

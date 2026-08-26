@@ -77,6 +77,20 @@ function advanceCalpokerHand(state: CalpokerHandState, update: GameUpdate): Calp
   return hand.getState();
 }
 
+function calpokerState(overrides: Partial<CalpokerHandState> = {}): CalpokerHandState {
+  return {
+    perPlayerStake: 100n,
+    playerHand: [],
+    opponentHand: [],
+    cardSelections: [],
+    moveNumber: 0n,
+    isPlayerTurn: true,
+    iStarted: false,
+    settlementOutcome: null,
+    ...overrides,
+  };
+}
+
 function freshKrunkHand(init: GameHandInitialization): KrunkHandState {
   return createKrunkHand(init).getState();
 }
@@ -517,16 +531,10 @@ describe('canonical feature gameplay reducers', () => {
   });
 
   it('uses the same Calpoker reducer for durable and mounted readable projection', () => {
-    const current = {
-      perPlayerStake: 100n,
-      playerHand: [],
-      opponentHand: [],
-      cardSelections: [],
+    const current = calpokerState({
       moveNumber: 1n,
       isPlayerTurn: false,
-      iStarted: false,
-      error: null,
-    };
+    });
     const cards = readable(ints([0n, 1n, 2n]), ints([3n, 4n, 5n]));
     const projected = reduceCalpokerFeatureState(current, {
       type: 'opponent-moved',
@@ -566,15 +574,14 @@ describe('canonical feature gameplay reducers', () => {
       ints([1n, 1n, 1n, 1n, 1n, 10n, 9n, 8n, 7n, 6n]),
       Program.fromBigInt(testCase.winDirection),
     );
-    const current = {
+    const current = calpokerState({
       playerHand: testCase.playerHand,
       opponentHand: testCase.opponentHand,
       cardSelections: testCase.playerHand.slice(0, 4),
       moveNumber: testCase.moveNumber,
       isPlayerTurn: false,
       iStarted: testCase.iStarted,
-      error: null,
-    };
+    });
 
     const projected = advanceCalpokerHand(current, {
       ...status(finalReadable),
@@ -605,30 +612,27 @@ describe('canonical feature gameplay reducers', () => {
 
     expect(() =>
       advanceCalpokerHand(
-        {
+        calpokerState({
           playerHand,
           opponentHand: [32n, 36n, 41n, 49n, 33n, 37n, 42n, 50n],
           cardSelections: playerHand.slice(0, 4),
           moveNumber: 1n,
           isPlayerTurn: false,
-          iStarted: false,
-          error: null,
-        },
+        }),
         { ...status(finalReadable), id: 'calpoker-1', iStarted: false },
       ),
     ).toThrow('before local selections were submitted');
   });
 
   it('does not invent a Calpoker final display when timeout settles before an outcome readable', () => {
-    const current = {
+    const current = calpokerState({
       playerHand: [0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n],
       opponentHand: [8n, 9n, 10n, 11n, 12n, 13n, 14n, 15n],
       cardSelections: [0n, 1n, 2n, 3n],
       moveNumber: 2n,
       isPlayerTurn: true,
       iStarted: true,
-      error: null,
-    };
+    });
 
     expect(
       advanceCalpokerHand(current, {
@@ -645,15 +649,11 @@ describe('canonical feature gameplay reducers', () => {
 
   it('durably applies Calpoker and Space Poker advisory messages with game-message semantics', () => {
     const cards = readable(ints([0n, 1n, 2n]), ints([3n, 4n, 5n]));
-    const calpoker = {
-      playerHand: [],
-      opponentHand: [],
-      cardSelections: [],
+    const calpoker = calpokerState({
       moveNumber: 1n,
       isPlayerTurn: false,
       iStarted: true,
-      error: null,
-    };
+    });
     expect(
       advanceCalpokerHand(calpoker, {
         ...status(cards, null),
@@ -769,6 +769,7 @@ describe('canonical feature gameplay reducers', () => {
     const progressed = {
       ...state!.members[0],
       handler: KrunkHandler.AliceWaiting,
+      myTurn: false,
       secretWord: 'SLATE',
     };
     const hand = restoreKrunkHand({

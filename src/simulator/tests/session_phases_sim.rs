@@ -12,8 +12,8 @@ use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, SINGLETO
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, PrivateKey,
-    Program, PuzzleHash, Spend, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    PrivateKey, Program, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
@@ -25,6 +25,7 @@ use crate::session_phases::handshake::CoinSpendRequest;
 use crate::session_phases::proposal::{GameProposal, ProposalParameters};
 use crate::session_phases::types::{
     BatchAction, ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
+    WireGameSpec, WireProposalGroup,
 };
 use crate::transaction_manager::TransactionManager;
 use crate::utils::proper_list;
@@ -809,9 +810,9 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
-            GameNotification::ProposalMade { id, .. } => {
+            GameNotification::ProposalMade { group_ids, .. } => {
                 self.assert_channel_created("game_proposed");
-                self.received_proposal_ids.push(id.clone());
+                self.received_proposal_ids.extend(group_ids.iter().copied());
                 self.notifications.push(notification.clone());
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
@@ -1808,6 +1809,101 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 "player {player} did not accept both grouped games",
             );
         }
+    }));
+    res.push(("krunk_group_accepts_by_non_primary_local_member", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = [
+            SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(1, GameID(3)),
+        ];
+        let outcome = run_krunk_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|move_number, cradles| {
+                move_number >= moves.len()
+                    && cradles.iter().all(|cradle| {
+                        cradle
+                            .proposal_contributions_for_testing()
+                            .is_ok_and(|proposals| proposals.is_empty())
+                    })
+            }),
+            Some(100),
+        )
+        .expect("non-primary local member should resolve to the canonical group");
+
+        for (player, ui) in outcome.local_uis.iter().enumerate() {
+            assert!(
+                [GameID(1), GameID(3)]
+                    .iter()
+                    .all(|id| ui.game_accepted_ids.contains(id)),
+                "player {player} did not accept the complete canonical group: {:?}",
+                ui.notifications,
+            );
+        }
+    }));
+    res.push(("krunk_group_cancels_by_non_primary_local_member", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = [
+            SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+            SimScriptAction::CancelProposal(1, GameID(3)),
+            SimScriptAction::CleanShutdown(0),
+        ];
+        let outcome = run_krunk_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(100),
+        )
+        .expect("non-primary local member should cancel the canonical group");
+
+        for (player, ui) in outcome.local_uis.iter().enumerate() {
+            let cancelled: Vec<GameID> = ui
+                .notifications
+                .iter()
+                .filter_map(|notification| match notification {
+                    GameNotification::ProposalCancelled { id, .. } => Some(*id),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                cancelled,
+                vec![GameID(1), GameID(3)],
+                "player {player} should receive ordered per-member cancellation facts",
+            );
+            assert!(
+                ui.game_accepted_ids.is_empty(),
+                "player {player} unexpectedly accepted a cancelled member",
+            );
+        }
+    }));
+    res.push(("krunk_wire_rejects_non_primary_group_id", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = [
+            SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+            SimScriptAction::MalformedAcceptProposalGroup(1, GameID(1), GameID(3)),
+        ];
+        let outcome = run_krunk_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[0].is_peer_disconnected()),
+            Some(100),
+        )
+        .expect("receiver should reject a non-canonical wire group ID");
+
+        assert!(
+            outcome.cradles[0].is_peer_disconnected(),
+            "proposal owner should reject the malformed peer acceptance",
+        );
+        assert!(
+            !outcome.local_uis[0]
+                .notifications
+                .iter()
+                .any(|notification| matches!(
+                    notification,
+                    GameNotification::ProposalAcceptedGroup { .. }
+                )),
+            "failed group acceptance must not emit an accepted-group fact",
+        );
     }));
     res.push(("test_peer_in_sim", &|| {
         let mut allocator = AllocEncoder::new();
@@ -6865,6 +6961,67 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    res.push(("test_out_of_range_proposal_integer_goes_on_chain", &|| {
+        let mut allocator = AllocEncoder::new();
+        let valid_integer = i128::MAX.to_string();
+        let invalid_integer = (i128::MAX as u128 + 1).to_string();
+        let message = PeerMessage::Batch {
+            actions: vec![BatchAction::ProposeGroup(WireProposalGroup {
+                start: GameProposal {
+                    player_a_contribution: Amount::new(1),
+                    player_b_contribution: Amount::new(1),
+                    sender_is_player_a: true,
+                    game_type: GameType::from_hash(Hash::default()),
+                    timeout: Timeout::new(15),
+                    parameters: ProposalParameters::Integer(i128::MAX),
+                },
+                members: vec![WireGameSpec {
+                    game_id: GameID(1),
+                    player_a_contribution: Amount::new(1),
+                    player_b_contribution: Amount::new(1),
+                    player_a_goes_first: true,
+                    initial_validation_program_hash: Hash::default(),
+                    initial_validation_info_hash: Hash::default(),
+                    initial_move: vec![],
+                    initial_max_move_size: 1,
+                    initial_mover_share: Amount::new(1),
+                }],
+            })],
+            signatures: Default::default(),
+            clean_shutdown: None,
+        };
+        let mut malformed = bencodex::to_vec(&message).expect("encode valid peer message");
+        let needle = format!("i{valid_integer}e").into_bytes();
+        let replacement = format!("i{invalid_integer}e").into_bytes();
+        let offset = malformed
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .expect("encoded proposal parameter integer");
+        malformed.splice(offset..offset + needle.len(), replacement);
+
+        let moves = vec![
+            SimScriptAction::WaitBlocks(5, 0),
+            SimScriptAction::InjectRawMessage(0, malformed),
+            SimScriptAction::WaitBlocks(20, 0),
+        ];
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[0].is_on_chain() || cradles[0].is_failed()),
+            None,
+        )
+        .expect("malformed peer integer should be handled without panic");
+
+        assert!(
+            outcome.cradles[0].is_on_chain(),
+            "malformed peer integer should escalate on-chain instead of crashing"
+        );
+        assert!(
+            !outcome.cradles[0].is_failed(),
+            "malformed peer integer should follow peer-protocol recovery"
+        );
+    }));
+
     res.push(("test_wrong_parity_proposal_rejected", &|| {
         let mut allocator = AllocEncoder::new();
 
@@ -6943,6 +7100,28 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             outcome.cradles[1].is_peer_disconnected(),
             "receiver should reject proposal arguments that differ from its factory output"
+        );
+    }));
+
+    res.push(("test_initial_validation_info_hash_is_reverified", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::WaitBlocks(5, 0),
+            SimScriptAction::InvalidProposalValidationInfoHash(0),
+            SimScriptAction::WaitBlocks(20, 0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[1].is_peer_disconnected()),
+            None,
+        )
+        .expect("should finish");
+
+        assert!(
+            outcome.cradles[1].is_peer_disconnected(),
+            "receiver should reject a validation-info hash that differs from its factory output"
         );
     }));
 

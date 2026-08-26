@@ -7,9 +7,10 @@ use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
 };
+#[cfg(test)]
+use crate::common::types::Program;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, Error, GameID, GameType, Hash, Program, ProgramRef, PuzzleHash,
-    Timeout,
+    Aggsig, Amount, CoinSpend, Error, GameID, GameType, Hash, ProgramRef, PuzzleHash, Timeout,
 };
 use crate::referee::types::GameMoveDetails;
 use crate::session_phases::effects::Effect;
@@ -25,26 +26,98 @@ pub use crate::session_phases::wallet_traits::{
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WireGameSpec {
     pub game_id: GameID,
-    pub amount: Amount,
     pub player_a_contribution: Amount,
     pub player_b_contribution: Amount,
     pub player_a_goes_first: bool,
     pub initial_validation_program_hash: Hash,
+    pub initial_validation_info_hash: Hash,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
-    pub initial_state: Program,
     pub initial_mover_share: Amount,
-    pub my_turn_handler: Program,
-    pub their_turn_handler: Program,
-    pub initial_validation_program: Program,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WireProposalGroup {
     pub start: GameProposal,
     pub members: Vec<WireGameSpec>,
-    /// Always the first member's game id (including singleton groups).
-    pub group_id: GameID,
+}
+
+#[cfg(test)]
+mod wire_proposal_tests {
+    use super::*;
+    use crate::session_phases::proposal::ProposalParameters;
+
+    #[test]
+    fn serialized_wire_game_omits_factory_local_raw_fields() {
+        let member = WireGameSpec {
+            game_id: GameID(7),
+            player_a_contribution: Amount::new(4),
+            player_b_contribution: Amount::new(6),
+            player_a_goes_first: true,
+            initial_validation_program_hash: Hash::default(),
+            initial_validation_info_hash: Hash::default(),
+            initial_move: vec![],
+            initial_max_move_size: 32,
+            initial_mover_share: Amount::new(4),
+        };
+        let wire = WireProposalGroup {
+            start: GameProposal {
+                player_a_contribution: Amount::new(4),
+                player_b_contribution: Amount::new(6),
+                sender_is_player_a: true,
+                game_type: GameType::from_hash(Hash::default()),
+                timeout: Timeout::new(15),
+                parameters: ProposalParameters::Null,
+            },
+            members: vec![member.clone()],
+        };
+
+        let encoded_member = bencodex::to_vec(&member).expect("serialize wire member");
+        let value: crate::protocol_pretty::BencodexValue =
+            bencodex::from_slice(&encoded_member).expect("decode wire member fields");
+        let crate::protocol_pretty::BencodexValue::Map(fields) = value else {
+            panic!("wire member did not serialize as a map");
+        };
+        let keys: Vec<&str> = fields
+            .iter()
+            .map(|(key, _)| match key {
+                crate::protocol_pretty::BencodexValue::Text(key) => key.as_str(),
+                other => panic!("wire member has non-text key {other:?}"),
+            })
+            .collect();
+        for absent in [
+            "amount",
+            "my_turn_handler",
+            "their_turn_handler",
+            "initial_validation_program",
+            "initial_state",
+        ] {
+            assert!(
+                !keys.contains(&absent),
+                "serialized proposal unexpectedly contains {absent}"
+            );
+        }
+        for retained in [
+            "player_a_contribution",
+            "initial_validation_program_hash",
+            "initial_validation_info_hash",
+        ] {
+            assert!(
+                keys.contains(&retained),
+                "serialized proposal is missing {retained}"
+            );
+        }
+
+        let encoded_group = bencodex::to_vec(&wire).expect("serialize wire group");
+        let value: crate::protocol_pretty::BencodexValue =
+            bencodex::from_slice(&encoded_group).expect("decode wire group fields");
+        let crate::protocol_pretty::BencodexValue::Map(fields) = value else {
+            panic!("wire group did not serialize as a map");
+        };
+        assert!(!fields.iter().any(|(key, _)| {
+            matches!(key, crate::protocol_pretty::BencodexValue::Text(key) if key == "group_id")
+        }));
+    }
 }
 
 pub trait ToLocalUI {
@@ -97,8 +170,8 @@ pub trait FromLocalUI {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BatchAction {
     ProposeGroup(WireProposalGroup),
-    AcceptProposal(GameID),
-    CancelProposal(GameID),
+    AcceptProposalGroup(GameID),
+    CancelProposalGroup(GameID),
     Move(GameID, GameMoveDetails),
     #[serde(rename = "AcceptSettlement")]
     AcceptSettlement(GameID, Amount),
@@ -155,9 +228,9 @@ pub enum GameAction {
     AcceptSettlement(GameID),
     CleanShutdown,
     QueuedProposalGroup(Vec<Rc<GameStartInfo>>, WireProposalGroup),
-    QueuedAcceptProposal(GameID),
-    QueuedCancelProposal(GameID),
-    QueuedCancelProposalSilently(GameID),
+    QueuedAcceptProposalGroup(GameID),
+    QueuedCancelProposalGroup(GameID),
+    QueuedCancelProposalGroupSilently(GameID),
     Cheat(GameID, Amount, Hash),
     #[cfg(test)]
     ForcedSelfAccept(GameID),
@@ -194,14 +267,14 @@ impl std::fmt::Debug for GameAction {
             GameAction::AcceptSettlement(gi) => write!(formatter, "AcceptSettlement({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::QueuedProposalGroup(_, _) => write!(formatter, "QueuedProposalGroup(..)"),
-            GameAction::QueuedAcceptProposal(gi) => {
-                write!(formatter, "QueuedAcceptProposal({gi:?})")
+            GameAction::QueuedAcceptProposalGroup(gi) => {
+                write!(formatter, "QueuedAcceptProposalGroup({gi:?})")
             }
-            GameAction::QueuedCancelProposal(gi) => {
-                write!(formatter, "QueuedCancelProposal({gi:?})")
+            GameAction::QueuedCancelProposalGroup(gi) => {
+                write!(formatter, "QueuedCancelProposalGroup({gi:?})")
             }
-            GameAction::QueuedCancelProposalSilently(gi) => {
-                write!(formatter, "QueuedCancelProposalSilently({gi:?})")
+            GameAction::QueuedCancelProposalGroupSilently(gi) => {
+                write!(formatter, "QueuedCancelProposalGroupSilently({gi:?})")
             }
             GameAction::Cheat(gi, ms, _) => write!(formatter, "Cheat({gi:?},{ms:?})"),
             #[cfg(test)]

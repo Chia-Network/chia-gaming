@@ -57,7 +57,12 @@ impl<'a> ser::Serializer for &'a mut BencodexSerializer {
     fn serialize_u16(self, v: u16) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
     fn serialize_u32(self, v: u32) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
     fn serialize_u64(self, v: u64) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_u128(self, v: u128) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
+    fn serialize_u128(self, v: u128) -> Result<(), Error> {
+        let value = i128::try_from(v)
+            .map_err(|_| Error::Message("bencodex integer exceeds i128".into()))?;
+        write_int(&mut self.out, value);
+        Ok(())
+    }
 
     fn serialize_f32(self, _v: f32) -> Result<(), Error> {
         Err(Error::Message("bencodex does not support floats".into()))

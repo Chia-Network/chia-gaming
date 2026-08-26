@@ -29,8 +29,7 @@ import type {
 import type { RegisteredGameType } from '../lib/session/types';
 import { REGISTERED_GAMES } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
-import type { GameHandSource } from '@games/host';
-import { liveGameHandOrigin } from '../lib/gameHandSource';
+import { liveGameHandOrigin, type GameHandSource } from '../lib/gameHandSource';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
@@ -226,7 +225,7 @@ export function useGameSession(
     [controller, dispatch, runtime],
   );
   const liveHandSource: GameHandSource = {
-    interactionMode: 'live',
+    frozen: false,
     hand: runtime.getGameHand(),
     port: liveGamePort,
   };

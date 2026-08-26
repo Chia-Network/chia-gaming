@@ -1167,6 +1167,33 @@ impl ChannelState {
             .collect())
     }
 
+    /// Resolve a wire group ID to its members in factory insertion order.
+    /// Wire actions must name the canonical first member, never another member.
+    pub fn canonical_group_member_ids(&self, group_id: &GameID) -> Result<Vec<GameID>, Error> {
+        let proposal = self
+            .proposed_games
+            .iter()
+            .find(|p| p.game_id == *group_id)
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "canonical_group_member_ids: no proposal with id {:?}",
+                    group_id
+                ))
+            })?;
+        if proposal.group_id != *group_id {
+            return Err(Error::StrErr(format!(
+                "proposal group action used non-canonical member {:?}; expected {:?}",
+                group_id, proposal.group_id
+            )));
+        }
+        Ok(self
+            .proposed_games
+            .iter()
+            .filter(|p| p.group_id == *group_id)
+            .map(|p| p.game_id)
+            .collect())
+    }
+
     pub fn pending_peer_proposal_ids(&self) -> Vec<GameID> {
         self.proposed_games
             .iter()

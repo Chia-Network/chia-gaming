@@ -9,12 +9,12 @@ import {
   KrunkGuess,
   KrunkRole,
 } from './useKrunkHand';
-import { gameHandState, type GameHandSource } from '../../host';
+import type { GameMountView } from '../../host';
 import { formatKrunkAmount } from './formatting';
 import type { KrunkHand, KrunkHandState } from './serialize';
 
 export interface KrunkProps {
-  handSource: GameHandSource<KrunkHandState, KrunkHand>;
+  view: GameMountView<KrunkHand>;
   onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
@@ -408,13 +408,11 @@ function OnScreenKeyboard({
 }
 
 const Krunk: React.FC<KrunkProps> = ({
-  handSource,
+  view,
   onGameLog,
-  myName: _myName,
-  opponentName,
 }) => {
-  const interactive = handSource.interactionMode === 'live';
-  const handState = gameHandState(handSource);
+  const interactive = !view.frozen;
+  const handState = view.hand.getState();
   const { aliceMemberIndex, bobMemberIndex } = krunkGameSlots(handState);
   const betSize = handState.perPlayerStake * 2n;
   const aliceInHand =
@@ -423,9 +421,9 @@ const Krunk: React.FC<KrunkProps> = ({
     handState.members[bobMemberIndex].handler !== KrunkHandler.Terminal;
   const aliceInteractive = interactive && aliceInHand;
 
-  const aliceHand = useKrunkHand(handSource, aliceMemberIndex);
+  const aliceHand = useKrunkHand(view, aliceMemberIndex);
 
-  const bobHand = useKrunkHand(handSource, bobMemberIndex);
+  const bobHand = useKrunkHand(view, bobMemberIndex);
   const setAliceSecretWord = aliceHand.setSecretWord;
   const submitBobGuessMove = bobHand.submitGuess;
 
@@ -607,7 +605,7 @@ const Krunk: React.FC<KrunkProps> = ({
     if (submitted) keyboardFocusRef.current?.focus();
   }, [keyboardMode, commitWord, submitGuess]);
 
-  const themLabel = opponentName ?? 'Opponent';
+  const themLabel = view.opponentName ?? 'Opponent';
 
   const handComplete =
     bobHand.gameState.handler === KrunkHandler.Terminal &&

@@ -1,10 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
-import {
-  gameHandState,
-  requireLiveGameHandSource,
-  type GameHandSource,
-} from '../../host';
+import { requireLiveGameMount, type GameMountView } from '../../host';
 import { krunkSettlementStatus } from './settlement';
 import { krunkOutcomeFromPlay } from './handProposal';
 import {
@@ -13,7 +9,6 @@ import {
   type KrunkHand,
   type KrunkGameState,
   type KrunkGuess,
-  type KrunkHandState,
   type KrunkRole,
 } from './serialize';
 
@@ -215,30 +210,28 @@ function finishedKrunkState(
 }
 
 export function useKrunkHand(
-  handSource: GameHandSource<KrunkHandState, KrunkHand>,
+  view: GameMountView<KrunkHand>,
   memberIndex: number,
 ): UseKrunkHandResult {
-  const handState = gameHandState(handSource);
+  const handState = view.hand.getState();
   const gameState = krunkGameStateFromHand(handState, memberIndex);
-  const interactive =
-    handSource.interactionMode === 'live' && gameState.handler !== KrunkHandler.Terminal;
+  const interactive = !view.frozen && gameState.handler !== KrunkHandler.Terminal;
 
   const gameStateRef = useRef(gameState);
-  const handSourceRef = useRef(handSource);
+  const viewRef = useRef(view);
   const memberIndexRef = useRef(memberIndex);
   const activeRef = useRef(interactive);
 
   gameStateRef.current = gameState;
-  handSourceRef.current = handSource;
+  viewRef.current = view;
   memberIndexRef.current = memberIndex;
   activeRef.current = interactive;
 
   const commitLocalAction = useCallback((next: KrunkGameState, command: LocalGameCommand): void => {
     const memberIndex = memberIndexRef.current;
-    const hand = handSourceRef.current.hand;
-    if (hand === null) throw new Error('Krunk hand is unavailable');
-    hand.updateGame(memberIndex, () => next);
-    requireLiveGameHandSource(handSourceRef.current).dispatch(
+    const live = requireLiveGameMount(viewRef.current);
+    live.hand.updateGame(memberIndex, () => next);
+    live.port.dispatch(
       command.type === 'make-move'
         ? { type: 'make-move', memberIndex, readable: command.readable }
         : { type: 'accept-settlement', memberIndex },
@@ -258,7 +251,7 @@ export function useKrunkHand(
       !gameState.myTurn
     )
       return;
-    if (!requireLiveGameHandSource(handSourceRef.current).isChannelReady()) return;
+    if (!requireLiveGameMount(viewRef.current).port.isChannelReady()) return;
     if (!activeRef.current) return;
     const latest = gameState.guesses[gameState.guesses.length - 1];
     const isReveal =
@@ -279,7 +272,7 @@ export function useKrunkHand(
         console.warn('[krunk] secret word must be 5 letters');
         return;
       }
-      requireLiveGameHandSource(handSourceRef.current);
+      requireLiveGameMount(viewRef.current);
       const next = {
         ...cur,
         secretWord: normalised,
@@ -304,7 +297,7 @@ export function useKrunkHand(
         console.warn('[krunk] guess must be 5 letters');
         return;
       }
-      requireLiveGameHandSource(handSourceRef.current);
+      requireLiveGameMount(viewRef.current);
       const next = {
         ...cur,
         guesses: [

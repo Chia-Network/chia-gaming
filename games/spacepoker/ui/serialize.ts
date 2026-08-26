@@ -591,6 +591,9 @@ export function createSpacepokerHand(init: GameHandInitialization): SpacepokerHa
   return spacepokerHandFromState(initialState(init, parameters.betUnitMojos));
 }
 
-export function restoreSpacepokerHand(savedState: SpacepokerHandState): SpacepokerHand {
+export function restoreSpacepokerHand(savedState: unknown): SpacepokerHand {
+  if (!isSpacepokerHandState(savedState)) {
+    throw new Error('Cannot restore Space Poker hand: saved state is invalid');
+  }
   return spacepokerHandFromState(savedState);
 }

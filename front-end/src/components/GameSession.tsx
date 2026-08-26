@@ -594,7 +594,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
     blockchain,
     terminalPresentation,
   );
-  const terminalMode = session.handSource.interactionMode === 'terminal';
+  const terminalMode = session.handSource.frozen;
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
@@ -786,7 +786,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           ref={gameAreaRef}
           tabIndex={-1}
           inert={gameInterfaceIsInertForBetweenHandDialog}
-          data-game-interaction-mode={session.handSource.interactionMode}
+          data-game-interaction-mode={session.handSource.frozen ? 'terminal' : 'live'}
           aria-disabled={gameInterfaceIsInertForBetweenHandDialog || undefined}
           className="relative overflow-hidden z-0 focus:outline-none"
         >

@@ -158,7 +158,9 @@ fn registry_keys() -> (Vec<String>, Vec<String>) {
 /// Every directory under `games/` except the JSON catalog and `games/host`
 /// (the portable host contract, not a factory game) must be a registered
 /// package, and every registered key must exist with conventional files.
-/// Production packages must export the UI modules stitched by the generator.
+/// Production packages must export the UI modules stitched by the generator;
+/// their Rust module and Rust tests are optional. Internal test packages retain
+/// the Rust hooks used by the simulator's package registration.
 #[test]
 fn every_game_package_is_registered() {
     let (production, test) = registry_keys();
@@ -201,10 +203,8 @@ fn every_game_package_is_registered() {
     let mut missing_files = Vec::new();
     for key in &registered {
         let root = PathBuf::from("games").join(key);
-        for rel in ["rust/mod.rs", "rust/tests/mod.rs", "clsp/factory.clsp"] {
-            if !root.join(rel).is_file() {
-                missing_files.push(format!("games/{key}/{rel}"));
-            }
+        if !root.join("clsp/factory.clsp").is_file() {
+            missing_files.push(format!("games/{key}/clsp/factory.clsp"));
         }
         if production.iter().any(|k| k == key) {
             for rel in [
@@ -217,6 +217,17 @@ fn every_game_package_is_registered() {
                     missing_files.push(format!("games/{key}/{rel}"));
                 }
             }
+            if root.join("rust/tests/mod.rs").is_file() && !root.join("rust/mod.rs").is_file() {
+                missing_files.push(format!(
+                    "games/{key}/rust/mod.rs (required when rust/tests/mod.rs exists)"
+                ));
+            }
+        } else {
+            for rel in ["rust/mod.rs", "rust/tests/mod.rs"] {
+                if !root.join(rel).is_file() {
+                    missing_files.push(format!("games/{key}/{rel}"));
+                }
+            }
         }
     }
     assert!(
@@ -225,14 +236,18 @@ fn every_game_package_is_registered() {
     );
 }
 
-/// Game-owned `test_funs` collectors must exist and be pulled in through the
-/// generated full-suite aggregator rather than a handwritten list.
+/// Game-owned Rust test modules, when present, must expose `test_funs` and be
+/// pulled in through the generated full-suite aggregator rather than a
+/// handwritten package list.
 #[test]
 fn every_game_package_test_module_is_aggregated() {
     let (production, test) = registry_keys();
     let mut missing = Vec::new();
     for key in production.iter().chain(test.iter()) {
         let tests = PathBuf::from(format!("games/{key}/rust/tests/mod.rs"));
+        if !tests.is_file() {
+            continue;
+        }
         let src = read(tests.to_str().unwrap());
         if !src.contains("pub fn test_funs") {
             missing.push(key.clone());

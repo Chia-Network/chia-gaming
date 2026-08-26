@@ -371,6 +371,48 @@ impl SimulationHarness {
         Ok(true)
     }
 
+    pub(super) fn malformed_accept_proposal_group(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        player: usize,
+        local_member_id: &GameID,
+        wire_group_id: &GameID,
+    ) -> Result<bool, Error> {
+        if !self.accept_proposal(allocator, player, local_member_id)? {
+            return Ok(false);
+        }
+        self.cradles[player].flush_pending(allocator)?;
+        self.cradles[player].replace_last_message(|message| {
+            let PeerMessage::Batch {
+                actions,
+                signatures,
+                clean_shutdown,
+            } = message
+            else {
+                return Err(Error::StrErr(format!(
+                    "malformed accept expected Batch, got {message:?}"
+                )));
+            };
+            let mut actions = actions.clone();
+            let group_id = actions.iter_mut().find_map(|action| match action {
+                BatchAction::AcceptProposalGroup(group_id) => Some(group_id),
+                _ => None,
+            });
+            let Some(group_id) = group_id else {
+                return Err(Error::StrErr(
+                    "malformed accept found no AcceptProposalGroup".to_string(),
+                ));
+            };
+            *group_id = *wire_group_id;
+            Ok(PeerMessage::Batch {
+                actions,
+                signatures: signatures.clone(),
+                clean_shutdown: clean_shutdown.clone(),
+            })
+        })?;
+        Ok(true)
+    }
+
     pub(super) fn cancel_proposal(
         &mut self,
         allocator: &mut AllocEncoder,

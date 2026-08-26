@@ -48,8 +48,6 @@ export type HandProposal = HandProposalBase & {
   gameType: RegisteredGameType;
 };
 
-export type ProposalGroupOrigin = 'local' | 'peer';
-
 export interface PersistedGameState<T = unknown> {
   gameType: string;
   state: T;
@@ -153,54 +151,12 @@ export function equalProposalParameterValue(
   return a === b;
 }
 
-export function proposalContributionForOrigin(
-  handProposal: HandProposal,
-  origin: ProposalGroupOrigin,
-): bigint {
-  const senderContribution = handProposal.senderIsPlayerA
-    ? handProposal.playerAContribution
-    : handProposal.playerBContribution;
-  const receiverContribution = handProposal.senderIsPlayerA
-    ? handProposal.playerBContribution
-    : handProposal.playerAContribution;
-  return origin === 'local' ? senderContribution : receiverContribution;
-}
-
 export interface LiveGamePort {
   isChannelReady(): boolean;
   dispatch(intent: GameIntent): void;
 }
 
-export type GameInteractionMode = 'live' | 'terminal';
 export type GameHandOrigin = 'fresh' | 'restored' | 'terminal';
-
-export type GameHandSource<
-  TState = unknown,
-  THand extends GameHandState<TState> = GameHandState<TState>,
-> =
-  | {
-      readonly interactionMode: 'live';
-      readonly hand: THand | null;
-      readonly port: LiveGamePort;
-    }
-  | {
-      readonly interactionMode: 'terminal';
-      readonly hand: THand | null;
-    };
-
-export function gameHandState<TState>(source: GameHandSource<TState>): TState {
-  if (source.hand === null) {
-    throw new Error('Game hand state is unavailable before a hand is accepted');
-  }
-  return source.hand.getState();
-}
-
-export function requireLiveGameHandSource(source: GameHandSource<unknown>): LiveGamePort {
-  if (source.interactionMode !== 'live') {
-    throw new Error('Protocol commands require a live game hand source');
-  }
-  return source.port;
-}
 
 export interface GameMountNames {
   myName?: string;
@@ -220,6 +176,15 @@ export type GameMountView<THand extends GameHandState<unknown>> =
     })
   | (GameMountViewBase<THand> & { frozen: true });
 
+export function requireLiveGameMount<THand extends GameHandState<unknown>>(
+  view: GameMountView<THand>,
+): Extract<GameMountView<THand>, { frozen: false }> {
+  if (view.frozen) {
+    throw new Error('Protocol commands require a live game mount');
+  }
+  return view;
+}
+
 export interface GameMountRegistration<THand extends GameHandState<unknown>> {
   render(view: GameMountView<THand>): ReactElement;
 }
@@ -232,7 +197,7 @@ export interface GamePackageRegistration<
   gameType: string;
   readonly displayName: string;
   createHand(init: GameHandInitialization): THand;
-  restoreHand(savedState: TState): THand;
+  restoreHand(savedState: unknown): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;
   describeHandProposal(handProposal: HandProposal): string;
   handProposalsEqual(a: HandProposal, b: HandProposal): boolean;

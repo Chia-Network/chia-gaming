@@ -33,12 +33,10 @@ export function defineGamePackage<TState, THand extends GameHand<TState>, TParam
   HandProposalForm: ComponentType<HandProposalFormProps<TParams>>,
   mount: GameMountRegistration<THand>,
 ): RegisteredGamePackage {
-  const requireState = (value: unknown): TState => value as TState;
   return {
     ...feature,
     createHand: (init) => feature.createHand(init) as RegisteredGameHand,
-    restoreHand: (savedState) =>
-      feature.restoreHand(requireState(savedState)) as RegisteredGameHand,
+    restoreHand: (savedState) => feature.restoreHand(savedState) as RegisteredGameHand,
     decodeProposalParameters: feature.proposalParameters.decode,
     encodeProposalParameters: (parameters) =>
       feature.proposalParameters.encode(parameters as TParams),

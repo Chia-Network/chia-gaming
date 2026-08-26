@@ -269,6 +269,12 @@ pub(in super::super) fn run_script(
                         }
                         ()
                     }
+                    SimScriptAction::MalformedAcceptProposalGroup(who, local, wire) => {
+                        if !harness.malformed_accept_proposal_group(allocator, *who, local, wire)? {
+                            advance_script = false;
+                        }
+                        ()
+                    }
                     SimScriptAction::CancelProposal(who, gid) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "CancelProposal", gid, gid);
@@ -477,6 +483,33 @@ pub(in super::super) fn run_script(
                         harness.mutate_last_proposal(allocator, *who, |wire| {
                             wire.members[0].player_a_contribution =
                                 wire.members[0].player_a_contribution.clone() + Amount::new(1);
+                            Ok(())
+                        })?;
+                        ()
+                    }
+                    SimScriptAction::InvalidProposalValidationInfoHash(who) => {
+                        let parameters = if package_key == "calpoker" {
+                            Program::from_bytes(&[0x80])
+                        } else {
+                            extras.clone()
+                        };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
+                        harness.propose_games(
+                            allocator,
+                            *who,
+                            &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
+                                game_type: proposal_type.clone(),
+                                timeout: Timeout::new(15),
+                                parameters,
+                            }],
+                        )?;
+                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                            wire.members[0].initial_validation_info_hash =
+                                Hash::from_bytes([0x5a; 32]);
                             Ok(())
                         })?;
                         ()

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
-import { gameHandState, requireLiveGameHandSource, type GameHandSource } from '../../host';
-import type { SettlementOutcome } from '../../host';
+import { requireLiveGameMount, type GameMountView, type SettlementOutcome } from '../../host';
 import { formatSpacepokerXch } from './formatting';
 import {
   type SpacepokerDisplayMode,
@@ -76,19 +75,19 @@ export interface UseSpacepokerHandResult {
 }
 
 export function useSpacepokerHand(
-  handSource: GameHandSource<SpacepokerHandState, SpacepokerHand>,
+  view: GameMountView<SpacepokerHand>,
 ): UseSpacepokerHandResult {
-  const state = gameHandState(handSource);
+  const state = view.hand.getState();
   const betSize = state.perPlayerStake * 2n;
 
-  const interactive = handSource.interactionMode === 'live';
+  const interactive = !view.frozen;
   const betUnit = state.unitSizeMojos;
   const stackSize = betSize / 2n / betUnit;
   const pot = 2n * state.halfPot + state.lastRaise;
   const playerStack = stackSize - state.halfPot - (state.iRaisedLast ? state.lastRaise : 0n);
   const opponentStack = stackSize - state.halfPot - (state.iRaisedLast ? 0n : state.lastRaise);
-  const handSourceRef = useRef(handSource);
-  handSourceRef.current = handSource;
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   const [terminalDisplayMode, setTerminalDisplayMode] = useState<SpacepokerDisplayMode | null>(
     null,
@@ -97,11 +96,9 @@ export function useSpacepokerHand(
 
   const commitLocalAction = useCallback(
     (update: (current: SpacepokerHandState) => SpacepokerHandState, command: LocalGameCommand) => {
-      const controller = requireLiveGameHandSource(handSourceRef.current);
-      const hand = handSourceRef.current.hand;
-      if (hand === null) throw new Error('Space Poker hand is unavailable');
-      hand.update(update);
-      controller.dispatch(
+      const live = requireLiveGameMount(viewRef.current);
+      live.hand.update(update);
+      live.port.dispatch(
         command.type === 'make-move'
           ? { type: 'make-move', memberIndex: 0, readable: command.readable }
           : command.type === 'accept-settlement'
@@ -114,15 +111,13 @@ export function useSpacepokerHand(
 
   const setDisplayMode = useCallback(
     (mode: SpacepokerDisplayMode) => {
-      if (handSourceRef.current.interactionMode === 'terminal') {
+      if (viewRef.current.frozen) {
         setTerminalDisplayMode(mode);
         return;
       }
-      const controller = requireLiveGameHandSource(handSourceRef.current);
-      const hand = handSourceRef.current.hand;
-      if (hand === null) throw new Error('Space Poker hand is unavailable');
-      hand.update((current) => ({ ...current, displayMode: mode }));
-      controller.dispatch({ type: 'state-changed' });
+      const live = requireLiveGameMount(viewRef.current);
+      live.hand.update((current) => ({ ...current, displayMode: mode }));
+      live.port.dispatch({ type: 'state-changed' });
     },
     [],
   );
@@ -133,7 +128,7 @@ export function useSpacepokerHand(
     if (state.terminalState !== 'none' || isTerminalSpacepokerHandler(state.gameState.handler))
       return;
     const { handler, myTurn, N } = state.gameState;
-    if (!myTurn || !requireLiveGameHandSource(handSourceRef.current).isChannelReady()) return;
+    if (!myTurn || !requireLiveGameMount(viewRef.current).port.isChannelReady()) return;
 
     const submitOnce = (
       update: (current: SpacepokerHandState) => SpacepokerHandState,

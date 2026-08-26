@@ -1,10 +1,5 @@
 import { cloneElement, type ReactElement } from 'react';
-import {
-  type GameHandState,
-  type GameMountNames,
-  type GameMountView,
-  requireLiveGameHandSource,
-} from '@games/host';
+import { type GameHandState, type GameMountNames, type GameMountView } from '@games/host';
 import { isCatalogGameType, packageFor, restoreRegisteredGameHand } from './gameRegistry';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { SessionModel } from './session/model';
@@ -27,15 +22,14 @@ export function renderLiveGameMount(
     hand: session.handSource.hand,
     ...names,
   };
-  const view: GameMountView<GameHandState<unknown>> =
-    session.handSource.interactionMode === 'terminal'
-      ? { ...common, frozen: true }
-      : {
-          ...common,
-          frozen: false,
-          port: requireLiveGameHandSource(session.handSource),
-          appendGameLog: session.appendGameLog,
-        };
+  const view: GameMountView<GameHandState<unknown>> = session.handSource.frozen
+    ? { ...common, frozen: true }
+    : {
+        ...common,
+        frozen: false,
+        port: session.handSource.port,
+        appendGameLog: session.appendGameLog,
+      };
   return cloneElement(packageFor(gameType).render(view), {
     key: session.handKey,
   });

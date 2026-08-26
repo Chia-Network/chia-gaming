@@ -1,41 +1,28 @@
 import { lazy, useCallback } from 'react';
-import { type GameHandSource, type GameMountRegistration } from '../../host';
-import type { KrunkHand, KrunkHandState } from './serialize';
+import { type GameMountRegistration, type GameMountView } from '../../host';
+import type { KrunkHand } from './serialize';
 
 const Krunk = lazy(() => import('./Krunk'));
 
 export interface KrunkLiveMountProps {
-  handSource: GameHandSource<KrunkHandState, KrunkHand>;
-  appendGameLog?: (line: string) => void;
-  myName?: string;
-  opponentName?: string;
+  view: GameMountView<KrunkHand>;
 }
 
 export function KrunkLiveMount(props: KrunkLiveMountProps) {
-  const { appendGameLog, ...rest } = props;
+  const { view } = props;
   const handleGameLog = useCallback(
     (lines: string[]) => {
-      if (!appendGameLog) return;
-      lines.forEach(appendGameLog);
-      appendGameLog('');
+      if (view.frozen) return;
+      lines.forEach(view.appendGameLog);
+      view.appendGameLog('');
     },
-    [appendGameLog],
+    [view],
   );
-  return <Krunk {...rest} onGameLog={handleGameLog} />;
+  return <Krunk view={view} onGameLog={handleGameLog} />;
 }
 
 export const play: GameMountRegistration<KrunkHand> = {
   render(view) {
-    const handSource: GameHandSource<KrunkHandState, KrunkHand> = view.frozen
-      ? { interactionMode: 'terminal', hand: view.hand }
-      : { interactionMode: 'live', hand: view.hand, port: view.port };
-    return (
-      <KrunkLiveMount
-        handSource={handSource}
-        appendGameLog={view.frozen ? undefined : view.appendGameLog}
-        myName={view.myName}
-        opponentName={view.opponentName}
-      />
-    );
+    return <KrunkLiveMount view={view} />;
   },
 };

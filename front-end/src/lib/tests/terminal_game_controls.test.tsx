@@ -85,7 +85,7 @@ describe('terminal game controls', () => {
             outcome: undefined,
             onGameLog: protocolMutation,
             onSnapshotChange: protocolMutation,
-            interactionMode: 'terminal',
+            frozen: true,
           }),
         );
       });
@@ -158,7 +158,7 @@ describe('terminal game controls', () => {
             playerDisplayText: '',
             opponentDisplayText: '',
           },
-          interactionMode: 'terminal',
+          frozen: true,
         }),
       );
     });
@@ -180,9 +180,10 @@ describe('terminal game controls', () => {
     act(() => {
       renderer = create(
         createElement(Krunk, {
-          handSource: {
-            interactionMode: 'terminal',
+          view: {
+            frozen: true,
             hand: restoreKrunkHand(krunkStateCodec.decode(handState)!),
+            handOrigin: 'terminal',
           },
           onGameLog: () => {},
         }),
@@ -221,9 +222,10 @@ describe('terminal game controls', () => {
     act(() => {
       renderer = create(
         createElement(SpacePoker, {
-          handSource: {
-            interactionMode: 'terminal',
+          view: {
+            frozen: true,
             hand: restoreSpacepokerHand(spacepokerStateCodec.decode(handState)!),
+            handOrigin: 'terminal',
           },
           onGameLog: () => {},
         }),

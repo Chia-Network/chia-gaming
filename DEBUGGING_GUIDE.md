@@ -83,6 +83,13 @@ closures are collected and executed in parallel using `std::thread::scope` with
 a shared work queue sized to `available_parallelism()`. To disable a test,
 comment out its `res.push(...)` call in the relevant `test_funs()` function.
 
+For game packages, `rust/tests/mod.rs` is optional. When it exists, it must
+export `test_funs()` and the build automatically includes those closures in the
+internal runner; packages using a non-Rust harness do not appear in that
+aggregation. The `registry.json` `test` list is reserved for internal Rust test
+packages such as `debug`, whose bespoke factory/probe hooks are also used by the
+simulator.
+
 ## Reading Test Output
 
 The output from `./ct.sh` is designed to be read directly. A passing run ends

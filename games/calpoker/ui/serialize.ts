@@ -303,6 +303,9 @@ export function createCalpokerHand(init: GameHandInitialization): CalpokerHand {
   return calpokerHandFromState(initialState(init));
 }
 
-export function restoreCalpokerHand(savedState: CalpokerHandState): CalpokerHand {
+export function restoreCalpokerHand(savedState: unknown): CalpokerHand {
+  if (!isCalpokerHandState(savedState)) {
+    throw new Error('Cannot restore California Poker hand: saved state is invalid');
+  }
   return calpokerHandFromState(savedState);
 }

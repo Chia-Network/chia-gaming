@@ -2,7 +2,7 @@ import React from 'react';
 
 import { CaliforniaPoker } from './components';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from './types/CaliforniapokerProps';
-import type { GameInteractionMode, SettlementOutcome } from '../../host';
+import type { SettlementOutcome } from '../../host';
 import type { CalpokerError } from './serialize';
 
 export interface CalpokerProps {
@@ -21,7 +21,7 @@ export interface CalpokerProps {
   myName?: string;
   opponentName?: string;
   terminalOutcome?: SettlementOutcome | null;
-  interactionMode?: GameInteractionMode;
+  frozen?: boolean;
   error: CalpokerError | null;
 }
 
@@ -41,7 +41,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   myName,
   opponentName,
   terminalOutcome,
-  interactionMode = 'live',
+  frozen = false,
   error,
 }) => {
   return (
@@ -64,7 +64,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           myName={myName}
           opponentName={opponentName}
           terminalOutcome={terminalOutcome}
-          interactionMode={interactionMode}
+          frozen={frozen}
           error={error}
         />
       </div>

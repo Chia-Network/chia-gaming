@@ -1770,9 +1770,9 @@ impl OnChainPhase {
             }
             GameAction::CleanShutdown => Ok(Vec::new()),
             GameAction::QueuedProposalGroup(_, _)
-            | GameAction::QueuedAcceptProposal(_)
-            | GameAction::QueuedCancelProposal(_)
-            | GameAction::QueuedCancelProposalSilently(_) => Ok(vec![]),
+            | GameAction::QueuedAcceptProposalGroup(_)
+            | GameAction::QueuedCancelProposalGroup(_)
+            | GameAction::QueuedCancelProposalGroupSilently(_) => Ok(vec![]),
             #[cfg(test)]
             GameAction::ForcedSelfAccept(_) => Ok(vec![]),
         }

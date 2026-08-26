@@ -253,8 +253,8 @@ Every potato pass is a single `PeerMessage::Batch` containing:
 1. `**actions: Vec<BatchAction>`** — one or more game operations to apply
   sequentially:
   - `ProposeGroup` — propose one factory-derived atomic game group
-  - `AcceptProposal` — accept a pending game proposal
-  - `CancelProposal` — cancel a pending proposal
+  - `AcceptProposalGroup` — accept one complete pending proposal group
+  - `CancelProposalGroup` — cancel one complete pending proposal group
   - `Move` — make a game move
   - `AcceptSettlement` — accept a game result (end game)
 2. `**signatures: StateUpdateSignatures`** — two half-signatures covering the final
@@ -520,9 +520,11 @@ generated member's initial validation puzzle hash
 human-readable key. Registration discovers it by running the factory with
 representative valid parameters. Adding a game means creating that conventional
 package and appending the key to the registry; Chialisp compile, Rust/WASM
-wiring, frontend imports, and the full-suite test aggregator are generated from
-that file. See [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md). Handler and
-validator walkthroughs for the reference games are in
+registration, frontend imports, and factory presets are generated from that
+file. Rust package modules and full-suite test aggregation are generated only
+when their optional Rust source files exist. See
+[`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md). Handler and validator
+walkthroughs for the reference games are in
 [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md#worked-examples-reference-games).
 
 The Rust game collection also registers `debug` (test list) for simulator tests
@@ -722,8 +724,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedRedoActions` | `channel_state/types/potato.rs`              | Internal protocol replay entries: `CachedSendMove`, `CachedAcceptSettlement`, and per-ID `ProposalAccepted` (not the UI `ProposalAcceptedGroup`) |
-| `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
-| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposal`, `QueuedCancelProposal`, `QueuedCancelProposalSilently`, `Cheat` |
+| `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, `AcceptProposalGroup`, `CancelProposalGroup`, plus per-game `Move` and `AcceptSettlement` |
+| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposalGroup`, `QueuedCancelProposalGroup`, `QueuedCancelProposalGroupSilently`, `Cheat` |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
 | `OnChainGameState`              | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout` |
 | `SettlementOutcome`             | `session_phases/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |

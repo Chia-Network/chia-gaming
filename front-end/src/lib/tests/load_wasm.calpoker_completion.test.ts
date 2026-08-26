@@ -297,14 +297,13 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     const hookHands: Array<UseCalpokerHandResult | undefined> = [undefined, undefined];
     function HookHarness({ index }: { index: number }) {
       const runtime = runtimes[index];
-      hookHands[index] = useCalpokerHand(
-        {
-          interactionMode: 'live',
-          hand: runtime.getGameHand(),
-          port: ports[index],
-        },
-        'restored',
-      );
+      hookHands[index] = useCalpokerHand({
+        frozen: false,
+        hand: runtime.getGameHand(),
+        port: ports[index],
+        handOrigin: 'restored',
+        appendGameLog: jest.fn(),
+      });
       return null;
     }
     const hookTree = () =>

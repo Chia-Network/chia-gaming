@@ -7,7 +7,7 @@ use crate::utils::proper_list;
 
 use crate::channel_state::game_handler::GameHandler;
 use crate::channel_state::game_start_info::GameStartInfo;
-use crate::channel_state::types::StateUpdateProgram;
+use crate::channel_state::types::{StateUpdateProgram, ValidationInfo};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     GameID, Hash, IntoErr, Program, Puzzle, Sha256tree, Timeout, MAX_BLOCK_COST_CLVM,
@@ -34,6 +34,21 @@ pub struct FactoryGame {
 }
 
 impl FactoryGame {
+    pub fn initial_validation_info_hash(&self, allocator: &mut AllocEncoder) -> Hash {
+        let initial_validation_program = StateUpdateProgram::new_hash(
+            self.initial_validation_program.clone(),
+            "initial",
+            self.initial_validation_program_hash.clone(),
+        );
+        ValidationInfo::new_state_update(
+            allocator,
+            initial_validation_program,
+            self.initial_state.clone(),
+        )
+        .hash()
+        .clone()
+    }
+
     pub fn game_start(
         &self,
         game_id: &GameID,

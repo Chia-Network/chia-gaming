@@ -134,6 +134,8 @@ describe('session machine behavior sequences', () => {
       gameType: 'calpoker',
 
       state: {
+        perPlayerStake: 10n,
+
         playerHand,
 
         opponentHand,
@@ -145,7 +147,8 @@ describe('session machine behavior sequences', () => {
         isPlayerTurn: false,
 
         iStarted: true,
-        error: null,
+
+        settlementOutcome: null,
       },
     });
 

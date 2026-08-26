@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { gameHandState, type GameHandSource } from '../../host';
+import type { GameMountView } from '../../host';
 import { describeSpacePokerHand, formatSpacepokerHandLog } from './handPresentation';
 import { formatSpacepokerAmount } from './formatting';
 import { SpacePokerActionControls } from './SpacePokerActionControls';
@@ -12,10 +12,10 @@ import {
   spacePokerTurnLine,
 } from './statusPresentation';
 import { SpHandler, type SpacepokerDisplayMode, useSpacepokerHand } from './useSpacepokerHand';
-import type { SpacepokerHand, SpacepokerHandState } from './serialize';
+import type { SpacepokerHand } from './serialize';
 
 export interface SpacePokerProps {
-  handSource: GameHandSource<SpacepokerHandState, SpacepokerHand>;
+  view: GameMountView<SpacepokerHand>;
   onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
@@ -51,20 +51,18 @@ function useSpacepokerCheatKeys(handleCheat: () => void, enabled: boolean): void
 }
 
 export default function SpacePoker({
-  handSource,
+  view,
   onGameLog,
-  myName,
-  opponentName,
 }: SpacePokerProps) {
-  const interactive = handSource.interactionMode === 'live';
-  const state = gameHandState(handSource);
+  const interactive = !view.frozen;
+  const state = view.hand.getState();
   const betSizeValue = state.perPlayerStake * 2n;
-  const sp = useSpacepokerHand(handSource);
+  const sp = useSpacepokerHand(view);
   const { handler, myTurn, N } = sp.gameState;
   useSpacepokerCheatKeys(sp.handleCheat, interactive);
 
   const [alreadyTerminalAtMount] = useState(() => {
-    const state = gameHandState(handSource);
+    const state = view.hand.getState();
     return state.terminalState !== 'none';
   });
   const gameLogFiredRef = useRef(alreadyTerminalAtMount);
@@ -158,8 +156,8 @@ export default function SpacePoker({
       </div>
 
       <SpacePokerTable
-        opponentName={opponentName ?? 'Opponent'}
-        playerName={myName ?? 'You'}
+        opponentName={view.opponentName ?? 'Opponent'}
+        playerName={view.myName ?? 'You'}
         opponentIndicator={indicators.opponent}
         playerIndicator={indicators.player}
         opponentStack={sp.opponentStack}

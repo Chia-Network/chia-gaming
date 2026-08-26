@@ -8,7 +8,7 @@ A game has three main parts:
 
 1. **CLVM rules** define valid moves and protect both players if a dispute goes
    on-chain.
-2. **A small Rust module** loads the compiled CLVM into the game engine.
+2. **Tests** exercise those rules through Rust or another harness.
 3. **A TypeScript/React UI** lets players propose a hand, play it, and restore
    it after a refresh.
 
@@ -48,9 +48,9 @@ games/<key>/
     factory_args.clvm.bin # Optional generated curry arguments
     onchain/              # Checks moves during an on-chain dispute
     *_generate.clinc      # Handles moves while the game is off-chain
-  rust/
-    mod.rs                # Optional Rust helpers; no factory loading
-    tests/                # CLVM, handler, validator, and simulator tests
+  rust/                   # Optional; omit when using a non-Rust test harness
+    mod.rs                # Rust helpers and test module declaration
+    tests/                # Optional Rust CLVM/handler/validator/simulator tests
   ui/
     handProposalForm.tsx  # Form used to propose a new hand
     handProposal.ts       # Proposal validation and factory parameters
@@ -79,8 +79,10 @@ Add the key to [`games/registry.json`](games/registry.json):
 - Use the `production` list for a playable game with a UI.
 - Use the `test` list for a game that exists only in automated tests.
 
-That is the only catalog you edit by hand. The build generates the Rust
-registration, frontend imports, test aggregation, and factory preset list.
+That is the only catalog you edit by hand. The build generates frontend imports
+and the factory preset list for every production package. When `rust/mod.rs` or
+`rust/tests/mod.rs` exists, it also generates the corresponding Rust module or
+internal test-suite aggregation.
 
 Two identifiers appear in the code:
 
@@ -178,9 +180,20 @@ write it as a proper list of arguments at
 is the example. Probe programs and factory-argument files are build inputs;
 the browser downloads neither of them.
 
-Add handler and validator tests under `games/<key>/rust/tests/`. Use
-[`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) when a test needs the blockchain
-simulator.
+Test the handlers and validators with the harness appropriate to the package.
+Rust tests may live under `games/<key>/rust/tests/`; production packages using a
+non-Rust harness may omit both `rust/mod.rs` and `rust/tests/mod.rs`. When Rust
+tests are present, `rust/mod.rs` must declare `#[cfg(test)] pub mod tests;`, and
+`rust/tests/mod.rs` must expose `pub fn test_funs()`. The build discovers that
+file and adds its closures to the internal full-suite runner; there is no
+handwritten per-package test list.
+
+The `test` array in `games/registry.json` is a separate internal mechanism for
+Rust-only test packages. The existing `debug` package uses it to register its
+bespoke `prepared_factory` and `probe_parameters` functions with simulator
+tests; it is not the way a production package selects its test harness. Use
+[`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) when a Rust test needs the
+blockchain simulator.
 
 ## Step 4: Define how a hand is proposed
 
@@ -310,7 +323,10 @@ interface ProposalParameterCodec<TParams> {
 
 The codec validates exact JavaScript types without coercion. Bencodex text
 strings are JavaScript `string`; byte strings are `Uint8Array`; integers are
-`bigint`; booleans, null, and proper lists retain their own types. For example:
+`bigint` within Rust's inclusive signed `i128` range; booleans, null, and proper
+lists retain their own types. Values outside `i128::MIN..=i128::MAX` are rejected
+at the peer decoding boundary rather than promoted to arbitrary precision. For
+example:
 
 ```ts
 const text: ProposalParameterValue = 'unit';
@@ -331,8 +347,9 @@ The protocol state in Rust is not enough to restore every detail of a React UI.
 For example, a card game may need revealed cards and current selections. Define
 one complete game-owned state type and implement both `createHand(init)` and
 `restoreHand(savedState)`. The first receives accepted initialization terms for
-a new hand. The second receives only the saved game state—never proposal or
-initialization data.
+a new hand. The second receives an `unknown` saved value—never proposal or
+initialization data—and must validate it with the package's hand-state predicate
+before constructing the hand. Invalid state fails immediately at this boundary.
 
 The shared `GameHand<TState>` exposes only `receive(update)` and `getState()`.
 Define any local mutation method on your package's concrete hand type. The
@@ -417,8 +434,8 @@ unchanged. The host applies its `handKey` to the returned element, which
 intentionally starts a fresh component lifecycle for each new hand. Game code
 does not need to add a React key or manage this lifecycle itself.
 
-Use `requireLiveGameHandSource` before dispatching an intent. The complete
-outgoing contract is:
+Narrow the `GameMountView` on `frozen` before dispatching an intent. The
+complete outgoing contract is:
 
 ```ts
 type GameIntent =
@@ -554,8 +571,8 @@ Before considering the game complete, check that:
 - The factory returns the expected game records for valid parameters.
 - Invalid factory parameters and invalid moves are rejected.
 - Both players derive the same initial game.
-- Handler and validator tests cover each legal move and important illegal
-  moves.
+- Handler and validator tests, in Rust or the package's external harness, cover
+  each legal move and important illegal moves.
 - The proposal form converts to and from `HandProposal` correctly.
 - The package-owned `forwardRef` form exposes `getProposal()`, validates its
   transient controls, and returns sender/receiver contributions plus typed

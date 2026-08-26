@@ -762,11 +762,11 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     iStarted: false,
   });
   expect(frozen.props).toMatchObject({
-    handSource: {
-      interactionMode: 'terminal',
+    view: {
+      frozen: true,
     },
   });
-  expect(frozen.props.handSource.hand.getState()).toEqual(terminal.model.game.handState?.state);
+  expect(frozen.props.view.hand.getState()).toEqual(terminal.model.game.handState?.state);
   expect(frozen.props).not.toHaveProperty('gameObject');
   const markup = renderToStaticMarkup(
     React.createElement(FinishedSessionGameView, {

@@ -281,10 +281,14 @@ the waiting player. The factory handlers are not regenerated from peer-specific
 inputs. The first member's initial-validator hash is the protocol identity.
 
 The framework derives each game's amount from its two contributions and hashes
-the returned initial validator. The wire member metadata is checked
-against the receiver's independently derived factory output, including list
-order and cardinality. The current factories produce one game for Calpoker,
-one for Space Poker, and two for Krunk.
+the returned initial validator. Wire members retain only setup commitments:
+contributions, first-player orientation, validator and validation-info hashes,
+initial move, maximum move size, and initial mover share. Raw initial state,
+validator code, handlers, and the derived amount stay local. The receiver
+reruns the factory, checks the retained metadata (including list order and
+cardinality), derives the group ID from the first member, and builds
+`GameStartInfo` entirely from its local factory result. The current factories
+produce one game for Calpoker, one for Space Poker, and two for Krunk.
 
 There is no proposal parser and no peer-specific `wire_data`/`local_data`
 proposal split in this model. This is separate from the optional advisory

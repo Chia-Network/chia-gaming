@@ -11,8 +11,8 @@ import {
 import { calpokerSettlementVerb, calpokerTimeoutBadge, isForfeitOutcome } from './settlement';
 import {
   type GameHandOrigin,
-  type GameHandSource,
   type GameIntent,
+  type GameMountView,
   type GameProposalFormHandle,
   type LiveGamePort,
   type PersistedGameState,
@@ -53,6 +53,29 @@ type TestLiveGamePort = LiveGamePort & {
 };
 const testHands = new WeakMap<TestLiveGamePort, CalpokerHand>();
 
+describe('Calpoker hand restoration', () => {
+  const savedState: CalpokerHandState = {
+    perPlayerStake: 100n,
+    playerHand: [],
+    opponentHand: [],
+    cardSelections: [],
+    moveNumber: 0n,
+    isPlayerTurn: true,
+    iStarted: false,
+    settlementOutcome: null,
+  };
+
+  it('restores a valid saved state', () => {
+    expect(restoreCalpokerHand(savedState).getState()).toBe(savedState);
+  });
+
+  it('rejects malformed saved state before constructing a hand', () => {
+    expect(() => restoreCalpokerHand({ ...savedState, perPlayerStake: 0n })).toThrow(
+      'Cannot restore California Poker hand: saved state is invalid',
+    );
+  });
+});
+
 function makeDispatch(makeMove: jest.Mock) {
   return (intent: GameIntent) => {
     if (intent.type === 'state-changed') return;
@@ -63,7 +86,10 @@ function makeDispatch(makeMove: jest.Mock) {
   };
 }
 
-function liveSource(port: TestLiveGamePort): GameHandSource {
+function liveSource(
+  port: TestLiveGamePort,
+  handOrigin: Exclude<GameHandOrigin, 'terminal'> = 'fresh',
+): GameMountView<CalpokerHand> {
   let hand = testHands.get(port);
   if (!hand) {
     hand = {
@@ -82,9 +108,11 @@ function liveSource(port: TestLiveGamePort): GameHandSource {
     testHands.set(port, hand);
   }
   return {
-    interactionMode: 'live',
+    frozen: false,
     hand,
     port,
+    handOrigin,
+    appendGameLog: jest.fn(),
   };
 }
 
@@ -267,7 +295,7 @@ describe('Calpoker fresh hand startup', () => {
     };
 
     function Harness() {
-      useCalpokerHand(liveSource(controller), 'restored');
+      useCalpokerHand(liveSource(controller, 'restored'));
       return null;
     }
 
@@ -298,7 +326,7 @@ describe('Calpoker fresh hand startup', () => {
     };
 
     function Harness({ handOrigin }: { handOrigin: GameHandOrigin }) {
-      useCalpokerHand(liveSource(controller), handOrigin);
+      useCalpokerHand(liveSource(controller, handOrigin));
       return null;
     }
     const mount = (key: number, handOrigin: GameHandOrigin) =>
@@ -368,7 +396,7 @@ describe('Calpoker terminal hand projection', () => {
     let hand: ReturnType<typeof useCalpokerHand> | undefined;
 
     function Harness() {
-      hand = useCalpokerHand(liveSource(controller), 'restored');
+      hand = useCalpokerHand(liveSource(controller, 'restored'));
       return null;
     }
 
@@ -461,7 +489,7 @@ describe('Calpoker terminal hand projection', () => {
       myName: 'Bob',
       opponentName: 'Alice',
       terminalOutcome: null,
-      interactionMode: 'terminal',
+      frozen: true,
     };
     function MountedPoker(props: CaliforniapokerProps) {
       useEffect(() => {
@@ -589,10 +617,10 @@ describe('Calpoker terminal hand projection', () => {
         terminalOutcome === null
           ? liveSource(controller)
           : {
-              interactionMode: 'terminal',
+              frozen: true,
               hand: terminalHand!,
+              handOrigin: 'terminal',
             },
-        'restored',
       );
       const outcomeViewValue: CalpokerOutcomeView | undefined = hand.outcome
         ? {
@@ -633,7 +661,7 @@ describe('Calpoker terminal hand projection', () => {
         myName: 'Alice',
         opponentName: 'Bob',
         terminalOutcome,
-        interactionMode: 'terminal',
+        frozen: true,
       });
     }
 
@@ -710,7 +738,7 @@ describe('Calpoker terminal hand projection', () => {
       myName: 'Bob',
       opponentName: 'Alice',
       terminalOutcome: 'lost',
-      interactionMode: 'terminal',
+      frozen: true,
     };
 
     act(() => {

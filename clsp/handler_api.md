@@ -17,8 +17,9 @@ wrapper:
 
 `game_parameters` is the game's opaque CLVM value converted from Bencodex by
 Rust. Bencodex text and byte strings are distinct on the wire even though both
-become CLVM atoms; integers use canonical signed CLVM integer encoding,
-booleans map to nil/`1`, null maps to nil, and lists remain proper lists.
+become CLVM atoms; integers are limited to signed `i128` and use canonical
+signed CLVM integer encoding, booleans map to nil/`1`, null maps to nil, and
+lists remain proper lists.
 Timeout, channel identity, local identity, and `sender_is_player_a` are not
 factory inputs. A factory returns a proper, nonempty list of game records.
 Every record is a proper list with exactly 10 fields:
@@ -32,7 +33,9 @@ Every record is a proper list with exactly 10 fields:
 `player_a_goes_first` is canonical nil or `1`. Handler order is always the
 handler for the player whose turn is first, followed by the handler for the
 waiting player. Both peers execute and compare the complete ordered factory
-output. Rust maps player A/B to sender/receiver and local/opponent globally
+shape locally; the wire retains only the ordered setup commitments, and the
+receiver rebuilds raw state, handlers, and validator programs from its own
+factory run. Rust maps player A/B to sender/receiver and local/opponent globally
 using the proposal's one `sender_is_player_a` bit; member order never changes.
 The first member's derived initial-validator hash is the registered protocol
 identity.

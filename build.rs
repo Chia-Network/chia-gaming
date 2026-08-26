@@ -100,12 +100,6 @@ fn validate_package(key: &str, production: bool) {
     let rust_tests = root.join("rust/tests/mod.rs");
     let factory = root.join("clsp/factory.clsp");
     let factory_probe = root.join("clsp/factory_probe.clsp");
-    if !rust_mod.is_file() {
-        panic!("game package {key} missing rust/mod.rs");
-    }
-    if !rust_tests.is_file() {
-        panic!("game package {key} missing rust/tests/mod.rs");
-    }
     if !factory.is_file() {
         panic!("game package {key} missing clsp/factory.clsp");
     }
@@ -121,6 +115,16 @@ fn validate_package(key: &str, production: bool) {
             if !root.join(rel).is_file() {
                 panic!("production game package {key} missing {rel}");
             }
+        }
+        if rust_tests.is_file() && !rust_mod.is_file() {
+            panic!("production game package {key} has rust/tests/mod.rs but no rust/mod.rs");
+        }
+    } else {
+        if !rust_mod.is_file() {
+            panic!("test game package {key} missing rust/mod.rs");
+        }
+        if !rust_tests.is_file() {
+            panic!("test game package {key} missing rust/tests/mod.rs");
         }
     }
 }
@@ -396,6 +400,9 @@ fn generate_package_modules(
     let mut packages = String::new();
     for key in registry.production.iter().chain(registry.test.iter()) {
         let path = manifest_dir.join("games").join(key).join("rust/mod.rs");
+        if !path.is_file() {
+            continue;
+        }
         packages.push_str(&format!(
             "#[path = \"{}\"]\npub mod {key};\n",
             path.display().to_string().replace('\\', "\\\\")
@@ -474,6 +481,13 @@ pub fn register_one_package(
         "pub fn game_package_test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {\n    let mut funs = Vec::new();\n",
     );
     for key in registry.production.iter().chain(registry.test.iter()) {
+        let path = manifest_dir
+            .join("games")
+            .join(key)
+            .join("rust/tests/mod.rs");
+        if !path.is_file() {
+            continue;
+        }
         tests.push_str(&format!(
             "    funs.extend(crate::games::{key}::tests::test_funs());\n"
         ));

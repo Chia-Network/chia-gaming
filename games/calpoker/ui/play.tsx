@@ -1,8 +1,6 @@
 import { lazy, useCallback } from 'react';
 import {
-  gameHandState,
-  type GameHandOrigin,
-  type GameHandSource,
+  type GameMountView,
   type GameMountRegistration,
 } from '../../host';
 import type {
@@ -10,18 +8,14 @@ import type {
   CalpokerOutcomeView,
 } from './types/CaliforniapokerProps';
 import { useCalpokerHand } from './useCalpokerHand';
-import type { CalpokerDisplaySnapshot, CalpokerHand, CalpokerHandState } from './serialize';
+import type { CalpokerDisplaySnapshot, CalpokerHand } from './serialize';
 import type { CalpokerOutcomeShape } from './outcome';
 import { formatCalpokerAmount } from './formatting';
 
 const Calpoker = lazy(() => import('./Calpoker'));
 
 export interface CalpokerLiveMountProps {
-  handSource: GameHandSource<CalpokerHandState, CalpokerHand>;
-  appendGameLog?: (line: string) => void;
-  myName?: string;
-  opponentName?: string;
-  handOrigin?: GameHandOrigin;
+  view: GameMountView<CalpokerHand>;
 }
 
 function snapshotView(
@@ -65,23 +59,17 @@ function outcomeView(
 }
 
 export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
-  const {
-    handSource,
-    appendGameLog,
-    myName,
-    opponentName,
-    handOrigin = 'fresh',
-  } = props;
-  const state = gameHandState(handSource);
-  const hand = useCalpokerHand(handSource, handOrigin);
+  const { view } = props;
+  const state = view.hand.getState();
+  const hand = useCalpokerHand(view);
   const handleGameLog = useCallback(
     (lines: string[]) => {
-      if (!appendGameLog) return;
-      appendGameLog(`California Poker ${formatCalpokerAmount(state.perPlayerStake)}`);
-      lines.forEach(appendGameLog);
-      appendGameLog('');
+      if (view.frozen) return;
+      view.appendGameLog(`California Poker ${formatCalpokerAmount(state.perPlayerStake)}`);
+      lines.forEach(view.appendGameLog);
+      view.appendGameLog('');
     },
-    [appendGameLog, state.perPlayerStake],
+    [view, state.perPlayerStake],
   );
 
   return (
@@ -105,10 +93,10 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
       onGameLog={handleGameLog}
       onSnapshotChange={(snapshot) => hand.saveDisplaySnapshot(snapshotModel(snapshot))}
       initialSnapshot={snapshotView(hand.initialDisplaySnapshot)}
-      myName={myName}
-      opponentName={opponentName}
+      myName={view.myName}
+      opponentName={view.opponentName}
       terminalOutcome={hand.terminalOutcome}
-      interactionMode={handSource.interactionMode}
+      frozen={view.frozen}
       error={null}
     />
   );
@@ -116,17 +104,6 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
 
 export const play: GameMountRegistration<CalpokerHand> = {
   render(view) {
-    const source: GameHandSource<CalpokerHandState, CalpokerHand> = view.frozen
-      ? { interactionMode: 'terminal', hand: view.hand }
-      : { interactionMode: 'live', hand: view.hand, port: view.port };
-    return (
-      <CalpokerLiveMount
-        handSource={source}
-        appendGameLog={view.frozen ? undefined : view.appendGameLog}
-        handOrigin={view.handOrigin}
-        myName={view.myName}
-        opponentName={view.opponentName}
-      />
-    );
+    return <CalpokerLiveMount view={view} />;
   },
 };

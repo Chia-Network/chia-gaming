@@ -1243,20 +1243,19 @@ boundaries:
 
 - The current hand's React feature tree is a visual lifetime. It remains mounted
   through individual game settlements and successful channel finalization.
-  Finalization changes its generic interaction mode from `live` to `terminal`
-  without changing the feature component type or `handKey`; only acceptance of
-  a new hand changes that key.
+  Finalization changes its `GameMountView` from the live branch to
+  `frozen: true` without changing the feature component type or `handKey`; only
+  acceptance of a new hand changes that key.
 - The real `SessionController`, peer relay, callbacks, subscriptions, and
   blockchain attachment are a protocol lifetime. After the terminal reduction
   queue and atomic terminal save have flushed, they are detached and destroyed.
-  The retained game receives its existing hand through a readonly terminal
-  source and one selector projection built entirely from the finalized
-  `SessionModel`. Protocol access through a terminal source fails
-  immediately.
+  The retained game receives its existing hand in the frozen mount branch and
+  one selector projection built entirely from the finalized `SessionModel`.
+  That branch has no protocol intent port.
 - `FinishedSessionGameView` is cold-restoration infrastructure. It creates a
   hand and installs its opaque saved state when no live React tree survived,
   such as after
-  a page reload. Its game controls remain disabled by terminal interaction mode,
+  a page reload. Its game controls remain disabled by the frozen mount branch,
   while scrolling, text selection, and copying remain available. Its
   error/fallback handling is isolated from the in-place terminal path.
 
@@ -1391,11 +1390,12 @@ durable game reduction, or persistence assembly.
 
 When Shell supplies a finalized terminal presentation, `useGameSession`
 atomically projects every model-derived field from that model, replaces the live
-hand source with a readonly terminal source, and exposes an empty gameplay
-stream. The existing feature mount remains in place under
+hand with the finalized model, and the mount registry supplies the frozen
+`GameMountView` branch, which has no intent port. The existing feature mount
+remains in place under
 the same hand key; effects that subscribe, attach blockchain services, autoplay,
 or install command-producing keyboard handlers are disabled by the generic
-interaction mode rather than by inspecting protocol phases.
+frozen mount discriminant rather than by inspecting protocol phases.
 
 The cohesive session modules own those responsibilities:
 
@@ -1570,13 +1570,14 @@ and does not call `SessionController.proposeGame` while
 new hand while one is in progress without a mirror ref.
 
 **Atomic factory proposals** — the proposal command constructs one request with
-`game_type`, game-specific CLVM `parameters`, and a shared game timeout.
+`game_type`, game-specific Bencodex `parameters`, and a shared game timeout.
 `SessionController.proposeGame` sends that single request to WASM and stores all
 returned IDs. The registered deterministic factory decides cardinality:
 Calpoker and Space Poker return one ID; Krunk returns two ordered IDs. On the
 receive side there is exactly one `ProposalMade` for the group, so the frontend
 presents one logical proposal without deduplicating per-member notifications.
-Accepting or cancelling via the first ID expands to the full group in WASM.
+Accepting or cancelling via any member ID expands to the full group in WASM,
+which emits one ordered per-member wire action for acceptance or cancellation.
 
 **Receive guard** — When a `ProposalMade` notification arrives while a game is
 active, the notification reducer emits `controller-cancel-proposal` rather than

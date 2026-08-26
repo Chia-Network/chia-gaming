@@ -25,7 +25,7 @@ export function ComposeProposalDialog({
     if (!canSubmit) return;
     const result = formRef.current?.getProposal();
     if (!result?.ok) return;
-    const senderIsPlayerA = compose.selectedGame === 'krunk' || !session.iStarted;
+    const senderIsPlayerA = !session.iStarted;
     const parameters = pkg.encodeProposalParameters(result.parameters);
     session.submitComposedProposal({
       gameType: compose.selectedGame,

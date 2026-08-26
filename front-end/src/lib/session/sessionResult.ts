@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import type { GameHandOrigin, GameHandSource } from '@games/host';
-import { terminalGameHandSource } from '../gameHandSource';
+import type { GameHandOrigin } from '@games/host';
+import { terminalGameHandSource, type GameHandSource } from '../gameHandSource';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
 import type {

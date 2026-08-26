@@ -3,7 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import {
   type GameIntent,
-  type GameHandSource,
+  type GameMountView,
   type LiveGamePort,
   type PersistedGameState,
 } from '../../host';
@@ -54,13 +54,30 @@ function handState(overrides: Partial<SpacepokerHandState> = {}): SpacepokerHand
   };
 }
 
+describe('Space Poker hand restoration', () => {
+  const savedState = handState();
+
+  it('restores a valid saved state', () => {
+    expect(restoreSpacepokerHand(savedState).getState()).toBe(savedState);
+  });
+
+  it('rejects malformed saved state before constructing a hand', () => {
+    expect(() => restoreSpacepokerHand({ ...savedState, communityCards: [] })).toThrow(
+      'Cannot restore Space Poker hand: saved state is invalid',
+    );
+  });
+});
+
 const testHands = new WeakMap<LiveGamePort, SpacepokerHand>();
 
-function liveSource(port: LiveGamePort, state: PersistedGameState): GameHandSource {
+function liveSource(
+  port: LiveGamePort,
+  state: PersistedGameState,
+): GameMountView<SpacepokerHand> {
   const current = spacepokerStateCodec.decode(state)!;
   const hand = restoreSpacepokerHand(current);
   testHands.set(port, hand);
-  return { interactionMode: 'live', hand, port };
+  return { frozen: false, hand, port, handOrigin: 'fresh', appendGameLog: jest.fn() };
 }
 
 describe('Space Poker terminal UX', () => {
@@ -223,7 +240,7 @@ describe('Space Poker machine-owned hand state', () => {
     const onGameLog = jest.fn();
     const render = (state: SpacepokerHandState) =>
       React.createElement(SpacePoker, {
-        handSource: liveSource(port, spacepokerStateCodec.encode(state)),
+        view: liveSource(port, spacepokerStateCodec.encode(state)),
         onGameLog,
       });
     const initial = handState({ perPlayerStake: 10n, unitSizeMojos: 1n });
@@ -338,13 +355,14 @@ describe('Space Poker machine-owned hand state', () => {
 
   it('does not expose protocol actions from a terminal hand source', () => {
     const source = {
-      interactionMode: 'terminal' as const,
+      frozen: true as const,
       hand: restoreSpacepokerHand(handState()),
+      handOrigin: 'terminal' as const,
     };
     act(() => {
       renderer = create(
         React.createElement(SpacePoker, {
-          handSource: source,
+          view: source,
           onGameLog: jest.fn(),
         }),
       );

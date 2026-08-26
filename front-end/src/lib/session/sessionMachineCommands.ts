@@ -1,6 +1,6 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
 import { handProposalsEqual } from '../gameRegistry';
-import { proposalContributionForOrigin } from '@games/host';
+import { proposalContributionForOrigin } from './proposalOrigin';
 import { selectProposalGroupByDisposition } from './selectors';
 import type {
   SessionMachineEvent,

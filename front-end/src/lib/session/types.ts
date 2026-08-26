@@ -10,8 +10,10 @@ import type { RestoreStatus } from '../../hooks/SessionController';
 import type { ComposeDraftState } from './composeDraft';
 import type { PersistedGameState, SettlementOutcome } from '@games/host';
 
-export type { HandProposalBase, ProposalGroupOrigin } from '@games/host';
-import type { HandProposal as HostHandProposal, ProposalGroupOrigin } from '@games/host';
+export type { HandProposalBase } from '@games/host';
+export type { ProposalGroupOrigin } from './proposalOrigin';
+import type { HandProposal as HostHandProposal } from '@games/host';
+import type { ProposalGroupOrigin } from './proposalOrigin';
 import type { CatalogGameType } from '../../generated/gamePresets';
 
 export type RegisteredGameType = CatalogGameType;

@@ -1,8 +1,8 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import type { CalpokerOutcomeShape } from './outcome';
-import type { GameHandOrigin, GameHandSource, SettlementOutcome } from '../../host';
-import { gameHandState, requireLiveGameHandSource } from '../../host';
+import type { GameMountView, SettlementOutcome } from '../../host';
+import { requireLiveGameMount } from '../../host';
 import {
   type CalpokerDisplaySnapshot,
   type CalpokerHand,
@@ -57,33 +57,30 @@ export function calpokerResponderFinishesAtReveal(iStarted: boolean): boolean {
 }
 
 export function useCalpokerHand(
-  handSource: GameHandSource<CalpokerHandState, CalpokerHand>,
-  handOrigin: GameHandOrigin = 'fresh',
+  view: GameMountView<CalpokerHand>,
 ): UseCalpokerHandResult {
-  const interactive = handSource.interactionMode === 'live';
-  const handState = gameHandState(handSource);
-  const handSourceRef = useRef(handSource);
+  const interactive = !view.frozen;
+  const handState = view.hand.getState();
+  const viewRef = useRef(view);
   const pendingPlayRef = useRef(false);
   const autoSubmissionRef = useRef<string | null>(null);
   const suppressInitialOutcomeRef = useRef(
-    handOrigin !== 'fresh' &&
+    view.handOrigin !== 'fresh' &&
       handState.outcome !== undefined &&
       handState.displaySnapshot?.gameState === 'final',
   );
 
-  handSourceRef.current = handSource;
+  viewRef.current = view;
 
   const currentState = useCallback((): CalpokerHandState => {
-    return gameHandState(handSourceRef.current);
+    return viewRef.current.hand.getState();
   }, []);
 
   const commitState = useCallback(
     (update: (current: CalpokerHandState) => CalpokerHandState): void => {
-      const controller = requireLiveGameHandSource(handSourceRef.current);
-      const hand = handSourceRef.current.hand;
-      if (hand === null) throw new Error('California Poker hand is unavailable');
-      hand.update(update);
-      controller.dispatch({ type: 'state-changed' });
+      const live = requireLiveGameMount(viewRef.current);
+      live.hand.update(update);
+      live.port.dispatch({ type: 'state-changed' });
     },
     [],
   );
@@ -93,11 +90,9 @@ export function useCalpokerHand(
       update: (current: CalpokerHandState) => CalpokerHandState,
       command: LocalGameCommand,
     ): void => {
-      const controller = requireLiveGameHandSource(handSourceRef.current);
-      const hand = handSourceRef.current.hand;
-      if (hand === null) throw new Error('California Poker hand is unavailable');
-      hand.update(update);
-      controller.dispatch(
+      const live = requireLiveGameMount(viewRef.current);
+      live.hand.update(update);
+      live.port.dispatch(
         command.type === 'make-move'
           ? {
               type: 'make-move',
@@ -111,8 +106,8 @@ export function useCalpokerHand(
   );
 
   const submitMove1 = useCallback(() => {
-    const controller = requireLiveGameHandSource(handSourceRef.current);
-    if (!controller.isChannelReady()) return;
+    const live = requireLiveGameMount(viewRef.current);
+    if (!live.port.isChannelReady()) return;
     const current = currentState();
     if ((current.cardSelections ?? []).length !== 4) return;
     const cards = current.cardSelections ?? [];
@@ -124,8 +119,8 @@ export function useCalpokerHand(
   }, [commitLocalAction, currentState]);
 
   const handleMakeMove = useCallback(() => {
-    const controller = requireLiveGameHandSource(handSourceRef.current);
-    if (!controller.isChannelReady()) return;
+    const live = requireLiveGameMount(viewRef.current);
+    if (!live.port.isChannelReady()) return;
     const current = currentState();
     const handFinished =
       current.settlementOutcome !== null ||
@@ -160,8 +155,8 @@ export function useCalpokerHand(
       handState.settlementOutcome !== null ||
       (handState.outcome !== undefined && calpokerResponderFinishesAtReveal(handState.iStarted));
     if (handFinished || !handState.isPlayerTurn) return;
-    const controller = requireLiveGameHandSource(handSourceRef.current);
-    if (!controller.isChannelReady()) return;
+    const live = requireLiveGameMount(viewRef.current);
+    if (!live.port.isChannelReady()) return;
     const m = handState.moveNumber;
     const submissionKey = `0:${m}`;
     if (autoSubmissionRef.current === submissionKey) return;
@@ -173,7 +168,7 @@ export function useCalpokerHand(
       submitMove1();
     }
   }, [
-    handSource,
+    view,
     handState.isPlayerTurn,
     handState.moveNumber,
     handState.outcome,
@@ -214,7 +209,7 @@ export function useCalpokerHand(
 
   const saveDisplaySnapshot = useCallback(
     (snapshot: CalpokerDisplaySnapshot) => {
-      requireLiveGameHandSource(handSourceRef.current);
+      requireLiveGameMount(viewRef.current);
       commitState((current) => ({ ...current, displaySnapshot: snapshot }));
     },
     [commitState],
