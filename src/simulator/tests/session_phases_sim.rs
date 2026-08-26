@@ -298,7 +298,7 @@ pub enum ExpectedNotification {
     GameStatusSubmittingTimeoutClaim,
     GameStatusEndedError,
     ProposalMade,
-    ProposalAccepted,
+    ProposalAcceptedGroup,
     ProposalCancelled,
     InsufficientBalance,
     ChannelStatus(ChannelStatus),
@@ -316,6 +316,26 @@ fn is_terminal_game_status(status: &GameStatusKind) -> bool {
         status,
         GameStatusKind::EndedCancelled | GameStatusKind::EndedError
     )
+}
+
+fn proposal_accepted_contains(notification: &GameNotification, id: &GameID) -> bool {
+    matches!(
+        notification,
+        GameNotification::ProposalAcceptedGroup { members }
+            if members.iter().any(|member| member.id == *id)
+    )
+}
+
+fn accepted_game_ids(notifications: &[GameNotification]) -> HashSet<GameID> {
+    notifications
+        .iter()
+        .flat_map(|notification| match notification {
+            GameNotification::ProposalAcceptedGroup { members } => {
+                members.iter().map(|member| member.id).collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 fn has_status(n: &GameNotification, want: GameStatusKind) -> bool {
@@ -357,7 +377,6 @@ fn is_opponent_side_settlement(outcome: SettlementOutcome) -> bool {
 
 fn is_terminal_for_id(n: &GameNotification, id: &GameID) -> bool {
     match n {
-        GameNotification::InsufficientBalance { id: nid, .. } => nid == id,
         GameNotification::GameSettled { id: nid, .. } => nid == id,
         GameNotification::GameStatus {
             id: nid, status, ..
@@ -468,8 +487,8 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                 ) => true,
                 (GameNotification::ProposalMade { .. }, ExpectedNotification::ProposalMade) => true,
                 (
-                    GameNotification::ProposalAccepted { .. },
-                    ExpectedNotification::ProposalAccepted,
+                    GameNotification::ProposalAcceptedGroup { .. },
+                    ExpectedNotification::ProposalAcceptedGroup,
                 ) => true,
                 (
                     GameNotification::ProposalCancelled { .. },
@@ -516,7 +535,12 @@ fn event_shape(actual: &TestEvent) -> String {
                 format!("Notif(GameSettled(id={id:?},outcome={outcome:?},share={our_share:?}))")
             }
             GameNotification::ProposalMade { id, .. } => format!("Notif(ProposalMade(id={id:?}))"),
-            GameNotification::ProposalAccepted { id, .. } => format!("Notif(ProposalAccepted(id={id:?}))"),
+            GameNotification::ProposalAcceptedGroup { members } => {
+                format!(
+                    "Notif(ProposalAcceptedGroup(ids={:?}))",
+                    members.iter().map(|member| member.id).collect::<Vec<_>>()
+                )
+            }
             GameNotification::ProposalCancelled { id, reason } => format!("Notif(ProposalCancelled(id={id:?},reason={reason:?}))"),
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
             GameNotification::ActionFailed { reason, .. } => format!("Notif(ActionFailed(reason={reason}))"),
@@ -567,7 +591,9 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
             }
             ExpectedNotification::GameStatusEndedError => "Notif(GameStatusEndedError)".to_string(),
             ExpectedNotification::ProposalMade => "Notif(ProposalMade)".to_string(),
-            ExpectedNotification::ProposalAccepted => "Notif(ProposalAccepted)".to_string(),
+            ExpectedNotification::ProposalAcceptedGroup => {
+                "Notif(ProposalAcceptedGroup)".to_string()
+            }
             ExpectedNotification::ProposalCancelled => "Notif(ProposalCancelled)".to_string(),
             ExpectedNotification::InsufficientBalance => "Notif(InsufficientBalance)".to_string(),
             ExpectedNotification::ChannelStatus(s) => format!("Notif(ChannelStatus(state={s:?}))"),
@@ -580,7 +606,7 @@ pub fn game_proposed() -> ExpectedEvent {
 }
 
 pub fn game_accepted() -> ExpectedEvent {
-    ExpectedEvent::Notification(ExpectedNotification::ProposalAccepted)
+    ExpectedEvent::Notification(ExpectedNotification::ProposalAcceptedGroup)
 }
 
 pub fn assert_event_sequence(events: &[TestEvent], expected: &[ExpectedEvent], player_label: &str) {
@@ -672,25 +698,14 @@ impl LocalTestUIReceiver {
     }
 
     /// True when every accepted game has exactly one terminal game notification (Rule B forward
-    /// direction). Vacuously true if there are no `ProposalAccepted` games.
+    /// direction). Vacuously true if there are no accepted-group members.
     pub fn all_accepted_games_have_terminal_notification(&self) -> bool {
-        let accepted_ids: HashSet<GameID> = self
-            .notifications
-            .iter()
-            .filter_map(|n| {
-                if let GameNotification::ProposalAccepted { id, .. } = n {
-                    Some(id.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let accepted_ids = accepted_game_ids(&self.notifications);
         for id in accepted_ids {
             let terminal_count = self
                 .notifications
                 .iter()
                 .filter(|n| match n {
-                    GameNotification::InsufficientBalance { id: nid, .. } => nid == &id,
                     GameNotification::GameSettled { id: nid, .. } => nid == &id,
                     GameNotification::GameStatus {
                         id: nid, status, ..
@@ -801,9 +816,10 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
-            GameNotification::ProposalAccepted { id, .. } => {
+            GameNotification::ProposalAcceptedGroup { members } => {
                 self.assert_channel_created("game_proposal_accepted");
-                self.game_accepted_ids.insert(id.clone());
+                self.game_accepted_ids
+                    .extend(members.iter().map(|member| member.id));
                 self.notifications.push(notification.clone());
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
@@ -1041,7 +1057,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     // Rule A (proposal lifecycle): every proposal-start event (propose_game
     // call on the proposer side, ProposalMade notification on the receiver
-    // side) yields exactly one ProposalAccepted or ProposalCancelled.
+    // side) yields exactly one ProposalAcceptedGroup membership or ProposalCancelled.
     // Checked per-player independently.
 
     // Rule A for proposer side:
@@ -1050,18 +1066,17 @@ fn run_game_container_with_action_list_with_success_predicate(
             let accepted = lui
                 .notifications
                 .iter()
-                .filter(|n| {
-                    matches!(n,
-                        GameNotification::ProposalAccepted { id: nid, .. } if nid == id
-                    )
-                })
+                .filter(|n| proposal_accepted_contains(n, id))
                 .count();
             let cancelled = lui
                 .notifications
                 .iter()
                 .filter(|n| {
-                    matches!(n,
-                        GameNotification::ProposalCancelled { id: nid, .. } if nid == id
+                    matches!(
+                        n,
+                        GameNotification::ProposalCancelled { id: nid, .. }
+                            | GameNotification::InsufficientBalance { id: nid, .. }
+                            if nid == id
                     )
                 })
                 .count();
@@ -1082,18 +1097,17 @@ fn run_game_container_with_action_list_with_success_predicate(
                 let accepted = lui
                     .notifications
                     .iter()
-                    .filter(|n2| {
-                        matches!(n2,
-                            GameNotification::ProposalAccepted { id: nid, .. } if nid == id
-                        )
-                    })
+                    .filter(|n2| proposal_accepted_contains(n2, id))
                     .count();
                 let cancelled = lui
                     .notifications
                     .iter()
                     .filter(|n2| {
-                        matches!(n2,
-                            GameNotification::ProposalCancelled { id: nid, .. } if nid == id
+                        matches!(
+                            n2,
+                            GameNotification::ProposalCancelled { id: nid, .. }
+                                | GameNotification::InsufficientBalance { id: nid, .. }
+                                if nid == id
                         )
                     })
                     .count();
@@ -1109,44 +1123,36 @@ fn run_game_container_with_action_list_with_success_predicate(
     }
 
     // Rule B (game lifecycle bijection): one-to-one correspondence between
-    // ProposalAccepted and terminal game notifications per player per game ID.
-    // Every ProposalAccepted has exactly one terminal, and every terminal has
-    // a preceding ProposalAccepted.
+    // accepted-group members and terminal game notifications per player per
+    // game ID. Every accepted member has exactly one terminal, and every
+    // terminal has a preceding ProposalAcceptedGroup member.
 
-    // Rule B forward: every ProposalAccepted has exactly one terminal.
+    // Rule B forward: every ProposalAcceptedGroup member has one terminal.
     for (i, lui) in local_uis.iter().enumerate() {
         for n in lui.notifications.iter() {
-            if let GameNotification::ProposalAccepted { id, .. } = n {
-                let terminal_count = lui
-                    .notifications
-                    .iter()
-                    .filter(|n2| is_terminal_for_id(n2, id))
-                    .count();
-                assert!(
+            if let GameNotification::ProposalAcceptedGroup { members } = n {
+                for member in members {
+                    let id = &member.id;
+                    let terminal_count = lui
+                        .notifications
+                        .iter()
+                        .filter(|n2| is_terminal_for_id(n2, id))
+                        .count();
+                    assert!(
                     terminal_count == 1,
-                    "player {i}: ProposalAccepted({id:?}) should have exactly one terminal game notification, got {terminal_count}. All notifications: {:?}",
+                    "player {i}: ProposalAcceptedGroup member {id:?} should have exactly one terminal game notification, got {terminal_count}. All notifications: {:?}",
                     lui.notifications,
                 );
+                }
             }
         }
     }
 
-    // Rule B reverse: every terminal has a preceding ProposalAccepted.
+    // Rule B reverse: every terminal has a preceding accepted-group member.
     for (i, lui) in local_uis.iter().enumerate() {
-        let accepted_ids: HashSet<GameID> = lui
-            .notifications
-            .iter()
-            .filter_map(|n| {
-                if let GameNotification::ProposalAccepted { id, .. } = n {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let accepted_ids = accepted_game_ids(&lui.notifications);
         for n in &lui.notifications {
             let terminal_id = match n {
-                GameNotification::InsufficientBalance { id, .. } => Some(id),
                 GameNotification::GameStatus { id, status, .. }
                     if is_terminal_game_status(status) =>
                 {
@@ -1157,7 +1163,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             if let Some(id) = terminal_id {
                 assert!(
                     accepted_ids.contains(id),
-                    "player {i}: terminal notification for {id:?} but no ProposalAccepted for that game. \
+                    "player {i}: terminal notification for {id:?} but no ProposalAcceptedGroup member for that game. \
                      Accepted IDs: {accepted_ids:?}\nAll notifications: {:?}",
                     lui.notifications,
                 );
@@ -1167,17 +1173,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     // Invariant: on-chain statuses only for accepted games.
     for (i, lui) in local_uis.iter().enumerate() {
-        let accepted_ids: HashSet<GameID> = lui
-            .notifications
-            .iter()
-            .filter_map(|n| {
-                if let GameNotification::ProposalAccepted { id, .. } = n {
-                    Some(id.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let accepted_ids = accepted_game_ids(&lui.notifications);
         for n in &lui.notifications {
             if let GameNotification::GameStatus { id, status, .. } = n {
                 if !matches!(
@@ -1192,7 +1188,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
                 assert!(
                     accepted_ids.contains(id),
-                    "player {i}: on-chain status for {id:?} but no ProposalAccepted for that game. \
+                    "player {i}: on-chain status for {id:?} but no ProposalAcceptedGroup member for that game. \
                      Accepted IDs: {accepted_ids:?}\nAll notifications: {:?}",
                     lui.notifications,
                 );
@@ -1229,16 +1225,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             continue;
         };
 
-        let accepted_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
-            .iter()
-            .filter_map(|n| {
-                if let GameNotification::ProposalAccepted { id, .. } = n {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let accepted_before_unroll = accepted_game_ids(&lui.notifications[..unroll_idx]);
 
         let terminal_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
             .iter()
@@ -1249,7 +1236,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                 {
                     Some(*id)
                 }
-                GameNotification::InsufficientBalance { id, .. } => Some(*id),
                 _ => None,
             })
             .collect();
@@ -2982,15 +2968,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         .expect("should finish");
 
         let borrowed: &Program = sim_setup.args_program.borrow();
-        let params1_node = (
-            Amount::new(1000),
-            (Amount::new(1000), (true, (borrowed.clone(), ()))),
-        )
-            .to_clvm(&mut allocator)
-            .into_gen()
-            .expect("encode debug parameters");
-        let params1 =
-            Program::from_nodeptr(&mut allocator, params1_node).expect("debug parameters");
+        let params1 = borrowed.clone();
         let params1 = ProposalParameters::from_program_for_testing(&mut allocator, &params1)
             .expect("structured debug parameters");
         let debug_type = crate::session_phases::game_collection::game_type_for_package(
@@ -3000,6 +2978,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let result1 = outcome.cradles[0].propose_games(
             &mut allocator,
             &[GameProposal {
+                player_a_contribution: Amount::new(1000),
+                player_b_contribution: Amount::new(1000),
+                sender_is_player_a: true,
                 game_type: debug_type.clone(),
                 timeout: Timeout::new(15),
                 parameters: params1,
@@ -3008,20 +2989,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         assert!(result1.is_ok());
 
-        let params2_node = (
-            Amount::new(1000),
-            (Amount::new(1000), (true, (borrowed.clone(), ()))),
-        )
-            .to_clvm(&mut allocator)
-            .into_gen()
-            .expect("encode debug parameters");
-        let params2 =
-            Program::from_nodeptr(&mut allocator, params2_node).expect("debug parameters");
+        let params2 = borrowed.clone();
         let params2 = ProposalParameters::from_program_for_testing(&mut allocator, &params2)
             .expect("structured debug parameters");
         let result2 = outcome.cradles[1].propose_games(
             &mut allocator,
             &[GameProposal {
+                player_a_contribution: Amount::new(1000),
+                player_b_contribution: Amount::new(1000),
+                sender_is_player_a: true,
                 game_type: debug_type,
                 timeout: Timeout::new(15),
                 parameters: params2,
@@ -5484,7 +5460,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             outcome.local_uis[0]
                 .notifications
                 .iter()
-                .any(|n| matches!(n, GameNotification::ProposalAccepted { .. })),
+                .any(|n| matches!(n, GameNotification::ProposalAcceptedGroup { .. })),
             "Alice should see accepted custom-timeout proposal, got: {:?}",
             outcome.local_uis[0].notifications
         );
@@ -5627,7 +5603,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // No initial game. Alice proposes (50+50), Bob accepts. A
         // WaitBlocks gap lets Alice process Bob's accept before going
-        // on-chain. Both sides should see ProposalMade + ProposalAccepted.
+        // on-chain. Both sides should see ProposalMade + ProposalAcceptedGroup.
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
             SimScriptAction::AcceptProposal(1, GameID(1)),
@@ -5649,8 +5625,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::ProposalAccepted { .. })),
-            "Alice should see ProposalAccepted, got: {p0_notifs:?}"
+                .any(|n| matches!(n, GameNotification::ProposalAcceptedGroup { .. })),
+            "Alice should see ProposalAcceptedGroup, got: {p0_notifs:?}"
         );
 
         let p1_notifs = &outcome.local_uis[1].notifications;
@@ -5663,8 +5639,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::ProposalAccepted { .. })),
-            "Bob should see ProposalAccepted, got: {p1_notifs:?}"
+                .any(|n| matches!(n, GameNotification::ProposalAcceptedGroup { .. })),
+            "Bob should see ProposalAcceptedGroup, got: {p1_notifs:?}"
         );
     }));
 
@@ -5806,8 +5782,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // Initial game A (100+100) consumes all balance (per_player_balance=100).
         // Alice proposes game B (50+50). Bob tries to accept but has
-        // insufficient balance. Bob sees ProposalAccepted then
-        // InsufficientBalance. Go on-chain to resolve game A.
+        // insufficient balance. Bob sees InsufficientBalance without a fake
+        // acceptance. Go on-chain to resolve game A.
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
             SimScriptAction::AcceptProposal(1, GameID(1)),
@@ -5828,12 +5804,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
-            p1_notifs.iter().any(|n| matches!(
-                n,
-                GameNotification::ProposalAccepted { id, amount, .. }
-                    if *id == GameID(3) && amount.to_u64() == 200
-            )),
-            "Bob should get ProposalAccepted with game 3's 200-mojo total, got: {p1_notifs:?}"
+            !p1_notifs
+                .iter()
+                .any(|n| proposal_accepted_contains(n, &GameID(3))),
+            "Bob must not get ProposalAcceptedGroup for failed game 3, got: {p1_notifs:?}"
         );
         assert!(
             p1_notifs
@@ -6161,7 +6135,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(3, 0));
         // Nerf player 1's messages so the accept response never reaches
-        // player 0 — the third game stays in cached_redo_actions as ProposalAccepted.
+        // player 0 — the third game stays as CachedRedoActions::ProposalAccepted.
         sim_setup.game_actions.push(SimScriptAction::NerfMessages(1));
         sim_setup.game_actions.push(SimScriptAction::AcceptProposal(0, GameID(0)));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(3, 0));

@@ -36,7 +36,7 @@ const WASM_NOTIFICATION_TAGS = new Set([
   'GameStatus',
   'GameSettled',
   'ProposalMade',
-  'ProposalAccepted',
+  'ProposalAcceptedGroup',
   'ProposalCancelled',
   'InsufficientBalance',
   'MoveRejected',
@@ -142,6 +142,9 @@ export interface ProposeGameParams {
   /** First generated member's initial validation puzzle hash (32-byte hex). */
   game_type: ProtocolGameId;
   timeout: bigint;
+  player_a_contribution: bigint;
+  player_b_contribution: bigint;
+  sender_is_player_a: boolean;
   parameters: ProposalParameterValue;
 }
 
@@ -185,7 +188,7 @@ export const CHANNEL_SEMANTIC_PHASES = [
 ] as const;
 
 export type ChannelSemanticPhase = WasmContract.ChannelSemanticPhase;
-export type ProposalAcceptedPayload = WasmContract.ProposalAcceptedPayload;
+export type ProposalAcceptedGroupPayload = WasmContract.ProposalAcceptedGroupPayload;
 export type ProposalMadePayload = WasmContract.ProposalMadePayload;
 export type MoveRejectedPayload = WasmContract.MoveRejectedPayload;
 export type ActionFailedPayload = WasmContract.ActionFailedPayload;
@@ -245,11 +248,7 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  propose_games: (
-    cid: number,
-    games: Omit<ProposeGameParams, 'parameters'>[],
-    parameters_list: ProposalParameterValue[],
-  ) => WasmResult;
+  propose_games: (cid: number, games: ProposeGameParams[]) => WasmResult;
   accept_proposal: (cid: number, game_id: string) => WasmResult;
   accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
   cancel_proposal: (cid: number, game_id: string) => WasmResult;
@@ -295,11 +294,8 @@ export class ChiaGame {
     this.session = sessionId;
   }
 
-  propose_games(
-    games: Omit<ProposeGameParams, 'parameters'>[],
-    parameters_list: ProposalParameterValue[],
-  ): WasmResult {
-    return this.wasm.propose_games(this.session, games, parameters_list);
+  propose_games(games: ProposeGameParams[]): WasmResult {
+    return this.wasm.propose_games(this.session, games);
   }
 
   accept_proposal(game_id: string): WasmResult {

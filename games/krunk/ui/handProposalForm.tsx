@@ -1,24 +1,58 @@
-import type { HandProposalFormProps } from '../../host';
+import { forwardRef, useImperativeHandle, useState } from 'react';
+import type { GameProposalFormHandle, HandProposalFormProps } from '../../host';
 import { AmountInput } from './AmountInput';
-import { isValidKrunkStake } from './handProposal';
+import { isValidKrunkStake, krunkProposalParameters } from './handProposal';
 
-export function HandProposalForm({
-  draft,
-  disabled,
-  maxPerHandMojos,
-  onChange,
-  onSubmit,
-}: HandProposalFormProps<{ amount: bigint }>) {
+type KrunkParameters = Record<string, never>;
+
+export const HandProposalForm = forwardRef<
+  GameProposalFormHandle<KrunkParameters>,
+  HandProposalFormProps<KrunkParameters>
+>(function HandProposalForm(
+  { disabled, maxPerHandMojos, defaultContribution, initialProposal, onSubmit },
+  ref,
+) {
+  const projectedInitial =
+    initialProposal && krunkProposalParameters.decode(initialProposal.parameters) !== null
+      ? initialProposal
+      : null;
+  const initialAmount = projectedInitial
+    ? projectedInitial.senderIsPlayerA
+      ? projectedInitial.playerAContribution
+      : projectedInitial.playerBContribution
+    : defaultContribution > 0n
+      ? defaultContribution
+      : 100n;
+  const [amount, setAmount] = useState(initialAmount);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const maxMojos =
     maxPerHandMojos != null ? maxPerHandMojos - (maxPerHandMojos % 100n) : maxPerHandMojos;
+  useImperativeHandle(ref, () => ({
+    getProposal: () => {
+      const error = !isValidKrunkStake(amount)
+        ? 'Krunk stakes must be positive multiples of 100 mojos.'
+        : maxMojos !== null && amount > maxMojos
+          ? 'Per-player stake exceeds the available reserve.'
+          : null;
+      setValidationError(error);
+      return error
+        ? { ok: false, error }
+        : {
+            ok: true,
+            senderContribution: amount,
+            receiverContribution: amount,
+            parameters: {},
+          };
+    },
+  }));
   return (
     <>
       <AmountInput
-        valueMojos={draft.amount}
-        onChange={(amount) => onChange({ amount })}
+        valueMojos={amount}
+        onChange={setAmount}
         maxMojos={maxMojos}
         onUseMax={
-          maxMojos != null && maxMojos > 0n ? () => onChange({ amount: maxMojos }) : undefined
+          maxMojos != null && maxMojos > 0n ? () => setAmount(maxMojos) : undefined
         }
         disabled={disabled}
         label="Per-player stake"
@@ -27,11 +61,14 @@ export function HandProposalForm({
           if (event.key === 'Enter') onSubmit();
         }}
       />
-      {draft.amount > 0n && !isValidKrunkStake(draft.amount) && (
+      {amount > 0n && !isValidKrunkStake(amount) && (
         <p className="text-xs text-alert-text">
           Krunk stakes must be multiples of 100 mojos.
         </p>
       )}
+      {validationError && isValidKrunkStake(amount) && (
+        <p className="text-xs text-alert-text">{validationError}</p>
+      )}
     </>
   );
-}
+});

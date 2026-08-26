@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import type { ReactElement, Ref } from 'react';
 import { Program } from 'clvm-lib';
 
 /** Compact settlement outcome ids (snake_case; match Rust `SettlementOutcome`). */
@@ -35,9 +35,11 @@ export function isSettlementOutcome(value: unknown): value is SettlementOutcome 
   return typeof value === 'string' && ALL_OUTCOMES.has(value);
 }
 export interface HandProposalBase {
-  myContribution: bigint;
-  theirContribution: bigint;
+  playerAContribution: bigint;
+  playerBContribution: bigint;
+  senderIsPlayerA: boolean;
   gameTimeout: bigint;
+  parameters: ProposalParameterValue;
 }
 
 export type RegisteredGameType = string;
@@ -69,26 +71,24 @@ export interface ProposalParameterCodec<TParams> {
 
 export type GameIntent =
   | { type: 'state-changed' }
-  | { type: 'make-move'; gameId: string; readable: Program | null }
-  | { type: 'accept-settlement'; gameId: string }
-  | { type: 'cheat'; gameId: string; moverShare: bigint };
+  | { type: 'make-move'; memberIndex: number; readable: Program | null }
+  | { type: 'accept-settlement'; memberIndex: number }
+  | { type: 'cheat'; memberIndex: number; moverShare: bigint };
 
 export interface GameHandInitialization {
-  gameIds: readonly string[];
-  iStarted: boolean;
-  origin: ProposalGroupOrigin;
   handProposal: HandProposal;
+  members: readonly { amount: bigint; ourTurn: boolean }[];
 }
 
 export type GameUpdate =
   | {
       type: 'move-readable';
-      gameId: string;
+      memberIndex: number;
       readable: Uint8Array;
       moverShare: string;
     }
-  | { type: 'message-readable'; gameId: string; readable: Uint8Array }
-  | { type: 'hand-ended'; gameId: string; outcome: SettlementOutcome | null };
+  | { type: 'message-readable'; memberIndex: number; readable: Uint8Array }
+  | { type: 'hand-ended'; memberIndex: number; outcome: SettlementOutcome | null };
 
 export interface GameHandState<TState> {
   getState(): TState;
@@ -98,27 +98,72 @@ export interface GameHand<TState> extends GameHandState<TState> {
   receive(update: GameUpdate): void;
 }
 
-export type ComposeDraftValue = Record<string, bigint>;
+export type GameProposalFormResult<TParams> =
+  | {
+      ok: true;
+      senderContribution: bigint;
+      receiverContribution: bigint;
+      parameters: TParams;
+    }
+  | { ok: false; error: string };
 
-export interface HandProposalFormProps<TDraft> {
-  draft: TDraft;
-  disabled: boolean;
-  maxPerHandMojos: bigint | null;
-  onChange: (update: Partial<TDraft>) => void;
-  onSubmit: () => void;
+export interface GameProposalFormHandle<TParams> {
+  getProposal(): GameProposalFormResult<TParams>;
 }
 
-export interface HandProposalDecodeContext {
-  readonly origin: ProposalGroupOrigin;
-  readonly iStarted: boolean;
+export interface HandProposalFormProps<TParams> {
+  ref?: Ref<GameProposalFormHandle<TParams>>;
+  disabled: boolean;
+  maxPerHandMojos: bigint | null;
+  defaultContribution: bigint;
+  initialProposal: HandProposal | null;
+  onSubmit: () => void;
 }
 
 export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase): boolean {
   return (
-    a.myContribution === b.myContribution &&
-    a.theirContribution === b.theirContribution &&
-    a.gameTimeout === b.gameTimeout
+    a.playerAContribution === b.playerAContribution &&
+    a.playerBContribution === b.playerBContribution &&
+    a.senderIsPlayerA === b.senderIsPlayerA &&
+    a.gameTimeout === b.gameTimeout &&
+    equalProposalParameterValue(a.parameters, b.parameters)
   );
+}
+
+export function equalProposalParameterValue(
+  a: ProposalParameterValue,
+  b: ProposalParameterValue,
+): boolean {
+  if (a instanceof Uint8Array || b instanceof Uint8Array) {
+    return (
+      a instanceof Uint8Array &&
+      b instanceof Uint8Array &&
+      a.length === b.length &&
+      a.every((value, index) => value === b[index])
+    );
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((value, index) => equalProposalParameterValue(value, b[index]))
+    );
+  }
+  return a === b;
+}
+
+export function proposalContributionForOrigin(
+  handProposal: HandProposal,
+  origin: ProposalGroupOrigin,
+): bigint {
+  const senderContribution = handProposal.senderIsPlayerA
+    ? handProposal.playerAContribution
+    : handProposal.playerBContribution;
+  const receiverContribution = handProposal.senderIsPlayerA
+    ? handProposal.playerBContribution
+    : handProposal.playerAContribution;
+  return origin === 'local' ? senderContribution : receiverContribution;
 }
 
 export interface LiveGamePort {
@@ -182,7 +227,6 @@ export interface GameMountRegistration<THand extends GameHandState<unknown>> {
 export interface GamePackageRegistration<
   TState,
   THand extends GameHand<TState>,
-  TDraft = ComposeDraftValue,
   TParams = unknown,
 > {
   gameType: string;
@@ -191,18 +235,5 @@ export interface GamePackageRegistration<
   restoreHand(savedState: TState): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;
   describeHandProposal(handProposal: HandProposal): string;
-  readonly draft: {
-    default(perGameAmount: bigint): TDraft;
-    fromHandProposal(handProposal: HandProposal): TDraft;
-    update(current: TDraft, update: Partial<TDraft>): TDraft;
-    toHandProposal(draft: TDraft, gameTimeout: bigint): HandProposal | null;
-  };
-  toProposalParameters(handProposal: HandProposal, iStarted: boolean): TParams;
-  decodeHandProposal(
-    base: HandProposalBase,
-    params: TParams,
-    context: HandProposalDecodeContext,
-  ): HandProposal | null;
-  validateHandProposal(handProposal: HandProposal): boolean;
   handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
 }

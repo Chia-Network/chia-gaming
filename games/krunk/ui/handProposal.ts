@@ -1,7 +1,6 @@
 import {
   equalHandProposalBase,
   type GamePackageRegistration,
-  type HandProposal,
   type ProposalParameterCodec,
 } from '../../host';
 import {
@@ -14,33 +13,20 @@ import { formatKrunkMojos } from './formatting';
 
 export { krunkOutcomeFromPlay, reduceKrunkHandState, reduceKrunkFeatureState } from './serialize';
 
-export type KrunkFactoryParameters = {
-  stake: bigint;
-};
+export type KrunkFactoryParameters = Record<string, never>;
 
 export const krunkProposalParameters: ProposalParameterCodec<KrunkFactoryParameters> = {
-  decode(value) {
-    return typeof value === 'bigint' && value > 0n ? { stake: value } : null;
-  },
-  encode: (params) => params.stake,
+  decode: (value) => (value === null ? {} : null),
+  encode: () => null,
 };
 
 export function isValidKrunkStake(stake: bigint): boolean {
   return stake > 0n && stake % 100n === 0n;
 }
 
-export function validateKrunkHandProposal(handProposal: HandProposal): boolean {
-  return (
-    handProposal.myContribution === handProposal.theirContribution &&
-    isValidKrunkStake(handProposal.myContribution) &&
-    handProposal.gameTimeout > 0n
-  );
-}
-
 const registration: GamePackageRegistration<
   KrunkHandState,
   KrunkHand,
-  { amount: bigint },
   KrunkFactoryParameters
 > = {
   gameType: 'krunk',
@@ -48,29 +34,12 @@ const registration: GamePackageRegistration<
   createHand: createKrunkHand,
   restoreHand: restoreKrunkHand,
   proposalParameters: krunkProposalParameters,
-  describeHandProposal: (handProposal) =>
-    `Stake ${formatKrunkMojos(handProposal.myContribution)} each`,
-  draft: {
-    default: () => ({ amount: 100n }),
-    fromHandProposal: (handProposal) => ({ amount: handProposal.myContribution }),
-    update: (current, update) => ({ ...current, ...update }),
-    toHandProposal(draft, gameTimeout) {
-      const handProposal = {
-        gameType: 'krunk',
-        myContribution: draft.amount,
-        theirContribution: draft.amount,
-        gameTimeout,
-      };
-      return validateKrunkHandProposal(handProposal) ? handProposal : null;
-    },
+  describeHandProposal(handProposal) {
+    if (krunkProposalParameters.decode(handProposal.parameters) === null) {
+      throw new Error('Krunk proposal parameters are invalid');
+    }
+    return `Stake ${formatKrunkMojos(handProposal.playerAContribution)} each`;
   },
-  toProposalParameters: (handProposal) => ({ stake: handProposal.myContribution }),
-  decodeHandProposal(base, params) {
-    if (params.stake !== base.myContribution) return null;
-    const handProposal = { gameType: 'krunk', ...base };
-    return validateKrunkHandProposal(handProposal) ? handProposal : null;
-  },
-  validateHandProposal: validateKrunkHandProposal,
   handProposalsEqual: equalHandProposalBase,
 };
 

@@ -11,7 +11,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 18n;
+export const SESSION_SAVE_VERSION = 20n;
 
 export type BlockchainType = 'simulator' | 'walletconnect';
 
@@ -82,8 +82,9 @@ export interface SavedGameInstance {
 }
 
 interface SavedHandProposalBase {
-  my_contribution: string;
-  their_contribution: string;
+  player_a_contribution: string;
+  player_b_contribution: string;
+  sender_is_player_a: boolean;
   game_timeout: string;
 }
 
@@ -124,7 +125,6 @@ export interface SessionPresentationSave {
     selected_game: RegisteredGameType;
     game_timeout: string;
     proposal_sent: boolean;
-    drafts: Record<string, Record<string, string>>;
   };
   betweenHandLastHandProposal: SavedHandProposal | null;
   betweenHandRejectedOnceHandProposal: SavedHandProposal | null;

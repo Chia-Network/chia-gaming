@@ -8,7 +8,6 @@ import {
   saveSession,
 } from '../../hooks/save';
 import { decodePersistedGameState } from '../gameRegistry';
-import { encodeGameProposalParameters } from '../gameProposalCodec';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import {
@@ -39,28 +38,33 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     {
       handProposal: {
         gameType: 'calpoker',
-        myContribution: 100n,
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: false,
         gameTimeout: 15n,
+        parameters: null,
       },
       expectedMembers: 1,
     },
     {
       handProposal: {
         gameType: 'spacepoker',
-        myContribution: 100n,
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: false,
         gameTimeout: 15n,
-        unitSizeMojos: 10n,
+        parameters: 10n,
       },
       expectedMembers: 1,
     },
     {
       handProposal: {
         gameType: 'krunk',
-        myContribution: 100n,
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: true,
         gameTimeout: 15n,
+        parameters: null,
       },
       expectedMembers: 2,
     },
@@ -73,7 +77,10 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     const ids = proposer.proposeGame({
       game_type: protocolIdForCatalog(testCase.handProposal.gameType),
       timeout: testCase.handProposal.gameTimeout,
-      parameters: encodeGameProposalParameters(testCase.handProposal, true),
+      player_a_contribution: testCase.handProposal.playerAContribution,
+      player_b_contribution: testCase.handProposal.playerBContribution,
+      sender_is_player_a: testCase.handProposal.senderIsPlayerA,
+      parameters: testCase.handProposal.parameters,
     });
     assert.equal(ids.length, testCase.expectedMembers);
     await exchangeUntilIdle(cradles);
@@ -184,8 +191,8 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       if (testCase.handProposal.gameType === 'krunk') {
         const krunk = krunkStateCodec.decode(restoredModel.game.handState);
         assert.ok(krunk);
-        assert.deepEqual(Object.keys(krunk.games), ids);
-        assert.notEqual(krunk.games[ids[0]].role, krunk.games[ids[1]].role);
+        assert.equal(krunk.members.length, ids.length);
+        assert.notEqual(krunk.members[0].role, krunk.members[1].role);
       }
       runtime.dispose();
     } finally {

@@ -144,17 +144,22 @@ export type ProposalParameterValue =
 export interface ProposalMadePayload {
   id: bigint;
   group_ids: bigint[];
-  my_contribution: unknown;
-  their_contribution: unknown;
+  player_a_contribution: unknown;
+  player_b_contribution: unknown;
+  sender_is_player_a: unknown;
   timeout: unknown;
   game_type: unknown;
   parameters: ProposalParameterValue;
 }
 
-export interface ProposalAcceptedPayload {
+export interface AcceptedGameMember {
   id: bigint;
   amount: unknown;
   our_turn: boolean;
+}
+
+export interface ProposalAcceptedGroupPayload {
+  members: AcceptedGameMember[];
 }
 
 export type CancelReason =
@@ -200,7 +205,7 @@ export interface WasmNotificationMap {
   GameStatus: GameStatusPayload;
   GameSettled: GameSettledPayload;
   ProposalMade: ProposalMadePayload;
-  ProposalAccepted: ProposalAcceptedPayload;
+  ProposalAcceptedGroup: ProposalAcceptedGroupPayload;
   ProposalCancelled: ProposalCancelledPayload;
   InsufficientBalance: InsufficientBalancePayload;
   MoveRejected: MoveRejectedPayload;

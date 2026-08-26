@@ -90,15 +90,32 @@ function fallbackHandInitialization(state: SessionMachineState): GameHandInitial
   if (handProposal === null) {
     throw new Error('Game update requires accepted hand terms');
   }
-  if (state.model.game.currentHandIds[0] === undefined) {
+  if (state.model.game.currentHandIds.length === 0) {
     throw new Error('Game update requires a current hand member');
   }
   return {
-    gameIds: state.model.game.currentHandIds,
-    iStarted: true,
-    origin: state.model.game.currentHandOrigin ?? 'local',
     handProposal,
+    members: state.model.game.currentHandIds.map((id) => {
+      const instance = state.model.game.instances[id];
+      if (!instance) throw new Error(`Game update missing current hand member ${id}`);
+      return {
+        amount: BigInt(instance.amount),
+        ourTurn:
+          instance.presentation === 'off-chain-my-turn' ||
+          instance.presentation === 'on-chain-my-turn',
+      };
+    }),
   };
+}
+
+function memberIndexForProtocolId(state: SessionMachineState, id: string): number {
+  const matches = state.model.game.currentHandIds
+    .map((candidate, index) => (candidate === id ? index : -1))
+    .filter((index) => index >= 0);
+  if (matches.length !== 1) {
+    throw new Error(`Game update protocol id ${id} must occur exactly once in current hand IDs`);
+  }
+  return matches[0]!;
 }
 
 function reduceWithTransientHand(
@@ -147,9 +164,20 @@ export function reduceDurableGameEvent(
       };
     }
     case 'notification-accepted-group': {
-      const proposal = selectProposalGroupByMemberId(state.model, event.id);
+      const firstMember = event.members[0];
+      if (!firstMember) throw new Error('ProposalAcceptedGroup has no members');
+      const proposal = selectProposalGroupByMemberId(state.model, firstMember.id);
       if (!proposal) {
-        throw new Error(`ProposalAccepted ${event.id} missing normalized proposal group`);
+        throw new Error(
+          `ProposalAcceptedGroup ${firstMember.id} missing normalized proposal group`,
+        );
+      }
+      const acceptedIds = event.members.map((member) => member.id);
+      if (
+        acceptedIds.length !== proposal.memberIds.length ||
+        acceptedIds.some((id, index) => id !== proposal.memberIds[index])
+      ) {
+        throw new Error('ProposalAcceptedGroup members do not match normalized proposal order');
       }
       const first =
         state.model.game.currentHandIds.length !== proposal.memberIds.length ||
@@ -164,9 +192,10 @@ export function reduceDurableGameEvent(
       const game = gameSliceReducer(gameSliceFromModel(state.model), {
         type: 'accepted-group',
         groupIds: proposal.memberIds,
-        acceptedId: event.id,
-        amount: event.amount,
-        startTurn: event.isMyTurn ? 'my-turn' : 'their-turn',
+        members: event.members.map((member) => ({
+          amount: member.amount,
+          startTurn: member.ourTurn ? 'my-turn' : 'their-turn',
+        })),
         origin: proposal.origin,
         gameType: proposal.handProposal.gameType,
       });
@@ -212,10 +241,11 @@ export function reduceDurableGameEvent(
       };
       if (!first) return { state: initialized, effects: [] };
       const init: GameHandInitialization = {
-        gameIds: proposal.memberIds,
-        iStarted: event.iStarted,
-        origin: proposal.origin,
         handProposal: proposal.handProposal,
+        members: event.members.map((member) => ({
+          amount: BigInt(member.amount),
+          ourTurn: member.ourTurn,
+        })),
       };
       const handState =
         event.handState ??
@@ -241,12 +271,12 @@ export function reduceDurableGameEvent(
         event.moverShare === null
           ? {
               type: 'message-readable',
-              gameId: event.id,
+              memberIndex: memberIndexForProtocolId(projected, event.id),
               readable: event.readable,
             }
           : {
               type: 'move-readable',
-              gameId: event.id,
+              memberIndex: memberIndexForProtocolId(projected, event.id),
               readable: event.readable,
               moverShare: event.moverShare,
             };
@@ -285,7 +315,7 @@ export function reduceDurableGameEvent(
       };
       const update: GameUpdate = {
         type: 'hand-ended',
-        gameId: event.id,
+        memberIndex: memberIndexForProtocolId(base, event.id),
         outcome: event.terminal.outcome,
       };
       const transition = withHandState(

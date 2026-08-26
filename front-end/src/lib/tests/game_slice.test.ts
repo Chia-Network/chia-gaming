@@ -16,9 +16,10 @@ describe('game slice reducer', () => {
     const slice = gameSliceReducer(INITIAL_GAME_SLICE, {
       type: 'accepted-group',
       groupIds: ['11', '12'],
-      acceptedId: '11',
-      amount: '200',
-      startTurn: 'my-turn',
+      members: [
+        { amount: '200', startTurn: 'my-turn' },
+        { amount: '200', startTurn: 'their-turn' },
+      ],
       origin: 'local',
       gameType: 'krunk',
     });
@@ -44,16 +45,18 @@ describe('game slice reducer', () => {
         betweenHand: {
           lastHandProposal: {
             gameType: 'krunk',
-            myContribution: 100n,
-            theirContribution: 100n,
+            playerAContribution: 100n,
+            playerBContribution: 100n,
+            senderIsPlayerA: true,
             gameTimeout: 15n,
+            parameters: null,
           },
         },
       }),
     );
     const restored = sessionModelFromSave(
       liveSave({
-        version: 11n,
+        version: 20n,
         playerId: 'player',
         serializedGameSession: new Uint8Array([1]),
         gameSessionSchemaVersion: 3n,
@@ -68,10 +71,8 @@ describe('game slice reducer', () => {
         ...snapshot,
         rewardPuzzleHash: '11'.repeat(32),
         handState: krunkStateCodec.encode({
-          games: {
-            '11': initialKrunkGameState('alice'),
-            '12': initialKrunkGameState('bob'),
-          },
+          perPlayerStake: 100n,
+          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       }),
     );

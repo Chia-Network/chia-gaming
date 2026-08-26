@@ -235,21 +235,34 @@ turns will be taken.
 The proposal API takes one atomic group request:
 
 ```
-(game_type parameters timeout)
+GameProposal {
+  player_a_contribution,
+  player_b_contribution,
+  sender_is_player_a,
+  game_type,
+  timeout,
+  parameters
+}
 ```
 
 `parameters` is the game-specific structured Bencodex value and `timeout` is
-shared by every game produced for the group. Game frontend code validates that
-value without handling CLVM. The Rust host converts it deterministically to the
-CLVM object documented in `clsp/handler_api.md`. Both peers then look up and run
-the same registered factory using those parameters. The factory returns a
+shared by every game produced for the group. `sender_is_player_a` globally maps
+the proposal sender to the stable A/B orientation. Game frontend code validates
+the parameter value without handling CLVM. The Rust host converts it
+deterministically and invokes the registered factory with:
+
+```
+(player_a_contribution player_b_contribution game_parameters)
+```
+
+Both peers use the same complete arguments. The factory returns a
 non-empty ordered list of canonical 10-field game records:
 
 ```
 (
-  sender_contribution
-  receiver_contribution
-  sender_goes_first
+  player_a_contribution
+  player_b_contribution
+  player_a_goes_first
   initial_move
   initial_max_move_size
   initial_state
@@ -260,13 +273,12 @@ non-empty ordered list of canonical 10-field game records:
 )
 ```
 
-Contributions and `sender_goes_first` are oriented to the proposal sender.
-The higher layer keeps that canonical orientation on the wire, then swaps
-sender/receiver contributions into the local `my_contribution` /
-`their_contribution` perspective when constructing each peer's game. It also
-selects `my_turn_handler` or `their_turn_handler` according to whether that
-peer is the initial mover. The factory handlers themselves are not regenerated
-from peer-specific inputs.
+Contributions, `player_a_goes_first`, and member order use one stable A/B
+orientation. The higher layer uses `sender_is_player_a` to project those facts
+to sender/receiver and local/opponent perspectives without reordering members.
+It selects `my_turn_handler` for the first player and `their_turn_handler` for
+the waiting player. The factory handlers are not regenerated from peer-specific
+inputs. The first member's initial-validator hash is the protocol identity.
 
 The framework derives each game's amount from its two contributions and hashes
 the returned initial validator. The wire member metadata is checked
@@ -641,8 +653,9 @@ Nil moves are appropriate when:
 ### Examples
 
 **Calpoker commitA** (step a): Alice's handler generates a preimage from
-entropy, hashes it, and sends the hash. The frontend calls
-`makeMove(gameId, null)` -- no user input is needed.
+entropy, hashes it, and sends the hash. The package dispatches
+`{ type: 'make-move', memberIndex: 0, readable: null }` -- no user input is
+needed.
 
 **Calpoker commitB** (step b): Bob's handler generates his seed from
 entropy and sends it. Same nil pattern.
@@ -654,21 +667,21 @@ these during the "Shuffling..." phase.
 **Space poker end reveal**: The mover's handler has the base preimage from
 its curried chain and computes the optimal 5-card selection via
 `space_hand_calc`. It concatenates `preimage || bitfield` and sends it.
-The frontend calls `makeMove(gameId, null)` -- the handler fills in the
-actual 17-byte move. On-chain, this move is validated by `end.clsp` which
+The package dispatches a nil `make-move` intent for member index 0; the handler
+fills in the actual 17-byte move. On-chain, this move is validated by `end.clsp` which
 independently derives all cards and checks the hand evaluation.
 
 ### Frontend Pattern
 
-The frontend detects automatic moves by checking the game phase. During
-setup phases (commits), it calls `makeMove(gameId, null)` as soon as it's
-the player's turn, without waiting for user interaction. The UI shows a
+The package detects automatic moves by checking its game phase. During setup
+phases (commits), it dispatches a nil move for the stable member index as soon
+as it is the player's turn, without waiting for user interaction. The UI shows a
 status message like "Shuffling..." while these automatic moves fire.
 
 ```typescript
 // Auto-play commit steps
 if (phase === 'setup' && isMyTurn) {
-  gameObject.makeMove(gameId, null);
+  port.dispatch({ type: 'make-move', memberIndex: 0, readable: null });
 }
 ```
 

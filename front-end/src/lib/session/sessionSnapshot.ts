@@ -1,11 +1,7 @@
 import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import type { SavedHandProposal, SessionPresentationSave } from './saveEnvelope';
 import { encodeComposeDraftState } from './persistenceBetweenHands';
-import {
-  encodePersistedHandProposalParameters,
-  isCatalogGameType,
-  validateHandProposal,
-} from '../gameRegistry';
+import { isCatalogGameType, validateHandProposal } from '../gameRegistry';
 import { channelStatusPayloadFromModel } from './normalization';
 import type { HandProposal, RegisteredGameType, SessionModel } from './types';
 
@@ -31,11 +27,12 @@ export function snapshotFromSessionModel(
       throw new Error(`Session invariant broken: invalid ${handProposal.gameType} hand proposal`);
     }
     return {
-      my_contribution: handProposal.myContribution.toString(),
-      their_contribution: handProposal.theirContribution.toString(),
+      player_a_contribution: handProposal.playerAContribution.toString(),
+      player_b_contribution: handProposal.playerBContribution.toString(),
+      sender_is_player_a: handProposal.senderIsPlayerA,
       game_timeout: handProposal.gameTimeout.toString(),
       game_type: requireCatalogGameType(handProposal.gameType, 'handProposal.gameType'),
-      parameters: encodePersistedHandProposalParameters(handProposal),
+      parameters: handProposal.parameters,
     };
   };
 

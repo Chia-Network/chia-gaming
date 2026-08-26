@@ -45,9 +45,7 @@ export type GameSliceAction =
   | {
       type: 'accepted-group';
       groupIds: string[];
-      acceptedId: string;
-      amount: string;
-      startTurn: GameTurnState;
+      members: readonly { amount: string; startTurn: GameTurnState }[];
       origin: ProposalGroupOrigin;
       gameType?: RegisteredGameType;
     }
@@ -107,26 +105,25 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
       if (action.groupIds.length === 0) {
         throw new Error('Game slice invariant broken: accepted group is empty');
       }
+      if (action.members.length !== action.groupIds.length) {
+        throw new Error('Game slice invariant broken: accepted member facts do not match group');
+      }
       const sameHand =
         slice.currentHandIds.length === action.groupIds.length &&
         slice.currentHandIds.every((id, index) => id === action.groupIds[index]);
       const newHand = !sameHand;
       const instances = newHand ? {} : { ...slice.instances };
-      for (const id of action.groupIds) {
-        instances[id] = instances[id] ?? newInstance(id, action.amount, 'their-turn');
+      for (const [index, id] of action.groupIds.entries()) {
+        const member = action.members[index]!;
+        instances[id] = newInstance(id, member.amount, member.startTurn);
       }
-      instances[action.acceptedId] = {
-        ...requireInstance({ ...slice, instances }, action.acceptedId),
-        amount: action.amount,
-        presentation: action.startTurn === 'my-turn' ? 'off-chain-my-turn' : 'off-chain-their-turn',
-      };
       next = {
         handKey: newHand ? slice.handKey + 1 : slice.handKey,
         activeIds: newHand ? [...action.groupIds] : slice.activeIds,
         currentHandIds: newHand ? [...action.groupIds] : slice.currentHandIds,
         currentHandOrigin: newHand ? action.origin : slice.currentHandOrigin,
         instances,
-        lastDisplayedId: newHand ? action.acceptedId : slice.lastDisplayedId,
+        lastDisplayedId: newHand ? action.groupIds[0]! : slice.lastDisplayedId,
         activeGameType: newHand ? (action.gameType ?? slice.activeGameType) : slice.activeGameType,
       };
       break;

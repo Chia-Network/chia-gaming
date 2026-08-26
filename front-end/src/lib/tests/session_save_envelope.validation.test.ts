@@ -52,11 +52,12 @@ describe('validateSessionSaveEnvelope', () => {
           error: null,
         }),
         betweenHandLastHandProposal: {
-          my_contribution: '20',
-          their_contribution: '20',
+          player_a_contribution: '20',
+          player_b_contribution: '20',
+          sender_is_player_a: false,
           game_timeout: '15',
           game_type: 'calpoker',
-          parameters: [20n, true],
+          parameters: null,
         },
       }),
     ],
@@ -82,11 +83,12 @@ describe('validateSessionSaveEnvelope', () => {
           error: null,
         }),
         betweenHandLastHandProposal: {
-          my_contribution: '20',
-          their_contribution: '20',
+          player_a_contribution: '20',
+          player_b_contribution: '20',
+          sender_is_player_a: false,
           game_timeout: '15',
           game_type: 'calpoker',
-          parameters: [20n, true],
+          parameters: null,
         },
       }),
     ],
@@ -137,11 +139,12 @@ describe('validateSessionSaveEnvelope', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
       betweenHandLastHandProposal: {
-        my_contribution: '20',
-        their_contribution: '20',
+        player_a_contribution: '20',
+        player_b_contribution: '20',
+        sender_is_player_a: false,
         game_timeout: '15',
         game_type: 'calpoker',
-        parameters: [20n, true],
+        parameters: null,
       },
     });
     expect(decodeSessionSaveEnvelope(preferences).phase).toBe('preferences');
@@ -346,11 +349,12 @@ describe('validateSessionSaveEnvelope', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
       betweenHandLastHandProposal: {
-        my_contribution: '20',
-        their_contribution: '20',
+        player_a_contribution: '20',
+        player_b_contribution: '20',
+        sender_is_player_a: false,
         game_timeout: '15',
         game_type: 'calpoker',
-        parameters: [20n, true],
+        parameters: null,
       },
     });
     expect(() => validateSessionSaveEnvelope(terminal)).not.toThrow();
@@ -403,11 +407,12 @@ describe('validateSessionSaveEnvelope', () => {
             error: null,
           }),
           betweenHandLastHandProposal: {
-            my_contribution: '20',
-            their_contribution: '20',
+            player_a_contribution: '20',
+            player_b_contribution: '20',
+            sender_is_player_a: false,
             game_timeout: '15',
             game_type: 'calpoker',
-            parameters: [20n, true],
+            parameters: null,
           },
         }),
       ),
@@ -510,13 +515,15 @@ describe('validateSessionSaveEnvelope', () => {
       'between-hand terms',
       {
         betweenHandLastHandProposal: {
-          my_contribution: 'not-an-amount',
-          their_contribution: '10',
+          player_a_contribution: 'not-an-amount',
+          player_b_contribution: '10',
+          sender_is_player_a: false,
+          game_timeout: '15',
           game_type: 'calpoker',
-          parameters: [10n, true],
+          parameters: null,
         },
       },
-      'betweenHandLastHandProposal.my_contribution',
+      'betweenHandLastHandProposal.player_a_contribution',
     ],
     [
       'peer proposal',
@@ -528,10 +535,12 @@ describe('validateSessionSaveEnvelope', () => {
             origin: 'peer',
             disposition: 'incoming-cached',
             hand_proposal: {
-              my_contribution: '10',
-              their_contribution: '10',
+              player_a_contribution: '10',
+              player_b_contribution: '10',
+              sender_is_player_a: false,
+              game_timeout: '15',
               game_type: 'calpoker',
-              parameters: [10n, true],
+              parameters: null,
             },
           },
         ],
@@ -548,31 +557,17 @@ describe('validateSessionSaveEnvelope', () => {
             origin: 'local',
             disposition: 'outgoing',
             hand_proposal: {
-              my_contribution: '100',
-              their_contribution: '100',
+              player_a_contribution: '100',
+              player_b_contribution: '100',
+              sender_is_player_a: true,
+              game_timeout: '15',
               game_type: 'krunk',
-              parameters: 100n,
+              parameters: null,
             },
           },
         ],
       },
       'duplicate',
-    ],
-    [
-      'compose amount',
-      {
-        betweenHandCompose: {
-          selected_game: 'calpoker',
-          game_timeout: '15',
-          proposal_sent: false,
-          drafts: {
-            calpoker: { amount: 'ten' },
-            krunk: { amount: '100' },
-            spacepoker: { unitSize: '1', stackSize: '10' },
-          },
-        },
-      },
-      'betweenHandCompose.drafts.calpoker.amount',
     ],
   ])('rejects malformed %s state', (_label, fields, message) => {
     expect(() => validateSessionSaveEnvelope(liveSave(fields as Partial<SessionSave>))).toThrow(
@@ -617,25 +612,21 @@ describe('validateSessionSaveEnvelope', () => {
     ).toThrow(message);
   });
 
-  it('restores compose from the explicit complete snapshot rather than a per-game fallback', () => {
+  it('restores only host-owned compose state', () => {
     const save = liveSave({
       betweenHandMode: 'decision',
       betweenHandCompose: {
         selected_game: 'calpoker',
         game_timeout: '20',
         proposal_sent: false,
-        drafts: {
-          calpoker: { amount: '12' },
-          krunk: { amount: '100' },
-          spacepoker: { unitSize: '1', stackSize: '20' },
-        },
       },
       betweenHandLastHandProposal: {
-        my_contribution: '12',
-        their_contribution: '12',
+        player_a_contribution: '12',
+        player_b_contribution: '12',
+        sender_is_player_a: false,
         game_timeout: '20',
         game_type: 'calpoker',
-        parameters: [12n, true],
+        parameters: null,
       },
       channelNotifQueue: [{ id: 1n, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
       myRunningBalance: '-3',
@@ -643,6 +634,10 @@ describe('validateSessionSaveEnvelope', () => {
 
     expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
     expect(() => sessionModelFromSave(save)).not.toThrow();
-    expect(sessionModelFromSave(save).betweenHand.compose.drafts.calpoker.amount).toBe(12n);
+    expect(sessionModelFromSave(save).betweenHand.compose).toEqual({
+      selectedGame: 'calpoker',
+      gameTimeout: 20n,
+      proposalSent: false,
+    });
   });
 });

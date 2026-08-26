@@ -230,6 +230,13 @@ impl CancelReason {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AcceptedGameMember {
+    pub id: GameID,
+    pub amount: Amount,
+    pub our_turn: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameStatus {
         id: GameID,
@@ -252,16 +259,16 @@ pub enum GameNotification {
         id: GameID,
         /// Full ordered member list; always non-empty (singleton ⇒ `[id]`).
         group_ids: Vec<GameID>,
-        my_contribution: Amount,
-        their_contribution: Amount,
+        player_a_contribution: Amount,
+        player_b_contribution: Amount,
+        sender_is_player_a: bool,
         timeout: Timeout,
         game_type: GameType,
         parameters: ProposalParameters,
     },
-    ProposalAccepted {
-        id: GameID,
-        amount: Amount,
-        our_turn: bool,
+    ProposalAcceptedGroup {
+        /// Members in the exact factory/wire order. The first member is canonical.
+        members: Vec<AcceptedGameMember>,
     },
     ProposalCancelled {
         id: GameID,

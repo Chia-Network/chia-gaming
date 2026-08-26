@@ -29,7 +29,7 @@ function opponentAccepted(current: SpacepokerHandState): SpacepokerHandState {
   const hand = restoreSpacepokerHand(current);
   hand.receive({
     type: 'hand-ended',
-    gameId: '7',
+    memberIndex: 0,
     outcome: 'accept_settlement',
   });
   return hand.getState();

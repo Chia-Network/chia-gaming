@@ -325,7 +325,9 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
-    let parameters = (BET_SIZE, (1i64, ())).to_clvm(allocator).unwrap();
+    let parameters = (BET_SIZE, (BET_SIZE, ((), ())))
+        .to_clvm(allocator)
+        .unwrap();
     let result = run_clvm(allocator, factory_clvm, parameters);
     let records = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(records.len(), 1, "Calpoker factory must return one record");
@@ -880,38 +882,44 @@ fn calpoker_factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> boo
 fn test_calpoker_factory_rejects_malformed_parameters() {
     let mut allocator = AllocEncoder::new();
 
-    let valid_args = (BET_SIZE, (1i64, ())).to_clvm(&mut allocator).unwrap();
+    let valid_args = (BET_SIZE, (BET_SIZE, ((), ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(
         calpoker_factory_succeeds(&mut allocator, valid_args),
-        "valid canonical parameters should be accepted"
-    );
-    let valid_nil_bool = (BET_SIZE, (0i64, ())).to_clvm(&mut allocator).unwrap();
-    assert!(
-        calpoker_factory_succeeds(&mut allocator, valid_nil_bool),
-        "nil sender_goes_first should be accepted"
+        "valid uniform arguments should be accepted"
     );
 
-    let zero_args = (0i64, (1i64, ())).to_clvm(&mut allocator).unwrap();
+    let zero_args = (0i64, (0i64, ((), ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(
         !calpoker_factory_succeeds(&mut allocator, zero_args),
         "zero stake must be rejected"
     );
 
-    let noncanonical_bool = (BET_SIZE, (2i64, ())).to_clvm(&mut allocator).unwrap();
+    let unequal = (BET_SIZE, (BET_SIZE + 1, ((), ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(
-        !calpoker_factory_succeeds(&mut allocator, noncanonical_bool),
-        "sender_goes_first must be nil or 1"
+        !calpoker_factory_succeeds(&mut allocator, unequal),
+        "player contributions must be equal"
     );
 
-    let missing_bool = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
-    assert!(!calpoker_factory_succeeds(&mut allocator, missing_bool));
+    let non_nil_parameters = (BET_SIZE, (BET_SIZE, (1i64, ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
+    assert!(!calpoker_factory_succeeds(
+        &mut allocator,
+        non_nil_parameters
+    ));
 
-    let extra_parameter = (BET_SIZE, (1i64, (7i64, ())))
+    let extra_parameter = (BET_SIZE, (BET_SIZE, ((), (7i64, ()))))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
         !calpoker_factory_succeeds(&mut allocator, extra_parameter),
-        "parameters must be a two-element proper list"
+        "arguments must be a three-element proper list"
     );
 }
 

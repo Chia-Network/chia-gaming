@@ -87,14 +87,14 @@ pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<ProgramRef, Erro
     Ok(program.into())
 }
 
-/// Canonical probe: 1-mojo contributions, sender goes first, dummy keys.
+/// Canonical probe: 1-mojo player A/B contributions and dummy-key game parameters.
 pub fn probe_parameters(allocator: &mut AllocEncoder) -> Result<Program, Error> {
     let args = DebugGameCurry::new(
         allocator,
         &PublicKey::default(),
         &PublicKey::default(),
     )?;
-    let node = (1u64, (1u64, (true, (args, ()))))
+    let node = (1u64, (1u64, (args, ())))
         .to_clvm(allocator)
         .into_gen()?;
     Program::from_nodeptr(allocator, node)
@@ -183,7 +183,7 @@ impl BareDebugGameHandler {
         .to_clvm(allocator)
         .into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let args_node = (my_contribution, (their_contribution, (true, (args, ()))))
+        let args_node = (my_contribution, (their_contribution, (args, ())))
             .to_clvm(allocator)
             .into_gen()?;
         let parameters = Program::from_nodeptr(allocator, args_node)?;

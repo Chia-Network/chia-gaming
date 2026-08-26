@@ -341,7 +341,14 @@ describe('SessionController WASM action results', () => {
     [
       'proposeGame',
       (blob: SessionController) =>
-        blob.proposeGame({ game_type: testProtocolId('calpoker'), timeout: 5n, parameters: null }),
+        blob.proposeGame({
+          game_type: testProtocolId('calpoker'),
+          timeout: 5n,
+          player_a_contribution: 1n,
+          player_b_contribution: 1n,
+          sender_is_player_a: true,
+          parameters: null,
+        }),
     ],
     ['acceptProposal', (blob: SessionController) => blob.acceptProposal('7')],
     ['cancelProposal', (blob: SessionController) => blob.cancel_proposal('7')],
@@ -461,8 +468,16 @@ describe('active game tracking', () => {
         ...wasmResult(),
         disposition: { kind: 'active' },
         events: [
-          { Notification: { ProposalAccepted: { id: '1', amount: '100', our_turn: true } } },
-          { Notification: { ProposalAccepted: { id: '3', amount: '100', our_turn: false } } },
+          {
+            Notification: {
+              ProposalAcceptedGroup: {
+                members: [
+                  { id: '1', amount: '100', our_turn: true },
+                  { id: '3', amount: '100', our_turn: false },
+                ],
+              },
+            },
+          },
         ],
       });
       blob.flushDeferredWork();

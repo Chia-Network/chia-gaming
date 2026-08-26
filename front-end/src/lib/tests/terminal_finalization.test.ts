@@ -129,9 +129,11 @@ const model = createSessionModel({
   betweenHand: {
     lastHandProposal: {
       gameType: 'calpoker',
-      myContribution: 10n,
-      theirContribution: 10n,
+      playerAContribution: 10n,
+      playerBContribution: 10n,
+      senderIsPlayerA: false,
       gameTimeout: 15n,
+      parameters: null,
     },
   },
 });
@@ -646,18 +648,14 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     secretWord: 'CRANE',
   };
   const acceptedHandState = krunkStateCodec.encode({
-    gameIds: ids,
     perPlayerStake: 100n,
-    games: {
-      picker: pickerBeforeTimeout,
-      guesser: initialKrunkGameState('bob'),
-    },
+    members: [pickerBeforeTimeout, initialKrunkGameState('bob')],
   });
   const gameHand = restoreKrunkHand(krunkStateCodec.decode(acceptedHandState)!);
-  for (const settledId of ids) {
+  for (const memberIndex of ids.keys()) {
     gameHand.receive({
       type: 'hand-ended',
-      gameId: settledId,
+      memberIndex,
       outcome: 'opponent_timed_out',
     });
   }
@@ -710,9 +708,11 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     betweenHand: {
       lastHandProposal: {
         gameType: 'krunk',
-        myContribution: 100n,
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: true,
         gameTimeout: 15n,
+        parameters: null,
       },
     },
   });
@@ -748,15 +748,13 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   });
   const frozenHand = krunkStateCodec.decode(terminal.model.game.handState);
   expect(frozenHand).not.toBeNull();
-  expect(Object.keys(frozenHand!.games)).toEqual(ids);
-  expect(
-    Object.values(frozenHand!.games).every((state) => state.handler === KrunkHandler.Terminal),
-  ).toBe(true);
-  expect(krunkBoardNotice(frozenHand!.games.picker, 'Bob', frozenHand!.perPlayerStake)).toEqual({
+  expect(frozenHand!.members).toHaveLength(ids.length);
+  expect(frozenHand!.members.every((state) => state.handler === KrunkHandler.Terminal)).toBe(true);
+  expect(krunkBoardNotice(frozenHand!.members[0], 'Bob', frozenHand!.perPlayerStake)).toEqual({
     text: 'Bob got nothing due to timeout.',
     kind: 'info',
   });
-  expect(krunkBoardNotice(frozenHand!.games.guesser, 'Bob', frozenHand!.perPlayerStake)).toEqual({
+  expect(krunkBoardNotice(frozenHand!.members[1], 'Bob', frozenHand!.perPlayerStake)).toEqual({
     text: 'You got 100 mojo due to timeout.',
     kind: 'info',
   });

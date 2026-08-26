@@ -43,28 +43,23 @@ export function formatKrunkHandLog(
 }
 
 export function krunkGameSlots(
-  currentHandGameIds: string[],
-  handState?: KrunkHandState,
+  handState: KrunkHandState,
 ): {
-  aliceGameId: string | null;
-  bobGameId: string | null;
+  aliceMemberIndex: number;
+  bobMemberIndex: number;
   aliceActive: boolean;
   bobActive: boolean;
 } {
-  const persistedGames = handState?.games;
-  if (!persistedGames) {
-    throw new Error('Krunk requires initialized durable game state');
-  }
-  const persistedAlice = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'alice');
-  const persistedBob = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'bob');
-  if (!currentHandGameIds.every((id) => persistedGames[id]) || !persistedAlice || !persistedBob) {
+  const aliceMemberIndex = handState.members.findIndex((member) => member.role === 'alice');
+  const bobMemberIndex = handState.members.findIndex((member) => member.role === 'bob');
+  if (aliceMemberIndex < 0 || bobMemberIndex < 0 || aliceMemberIndex === bobMemberIndex) {
     throw new Error('Krunk persisted roles must contain one alice and one bob');
   }
   return {
-    aliceGameId: persistedAlice,
-    bobGameId: persistedBob,
-    aliceActive: persistedGames[persistedAlice].handler !== KrunkHandler.Terminal,
-    bobActive: persistedGames[persistedBob].handler !== KrunkHandler.Terminal,
+    aliceMemberIndex,
+    bobMemberIndex,
+    aliceActive: handState.members[aliceMemberIndex].handler !== KrunkHandler.Terminal,
+    bobActive: handState.members[bobMemberIndex].handler !== KrunkHandler.Terminal,
   };
 }
 
@@ -420,20 +415,17 @@ const Krunk: React.FC<KrunkProps> = ({
 }) => {
   const interactive = handSource.interactionMode === 'live';
   const handState = gameHandState(handSource);
-  const currentHandGameIds = [...handState.gameIds];
-  const { aliceGameId, bobGameId } = krunkGameSlots(currentHandGameIds, handState);
-  const aliceId = aliceGameId ?? '';
-  const bobId = bobGameId ?? '';
+  const { aliceMemberIndex, bobMemberIndex } = krunkGameSlots(handState);
   const betSize = handState.perPlayerStake * 2n;
   const aliceInHand =
-    aliceGameId !== null && handState.games[aliceGameId].handler !== KrunkHandler.Terminal;
+    handState.members[aliceMemberIndex].handler !== KrunkHandler.Terminal;
   const bobInHand =
-    bobGameId !== null && handState.games[bobGameId].handler !== KrunkHandler.Terminal;
+    handState.members[bobMemberIndex].handler !== KrunkHandler.Terminal;
   const aliceInteractive = interactive && aliceInHand;
 
-  const aliceHand = useKrunkHand(handSource, aliceId);
+  const aliceHand = useKrunkHand(handSource, aliceMemberIndex);
 
-  const bobHand = useKrunkHand(handSource, bobId);
+  const bobHand = useKrunkHand(handSource, bobMemberIndex);
   const setAliceSecretWord = aliceHand.setSecretWord;
   const submitBobGuessMove = bobHand.submitGuess;
 

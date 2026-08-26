@@ -1,30 +1,71 @@
-import type { HandProposalFormProps } from '../../host';
+import { forwardRef, useImperativeHandle, useState } from 'react';
+import type { GameProposalFormHandle, HandProposalFormProps } from '../../host';
 import { AmountInput } from './AmountInput';
 import { formatSpacepokerMojos } from './formatting';
+import {
+  spacepokerProposalParameters,
+  type SpacepokerFactoryParameters,
+} from './unitSize';
 
-export function HandProposalForm({
-  draft,
-  disabled,
-  maxPerHandMojos,
-  onChange,
-  onSubmit,
-}: HandProposalFormProps<{ unitSize: bigint; stackSize: bigint }>) {
-  const betSize = draft.unitSize * draft.stackSize;
+export const HandProposalForm = forwardRef<
+  GameProposalFormHandle<SpacepokerFactoryParameters>,
+  HandProposalFormProps<SpacepokerFactoryParameters>
+>(function HandProposalForm(
+  { disabled, maxPerHandMojos, defaultContribution, initialProposal, onSubmit },
+  ref,
+) {
+  const initialParams = initialProposal
+    ? spacepokerProposalParameters.decode(initialProposal.parameters)
+    : null;
+  const [betUnitMojos, setBetUnitMojos] = useState(initialParams?.betUnitMojos ?? 1n);
+  const initialStake = initialProposal
+    ? initialProposal.senderIsPlayerA
+      ? initialProposal.playerAContribution
+      : initialProposal.playerBContribution
+    : defaultContribution > 0n
+      ? defaultContribution
+      : 10n;
+  const [stackSize, setStackSize] = useState(
+    initialParams && initialParams.betUnitMojos > 0n
+      ? initialStake / initialParams.betUnitMojos
+      : 10n,
+  );
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const betSize = betUnitMojos * stackSize;
   const maxUnitSize =
-    maxPerHandMojos != null && draft.stackSize > 0n ? maxPerHandMojos / draft.stackSize : null;
+    maxPerHandMojos != null && stackSize > 0n ? maxPerHandMojos / stackSize : null;
+  useImperativeHandle(ref, () => ({
+    getProposal: () => {
+      const error =
+        betUnitMojos <= 0n || stackSize <= 0n
+          ? 'Bet unit and stack size must be positive.'
+          : maxPerHandMojos !== null && betSize > maxPerHandMojos
+            ? 'Per-player stake exceeds the available reserve.'
+            : null;
+      setValidationError(error);
+      return error
+        ? { ok: false, error }
+        : {
+            ok: true,
+            senderContribution: betSize,
+            receiverContribution: betSize,
+            parameters: { betUnitMojos },
+          };
+    },
+  }));
   return (
     <>
       <AmountInput
-        valueMojos={draft.unitSize}
-        onChange={(unitSize) => onChange({ unitSize })}
+        valueMojos={betUnitMojos}
+        onChange={setBetUnitMojos}
         maxMojos={maxUnitSize}
         onUseMax={
           maxUnitSize != null && maxUnitSize > 0n
-            ? () => onChange({ unitSize: maxUnitSize })
+            ? () => setBetUnitMojos(maxUnitSize)
             : undefined
         }
         disabled={disabled}
-        label="Unit size"
+        label="Bet unit"
         exceedsLabel="Exceeds available reserve."
         onKeyDown={(event) => {
           if (event.key === 'Enter') onSubmit();
@@ -36,11 +77,11 @@ export function HandProposalForm({
           type="number"
           min={1}
           className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
-          value={draft.stackSize.toString()}
+          value={stackSize.toString()}
           disabled={disabled}
           onChange={(event) => {
             const next = event.target.value.replace(/[^0-9]/g, '');
-            onChange({ stackSize: BigInt(next || '0') });
+            setStackSize(BigInt(next || '0'));
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') onSubmit();
@@ -51,6 +92,7 @@ export function HandProposalForm({
         Per-player stake: {formatSpacepokerMojos(betSize)} · Total game size:{' '}
         {formatSpacepokerMojos(betSize * 2n)}
       </div>
+      {validationError && <p className="text-xs text-alert-text">{validationError}</p>}
     </>
   );
-}
+});

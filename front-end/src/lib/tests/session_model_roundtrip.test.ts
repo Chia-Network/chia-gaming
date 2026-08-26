@@ -17,9 +17,11 @@ function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
 
 const CAL_TERMS = {
   gameType: 'calpoker' as const,
-  myContribution: 100n,
-  theirContribution: 100n,
+  playerAContribution: 100n,
+  playerBContribution: 100n,
+  senderIsPlayerA: false,
   gameTimeout: 15n,
+  parameters: null,
 };
 const CAL_HAND_STATE = calpokerStateCodec.encode({
   playerHand: [],
@@ -157,9 +159,11 @@ describe('session model round trips', () => {
       betweenHand: {
         lastHandProposal: {
           gameType: 'krunk',
-          myContribution: 100n,
-          theirContribution: 100n,
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          senderIsPlayerA: true,
           gameTimeout: 15n,
+          parameters: null,
         },
       },
     });
@@ -174,10 +178,8 @@ describe('session model round trips', () => {
         activeGameType: snapshot.activeGameType,
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: krunkStateCodec.encode({
-          games: {
-            '7': initialKrunkGameState('alice'),
-            '9': initialKrunkGameState('bob'),
-          },
+          perPlayerStake: 100n,
+          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       }),
     );

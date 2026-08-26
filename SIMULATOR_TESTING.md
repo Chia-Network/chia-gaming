@@ -239,8 +239,8 @@ The sim loop handles this in two phases:
 
 1. Phase 1 calls `accept_proposal` once the proposal is received, records the
    game ID in `accepted_proposal_ids`, and leaves `move_number` unchanged.
-2. Phase 2 advances the script once `ProposalAccepted`, `InsufficientBalance`,
-   or `ProposalCancelled` appears for that game ID.
+2. Phase 2 advances the script once a `ProposalAcceptedGroup` containing that
+   game ID, `InsufficientBalance`, or `ProposalCancelled` appears.
 
 ## Writing a Test
 

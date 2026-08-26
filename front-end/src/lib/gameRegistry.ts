@@ -1,16 +1,13 @@
 import { GENERATED_GAME_PACKAGES, GENERATED_GAME_PACKAGES_BY_KEY } from '../generated/gamePackages';
 import type { CatalogGameType } from '../generated/gamePresets';
 import type {
-  ComposeDraftValue,
   GameHandInitialization,
-  HandProposalDecodeContext,
-  HandProposal as HostHandProposal,
   PersistedGameState,
   ProposalParameterValue,
 } from '@games/host';
 import type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
-export type { GameComposeDrafts, RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
-import type { HandProposalBase, HandProposal } from './session/types';
+export type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
+import type { HandProposal } from './session/types';
 import type { SessionModel } from './session/types';
 
 export type { CatalogGameType } from '../generated/gamePresets';
@@ -85,37 +82,29 @@ export function restoreRegisteredGameHand(model: SessionModel): RegisteredGameHa
   return restoreRegisteredGameHandState(game.activeGameType, game.handState);
 }
 
-function handProposalWithCatalogType(
-  registration: RegisteredGamePackage,
-  handProposal: HostHandProposal | null,
-): HandProposal | null {
-  if (handProposal === null) return null;
-  if (handProposal.gameType !== registration.gameType) {
-    throw new Error(
-      `Package ${registration.gameType} decoded hand proposal as ${handProposal.gameType}`,
-    );
-  }
-  if (!isCatalogGameType(handProposal.gameType)) {
-    throw new Error(`Package ${registration.gameType} decoded a non-catalog gameType`);
-  }
-  return { ...handProposal, gameType: handProposal.gameType };
-}
-
-export function decodeHandProposal(
-  gameType: RegisteredGameType,
-  base: HandProposalBase,
-  parameterState: unknown,
-  context: Pick<HandProposalDecodeContext, 'iStarted' | 'origin'>,
-): HandProposal | null {
-  const registration = packageFor(gameType);
-  return handProposalWithCatalogType(
-    registration,
-    registration.decodeHandProposal(base, parameterState, context),
+export function isProposalParameterValue(value: unknown): value is ProposalParameterValue {
+  return (
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint' ||
+    typeof value === 'string' ||
+    value instanceof Uint8Array ||
+    (Array.isArray(value) && value.every(isProposalParameterValue))
   );
 }
 
 export function validateHandProposal(handProposal: HandProposal): boolean {
-  return packageFor(handProposal.gameType).validateHandProposal(handProposal);
+  return (
+    isCatalogGameType(handProposal.gameType) &&
+    typeof handProposal.playerAContribution === 'bigint' &&
+    handProposal.playerAContribution > 0n &&
+    typeof handProposal.playerBContribution === 'bigint' &&
+    handProposal.playerBContribution > 0n &&
+    typeof handProposal.senderIsPlayerA === 'boolean' &&
+    typeof handProposal.gameTimeout === 'bigint' &&
+    handProposal.gameTimeout > 0n &&
+    isProposalParameterValue(handProposal.parameters)
+  );
 }
 
 export function handProposalsEqual(a: HandProposal | null, b: HandProposal | null): boolean {
@@ -125,61 +114,4 @@ export function handProposalsEqual(a: HandProposal | null, b: HandProposal | nul
 
 export function describeReceivedProposal(handProposal: HandProposal): string {
   return packageFor(handProposal.gameType).describeHandProposal(handProposal);
-}
-
-export function defaultGameComposeDraft(
-  gameType: RegisteredGameType,
-  perGameAmount: bigint,
-): ComposeDraftValue {
-  return packageFor(gameType).draft.default(perGameAmount);
-}
-
-export function gameComposeDraftFromHandProposal(handProposal: HandProposal): ComposeDraftValue {
-  return packageFor(handProposal.gameType).draft.fromHandProposal(handProposal);
-}
-
-export function updateGameComposeDraft(
-  gameType: RegisteredGameType,
-  current: ComposeDraftValue,
-  update: Partial<ComposeDraftValue>,
-): ComposeDraftValue {
-  return packageFor(gameType).draft.update(current, update);
-}
-
-export function handProposalFromComposeDraft(
-  gameType: RegisteredGameType,
-  draft: ComposeDraftValue,
-  gameTimeout: bigint,
-): HandProposal | null {
-  const registration = packageFor(gameType);
-  return handProposalWithCatalogType(
-    registration,
-    registration.draft.toHandProposal(draft, gameTimeout),
-  );
-}
-
-/**
- * Deterministic codec context for persisted normalized proposal terms.
- * It does not preserve or reconstruct the live proposal direction.
- */
-const PERSISTED_HAND_PROPOSAL_CODEC_CONTEXT = {
-  origin: 'local',
-  iStarted: false,
-} as const;
-
-export function encodePersistedHandProposalParameters(
-  handProposal: HandProposal,
-): ProposalParameterValue {
-  return packageFor(handProposal.gameType).encodeProposalParameters(
-    handProposal,
-    PERSISTED_HAND_PROPOSAL_CODEC_CONTEXT.iStarted,
-  );
-}
-
-export function decodePersistedHandProposal(
-  gameType: RegisteredGameType,
-  base: HandProposalBase,
-  parameterState: unknown,
-): HandProposal | null {
-  return decodeHandProposal(gameType, base, parameterState, PERSISTED_HAND_PROPOSAL_CODEC_CONTEXT);
 }

@@ -213,14 +213,16 @@
    )
   )
 
-(defun factory (sender_contribution receiver_contribution sender_goes_first (CURRY_PACK))
+(defun factory
+    (player_a_contribution player_b_contribution (CURRY_PACK))
   (assert
-    (or (not sender_goes_first) (= sender_goes_first 1))
+    (> player_a_contribution 0)
+    (> player_b_contribution 0)
     (list
      (list
-      sender_contribution
-      receiver_contribution
-      sender_goes_first
+      player_a_contribution
+      player_b_contribution
+      1
       ()
       512
       (list () () ())

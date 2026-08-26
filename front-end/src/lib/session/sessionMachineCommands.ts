@@ -1,5 +1,6 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
-import { handProposalsEqual, validateHandProposal } from '../gameRegistry';
+import { handProposalsEqual } from '../gameRegistry';
+import { proposalContributionForOrigin } from '@games/host';
 import { selectProposalGroupByDisposition } from './selectors';
 import type {
   SessionMachineEvent,
@@ -81,8 +82,17 @@ export function reduceSessionCommand(
         };
       }
       const enough =
-        canCover(state.model.channel.status.ourBalance, terms.myContribution) &&
-        canCover(state.model.channel.status.theirBalance, terms.theirContribution);
+        canCover(
+          state.model.channel.status.ourBalance,
+          proposalContributionForOrigin(terms, state.model.game.currentHandOrigin ?? 'local'),
+        ) &&
+        canCover(
+          state.model.channel.status.theirBalance,
+          proposalContributionForOrigin(
+            terms,
+            state.model.game.currentHandOrigin === 'local' ? 'peer' : 'local',
+          ),
+        );
       if (!enough) {
         return {
           state: {
@@ -183,7 +193,6 @@ export function reduceSessionCommand(
         effects: [{ type: 'persist-session' }],
       };
     case 'submit-compose':
-      if (!validateHandProposal(event.handProposal)) return { state, effects: [] };
       return {
         state,
         effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],

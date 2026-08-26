@@ -274,7 +274,7 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
-    let parameters = (BET_SIZE, (BET_UNIT, (1i64, ())))
+    let parameters = (BET_SIZE, (BET_SIZE, (BET_UNIT, ())))
         .to_clvm(allocator)
         .unwrap();
     let result = run_clvm(allocator, factory_clvm, parameters);
@@ -697,19 +697,12 @@ fn factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
 fn test_spacepoker_factory_requires_canonical_parameters() {
     let mut allocator = AllocEncoder::new();
 
-    let valid_args = (BET_SIZE, (BET_UNIT, (1i64, ())))
+    let valid_args = (BET_SIZE, (BET_SIZE, (BET_UNIT, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
         factory_succeeds(&mut allocator, valid_args),
-        "valid canonical parameters should be accepted"
-    );
-    let valid_nil_bool = (BET_SIZE, (BET_UNIT, (0i64, ())))
-        .to_clvm(&mut allocator)
-        .unwrap();
-    assert!(
-        factory_succeeds(&mut allocator, valid_nil_bool),
-        "nil sender_goes_first should be accepted"
+        "valid uniform arguments should be accepted"
     );
 
     let missing_bet_unit = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
@@ -718,7 +711,7 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
         "bet_unit is required; no per_player_stake / 10 fallback should exist"
     );
 
-    let zero_bet_unit = (BET_SIZE, (0i64, (1i64, ())))
+    let zero_bet_unit = (BET_SIZE, (BET_SIZE, (0i64, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
@@ -726,7 +719,7 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
         "bet_unit must be positive"
     );
 
-    let non_dividing_bet_unit = (BET_SIZE, (6i64, (1i64, ())))
+    let non_dividing_bet_unit = (BET_SIZE, (BET_SIZE, (6i64, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
@@ -734,15 +727,15 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
         "per_player_stake must divide evenly into bet_unit-sized stack units"
     );
 
-    let noncanonical_bool = (BET_SIZE, (BET_UNIT, (2i64, ())))
+    let unequal_contributions = (BET_SIZE, (BET_SIZE + 1, (BET_UNIT, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
-        !factory_succeeds(&mut allocator, noncanonical_bool),
-        "sender_goes_first must be nil or 1"
+        !factory_succeeds(&mut allocator, unequal_contributions),
+        "player contributions must be equal"
     );
 
-    let extra_parameter = (BET_SIZE, (BET_UNIT, (1i64, (7i64, ()))))
+    let extra_parameter = (BET_SIZE, (BET_SIZE, (BET_UNIT, (7i64, ()))))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(

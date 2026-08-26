@@ -728,6 +728,10 @@ mod gaming_wasm {
         // First generated member's initial validation puzzle hash, as 32-byte hex.
         game_type: String,
         timeout: u64,
+        player_a_contribution: u64,
+        player_b_contribution: u64,
+        sender_is_player_a: bool,
+        parameters: ProposalParameters,
     }
 
     fn game_id_to_string(id: &GameID) -> String {
@@ -775,23 +779,21 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
+    pub fn propose_games(cid: i32, games: JsValue) -> Result<JsValue, JsValue> {
         let js_games: Vec<JsGameProposal> =
             serde_wasm_bindgen::from_value(games).into_js()?;
-        let params_arr: Vec<ProposalParameters> =
-            serde_wasm_bindgen::from_value(parameters_list).into_js()?;
-        if js_games.len() != params_arr.len() {
-            return Err(JsValue::from_str("games and parameters_list must have the same length"));
-        }
         with_game(cid, move |cradle: &mut JsGameSession| {
             let mut game_starts = Vec::with_capacity(js_games.len());
-            for (g, parameters) in js_games.iter().zip(params_arr.iter()) {
+            for g in &js_games {
                 let game_type = parse_game_type_hex(&g.game_type)
                     .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
                 game_starts.push(GameProposal {
+                    player_a_contribution: Amount::new(g.player_a_contribution),
+                    player_b_contribution: Amount::new(g.player_b_contribution),
+                    sender_is_player_a: g.sender_is_player_a,
                     game_type,
                     timeout: Timeout::new(g.timeout),
-                    parameters: parameters.clone(),
+                    parameters: g.parameters.clone(),
                 });
             }
             let ids = cradle.cradle.propose_games(

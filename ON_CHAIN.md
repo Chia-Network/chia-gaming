@@ -430,8 +430,9 @@ by puzzle hash **and** amount:
 - Games not found in the unroll outputs receive one of two notifications
 depending on whether the game was fully established or still in-flight:
   - `**EndedCancelled`** — the game was a recently accepted proposal whose
-  potato round-trip hadn't completed (tracked as a `ProposalAccepted`
-  entry in `cached_redo_actions`). The opponent hadn't acknowledged the
+  potato round-trip hadn't completed (tracked per protocol ID as a
+  `CachedRedoActions::ProposalAccepted` entry). This internal replay marker is
+  not the atomic UI `ProposalAcceptedGroup` notification. The opponent hadn't acknowledged the
   accept when they published the stale unroll, so the game coin never
   existed in that state. The accept was simply rolled back.
   - `**GameError`** — the game was an established live game (its accept

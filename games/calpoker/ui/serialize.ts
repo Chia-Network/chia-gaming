@@ -8,7 +8,6 @@ import {
   type SettlementOutcome,
 } from '../../host';
 import { CalpokerOutcome, projectCalpokerFinalDisplay, type CalpokerOutcomeShape } from './outcome';
-import { calpokerProposalSenderGoesFirst } from './firstPlayer';
 
 export interface CalpokerDisplaySnapshot {
   gameState: string;
@@ -27,7 +26,6 @@ export interface CalpokerError {
 }
 
 export interface CalpokerHandState {
-  gameId: string;
   perPlayerStake: bigint;
   playerHand: bigint[];
   opponentHand: bigint[];
@@ -123,8 +121,6 @@ export function isCalpokerHandState(value: unknown): value is CalpokerHandState 
     return false;
   }
   return (
-    typeof state.gameId === 'string' &&
-    state.gameId.length > 0 &&
     typeof state.perPlayerStake === 'bigint' &&
     state.perPlayerStake > 0n &&
     typeof state.moveNumber === 'bigint' &&
@@ -139,17 +135,18 @@ export function isCalpokerHandState(value: unknown): value is CalpokerHandState 
 }
 
 function initialState(init: GameHandInitialization): CalpokerHandState {
-  const senderGoesFirst = calpokerProposalSenderGoesFirst(init.iStarted, init.origin);
-  const isMyTurn = init.origin === 'local' ? senderGoesFirst : !senderGoesFirst;
+  const member = init.members[0]!;
+  if (member.amount <= 0n || member.amount % 2n !== 0n) {
+    throw new Error('California Poker requires an even positive approved member amount');
+  }
   return {
-    gameId: init.gameIds[0]!,
-    perPlayerStake: init.handProposal.myContribution,
+    perPlayerStake: member.amount / 2n,
     playerHand: [],
     opponentHand: [],
     cardSelections: [],
     moveNumber: 0n,
-    isPlayerTurn: isMyTurn,
-    iStarted: init.iStarted,
+    isPlayerTurn: member.ourTurn,
+    iStarted: !member.ourTurn,
     settlementOutcome: null,
   };
 }
@@ -300,7 +297,7 @@ function calpokerHandFromState(initial: CalpokerHandState): CalpokerHand {
 }
 
 export function createCalpokerHand(init: GameHandInitialization): CalpokerHand {
-  if (init.gameIds.length !== 1 || init.handProposal.gameType !== 'calpoker') {
+  if (init.members.length !== 1 || init.handProposal.gameType !== 'calpoker') {
     throw new Error('California Poker requires one game and California Poker proposal terms');
   }
   return calpokerHandFromState(initialState(init));

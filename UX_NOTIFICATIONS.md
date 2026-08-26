@@ -29,7 +29,7 @@ stores its coin, terminal data, and one canonical `GameProtocolPresentation`
 discriminant; turn and hand labels are derived compatibility views, not
 separately mutable state. Local turns, non-terminal `GameStatus`, coin
 enrichment, settlement, and whole-group removal therefore update the owning
-instance or group atomically. Schema-11 saves persist only `gameInstances` plus
+instance or group atomically. Version-20 saves persist only `gameInstances` plus
 `lastDisplayedGameId` for protocol presentation. There are no aggregate
 current-game presentation fields and no migration from older records:
 incompatible alpha records are discarded.
@@ -39,7 +39,7 @@ like "OpponentMoved" for readability. The canonical wire model in Rust is
 `GameNotification` plus `GameStatusKind` for in-play status, and
 `GameNotification::GameSettled` for all settled outcomes:
 
-- dedicated variants: `ProposalMade`, `ProposalAccepted`,
+- dedicated variants: `ProposalMade`, `ProposalAcceptedGroup`,
   `ProposalCancelled`, `InsufficientBalance`, `MoveRejected`, `ActionFailed`,
   host-only `LocalActionApplied`, and `ChannelStatus`
 - gameplay lifecycle (non-terminal): `GameNotification::GameStatus { status:
@@ -395,8 +395,8 @@ These fire during active gameplay (after a game proposal has been accepted).
 
 | Notification                                                                                   | When                                         | Meaning                                                                                                                                                                                                                           |
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ProposalMade { id, group_ids, my_contribution, their_contribution, timeout, game_type, ... }` | Atomic proposal group received from opponent | Fires exactly once for the receiver. `id` is the first factory-produced game ID; `group_ids` is always the full ordered member list (singleton ⇒ `[id]`). Contributions are aggregate totals in the receiver's local perspective. |
-| `ProposalAccepted { id, amount, our_turn }`                                                    | Proposal accepted by either side             | The game is now live; `amount` is that game's total pot and `our_turn` is Rust's authoritative initial turn for this specific game                                                                                                 |
+| `ProposalMade { id, group_ids, player_a_contribution, player_b_contribution, sender_is_player_a, timeout, game_type, parameters }` | Atomic proposal group received from opponent | Fires exactly once for the receiver. `id` is the first factory-produced game ID; `group_ids` is always the full ordered member list (singleton ⇒ `[id]`). Parameters and A/B terms are preserved exactly. |
+| `ProposalAcceptedGroup { members: [{ id, amount, our_turn }, ...] }`                            | Proposal accepted by either side             | Fires once for the whole group. Members are in exact factory order; each amount is that member's total pot. The two peers have opposite `our_turn` for every member. |
 | `ProposalCancelled { id, reason }`                                                             | Proposal cancelled or invalidated            | The proposal was cancelled explicitly, or automatically due to going on-chain                                                                                                                                                     |
 
 ### Cancellation Reasons (`CancelReason`)
@@ -539,9 +539,10 @@ is drained).
 
 Every group-start event — a `propose_games` call (proposer side) or the single
 `ProposalMade` notification (receiver side) — covers the ordered IDs returned
-by the deterministic factory. Each member ID yields exactly one
-`ProposalAccepted` or `ProposalCancelled` on that player's side, but group
-acceptance and cancellation are all-or-none. The `cancel_all_proposals()` call
+by the deterministic factory. The group yields exactly one
+`ProposalAcceptedGroup` containing every member in order, or cancellation for
+all members; acceptance and cancellation are all-or-none. The
+`cancel_all_proposals()` call
 on every exit path (go-on-chain, clean shutdown, channel error) is the catch-all
 that ensures no member is left unresolved. Enforced by the simulation loop's
 post-test assertion.
@@ -554,25 +555,26 @@ receiver contributions before accepting any member. A peer must place every
 member acceptance in the same batch; partial acceptance rejects the batch.
 Cancellation likewise expands to the complete group. Consequently the UI must
 never model a factory group as partly pending, partly live, or partly cancelled.
-`acceptedProposalGroupIds` retains each ordered group as a distinct atomic unit
-through the complete
-`ProposalAccepted` notification wave. If the subsequent aggregate preflight
-emits `InsufficientBalance`, it removes every member from active and
-current-hand presentation atomically, even when the notification identifies
-only one member.
+The normalized proposal-group record retains each ordered group as a distinct
+atomic unit through the single `ProposalAcceptedGroup`. If aggregate preflight
+emits `InsufficientBalance`, no acceptance notification is emitted and the host
+removes every member from active/current-hand presentation atomically. It must
+not create a fake accepted hand from the failed request.
 
 ### Rule B — Game lifecycle (bijection)
 
-There is a one-to-one correspondence between `ProposalAccepted` notifications
-and terminal game notifications per player per game ID. Every
-`ProposalAccepted` has exactly one terminal (`GameSettled`, `InsufficientBalance`,
-`EndedCancelled`, or `EndedError`), and every terminal has a preceding
-`ProposalAccepted`. Enforced by the simulation loop's post-test assertion.
+Expand each `ProposalAcceptedGroup.members` entry conceptually by member ID.
+There is a one-to-one correspondence between those accepted members and
+terminal game notifications per player. Every accepted member has exactly one
+terminal (`GameSettled`, `EndedCancelled`, or `EndedError`), and every such
+terminal has a preceding accepted-group member. `InsufficientBalance` is a
+failed group acceptance, not a terminal for a live member. Enforced by the
+simulation loop's post-test assertion.
 
 ### Additional invariants
 
 3. **`GameOnChain` invariant.** Every `GameOnChain` notification references a
-   game that has a preceding `ProposalAccepted` in the same player's
+   game that appears in a preceding `ProposalAcceptedGroup` in the same player's
    notification stream. A cancelled or never-accepted game must never produce
    `GameOnChain`. Enforced by the simulation loop's post-test assertion.
 4. **First post-unroll status classification.** For each game that is still
@@ -634,7 +636,7 @@ events.
 | `kind`              | Source                                                                                | Behavior                                                                  |
 | ------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `game-terminal`     | Adverse `GameSettled` outcomes (`isErrorSettlementOutcome`), except bar-only forfeits | Shows reward amount and coin info.                                        |
-| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer`                                            | Peer-side cancellation notice; cleared when a `ProposalAccepted` arrives. |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer`                                            | Peer-side cancellation notice; cleared when a `ProposalAcceptedGroup` arrives. |
 | `insufficient-bal`  | `InsufficientBalance` notification                                                    | Game could not start due to balance.                                      |
 
 ### Data Model

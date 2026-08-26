@@ -220,24 +220,12 @@ pub(in super::super) fn run_script(
                             SimScriptAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
                             _ => 15,
                         };
-                        let parameters = if package_key == "calpoker" {
-                            let node = (Amount::new(100), (my_turn, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                        let parameters = if package_key == "calpoker" || package_key == "krunk" {
+                            Program::from_bytes(&[0x80])
                         } else if package_key == "spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (my_turn, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else if package_key == "debug" {
-                            let node = (
-                                Amount::new(100),
-                                (Amount::new(100), (my_turn, (extras.clone(), ()))),
-                            )
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else {
                             extras.clone()
                         };
@@ -247,6 +235,9 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: my_turn,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(timeout),
                                 parameters,
@@ -259,9 +250,12 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: krunk_type.clone(),
                                 timeout: Timeout::new(15),
-                                parameters: ProposalParameters::Integer(100),
+                                parameters: ProposalParameters::Null,
                             }],
                         )?;
                         ()
@@ -402,15 +396,9 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::WrongParityProposal(who) => {
                         let parameters = if package_key == "calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            Program::from_bytes(&[0x80])
                         } else if package_key == "spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else {
                             extras.clone()
                         };
@@ -420,6 +408,9 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,
@@ -433,15 +424,9 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::InvalidProposalParameters(who) => {
                         let parameters = if package_key == "calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            Program::from_bytes(&[0x80])
                         } else if package_key == "spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else {
                             extras.clone()
                         };
@@ -451,31 +436,29 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
                         )?;
                         harness.mutate_last_proposal(allocator, *who, |wire| {
-                            wire.start.parameters = ProposalParameters::Null;
+                            wire.start.parameters = if package_key == "calpoker" {
+                                ProposalParameters::Integer(1)
+                            } else {
+                                ProposalParameters::Null
+                            };
                             Ok(())
                         })?;
                         ()
                     }
                     SimScriptAction::InvalidProposalArguments(who) => {
                         let parameters = if package_key == "calpoker" {
-                            ProposalParameters::List(vec![
-                                ProposalParameters::Integer(100),
-                                ProposalParameters::Bool(true),
-                            ])
+                            ProposalParameters::Null
                         } else if package_key == "spacepoker" {
-                            let extras =
-                                ProposalParameters::from_program_for_testing(allocator, extras)?;
-                            ProposalParameters::List(vec![
-                                ProposalParameters::Integer(100),
-                                extras,
-                                ProposalParameters::Bool(true),
-                            ])
+                            ProposalParameters::from_program_for_testing(allocator, extras)?
                         } else {
                             ProposalParameters::from_program_for_testing(allocator, extras)?
                         };
@@ -483,29 +466,26 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
                         )?;
                         harness.mutate_last_proposal(allocator, *who, |wire| {
-                            wire.members[0].sender_contribution =
-                                wire.members[0].sender_contribution.clone() + Amount::new(1);
+                            wire.members[0].player_a_contribution =
+                                wire.members[0].player_a_contribution.clone() + Amount::new(1);
                             Ok(())
                         })?;
                         ()
                     }
                     SimScriptAction::InvalidProposalTimeout(who) => {
                         let parameters = if package_key == "calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            Program::from_bytes(&[0x80])
                         } else if package_key == "spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else {
                             extras.clone()
                         };
@@ -515,6 +495,9 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,

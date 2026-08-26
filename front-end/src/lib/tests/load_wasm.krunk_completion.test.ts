@@ -39,12 +39,14 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   ];
   const handProposal: HandProposal = {
     gameType: 'krunk',
-    myContribution: 100n,
-    theirContribution: 100n,
+    playerAContribution: 100n,
+    playerBContribution: 100n,
+    senderIsPlayerA: true,
     gameTimeout: 15n,
+    parameters: null,
   };
   const traces: Array<
-    Array<{ currentHandIds: string[]; payloadIds: string[]; activeIds: string[] }>
+    Array<{ currentHandIds: string[]; payloadMemberCount: number; activeIds: string[] }>
   > = [[], []];
   const errors: unknown[] = [];
   const runtimes: SessionMachineRuntime[] = [];
@@ -58,7 +60,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   ): KrunkSettlementTrace => {
     const machine = runtimes[index].getState();
     const hand = krunkStateCodec.decode(machine.model.game.handState);
-    const state = hand?.games[gameId];
+    const memberIndex = machine.model.game.currentHandIds.indexOf(gameId);
+    assert.notEqual(memberIndex, -1, `krunk completion player ${index}: unknown ${gameId}`);
+    const state = hand?.members[memberIndex];
     const amount = machine.model.game.instances[gameId]?.amount;
     assert.ok(state, `krunk completion player ${index}: missing state for ${gameId}`);
     assert.ok(amount, `krunk completion player ${index}: missing amount for ${gameId}`);
@@ -86,10 +90,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       const machine = runtime.getState();
       const currentHandIds = [...machine.model.game.currentHandIds];
       const hand = krunkStateCodec.decode(machine.model.game.handState);
-      const payloadIds = hand ? Object.keys(hand.games) : [];
       traces[index].push({
         currentHandIds,
-        payloadIds,
+        payloadMemberCount: hand?.members.length ?? 0,
         activeIds: [...machine.model.game.activeIds],
       });
       await persistSessionSnapshot({
@@ -199,21 +202,21 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       assert.deepEqual(runtime.getState().model.game.currentHandIds, ids);
       const hand = krunkStateCodec.decode(runtime.getState().model.game.handState);
       assert.ok(hand);
-      assert.deepEqual(Object.keys(hand.games), ids);
+      assert.equal(hand.members.length, ids.length);
       assert.ok(
         traces[index].some(
           (trace) =>
             trace.activeIds.length === 1 &&
             trace.currentHandIds.join(',') === ids.join(',') &&
-            trace.payloadIds.join(',') === ids.join(','),
+            trace.payloadMemberCount === ids.length,
         ),
         `krunk completion player ${index}: must persist the full pair after one member settles`,
       );
       for (const trace of traces[index]) {
         if (trace.currentHandIds.length === 0) continue;
-        assert.deepEqual(
-          trace.payloadIds,
-          trace.currentHandIds,
+        assert.equal(
+          trace.payloadMemberCount,
+          trace.currentHandIds.length,
           `krunk completion player ${index}: invalid persistence trace`,
         );
       }
@@ -285,7 +288,10 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         assert.equal(notices[loser]?.text, "You didn't win anything.");
       } else {
         assert.equal(notices[winner]?.text, `You won ${won} mojo!`);
-        assert.equal(notices[loser]?.text, `${winner === 0 ? 'Alice' : 'Bob'} won ${won} mojo!`);
+        assert.equal(
+          notices[loser]?.text,
+          `${winner === 0 ? 'Alice' : 'Bob'} won ${byPlayer[loser].perPlayerStake} mojo!`,
+        );
       }
     }
 
@@ -307,7 +313,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       assert.deepEqual(runtime.getState().model.game.currentHandIds, secondIds);
       const hand = krunkStateCodec.decode(runtime.getState().model.game.handState);
       assert.ok(hand);
-      assert.deepEqual(Object.keys(hand.games), secondIds);
+      assert.equal(hand.members.length, secondIds.length);
       const secondHandTraces = traces[index]
         .slice(traceCountsBeforeSecondHand[index])
         .filter(
@@ -321,7 +327,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       );
       for (const trace of secondHandTraces) {
         assert.deepEqual(trace.currentHandIds, secondIds);
-        assert.deepEqual(trace.payloadIds, secondIds);
+        assert.equal(trace.payloadMemberCount, secondIds.length);
       }
     }
   } finally {

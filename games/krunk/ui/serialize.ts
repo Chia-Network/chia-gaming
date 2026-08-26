@@ -38,13 +38,12 @@ export interface KrunkGameState {
 }
 
 export interface KrunkHandState {
-  gameIds: readonly string[];
   perPlayerStake: bigint;
-  games: Record<string, KrunkGameState>;
+  members: readonly [KrunkGameState, KrunkGameState];
 }
 
 export interface KrunkHand extends GameHand<KrunkHandState> {
-  updateGame(gameId: string, reducer: (current: KrunkGameState) => KrunkGameState): void;
+  updateGame(memberIndex: number, reducer: (current: KrunkGameState) => KrunkGameState): void;
 }
 
 /** Test/helper envelope only; persistence treats the state as opaque. */
@@ -175,29 +174,25 @@ export function decodeKrunkGameState(value: unknown): KrunkGameState | null {
 export function isKrunkHandState(value: unknown): value is KrunkHandState {
   if (typeof value !== 'object' || value === null) return false;
   const hand = value as Partial<KrunkHandState>;
-  const games = hand.games;
   return (
-    Array.isArray(hand.gameIds) &&
-    hand.gameIds.length === 2 &&
-    new Set(hand.gameIds).size === 2 &&
     typeof hand.perPlayerStake === 'bigint' &&
     hand.perPlayerStake > 0n &&
-    typeof games === 'object' &&
-    games !== null &&
-    Object.keys(games).length === hand.gameIds.length &&
-    hand.gameIds.every((gameId) => Object.hasOwn(games, gameId)) &&
-    Object.entries(games).every(
-      ([gameId, gameState]) => gameId.length > 0 && isKrunkGameState(gameState),
-    )
+    Array.isArray(hand.members) &&
+    hand.members.length === 2 &&
+    isKrunkGameState(hand.members[0]) &&
+    isKrunkGameState(hand.members[1])
   );
 }
 
 export function krunkGameStateFromHand(
   handState: KrunkHandState,
-  gameId: string,
+  memberIndex: number,
 ): KrunkGameState {
-  const game = handState.games[gameId];
-  if (!game) throw new Error(`Krunk hand is missing member ${gameId}`);
+  if (!Number.isInteger(memberIndex) || memberIndex < 0) {
+    throw new Error(`Krunk member index must be a nonnegative integer: ${memberIndex}`);
+  }
+  const game = handState.members[memberIndex];
+  if (!game) throw new Error(`Krunk hand is missing member ${memberIndex}`);
   return game;
 }
 
@@ -314,8 +309,8 @@ export function reduceKrunkFeatureState(
 }
 
 export function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate): KrunkHandState {
-  if (!current.games[event.gameId]) return current;
-  const game = current.games[event.gameId];
+  const game = current.members[event.memberIndex];
+  if (!game) return current;
   let next = game;
   if (event.type === 'hand-ended') {
     next = reduceKrunkFeatureState(game, { type: 'settled', outcome: event.outcome });
@@ -326,7 +321,9 @@ export function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate)
       moverShare: event.moverShare,
     });
   }
-  return { ...current, games: { ...current.games, [event.gameId]: next } };
+  const members = [...current.members] as [KrunkGameState, KrunkGameState];
+  members[event.memberIndex] = next;
+  return { ...current, members };
 }
 
 function krunkHandFromState(initial: KrunkHandState): KrunkHand {
@@ -336,29 +333,31 @@ function krunkHandFromState(initial: KrunkHandState): KrunkHand {
     receive: (update) => {
       state = reduceKrunkHandState(state, update);
     },
-    updateGame: (gameId, reducer) => {
-      const game = krunkGameStateFromHand(state, gameId);
-      state = { ...state, games: { ...state.games, [gameId]: reducer(game) } };
+    updateGame: (memberIndex, reducer) => {
+      const game = krunkGameStateFromHand(state, memberIndex);
+      const members = [...state.members] as [KrunkGameState, KrunkGameState];
+      members[memberIndex] = reducer(game);
+      state = { ...state, members };
     },
   };
 }
 
 export function createKrunkHand(init: GameHandInitialization): KrunkHand {
-  if (init.gameIds.length !== 2 || init.handProposal.gameType !== 'krunk') {
+  if (init.members.length !== 2 || init.handProposal.gameType !== 'krunk') {
     throw new Error('Krunk requires two games and Krunk proposal terms');
   }
-  const games = Object.fromEntries(
-    init.gameIds.map((id, index) => {
-      const proposerIsAlice = index === 0;
-      const role =
-        proposerIsAlice === (init.origin === 'local') ? ('alice' as const) : ('bob' as const);
-      return [id, initialKrunkGameState(role)];
-    }),
-  );
+  if (
+    init.members.some((member) => member.amount <= 0n || member.amount % 2n !== 0n) ||
+    init.members[0]!.amount !== init.members[1]!.amount
+  ) {
+    throw new Error('Krunk requires two equal, even, positive approved member amounts');
+  }
   return krunkHandFromState({
-    gameIds: [...init.gameIds],
-    perPlayerStake: init.handProposal.myContribution,
-    games,
+    perPlayerStake: init.members[0]!.amount / 2n,
+    members: [
+      initialKrunkGameState(init.members[0]!.ourTurn ? 'alice' : 'bob'),
+      initialKrunkGameState(init.members[1]!.ourTurn ? 'alice' : 'bob'),
+    ],
   });
 }
 

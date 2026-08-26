@@ -1,21 +1,19 @@
-import { createElement, type ComponentType, type ReactElement } from 'react';
+import { createElement, type ComponentType, type ReactElement, type Ref } from 'react';
 import type {
-  ComposeDraftValue,
   GameHand,
   GameHandInitialization,
   GameHandState,
   GameMountRegistration,
   GameMountView,
   GamePackageRegistration,
+  GameProposalFormHandle,
   HandProposal,
-  HandProposalBase,
-  HandProposalDecodeContext,
   HandProposalFormProps,
   ProposalParameterValue,
 } from '@games/host';
 
 export type RegisteredGameHand = GameHand<unknown>;
-export type GameComposeDrafts = Record<string, ComposeDraftValue>;
+export type RegisteredGameProposalFormHandle = GameProposalFormHandle<unknown>;
 
 export interface RegisteredGamePackage {
   readonly gameType: string;
@@ -23,32 +21,16 @@ export interface RegisteredGamePackage {
   createHand(init: GameHandInitialization): RegisteredGameHand;
   restoreHand(savedState: unknown): RegisteredGameHand;
   describeHandProposal(handProposal: HandProposal): string;
-  readonly draft: {
-    default(perGameAmount: bigint): ComposeDraftValue;
-    fromHandProposal(handProposal: HandProposal): ComposeDraftValue;
-    update(current: ComposeDraftValue, update: Partial<ComposeDraftValue>): ComposeDraftValue;
-    toHandProposal(draft: ComposeDraftValue, gameTimeout: bigint): HandProposal | null;
-  };
-  encodeProposalParameters(handProposal: HandProposal, iStarted: boolean): ProposalParameterValue;
-  decodeHandProposal(
-    base: HandProposalBase,
-    parameterState: unknown,
-    context: HandProposalDecodeContext,
-  ): HandProposal | null;
-  validateHandProposal(handProposal: HandProposal): boolean;
+  decodeProposalParameters(parameters: unknown): unknown | null;
+  encodeProposalParameters(parameters: unknown): ProposalParameterValue;
   handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
   render(view: GameMountView<GameHandState<unknown>>): ReactElement;
-  renderHandProposalForm(props: HandProposalFormProps<ComposeDraftValue>): ReactElement;
+  renderHandProposalForm(props: HandProposalFormProps<unknown>): ReactElement;
 }
 
-export function defineGamePackage<
-  TState,
-  THand extends GameHand<TState>,
-  TDraft extends ComposeDraftValue,
-  TParams,
->(
-  feature: GamePackageRegistration<TState, THand, TDraft, TParams>,
-  HandProposalForm: ComponentType<HandProposalFormProps<TDraft>>,
+export function defineGamePackage<TState, THand extends GameHand<TState>, TParams>(
+  feature: GamePackageRegistration<TState, THand, TParams>,
+  HandProposalForm: ComponentType<HandProposalFormProps<TParams>>,
   mount: GameMountRegistration<THand>,
 ): RegisteredGamePackage {
   const requireState = (value: unknown): TState => value as TState;
@@ -57,25 +39,14 @@ export function defineGamePackage<
     createHand: (init) => feature.createHand(init) as RegisteredGameHand,
     restoreHand: (savedState) =>
       feature.restoreHand(requireState(savedState)) as RegisteredGameHand,
-    draft: {
-      default: feature.draft.default,
-      fromHandProposal: feature.draft.fromHandProposal,
-      update: (current, update) =>
-        feature.draft.update(current as TDraft, update as Partial<TDraft>),
-      toHandProposal: (draft, gameTimeout) =>
-        feature.draft.toHandProposal(draft as TDraft, gameTimeout),
-    },
-    encodeProposalParameters: (handProposal, iStarted) =>
-      feature.proposalParameters.encode(feature.toProposalParameters(handProposal, iStarted)),
-    decodeHandProposal: (base, parameterState, context) => {
-      const params = feature.proposalParameters.decode(parameterState);
-      return params === null ? null : feature.decodeHandProposal(base, params, context);
-    },
+    decodeProposalParameters: feature.proposalParameters.decode,
+    encodeProposalParameters: (parameters) =>
+      feature.proposalParameters.encode(parameters as TParams),
     render: (view) => mount.render(view as GameMountView<THand>),
     renderHandProposalForm: (props) =>
       createElement(HandProposalForm, {
         ...props,
-        draft: props.draft as unknown as TDraft,
+        ref: props.ref as Ref<GameProposalFormHandle<TParams>>,
       }),
   };
 }

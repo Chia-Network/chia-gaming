@@ -101,13 +101,12 @@ export function useSpacepokerHand(
       const hand = handSourceRef.current.hand;
       if (hand === null) throw new Error('Space Poker hand is unavailable');
       hand.update(update);
-      const next = hand.getState();
       controller.dispatch(
         command.type === 'make-move'
-          ? { type: 'make-move', gameId: next.gameId, readable: command.readable }
+          ? { type: 'make-move', memberIndex: 0, readable: command.readable }
           : command.type === 'accept-settlement'
-            ? { type: 'accept-settlement', gameId: next.gameId }
-            : { type: 'cheat', gameId: next.gameId, moverShare: command.moverShare },
+            ? { type: 'accept-settlement', memberIndex: 0 }
+            : { type: 'cheat', memberIndex: 0, moverShare: command.moverShare },
       );
     },
     [],

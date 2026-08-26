@@ -1028,10 +1028,12 @@ export class SessionController implements PollingGameSession {
           this.ensureProtocolIdentities();
         }
       }
-      if (n.ProposalAccepted !== undefined) {
-        const acceptedId = String(n.ProposalAccepted.id);
-        if (!this.activeGameIds.includes(acceptedId)) {
-          this.activeGameIds.push(acceptedId);
+      if (n.ProposalAcceptedGroup !== undefined) {
+        for (const member of n.ProposalAcceptedGroup.members) {
+          const acceptedId = String(member.id);
+          if (!this.activeGameIds.includes(acceptedId)) {
+            this.activeGameIds.push(acceptedId);
+          }
         }
       }
       if (n.GameStatus !== undefined) {
@@ -1567,9 +1569,7 @@ export class SessionController implements PollingGameSession {
     if (paramsList.length !== 1) {
       throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
     }
-    const games = paramsList.map(({ parameters: _p, ...wasmParams }) => wasmParams);
-    const parametersList = paramsList.map(({ parameters }) => parameters);
-    const result = this.cradle.propose_games(games, parametersList);
+    const result = this.cradle.propose_games(paramsList);
     this.processCommandResult(result, 'propose game');
     if (!result?.ids) {
       throw new Error('proposeGames returned no ids');

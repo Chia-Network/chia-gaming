@@ -21,7 +21,7 @@ describe('save boundary enforcement', () => {
   it('deletes an obsolete v11 envelope without migration and keeps the marker', async () => {
     markSavedSession();
     await writeSessionRecord({
-      version: 11n,
+      version: 20n,
       playerId: 'old-player',
       serializedGameSession: new Uint8Array([1, 2, 3]),
     } as unknown as Parameters<typeof writeSessionRecord>[0]);
@@ -90,7 +90,7 @@ describe('save boundary enforcement', () => {
           their_contribution: '20',
           game_timeout: '15',
           game_type: 'calpoker',
-          parameters: [20n, true],
+          parameters: null,
         },
       }),
     );

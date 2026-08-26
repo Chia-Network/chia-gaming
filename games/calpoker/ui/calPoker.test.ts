@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { createRef, useEffect } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Program } from 'clvm-lib';
 import { cardIdToRankSuit, handValueToDescription } from './types';
@@ -13,9 +13,11 @@ import {
   type GameHandOrigin,
   type GameHandSource,
   type GameIntent,
+  type GameProposalFormHandle,
   type LiveGamePort,
   type PersistedGameState,
 } from '../../host';
+import { HandProposalForm } from './handProposalForm';
 import {
   calpokerStateCodec,
   isCalpokerHandState,
@@ -57,7 +59,7 @@ function makeDispatch(makeMove: jest.Mock) {
     if (intent.type !== 'make-move') {
       throw new Error(`Unexpected test intent ${intent.type}`);
     }
-    makeMove(intent.gameId, intent.readable);
+    makeMove(intent.memberIndex, intent.readable);
   };
 }
 
@@ -87,6 +89,30 @@ function liveSource(port: TestLiveGamePort): GameHandSource {
 }
 
 describe('Calpoker bigint domain helpers', () => {
+  it('owns proposal form state and exposes it through getProposal', () => {
+    const ref = createRef<GameProposalFormHandle<Record<string, never>>>();
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(HandProposalForm, {
+          ref,
+          disabled: false,
+          maxPerHandMojos: 200n,
+          defaultContribution: 100n,
+          initialProposal: null,
+          onSubmit: () => {},
+        }),
+      );
+    });
+    expect(ref.current?.getProposal()).toEqual({
+      ok: true,
+      senderContribution: 100n,
+      receiverContribution: 100n,
+      parameters: {},
+    });
+    act(() => renderer!.unmount());
+  });
+
   it('accepts bigint card ids at display boundaries', () => {
     expect(cardIdToRankSuit(51n)).toEqual({ rank: 14, suit: 4 });
   });
@@ -156,7 +182,6 @@ describe('Calpoker fresh hand startup', () => {
     const dispatch = jest.fn(makeDispatch(makeMove));
     const controller = {
       handState: calpokerStateCodec.encode({
-        gameId: '7',
         perPlayerStake: 100n,
         playerHand: [],
         opponentHand: [],
@@ -181,11 +206,11 @@ describe('Calpoker fresh hand startup', () => {
     });
 
     expect(makeMove).toHaveBeenCalledTimes(1);
-    expect(makeMove).toHaveBeenCalledWith('7', null);
+    expect(makeMove).toHaveBeenCalledWith(0, null);
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'make-move',
-        gameId: '7',
+        memberIndex: 0,
         readable: null,
       }),
     );
@@ -195,7 +220,6 @@ describe('Calpoker fresh hand startup', () => {
     const makeMove = jest.fn();
     const controller = {
       handState: calpokerStateCodec.encode({
-        gameId: '7',
         perPlayerStake: 100n,
         playerHand: [],
         opponentHand: [],
@@ -228,7 +252,6 @@ describe('Calpoker fresh hand startup', () => {
     const makeMove = jest.fn();
     const controller = {
       handState: calpokerStateCodec.encode({
-        gameId: '7',
         perPlayerStake: 100n,
         playerHand: [],
         opponentHand: [],
@@ -253,14 +276,13 @@ describe('Calpoker fresh hand startup', () => {
     });
 
     expect(makeMove).toHaveBeenCalledTimes(1);
-    expect(makeMove).toHaveBeenCalledWith('7', null);
+    expect(makeMove).toHaveBeenCalledWith(0, null);
   });
 
   it('auto-fires a new hand after a restored hand on the same controller', () => {
     const makeMove = jest.fn();
     const controller = {
       handState: calpokerStateCodec.encode({
-        gameId: '7',
         perPlayerStake: 100n,
         playerHand: [],
         opponentHand: [],
@@ -275,23 +297,21 @@ describe('Calpoker fresh hand startup', () => {
       dispatch: makeDispatch(makeMove),
     };
 
-    function Harness({ gameId, handOrigin }: { gameId: string; handOrigin: GameHandOrigin }) {
-      controller.handState.state.gameId = gameId;
+    function Harness({ handOrigin }: { handOrigin: GameHandOrigin }) {
       useCalpokerHand(liveSource(controller), handOrigin);
       return null;
     }
-    const mount = (key: number, gameId: string, handOrigin: GameHandOrigin) =>
-      React.createElement(Harness, { key, gameId, handOrigin });
+    const mount = (key: number, handOrigin: GameHandOrigin) =>
+      React.createElement(Harness, { key, handOrigin });
 
     act(() => {
-      renderer = create(mount(1, '7', 'restored'));
+      renderer = create(mount(1, 'restored'));
     });
     expect(makeMove).toHaveBeenCalledTimes(1);
-    expect(makeMove).toHaveBeenLastCalledWith('7', null);
+    expect(makeMove).toHaveBeenLastCalledWith(0, null);
 
     act(() => {
       controller.handState = calpokerStateCodec.encode({
-        gameId: '9',
         perPlayerStake: 100n,
         playerHand: [],
         opponentHand: [],
@@ -302,10 +322,10 @@ describe('Calpoker fresh hand startup', () => {
         settlementOutcome: null,
         error: null,
       });
-      renderer!.update(mount(2, '9', 'fresh'));
+      renderer!.update(mount(2, 'fresh'));
     });
     expect(makeMove).toHaveBeenCalledTimes(2);
-    expect(makeMove).toHaveBeenLastCalledWith('9', null);
+    expect(makeMove).toHaveBeenLastCalledWith(0, null);
   });
 });
 
@@ -324,7 +344,6 @@ describe('Calpoker terminal hand projection', () => {
     const makeMove = jest.fn();
     const controller = {
       handState: calpokerStateCodec.encode({
-        gameId: '7',
         perPlayerStake: 100n,
         playerHand,
         opponentHand,
@@ -342,7 +361,7 @@ describe('Calpoker terminal hand projection', () => {
           throw new Error('Calpoker test received invalid local action state');
         }
         if (intent.type === 'make-move') {
-          makeMove(intent.gameId, intent.readable);
+          makeMove(intent.memberIndex, intent.readable);
         }
       },
     };
@@ -368,7 +387,7 @@ describe('Calpoker terminal hand projection', () => {
     expect(rejectedPayloads).toEqual([]);
     expect(hand!.cardSelections).toEqual([]);
     expect(makeMove).toHaveBeenCalledTimes(1);
-    expect(makeMove).toHaveBeenCalledWith('7', null);
+    expect(makeMove).toHaveBeenCalledWith(0, null);
   });
 
   it('finishes the normal swap animation and keeps final descriptions after terminal loss', () => {
@@ -546,7 +565,6 @@ describe('Calpoker terminal hand projection', () => {
     const makeMove = jest.fn();
     const controller = {
       handState: calpokerStateCodec.encode({
-        gameId: '7',
         perPlayerStake: 100n,
         playerHand,
         opponentHand,
@@ -628,13 +646,13 @@ describe('Calpoker terminal hand projection', () => {
         const gameHand = restoreCalpokerHand(current);
         gameHand.receive({
           type: 'move-readable',
-          gameId: '7',
+          memberIndex: 0,
           readable: finalReadable,
           moverShare: '0',
         });
         gameHand.receive({
           type: 'hand-ended',
-          gameId: '7',
+          memberIndex: 0,
           outcome: 'forfeited_skipped_reveal',
         });
         terminalHand = gameHand;

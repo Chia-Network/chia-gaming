@@ -1,21 +1,46 @@
-import type { HandProposalFormProps } from '../../host';
+import { forwardRef, useImperativeHandle, useState } from 'react';
+import type { GameProposalFormHandle, HandProposalFormProps } from '../../host';
 import { AmountInput } from './AmountInput';
+import { calpokerProposalParameters } from './handProposal';
 
-export function HandProposalForm({
-  draft,
-  disabled,
-  maxPerHandMojos,
-  onChange,
-  onSubmit,
-}: HandProposalFormProps<{ amount: bigint }>) {
+type CalpokerParameters = Record<string, never>;
+
+export const HandProposalForm = forwardRef<
+  GameProposalFormHandle<CalpokerParameters>,
+  HandProposalFormProps<CalpokerParameters>
+>(function HandProposalForm(
+  { disabled, maxPerHandMojos, defaultContribution, initialProposal, onSubmit },
+  ref,
+) {
+  const projectedInitial =
+    initialProposal && calpokerProposalParameters.decode(initialProposal.parameters) !== null
+      ? initialProposal
+      : null;
+  const initialAmount = projectedInitial
+    ? projectedInitial.senderIsPlayerA
+      ? projectedInitial.playerAContribution
+      : projectedInitial.playerBContribution
+    : defaultContribution;
+  const [amount, setAmount] = useState(initialAmount);
+  useImperativeHandle(ref, () => ({
+    getProposal: () =>
+      amount > 0n && (maxPerHandMojos === null || amount <= maxPerHandMojos)
+        ? {
+            ok: true,
+            senderContribution: amount,
+            receiverContribution: amount,
+            parameters: {},
+          }
+        : { ok: false, error: 'Enter a positive stake within the available reserve.' },
+  }));
   return (
     <AmountInput
-      valueMojos={draft.amount}
-      onChange={(amount) => onChange({ amount })}
+      valueMojos={amount}
+      onChange={setAmount}
       maxMojos={maxPerHandMojos}
       onUseMax={
         maxPerHandMojos != null && maxPerHandMojos > 0n
-          ? () => onChange({ amount: maxPerHandMojos })
+          ? () => setAmount(maxPerHandMojos)
           : undefined
       }
       disabled={disabled}
@@ -26,4 +51,4 @@ export function HandProposalForm({
       }}
     />
   );
-}
+});

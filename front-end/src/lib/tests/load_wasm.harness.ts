@@ -397,10 +397,11 @@ export function postMoveHandState(
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
   const hand = createRegisteredGameHand(handProposal.gameType, {
-    gameIds: ids,
-    iStarted: false,
-    origin: 'peer',
     handProposal,
+    members: ids.map((_, index) => ({
+      amount: handProposal.playerAContribution + handProposal.playerBContribution,
+      ourTurn: handProposal.gameType === 'krunk' ? index === 1 : true,
+    })),
   });
   const accepted = snapshotRegisteredGameHand(handProposal.gameType, hand);
   if (handProposal.gameType === 'calpoker') {
@@ -430,21 +431,21 @@ export function postMoveHandState(
   }
   const state = krunkStateCodec.decode(accepted);
   assert.ok(state);
-  const mover = Object.entries(state.games).find(([, game]) => game.role === 'alice');
-  assert.ok(mover, 'krunk: receiver must own exactly one alice member');
+  const moverIndex = state.members.findIndex((game) => game.role === 'alice');
+  assert.notEqual(moverIndex, -1, 'krunk: receiver must own exactly one alice member');
+  const members = [...state.members] as [(typeof state.members)[0], (typeof state.members)[1]];
+  members[moverIndex] = {
+    ...initialKrunkGameState('alice'),
+    handler: KrunkHandler.AliceWaiting,
+    myTurn: false,
+    secretWord: 'CRANE',
+  };
   return {
     handState: krunkStateCodec.encode({
-      games: {
-        ...state.games,
-        [mover[0]]: {
-          ...initialKrunkGameState('alice'),
-          handler: KrunkHandler.AliceWaiting,
-          myTurn: false,
-          secretWord: 'CRANE',
-        },
-      },
+      ...state,
+      members,
     }),
-    moverId: mover[0],
+    moverId: ids[moverIndex],
     move: Program.fromBytes(new TextEncoder().encode('CRANE')),
   };
 }

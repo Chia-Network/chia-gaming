@@ -31,9 +31,11 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
   ];
   const handProposal: HandProposal = {
     gameType: 'calpoker',
-    myContribution: 20n,
-    theirContribution: 20n,
+    playerAContribution: 20n,
+    playerBContribution: 20n,
+    senderIsPlayerA: false,
     gameTimeout: 15n,
+    parameters: null,
   };
   const runtimes: SessionMachineRuntime[] = [];
   const ports: LiveGamePort[] = [];
@@ -79,9 +81,12 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
           return;
         }
         submittedMoves[index] += intent.type === 'make-move' ? 1 : 0;
+        assert.ok(Number.isInteger(intent.memberIndex) && intent.memberIndex >= 0);
+        const id = game.currentHandIds[intent.memberIndex];
+        assert.ok(id, `calpoker completion: invalid member index ${intent.memberIndex}`);
         runtime.commitLocalGameAction({
           gameType: 'calpoker',
-          id: intent.gameId,
+          id,
           command:
             intent.type === 'make-move'
               ? { type: 'make-move', readable: intent.readable }
@@ -121,7 +126,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.ok(state, `calpoker initial deal player ${index}: missing hand state`);
     return state;
   };
-  const submitSelections = (index: number, gameId: string, selections: bigint[]) => {
+  const submitSelections = (index: number, selections: bigint[]) => {
     (runtimes[index].getGameHand() as CalpokerHand).update((state) => ({
       ...state,
       cardSelections: selections,
@@ -130,11 +135,11 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     }));
     ports[index].dispatch({
       type: 'make-move',
-      gameId,
+      memberIndex: 0,
       readable: Program.fromList(selections.map((card) => Program.fromBigInt(card))),
     });
   };
-  const submitNil = (index: number, gameId: string, moveNumber: bigint) => {
+  const submitNil = (index: number, moveNumber: bigint) => {
     (runtimes[index].getGameHand() as CalpokerHand).update((state) => ({
       ...state,
       moveNumber,
@@ -142,14 +147,14 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     }));
     ports[index].dispatch({
       type: 'make-move',
-      gameId,
+      memberIndex: 0,
       readable: null,
     });
   };
-  const autofireOpening = (index: number, gameId: string) => {
+  const autofireOpening = (index: number) => {
     const state = hand(index);
     if (!shouldAutoFireCalpokerMove(false, state.isPlayerTurn, state.moveNumber)) return;
-    submitNil(index, gameId, state.moveNumber + 1n);
+    submitNil(index, state.moveNumber + 1n);
   };
 
   try {
@@ -166,12 +171,12 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.deepEqual(hand(0).playerHand, []);
     assert.deepEqual(hand(1).playerHand, []);
 
-    submitNil(1, gameId, 1n);
+    submitNil(1, 1n);
     await exchange();
     assert.deepEqual(hand(0).playerHand, []);
     assert.deepEqual(hand(1).playerHand, []);
 
-    submitNil(0, gameId, 1n);
+    submitNil(0, 1n);
     await exchange();
 
     const bob = hand(0);
@@ -192,16 +197,16 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     );
 
     const aliceSelections = alice.playerHand.slice(0, 4);
-    submitSelections(1, gameId, aliceSelections);
+    submitSelections(1, aliceSelections);
     await exchange();
 
     const bobSelections = hand(0).playerHand.slice(0, 4);
-    submitSelections(0, gameId, bobSelections);
+    submitSelections(0, bobSelections);
     await exchange();
     const aliceOutcome = hand(1).outcome;
     assert.ok(aliceOutcome, 'Alice must derive the outcome from Bob’s final readable');
 
-    submitNil(1, gameId, 3n);
+    submitNil(1, 3n);
     await exchange();
     const bobOutcome = hand(0).outcome;
     assert.ok(bobOutcome, 'Bob must derive the outcome from Alice’s terminal readable');
@@ -269,8 +274,8 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
       moveNumber: state.moveNumber,
       isPlayerTurn: state.isPlayerTurn,
     }));
-    autofireOpening(0, secondGameId);
-    autofireOpening(1, secondGameId);
+    autofireOpening(0);
+    autofireOpening(1);
     await exchange();
     assert.deepEqual(
       secondStartup,
@@ -282,7 +287,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     );
     assert.deepEqual(submittedMoves, [2, 4], 'only Alice must autofire the second opening');
 
-    submitNil(0, secondGameId, 1n);
+    submitNil(0, 1n);
     await exchange();
     const secondAlice = hand(1);
     const secondBob = hand(0);

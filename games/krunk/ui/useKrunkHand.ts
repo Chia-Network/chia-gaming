@@ -216,32 +216,32 @@ function finishedKrunkState(
 
 export function useKrunkHand(
   handSource: GameHandSource<KrunkHandState, KrunkHand>,
-  gameId: string,
+  memberIndex: number,
 ): UseKrunkHandResult {
   const handState = gameHandState(handSource);
-  const gameState = krunkGameStateFromHand(handState, gameId);
+  const gameState = krunkGameStateFromHand(handState, memberIndex);
   const interactive =
     handSource.interactionMode === 'live' && gameState.handler !== KrunkHandler.Terminal;
 
   const gameStateRef = useRef(gameState);
   const handSourceRef = useRef(handSource);
-  const gameIdRef = useRef(gameId);
+  const memberIndexRef = useRef(memberIndex);
   const activeRef = useRef(interactive);
 
   gameStateRef.current = gameState;
   handSourceRef.current = handSource;
-  gameIdRef.current = gameId;
+  memberIndexRef.current = memberIndex;
   activeRef.current = interactive;
 
   const commitLocalAction = useCallback((next: KrunkGameState, command: LocalGameCommand): void => {
-    const gameId = gameIdRef.current;
+    const memberIndex = memberIndexRef.current;
     const hand = handSourceRef.current.hand;
     if (hand === null) throw new Error('Krunk hand is unavailable');
-    hand.updateGame(gameId, () => next);
+    hand.updateGame(memberIndex, () => next);
     requireLiveGameHandSource(handSourceRef.current).dispatch(
       command.type === 'make-move'
-        ? { type: 'make-move', gameId, readable: command.readable }
-        : { type: 'accept-settlement', gameId },
+        ? { type: 'make-move', memberIndex, readable: command.readable }
+        : { type: 'accept-settlement', memberIndex },
     );
   }, []);
 
@@ -259,8 +259,7 @@ export function useKrunkHand(
     )
       return;
     if (!requireLiveGameHandSource(handSourceRef.current).isChannelReady()) return;
-    const gid = gameIdRef.current;
-    if (!activeRef.current || !gid) return;
+    if (!activeRef.current) return;
     const latest = gameState.guesses[gameState.guesses.length - 1];
     const isReveal =
       !!latest && (latest.clue.every((v) => v === 2n) || gameState.guesses.length >= MAX_GUESSES);
@@ -273,9 +272,7 @@ export function useKrunkHand(
   const setSecretWord = useCallback(
     (word: string) => {
       if (!activeRef.current) return;
-      const gid = gameIdRef.current;
       const cur = gameStateRef.current;
-      if (!gid) return;
       if (cur.role !== 'alice' || cur.handler !== KrunkHandler.WaitingCommit) return;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {
@@ -300,9 +297,7 @@ export function useKrunkHand(
   const submitGuess = useCallback(
     (word: string) => {
       if (!activeRef.current) return;
-      const gid = gameIdRef.current;
       const cur = gameStateRef.current;
-      if (!gid) return;
       if (cur.role !== 'bob' || cur.handler !== KrunkHandler.BobGuess) return;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {

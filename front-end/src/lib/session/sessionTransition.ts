@@ -9,7 +9,7 @@ export type DurableNotificationKind =
   | null;
 
 export function durableNotificationKind(notification: WasmNotification): DurableNotificationKind {
-  if (notification.ProposalAccepted) return 'accepted-group';
+  if (notification.ProposalAcceptedGroup) return 'accepted-group';
   if (notification.GameSettled) return 'settlement';
   if (notification.GameStatus) return 'game-status';
   if (notification.InsufficientBalance) return 'insufficient-balance';

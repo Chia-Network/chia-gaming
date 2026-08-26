@@ -9,7 +9,7 @@ use serde::de::{self, SeqAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::common::types::{AllocEncoder, Error, GameType, Program, Timeout};
+use crate::common::types::{AllocEncoder, Amount, Error, GameType, Program, Timeout};
 use crate::utils::enlist;
 
 /// Bencodex-native game parameters. Rust converts this value to CLVM only when
@@ -219,6 +219,9 @@ impl<'de> Deserialize<'de> for ProposalParameters {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameProposal {
+    pub player_a_contribution: Amount,
+    pub player_b_contribution: Amount,
+    pub sender_is_player_a: bool,
     pub game_type: GameType,
     pub timeout: Timeout,
     pub parameters: ProposalParameters,

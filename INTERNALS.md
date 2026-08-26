@@ -343,17 +343,17 @@ Proposal construction starts from exactly one group request:
 `game_type`, game-specific `parameters`, and one timeout shared by all games in
 the result. Both peers run the same registered deterministic factory. Its output
 is a non-empty ordered list of canonical 10-field records containing
-sender/receiver contributions, `sender_goes_first`, the initial state fields,
-fixed my-turn and their-turn handlers, and the initial validator. The host
-derives the amount from the contributions and hashes the validator locally.
+player-A/player-B contributions, `player_a_goes_first`, the initial state
+fields, fixed my-turn and their-turn handlers, and the initial validator. The
+host derives the amount from the contributions and hashes the validator locally.
 
-The result remains sender-oriented until the higher layer constructs local game
-state. At that point it selects the fixed handler matching the local initial
-turn and swaps sender/receiver contributions into the receiver's
-`my_contribution` / `their_contribution` perspective. This avoids peer-specific
-factory runs or proposal parsers while ensuring both peers commit to the same
-game records. Calpoker and Space Poker factories return one record; Krunk
-returns two.
+The result remains in stable A/B orientation. The proposal-wide
+`sender_is_player_a` maps sender/receiver and local/opponent perspectives onto
+that orientation. The higher layer selects the fixed handler matching the local
+initial turn and projects A/B contributions into local contribution fields.
+This avoids peer-specific factory runs or proposal parsers while ensuring both
+peers commit to the same ordered records. Calpoker and Space Poker factories
+return one record; Krunk returns two.
 
 Atomicity is enforced at three boundaries:
 
@@ -405,10 +405,13 @@ and the post-move puzzle hash (`saved_post_move_last_ph`).
 hash, live game state, and reward amounts. When the potato returns
 (acknowledgment), `drain_cached_accept_settlements` emits `GameSettled` with
 `outcome: accept_settlement` for each cached accept.
-- `**ProposalAccepted**` — a proposal acceptance we sent. Stores the game ID.
-Used during stale unroll handling to distinguish in-flight proposal accepts
-(which get `EndedCancelled`) from fully established games (which get
-`GameError`).
+- `**ProposalAccepted**` — an internal per-ID protocol replay marker for a
+proposal acceptance we sent. Stores one game ID and is repeated for members of
+an atomic group. This exact `CachedRedoActions::ProposalAccepted` Rust name is
+not the UI notification; UI acceptance is one ordered
+`GameNotification::ProposalAcceptedGroup`. The marker is used during stale
+unroll handling to distinguish in-flight proposal accepts (which get
+`EndedCancelled`) from fully established games (which get `GameError`).
 
 **Set** in `send_move_no_finalize` (moves) and
 `send_accept_settlement_no_finalize` (accept settlements).
@@ -449,7 +452,7 @@ different games. Redo transactions are emitted in parallel during
 `finish_on_chain_transition`, with a `PendingMoveSavedState` entry inserted into
 the handler's `pending_moves` map for each one.
 
-**In-flight proposal acceptances** (`ProposalAccepted` entries in
+**In-flight proposal acceptances** (`CachedRedoActions::ProposalAccepted` entries in
 `cached_redo_actions`) don't trigger a redo — if the game coin never
 materialized on-chain, the game is cancelled (`EndedCancelled`).
 

@@ -8,6 +8,27 @@ import { reduceSessionNotification } from '../session/sessionMachineNotification
 import { CALPOKER_TERMS, run, send, trackProposal } from './session_machine.harness';
 
 describe('session machine behavior sequences', () => {
+  it('rejects an inbound protocol ID outside the accepted hand', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = trackProposal(state, ['7'], CALPOKER_TERMS);
+    state = send(state, {
+      type: 'notification-accepted-group',
+      members: [{ id: '7', amount: '20', ourTurn: false }],
+    });
+
+    expect(() =>
+      reduceSessionMachine(state, {
+        type: 'notification-game-status',
+        id: '9',
+        payload: { id: '9', status: 'my-turn', coin_id: null },
+        channelState: 'Active',
+        readable: new Uint8Array([0x80]),
+        moverShare: '10',
+        iStarted: false,
+      }),
+    ).toThrow('Game slice invariant broken: missing instance 9');
+  });
+
   it('resets durable state only when an accepted group starts a new hand', () => {
     let state = createSessionMachineState(createSessionModel());
     state = trackProposal(state, ['7'], CALPOKER_TERMS);
@@ -15,11 +36,7 @@ describe('session machine behavior sequences', () => {
     state = trackProposal(state, ['9'], CALPOKER_TERMS, 'peer');
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '20',
-      iStarted: true,
-      isMyTurn: false,
+      members: [{ id: '7', amount: '20', ourTurn: false }],
     });
 
     expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
@@ -61,11 +78,7 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '20',
-      iStarted: true,
-      isMyTurn: false,
+      members: [{ id: '7', amount: '20', ourTurn: false }],
     });
 
     expect(state.model.game.handState).toEqual(progressed);
@@ -74,11 +87,7 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '9',
-      amount: '20',
-      iStarted: true,
-      isMyTurn: false,
+      members: [{ id: '9', amount: '20', ourTurn: false }],
     });
 
     expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
@@ -116,11 +125,7 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '20',
-      iStarted: true,
-      isMyTurn: false,
+      members: [{ id: '7', amount: '20', ourTurn: false }],
     });
 
     state = send(state, {
@@ -237,13 +242,13 @@ describe('session machine behavior sequences', () => {
       handProposal: {
         gameType: 'spacepoker' as const,
 
-        myContribution: 100n,
-
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: false,
 
         gameTimeout: 15n,
 
-        unitSizeMojos: 10n,
+        parameters: 10n,
       },
 
       moved: (state: ReturnType<typeof createSessionMachineState>) =>
@@ -258,15 +263,16 @@ describe('session machine behavior sequences', () => {
       handProposal: {
         gameType: 'krunk' as const,
 
-        myContribution: 100n,
-
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: true,
 
         gameTimeout: 15n,
+        parameters: null,
       },
 
       moved: (state: ReturnType<typeof createSessionMachineState>) =>
-        krunkStateCodec.decode(state.model.game.handState)?.games['9'].handler,
+        krunkStateCodec.decode(state.model.game.handState)?.members[1].handler,
     },
   ])(
     'atomically persists $gameType acceptance, move, settlement, balance failure, and abandonment',
@@ -286,11 +292,11 @@ describe('session machine behavior sequences', () => {
 
         {
           type: 'notification-accepted-group',
-
-          id: ids[0],
-          amount: '100',
-          iStarted: false,
-          isMyTurn: true,
+          members: ids.map((id, index) => ({
+            id,
+            amount: '100',
+            ourTurn: gameType === 'krunk' ? index === 0 : true,
+          })),
         },
 
         acceptedOrder,
@@ -307,7 +313,7 @@ describe('session machine behavior sequences', () => {
           ? calpokerStateCodec.decode(state.model.game.handState)
           : gameType === 'spacepoker'
             ? spacepokerStateCodec.decode(state.model.game.handState)
-            : krunkStateCodec.decode(state.model.game.handState)?.games[ids[0]];
+            : krunkStateCodec.decode(state.model.game.handState)?.members[0];
 
       expect(() =>
         reduceSessionMachine(state, {
@@ -360,7 +366,7 @@ describe('session machine behavior sequences', () => {
       expect(state.model.game.instances[ids[0]].terminal.outcome).toBe('opponent_timed_out');
 
       if (gameType === 'krunk') {
-        expect(krunkStateCodec.decode(state.model.game.handState)?.games[ids[1]]).toBeDefined();
+        expect(krunkStateCodec.decode(state.model.game.handState)?.members[1]).toBeDefined();
       }
 
       if (gameType === 'krunk') {
@@ -411,13 +417,13 @@ describe('session machine behavior sequences', () => {
       handProposal: {
         gameType: 'spacepoker' as const,
 
-        myContribution: 100n,
-
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: false,
 
         gameTimeout: 15n,
 
-        unitSizeMojos: 10n,
+        parameters: 10n,
       },
     },
   ])('does not invent $gameType durable turns from chain progress statuses', ({ handProposal }) => {
@@ -430,11 +436,7 @@ describe('session machine behavior sequences', () => {
 
     state = run(state, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '100',
-      iStarted: false,
-      isMyTurn: true,
+      members: [{ id: '7', amount: '100', ourTurn: true }],
     });
 
     const accepted = state.model.game.handState;
@@ -478,11 +480,7 @@ describe('session machine behavior sequences', () => {
 
     const state = send(initial, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '10',
-      iStarted: false,
-      isMyTurn: true,
+      members: [{ id: '7', amount: '10', ourTurn: true }],
     });
 
     expect(() =>

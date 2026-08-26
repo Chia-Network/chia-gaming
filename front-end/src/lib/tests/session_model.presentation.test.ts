@@ -544,7 +544,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     };
     const restored = sessionModelFromSave(
       baseSave({
-        version: 11n,
+        version: 20n,
         playerId: 'p1',
         activeGameIds: [],
         channelStatus,

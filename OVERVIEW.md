@@ -607,11 +607,12 @@ host-delivered updates, while the browser rereads the complete hand after a
 state-change notification or protocol request and reconstructs it from the
 canonical checkpoint on rejection.
 
-Proposal persistence reuses each package's structured Bencodex parameter codec,
-with a private deterministic context used only while recovering normalized
-terms; there are no game-specific save keys or persisted live-direction fields.
-Proposal-group integrity remains a generic host concern, while each game asserts
-its factory topology when creating a fresh hand.
+Proposal persistence stores the exact opaque Bencodex parameter value together
+with the generic player-A/player-B terms and sender orientation. Each package
+decodes that value only for its own form, display, and hand initialization;
+there are no game-specific proposal save keys. Proposal-group integrity remains
+a generic host concern, while each game asserts its factory topology when
+creating a fresh hand.
 
 | Concern | Owner |
 | --- | --- |
@@ -720,7 +721,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `UnrollCoin`                    | `channel_state/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
-| `CachedRedoActions` | `channel_state/types/potato.rs`              | Enum for `cached_redo_actions` entries: `CachedSendMove`, `CachedAcceptSettlement`, `ProposalAccepted`     |
+| `CachedRedoActions` | `channel_state/types/potato.rs`              | Internal protocol replay entries: `CachedSendMove`, `CachedAcceptSettlement`, and per-ID `ProposalAccepted` (not the UI `ProposalAcceptedGroup`) |
 | `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
 | `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposal`, `QueuedCancelProposal`, `QueuedCancelProposalSilently`, `Cheat` |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |

@@ -26,14 +26,17 @@ pub use crate::session_phases::wallet_traits::{
 pub struct WireGameSpec {
     pub game_id: GameID,
     pub amount: Amount,
-    pub sender_contribution: Amount,
-    pub receiver_contribution: Amount,
-    pub sender_goes_first: bool,
+    pub player_a_contribution: Amount,
+    pub player_b_contribution: Amount,
+    pub player_a_goes_first: bool,
     pub initial_validation_program_hash: Hash,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_state: Program,
     pub initial_mover_share: Amount,
+    pub my_turn_handler: Program,
+    pub their_turn_handler: Program,
+    pub initial_validation_program: Program,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -100,20 +100,25 @@
 
 ; ─── deterministic factory ───────────────────────────────────────────
 
-; Parameters: (per_player_stake bet_unit sender_goes_first).
+; Uniform factory arguments:
+; (player_a_contribution player_b_contribution bet_unit).
 ; Returns one canonical 10-field game record.
-(defun spacepoker_factory (@ _args (per_player_stake bet_unit sender_goes_first))
+(defun spacepoker_factory
+    (@ _args (player_a_contribution player_b_contribution bet_unit))
     (assert
-        (> per_player_stake 0)
+        (> player_a_contribution 0)
+        (= player_a_contribution player_b_contribution)
         (> bet_unit 0)
-        (= (% per_player_stake bet_unit) 0)
-        (or (not sender_goes_first) (= sender_goes_first 1))
-        (deep= _args (li per_player_stake bet_unit sender_goes_first))
+        (= (% player_a_contribution bet_unit) 0)
+        (deep=
+            _args
+            (li player_a_contribution player_b_contribution bet_unit)
+        )
         (li
             (li
-                per_player_stake
-                per_player_stake
-                sender_goes_first
+                player_a_contribution
+                player_b_contribution
+                1
                 0
                 32
                 bet_unit

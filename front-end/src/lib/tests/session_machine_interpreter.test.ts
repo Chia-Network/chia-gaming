@@ -26,22 +26,27 @@ import { wasmResult } from './message_protocol.harness';
 
 const TERMS = {
   gameType: 'calpoker' as const,
-  myContribution: 10n,
-  theirContribution: 10n,
+  playerAContribution: 10n,
+  playerBContribution: 10n,
+  senderIsPlayerA: false,
   gameTimeout: 15n,
+  parameters: null,
 };
 const KRUNK_TERMS = {
   gameType: 'krunk' as const,
-  myContribution: 100n,
-  theirContribution: 100n,
+  playerAContribution: 100n,
+  playerBContribution: 100n,
+  senderIsPlayerA: true,
   gameTimeout: 15n,
+  parameters: null,
 };
 const SPACEPOKER_TERMS = {
   gameType: 'spacepoker' as const,
-  myContribution: 100n,
-  theirContribution: 100n,
+  playerAContribution: 100n,
+  playerBContribution: 100n,
+  senderIsPlayerA: false,
   gameTimeout: 15n,
-  unitSizeMojos: 10n,
+  parameters: 10n,
 };
 
 function stateWithProposals(
@@ -233,10 +238,11 @@ describe('session machine causal sequences', () => {
       const ids = ['1', '2'];
       runtime.dispatch({
         type: 'notification-accepted-group',
-        id: ids[0],
-        amount: '100',
-        iStarted,
-        isMyTurn: pickerId === ids[0],
+        members: ids.map((id) => ({
+          id,
+          amount: '100',
+          ourTurn: id === pickerId,
+        })),
       });
 
       const assertPickerAuthority = () => {
@@ -245,21 +251,22 @@ describe('session machine causal sequences', () => {
         expect(game.currentHandIds).toEqual(ids);
         expect(game.activeGameType).toBe('krunk');
         expect(game.handState?.gameType).toBe('krunk');
-        expect(Object.keys(hand!.games)).toEqual(ids);
-        expect(hand!.games[pickerId].role).toBe('alice');
+        expect(hand!.members).toHaveLength(2);
+        expect(hand!.members[ids.indexOf(pickerId)].role).toBe('alice');
         return hand!;
       };
       const pickWord = () => {
         const hand = assertPickerAuthority();
-        const picker = hand.games[pickerId];
-        (runtime.getGameHand() as KrunkHand).updateGame(pickerId, () => ({
+        const pickerIndex = ids.indexOf(pickerId);
+        const picker = hand.members[pickerIndex];
+        (runtime.getGameHand() as KrunkHand).updateGame(pickerIndex, () => ({
           ...picker,
           handler: 1n,
           myTurn: false,
           secretWord: 'CRANE',
         }));
         runtime.commitHandStateChanged('krunk');
-        expect(assertPickerAuthority().games[pickerId].secretWord).toBe('CRANE');
+        expect(assertPickerAuthority().members[pickerIndex].secretWord).toBe('CRANE');
       };
 
       assertPickerAuthority();
@@ -306,10 +313,10 @@ describe('session machine causal sequences', () => {
     );
     runtime.dispatch({
       type: 'notification-accepted-group',
-      id: '1',
-      amount: '100',
-      iStarted: false,
-      isMyTurn: true,
+      members: [
+        { id: '1', amount: '100', ourTurn: true },
+        { id: '2', amount: '100', ourTurn: false },
+      ],
     });
     runtime.dispatch({
       type: 'notification-game-terminal',
@@ -324,10 +331,7 @@ describe('session machine causal sequences', () => {
     });
     runtime.dispatch({
       type: 'notification-accepted-group',
-      id: '7',
-      amount: '20',
-      iStarted: false,
-      isMyTurn: true,
+      members: [{ id: '7', amount: '20', ourTurn: true }],
     });
     const authority = runtime.getState();
     expect(() => runtime.commitHandStateChanged('krunk')).toThrow('gameType');
@@ -339,10 +343,8 @@ describe('session machine causal sequences', () => {
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
     const hand = createRegisteredGameHand('calpoker', {
-      gameIds: ['7'],
-      iStarted: true,
-      origin: 'local',
       handProposal: TERMS,
+      members: [{ amount: 20n, ourTurn: true }],
     });
     const handState = snapshotRegisteredGameHand('calpoker', hand);
     const runtime = new SessionMachineRuntime(
@@ -808,10 +810,7 @@ describe('session machine local game action boundary', () => {
     runtime.setRender((state) => rendered.push(state));
     runtime.dispatch({
       type: 'notification-accepted-group',
-      id: '7',
-      amount: '20',
-      iStarted: false,
-      isMyTurn: true,
+      members: [{ id: '7', amount: '20', ourTurn: true }],
     });
     persisted.length = 0;
     rendered.length = 0;
@@ -845,21 +844,23 @@ describe('session machine local game action boundary', () => {
     runtime.dispatch({
       type: 'wasm-notification',
       iStarted: true,
-      notification: { ProposalAccepted: { id: '2', amount: '100', our_turn: true } },
-    });
-    runtime.dispatch({
-      type: 'wasm-notification',
-      iStarted: true,
-      notification: { ProposalAccepted: { id: '4', amount: '100', our_turn: false } },
+      notification: {
+        ProposalAcceptedGroup: {
+          members: [
+            { id: '2', amount: '100', our_turn: true },
+            { id: '4', amount: '100', our_turn: false },
+          ],
+        },
+      },
     });
 
     const hand = krunkStateCodec.decode(runtime.getState().model.game.handState)!;
-    expect(hand.games['2']).toMatchObject({ role: 'alice', myTurn: true });
-    expect(hand.games['4']).toMatchObject({ role: 'bob', myTurn: false });
+    expect(hand.members[0]).toMatchObject({ role: 'alice', myTurn: true });
+    expect(hand.members[1]).toMatchObject({ role: 'bob', myTurn: false });
     expect(runtime.getState().model.game.instances['2'].presentation).toBe('off-chain-my-turn');
     expect(runtime.getState().model.game.instances['4'].presentation).toBe('off-chain-their-turn');
 
-    (runtime.getGameHand() as KrunkHand).updateGame('2', (game) => ({
+    (runtime.getGameHand() as KrunkHand).updateGame(0, (game) => ({
       ...game,
       handler: 1n,
       myTurn: false,
@@ -895,11 +896,15 @@ describe('session machine local game action boundary', () => {
     runtime.dispatch({
       type: 'wasm-notification',
       iStarted: true,
-      notification: { ProposalAccepted: { id: '7', amount: '200', our_turn: true } },
+      notification: {
+        ProposalAcceptedGroup: {
+          members: [{ id: '7', amount: '200', our_turn: true }],
+        },
+      },
     });
 
     const hand = spacepokerStateCodec.decode(runtime.getState().model.game.handState)!;
-    expect(hand.gameState.myTurn).toBe(false);
+    expect(hand.gameState.myTurn).toBe(true);
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-my-turn');
 
     (runtime.getGameHand() as SpacepokerHand).update((state) => ({
@@ -1093,10 +1098,7 @@ describe('session machine local game action boundary', () => {
     );
     runtime.dispatch({
       type: 'notification-accepted-group',
-      id: '7',
-      amount: '20',
-      iStarted: false,
-      isMyTurn: true,
+      members: [{ id: '7', amount: '20', ourTurn: true }],
     });
     updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
@@ -1106,10 +1108,7 @@ describe('session machine local game action boundary', () => {
     });
     runtime.dispatch({
       type: 'notification-accepted-group',
-      id: '9',
-      amount: '20',
-      iStarted: false,
-      isMyTurn: true,
+      members: [{ id: '9', amount: '20', ourTurn: true }],
     });
     expect(runtime.getState().model.game.pendingCandidates).toEqual({});
 

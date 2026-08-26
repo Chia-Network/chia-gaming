@@ -4,7 +4,6 @@ import type { GameHandOrigin, GameHandSource } from '@games/host';
 import { terminalGameHandSource } from '../gameHandSource';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
-import type { ComposeDraftValue } from '@games/host';
 import type {
   BetweenHandModeModel,
   ChannelStatusModel,
@@ -55,7 +54,6 @@ export interface UseGameSessionResult {
   openComposeProposal: () => void;
   setComposeGameTimeout: (value: bigint) => void;
   setComposeGameType: (value: HandProposal['gameType']) => void;
-  updateSelectedComposeDraft: (draft: Partial<ComposeDraftValue>) => void;
   composeProposalSent: boolean;
   newHandRequested: boolean;
   submitComposedProposal: (handProposal: HandProposal) => void;
@@ -168,7 +166,6 @@ export function projectTerminalSessionResult(
     openComposeProposal: NOOP,
     setComposeGameTimeout: NOOP,
     setComposeGameType: NOOP,
-    updateSelectedComposeDraft: NOOP,
     composeProposalSent: model.betweenHand.compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: NOOP,

@@ -95,28 +95,44 @@ between the key and protocol ID at the WASM boundary.
 
 ## Step 2: Implement the CLVM rules
 
-The factory receives the parameters for a proposed hand and returns the game
-or games that the peers will run. It must be deterministic: both peers run the
-same factory with the same parameters and must get the same result.
+The factory is invoked once with this exact proper list:
+
+```clojure
+(player_a_contribution player_b_contribution game_parameters)
+```
+
+It returns the game or games that the peers will run. It must be deterministic:
+both peers run the same factory with the same A/B contributions and parameters
+and must get the same result.
 
 Most factories create one game. A factory may create several games that must
 be accepted or cancelled together; the code calls these an atomic group.
 Krunk is the reference example for that case.
 
-Starting-player policy belongs to each factory record, not necessarily to one
-proposal-wide flag. Krunk emits two records with opposite
-`sender_goes_first` values so each player picks a word once. If a future game
-makes starting order a user-negotiated term, include it in that package's
-normalized proposal, description, equality, and persistence. If it is derived
-from session role, validate the encoded parameter against the supplied decode
-context instead of displaying it as a term.
+The result is a nonempty proper list. Every member is a proper list with exactly
+these 10 fields:
 
-Each game returned by the factory includes its starting state, move handlers,
-and validation programs. See
-[the factory return format](clsp/handler_api.md#game-factory) for the exact
-fields. Return each player's contribution separately; the host derives the
-total amount. Return the initial validator program itself; the host derives its
-tree hash and uses the first record's hash as the protocol game ID.
+```clojure
+(player_a_contribution player_b_contribution player_a_goes_first initial_move
+ initial_max_move_size initial_state initial_mover_share my_turn_handler
+ their_turn_handler initial_validator)
+```
+
+`player_a_goes_first` is canonical nil or `1`. The two handlers have a stable
+meaning and order: `my_turn_handler` is run by whichever player goes first;
+`their_turn_handler` is run by the waiting player. Member order is factory
+order and never flips between peers.
+
+The proposal sender is mapped to A or B once by the proposal-wide
+`senderIsPlayerA`/`sender_is_player_a` value. Rust uses that mapping to project
+A/B contributions and turns into each peer's local perspective; it does not
+reinterpret or reorder factory members. Krunk always returns two members in
+fixed order: member 0 has player A first and member 1 has player B first.
+
+Return each player's contribution separately; the host derives the total
+amount. Return the initial validator program itself; the host derives its tree
+hash. The first member's initial-validator hash is the package's protocol
+identity. See [the factory return format](clsp/handler_api.md#game-factory).
 
 During play, the engine uses:
 
@@ -136,21 +152,23 @@ and return shapes. [`CLVM_DOS.md`](CLVM_DOS.md) covers cost and size limits.
 
 ## Step 3: Add the factory probe
 
-Add `games/<key>/clsp/factory_probe.clsp`, a no-argument Chialisp program
-which returns one representative valid parameter value for `factory.clsp`.
-For example, Calpoker's probe is:
+Add `games/<key>/clsp/factory_probe.clsp`, a no-argument Chialisp program that
+returns one representative valid complete factory argument list: contributions
+for A and B followed by the game parameters. Calpoker's current probe is:
 
 ```clojure
 (include *standard-cl-23*)
 
-(export () (list 1 1))
+(export () (list 1 1 ()))
 ```
 
-The build compiles both files, curries any `factory_args.clvm.bin` into the
-factory, and runs the probe against that prepared factory. It records the first
-returned game's initial validation puzzle hash as the protocol ID and emits one
-prepared binary factory for runtime use. The factory itself is never hashed as
-an identifier.
+The final `()` is Calpoker's nil parameter value; it is not an omitted
+argument. Krunk uses `(list 100 100 ())`, while Space Poker supplies its positive
+integer bet unit as the third item. The build compiles both files, curries any
+`factory_args.clvm.bin` into the factory, and runs the probe against that
+prepared factory. It records the first returned game's initial validation
+puzzle hash as the protocol ID and emits one prepared binary factory for
+runtime use. The factory itself is never hashed as an identifier.
 
 Factory loading, binary serialization, caching, and registration are player
 implementation details. A game package does not implement Rust loader
@@ -169,26 +187,51 @@ simulator.
 The proposal flow has three representations:
 
 ```text
-editable form draft → HandProposal → CLVM factory parameters
+mounted form state → typed package parameters → opaque HandProposal
 ```
 
 Keeping these representations separate makes each boundary clear:
 
-- The **draft** is temporary form state. It may be incomplete or invalid while
-  the player is typing.
-- A **`HandProposal`** is a complete, validated offer sent to the other player.
-  Every proposal includes `gameType`, both players' contributions, and a
-  timeout. A game can add fields of its own.
-- **Factory parameters** are the CLVM value passed to the game factory.
+- The mounted React form owns temporary controls and validation presentation.
+- Its imperative handle returns sender/receiver contributions plus typed,
+  package-owned parameters.
+- The host immediately encodes those parameters to `ProposalParameterValue` and
+  constructs the final `HandProposal`, which contains catalog `gameType`,
+  player-A/player-B contributions, sender orientation, timeout, and the exact
+  opaque Bencodex value. Rust is the semantic authority for the factory input.
 
-Implement the React form in `handProposalForm.tsx`. It receives the current
-draft, an `onChange` callback, and an `onSubmit` callback through
-`HandProposalFormProps`. Export it as:
+Implement the React form in `handProposalForm.tsx` with `forwardRef`. It owns
+its editable state and exposes `GameProposalFormHandle<TParams>`. Export it as:
 
-```ts
-export function HandProposalForm(props: HandProposalFormProps<MyDraft>) {
-  // ...
-}
+```tsx
+export const HandProposalForm = forwardRef<
+  GameProposalFormHandle<MyParams>,
+  HandProposalFormProps<MyParams>
+>(function HandProposalForm(
+  { disabled, maxPerHandMojos, defaultContribution, onSubmit },
+  ref,
+) {
+  const [amount, setAmount] = useState(defaultContribution);
+  useImperativeHandle(ref, () => ({
+    getProposal: () =>
+      amount > 0n && (maxPerHandMojos === null || amount <= maxPerHandMojos)
+        ? {
+            ok: true,
+            senderContribution: amount,
+            receiverContribution: amount,
+            parameters: {} as MyParams,
+          }
+        : { ok: false, error: 'Enter a positive affordable stake.' },
+  }));
+  return (
+    <input
+      disabled={disabled}
+      value={amount.toString()}
+      onChange={(event) => setAmount(BigInt(event.currentTarget.value))}
+      onKeyDown={(event) => event.key === 'Enter' && onSubmit()}
+    />
+  );
+});
 ```
 
 ### Proposal form API
@@ -196,28 +239,26 @@ export function HandProposalForm(props: HandProposalFormProps<MyDraft>) {
 The complete package-facing form contract is:
 
 ```ts
-interface HandProposalFormProps<TDraft> {
-  draft: TDraft;
+interface HandProposalFormProps<TParams> {
+  ref?: Ref<GameProposalFormHandle<TParams>>;
   disabled: boolean;
   maxPerHandMojos: bigint | null;
-  onChange: (update: Partial<TDraft>) => void;
+  defaultContribution: bigint;
+  initialProposal: HandProposal | null;
   onSubmit: () => void;
 }
 ```
 
-- `draft` is the current game-specific draft. Treat it as immutable.
 - `disabled` is true after submission while the host is preventing another
   proposal. Disable every editable control and submit action when it is true.
 - `maxPerHandMojos` is the largest currently available contribution per player,
   in mojos. `null` means the host cannot provide a balance-derived limit; it
   does not make an otherwise invalid draft valid.
-- `onChange(update)` sends a partial draft update to the host. The host passes
-  the current draft and this update to `draft.update`; the form must not assume
-  that a shallow merge is sufficient.
-- `onSubmit()` asks the host to submit. The host calls `draft.toHandProposal`,
-  validates the result and the balance limit again, and does nothing if those
-  checks fail. The form may use normal form submission or call this callback
-  from its submit button.
+- `defaultContribution` seeds a fresh mounted form. `initialProposal` may seed a
+  counter/retry form; decode it only with the package codec.
+- `onSubmit()` asks the host to call the active handle. `getProposal()` returns
+  either `{ ok: true, senderContribution, receiverContribution, parameters }`
+  or `{ ok: false, error }`. The form displays its own validation error.
 
 The host owns the game selector and `gameTimeout`; they are deliberately absent
 from this interface. The game form owns only game-specific draft fields. A form
@@ -229,51 +270,28 @@ values. There is deliberately no shared game UI component or currency-formatting
 service: reference games may duplicate small controls so their presentation
 implementations remain independent.
 
-Implement the conversion and validation in `handProposal.ts`. Its registration
-must provide:
-
-- `draft.default` to create an initial form value.
-- `draft.update` to apply a form change.
-- `draft.toHandProposal` to produce a valid proposal, or `null` if the draft is
-  not ready to submit.
-- `draft.fromHandProposal` to repopulate the form from an existing proposal.
-- `validateHandProposal` to validate a complete proposal.
-- `handProposalsEqual` to compare two proposals.
-- `describeHandProposal` to write a short, readable summary for the receiving
-  player.
-
-Use `equalHandProposalBase` when your equality check only needs to add
-game-specific fields to the common proposal comparison.
-
-The same registration translates between a `HandProposal` and structured
-Bencodex proposal parameters:
-
-- `toProposalParameters(handProposal, iStarted)` creates the typed parameter
-  object for an outgoing proposal.
-- `proposalParameters.encode` converts that object into Bencodex-compatible
-  values.
-- `proposalParameters.decode` safely validates untrusted Bencodex values.
-- `decodeHandProposal(base, params, context)` reconstructs and validates the
-  proposal received from the peer.
+Implement the package registration in `handProposal.ts`. It provides the one
+typed parameter codec, `describeHandProposal`, and `handProposalsEqual`.
+`describeHandProposal` decodes `handProposal.parameters` through that codec and
+must fail if the player app cannot project the Rust-approved value.
 
 Game frontend code must not construct, deserialize, or inspect CLVM here. Rust
-converts the structured values to CLVM immediately before invoking the factory.
+converts the opaque Bencodex value to factory input and remains the semantic
+authority.
 
-### Proposal-parameter decoder API
-
-Common proposal terms are always supplied separately from the game factory
-parameters:
+### Proposal-parameter codec API
 
 ```ts
 interface HandProposalBase {
-  myContribution: bigint;
-  theirContribution: bigint;
+  playerAContribution: bigint;
+  playerBContribution: bigint;
+  senderIsPlayerA: boolean;
   gameTimeout: bigint;
+  parameters: ProposalParameterValue;
 }
 
 type HandProposal = HandProposalBase & {
   gameType: string;
-  // A package may add validated game-specific fields.
 };
 
 type ProposalParameterValue =
@@ -288,61 +306,24 @@ interface ProposalParameterCodec<TParams> {
   decode(value: unknown): TParams | null;
   encode(params: TParams): ProposalParameterValue;
 }
-
-interface HandProposalDecodeContext {
-  origin: 'local' | 'peer';
-  iStarted: boolean;
-}
-
-interface ProposalCodec<TParams> {
-  proposalParameters: ProposalParameterCodec<TParams>;
-  toProposalParameters(handProposal: HandProposal, iStarted: boolean): TParams;
-  decodeHandProposal(
-    base: HandProposalBase,
-    params: TParams,
-    context: HandProposalDecodeContext,
-  ): HandProposal | null;
-}
 ```
 
-`toProposalParameters` receives validated proposal terms and whether this client
-started the session. It returns the typed game-specific value consumed by
-`proposalParameters.encode`. `encode` returns only Bencodex-compatible values.
-The host carries those values across WASM and the peer wire and performs the
-generic conversion to the CLVM object passed to the factory. The same encoded
-value is persisted, so game-specific proposal fields use one codec for wire and
-save round trips. Persistence uses a private deterministic codec context only to
-recover normalized proposal terms; it does not preserve live proposal direction.
+The codec validates exact JavaScript types without coercion. Bencodex text
+strings are JavaScript `string`; byte strings are `Uint8Array`; integers are
+`bigint`; booleans, null, and proper lists retain their own types. For example:
 
-Decoding is intentionally two-stage:
+```ts
+const text: ProposalParameterValue = 'unit';
+const bytes: ProposalParameterValue = new Uint8Array([0x75, 0x6e, 0x69, 0x74]);
+const integer: ProposalParameterValue = 100n;
+```
 
-1. `proposalParameters.decode(value)` receives untrusted Bencodex values. It
-   must validate the complete list/scalar shape and every value, returning typed
-   parameters or `null`. Malformed peer data is expected at this boundary and
-   must not throw.
-2. `decodeHandProposal(base, params, context)` combines the already-decoded
-   common terms with the typed parameters. It must reject contradictions
-   between duplicated values, validate any proposer-relative policy represented
-   by its parameters, add the package's `gameType` and game-specific proposal
-   fields, run the complete proposal validation, and return `null` on any
-   mismatch.
-
-The host verifies that a non-null proposal has the registration's catalog
-`gameType`. Do not trust a type assertion or silently repair inconsistent peer
-data. Incoming `ProposalMade` notifications must contain an explicit positive
-timeout and explicit `parameters`; missing fields are decode failures.
-
-For example, Calpoker encodes `[perPlayerStake, senderGoesFirst]`, Space Poker
-encodes `[perPlayerStake, betUnit, senderGoesFirst]`, and Krunk encodes its stake
-as a single `bigint`. Their decoders check exact list lengths, JavaScript value
-types, positivity, cross-field relationships, and consistency with
-`HandProposalBase`. Test a valid encode/decode round trip, wrong list lengths
-and types, invalid values, and another game's parameter encoding.
-
-When parameters contain a proposal-wide first-player bit, define that policy in
-game-local code and use it for outgoing construction, incoming validation, and
-fresh-hand initial turn. Calpoker and Space Poker do this. Krunk does not expose
-a proposal-wide policy because its factory members have different roles.
+Those three values are distinct even though their CLVM atom bytes can overlap.
+Calpoker and Krunk codecs encode typed empty parameter records as `null`:
+`decode(null) -> {}` and `encode({}) -> null`. Space Poker decodes a positive
+`bigint` as `{ betUnitMojos }` and encodes that record back to the same
+`bigint`. The host persists the encoded value directly and never reconstructs
+package-specific fields.
 
 ## Step 5: Own one hand instance
 
@@ -360,17 +341,27 @@ adding setters to the shared API. `restoreHand` constructs a replacement hand
 directly from the complete saved state; it does not create a fresh hand and
 overwrite it.
 
-The initial state must copy every accepted fact the play UI needs from
-`GameHandInitialization`: ordered routing IDs, stakes and game-specific proposal
-terms, local role, and the initial game turn. Derive the initial turn from the
-validated proposal convention plus `origin` and `iStarted`; the host does not
-pass a second `canAct` answer.
+The complete initialization shape is:
 
-Multi-ID games keep all members in the one complete state; Krunk, for example,
-stores ordered `gameIds`, the accepted per-player stake, and
-`games: Record<string, KrunkGameState>`. Single-ID games likewise keep their
-routing ID and accepted terms in state. The host treats `getState()` as opaque
-Bencodex-compatible data and saves `{ gameType, state }` generically.
+```ts
+interface GameHandInitialization {
+  handProposal: HandProposal;
+  members: readonly { amount: bigint; ourTurn: boolean }[];
+}
+```
+
+The initial state must copy every accepted fact the play UI needs: stakes and
+game-specific proposal terms from `handProposal`, plus member amounts and local
+initial turns from `members`. Assert the expected member count and game type.
+Protocol IDs, proposal origin, and session `iStarted` are deliberately
+inaccessible to packages.
+
+Multi-member games keep members in this stable factory order. Krunk stores
+`members: readonly [KrunkGameState, KrunkGameState]`; index 0 and index 1 remain
+the factory's two members for the hand's lifetime and settle independently.
+Single-member games use index 0. The host treats `getState()` as opaque
+Bencodex-compatible data and saves `{ gameType, state }` generically. Game-owned
+persisted state stores member order/indices, not protocol IDs.
 Games do not provide envelope serializers, versions, compatibility decoders, or
 migrations.
 
@@ -378,18 +369,18 @@ Every playable package must support a frozen mount and `restoreHand`. A finished
 session always attempts a cold read-only remount when a valid
 `PersistedGameState` exists.
 
-Proposal snapshots persist the registration's structured
-`proposalParameters.encode` result and generic decode context. Do not add
-game-specific save keys or a second persistence codec. Hand state remains saved
-generically from `GameHand.getState()`.
+Proposal snapshots persist the exact opaque `parameters` value and all generic
+A/B terms. Do not add game-specific proposal save keys or a second persistence
+codec. Hand state remains saved generically from `GameHand.getState()`.
 
 ## Step 6: Build the play UI
 
 Implement `play.tsx` and export a `GameMountRegistration` named `play`. It has
 one `render(view)` function. Every render receives the live or restored
-`GameHand`, player display names, and `frozen`. IDs, accepted stakes, current
-turn/handler, active members, and terminal results come from the complete hand
-state rather than parallel host projections.
+`GameHand`, player display names, and `frozen`. Accepted stakes, current
+turn/handler, factory-ordered member state, and terminal results come from the
+complete hand state rather than parallel host projections. Protocol IDs never
+cross this package boundary.
 
 `frozen` is the type discriminant:
 
@@ -432,17 +423,19 @@ outgoing contract is:
 ```ts
 type GameIntent =
   | { type: 'state-changed' }
-  | { type: 'make-move'; gameId: string; readable: Program | null }
-  | { type: 'accept-settlement'; gameId: string }
-  | { type: 'cheat'; gameId: string; moverShare: bigint };
+  | { type: 'make-move'; memberIndex: number; readable: Program | null }
+  | { type: 'accept-settlement'; memberIndex: number }
+  | { type: 'cheat'; memberIndex: number; moverShare: bigint };
 ```
 
 - Mutate the concrete hand first. `state-changed` tells the player app to reread
   the entire hand and persist a local-only durable change; it works for both
-  single- and multi-ID hands.
+  single- and multi-member hands.
 - `make-move` asks the local CLVM handler to process `readable`. `null` means
   CLVM nil.
-- `accept-settlement` accepts the result for `gameId`.
+- `memberIndex` addresses the stable factory-ordered member. The host checks the
+  index before mapping it to its private protocol ID.
+- `accept-settlement` accepts that member's result.
 - `cheat` deliberately invokes the diagnostic illegal-move path with a
   mojo-denominated `moverShare`. It is not a normal gameplay fallback. It is
   optional; among the reference games only Space Poker exposes it, including
@@ -469,33 +462,27 @@ contains the advanced handler/turn and must not. Do not persist a separate
 The complete incoming contract is:
 
 ```ts
-type ProposalGroupOrigin = 'local' | 'peer';
-
 interface GameHandInitialization {
-  gameIds: readonly string[];
-  iStarted: boolean;
-  origin: ProposalGroupOrigin;
   handProposal: HandProposal;
+  members: readonly { amount: bigint; ourTurn: boolean }[];
 }
 
 type GameUpdate =
   | {
       type: 'move-readable';
-      gameId: string;
+      memberIndex: number;
       readable: Uint8Array;
       moverShare: string;
     }
-  | { type: 'message-readable'; gameId: string; readable: Uint8Array }
-  | { type: 'hand-ended'; gameId: string; outcome: SettlementOutcome | null };
+  | { type: 'message-readable'; memberIndex: number; readable: Uint8Array }
+  | { type: 'hand-ended'; memberIndex: number; outcome: SettlementOutcome | null };
 ```
 
-`GameHandInitialization` is supplied only to `createHand`. `gameIds` is the
-authoritative ordered membership, `iStarted` identifies the local session
-initiator, `origin` identifies the proposal author, and `handProposal` contains
-validated accepted terms. A typical single-ID initialization copies
-`gameIds[0]` and `handProposal.myContribution` into state and computes whether
-the local player is the proposal's first mover. Assert your expected member
-count and proposal game type in `createHand`.
+`GameHandInitialization` is supplied only to `createHand`. `members` is the
+authoritative ordered package membership and `handProposal` contains validated
+accepted terms. A typical single-member initialization reads `members[0].amount`
+and `members[0].ourTurn`. Assert your expected member count and proposal game
+type in `createHand`.
 - `move-readable` addresses one member of the hand. `readable` is the
   serialized CLVM readable returned by the opponent-move handler.
   `moverShare` is a decimal mojo string because it originated at the WASM
@@ -503,7 +490,7 @@ count and proposal game type in `createHand`.
 - `message-readable` carries serialized advisory readable data for one member. It
   does not itself imply a move, turn change, or protocol-state transition.
 - `hand-ended` supplies the normalized settlement outcome, when one exists, for
-  one member. Multi-ID hands receive independent terminal inputs as their
+  one member. Multi-member hands receive independent terminal inputs as their
   members finish. Set that member's turn false and retain the outcome in the
   complete state so a frozen mount renders without host terminal maps.
 
@@ -558,7 +545,6 @@ The following are frontend implementation details, not APIs for games:
 
 - Raw WASM payload types such as `GameStatus`, `LocalActionApplied`,
   `ActionFailed`, and `ProposalMade`
-- [`front-end/src/lib/gameProposalCodec.ts`](front-end/src/lib/gameProposalCodec.ts)
 - The session model, `useGameSession`, and the catalog-to-protocol-ID mapping
 
 ## Testing checklist
@@ -571,11 +557,21 @@ Before considering the game complete, check that:
 - Handler and validator tests cover each legal move and important illegal
   moves.
 - The proposal form converts to and from `HandProposal` correctly.
-- Factory parameter encoding and decoding round-trip.
+- The package-owned `forwardRef` form exposes `getProposal()`, validates its
+  transient controls, and returns sender/receiver contributions plus typed
+  parameters; transient form state is not persisted.
+- Factory parameter encoding and decoding round-trip with exact
+  text/bytes/integer typing.
 - A fresh `GameHand` initializes from accepted terms and `restoreHand` constructs
   directly from only its generic saved state.
+- Opaque saved state, including `Uint8Array`, round-trips without JSON/base64
+  conversion and contains no protocol IDs.
 - `GameHand.receive` handles move, message, and terminal updates in order, and
   `getState` returns the latest complete hand state.
+- Invalid member indices and unknown inbound protocol IDs fail at the host
+  boundary; package code never receives an ID.
+- Automatic actions are ordinary state-driven effects: a restored pre-action
+  state may fire once, while restored queued/applied state must not refire.
 - Every outgoing intent is tested for accepted, rejected, and unexpected-failure
   behavior.
 - Live and frozen branches of the single mount render the expected game state,

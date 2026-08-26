@@ -15,15 +15,14 @@ use crate::common::types::{
 
 /// One canonical game returned by a proposal factory.
 ///
-/// Contributions and `sender_goes_first` are always oriented to the sender of
-/// the proposal. Both peers execute the same factory result and select one of
-/// the two handlers based only on which side of the proposal they occupy.
+/// Contributions and `player_a_goes_first` use the factory's stable player A/B
+/// orientation. Rust projects that orientation to either local player.
 #[derive(Clone)]
 pub struct FactoryGame {
-    pub sender_contribution: Amount,
-    pub receiver_contribution: Amount,
+    pub player_a_contribution: Amount,
+    pub player_b_contribution: Amount,
     pub amount: Amount,
-    pub sender_goes_first: bool,
+    pub player_a_goes_first: bool,
     pub initial_validation_program_hash: Hash,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
@@ -39,9 +38,9 @@ impl FactoryGame {
         &self,
         game_id: &GameID,
         timeout: &Timeout,
-        sender_side: bool,
+        local_is_player_a: bool,
     ) -> GameStartInfo {
-        let is_my_turn = sender_side == self.sender_goes_first;
+        let is_my_turn = local_is_player_a == self.player_a_goes_first;
         let handler_program = if is_my_turn {
             self.my_turn_handler.clone()
         } else {
@@ -52,15 +51,15 @@ impl FactoryGame {
         } else {
             GameHandler::TheirTurnHandler(handler_program.into())
         };
-        let (my_contribution, their_contribution) = if sender_side {
+        let (my_contribution, their_contribution) = if local_is_player_a {
             (
-                self.sender_contribution.clone(),
-                self.receiver_contribution.clone(),
+                self.player_a_contribution.clone(),
+                self.player_b_contribution.clone(),
             )
         } else {
             (
-                self.receiver_contribution.clone(),
-                self.sender_contribution.clone(),
+                self.player_b_contribution.clone(),
+                self.player_a_contribution.clone(),
             )
         };
 
@@ -90,17 +89,19 @@ pub struct Game;
 impl Game {
     /// Run the canonical atomic proposal factory.
     ///
-    /// Parameters are the exact CLVM object sent over the wire. The result is a
+    /// `arguments` is the uniform proper list
+    /// `(player_a_contribution player_b_contribution game_parameters)`.
+    /// The result is a
     /// non-empty proper list of 10-field game records:
-    /// (sender_contribution receiver_contribution sender_goes_first initial_move
+    /// (player_a_contribution player_b_contribution player_a_goes_first initial_move
     ///  initial_max_move_size initial_state initial_mover_share my_turn_handler
     ///  their_turn_handler initial_validator)
     pub fn run_factory(
         allocator: &mut AllocEncoder,
         factory_program: Puzzle,
-        parameters: &Program,
+        arguments: &Program,
     ) -> Result<Vec<FactoryGame>, Error> {
-        let args = parameters.to_clvm(allocator).into_gen()?;
+        let args = arguments.to_clvm(allocator).into_gen()?;
         let factory_clvm = factory_program.to_clvm(allocator).into_gen()?;
         let result = run_program(
             allocator.allocator(),
@@ -136,22 +137,22 @@ impl Game {
 
             let turn_atom = atom_from_clvm(allocator, fields[2]).ok_or_else(|| {
                 Error::StrErr(format!(
-                    "proposal factory game {index} sender_goes_first is not an atom"
+                    "proposal factory game {index} player_a_goes_first is not an atom"
                 ))
             })?;
-            let sender_goes_first = match turn_atom.as_slice() {
+            let player_a_goes_first = match turn_atom.as_slice() {
                 [] => false,
                 [1] => true,
                 _ => {
                     return Err(Error::StrErr(format!(
-                        "proposal factory game {index} sender_goes_first is not canonical boolean"
+                        "proposal factory game {index} player_a_goes_first is not canonical boolean"
                     )));
                 }
             };
 
-            let sender_contribution = Amount::from_clvm(allocator, fields[0])?;
-            let receiver_contribution = Amount::from_clvm(allocator, fields[1])?;
-            let amount = sender_contribution.clone() + receiver_contribution.clone();
+            let player_a_contribution = Amount::from_clvm(allocator, fields[0])?;
+            let player_b_contribution = Amount::from_clvm(allocator, fields[1])?;
+            let amount = player_a_contribution.clone() + player_b_contribution.clone();
             let initial_validation_program = Rc::new(Program::from_nodeptr(allocator, fields[9])?);
             let initial_validation_program_hash = initial_validation_program
                 .sha256tree(allocator)
@@ -172,10 +173,10 @@ impl Game {
             }
 
             games.push(FactoryGame {
-                sender_contribution,
-                receiver_contribution,
+                player_a_contribution,
+                player_b_contribution,
                 amount,
-                sender_goes_first,
+                player_a_goes_first,
                 initial_validation_program_hash,
                 initial_move: atom_from_clvm(allocator, fields[3])
                     .ok_or_else(|| {
@@ -243,12 +244,12 @@ mod atomic_factory_tests {
         );
     }
 
-    fn factory_game(sender_goes_first: bool) -> FactoryGame {
+    fn factory_game(player_a_goes_first: bool) -> FactoryGame {
         FactoryGame {
-            sender_contribution: Amount::new(10),
-            receiver_contribution: Amount::new(20),
+            player_a_contribution: Amount::new(10),
+            player_b_contribution: Amount::new(20),
             amount: Amount::new(30),
-            sender_goes_first,
+            player_a_goes_first,
             initial_validation_program_hash: Hash::default(),
             initial_move: vec![],
             initial_max_move_size: 32,
@@ -262,17 +263,17 @@ mod atomic_factory_tests {
 
     #[test]
     fn factory_game_selects_handlers_and_contributions_for_both_sides() {
-        for sender_goes_first in [false, true] {
-            let game = factory_game(sender_goes_first);
-            let sender = game.game_start(&GameID(1), &Timeout::new(15), true);
-            let receiver = game.game_start(&GameID(1), &Timeout::new(15), false);
+        for player_a_goes_first in [false, true] {
+            let game = factory_game(player_a_goes_first);
+            let player_a = game.game_start(&GameID(1), &Timeout::new(15), true);
+            let player_b = game.game_start(&GameID(1), &Timeout::new(15), false);
 
-            assert_eq!(sender.is_my_turn(), sender_goes_first);
-            assert_eq!(receiver.is_my_turn(), !sender_goes_first);
-            assert_eq!(sender.my_contribution_this_game, Amount::new(10));
-            assert_eq!(sender.their_contribution_this_game, Amount::new(20));
-            assert_eq!(receiver.my_contribution_this_game, Amount::new(20));
-            assert_eq!(receiver.their_contribution_this_game, Amount::new(10));
+            assert_eq!(player_a.is_my_turn(), player_a_goes_first);
+            assert_eq!(player_b.is_my_turn(), !player_a_goes_first);
+            assert_eq!(player_a.my_contribution_this_game, Amount::new(10));
+            assert_eq!(player_a.their_contribution_this_game, Amount::new(20));
+            assert_eq!(player_b.my_contribution_this_game, Amount::new(20));
+            assert_eq!(player_b.their_contribution_this_game, Amount::new(10));
         }
     }
 }

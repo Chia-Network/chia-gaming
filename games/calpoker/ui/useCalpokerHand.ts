@@ -97,15 +97,14 @@ export function useCalpokerHand(
       const hand = handSourceRef.current.hand;
       if (hand === null) throw new Error('California Poker hand is unavailable');
       hand.update(update);
-      const next = hand.getState();
       controller.dispatch(
         command.type === 'make-move'
           ? {
               type: 'make-move',
-              gameId: next.gameId,
+              memberIndex: 0,
               readable: command.readable,
             }
-          : { type: 'accept-settlement', gameId: next.gameId },
+          : { type: 'accept-settlement', memberIndex: 0 },
       );
     },
     [],
@@ -164,7 +163,7 @@ export function useCalpokerHand(
     const controller = requireLiveGameHandSource(handSourceRef.current);
     if (!controller.isChannelReady()) return;
     const m = handState.moveNumber;
-    const submissionKey = `${handState.gameId}:${m}`;
+    const submissionKey = `0:${m}`;
     if (autoSubmissionRef.current === submissionKey) return;
     if (shouldAutoFireCalpokerMove(handFinished, handState.isPlayerTurn, m)) {
       autoSubmissionRef.current = submissionKey;
@@ -181,7 +180,6 @@ export function useCalpokerHand(
     interactive,
     handleMakeMove,
     submitMove1,
-    handState.gameId,
     handState.iStarted,
     handState.settlementOutcome,
   ]);

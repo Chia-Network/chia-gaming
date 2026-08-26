@@ -1,7 +1,5 @@
 import type { GameCommandDisposition, SessionController } from '../../hooks/SessionController';
 import { protocolIdForCatalog } from '../gameIdentities';
-import { encodeGameProposalParameters } from '../gameProposalCodec';
-import { validateHandProposal } from '../gameRegistry';
 import { coinIdHex } from './gameSessionEvents';
 import type {
   SessionMachineEffect,
@@ -75,10 +73,6 @@ export class SessionMachineInterpreter {
           this.commandFailed('propose-game', new Error('channel is not active off-chain'));
           return;
         }
-        if (!validateHandProposal(effect.handProposal)) {
-          this.commandFailed('propose-game', new Error('proposal terms are invalid'));
-          return;
-        }
         if (dependencies.getState().model.game.activeIds.length > 0) {
           this.commandFailed('propose-game', new Error('a game is already active'));
           return;
@@ -89,7 +83,10 @@ export class SessionMachineInterpreter {
             dependencies.controller.proposeGame({
               game_type: protocolIdForCatalog(effect.handProposal.gameType),
               timeout: effect.handProposal.gameTimeout,
-              parameters: encodeGameProposalParameters(effect.handProposal, dependencies.iStarted),
+              player_a_contribution: effect.handProposal.playerAContribution,
+              player_b_contribution: effect.handProposal.playerBContribution,
+              sender_is_player_a: effect.handProposal.senderIsPlayerA,
+              parameters: effect.handProposal.parameters,
             }),
           (ids) =>
             dependencies.dispatch({

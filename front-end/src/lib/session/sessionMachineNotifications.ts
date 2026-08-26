@@ -136,9 +136,13 @@ export function reduceSessionNotification(
   }
 
   if ('ProposalMade' in notification) {
-    const incoming = proposalGroupFromProposalMade(notification.ProposalMade, iStarted);
+    const incoming = proposalGroupFromProposalMade(notification.ProposalMade);
     if (!incoming) {
-      effects.push({ type: 'controller-go-on-chain' });
+      step({
+        type: 'enqueue-error',
+        kind: 'action-failed',
+        message: 'The peer sent an invalid game proposal.',
+      });
       return { state: current, effects };
     }
     step({
@@ -282,20 +286,27 @@ export function reduceSessionNotification(
 
   const durableKind = durableNotificationKind(notification);
   if (durableKind === 'accepted-group') {
-    const accepted = notification.ProposalAccepted!;
-    const id = String(accepted.id);
-    const amount = parseAmount(accepted.amount);
-    if (amount == null) throw new Error(`ProposalAccepted ${id} missing amount`);
-    if (typeof accepted.our_turn !== 'boolean') {
-      throw new Error(`ProposalAccepted ${id} missing Rust turn authority`);
+    const accepted = notification.ProposalAcceptedGroup!;
+    if (!Array.isArray(accepted.members) || accepted.members.length === 0) {
+      throw new Error('ProposalAcceptedGroup missing members');
     }
+    const members = accepted.members.map((member) => {
+      const id = String(member.id);
+      const amount = parseAmount(member.amount);
+      if (amount == null) throw new Error(`ProposalAcceptedGroup ${id} missing amount`);
+      if (typeof member.our_turn !== 'boolean') {
+        throw new Error(`ProposalAcceptedGroup ${id} missing Rust turn authority`);
+      }
+      return { id, amount, ourTurn: member.our_turn };
+    });
+    if (new Set(members.map((member) => member.id)).size !== members.length) {
+      throw new Error('ProposalAcceptedGroup contains duplicate member IDs');
+    }
+    const id = members[0]!.id;
     const previousHandIds = current.model.game.currentHandIds;
     step({
       type: 'notification-accepted-group',
-      id,
-      amount,
-      iStarted,
-      isMyTurn: accepted.our_turn,
+      members,
     });
     const first =
       previousHandIds.length !== current.model.game.currentHandIds.length ||

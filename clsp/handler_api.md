@@ -8,34 +8,51 @@ game-specific — calpoker is one implementation.
 
 
 ## Game Factory
-Both peers run the same deterministic factory with only the canonical
-parameters program. There is no proposal parser. A factory returns a proper,
-nonempty list of game records. Every record is a proper list with exactly 10
-fields:
+Both peers run the same deterministic factory once with the uniform proper-list
+wrapper:
 
 ```
-(sender_contribution receiver_contribution sender_goes_first initial_move
+(player_a_contribution player_b_contribution game_parameters)
+```
+
+`game_parameters` is the game's opaque CLVM value converted from Bencodex by
+Rust. Bencodex text and byte strings are distinct on the wire even though both
+become CLVM atoms; integers use canonical signed CLVM integer encoding,
+booleans map to nil/`1`, null maps to nil, and lists remain proper lists.
+Timeout, channel identity, local identity, and `sender_is_player_a` are not
+factory inputs. A factory returns a proper, nonempty list of game records.
+Every record is a proper list with exactly 10 fields:
+
+```
+(player_a_contribution player_b_contribution player_a_goes_first initial_move
  initial_max_move_size initial_state initial_mover_share my_turn_handler
  their_turn_handler initial_validator)
 ```
 
-`sender_goes_first` is canonical nil or `1`. Handler order is always the
+`player_a_goes_first` is canonical nil or `1`. Handler order is always the
 handler for the player whose turn is first, followed by the handler for the
-waiting player. Both peers execute the identical factory output and select
-their initial handler from `sender_goes_first` and their side of the proposal.
+waiting player. Both peers execute and compare the complete ordered factory
+output. Rust maps player A/B to sender/receiver and local/opponent globally
+using the proposal's one `sender_is_player_a` bit; member order never changes.
+The first member's derived initial-validator hash is the registered protocol
+identity.
 
-The host derives `amount` by adding the sender and receiver contributions. It
+The host derives `amount` by adding the player A and B contributions. It
 also calculates the initial validator's tree hash, which is the protocol game
 ID for the first record. Factories do not return either redundant value.
 
 Canonical CLVM parameters, produced only inside the Rust host by converting the
 game's structured Bencodex proposal parameters:
 
-- Calpoker: proper list `(per_player_stake sender_goes_first)`.
-- Space Poker: proper list
-  `(per_player_stake bet_unit sender_goes_first)`.
-- Krunk: the stake atom. Its factory is curried with the dictionary public key
-  and tree and returns the fixed two-game atomic hand.
+- Calpoker: nil.
+- Space Poker: one positive bet-unit integer atom.
+- Krunk: nil. Its factory is curried with the dictionary public key and tree
+  and returns the fixed two-game atomic hand.
+
+A factory probe returns the complete representative invocation list, not only
+`game_parameters`: Calpoker currently probes with `(1 1 ())`, Space Poker with
+representative contributions plus a positive bet unit, and Krunk with
+`(100 100 ())`.
 
 
 ## Handler parameters

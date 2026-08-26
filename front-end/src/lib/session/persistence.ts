@@ -14,11 +14,7 @@ import type {
   TerminalSessionSave,
 } from './saveEnvelope';
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
-import {
-  decodePersistedGameState,
-  encodePersistedHandProposalParameters,
-  isCatalogGameType,
-} from '../gameRegistry';
+import { decodePersistedGameState, isCatalogGameType } from '../gameRegistry';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -280,11 +276,12 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
 
 function savedHandProposalFromModel(handProposal: HandProposal): SavedHandProposal {
   return {
-    my_contribution: handProposal.myContribution.toString(),
-    their_contribution: handProposal.theirContribution.toString(),
+    player_a_contribution: handProposal.playerAContribution.toString(),
+    player_b_contribution: handProposal.playerBContribution.toString(),
+    sender_is_player_a: handProposal.senderIsPlayerA,
     game_timeout: handProposal.gameTimeout.toString(),
     game_type: handProposal.gameType,
-    parameters: encodePersistedHandProposalParameters(handProposal),
+    parameters: handProposal.parameters,
   };
 }
 

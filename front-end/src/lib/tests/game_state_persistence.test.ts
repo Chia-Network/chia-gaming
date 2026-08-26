@@ -50,7 +50,8 @@ describe('opaque persisted game state helpers', () => {
     const alice = initialKrunkGameState('alice');
     const bob = initialKrunkGameState('bob');
     const encoded = krunkStateCodec.encode({
-      games: { 'alice-game': alice, 'bob-game': bob },
+      perPlayerStake: 100n,
+      members: [alice, bob],
     });
     expect(decodePersistedGameState(encoded)).toEqual({
       persisted: encoded,

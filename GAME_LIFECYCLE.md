@@ -41,10 +41,12 @@ factory by the request's hash `game_type`, converts the exact structured
 `parameters` to CLVM, runs the factory,
 and requires that the first returned record's `initial_validation_program_hash`
 equals that `game_type`. The wire member list must be non-empty and have the
-same ordered cardinality as the factory result. Each wire member must match the corresponding canonical factory
-record: sender/receiver contributions, amount, `sender_goes_first`, initial
-commitments, fixed handlers' derived role, and validator commitment. Any
-failure rejects the batch (triggering rollback and go-on-chain).
+same ordered cardinality as the factory result. Each wire member must match the
+corresponding canonical factory record: player-A/player-B contributions,
+derived amount, `player_a_goes_first`, initial commitments, fixed handlers, and
+validator program/hash. The proposal-wide `sender_is_player_a` maps the sender
+to the stable A/B orientation; it never changes member order. Any failure
+rejects the batch (triggering rollback and go-on-chain).
 
 The normal per-game checks are then applied while recording each member:
 
@@ -55,8 +57,8 @@ skip due to cancelled proposals, but cannot go backwards).
 - **Nonce gap cap:** The nonce must not jump more than `MAX_NONCE_GAP` (1000)
 ahead of the expected value. Prevents a malicious peer from claiming an
 absurdly high nonce.
-- **Amount consistency:** Each member's `amount` must equal its sender and
-receiver contributions. Prevents the peer from creating games where money
+- **Amount consistency:** Each member's `amount` must equal its player A plus
+player B contributions. Prevents the peer from creating games where money
 appears or disappears.
 - **Game timeout:** The proposal's `timeout` must be positive. The UX defaults
   to 15 blocks, but peers can propose different positive game timeouts.
@@ -89,7 +91,7 @@ The cancel is silently discarded — `drain_queue_into_batch` checks
 authoritative (they are the only one who can accept, so deciding to cancel
 resolves it). Cancellation by the **proposer** is best-effort: the receiver
 may have already accepted on a previous potato pass, in which case the
-proposer's cancel evaporates and a `ProposalAccepted` arrives instead.
+proposer's cancel evaporates and a `ProposalAcceptedGroup` arrives instead.
 - **Stale accept:** A player queues `AcceptProposal` but the proposal was
 already cancelled by the peer before the accept is sent. The accept silently
 evaporates — the `ProposalCancelled` from the peer's cancel already resolved
@@ -148,9 +150,9 @@ member ID.
 
 **Receiver derivation:** The receiver runs the same factory and compares the
 entire ordered wire group with its local result. It does not parse one member
-at a time to discover peer-specific handlers. The higher layer selects the
-appropriate fixed handler and swaps sender/receiver contributions into its
-local perspective.
+at a time to discover peer-specific handlers. The higher layer uses
+`sender_is_player_a` to project stable A/B contributions and fixed first/waiting
+handlers into its local perspective.
 
 **Accept/cancel expansion:** Calling `accept_proposal` or `cancel_proposal`
 with any member ID expands to the complete group. Acceptance performs another
@@ -188,9 +190,10 @@ A single game's lifecycle, independent of other concurrent games:
 1. Propose  (BatchAction::ProposeGroup)
    → all factory-produced games enter proposed_games on both sides
 
-2. Accept   (BatchAction::AcceptProposal)
-   → referee + game handler instantiated, game moves to live_games
-   → both sides receive ProposalAccepted with that side's Rust-owned initial turn
+2. Accept   (one BatchAction::AcceptProposal per member, in factory order)
+   → all referees + game handlers are instantiated atomically
+   → each side receives exactly one ProposalAcceptedGroup
+     { members: [{ id, amount, our_turn }, ...] } in factory order
 
 3. Play     (BatchAction::Move, alternating turns)
    → each move updates the referee state and mover_share
@@ -205,6 +208,10 @@ All of these actions are delivered via the
 when the potato is held, potentially alongside actions for other games. Multiple
 games can be in flight simultaneously, and any potato pass may carry actions
 for several of them.
+
+For every accepted member, the two peers report opposite `our_turn` bits.
+Insufficient aggregate balance emits `InsufficientBalance`, cancels the group,
+and emits no `ProposalAcceptedGroup`; the UI must not synthesize an acceptance.
 
 The `ChannelState` tracks `live_games`, `pending_settlements`,
 player balances (`my_allocated_balance`, `their_allocated_balance`), and the

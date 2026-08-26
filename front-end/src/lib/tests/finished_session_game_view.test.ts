@@ -53,10 +53,8 @@ describe('finished session shell display', () => {
         currentHandIds: ['picker', 'guesser'],
         lastDisplayedId: 'picker',
         handState: krunkStateCodec.encode({
-          games: {
-            picker: initialKrunkGameState('alice'),
-            guesser: initialKrunkGameState('bob'),
-          },
+          perPlayerStake: 100n,
+          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       },
     });
@@ -71,10 +69,8 @@ describe('finished session shell display', () => {
         currentHandIds: ['picker', 'guesser'],
         lastDisplayedId: 'picker',
         handState: krunkStateCodec.encode({
-          games: {
-            picker: initialKrunkGameState('alice'),
-            guesser: initialKrunkGameState('bob'),
-          },
+          perPlayerStake: 100n,
+          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       },
     });

@@ -7,7 +7,7 @@ import {
   type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
-import { spacepokerProposalSenderGoesFirst } from './firstPlayer';
+import { spacepokerProposalParameters } from './unitSize';
 
 function isForfeitOutcome(outcome: SettlementOutcome): boolean {
   return outcome === 'forfeited_skipped_reveal' || outcome === 'forfeited_we_accepted';
@@ -44,7 +44,6 @@ export type SpTerminalState =
   | 'won-by-opponent-failure';
 
 export interface SpacepokerHandState {
-  gameId: string;
   perPlayerStake: bigint;
   gameState: SpGameState;
   playerHoleCards: [bigint, bigint] | null;
@@ -170,8 +169,6 @@ export function isSpacepokerHandState(value: unknown): value is SpacepokerHandSt
   if (typeof value !== 'object' || value === null) return false;
   const state = value as Partial<SpacepokerHandState>;
   if (
-    typeof state.gameId !== 'string' ||
-    state.gameId.length === 0 ||
     typeof state.perPlayerStake !== 'bigint' ||
     state.perPlayerStake <= 0n ||
     !isGameState(state.gameState) ||
@@ -221,12 +218,13 @@ function initialState(
   init: GameHandInitialization,
   unitSizeMojos: bigint,
 ): SpacepokerHandState {
-  const senderGoesFirst = spacepokerProposalSenderGoesFirst(init.iStarted, init.origin);
-  const isMyTurn = init.origin === 'local' ? senderGoesFirst : !senderGoesFirst;
+  const member = init.members[0]!;
+  if (member.amount <= 0n || member.amount % 2n !== 0n) {
+    throw new Error('Space Poker requires an even positive approved member amount');
+  }
   return {
-    gameId: init.gameIds[0]!,
-    perPlayerStake: init.handProposal.myContribution,
-    gameState: { handler: 0n, myTurn: isMyTurn, N: 4n },
+    perPlayerStake: member.amount / 2n,
+    gameState: { handler: 0n, myTurn: member.ourTurn, N: 4n },
     playerHoleCards: null,
     playerBoost: false,
     opponentHoleCards: null,
@@ -583,14 +581,14 @@ function spacepokerHandFromState(initial: SpacepokerHandState): SpacepokerHand {
 }
 
 export function createSpacepokerHand(init: GameHandInitialization): SpacepokerHand {
-  if (init.gameIds.length !== 1 || init.handProposal.gameType !== 'spacepoker') {
+  if (init.members.length !== 1 || init.handProposal.gameType !== 'spacepoker') {
     throw new Error('Space Poker hand requires one game and Space Poker proposal terms');
   }
-  const unitSizeMojos =
-    'unitSizeMojos' in init.handProposal && typeof init.handProposal.unitSizeMojos === 'bigint'
-      ? init.handProposal.unitSizeMojos
-      : 1n;
-  return spacepokerHandFromState(initialState(init, unitSizeMojos));
+  const parameters = spacepokerProposalParameters.decode(init.handProposal.parameters);
+  if (!parameters) {
+    throw new Error('Space Poker hand requires valid proposal parameters');
+  }
+  return spacepokerHandFromState(initialState(init, parameters.betUnitMojos));
 }
 
 export function restoreSpacepokerHand(savedState: SpacepokerHandState): SpacepokerHand {

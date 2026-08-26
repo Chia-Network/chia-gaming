@@ -109,11 +109,7 @@ describe('session machine behavior sequences', () => {
 
         groupIds: ['7'],
 
-        acceptedId: '7',
-
-        amount: '20',
-
-        startTurn: 'my-turn',
+        members: [{ amount: '20', startTurn: 'my-turn' }],
 
         origin: 'local',
 

@@ -168,7 +168,8 @@ against the event state in `LocalTestUIReceiver`:
 - Move actions wait for `game_accepted_ids` or `opponent_moved_in_game` to
   contain the referenced `GameID`.
 - `AcceptProposal` is two-phase: first it waits for the proposal to arrive,
-  then it waits for `ProposalAccepted`, `InsufficientBalance`, or
+  then it waits for membership in `ProposalAcceptedGroup`,
+  `InsufficientBalance`, or
   `ProposalCancelled` after `accept_proposal` has been called.
 - Global actions such as `GoOnChain`, `WaitBlocks`, `AcceptSettlement`, and
   `CleanShutdown` are unconditional once they become the next scripted action.

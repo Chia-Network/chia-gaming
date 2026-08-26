@@ -54,16 +54,15 @@ describe('Krunk automatic moves', () => {
   it('fires an automatic clue from restored semantic state', () => {
     const dispatch = jest.fn();
     const persisted = krunkStateCodec.encode({
-      gameIds: ['picker', 'guesser'],
       perPlayerStake: 100n,
-      games: {
-        picker: {
+      members: [
+        {
           ...initialKrunkGameState('alice'),
           handler: KrunkHandler.AliceClue,
           myTurn: true,
         },
-        guesser: initialKrunkGameState('bob'),
-      },
+        initialKrunkGameState('bob'),
+      ],
     });
 
     function Harness() {
@@ -73,7 +72,7 @@ describe('Krunk automatic moves', () => {
           hand: testHand(persisted),
           port: { isChannelReady: () => true, dispatch },
         },
-        'picker',
+        0,
       );
       return null;
     }
@@ -86,7 +85,7 @@ describe('Krunk automatic moves', () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'make-move',
-        gameId: 'picker',
+        memberIndex: 0,
         readable: null,
       }),
     );
@@ -104,19 +103,18 @@ describe('Krunk draft continuity', () => {
       },
     });
     const persisted = krunkStateCodec.encode({
-      gameIds: ['picker', 'guesser'],
       perPlayerStake: 100n,
-      games: {
-        picker: {
+      members: [
+        {
           ...initialKrunkGameState('alice'),
           handler: KrunkHandler.WaitingCommit,
           secretWord: null,
         },
-        guesser: {
+        {
           ...initialKrunkGameState('bob'),
           handler: KrunkHandler.BobWaiting,
         },
-      },
+      ],
     });
     const renderPhases: string[] = [];
     const controller = { dispatch: jest.fn() } as LiveGamePort;
@@ -160,16 +158,16 @@ describe('Krunk draft continuity', () => {
     const initial = krunkStateCodec.decode(persisted) as KrunkHandState;
     const pickerSettled = krunkStateCodec.encode({
       ...initial,
-      games: {
-        ...initial.games,
-        picker: {
-          ...initial.games.picker,
+      members: [
+        {
+          ...initial.members[0],
           handler: KrunkHandler.Terminal,
           myTurn: false,
           outcome: 'win',
           settlementOutcome: 'opponent_timed_out',
         },
-      },
+        initial.members[1],
+      ],
     });
     act(() => {
       renderer!.update(
@@ -190,16 +188,16 @@ describe('Krunk draft continuity', () => {
     const pickerState = krunkStateCodec.decode(pickerSettled) as KrunkHandState;
     const bothSettled = krunkStateCodec.encode({
       ...krunkStateCodec.decode(pickerSettled)!,
-      games: {
-        ...pickerState.games,
-        guesser: {
-          ...pickerState.games.guesser,
+      members: [
+        pickerState.members[0],
+        {
+          ...pickerState.members[1],
           handler: KrunkHandler.Terminal,
           myTurn: false,
           outcome: 'lose',
           settlementOutcome: 'timed_out_waiting_for_our_move',
         },
-      },
+      ],
     });
     act(() => {
       renderer!.update(
@@ -252,12 +250,8 @@ describe('Krunk draft continuity', () => {
       throw new Error('word rejected');
     });
     const persisted = krunkStateCodec.encode({
-      gameIds: ['picker', 'guesser'],
       perPlayerStake: 100n,
-      games: {
-        picker: initialKrunkGameState('alice'),
-        guesser: initialKrunkGameState('bob'),
-      },
+      members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
     });
     let renderer: ReactTestRenderer;
 
@@ -286,7 +280,7 @@ describe('Krunk draft continuity', () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'make-move',
-        gameId: 'picker',
+        memberIndex: 0,
       }),
     );
     act(() => renderer!.unmount());
@@ -308,12 +302,8 @@ describe('Krunk draft continuity', () => {
     });
     const dispatch = jest.fn();
     const persisted = krunkStateCodec.encode({
-      gameIds: ['picker', 'guesser'],
       perPlayerStake: 100n,
-      games: {
-        picker: initialKrunkGameState('alice'),
-        guesser: initialKrunkGameState('bob'),
-      },
+      members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
     });
     let renderer: ReactTestRenderer;
 
@@ -344,7 +334,7 @@ describe('Krunk draft continuity', () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'make-move',
-        gameId: 'picker',
+        memberIndex: 0,
       }),
     );
     act(() => renderer!.unmount());
@@ -362,41 +352,38 @@ describe('Krunk draft continuity', () => {
   });
 
   it('keeps durable role slots stable after one sibling ends', () => {
-    const current = ['0', '1'];
     const aliceFirst = krunkStateCodec.encode({
-      gameIds: current,
       perPlayerStake: 100n,
-      games: {
-        '0': {
+      members: [
+        {
           ...initialKrunkGameState('alice'),
           handler: KrunkHandler.Terminal,
           myTurn: false,
         },
-        '1': initialKrunkGameState('bob'),
-      },
+        initialKrunkGameState('bob'),
+      ],
     });
 
-    expect(krunkGameSlots(current, krunkStateCodec.decode(aliceFirst))).toEqual({
-      aliceGameId: '0',
-      bobGameId: '1',
+    expect(krunkGameSlots(krunkStateCodec.decode(aliceFirst)!)).toEqual({
+      aliceMemberIndex: 0,
+      bobMemberIndex: 1,
       aliceActive: false,
       bobActive: true,
     });
     const bobFirst = krunkStateCodec.encode({
-      gameIds: current,
       perPlayerStake: 100n,
-      games: {
-        '0': {
+      members: [
+        {
           ...initialKrunkGameState('bob'),
           handler: KrunkHandler.Terminal,
           myTurn: false,
         },
-        '1': initialKrunkGameState('alice'),
-      },
+        initialKrunkGameState('alice'),
+      ],
     });
-    expect(krunkGameSlots(current, krunkStateCodec.decode(bobFirst))).toEqual({
-      aliceGameId: '1',
-      bobGameId: '0',
+    expect(krunkGameSlots(krunkStateCodec.decode(bobFirst)!)).toEqual({
+      aliceMemberIndex: 1,
+      bobMemberIndex: 0,
       aliceActive: true,
       bobActive: false,
     });
@@ -417,14 +404,13 @@ describe('Krunk draft continuity', () => {
       outcome: 'lose' as const,
     };
     const persisted = krunkStateCodec.encode({
-      gameIds: ['0', '1'],
       perPlayerStake: 100n,
-      games: { '0': alice, '1': bob },
+      members: [alice, bob],
     });
 
-    expect(krunkGameSlots(['0', '1'], krunkStateCodec.decode(persisted))).toEqual({
-      aliceGameId: '0',
-      bobGameId: '1',
+    expect(krunkGameSlots(krunkStateCodec.decode(persisted)!)).toEqual({
+      aliceMemberIndex: 0,
+      bobMemberIndex: 1,
       aliceActive: false,
       bobActive: false,
     });

@@ -32,7 +32,6 @@ import {
 
 function handState(overrides: Partial<SpacepokerHandState> = {}): SpacepokerHandState {
   return {
-    gameId: '7',
     perPlayerStake: 50n,
     gameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
     playerHoleCards: [1n, 2n],
@@ -130,7 +129,7 @@ describe('Space Poker terminal UX', () => {
     const hand = restoreSpacepokerHand(current);
     hand.receive({
       type: 'move-readable',
-      gameId: '7',
+      memberIndex: 0,
       readable: new Uint8Array([0x80]),
       moverShare: '0',
     });
@@ -182,7 +181,7 @@ describe('Space Poker machine-owned hand state', () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'make-move',
-        gameId: '7',
+        memberIndex: 0,
         readable: null,
       }),
     );
@@ -270,7 +269,7 @@ describe('Space Poker machine-owned hand state', () => {
     expect(() => act(() => hand?.handleCheck())).toThrow('check rejected');
     expect(rejected).toMatchObject({
       type: 'make-move',
-      gameId: '7',
+      memberIndex: 0,
     });
     act(() => renderer?.update(React.createElement(Harness)));
     expect(hand?.gameState).toEqual({ handler: SpHandler.MidRound, myTurn: true, N: 3n });
@@ -299,7 +298,7 @@ describe('Space Poker machine-owned hand state', () => {
     act(() => hand?.handleFold());
 
     expect(committed).toHaveLength(1);
-    expect(committed[0]).toMatchObject({ type: 'accept-settlement', gameId: '7' });
+    expect(committed[0]).toMatchObject({ type: 'accept-settlement', memberIndex: 0 });
     expect(isSpacepokerHandState(persisted.state)).toBe(true);
     expect(persisted.state).toMatchObject({
       gameState: { handler: SpHandler.Folded, myTurn: false, N: 3n },

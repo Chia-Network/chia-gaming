@@ -1,7 +1,6 @@
 import {
   equalHandProposalBase,
   type GamePackageRegistration,
-  type HandProposal,
   type ProposalParameterCodec,
 } from '../../host';
 import {
@@ -11,7 +10,6 @@ import {
   type CalpokerHandState,
 } from './serialize';
 import { formatCalpokerMojos } from './formatting';
-import { calpokerProposalSenderGoesFirst } from './firstPlayer';
 
 export {
   calpokerOutcomeFromState,
@@ -20,40 +18,16 @@ export {
   reduceCalpokerFeatureState,
 } from './serialize';
 
-export type CalpokerFactoryParameters = {
-  perPlayerStake: bigint;
-  senderGoesFirst: boolean;
-};
+export type CalpokerFactoryParameters = Record<string, never>;
 
 export const calpokerProposalParameters: ProposalParameterCodec<CalpokerFactoryParameters> = {
-  decode(value) {
-    if (
-      !Array.isArray(value) ||
-      value.length !== 2 ||
-      typeof value[0] !== 'bigint' ||
-      value[0] <= 0n ||
-      typeof value[1] !== 'boolean'
-    ) {
-      return null;
-    }
-    const [perPlayerStake, senderGoesFirst] = value;
-    return { perPlayerStake, senderGoesFirst };
-  },
-  encode: (params) => [params.perPlayerStake, params.senderGoesFirst],
+  decode: (value) => (value === null ? {} : null),
+  encode: () => null,
 };
-
-export function validateCalpokerHandProposal(handProposal: HandProposal): boolean {
-  return (
-    handProposal.myContribution === handProposal.theirContribution &&
-    handProposal.myContribution > 0n &&
-    handProposal.gameTimeout > 0n
-  );
-}
 
 const registration: GamePackageRegistration<
   CalpokerHandState,
   CalpokerHand,
-  { amount: bigint },
   CalpokerFactoryParameters
 > = {
   gameType: 'calpoker',
@@ -61,40 +35,12 @@ const registration: GamePackageRegistration<
   createHand: createCalpokerHand,
   restoreHand: restoreCalpokerHand,
   proposalParameters: calpokerProposalParameters,
-  describeHandProposal: (handProposal) =>
-    `Stake ${formatCalpokerMojos(handProposal.myContribution)} each`,
-  draft: {
-    default: (perGameAmount) => ({ amount: perGameAmount }),
-    fromHandProposal: (handProposal) => ({ amount: handProposal.myContribution }),
-    update: (current, update) => ({ ...current, ...update }),
-    toHandProposal(draft, gameTimeout) {
-      const handProposal = {
-        gameType: 'calpoker',
-        myContribution: draft.amount,
-        theirContribution: draft.amount,
-        gameTimeout,
-      };
-      return validateCalpokerHandProposal(handProposal) ? handProposal : null;
-    },
-  },
-  toProposalParameters(handProposal, iStarted) {
-    return {
-      perPlayerStake: handProposal.myContribution,
-      senderGoesFirst: calpokerProposalSenderGoesFirst(iStarted, 'local'),
-    };
-  },
-  decodeHandProposal(base, params, context) {
-    if (
-      params.perPlayerStake !== base.myContribution ||
-      params.senderGoesFirst !==
-        calpokerProposalSenderGoesFirst(context.iStarted, context.origin)
-    ) {
-      return null;
+  describeHandProposal(handProposal) {
+    if (calpokerProposalParameters.decode(handProposal.parameters) === null) {
+      throw new Error('California Poker proposal parameters are invalid');
     }
-    const handProposal = { gameType: 'calpoker', ...base };
-    return validateCalpokerHandProposal(handProposal) ? handProposal : null;
+    return `Stake ${formatCalpokerMojos(handProposal.playerAContribution)} each`;
   },
-  validateHandProposal: validateCalpokerHandProposal,
   handProposalsEqual: equalHandProposalBase,
 };
 

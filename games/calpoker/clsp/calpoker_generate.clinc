@@ -20,18 +20,23 @@
 (import games.calpoker.clsp.onchain.arrange_cards exposing get_final_cards_in_canonical_order pull_out_cards)
 (import games.calpoker.clsp.onchain.onehandcalc exposing onehandcalc)
 
-; Deterministic factory parameters: (per_player_stake sender_goes_first).
+; Uniform factory arguments: (player_a_contribution player_b_contribution ()).
 ; Returns one canonical 10-field game record.
-(defun calpoker_factory (@ _args (per_player_stake sender_goes_first))
+(defun calpoker_factory
+    (@ _args (player_a_contribution player_b_contribution game_parameters))
     (assert
-        (> per_player_stake 0)
-        (or (not sender_goes_first) (= sender_goes_first 1))
-        (deep= _args (li per_player_stake sender_goes_first))
+        (> player_a_contribution 0)
+        (= player_a_contribution player_b_contribution)
+        (not game_parameters)
+        (deep=
+            _args
+            (li player_a_contribution player_b_contribution game_parameters)
+        )
         (li
             (li
-                per_player_stake
-                per_player_stake
-                sender_goes_first
+                player_a_contribution
+                player_b_contribution
+                1
                 0
                 32
                 0

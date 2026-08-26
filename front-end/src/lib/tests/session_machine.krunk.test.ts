@@ -12,11 +12,10 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '1',
-      amount: '100',
-      iStarted: false,
-      isMyTurn: false,
+      members: [
+        { id: '1', amount: '100', ourTurn: false },
+        { id: '2', amount: '100', ourTurn: true },
+      ],
     });
 
     state = trackProposal(state, ['7'], CALPOKER_TERMS);
@@ -45,19 +44,11 @@ describe('session machine behavior sequences', () => {
     expect(state.model.game.currentHandIds).toEqual(['1', '2']);
     expect(state.model.game.currentHandOrigin).toBe('peer');
 
-    expect(Object.keys(krunkStateCodec.decode(state.model.game.handState)!.games)).toEqual([
-      '1',
-
-      '2',
-    ]);
+    expect(krunkStateCodec.decode(state.model.game.handState)!.members).toHaveLength(2);
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '20',
-      iStarted: false,
-      isMyTurn: true,
+      members: [{ id: '7', amount: '20', ourTurn: true }],
     });
 
     expect(state.model.game.activeIds).toEqual(['7']);
@@ -79,11 +70,10 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '1',
-      amount: '100',
-      iStarted: false,
-      isMyTurn: true,
+      members: [
+        { id: '1', amount: '100', ourTurn: true },
+        { id: '2', amount: '100', ourTurn: false },
+      ],
     });
 
     state = reduceSessionNotification(
@@ -108,7 +98,7 @@ describe('session machine behavior sequences', () => {
 
     const terminalInstance = state.model.game.instances['1'];
 
-    const terminalPayload = krunkStateCodec.decode(state.model.game.handState)!.games['1'];
+    const terminalPayload = krunkStateCodec.decode(state.model.game.handState)!.members[0];
 
     expect(state.model.game.activeIds).toEqual(['2']);
     expect(state.model.game.currentHandIds).toEqual(['1', '2']);
@@ -144,7 +134,7 @@ describe('session machine behavior sequences', () => {
 
     expect(stale.state.model.game.instances['1']).toEqual(terminalInstance);
 
-    expect(krunkStateCodec.decode(stale.state.model.game.handState)!.games['1']).toEqual(
+    expect(krunkStateCodec.decode(stale.state.model.game.handState)!.members[0]).toEqual(
       terminalPayload,
     );
 
@@ -174,14 +164,11 @@ describe('session machine behavior sequences', () => {
       reduceSessionMachine,
     );
 
-    expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.games['2'].handler).toBe(4n);
+    expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.members[1].handler).toBe(4n);
 
     expect(sibling.state.model.game.activeIds).toEqual(['2']);
     expect(sibling.state.model.game.currentHandIds).toEqual(['1', '2']);
-    expect(Object.keys(krunkStateCodec.decode(sibling.state.model.game.handState)!.games)).toEqual([
-      '1',
-      '2',
-    ]);
+    expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.members).toHaveLength(2);
     expect(sibling.state.model.game.instances['1']).toEqual(terminalInstance);
     expect(sibling.state.model.game.instances['2'].presentation).toBe('off-chain-my-turn');
     expect(sibling.effects).toEqual([
@@ -205,16 +192,15 @@ describe('session machine behavior sequences', () => {
 
     state = run(state, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '100',
-      iStarted: false,
-      isMyTurn: true,
+      members: [
+        { id: '7', amount: '100', ourTurn: true },
+        { id: '9', amount: '100', ourTurn: false },
+      ],
     });
 
     const accepted = state.model.game.handState;
 
-    expect(krunkStateCodec.decode(accepted)?.games['7']).toMatchObject({
+    expect(krunkStateCodec.decode(accepted)?.members[0]).toMatchObject({
       handler: 0n,
 
       myTurn: true,
@@ -278,7 +264,7 @@ describe('session machine behavior sequences', () => {
 
     const decoded = krunkStateCodec.decode(state.model.game.handState);
 
-    expect(decoded?.games['7']).toMatchObject({
+    expect(decoded?.members[0]).toMatchObject({
       handler: 0n,
 
       myTurn: true,
@@ -293,15 +279,15 @@ describe('session machine behavior sequences', () => {
         gameType: 'krunk',
 
         state: {
-          games: {
-            ...decoded!.games,
-            '7': {
-              ...decoded!.games['7'],
+          members: [
+            {
+              ...decoded!.members[0],
               handler: 1n,
               myTurn: false,
               secretWord: 'CRANE',
             },
-          },
+            decoded!.members[1],
+          ],
         },
       }),
     ).not.toThrow();
@@ -312,10 +298,10 @@ describe('session machine behavior sequences', () => {
     state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
-      id: '1',
-      amount: '100',
-      iStarted: true,
-      isMyTurn: true,
+      members: [
+        { id: '1', amount: '100', ourTurn: true },
+        { id: '2', amount: '100', ourTurn: false },
+      ],
     });
     const canonical = state.model.game.handState;
     const hand = krunkStateCodec.decode(canonical)!;
@@ -326,7 +312,8 @@ describe('session machine behavior sequences', () => {
       id: '2',
       action: 'make_move',
       state: {
-        games: { ...hand.games, '2': { ...hand.games['2'], handler: 4n, myTurn: true } },
+        ...hand,
+        members: [hand.members[0], { ...hand.members[1], handler: 4n, myTurn: true }],
       },
     });
     state = send(state, {
@@ -335,10 +322,11 @@ describe('session machine behavior sequences', () => {
       id: '1',
       action: 'make_move',
       state: {
-        games: {
-          ...hand.games,
-          '1': { ...hand.games['1'], handler: 1n, myTurn: false, secretWord: 'CRANE' },
-        },
+        ...hand,
+        members: [
+          { ...hand.members[0], handler: 1n, myTurn: false, secretWord: 'CRANE' },
+          hand.members[1],
+        ],
       },
     });
 
@@ -346,13 +334,13 @@ describe('session machine behavior sequences', () => {
     const projected = state.model.game.pendingCandidates['1'].state as NonNullable<
       ReturnType<typeof krunkStateCodec.decode>
     >;
-    expect(Object.keys(projected.games)).toEqual(['1', '2']);
-    expect(projected.games['1'].secretWord).toBe('CRANE');
-    expect(projected.games['2'].handler).toBe(3n);
+    expect(projected.members).toHaveLength(2);
+    expect(projected.members[0].secretWord).toBe('CRANE');
+    expect(projected.members[1].handler).toBe(3n);
 
     state = send(state, { type: 'local-action-applied', id: '1', action: 'make_move' });
-    expect(krunkStateCodec.decode(state.model.game.handState)!.games['1'].secretWord).toBe('CRANE');
-    expect(krunkStateCodec.decode(state.model.game.handState)!.games['2'].handler).toBe(3n);
+    expect(krunkStateCodec.decode(state.model.game.handState)!.members[0].secretWord).toBe('CRANE');
+    expect(krunkStateCodec.decode(state.model.game.handState)!.members[1].handler).toBe(3n);
     expect(Object.keys(state.model.game.pendingCandidates)).toEqual(['2']);
   });
 });

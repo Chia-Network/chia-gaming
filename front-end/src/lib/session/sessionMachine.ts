@@ -97,10 +97,8 @@ export function reduceSessionMachine(
     case 'set-last-terms':
     case 'set-pending-retry-terms':
     case 'set-new-hand-requested':
-    case 'set-compose-draft':
     case 'select-compose-game':
     case 'set-compose-timeout':
-    case 'update-selected-compose-draft':
     case 'set-compose-proposal-sent':
     case 'set-same-terms-requested':
     case 'set-expecting-counter-proposal':

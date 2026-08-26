@@ -28,17 +28,26 @@ function modelFor(gameType: 'calpoker' | 'spacepoker' | 'krunk') {
     gameType === 'spacepoker'
       ? {
           gameType,
-          myContribution: 100n,
-          theirContribution: 100n,
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          senderIsPlayerA: false,
           gameTimeout: 15n,
-          unitSizeMojos: 10n,
+          parameters: 10n,
         }
-      : { gameType, myContribution: 100n, theirContribution: 100n, gameTimeout: 15n };
+      : {
+          gameType,
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          senderIsPlayerA: gameType === 'krunk',
+          gameTimeout: 15n,
+          parameters: null,
+        };
   const hand = createRegisteredGameHand(gameType, {
-    gameIds: ids,
-    iStarted: true,
-    origin: 'local',
     handProposal,
+    members: ids.map((_, index) => ({
+      amount: 200n,
+      ourTurn: gameType === 'krunk' ? index === 0 : true,
+    })),
   });
   return createSessionModel({
     betweenHand: { lastHandProposal: handProposal },
@@ -133,10 +142,8 @@ describe('game mount registry', () => {
         hand: createRegisteredGameHand(
           'calpoker',
           {
-            gameIds: ['1'],
-            iStarted: true,
-            origin: 'local',
             handProposal: model.betweenHand.lastHandProposal!,
+            members: [{ amount: 200n, ourTurn: true }],
           },
           model.game.handState,
         ),

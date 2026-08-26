@@ -1,4 +1,3 @@
-import { encodeGameProposalParameters } from '../gameProposalCodec';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
@@ -13,12 +12,9 @@ describe('session machine behavior sequences', () => {
     expect(() =>
       reduceSessionMachine(state, {
         type: 'notification-accepted-group',
-        id: 'missing',
-        amount: '20',
-        iStarted: false,
-        isMyTurn: false,
+        members: [{ id: 'missing', amount: '20', ourTurn: false }],
       }),
-    ).toThrow('ProposalAccepted missing missing normalized proposal group');
+    ).toThrow('ProposalAcceptedGroup missing missing normalized proposal group');
     expect(() =>
       reduceSessionMachine(state, {
         type: 'notification-insufficient-balance',
@@ -43,7 +39,11 @@ describe('session machine behavior sequences', () => {
 
     reduceSessionNotification(
       state,
-      { ProposalAccepted: { id: '7', amount: '20', our_turn: true } },
+      {
+        ProposalAcceptedGroup: {
+          members: [{ id: '7', amount: '20', our_turn: true }],
+        },
+      },
       true,
       capture,
     );
@@ -51,10 +51,7 @@ describe('session machine behavior sequences', () => {
 
     expect(events[0]).toEqual({
       type: 'notification-accepted-group',
-      id: '7',
-      amount: '20',
-      iStarted: true,
-      isMyTurn: true,
+      members: [{ id: '7', amount: '20', ourTurn: true }],
     });
     expect(events[1]).toMatchObject({
       type: 'notification-insufficient-balance',
@@ -97,11 +94,7 @@ describe('session machine behavior sequences', () => {
 
         groupIds: ['11'],
 
-        acceptedId: '11',
-
-        amount: '20',
-
-        startTurn: 'my-turn',
+        members: [{ amount: '20', startTurn: 'my-turn' }],
 
         origin: 'local',
 
@@ -140,7 +133,7 @@ describe('session machine behavior sequences', () => {
     });
   });
 
-  it('retains Krunk group terms through each member acceptance notification', () => {
+  it('retains Krunk group terms through one ordered group acceptance notification', () => {
     let state = createSessionMachineState(createSessionModel());
 
     state = send(state, {
@@ -157,7 +150,14 @@ describe('session machine behavior sequences', () => {
     state = reduceSessionNotification(
       state,
 
-      { ProposalAccepted: { id: '1', amount: '200', our_turn: false } },
+      {
+        ProposalAcceptedGroup: {
+          members: [
+            { id: '1', amount: '200', our_turn: false },
+            { id: '2', amount: '200', our_turn: true },
+          ],
+        },
+      },
 
       true,
 
@@ -165,18 +165,6 @@ describe('session machine behavior sequences', () => {
     ).state;
 
     expect(state.model.betweenHand.proposalGroups[0]?.handProposal).toEqual(KRUNK_TERMS);
-
-    expect(() => {
-      state = reduceSessionNotification(
-        state,
-
-        { ProposalAccepted: { id: '2', amount: '200', our_turn: true } },
-
-        true,
-
-        reduceSessionMachine,
-      ).state;
-    }).not.toThrow();
 
     expect(state.model.game.activeIds).toEqual(['1', '2']);
 
@@ -251,10 +239,11 @@ describe('session machine behavior sequences', () => {
     try {
       const terms = {
         gameType: 'spacepoker' as const,
-        myContribution: 100n,
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: false,
         gameTimeout: 15n,
-        unitSizeMojos: 10n,
+        parameters: 10n,
       };
       const state = createSessionMachineState(
         createSessionModel({
@@ -268,8 +257,9 @@ describe('session machine behavior sequences', () => {
           ProposalMade: {
             id: '9',
             group_ids: ['9'],
-            my_contribution: '100',
-            their_contribution: '100',
+            player_a_contribution: '100',
+            player_b_contribution: '100',
+            sender_is_player_a: false,
             timeout: '15',
             game_type: testProtocolId('spacepoker'),
             parameters: [],
@@ -277,7 +267,13 @@ describe('session machine behavior sequences', () => {
         },
         iStarted: false,
       });
-      expect(unreadable.effects.map((effect) => effect.type)).toContain('controller-go-on-chain');
+      expect(unreadable.effects.map((effect) => effect.type)).not.toContain(
+        'controller-go-on-chain',
+      );
+      expect(unreadable.state.model.channel.queue[0]?.kind).toBe('action-failed');
+      expect(unreadable.state.model.channel.queue[0]?.message).toBe(
+        'The peer sent an invalid game proposal.',
+      );
 
       const missingParameters = reduceSessionMachine(state, {
         type: 'wasm-notification',
@@ -285,8 +281,9 @@ describe('session machine behavior sequences', () => {
           ProposalMade: {
             id: '9',
             group_ids: ['9'],
-            my_contribution: '100',
-            their_contribution: '100',
+            player_a_contribution: '100',
+            player_b_contribution: '100',
+            sender_is_player_a: false,
             timeout: '15',
             game_type: testProtocolId('spacepoker'),
             parameters: undefined as never,
@@ -294,8 +291,12 @@ describe('session machine behavior sequences', () => {
         },
         iStarted: false,
       });
-      expect(missingParameters.effects.map((effect) => effect.type)).toContain(
+      expect(missingParameters.effects.map((effect) => effect.type)).not.toContain(
         'controller-go-on-chain',
+      );
+      expect(missingParameters.state.model.channel.queue[0]?.kind).toBe('action-failed');
+      expect(missingParameters.state.model.channel.queue[0]?.message).toBe(
+        'The peer sent an invalid game proposal.',
       );
 
       const readable = reduceSessionMachine(state, {
@@ -304,11 +305,12 @@ describe('session machine behavior sequences', () => {
           ProposalMade: {
             id: '9',
             group_ids: ['9'],
-            my_contribution: '100',
-            their_contribution: '100',
+            player_a_contribution: '100',
+            player_b_contribution: '100',
+            sender_is_player_a: false,
             timeout: '15',
             game_type: testProtocolId('spacepoker'),
-            parameters: encodeGameProposalParameters(terms, true),
+            parameters: terms.parameters,
           },
         },
         iStarted: false,

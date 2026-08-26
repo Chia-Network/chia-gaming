@@ -12,7 +12,7 @@ import {
   sessionModelFromSave,
   type HandProposal,
 } from '../lib/session/model';
-import type { ComposeDraftValue, GameIntent } from '@games/host';
+import type { GameIntent } from '@games/host';
 import { dispatchWasmNotification } from '../lib/session/gameSessionEvents';
 import { createSessionMachineState } from '../lib/session/sessionMachine';
 import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
@@ -142,9 +142,11 @@ export function useGameSession(
   const initialState = useMemo(() => {
     const handProposal: HandProposal = {
       gameType: REGISTERED_GAMES[0].gameType,
-      myContribution: perGameAmount,
-      theirContribution: perGameAmount,
+      playerAContribution: perGameAmount,
+      playerBContribution: perGameAmount,
+      senderIsPlayerA: !iStarted,
       gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
+      parameters: null,
     };
     return createSessionMachineState(
       restoredModel ??
@@ -152,7 +154,7 @@ export function useGameSession(
           channel: { cleanShutdownStarted: controller.cleanShutdownCalled },
           betweenHand: {
             lastHandProposal: null,
-            compose: createComposeDraftState(perGameAmount, handProposal),
+            compose: createComposeDraftState(handProposal),
           },
         }),
       {
@@ -161,7 +163,7 @@ export function useGameSession(
           sessionSave.presentation.channelStatus?.state === 'Active',
       },
     );
-  }, [controller, perGameAmount, restoredModel, sessionSave]);
+  }, [controller, iStarted, perGameAmount, restoredModel, sessionSave]);
   const runtimeRef = useRef<SessionMachineRuntime | null>(null);
   if (!runtimeRef.current) {
     restoredHandKeyRef.current = restoredModel?.game.handState ? restoredModel.game.handKey : null;
@@ -187,9 +189,20 @@ export function useGameSession(
           runtime.commitHandStateChanged(gameType);
           return;
         }
+        if (!Number.isInteger(intent.memberIndex) || intent.memberIndex < 0) {
+          throw new Error(
+            `Internal game action member index must be a nonnegative integer: ${intent.memberIndex}`,
+          );
+        }
+        const id = game.currentHandIds[intent.memberIndex];
+        if (id === undefined) {
+          throw new Error(
+            `Internal game action member index ${intent.memberIndex} is outside the current hand`,
+          );
+        }
         const request: LocalGameActionRequest = {
           gameType,
-          id: intent.gameId,
+          id,
           command:
             intent.type === 'make-move'
               ? { type: 'make-move', readable: intent.readable }
@@ -311,12 +324,6 @@ export function useGameSession(
     (gameType: HandProposal['gameType']) => dispatch({ type: 'select-compose-game', gameType }),
     [dispatch],
   );
-  const updateSelectedComposeDraft = useCallback(
-    (draft: Partial<ComposeDraftValue>) =>
-      dispatch({ type: 'update-selected-compose-draft', draft }),
-    [dispatch],
-  );
-
   const { model, coordination } = machineState;
   const view = selectGameSessionView(model);
   const gameSpecificView = selectGameSpecificView(model);
@@ -353,7 +360,6 @@ export function useGameSession(
     openComposeProposal: () => dispatch({ type: 'open-compose' }),
     setComposeGameTimeout,
     setComposeGameType,
-    updateSelectedComposeDraft,
     composeProposalSent: compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: (handProposal) => dispatch({ type: 'submit-compose', handProposal }),

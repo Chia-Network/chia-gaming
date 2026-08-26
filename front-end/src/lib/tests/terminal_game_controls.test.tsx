@@ -173,12 +173,8 @@ describe('terminal game controls', () => {
 
   it('disables Krunk keyboard and submit controls', () => {
     const handState = krunkStateCodec.encode({
-      gameIds: ['alice', 'bob'],
       perPlayerStake: 100n,
-      games: {
-        alice: initialKrunkGameState('alice'),
-        bob: initialKrunkGameState('bob'),
-      },
+      members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
     });
 
     act(() => {

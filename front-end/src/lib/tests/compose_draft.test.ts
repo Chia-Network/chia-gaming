@@ -1,79 +1,54 @@
 import {
-  composeDraftCanSubmit,
-  composeDraftTerms,
-  composeDraftValue,
+  applyHandProposalToComposeDraft,
   createComposeDraftState,
+  emptyComposeDraftState,
   selectComposeGame,
-  updateSelectedComposeDraft,
 } from '../session/composeDraft';
-import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
-import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import type { HandProposal } from '../session/types';
 
-const CALPOKER_TERMS = {
-  gameType: 'calpoker' as const,
-  myContribution: 25n,
-  theirContribution: 25n,
+const TERMS: HandProposal = {
+  gameType: 'calpoker',
+  playerAContribution: 25n,
+  playerBContribution: 25n,
+  senderIsPlayerA: false,
   gameTimeout: 15n,
+  parameters: null,
 };
 
-describe('compose draft state', () => {
-  it('keeps editable invalid drafts separate from submission validity', () => {
-    let state = createComposeDraftState(0n, {
-      ...CALPOKER_TERMS,
-      myContribution: 0n,
-      theirContribution: 0n,
-    });
-    expect(composeDraftTerms(state)).toBeNull();
-
-    state = updateSelectedComposeDraft(state, { amount: 25n });
-    expect(composeDraftTerms(state)).toEqual(CALPOKER_TERMS);
-
-    state = selectComposeGame(state, 'krunk');
-    state = updateSelectedComposeDraft(state, { amount: 250n });
-    expect(composeDraftCanSubmit(state, null)).toBe(false);
-    state = updateSelectedComposeDraft(state, { amount: 300n });
-    expect(composeDraftCanSubmit(state, 299n)).toBe(false);
-    expect(composeDraftCanSubmit(state, 300n)).toBe(true);
-
-    state = selectComposeGame(state, 'spacepoker');
-    state = updateSelectedComposeDraft(state, { unitSize: 7n, stackSize: 13n });
-    expect(composeDraftTerms(state)).toEqual({
-      gameType: 'spacepoker',
-      myContribution: 91n,
-      theirContribution: 91n,
+describe('compose host state', () => {
+  it('owns only selector, timeout, and submission state', () => {
+    expect(createComposeDraftState(TERMS)).toEqual({
+      selectedGame: 'calpoker',
       gameTimeout: 15n,
-      unitSizeMojos: 7n,
+      proposalSent: false,
     });
-    state = updateSelectedComposeDraft(state, {
-      stackSize: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+    expect(emptyComposeDraftState()).toEqual({
+      selectedGame: 'calpoker',
+      gameTimeout: 15n,
+      proposalSent: false,
     });
-    expect(composeDraftTerms(state)).toBeNull();
   });
 
-  it('restores every exact draft after switching away and back', () => {
-    let state = createComposeDraftState(25n, CALPOKER_TERMS);
-    state = updateSelectedComposeDraft(state, { amount: 37n });
-    state = selectComposeGame(state, 'krunk');
-    state = updateSelectedComposeDraft(state, { amount: 900n });
-    state = selectComposeGame(state, 'spacepoker');
-    state = updateSelectedComposeDraft(state, { unitSize: 11n, stackSize: 17n });
-
-    state = selectComposeGame(state, 'krunk');
-    expect(state.drafts.krunk.amount).toBe(900n);
-    state = selectComposeGame(state, 'spacepoker');
-    expect(state.drafts.spacepoker).toEqual({ unitSize: 11n, stackSize: 17n });
-    state = selectComposeGame(state, 'calpoker');
-    expect(state.drafts.calpoker.amount).toBe(37n);
+  it('does not retain per-game controls while switching packages', () => {
+    const selected = selectComposeGame(createComposeDraftState(TERMS), 'spacepoker');
+    expect(selected).toEqual({
+      selectedGame: 'spacepoker',
+      gameTimeout: 15n,
+      proposalSent: false,
+    });
+    expect(Object.hasOwn(selected, 'drafts')).toBe(false);
   });
 
-  it('looks up drafts by catalog gameType after protocol identities are set', () => {
-    const state = createComposeDraftState(25n, CALPOKER_TERMS);
-    setProtocolIds(TEST_PROTOCOL_IDS);
-    try {
-      expect(composeDraftValue(state, 'calpoker')).toEqual({ amount: 25n });
-      expect(composeDraftTerms(state)?.myContribution).toBe(25n);
-    } finally {
-      resetProtocolIds();
-    }
+  it('repopulates only generic host fields from completed terms', () => {
+    const next = applyHandProposalToComposeDraft(emptyComposeDraftState(), {
+      ...TERMS,
+      gameType: 'krunk',
+      gameTimeout: 30n,
+    });
+    expect(next).toEqual({
+      selectedGame: 'krunk',
+      gameTimeout: 30n,
+      proposalSent: false,
+    });
   });
 });

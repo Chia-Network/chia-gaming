@@ -1,6 +1,4 @@
 import type { ChannelStatus, GameConnectionState, WasmNotification } from '../../types/ChiaGaming';
-import type { ComposeDraftValue } from '@games/host';
-import type { ComposeDraftState } from './composeDraft';
 import type { GameSliceAction } from './gameSlice';
 import type {
   BetweenHandModeModel,
@@ -112,10 +110,8 @@ export type SessionMachineEvent =
   | { type: 'set-last-terms'; handProposal: HandProposal }
   | { type: 'set-pending-retry-terms'; handProposal: HandProposal | null }
   | { type: 'set-new-hand-requested'; requested: boolean }
-  | { type: 'set-compose-draft'; compose: ComposeDraftState }
   | { type: 'select-compose-game'; gameType: RegisteredGameType }
   | { type: 'set-compose-timeout'; timeout: bigint }
-  | { type: 'update-selected-compose-draft'; draft: Partial<ComposeDraftValue> }
   | { type: 'set-compose-proposal-sent'; sent: boolean }
   | { type: 'clear-proposals'; ids?: readonly string[] }
   | { type: 'set-same-terms-requested'; requested: boolean }
@@ -123,10 +119,7 @@ export type SessionMachineEvent =
   | { type: 'set-first-game-accepted'; accepted: boolean }
   | {
       type: 'notification-accepted-group';
-      id: string;
-      amount: string;
-      iStarted: boolean;
-      isMyTurn: boolean;
+      members: readonly { id: string; amount: string; ourTurn: boolean }[];
       handState?: PersistedGameState;
     }
   | {
