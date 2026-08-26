@@ -1,0 +1,30 @@
+{
+  "name": "chia-gaming-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hardened Electron shell for the Chia Gaming player app",
+  "homepage": "https://github.com/Chia-Network/chia-gaming/",
+  "license": "Apache-2.0",
+  "author": "Chia Gaming",
+  "desktopName": "Chia Gaming",
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "typecheck": "tsc --project .",
+    "build:main": "esbuild src/main/index.ts --bundle --platform=node --target=node22 --format=cjs --external:electron --outfile=dist/main/index.cjs --sourcemap",
+    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --external:electron --outfile=dist/preload/index.cjs --sourcemap",
+    "stage": "node scripts/stage-renderer.mjs",
+    "build": "pnpm run typecheck && pnpm run build:main && pnpm run build:preload && pnpm run stage",
+    "start": "pnpm run build && electron .",
+    "package": "pnpm run build && node scripts/package-app.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.6.2",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.25.11",
+    "typescript": "5.9.3",
+    "zod": "4.4.3"
+  }
+}

@@ -1,0 +1,240 @@
+name: Electron desktop
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+      - 'long_lived/**'
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  RUST_VERSION: stable
+
+jobs:
+  build:
+    name: Build Electron (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            os: macos-13-arm64
+            artifact: chia-gaming-electron-macos
+          - platform: win
+            os: windows-latest
+            artifact: chia-gaming-electron-windows
+            environment: windows-code-signing
+          - platform: linux
+            os: ubuntu-22.04
+            artifact: chia-gaming-electron-linux
+    runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.15.0
+
+      - name: Install WASI SDK
+        if: runner.os == 'macOS'
+        env:
+          WASI_SDK_VERSION: '33'
+          WASI_SDK_SHA256: 85c997a2665ead91673b5bb88b7d0df3fc8900df3bfa244f720d478187bbdc78
+        run: |
+          archive="$RUNNER_TEMP/wasi-sdk.tar.gz"
+          install_dir="$RUNNER_TEMP/wasi-sdk"
+          curl --fail --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-arm64-macos.tar.gz"
+          echo "${WASI_SDK_SHA256}  ${archive}" | shasum -a 256 --check
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" --strip-components=1 -C "$install_dir"
+          echo "CC_wasm32_unknown_unknown=$install_dir/bin/clang" >> "$GITHUB_ENV"
+          echo "AR_wasm32_unknown_unknown=$install_dir/bin/llvm-ar" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.0 --activate
+
+      - name: Check for Apple signing credentials
+        if: matrix.platform == 'mac' && github.event_name != 'pull_request'
+        id: apple-signing
+        shell: bash
+        env:
+          APPLE_DEV_ID_APP: ${{ secrets.APPLE_DEV_ID_APP }}
+          APPLE_DEV_ID_APP_PASS: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
+          APPLE_NOTARIZE_USERNAME: ${{ secrets.APPLE_NOTARIZE_USERNAME }}
+          APPLE_NOTARIZE_PASSWORD: ${{ secrets.APPLE_NOTARIZE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          configured=0
+          for value in \
+            "$APPLE_DEV_ID_APP" \
+            "$APPLE_DEV_ID_APP_PASS" \
+            "$APPLE_NOTARIZE_USERNAME" \
+            "$APPLE_NOTARIZE_PASSWORD" \
+            "$APPLE_TEAM_ID"; do
+            if [[ -n "$value" ]]; then
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [[ "$configured" -eq 5 ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$configured" -eq 0 ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Apple signing is partially configured; all five Apple secrets are required"
+            exit 1
+          fi
+
+      - name: Import Apple app signing certificate
+        if: steps.apple-signing.outputs.available == 'true'
+        uses: Apple-Actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.APPLE_DEV_ID_APP }}
+          p12-password: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
+
+      - name: Check for Windows signing credentials
+        if: matrix.platform == 'win' && github.event_name != 'pull_request'
+        id: windows-signing
+        shell: bash
+        env:
+          AZURE_SIGNING_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_SIGNING_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+        run: |
+          configured=0
+          for value in \
+            "$AZURE_SIGNING_CLIENT_ID" \
+            "$AZURE_SIGNING_TENANT_ID"; do
+            if [[ -n "$value" ]]; then
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [[ "$configured" -eq 2 ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$configured" -eq 0 ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Windows signing is partially configured; both Azure signing secrets are required"
+            exit 1
+          fi
+
+      - name: Install Azure Artifact Signing client
+        if: steps.windows-signing.outputs.available == 'true'
+        shell: pwsh
+        run: |
+          $toolsDir = Join-Path $env:RUNNER_TEMP "artifact-signing-client"
+          New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+          Push-Location $toolsDir
+
+          Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe" -OutFile nuget.exe
+          .\nuget.exe install Microsoft.ArtifactSigning.Client -x -OutputDirectory .
+
+          $dlib = Get-ChildItem -Recurse -Filter "Azure.CodeSigning.Dlib.dll" |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+            Select-Object -First 1
+          if (-not $dlib) {
+            throw "Azure.CodeSigning.Dlib.dll (x64) not found after installing Microsoft.ArtifactSigning.Client"
+          }
+
+          $metadataPath = Join-Path $toolsDir "metadata.json"
+          @{
+            Endpoint = "https://wus2.codesigning.azure.net/"
+            CodeSigningAccountName = "ChiaNetworkInc"
+            CertificateProfileName = "ChiaNetworkInc"
+            CorrelationId = "github-actions-$env:GITHUB_RUN_ID"
+          } | ConvertTo-Json | Set-Content -Path $metadataPath
+
+          Add-Content -Path $env:GITHUB_ENV -Value "AZURE_CODE_SIGNING_DLIB=$($dlib.FullName)"
+          Add-Content -Path $env:GITHUB_ENV -Value "AZURE_CODE_SIGNING_METADATA=$metadataPath"
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files (x86)\Windows Kits\10\App Certification Kit"
+          Pop-Location
+
+      - name: Build signed Electron installer
+        if: steps.apple-signing.outputs.available == 'true'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.APPLE_DEV_ID_APP }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
+        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+
+      - name: Build signed Windows Electron installer
+        if: steps.windows-signing.outputs.available == 'true'
+        shell: bash
+        env:
+          HAS_SIGNING_SECRET: 'true'
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          AZURE_TOKEN_CREDENTIALS: prod
+          AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+
+      - name: Build unsigned Electron installer
+        if: steps.apple-signing.outputs.available != 'true' && steps.windows-signing.outputs.available != 'true'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+
+      - name: Notarize and staple macOS installers
+        if: steps.apple-signing.outputs.available == 'true'
+        shell: bash
+        env:
+          APPLE_NOTARIZE_USERNAME: ${{ secrets.APPLE_NOTARIZE_USERNAME }}
+          APPLE_NOTARIZE_PASSWORD: ${{ secrets.APPLE_NOTARIZE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for dmg in desktop/release/*.dmg; do
+            xcrun notarytool submit \
+              --wait \
+              --apple-id "$APPLE_NOTARIZE_USERNAME" \
+              --password "$APPLE_NOTARIZE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              "$dmg"
+            xcrun stapler staple "$dmg"
+            xcrun stapler validate "$dmg"
+          done
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb

@@ -1,3 +1,5 @@
+import { isElectronDistribution } from '../util/distribution';
+
 const SESSION_MARKER_KEY = 'appState_savedSession';
 const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
 const RESET_KEY = 'appState_hardReset';
@@ -49,10 +51,18 @@ export function offFenced(cb: () => void): void {
   fencedListeners.delete(cb);
 }
 
+// The lease lives in localStorage but `tabId` lives in sessionStorage, so a
+// quit orphans the lease. Electron enforces one app instance and one window,
+// which means a foreign owner in the desktop build is always stale.
+function leaseHasLivePeer(): boolean {
+  const current = localStorage.getItem(LEASE_KEY);
+  if (current === null || current === tabId) return false;
+  return !isElectronDistribution();
+}
+
 export function isLeaseConflict(): boolean {
   try {
-    const current = localStorage.getItem(LEASE_KEY);
-    return current !== null && current !== tabId;
+    return leaseHasLivePeer();
   } catch {
     return false;
   }
@@ -60,8 +70,7 @@ export function isLeaseConflict(): boolean {
 
 export function checkLease(): boolean {
   try {
-    const current = localStorage.getItem(LEASE_KEY);
-    return current === null || current === tabId;
+    return !leaseHasLivePeer();
   } catch {
     return true;
   }

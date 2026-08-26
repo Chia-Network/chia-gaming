@@ -18,6 +18,8 @@ struct GameRegistry {
     test: Vec<String>,
 }
 
+const CHIALISP_COMPILER_STACK_SIZE: usize = 128 * 1024 * 1024;
+
 fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
     let mut allocator = Allocator::new();
     let mut arguments: HashMap<String, ArgumentValue> = HashMap::new();
@@ -182,6 +184,22 @@ fn compile_chialisp(registry: &GameRegistry) -> Result<(), CompileError> {
     Ok(())
 }
 
+fn compile_chialisp_with_large_stack(registry: GameRegistry) {
+    let compiler = std::thread::Builder::new()
+        .name("chialisp-compiler".to_string())
+        .stack_size(CHIALISP_COMPILER_STACK_SIZE)
+        .spawn(move || {
+            if let Err(e) = compile_chialisp(&registry) {
+                panic!("error compiling chialisp: {e:?}");
+            }
+        })
+        .expect("failed to start Chialisp compiler thread");
+
+    if let Err(payload) = compiler.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 fn emit_rerun_directives(dir: &Path) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -279,8 +297,6 @@ fn main() {
     generate_package_modules(&registry, &out_dir);
 
     if std::env::var("CHIALISP_COMPILE").is_ok() {
-        if let Err(e) = compile_chialisp(&registry) {
-            panic!("error compiling chialisp: {e:?}");
-        }
+        compile_chialisp_with_large_stack(registry);
     }
 }
