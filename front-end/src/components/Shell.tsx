@@ -153,10 +153,7 @@ import {
 } from '../lib/session/historyLimits';
 import { log } from '../services/log';
 import { formatMojos } from '../util';
-import {
-  needsConnectionSetupPrompt,
-  needsWalletPairing,
-} from '../util/connectionSetup';
+import { needsConnectionSetupPrompt, needsWalletPairing } from '../util/connectionSetup';
 import { isElectronDistribution } from '../util/distribution';
 import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
