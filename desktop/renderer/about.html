@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f9faf8" />
+    <title>About Chia Gaming</title>
+    <script src="about-theme.js"></script>
+    <link rel="stylesheet" href="about.css" />
+  </head>
+  <body data-slot="about-page">
+    <main data-slot="about-card">
+      <div data-slot="brand-mark">
+        <img data-slot="app-icon" src="about-icon.svg" alt="" />
+      </div>
+
+      <h1 data-slot="app-name">Chia Gaming</h1>
+      <p data-slot="tagline">Two-player games secured by Chia state channels.</p>
+
+      <dl data-slot="build-details">
+        <div data-slot="build-detail">
+          <dt data-slot="build-label">Version</dt>
+          <dd data-slot="build-value" id="app-version">—</dd>
+        </div>
+        <div data-slot="build-detail">
+          <dt data-slot="build-label">Runtime</dt>
+          <dd data-slot="build-value" id="runtime-version">—</dd>
+        </div>
+      </dl>
+
+      <a
+        data-slot="project-link"
+        href="https://github.com/Chia-Network/chia-gaming"
+        target="_blank"
+        rel="noreferrer"
+      >
+        More information
+        <span data-slot="external-mark" aria-hidden="true">↗</span>
+      </a>
+
+      <footer data-slot="about-footer">
+        <span data-slot="license">Apache-2.0</span>
+        <span data-slot="copyright" id="copyright">Chia Network</span>
+      </footer>
+    </main>
+    <script type="module" src="about.mjs"></script>
+  </body>
+</html>

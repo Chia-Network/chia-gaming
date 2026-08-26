@@ -73,7 +73,13 @@ export default defineConfig([
     },
   },
   {
-    files: ['front-end/scripts/**', 'hub/hub-service/**', 'static-server.js', 'tools/**'],
+    files: [
+      'desktop/**',
+      'front-end/scripts/**',
+      'hub/hub-service/**',
+      'static-server.js',
+      'tools/**',
+    ],
     rules: {
       'no-console': 'off',
     },

@@ -38,6 +38,7 @@ import {
   getSessionId,
   ensureHubIdentity,
   clearSessionId,
+  regenerateSessionId,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
@@ -151,6 +152,8 @@ import {
 } from '../lib/session/historyLimits';
 import { log } from '../services/log';
 import { formatMojos } from '../util';
+import { isElectronDistribution } from '../util/distribution';
+import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
 
 import { HubPicker } from './HubPicker';
@@ -161,19 +164,6 @@ function getInterface(bcType: 'simulator' | 'walletconnect') {
   return bcType === 'walletconnect'
     ? { iface: realBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS }
     : { iface: fakeBlockchainInfo, pollMs: 5000 };
-}
-
-function normalizeHubOrigin(origin: string): string {
-  try {
-    const url = new URL(origin);
-    if (url.hostname === '127.0.0.1' && url.port === '3003') {
-      url.hostname = 'localhost';
-      return url.origin;
-    }
-  } catch {
-    return origin;
-  }
-  return origin;
 }
 
 function humanHistoryFromSave(save: SessionSave): string[] | undefined {
@@ -1857,8 +1847,7 @@ const Shell = () => {
 
   // Connect to a hub by origin URL. Creates the hub iframe + game relay WebSocket.
   const connectToHub = useCallback(
-    (rawOrigin: string, options: { resetSession?: boolean } = {}) => {
-      const origin = normalizeHubOrigin(rawOrigin);
+    (origin: string, options: { resetSession?: boolean } = {}) => {
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
       setHubConnectionError(null);
@@ -2169,7 +2158,20 @@ const Shell = () => {
   );
 
   const requestHubConnect = useCallback(
-    (origin: string) => {
+    async (origin: string) => {
+      const trust = await requestHubTrust(origin);
+      const trustError = hubTrustError(trust, origin);
+      if (trustError !== null) {
+        setHubConnectionError(trustError);
+        return;
+      }
+      if (trust === 'granted') {
+        regenerateSessionId();
+        saveHubUrl(origin);
+        window.location.reload();
+        return;
+      }
+
       if (
         (peerLiveness === 'connected' || peerLiveness === 'degraded') &&
         sessionPhase === 'off-chain'
@@ -2206,11 +2208,29 @@ const Shell = () => {
       hubConnRef.current = null;
       return;
     }
-    const url = getHubUrl();
-    if (url && !hubConnRef.current) {
-      connectToHub(url);
+    const origin = getHubUrl();
+    let cancelled = false;
+    if (origin && !hubConnRef.current) {
+      void requestHubTrust(origin).then((trust) => {
+        if (cancelled) return;
+        const trustError = hubTrustError(trust, origin);
+        if (trustError !== null) {
+          if (trust === 'invalid') {
+            saveHubUrl(undefined);
+          }
+          setHubConnectionError(trustError);
+          return;
+        }
+        if (trust === 'granted') {
+          saveHubUrl(origin);
+          window.location.reload();
+          return;
+        }
+        connectToHub(origin);
+      });
     }
     return () => {
+      cancelled = true;
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
     };
@@ -2680,13 +2700,16 @@ const Shell = () => {
     [setActiveTab, setHubAlert, setUnreadGame, setWalletAlert],
   );
 
-  useThemeSyncToIframe('hub-iframe', [iframeUrl]);
+  useThemeSyncToIframe({ iframeId: 'hub-iframe', frameOrigin: hubOrigin, frameUrl: iframeUrl });
 
   // Hub owns the display name; keep local prefs aligned so presence and
   // session_proposal do not invent a Player_* fallback that later overwrites
   // the hub.
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
+      if (hubOrigin === null || ev.origin !== hubOrigin) return;
+      const frame = document.getElementById('hub-iframe') as HTMLIFrameElement | null;
+      if (frame === null || ev.source !== frame.contentWindow) return;
       const data = ev.data;
       if (!data || data.type !== 'hub-alias' || typeof data.alias !== 'string') return;
       const trimmed = data.alias.trim();
@@ -2696,7 +2719,7 @@ const Shell = () => {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [hubOrigin]);
 
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
@@ -2755,7 +2778,9 @@ const Shell = () => {
   const performResume = useCallback(
     (save: SessionSave) => {
       setActiveTab('game');
-      const bcType = save.preferences.blockchainType ?? 'simulator';
+      const bcType =
+        save.preferences.blockchainType ??
+        (isElectronDistribution() ? 'walletconnect' : 'simulator');
       setResuming(true);
       setRestoreStatus('restoring');
       setRestoreError(null);
@@ -3951,11 +3976,13 @@ const Shell = () => {
                 <Button variant="solid" onClick={handleCancelConnect}>
                   Cancel
                 </Button>
-                <SimulatorSetupModal
-                  open={showSimModal}
-                  onConnect={handleFinalize}
-                  connecting={connecting}
-                />
+                {!isElectronDistribution() && (
+                  <SimulatorSetupModal
+                    open={showSimModal}
+                    onConnect={handleFinalize}
+                    connecting={connecting}
+                  />
+                )}
               </div>
             ) : connecting ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
@@ -4006,18 +4033,22 @@ const Shell = () => {
                   )}
                 </div>
                 <div className="w-full max-w-sm flex flex-col gap-3">
-                  <Button
-                    variant="solid"
-                    fullWidth
-                    onClick={() => handleConnect('simulator', false, true)}
-                  >
-                    Continue with Simulator
-                  </Button>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 border-t border-canvas-border" />
-                    <span className="text-canvas-text font-medium text-sm">OR</span>
-                    <div className="flex-1 border-t border-canvas-border" />
-                  </div>
+                  {!isElectronDistribution() && (
+                    <>
+                      <Button
+                        variant="solid"
+                        fullWidth
+                        onClick={() => handleConnect('simulator', false, true)}
+                      >
+                        Continue with Simulator
+                      </Button>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 border-t border-canvas-border" />
+                        <span className="text-canvas-text font-medium text-sm">OR</span>
+                        <div className="flex-1 border-t border-canvas-border" />
+                      </div>
+                    </>
+                  )}
                   <Button
                     variant="solid"
                     fullWidth
@@ -4073,6 +4104,7 @@ const Shell = () => {
                   id="hub-iframe"
                   className="bg-canvas-bg-subtle"
                   style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
+                  sandbox="allow-scripts allow-same-origin"
                   src={iframeUrl}
                 />
               </>
