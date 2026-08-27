@@ -1,5 +1,5 @@
 import { GENERATED_GAME_PACKAGES, GENERATED_GAME_PACKAGES_BY_KEY } from '../generated/gamePackages';
-import type { CatalogGameType } from '../generated/gamePresets';
+import { PRODUCTION_PACKAGE_KEYS, type CatalogGameType } from '../generated/gamePresets';
 import type {
   GameHandInitialization,
   PersistedGameState,
@@ -31,12 +31,12 @@ export function isCatalogGameType(value: unknown): value is CatalogGameType {
   );
 }
 
-export const REGISTERED_GAMES = GAME_PACKAGES.map((pkg) => {
-  if (!isCatalogGameType(pkg.gameType)) {
-    throw new Error(`Generated package has non-catalog gameType ${pkg.gameType}`);
-  }
-  return { gameType: pkg.gameType, displayName: pkg.displayName };
-});
+export const DEFAULT_CATALOG_GAME_TYPE = PRODUCTION_PACKAGE_KEYS[0];
+
+export const REGISTERED_GAMES = PRODUCTION_PACKAGE_KEYS.map((gameType) => ({
+  gameType,
+  displayName: packageFor(gameType).displayName,
+}));
 
 export interface DecodedPersistedGameState {
   persisted: PersistedGameState;

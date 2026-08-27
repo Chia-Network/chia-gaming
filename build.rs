@@ -15,6 +15,9 @@ use chialisp::classic::platform::argparse::ArgumentValue;
 use chialisp::compiler::comptypes::CompileErr;
 use chialisp::compiler::srcloc::Srcloc;
 
+#[path = "src/game_package_key.rs"]
+mod game_package_key;
+
 #[derive(Clone, Debug)]
 struct GameRegistry {
     production: Vec<String>,
@@ -86,17 +89,9 @@ fn load_registry() -> GameRegistry {
     }
 }
 
-fn is_valid_package_key(key: &str) -> bool {
-    !key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-}
-
 fn validate_package(key: &str, production: bool) {
-    if !is_valid_package_key(key) {
-        panic!("invalid game package key {key:?}");
-    }
+    game_package_key::validate_game_package_key(key)
+        .unwrap_or_else(|reason| panic!("invalid game package key {key:?}: {reason}"));
     let root = PathBuf::from("games").join(key);
     let rust_mod = root.join("rust/mod.rs");
     let rust_tests = root.join("rust/tests/mod.rs");

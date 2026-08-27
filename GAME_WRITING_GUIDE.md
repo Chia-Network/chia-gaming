@@ -54,10 +54,14 @@ games/<key>/
   ui/
     handProposalForm.tsx  # Form used to propose a new hand
     handProposal.ts       # Proposal validation and factory parameters
-    serialize.ts          # Saved UI state and state transitions
+    serialize.ts          # Optional organization for hand state and transitions
     play.tsx              # Live and finished-hand React views
     styles.css            # Optional game-specific styles
 ```
+
+Production packages require `handProposal.ts`, `handProposalForm.tsx`, and
+`play.tsx`. Other UI modules are package-private organization: the reference
+games use `serialize.ts`, but the build neither requires nor imports that name.
 
 The frontend catalog is generated, so do not create `ui/index.ts`. Each UI
 file has a conventional export that the generator discovers:
@@ -78,11 +82,18 @@ Add the key to [`games/registry.json`](games/registry.json):
 
 - Use the `production` list for a playable game with a UI.
 - Use the `test` list for a game that exists only in automated tests.
+- Use a key matching `[a-z][a-z0-9_]*`; Rust keywords and the reserved key
+  `host` are rejected.
 
 That is the only catalog you edit by hand. The build generates frontend imports
 and the factory preset list for every production package. When `rust/mod.rs` or
 `rust/tests/mod.rs` exists, it also generates the corresponding Rust module or
 internal test-suite aggregation.
+
+Do not edit or check in compiled `.hex` files, prepared factory binaries, or
+`games/package_manifest.json`; they are generated implementation artifacts.
+Game packages maintain their `.clsp` sources and, when needed, the optional
+`factory_args.clvm.bin` input.
 
 Two identifiers appear in the code:
 

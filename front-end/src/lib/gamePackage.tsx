@@ -16,7 +16,6 @@ export type RegisteredGameHand = GameHand<unknown>;
 export type RegisteredGameProposalFormHandle = GameProposalFormHandle<unknown>;
 
 export interface RegisteredGamePackage {
-  readonly gameType: string;
   readonly displayName: string;
   createHand(init: GameHandInitialization): RegisteredGameHand;
   restoreHand(savedState: unknown): RegisteredGameHand;

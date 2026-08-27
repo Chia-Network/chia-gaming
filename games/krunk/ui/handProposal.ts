@@ -29,7 +29,6 @@ const registration: GamePackageRegistration<
   KrunkHand,
   KrunkFactoryParameters
 > = {
-  gameType: 'krunk',
   displayName: 'Krunk',
   createHand: createKrunkHand,
   restoreHand: restoreKrunkHand,

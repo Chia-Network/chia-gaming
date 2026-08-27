@@ -26,6 +26,15 @@ describe('game package isolation', () => {
     expect(generated).not.toContain('as unknown as GamePackage');
   });
 
+  it('derives prepared factory presets without reading the Rust package manifest', () => {
+    const generator = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/generate-game-registry.mjs'),
+      'utf8',
+    );
+    expect(generator).toContain('factory_prepared.clvm.bin');
+    expect(generator).not.toContain('package_manifest.json');
+  });
+
   it('does not import this player app from game UI or game tests', () => {
     const keys = fs.readdirSync(GAMES_ROOT).filter((name) => {
       const ui = path.join(GAMES_ROOT, name, 'ui');

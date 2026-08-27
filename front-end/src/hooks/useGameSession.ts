@@ -27,7 +27,7 @@ import type {
   SessionMachineEvent,
 } from '../lib/session/sessionMachineTypes';
 import type { RegisteredGameType } from '../lib/session/types';
-import { REGISTERED_GAMES } from '../lib/gameRegistry';
+import { DEFAULT_CATALOG_GAME_TYPE } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 import { liveGameHandOrigin, type GameHandSource } from '../lib/gameHandSource';
 import { log } from '../services/log';
@@ -140,7 +140,7 @@ export function useGameSession(
   const restoredHandKeyRef = useRef<number | null>(null);
   const initialState = useMemo(() => {
     const handProposal: HandProposal = {
-      gameType: REGISTERED_GAMES[0].gameType,
+      gameType: DEFAULT_CATALOG_GAME_TYPE,
       playerAContribution: perGameAmount,
       playerBContribution: perGameAmount,
       senderIsPlayerA: !iStarted,

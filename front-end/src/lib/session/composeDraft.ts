@@ -1,4 +1,4 @@
-import { REGISTERED_GAMES } from '../gameRegistry';
+import { DEFAULT_CATALOG_GAME_TYPE } from '../gameRegistry';
 import type { HandProposal, RegisteredGameType } from './types';
 
 export interface ComposeDraftState {
@@ -9,7 +9,7 @@ export interface ComposeDraftState {
 
 export function emptyComposeDraftState(): ComposeDraftState {
   return {
-    selectedGame: REGISTERED_GAMES[0].gameType,
+    selectedGame: DEFAULT_CATALOG_GAME_TYPE,
     gameTimeout: 15n,
     proposalSent: false,
   };

@@ -3,12 +3,14 @@ import { krunkProposalParameters } from '@games/krunk/ui/handProposal';
 import { spacepokerProposalParameters } from '@games/spacepoker/ui/unitSize';
 import { protocolIdForCatalog, resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import {
+  DEFAULT_CATALOG_GAME_TYPE,
   describeReceivedProposal,
   handProposalsEqual,
   isProposalParameterValue,
   packageFor,
   REGISTERED_GAMES,
 } from '../gameRegistry';
+import { PRODUCTION_PACKAGE_KEYS } from '../../generated/gamePresets';
 import { proposalGroupFromProposalMade } from '../session/incomingProposal';
 import type { HandProposal } from '../session/types';
 
@@ -32,11 +34,8 @@ describe('game package proposal adapters', () => {
   afterAll(resetProtocolIds);
 
   it('derives display metadata from the generated keyed packages', () => {
-    expect(REGISTERED_GAMES.map(({ gameType }) => gameType)).toEqual([
-      'calpoker',
-      'spacepoker',
-      'krunk',
-    ]);
+    expect(REGISTERED_GAMES.map(({ gameType }) => gameType)).toEqual([...PRODUCTION_PACKAGE_KEYS]);
+    expect(DEFAULT_CATALOG_GAME_TYPE).toBe(PRODUCTION_PACKAGE_KEYS[0]);
     expect(packageFor('spacepoker').displayName).toBe('Space Poker');
   });
 

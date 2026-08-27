@@ -194,7 +194,6 @@ export interface GamePackageRegistration<
   THand extends GameHand<TState>,
   TParams = unknown,
 > {
-  gameType: string;
   readonly displayName: string;
   createHand(init: GameHandInitialization): THand;
   restoreHand(savedState: unknown): THand;

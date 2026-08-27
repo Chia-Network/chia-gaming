@@ -155,6 +155,15 @@ fn registry_keys() -> (Vec<String>, Vec<String>) {
     (strings("production"), strings("test"))
 }
 
+#[test]
+fn game_package_keys_are_valid_identifiers() {
+    let (production, test) = registry_keys();
+    for key in production.iter().chain(test.iter()) {
+        crate::game_package_key::validate_game_package_key(key)
+            .unwrap_or_else(|reason| panic!("invalid game package key {key:?}: {reason}"));
+    }
+}
+
 /// Every directory under `games/` except the JSON catalog and `games/host`
 /// (the portable host contract, not a factory game) must be a registered
 /// package, and every registered key must exist with conventional files.

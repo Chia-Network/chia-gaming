@@ -146,6 +146,8 @@ runtime factory. It content-hashes the sources, compiler inputs, and generated
 outputs, rebuilding only when an input changes or an output is missing or
 modified. Ordinary Cargo commands do not compile Chialisp. Only prepared
 factories and core runtime programs are loaded by the WASM module over HTTP.
+The gitignored `games/package_manifest.json` caches the generated protocol IDs
+for subsequent Rust builds; it is build output, not a hand-edited catalog.
 
 ### 2. WASM (browser target)
 

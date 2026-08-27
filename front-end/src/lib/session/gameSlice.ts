@@ -1,4 +1,4 @@
-import { REGISTERED_GAMES } from '../gameRegistry';
+import { DEFAULT_CATALOG_GAME_TYPE } from '../gameRegistry';
 import type { ChannelStatus } from '../../types/ChiaGaming';
 import {
   INITIAL_GAME_TERMINAL_MODEL,
@@ -37,7 +37,7 @@ export const INITIAL_GAME_SLICE: GameSlice = {
   currentHandOrigin: null,
   instances: {},
   lastDisplayedId: null,
-  activeGameType: REGISTERED_GAMES[0].gameType,
+  activeGameType: DEFAULT_CATALOG_GAME_TYPE,
 };
 
 export type GameSliceAction =

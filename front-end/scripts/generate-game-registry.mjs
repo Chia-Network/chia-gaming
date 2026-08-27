@@ -7,19 +7,17 @@ import { fileURLToPath } from 'node:url';
 const FE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(FE, '..', '..');
 const registry = JSON.parse(readFileSync(join(ROOT, 'games', 'registry.json'), 'utf8'));
-const manifest = JSON.parse(readFileSync(join(ROOT, 'games', 'package_manifest.json'), 'utf8'));
 const production = registry.production;
 if (!Array.isArray(production) || production.length === 0) {
   throw new Error('games/registry.json production list is empty');
 }
 
-const manifestByKey = new Map(manifest.production.map((entry) => [entry.key, entry]));
 function factoryBinary(key) {
-  const entry = manifestByKey.get(key);
-  if (!entry || typeof entry.factory !== 'string' || typeof entry.id !== 'string') {
-    throw new Error(`games/package_manifest.json missing valid production package ${key}`);
+  const factory = `games/${key}/clsp/factory_prepared.clvm.bin`;
+  if (!existsSync(join(ROOT, factory))) {
+    throw new Error(`Missing ${factory}; run ./cb.sh to build game factories`);
   }
-  return entry.factory;
+  return factory;
 }
 
 function tsString(value) {

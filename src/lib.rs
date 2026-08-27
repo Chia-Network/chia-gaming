@@ -21,6 +21,9 @@ pub mod transaction_manager;
 pub mod utils;
 
 #[cfg(test)]
+mod game_package_key;
+
+#[cfg(test)]
 mod manifest_guards;
 
 #[cfg(test)]

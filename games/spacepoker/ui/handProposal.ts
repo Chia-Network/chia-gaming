@@ -22,7 +22,6 @@ const registration: GamePackageRegistration<
   SpacepokerHand,
   SpacepokerFactoryParameters
 > = {
-  gameType: 'spacepoker',
   displayName: 'Space Poker',
   createHand: createSpacepokerHand,
   restoreHand: restoreSpacepokerHand,

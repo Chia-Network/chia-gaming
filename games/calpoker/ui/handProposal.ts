@@ -30,7 +30,6 @@ const registration: GamePackageRegistration<
   CalpokerHand,
   CalpokerFactoryParameters
 > = {
-  gameType: 'calpoker',
   displayName: 'California Poker',
   createHand: createCalpokerHand,
   restoreHand: restoreCalpokerHand,
