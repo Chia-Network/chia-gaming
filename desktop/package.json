@@ -13,7 +13,7 @@
   "scripts": {
     "typecheck": "tsc --project .",
     "build:main": "esbuild src/main/index.ts --bundle --platform=node --target=node22 --format=cjs --external:electron --outfile=dist/main/index.cjs --sourcemap",
-    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --external:electron --outfile=dist/preload/index.cjs --sourcemap",
+    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --external:electron --outfile=dist/preload/index.cjs --sourcemap && esbuild src/preload/empty.ts --bundle --platform=node --target=node22 --format=cjs --external:electron --outfile=dist/preload/empty.cjs --sourcemap",
     "stage": "node scripts/stage-renderer.mjs",
     "build": "pnpm run typecheck && pnpm run build:main && pnpm run build:preload && pnpm run stage",
     "start": "pnpm run build && electron .",

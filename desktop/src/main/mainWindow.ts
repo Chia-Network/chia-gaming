@@ -4,6 +4,13 @@ import { BrowserWindow, app, dialog } from 'electron';
 
 import { APP_ORIGIN } from './appProtocol';
 
+let playerMainWebContentsId: number | undefined;
+
+/** True for the player window created by `createMainWindow`, not About or popups. */
+export function isPlayerMainWebContents(contents: { id: number }): boolean {
+  return playerMainWebContentsId !== undefined && contents.id === playerMainWebContentsId;
+}
+
 export function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1360,
@@ -48,6 +55,13 @@ export function createMainWindow(): BrowserWindow {
 
     if (response === 0) {
       event.preventDefault();
+    }
+  });
+
+  playerMainWebContentsId = window.webContents.id;
+  window.on('closed', () => {
+    if (playerMainWebContentsId === window.webContents.id) {
+      playerMainWebContentsId = undefined;
     }
   });
 

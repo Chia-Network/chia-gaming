@@ -1,8 +1,11 @@
+import path from 'node:path';
+
 import { app } from 'electron';
-import type { Session } from 'electron';
+import type { Session, WebContents, WebPreferences } from 'electron';
 
 import { isAppUrl } from './appProtocol';
 import { log } from './log';
+import { isPlayerMainWebContents } from './mainWindow';
 import { originOfUrl, type NetworkPolicy, type PolicyRef } from './networkPolicy';
 
 /**
@@ -46,30 +49,72 @@ export function installSessionSecurity(target: Session, policy: PolicyRef): void
   });
 }
 
-function isNavigationAllowed(url: string, isMainFrame: boolean, policy: NetworkPolicy): boolean {
+function isNavigationAllowed(
+  url: string,
+  isMainFrame: boolean,
+  policy: NetworkPolicy,
+  contents: WebContents,
+): boolean {
   // A page-initiated blank frame grants no capability the page does not have.
   if (url === 'about:blank') {
     return true;
   }
-  // The top frame stays on the app's own pages; reloading it is how a newly
-  // trusted hub takes effect, so this has to admit our own URLs.
-  if (isMainFrame) {
-    return isAppUrl(url);
+  // App URLs: the player window, About, and the Cloud Wallet OAuth callback
+  // popup returning to `chiagaming://app/oauth/callback`.
+  if (isAppUrl(url)) {
+    return true;
+  }
+  if (!isMainFrame) {
+    const origin = originOfUrl(url);
+    return origin !== null && policy.allowedFrameOrigins.has(origin);
+  }
+  // The player window's top frame stays on the app. Cloud Wallet popups may
+  // leave for an allowlisted origin (authorize / consent / approve).
+  if (isPlayerMainWebContents(contents)) {
+    return false;
   }
   const origin = originOfUrl(url);
-  return origin !== null && policy.allowedFrameOrigins.has(origin);
+  return origin !== null && policy.allowedPopupOrigins.has(origin);
+}
+
+function popupWebPreferences(): WebPreferences {
+  return {
+    // Do not inherit the player preload; Cloud Wallet pages are remote.
+    preload: path.join(app.getAppPath(), 'dist', 'preload', 'empty.cjs'),
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    nodeIntegrationInWorker: false,
+    nodeIntegrationInSubFrames: false,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    experimentalFeatures: false,
+    webviewTag: false,
+    navigateOnDragDrop: false,
+    spellcheck: false,
+    devTools: !app.isPackaged,
+  };
 }
 
 export function installWebContentsSecurity(policy: PolicyRef): void {
   app.on('web-contents-created', (_event, contents) => {
     contents.setWindowOpenHandler((details) => {
+      const origin = originOfUrl(details.url);
+      if (origin !== null && policy.current.allowedPopupOrigins.has(origin)) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            webPreferences: popupWebPreferences(),
+          },
+        };
+      }
       log.warn(`blocked window.open for ${details.url}`);
       return { action: 'deny' };
     });
 
     // 'will-frame-navigate' covers every frame; 'will-navigate' only the top one.
     contents.on('will-frame-navigate', (details) => {
-      if (isNavigationAllowed(details.url, details.isMainFrame, policy.current)) {
+      if (isNavigationAllowed(details.url, details.isMainFrame, policy.current, contents)) {
         return;
       }
       const frame = details.isMainFrame ? 'top-level' : 'sub-frame';
