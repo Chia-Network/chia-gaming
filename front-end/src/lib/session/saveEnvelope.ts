@@ -13,7 +13,7 @@ import type {
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
 export const SESSION_SAVE_VERSION = 15n;
 
-export type BlockchainType = 'simulator' | 'walletconnect';
+export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
 export type ChiaNetwork = 'mainnet' | 'testnet';
 

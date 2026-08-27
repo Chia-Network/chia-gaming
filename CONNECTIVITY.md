@@ -306,8 +306,8 @@ The app is available for a new session when hub presence is not busy
 backend not yet ready for play) and there is no consent prompt, reserved peer id,
 buffered handshake, or live message handler (`isAvailableForNewSessionPrompt()`).
 Backend readiness is owned by `InternalBlockchainInterface.isReadyForPlay()`
-(simulator: connected; WalletConnect: a verified full-node peer, checked
-privately). The app still connects to the hub normally while a backend is not
+(simulator and Cloud Wallet: connected; WalletConnect: a verified full-node
+peer, checked privately). The app still connects to the hub normally while a backend is not
 ready; it simply advertises busy, and inbound `advisory_start` /
 `session_proposal` must still be declined even if the game WebSocket is live. A
 consent prompt is a temporary unavailable state for inbound matchmaking even

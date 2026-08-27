@@ -474,16 +474,19 @@ export interface BlockchainInboundAddressResult {
   puzzleHash: string;
 }
 
-export interface ConnectionField {
-  label: string;
-  default: bigint;
-}
+export type ConnectionField =
+  | { type: 'bigint'; label: string; default: bigint }
+  | { type: 'string'; label: string; default: string };
+
+export type ConnectionFieldValues = Record<string, string | bigint>;
 
 export interface ConnectionSetup {
   qrUri: string;
   skipQr?: boolean;
-  fields?: { balance?: ConnectionField };
-  finalize(values?: { balance?: bigint }): Promise<void>;
+  title?: string;
+  description?: string;
+  fields?: Record<string, ConnectionField>;
+  finalize(values?: ConnectionFieldValues): Promise<void>;
 }
 
 export interface InternalBlockchainInterface {
@@ -518,8 +521,9 @@ export interface InternalBlockchainInterface {
   isConnected(): boolean;
   onConnectionChange(cb: (connected: boolean) => void): () => void;
   // True when this backend can fund/resolve channels (hub may advertise
-  // not-busy). Simulator: ready whenever connected. WalletConnect: ready once a
-  // full-node peer is verified. Peer count is a private implementation detail.
+  // not-busy). Simulator and Cloud Wallet: ready whenever connected.
+  // WalletConnect: ready once a full-node peer is verified. Peer count is a
+  // private implementation detail.
   isReadyForPlay(): boolean;
   onPlayReadinessChange(cb: (ready: boolean) => void): () => void;
 }

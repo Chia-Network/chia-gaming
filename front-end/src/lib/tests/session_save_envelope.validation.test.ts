@@ -148,6 +148,18 @@ describe('validateSessionSaveEnvelope', () => {
     expect(decodeSessionSaveEnvelope(terminal).phase).toBe('terminal');
   });
 
+  it('accepts cloud as preferences.blockchainType', () => {
+    const decoded = decodeSessionSaveEnvelope(baseSave({ blockchainType: 'cloud' }));
+    expect(decoded.phase).toBe('preferences');
+    expect(decoded.save.preferences.blockchainType).toBe('cloud');
+  });
+
+  it('rejects an unknown preferences.blockchainType', () => {
+    expect(() => decodeSessionSaveEnvelope(baseSave({ blockchainType: 'not-a-wallet' }))).toThrow(
+      'Garbled save: invalid preferences.blockchainType: not-a-wallet',
+    );
+  });
+
   it.each([
     ['schema', { gameSessionSchemaVersion: undefined }],
     ['message counter', { messageNumber: undefined }],

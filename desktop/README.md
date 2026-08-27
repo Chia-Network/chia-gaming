@@ -40,12 +40,12 @@ browser at `:3002`.
 
 ## Connection modes
 
-The desktop build is **WalletConnect only**. The preload sets
+The desktop build hides the local simulator. The preload sets
 `window.__chiaDistribution = 'electron'`, and `front-end/src/util/distribution.ts`
-uses it to hide the "Continue with Simulator" button and the simulator setup
-modal, and to resume a saved session with no recorded `blockchainType` as
-WalletConnect rather than simulator. The simulator remains available in the web
-build.
+uses it to hide the "Continue with Simulator" button and to resume a saved
+session with no recorded `blockchainType` as WalletConnect rather than
+simulator. WalletConnect and Cloud Wallet remain available. The simulator
+stays in the web build.
 
 The same flag suppresses the front end's multi-tab lease. That lease records its
 owner in `localStorage` but identifies itself from `sessionStorage`, so a quit
@@ -59,15 +59,21 @@ public internet, `front-end/src/util/walletConnectMetadata.ts` substitutes a
 public https identity when the page origin is not http(s) — the renderer origin
 here is `chiagaming://app`, which no wallet can open or fetch.
 
+Cloud Wallet OAuth uses that same custom-scheme origin as `redirect_uri`
+(`chiagaming://app/oauth/callback`). The protocol handler serves the player
+document at that path so the callback page can `postMessage` the authorization
+code to the opener. The Cloud Wallet OAuth client must allow that redirect URI.
+
 ## Configuration
 
 Optional JSON file at `<userData>/config.json`, where `<userData>` is
 `~/Library/Application Support/Chia Gaming` on macOS,
 `%APPDATA%\Chia Gaming` on Windows, and `~/.config/Chia Gaming` on Linux.
 
-| Key          | Default                                              | Meaning                                     |
-| ------------ | ---------------------------------------------------- | ------------------------------------------- |
-| `hubOrigins` | `["http://localhost:3003", "http://127.0.0.1:3003"]` | Hub origins the app may load and connect to |
+| Key                  | Default                                                                                                | Meaning                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `hubOrigins`         | `["http://localhost:3003", "http://127.0.0.1:3003"]`                                                   | Hub origins the app may load and connect to                             |
+| `cloudWalletOrigins` | `["http://127.0.0.1:3000", "http://127.0.0.1:3001", "http://localhost:3000", "http://localhost:3001"]` | Cloud Wallet API and UI origins for OAuth, GraphQL, and approval popups |
 
 Anything invalid is reported in an error dialog and the app exits rather than
 starting with a half-applied policy.
@@ -77,6 +83,11 @@ is a starting point rather than a fixed set: a hub typed into the in-app picker
 is added to it at runtime and written back to the file. See
 [Hub trust](#hub-trust).
 
+`cloudWalletOrigins` feeds `connect-src` and the popup allowlist. They are not
+framed. A production Cloud Wallet is added here (and the OAuth client must
+allow `chiagaming://app/oauth/callback` as a redirect URI). A hub grant writes
+`hubOrigins` without dropping a `cloudWalletOrigins` key already in the file.
+
 ## Security posture
 
 ### Process isolation
@@ -84,19 +95,19 @@ is added to it at runtime and written back to the file. See
 The renderer has no Node.js reachable from it at all, and the IPC surface is a
 single channel described under [Hub trust](#hub-trust).
 
-| Setting                       | Value   |
-| ----------------------------- | ------- |
+| Setting                       | Value                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------- |
 | `sandbox`                     | `true` (also `app.enableSandbox()`, which covers renderers created later) |
-| `contextIsolation`            | `true`  |
-| `nodeIntegration`             | `false` |
-| `nodeIntegrationInWorker`     | `false` |
-| `nodeIntegrationInSubFrames`  | `false` |
-| `webSecurity`                 | `true`  |
-| `allowRunningInsecureContent` | `false` |
-| `experimentalFeatures`        | `false` |
-| `webviewTag`                  | `false` |
-| `navigateOnDragDrop`          | `false` |
-| `devTools`                    | only in unpackaged builds |
+| `contextIsolation`            | `true`                                                                    |
+| `nodeIntegration`             | `false`                                                                   |
+| `nodeIntegrationInWorker`     | `false`                                                                   |
+| `nodeIntegrationInSubFrames`  | `false`                                                                   |
+| `webSecurity`                 | `true`                                                                    |
+| `allowRunningInsecureContent` | `false`                                                                   |
+| `experimentalFeatures`        | `false`                                                                   |
+| `webviewTag`                  | `false`                                                                   |
+| `navigateOnDragDrop`          | `false`                                                                   |
+| `devTools`                    | only in unpackaged builds                                                 |
 
 `src/preload/index.ts` exposes two things and nothing else: `__chiaDistribution`,
 a string the front end reads during the first render to drop web-only
@@ -144,17 +155,17 @@ Three of those need explanation:
   instead of reusing `front-end/public/index.html` — the browser entry point
   bootstraps through an inline `<script>` that would need a hash or a nonce.
 - `style-src` allows inline styles because Radix's scroll-lock injects a
-  `<style>` element at runtime. Inline *style* is not an XSS vector the way
-  inline *script* is.
+  `<style>` element at runtime. Inline _style_ is not an XSS vector the way
+  inline _script_ is.
 
 ### Network egress
 
 `onBeforeRequest` cancels every `http`, `https`, `ws` and `wss` request whose
 origin is not on the allowlist, and logs it. The allowlist is the configured hub
-origins (plus their WebSocket forms) and the WalletConnect
-endpoints `sign-client` actually reaches: the `.com` and `.org` relays, the
-Verify API, and `pulse.walletconnect.org`. Requests on `chiagaming://` are
-answered from disk and never touch the network stack.
+origins (plus their WebSocket forms), the configured Cloud Wallet origins, and
+the WalletConnect endpoints `sign-client` actually reaches: the `.com` and
+`.org` relays, the Verify API, and `pulse.walletconnect.org`. Requests on
+`chiagaming://` are answered from disk and never touch the network stack.
 
 ### Hub trust
 
@@ -177,11 +188,15 @@ is actually choosing.
 
 ### Navigation and permissions
 
-- `setWindowOpenHandler` denies every `window.open`. The player app has no
-  external links, so nothing needs `shell.openExternal`.
-- `will-frame-navigate` restricts the top frame to `chiagaming://app` and
-  sub-frames to the frame allowlist. It is used in preference to
-  `will-navigate`, which only sees the top frame.
+- `setWindowOpenHandler` allows a popup only when its origin is on
+  `cloudWalletOrigins` (Cloud Wallet OAuth and funding approval). Those windows
+  get an empty preload so they cannot see `__chiaHub`. Every other `window.open`
+  is denied. About-window links still use `shell.openExternal` for the project
+  URL only.
+- `will-frame-navigate` keeps the player window's top frame on `chiagaming://app`,
+  allows Cloud Wallet popups to reach `cloudWalletOrigins` and to return to the
+  app for `/oauth/callback`, and restricts sub-frames to the frame allowlist. It
+  is used in preference to `will-navigate`, which only sees the top frame.
 - `will-attach-webview` is blocked, on top of `webviewTag: false`.
 - Permission requests and checks are denied except `clipboard-sanitized-write`
   from the app origin, which is what `navigator.clipboard.writeText` needs to
