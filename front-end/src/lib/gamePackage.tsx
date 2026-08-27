@@ -22,7 +22,6 @@ export interface RegisteredGamePackage {
   describeHandProposal(handProposal: HandProposal): string;
   decodeProposalParameters(parameters: unknown): unknown | null;
   encodeProposalParameters(parameters: unknown): ProposalParameterValue;
-  handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
   render(view: GameMountView<GameHandState<unknown>>): ReactElement;
   renderHandProposalForm(props: HandProposalFormProps<unknown>): ReactElement;
 }
@@ -44,6 +43,7 @@ export function defineGamePackage<TState, THand extends GameHand<TState>, TParam
       createElement(HandProposalForm, {
         ...props,
         ref: props.ref as Ref<GameProposalFormHandle<TParams>>,
+        initialValues: props.initialValues as HandProposalFormProps<TParams>['initialValues'],
       }),
   };
 }

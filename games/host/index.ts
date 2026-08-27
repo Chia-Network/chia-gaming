@@ -111,46 +111,19 @@ export interface GameProposalFormHandle<TParams> {
   getProposal(): GameProposalFormResult<TParams>;
 }
 
+export interface GameProposalFormInitialValues<TParams> {
+  senderContribution: bigint;
+  receiverContribution: bigint;
+  parameters: TParams;
+}
+
 export interface HandProposalFormProps<TParams> {
   ref?: Ref<GameProposalFormHandle<TParams>>;
   disabled: boolean;
   maxPerHandMojos: bigint | null;
   defaultContribution: bigint;
-  initialProposal: HandProposal | null;
+  initialValues: GameProposalFormInitialValues<TParams> | null;
   onSubmit: () => void;
-}
-
-export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase): boolean {
-  return (
-    a.playerAContribution === b.playerAContribution &&
-    a.playerBContribution === b.playerBContribution &&
-    a.senderIsPlayerA === b.senderIsPlayerA &&
-    a.gameTimeout === b.gameTimeout &&
-    equalProposalParameterValue(a.parameters, b.parameters)
-  );
-}
-
-function equalProposalParameterValue(
-  a: ProposalParameterValue,
-  b: ProposalParameterValue,
-): boolean {
-  if (a instanceof Uint8Array || b instanceof Uint8Array) {
-    return (
-      a instanceof Uint8Array &&
-      b instanceof Uint8Array &&
-      a.length === b.length &&
-      a.every((value, index) => value === b[index])
-    );
-  }
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return (
-      Array.isArray(a) &&
-      Array.isArray(b) &&
-      a.length === b.length &&
-      a.every((value, index) => equalProposalParameterValue(value, b[index]))
-    );
-  }
-  return a === b;
 }
 
 export interface LiveGamePort {
@@ -201,5 +174,4 @@ export interface GamePackageRegistration<
   restoreHand(savedState: unknown): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;
   describeHandProposal(handProposal: HandProposal): string;
-  handProposalsEqual(a: HandProposal, b: HandProposal): boolean;
 }

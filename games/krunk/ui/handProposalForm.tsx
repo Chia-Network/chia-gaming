@@ -1,7 +1,7 @@
 import { forwardRef, useImperativeHandle, useState } from 'react';
 import type { GameProposalFormHandle, HandProposalFormProps } from '../../host';
 import { AmountInput } from './AmountInput';
-import { isValidKrunkStake, krunkProposalParameters } from './handProposal';
+import { isValidKrunkStake } from './handProposal';
 
 type KrunkParameters = Record<string, never>;
 
@@ -9,17 +9,11 @@ export const HandProposalForm = forwardRef<
   GameProposalFormHandle<KrunkParameters>,
   HandProposalFormProps<KrunkParameters>
 >(function HandProposalForm(
-  { disabled, maxPerHandMojos, defaultContribution, initialProposal, onSubmit },
+  { disabled, maxPerHandMojos, defaultContribution, initialValues, onSubmit },
   ref,
 ) {
-  const projectedInitial =
-    initialProposal && krunkProposalParameters.decode(initialProposal.parameters) !== null
-      ? initialProposal
-      : null;
-  const initialAmount = projectedInitial
-    ? projectedInitial.senderIsPlayerA
-      ? projectedInitial.playerAContribution
-      : projectedInitial.playerBContribution
+  const initialAmount = initialValues
+    ? initialValues.senderContribution
     : defaultContribution > 0n
       ? defaultContribution
       : 100n;

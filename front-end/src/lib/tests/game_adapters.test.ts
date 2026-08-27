@@ -75,16 +75,34 @@ describe('game package proposal adapters', () => {
       ...SPACE_PROPOSAL,
       parameters: [Uint8Array.of(0, 255), 'é'] as const,
     };
-    expect(handProposalsEqual(bytesProposal, { ...bytesProposal })).toBe(true);
+    expect(handProposalsEqual(bytesProposal, 'peer', { ...bytesProposal }, 'peer')).toBe(true);
     expect(
-      handProposalsEqual(bytesProposal, {
-        ...bytesProposal,
-        parameters: [Uint8Array.of(0, 254), 'é'],
-      }),
+      handProposalsEqual(
+        bytesProposal,
+        'peer',
+        {
+          ...bytesProposal,
+          parameters: [Uint8Array.of(0, 254), 'é'],
+        },
+        'peer',
+      ),
     ).toBe(false);
-    expect(handProposalsEqual(SPACE_PROPOSAL, { ...SPACE_PROPOSAL, senderIsPlayerA: true })).toBe(
-      false,
-    );
+    expect(
+      handProposalsEqual(
+        SPACE_PROPOSAL,
+        'peer',
+        { ...SPACE_PROPOSAL, senderIsPlayerA: true },
+        'local',
+      ),
+    ).toBe(true);
+    expect(
+      handProposalsEqual(
+        SPACE_PROPOSAL,
+        'peer',
+        { ...SPACE_PROPOSAL, senderIsPlayerA: true },
+        'peer',
+      ),
+    ).toBe(false);
   });
 
   it('projects display text through the package codec', () => {

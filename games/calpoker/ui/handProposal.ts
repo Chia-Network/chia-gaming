@@ -1,5 +1,4 @@
 import {
-  equalHandProposalBase,
   type GamePackageRegistration,
   type ProposalParameterCodec,
 } from '../../host';
@@ -40,8 +39,6 @@ const registration: GamePackageRegistration<
     }
     return `Stake ${formatCalpokerMojos(handProposal.playerAContribution)} each`;
   },
-  handProposalsEqual: equalHandProposalBase,
 };
 
-export const calpokerRegistration = registration;
 export default registration;

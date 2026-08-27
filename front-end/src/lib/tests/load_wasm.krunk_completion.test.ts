@@ -296,9 +296,19 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     }
 
     const traceCountsBeforeSecondHand = traces.map((playerTraces) => playerTraces.length);
-    runtimes[0].dispatch({ type: 'choose-same-terms' });
+    runtimes[1].dispatch({ type: 'choose-same-terms' });
+    assert.equal(
+      runtimes[1].getState().model.betweenHand.mode,
+      'decision',
+      'Krunk repeat proposer must bypass the compose form',
+    );
     await exchangeAndPersist();
-    const cachedSecondProposal = runtimes[1]
+    assert.equal(
+      runtimes[0].getState().model.betweenHand.mode,
+      'decision',
+      'Krunk repeat receiver must cache exact terms without opening the form',
+    );
+    const cachedSecondProposal = runtimes[0]
       .getState()
       .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
     assert.ok(cachedSecondProposal, 'krunk completion receiver must cache the same-terms proposal');
@@ -306,7 +316,12 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     assert.equal(secondIds.length, 2);
     assert.notDeepEqual(secondIds, ids);
 
-    runtimes[1].dispatch({ type: 'choose-same-terms' });
+    runtimes[0].dispatch({ type: 'choose-same-terms' });
+    assert.equal(
+      runtimes[0].getState().model.betweenHand.mode,
+      'decision',
+      'Krunk repeat acceptance must bypass the compose form',
+    );
     await exchangeAndPersist();
 
     for (const [index, runtime] of runtimes.entries()) {

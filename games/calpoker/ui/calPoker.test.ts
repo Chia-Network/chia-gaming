@@ -127,7 +127,7 @@ describe('Calpoker bigint domain helpers', () => {
           disabled: false,
           maxPerHandMojos: 200n,
           defaultContribution: 100n,
-          initialProposal: null,
+          initialValues: null,
           onSubmit: () => {},
         }),
       );

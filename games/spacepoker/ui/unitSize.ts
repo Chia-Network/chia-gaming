@@ -13,7 +13,3 @@ export const spacepokerProposalParameters: ProposalParameterCodec<SpacepokerFact
   },
   encode: (params) => params.betUnitMojos,
 };
-
-export function decodeSpacepokerBetUnitMojos(value: unknown): bigint | null {
-  return spacepokerProposalParameters.decode(value)?.betUnitMojos ?? null;
-}

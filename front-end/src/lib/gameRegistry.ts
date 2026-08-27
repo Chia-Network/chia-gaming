@@ -9,6 +9,7 @@ import type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
 export type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
 import type { HandProposal } from './session/types';
 import type { SessionModel } from './session/types';
+import type { ProposalGroupOrigin } from './session/proposalOrigin';
 
 export type { CatalogGameType } from '../generated/gamePresets';
 export type RegisteredGameType = CatalogGameType;
@@ -107,9 +108,45 @@ export function validateHandProposal(handProposal: HandProposal): boolean {
   );
 }
 
-export function handProposalsEqual(a: HandProposal | null, b: HandProposal | null): boolean {
-  if (!a || !b || a.gameType !== b.gameType) return false;
-  return packageFor(a.gameType).handProposalsEqual(a, b);
+function proposalParameterValuesEqual(
+  a: ProposalParameterValue,
+  b: ProposalParameterValue,
+): boolean {
+  if (a instanceof Uint8Array || b instanceof Uint8Array) {
+    return (
+      a instanceof Uint8Array &&
+      b instanceof Uint8Array &&
+      a.length === b.length &&
+      a.every((value, index) => value === b[index])
+    );
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((value, index) => proposalParameterValuesEqual(value, b[index]))
+    );
+  }
+  return a === b;
+}
+
+export function handProposalsEqual(
+  a: HandProposal | null,
+  aOrigin: ProposalGroupOrigin | null,
+  b: HandProposal | null,
+  bOrigin: ProposalGroupOrigin | null,
+): boolean {
+  if (!a || !b || !aOrigin || !bOrigin || a.gameType !== b.gameType) return false;
+  const localIsPlayerAForA = (aOrigin === 'local') === a.senderIsPlayerA;
+  const localIsPlayerAForB = (bOrigin === 'local') === b.senderIsPlayerA;
+  return (
+    a.playerAContribution === b.playerAContribution &&
+    a.playerBContribution === b.playerBContribution &&
+    localIsPlayerAForA === localIsPlayerAForB &&
+    a.gameTimeout === b.gameTimeout &&
+    proposalParameterValuesEqual(a.parameters, b.parameters)
+  );
 }
 
 export function describeReceivedProposal(handProposal: HandProposal): string {

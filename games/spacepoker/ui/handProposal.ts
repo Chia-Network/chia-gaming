@@ -1,4 +1,4 @@
-import { equalHandProposalBase, type GamePackageRegistration } from '../../host';
+import type { GamePackageRegistration } from '../../host';
 import {
   createSpacepokerHand,
   restoreSpacepokerHand,
@@ -35,8 +35,6 @@ const registration: GamePackageRegistration<
     const stack = stake / params.betUnitMojos;
     return `Stake ${formatSpacepokerMojos(stake)} each · bet unit ${formatSpacepokerMojos(params.betUnitMojos)} · stack ${String(stack)}`;
   },
-  handProposalsEqual: equalHandProposalBase,
 };
 
-export const spacepokerRegistration = registration;
 export default registration;

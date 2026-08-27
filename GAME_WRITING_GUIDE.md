@@ -268,7 +268,11 @@ interface HandProposalFormProps<TParams> {
   disabled: boolean;
   maxPerHandMojos: bigint | null;
   defaultContribution: bigint;
-  initialProposal: HandProposal | null;
+  initialValues: {
+    senderContribution: bigint;
+    receiverContribution: bigint;
+    parameters: TParams;
+  } | null;
   onSubmit: () => void;
 }
 ```
@@ -278,11 +282,19 @@ interface HandProposalFormProps<TParams> {
 - `maxPerHandMojos` is the largest currently available contribution per player,
   in mojos. `null` means the host cannot provide a balance-derived limit; it
   does not make an otherwise invalid draft valid.
-- `defaultContribution` seeds a fresh mounted form. `initialProposal` may seed a
-  counter/retry form; decode it only with the package codec.
+- `defaultContribution` seeds a fresh mounted form. `initialValues` may seed a
+  counter/retry form. Its parameters are already decoded to `TParams`, and its
+  contributions are oriented to the proposal being composed now: `sender` is
+  the local proposer and `receiver` is the peer, regardless of who proposed the
+  previous hand.
 - `onSubmit()` asks the host to call the active handle. `getProposal()` returns
   either `{ ok: true, senderContribution, receiverContribution, parameters }`
   or `{ ok: false, error }`. The form displays its own validation error.
+
+The result uses the same orientation: `senderContribution` is what the local
+proposer commits and `receiverContribution` is what the accepting peer commits.
+The host maps those values to stable factory player A/B fields and supplies the
+proposal-wide sender-orientation bit. Games never inspect that bit.
 
 The host owns the game selector and `gameTimeout`; they are deliberately absent
 from this interface. The game form owns only game-specific draft fields. A form
@@ -295,7 +307,7 @@ service: reference games may duplicate small controls so their presentation
 implementations remain independent.
 
 Implement the package registration in `handProposal.ts`. It provides the one
-typed parameter codec, `describeHandProposal`, and `handProposalsEqual`.
+typed parameter codec and `describeHandProposal`.
 `describeHandProposal` decodes `handProposal.parameters` through that codec and
 must fail if the player app cannot project the Rust-approved value.
 
@@ -407,6 +419,13 @@ session always attempts a cold read-only remount when a valid
 Proposal snapshots persist the exact opaque `parameters` value and all generic
 A/B terms. Do not add game-specific proposal save keys or a second persistence
 codec. Hand state remains saved generically from `GameHand.getState()`.
+
+“Same terms” and retry comparisons are player-app bookkeeping, not game
+semantics. The host compares game type, contributions, timeout, and the complete
+opaque parameter value structurally. It also compares each physical player's
+A/B role after combining proposal origin with `senderIsPlayerA`; when the other
+player proposes a redo, both values flip and the resulting orientation remains
+equal. Games do not provide an equality hook.
 
 ## Step 6: Build the play UI
 

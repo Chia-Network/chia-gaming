@@ -7,6 +7,7 @@ import {
   packageFor,
   REGISTERED_GAMES,
 } from '../lib/gameRegistry';
+import { proposalContributionForOrigin } from '../lib/session/proposalOrigin';
 import { Button } from './button';
 
 export function ComposeProposalDialog({
@@ -20,6 +21,23 @@ export function ComposeProposalDialog({
   const pkg = packageFor(compose.selectedGame);
   const formRef = useRef<RegisteredGameProposalFormHandle>(null);
   const canSubmit = !session.composeProposalSent && compose.gameTimeout > 0n;
+  const initialProposal =
+    session.lastHandProposal?.gameType === compose.selectedGame ? session.lastHandProposal : null;
+  const initialParameters = initialProposal
+    ? pkg.decodeProposalParameters(initialProposal.parameters)
+    : null;
+  const previousOrigin = session.iProposedHand ? 'local' : 'peer';
+  const initialValues =
+    initialProposal && initialParameters !== null
+      ? {
+          senderContribution: proposalContributionForOrigin(initialProposal, previousOrigin),
+          receiverContribution: proposalContributionForOrigin(
+            initialProposal,
+            previousOrigin === 'local' ? 'peer' : 'local',
+          ),
+          parameters: initialParameters,
+        }
+      : null;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -64,10 +82,7 @@ export function ComposeProposalDialog({
           disabled: session.composeProposalSent,
           maxPerHandMojos,
           defaultContribution: session.perGameAmount,
-          initialProposal:
-            session.lastHandProposal?.gameType === compose.selectedGame
-              ? session.lastHandProposal
-              : null,
+          initialValues,
           onSubmit: submit,
         })}
         <div className="flex w-full flex-col items-center gap-1">

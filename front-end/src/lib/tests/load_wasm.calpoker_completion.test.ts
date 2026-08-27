@@ -243,7 +243,17 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
 
     const firstHandKeys = runtimes.map((runtime) => runtime.getState().model.game.handKey);
     runtimes[0].dispatch({ type: 'choose-same-terms' });
+    assert.equal(
+      runtimes[0].getState().model.betweenHand.mode,
+      'decision',
+      'Calpoker repeat proposer must bypass the compose form',
+    );
     await exchange();
+    assert.equal(
+      runtimes[1].getState().model.betweenHand.mode,
+      'decision',
+      'Calpoker repeat receiver must cache exact terms without opening the form',
+    );
     const secondProposal = runtimes[1]
       .getState()
       .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
@@ -251,6 +261,11 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     const secondGameId = secondProposal.memberIds[0];
     assert.notEqual(secondGameId, gameId);
     runtimes[1].dispatch({ type: 'choose-same-terms' });
+    assert.equal(
+      runtimes[1].getState().model.betweenHand.mode,
+      'decision',
+      'Calpoker repeat acceptance must bypass the compose form',
+    );
     await exchange();
 
     assert.deepEqual(

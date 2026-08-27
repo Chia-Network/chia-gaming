@@ -37,7 +37,14 @@ export function reduceSessionCommand(
     case 'choose-same-terms': {
       const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
       if (cached) {
-        if (handProposalsEqual(cached.handProposal, betweenHand.lastHandProposal)) {
+        if (
+          handProposalsEqual(
+            cached.handProposal,
+            cached.origin,
+            betweenHand.lastHandProposal,
+            state.model.game.currentHandOrigin,
+          )
+        ) {
           return {
             state,
             effects: [
@@ -111,6 +118,10 @@ export function reduceSessionCommand(
           effects: [{ type: 'persist-session' }],
         };
       }
+      const localTerms =
+        state.model.game.currentHandOrigin === 'peer'
+          ? { ...terms, senderIsPlayerA: !terms.senderIsPlayerA }
+          : terms;
       return {
         state: {
           ...state,
@@ -120,12 +131,20 @@ export function reduceSessionCommand(
           },
           coordination: { ...state.coordination, sameTermsRequested: true },
         },
-        effects: [{ type: 'controller-propose-game', handProposal: terms }],
+        effects: [{ type: 'controller-propose-game', handProposal: localTerms }],
       };
     }
     case 'reject-current-proposal': {
       const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
-      if (cached && !handProposalsEqual(cached.handProposal, betweenHand.lastHandProposal)) {
+      if (
+        cached &&
+        !handProposalsEqual(
+          cached.handProposal,
+          cached.origin,
+          betweenHand.lastHandProposal,
+          state.model.game.currentHandOrigin,
+        )
+      ) {
         return {
           state: {
             ...state,

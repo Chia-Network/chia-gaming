@@ -1,5 +1,4 @@
 import {
-  equalHandProposalBase,
   type GamePackageRegistration,
   type ProposalParameterCodec,
 } from '../../host';
@@ -39,8 +38,6 @@ const registration: GamePackageRegistration<
     }
     return `Stake ${formatKrunkMojos(handProposal.playerAContribution)} each`;
   },
-  handProposalsEqual: equalHandProposalBase,
 };
 
-export const krunkRegistration = registration;
 export default registration;

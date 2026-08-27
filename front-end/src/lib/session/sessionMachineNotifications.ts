@@ -160,7 +160,12 @@ export function reduceSessionNotification(
       return { state: current, effects };
     }
     const between = current.model.betweenHand;
-    const matchesLast = handProposalsEqual(incoming.handProposal, between.lastHandProposal);
+    const matchesLast = handProposalsEqual(
+      incoming.handProposal,
+      incoming.origin,
+      between.lastHandProposal,
+      current.model.game.currentHandOrigin,
+    );
     if (between.mode === 'decision') {
       if (current.coordination.expectingCounterProposal) {
         effects.push({ type: 'timer-cancel', key: 'rejection-fallback' });
@@ -262,7 +267,14 @@ export function reduceSessionNotification(
           });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         }
-      } else if (handProposalsEqual(incoming.handProposal, between.rejectedOnceHandProposal)) {
+      } else if (
+        handProposalsEqual(
+          incoming.handProposal,
+          incoming.origin,
+          between.rejectedOnceHandProposal,
+          current.model.game.currentHandOrigin,
+        )
+      ) {
         effects.push({ type: 'controller-cancel-proposal', id: incoming.primaryId });
         step({ type: 'set-rejected-terms', handProposal: null });
       } else {

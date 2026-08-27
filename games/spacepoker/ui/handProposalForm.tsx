@@ -2,26 +2,19 @@ import { forwardRef, useImperativeHandle, useState } from 'react';
 import type { GameProposalFormHandle, HandProposalFormProps } from '../../host';
 import { AmountInput } from './AmountInput';
 import { formatSpacepokerMojos } from './formatting';
-import {
-  spacepokerProposalParameters,
-  type SpacepokerFactoryParameters,
-} from './unitSize';
+import type { SpacepokerFactoryParameters } from './unitSize';
 
 export const HandProposalForm = forwardRef<
   GameProposalFormHandle<SpacepokerFactoryParameters>,
   HandProposalFormProps<SpacepokerFactoryParameters>
 >(function HandProposalForm(
-  { disabled, maxPerHandMojos, defaultContribution, initialProposal, onSubmit },
+  { disabled, maxPerHandMojos, defaultContribution, initialValues, onSubmit },
   ref,
 ) {
-  const initialParams = initialProposal
-    ? spacepokerProposalParameters.decode(initialProposal.parameters)
-    : null;
+  const initialParams = initialValues?.parameters ?? null;
   const [betUnitMojos, setBetUnitMojos] = useState(initialParams?.betUnitMojos ?? 1n);
-  const initialStake = initialProposal
-    ? initialProposal.senderIsPlayerA
-      ? initialProposal.playerAContribution
-      : initialProposal.playerBContribution
+  const initialStake = initialValues
+    ? initialValues.senderContribution
     : defaultContribution > 0n
       ? defaultContribution
       : 10n;
