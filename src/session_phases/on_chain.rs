@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::channel_state::game_handler::PreparedMove;
 #[cfg(test)]
 use crate::channel_state::types::ChannelCoinSpendInfo;
 use crate::channel_state::types::ChannelEnv;
@@ -394,8 +395,7 @@ impl OnChainPhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        readable_move: &ReadableMove,
-        entropy: Hash,
+        prepared: PreparedMove,
         existing_coin: &CoinString,
     ) -> Result<(PuzzleHash, PuzzleHash, usize, GameMoveDetails, Spend), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
@@ -403,12 +403,8 @@ impl OnChainPhase {
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
         let state_number = self.state_number;
 
-        let move_result = self.live_games[game_idx].internal_make_move(
-            env.allocator,
-            readable_move,
-            entropy,
-            state_number,
-        )?;
+        let move_result =
+            self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
 
         let tx =
             self.live_games[game_idx].get_transaction_for_move(env.allocator, existing_coin)?;
@@ -1531,8 +1527,7 @@ impl OnChainPhase {
         env: &mut ChannelEnv<'_>,
         current_coin: &CoinString,
         game_id: GameID,
-        readable_move: ReadableMove,
-        entropy: Hash,
+        prepared: PreparedMove,
         action: LocalActionKind,
     ) -> Result<Vec<Effect>, Error> {
         let my_turn = self.my_move_in_game(&game_id);
@@ -1567,7 +1562,7 @@ impl OnChainPhase {
         let (pre_referee, pre_last_ph) = self.save_game_state(&game_id)?;
 
         let (old_ph, new_ph, _state_number, move_result, transaction) =
-            self.on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
+            self.on_chain_our_move(env, &game_id, prepared, current_coin)?;
 
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
@@ -1635,7 +1630,7 @@ impl OnChainPhase {
         };
 
         match action {
-            GameAction::Move(game_id, readable_move, hash) => match get_current_coin(&game_id) {
+            GameAction::Move(game_id, prepared) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
                     if self.pending_moves.contains_key(&current_coin) {
                         return Err(Error::StrErr(format!(
@@ -1651,8 +1646,7 @@ impl OnChainPhase {
                             env,
                             &current_coin,
                             game_id,
-                            readable_move,
-                            hash,
+                            prepared,
                             LocalActionKind::MakeMove,
                         )?
                         .into_iter()
@@ -1676,13 +1670,20 @@ impl OnChainPhase {
                         self.enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
                         let readable_move =
                             ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
+                        let prepared = {
+                            let game_idx = self.get_game_by_id(&game_id)?;
+                            self.live_games[game_idx].prepare_move(
+                                env.allocator,
+                                &readable_move,
+                                entropy,
+                            )?
+                        };
                         Ok(self
                             .do_on_chain_move(
                                 env,
                                 &current_coin,
                                 game_id,
-                                readable_move,
-                                entropy,
+                                prepared,
                                 LocalActionKind::Cheat,
                             )?
                             .into_iter()
@@ -1812,7 +1813,10 @@ impl OnChainPhase {
             &self.game_action_queue,
             current_coin.is_none_or(|coin| self.pending_moves.contains_key(coin)),
         )?;
-        self.do_on_chain_action(env, GameAction::Move(*id, readable.clone(), new_entropy))
+        let game_idx = self.get_game_by_id(id)?;
+        let prepared =
+            self.live_games[game_idx].prepare_move(env.allocator, readable, new_entropy)?;
+        self.do_on_chain_action(env, GameAction::Move(*id, prepared))
     }
 
     pub fn accept_settlement(

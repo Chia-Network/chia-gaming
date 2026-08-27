@@ -21,14 +21,11 @@ export type DurableGameEvent = Extract<
   | { type: 'notification-accepted-group' }
   | { type: 'notification-game-status' }
   | { type: 'notification-game-terminal' }
-  | { type: 'notification-move-rejected' }
   | { type: 'notification-insufficient-balance' }
   | { type: 'notification-abandoned' }
   | { type: 'hand-state-changed' }
-  | { type: 'local-game-action-staged' }
-  | { type: 'local-game-action-applied' }
+  | { type: 'local-game-action-committed' }
   | { type: 'local-action-applied' }
-  | { type: 'discard-pending-candidate' }
 >;
 
 function gameSliceFromModel(model: SessionModel): GameSlice {
@@ -45,20 +42,6 @@ function gameSliceFromModel(model: SessionModel): GameSlice {
 
 function withGameSlice(model: SessionModel, game: GameSlice): SessionModel {
   return { ...model, game: { ...model.game, ...game } };
-}
-
-function withoutPendingIds(model: SessionModel, ids: readonly string[]): SessionModel {
-  if (!ids.some((id) => model.game.pendingCandidates[id])) return model;
-  const removed = new Set(ids);
-  return {
-    ...model,
-    game: {
-      ...model.game,
-      pendingCandidates: Object.fromEntries(
-        Object.entries(model.game.pendingCandidates).filter(([id]) => !removed.has(id)),
-      ),
-    },
-  };
 }
 
 type DurableGameEventWithHandState = DurableGameEvent & {
@@ -118,22 +101,12 @@ function reduceHandUpdateAcrossSnapshots(
   activeHand?.receive(update);
   const handState =
     suppliedHandState ?? reduceHandSnapshot(state, state.model.game.handState, update);
-  const pendingCandidates = Object.fromEntries(
-    Object.entries(state.model.game.pendingCandidates).map(([id, pending]) => {
-      const updated = reduceHandSnapshot(
-        state,
-        { gameType: pending.gameType, state: pending.state },
-        update,
-      );
-      return [id, { ...pending, state: updated.state }];
-    }),
-  );
   return {
     state: {
       ...state,
       model: {
         ...state.model,
-        game: { ...state.model.game, handState, pendingCandidates },
+        game: { ...state.model.game, handState },
       },
     },
     effects: [],
@@ -152,20 +125,12 @@ export function reduceDurableGameEvent(
   switch (event.type) {
     case 'game': {
       if (event.action.type === 'abandoned') activeHand?.clear();
-      const cleared =
-        event.action.type === 'remove-group'
-          ? withoutPendingIds(state.model, event.action.groupIds)
-          : event.action.type === 'settled'
-            ? withoutPendingIds(state.model, [event.action.id])
-            : event.action.type === 'abandoned'
-              ? { ...state.model, game: { ...state.model.game, pendingCandidates: {} } }
-              : state.model;
       return {
         state: {
           ...state,
           model: withGameSlice(
-            cleared,
-            gameSliceReducer(gameSliceFromModel(cleared), event.action),
+            state.model,
+            gameSliceReducer(gameSliceFromModel(state.model), event.action),
           ),
         },
         effects: [],
@@ -207,12 +172,7 @@ export function reduceDurableGameEvent(
         origin: proposal.origin,
         gameType: proposal.handProposal.gameType,
       });
-      const modelWithGame = withGameSlice(
-        first
-          ? { ...state.model, game: { ...state.model.game, pendingCandidates: {} } }
-          : state.model,
-        game,
-      );
+      const modelWithGame = withGameSlice(state.model, game);
       const initialized = {
         ...state,
         model: {
@@ -242,7 +202,6 @@ export function reduceDurableGameEvent(
             ? {
                 firstGameAccepted: true,
                 sameTermsRequested: false,
-                expectingCounterProposal: false,
               }
             : {}),
         },
@@ -292,11 +251,7 @@ export function reduceDurableGameEvent(
       return reduceHandUpdateAcrossSnapshots(projected, update, event.handState, activeHand);
     }
     case 'notification-game-terminal': {
-      if (state.model.game.pendingCandidates[event.id]) {
-        activeHand?.restore(state.model.game.handState);
-      }
-      const modelWithoutPending = withoutPendingIds(state.model, [event.id]);
-      const game = gameSliceReducer(gameSliceFromModel(modelWithoutPending), {
+      const game = gameSliceReducer(gameSliceFromModel(state.model), {
         type: 'settled',
         id: event.id,
         terminal: event.terminal,
@@ -305,7 +260,7 @@ export function reduceDurableGameEvent(
       const base = {
         ...state,
         model: {
-          ...withGameSlice(modelWithoutPending, game),
+          ...withGameSlice(state.model, game),
           betweenHand: isLast
             ? {
                 ...state.model.betweenHand,
@@ -324,13 +279,6 @@ export function reduceDurableGameEvent(
       };
       return reduceHandUpdateAcrossSnapshots(base, update, event.handState, activeHand);
     }
-    case 'notification-move-rejected': {
-      activeHand?.restore(state.model.game.handState);
-      return {
-        state: { ...state, model: withoutPendingIds(state.model, [event.id]) },
-        effects: [{ type: 'persist-session' }],
-      };
-    }
     case 'notification-insufficient-balance': {
       const proposal = selectProposalGroupByMemberId(state.model, event.id);
       if (!proposal) {
@@ -340,7 +288,7 @@ export function reduceDurableGameEvent(
         type: 'remove-group',
         groupIds: proposal.memberIds,
       });
-      const modelWithGame = withoutPendingIds(withGameSlice(state.model, game), proposal.memberIds);
+      const modelWithGame = withGameSlice(state.model, game);
       const cleared = clearProposalIds(
         {
           ...state,
@@ -386,7 +334,6 @@ export function reduceDurableGameEvent(
             game: {
               ...withGameSlice(state.model, game).game,
               handState: null,
-              pendingCandidates: {},
             },
           },
         },
@@ -408,126 +355,39 @@ export function reduceDurableGameEvent(
         effects: [{ type: 'persist-session' }],
       };
     }
-    case 'local-game-action-staged': {
+    case 'local-game-action-committed': {
       if (event.gameType !== state.model.game.activeGameType) {
         throw new Error(
-          `Internal pending candidate gameType ${event.gameType} does not match active ${state.model.game.activeGameType}`,
-        );
-      }
-      if (!state.model.game.activeIds.includes(event.id)) {
-        throw new Error(`Internal pending candidate game id ${event.id} is not active`);
-      }
-      if (!state.model.game.currentHandIds.includes(event.id)) {
-        throw new Error(
-          `Internal pending candidate game id ${event.id} is not a current hand member`,
-        );
-      }
-      if (state.model.game.pendingCandidates[event.id]) {
-        throw new Error(`Internal pending candidate already exists for game ${event.id}`);
-      }
-      return {
-        state: {
-          ...state,
-          model: {
-            ...state.model,
-            game: {
-              ...state.model.game,
-              pendingCandidates: {
-                ...state.model.game.pendingCandidates,
-                [event.id]: {
-                  gameType: event.gameType,
-                  id: event.id,
-                  action: event.action,
-                  state: event.state,
-                },
-              },
-            },
-          },
-        },
-        effects: [{ type: 'persist-session' }],
-      };
-    }
-    case 'local-game-action-applied': {
-      if (event.gameType !== state.model.game.activeGameType) {
-        throw new Error(
-          `Internal applied candidate gameType ${event.gameType} does not match active ${state.model.game.activeGameType}`,
+          `Internal committed gameType ${event.gameType} does not match active ${state.model.game.activeGameType}`,
         );
       }
       if (
         !state.model.game.activeIds.includes(event.id) ||
         !state.model.game.currentHandIds.includes(event.id)
       ) {
-        throw new Error(
-          `Internal applied candidate game id ${event.id} is not an active hand member`,
-        );
-      }
-      if (state.model.game.pendingCandidates[event.id]) {
-        throw new Error(`Internal applied candidate conflicts with pending game ${event.id}`);
+        throw new Error(`Internal committed game id ${event.id} is not an active hand member`);
       }
       const handState = event.handState ?? { gameType: event.gameType, state: event.state };
-      const applied = {
-        ...state,
-        model: {
-          ...state.model,
-          game: { ...state.model.game, handState },
-        },
-      };
-      const game = gameSliceReducer(gameSliceFromModel(applied.model), {
-        type: 'local-turn',
-        id: event.id,
-        isMyTurn: false,
-        channelState: applied.model.channel.status.state,
-      });
       return {
-        state: { ...applied, model: withGameSlice(applied.model, game) },
+        state: {
+          ...state,
+          model: {
+            ...state.model,
+            game: { ...state.model.game, handState },
+          },
+        },
         effects: [{ type: 'persist-session' }],
       };
     }
     case 'local-action-applied': {
-      const pending = state.model.game.pendingCandidates[event.id];
-      if (!pending) return { state, effects: [] };
-      if (pending.action !== event.action) {
-        throw new Error(
-          `LocalActionApplied ${event.id} action ${event.action} does not match pending ${pending.action}`,
-        );
-      }
-      const handState = event.handState ?? {
-        gameType: pending.gameType,
-        state: pending.state,
-      };
-      const promoted = {
-        ...state,
-        model: {
-          ...state.model,
-          game: {
-            ...state.model.game,
-            handState,
-            pendingCandidates: Object.fromEntries(
-              Object.entries(state.model.game.pendingCandidates).filter(([id]) => id !== event.id),
-            ),
-          },
-        },
-      };
-      const game = gameSliceReducer(gameSliceFromModel(promoted.model), {
+      const game = gameSliceReducer(gameSliceFromModel(state.model), {
         type: 'local-turn',
         id: event.id,
         isMyTurn: false,
-        channelState: promoted.model.channel.status.state,
+        channelState: state.model.channel.status.state,
       });
       return {
-        state: { ...promoted, model: withGameSlice(promoted.model, game) },
-        effects: [{ type: 'persist-session' }],
-      };
-    }
-    case 'discard-pending-candidate': {
-      const pending = state.model.game.pendingCandidates[event.id];
-      if (!pending) return { state, effects: [] };
-      if (event.action !== undefined && pending.action !== event.action) {
-        return { state, effects: [] };
-      }
-      activeHand?.restore(state.model.game.handState);
-      return {
-        state: { ...state, model: withoutPendingIds(state.model, [event.id]) },
+        state: { ...state, model: withGameSlice(state.model, game) },
         effects: [{ type: 'persist-session' }],
       };
     }

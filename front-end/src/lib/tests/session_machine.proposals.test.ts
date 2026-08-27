@@ -74,11 +74,15 @@ describe('session machine behavior sequences', () => {
         },
       ],
     });
-    expect(events[1]).toMatchObject({
+    expect(events[1]).toEqual({
+      type: 'remove-game-notifications',
+      kind: 'proposal-rejected',
+    });
+    expect(events[2]).toMatchObject({
       type: 'notification-insufficient-balance',
       id: '9',
     });
-    expect(events[1]).not.toHaveProperty('groupIds');
+    expect(events[2]).not.toHaveProperty('groupIds');
   });
 
   it('tracks a grouped proposal through acceptance and insufficient-balance rollback', () => {

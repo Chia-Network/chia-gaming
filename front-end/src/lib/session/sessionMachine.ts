@@ -19,12 +19,10 @@ function initialCoordination(
   return {
     firstGameAccepted,
     sameTermsRequested: false,
-    expectingCounterProposal: false,
     nextNotificationId: [...model.channel.queue, ...model.game.queue].reduce(
       (maximum, notification) => (notification.id > maximum ? notification.id : maximum),
       0n,
     ),
-    rejectionTimerGeneration: 0,
     channelEnrichmentGeneration: 0,
     gameEnrichmentGeneration: {},
     hostOnChain: false,
@@ -60,7 +58,6 @@ export function reduceSessionMachine(
     case 'submit-compose':
     case 'accept-review':
     case 'reject-review':
-    case 'rejection-fallback-fired':
       return reduceSessionCommand(state, event);
 
     case 'wasm-notification':
@@ -101,7 +98,6 @@ export function reduceSessionMachine(
     case 'set-compose-timeout':
     case 'set-compose-proposal-sent':
     case 'set-same-terms-requested':
-    case 'set-expecting-counter-proposal':
     case 'set-first-game-accepted':
       return reduceBetweenHandEvent(state, event);
 
@@ -119,14 +115,11 @@ export function reduceSessionMachine(
     case 'notification-accepted-group':
     case 'notification-game-status':
     case 'notification-game-terminal':
-    case 'notification-move-rejected':
     case 'notification-insufficient-balance':
     case 'notification-abandoned':
     case 'hand-state-changed':
-    case 'local-game-action-staged':
-    case 'local-game-action-applied':
+    case 'local-game-action-committed':
     case 'local-action-applied':
-    case 'discard-pending-candidate':
       return reduceDurableGameEvent(state, event, activeHand);
 
     default:

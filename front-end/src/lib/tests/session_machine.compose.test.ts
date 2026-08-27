@@ -42,7 +42,7 @@ describe('session machine behavior sequences', () => {
   it('uses the restored model directly as the machine projection', () => {
     const restored = sessionModelFromSave(
       liveSave({
-        version: 20n,
+        version: 21n,
 
         playerId: 'p1',
 

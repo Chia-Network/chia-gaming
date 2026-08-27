@@ -42,16 +42,19 @@ factory by the request's hash `game_type`, converts the exact structured
 `parameters` to CLVM, runs the factory,
 and requires that the first returned record's `initial_validation_program_hash`
 equals that `game_type`. The wire member list must be non-empty and have the
-same ordered cardinality as the factory result. Each wire member must match the
-corresponding canonical factory record for every mutually committed setup fact:
+same ordered cardinality as the factory result. The peer wire intentionally
+contains and compares only the small protocol-visible initialization/referee
+facts needed to prove both sides instantiated the same game. Each wire member
+must match the corresponding canonical factory record for:
 player-A/player-B contributions, `player_a_goes_first`, initial validator hash,
 initial validation-info hash (the validator/state commitment used by the
 referee), initial move, maximum move size, and initial mover share. Raw initial
-state, validator program, handlers, and the contribution-derived amount are not
-sent; `GameStartInfo` is built entirely from the receiver's local factory
-result. The proposal-wide `sender_is_player_a` maps the sender to the stable A/B
-orientation; it never changes member order. Any failure rejects the batch
-(triggering rollback and go-on-chain).
+state and the contribution-derived amount are not sent. Validator programs and
+my-turn/their-turn handlers are local implementation details: they are neither
+sent nor peer compatibility material. `GameStartInfo` is built entirely from
+the receiver's local factory result. The proposal-wide `sender_is_player_a`
+maps the sender to the stable A/B orientation; it never changes member order.
+Any failure rejects the batch (triggering rollback and go-on-chain).
 
 The normal per-game checks are then applied while recording each member:
 
@@ -119,9 +122,9 @@ resulting cancellations gracefully so the user's intent is preserved.
 **How collisions manifest:** Both `SupersededByIncoming` and
 `PeerProposalPending` cancel the local proposal and emit
 `ProposalCancelled`. The frontend stashes the cancelled proposal's terms in
-`pendingRetryTermsRef`. When the peer's `ProposalMade` notification arrives
+`pendingRetryHandProposal`. When the peer's `ProposalMade` notification arrives
 (which it will, since the peer successfully proposed), the handler checks
-`pendingRetryTermsRef` and takes one of two paths:
+`pendingRetryHandProposal` and takes one of two paths:
 
 - **Terms match the previous hand** — auto-reject the peer's proposal and
   re-send ours. The user never sees the collision.
@@ -131,6 +134,11 @@ resulting cancellations gracefully so the user's intent is preserved.
 This means a simple "play again at the same stakes" interaction is seamless
 even when both players click "New Hand" at the same moment. Only genuinely
 conflicting terms (different amounts) require user intervention.
+
+When the user rejects an incoming proposal, a successful cancel returns the UI
+to compose immediately. There is no `expectingCounterProposal` state or timer.
+If a legitimate crossed proposal is already in flight, compose may flicker
+briefly before the normal `ProposalMade` path presents it.
 
 See `UX_NOTIFICATIONS.md` for the full `CancelReason` table and frontend
 behavior for each variant.
@@ -213,10 +221,24 @@ A single game's lifecycle, independent of other concurrent games:
 ```
 
 All of these actions are delivered via the
-[potato batch protocol](OVERVIEW.md#the-potato-protocol): they are queued locally and sent
-when the potato is held, potentially alongside actions for other games. Multiple
-games can be in flight simultaneously, and any potato pass may carry actions
-for several of them.
+[potato batch protocol](OVERVIEW.md#the-potato-protocol): their durable action
+state is queued locally and sent when the potato is held, potentially alongside
+actions for other games. A move directive is validated and prepared before that
+queue boundary: Rust verifies local turn/duplicate authority and immediately
+runs the my-turn handler. A tagged `(tag message)` rejection emits synchronous
+`MoveRejected`, and neither the readable input nor any move is queued.
+
+On success the queue stores only the durable uncurried `PreparedMove` outputs
+from that handler: move bytes, outgoing/incoming validator programs, maximum
+move size, mover share, waiting handler, and optional message parser. It does
+not store the readable, entropy, transaction, curried referee, or derived puzzle
+hash. When the potato arrives, off-chain application consumes the prepared
+output to advance/curry/sign/send without rerunning the handler. The same split
+applies to later on-chain actuation. Post-application `CachedSendMove` redo
+state is separate from this pre-application queue.
+
+Multiple games can be in flight simultaneously, and any potato pass may carry
+actions for several of them.
 
 For every accepted member, the two peers report opposite `our_turn` bits.
 Insufficient aggregate balance emits `InsufficientBalance`, cancels the group,

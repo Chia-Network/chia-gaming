@@ -1031,27 +1031,18 @@ impl OffChainPhase {
         while let Some(action) = self.game_action_queue.pop_front() {
             self.last_failed_queued_action = failed_game_action_context(&action);
             match action {
-                GameAction::Move(game_id, readable_move, new_entropy) => {
+                GameAction::Move(game_id, prepared) => {
                     let ch = self.channel_state_mut()?;
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
                     if let Some(true) = game_is_my_turn {
-                        match ch.send_move_no_finalize(env, &game_id, &readable_move, new_entropy) {
-                            Ok(move_result) => {
-                                batch_actions
-                                    .push(BatchAction::Move(game_id, move_result.game_move));
-                                applied_actions.push((game_id, LocalActionKind::MakeMove));
-                            }
-                            Err(Error::GameMoveRejected { tag, message }) => {
-                                effects.push(Effect::Notify(GameNotification::MoveRejected {
-                                    id: game_id,
-                                    tag: String::from_utf8_lossy(&tag).into_owned(),
-                                    message: String::from_utf8_lossy(&message).into_owned(),
-                                }));
-                            }
-                            Err(error) => return Err(error),
-                        }
+                        let move_result = ch.send_move_no_finalize(env, &game_id, prepared)?;
+                        batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
+                        applied_actions.push((game_id, LocalActionKind::MakeMove));
                     } else {
-                        deferred.push_back(GameAction::Move(game_id, readable_move, new_entropy));
+                        game_assert!(
+                            false,
+                            "prepared move became stale before off-chain application"
+                        );
                     }
                 }
                 GameAction::Cheat(game_id, mover_share, entropy) => {
@@ -1061,8 +1052,8 @@ impl OffChainPhase {
                         ch.enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
                         let readable_move =
                             ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
-                        let move_result =
-                            ch.send_move_no_finalize(env, &game_id, &readable_move, entropy)?;
+                        let prepared = ch.prepare_move(env, &game_id, &readable_move, entropy)?;
+                        let move_result = ch.send_move_no_finalize(env, &game_id, prepared)?;
                         batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
                         applied_actions.push((game_id, LocalActionKind::Cheat));
                     } else {
@@ -1686,8 +1677,10 @@ impl FromLocalUI for OffChainPhase {
             &self.game_action_queue,
             false,
         )?;
-        let (_continued, effects) =
-            self.do_game_action(GameAction::Move(*id, readable.clone(), new_entropy))?;
+        let prepared = self
+            .channel_state()?
+            .prepare_move(_env, id, readable, new_entropy)?;
+        let (_continued, effects) = self.do_game_action(GameAction::Move(*id, prepared))?;
 
         Ok(effects)
     }

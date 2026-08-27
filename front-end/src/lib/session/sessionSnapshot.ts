@@ -93,34 +93,11 @@ export function snapshotFromSessionModel(
   if (model.game.handState !== null) {
     requireCatalogGameType(model.game.handState.gameType, 'handState.gameType');
   }
-  for (const [id, pending] of Object.entries(model.game.pendingCandidates)) {
-    if (
-      pending.id !== id ||
-      pending.gameType !== model.game.activeGameType ||
-      !model.game.currentHandIds.includes(id) ||
-      !model.game.activeIds.includes(id)
-    ) {
-      throw new Error(`Session invariant broken: invalid pending candidate ${id}`);
-    }
-  }
 
   return {
     activeGameIds: model.game.activeIds,
     activeGameType: requireCatalogGameType(model.game.activeGameType, 'activeGameType'),
     handState: model.game.handState,
-    pendingCandidates: model.game.currentHandIds.flatMap((id) => {
-      const pending = model.game.pendingCandidates[id];
-      return pending
-        ? [
-            {
-              gameType: pending.gameType,
-              id: pending.id,
-              action: pending.action,
-              state: pending.state,
-            },
-          ]
-        : [];
-    }),
     currentHandGameIds: model.game.currentHandIds,
     currentHandOrigin: model.game.currentHandOrigin,
     lastDisplayedGameId: model.game.lastDisplayedId,

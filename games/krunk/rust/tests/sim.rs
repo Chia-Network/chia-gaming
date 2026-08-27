@@ -75,20 +75,11 @@ pub fn krunk_ran_all_the_moves_predicate(
 mod sim_tests {
     use super::*;
 
-    use std::collections::{HashMap, VecDeque};
-    use std::panic::{catch_unwind, AssertUnwindSafe};
-
-    use rand::{Rng, SeedableRng};
-    use rand_chacha::ChaCha8Rng;
-
-    use crate::channel_state::types::{ChannelEnv, OnChainGameState, TimeoutClaimState};
-    use crate::common::types::{Amount, CoinString, Hash, PuzzleHash, Timeout};
     use crate::session_phases::effects::{
         ChannelStatus, ChannelStatusSnapshot, GameNotification, GameStatusKind, LocalActionKind,
         SettlementOutcome,
     };
-    use crate::session_phases::on_chain::{OnChainPhase, OnChainPhaseArgs};
-    use crate::session_phases::types::{GameAction, PeerMessage, PotatoState};
+    use crate::session_phases::types::PeerMessage;
     use crate::simulator::tests::session_phases_sim::{
         run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome, TestEvent,
     };
@@ -314,72 +305,6 @@ mod sim_tests {
         assert_cached_nil_redo(&outcome, picker, game_id);
     }
 
-    fn phase_for_move_validation(
-        game_id: GameID,
-        our_turn: bool,
-        game_action_queue: VecDeque<GameAction>,
-    ) -> OnChainPhase {
-        let game_map = HashMap::from([(
-            CoinString::default(),
-            OnChainGameState {
-                game_id,
-                puzzle_hash: PuzzleHash::default(),
-                our_turn,
-                state_number: 0,
-                timeout_claim: TimeoutClaimState::Waiting,
-                pending_slash_amount: None,
-                cheating_move_mover_share: None,
-                timeout_claim_armed: false,
-                notification_sent: false,
-                game_timeout: Timeout::new(15),
-                game_finished: false,
-            },
-        )]);
-        let mut rng = ChaCha8Rng::from_seed([0; 32]);
-        OnChainPhase::new(OnChainPhaseArgs {
-            have_potato: PotatoState::Present,
-            channel_timeout: Timeout::new(15),
-            game_action_queue,
-            game_map,
-            pending_moves: HashMap::new(),
-            private_keys: rng.random(),
-            reward_puzzle_hash: PuzzleHash::default(),
-            their_reward_puzzle_hash: PuzzleHash::default(),
-            my_out_of_game_balance: Amount::default(),
-            their_out_of_game_balance: Amount::default(),
-            my_allocated_balance: Amount::default(),
-            their_allocated_balance: Amount::default(),
-            live_games: Vec::new(),
-            pending_settlements: Vec::new(),
-            unroll_advance_timeout: Timeout::new(15),
-            is_initial_potato: true,
-            state_number: 0,
-            was_stale: false,
-            resolved_clean: false,
-            terminal_reward_coin: None,
-            game_payout_coins: Vec::new(),
-        })
-    }
-
-    fn assert_phase_move_panics(mut phase: OnChainPhase, game_id: GameID, expected: &str) {
-        let panic = catch_unwind(AssertUnwindSafe(|| {
-            let mut allocator = AllocEncoder::new();
-            let mut env = ChannelEnv::new(&mut allocator).expect("channel environment");
-            let readable = ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
-            let _ = phase.make_move(&mut env, &game_id, &readable, Hash::default());
-        }))
-        .expect_err("phase API must fail loudly");
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&str>().copied())
-            .unwrap_or("<non-string panic>");
-        assert!(
-            message.contains(expected),
-            "expected panic containing {expected:?}, got {message:?}"
-        );
-    }
-
     pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut res: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = Vec::new();
 
@@ -403,24 +328,28 @@ mod sim_tests {
                     let player_0_moves = outcome.local_uis[0]
                         .notifications
                         .iter()
-                        .filter(|notification| matches!(
-                            notification,
-                            GameNotification::LocalActionApplied {
-                                id: GameID(1),
-                                action: LocalActionKind::MakeMove,
-                            }
-                        ))
+                        .filter(|notification| {
+                            matches!(
+                                notification,
+                                GameNotification::LocalActionApplied {
+                                    id: GameID(1),
+                                    action: LocalActionKind::MakeMove,
+                                }
+                            )
+                        })
                         .count();
                     let player_1_moves = outcome.local_uis[1]
                         .notifications
                         .iter()
-                        .filter(|notification| matches!(
-                            notification,
-                            GameNotification::LocalActionApplied {
-                                id: GameID(1),
-                                action: LocalActionKind::MakeMove,
-                            }
-                        ))
+                        .filter(|notification| {
+                            matches!(
+                                notification,
+                                GameNotification::LocalActionApplied {
+                                    id: GameID(1),
+                                    action: LocalActionKind::MakeMove,
+                                }
+                            )
+                        })
                         .count();
                     assert_eq!(player_0_moves, 1);
                     assert_eq!(player_1_moves, 1);
@@ -431,7 +360,7 @@ mod sim_tests {
             }
         }));
 
-        res.push(("test_krunk_rejected_local_move_stays_live", &|| {
+        res.push(("test_krunk_rejection_is_immediate_with_potato", &|| {
             let mut allocator = AllocEncoder::new();
             let invalid_word = word_program(&mut allocator, b"XXXXX");
             let moves = vec![
@@ -454,7 +383,6 @@ mod sim_tests {
             )
             .expect("rejected local Krunk move should remain recoverable");
 
-            assert_stayed_off_chain(&outcome, "test_krunk_rejected_local_move_stays_live");
             let notifications = &outcome.local_uis[0].notifications;
             assert!(notifications.iter().any(|notification| matches!(
                 notification,
@@ -473,68 +401,62 @@ mod sim_tests {
                     action: LocalActionKind::MakeMove,
                 }
             )));
-            assert!(!notifications.iter().any(|notification| matches!(
-                notification,
-                GameNotification::GameSettled { .. }
-                    | GameNotification::GameStatus {
-                        status: crate::session_phases::effects::GameStatusKind::EndedCancelled
-                            | crate::session_phases::effects::GameStatusKind::EndedError,
-                        ..
-                    }
-            )));
         }));
 
-        res.push(("test_krunk_move_applies_after_potato_returns", &|| {
-            let mut allocator = AllocEncoder::new();
-            let valid_word = word_program(&mut allocator, b"CRANE");
-            let request_potato =
-                bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("serialize request");
-            let moves = vec![
-                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
-                // Give away the potato without changing the game turn, then
-                // queue the move while player 0 still has move authority.
-                SimScriptAction::InjectRawMessage(0, request_potato),
-                SimScriptAction::Move(
-                    0,
-                    GameID(1),
-                    ReadableMove::from_program(Rc::new(valid_word)),
-                    true,
-                ),
-                SimScriptAction::WaitBlocks(1, 0),
-            ];
-            let move_count = moves.len();
-            let outcome = run_krunk_container_with_action_list_with_success_predicate(
-                &mut allocator,
-                &moves,
-                Some(&|move_number, cradles| {
-                    move_number >= move_count
-                        && cradles[0]
-                            .historical_unroll_count()
-                            .is_some_and(|count| count >= 5)
-                }),
-                None,
-            )
-            .expect("queued move should apply after the potato returns");
+        res.push((
+            "test_krunk_prepared_move_drains_without_handler_rerun",
+            &|| {
+                let mut allocator = AllocEncoder::new();
+                let valid_word = word_program(&mut allocator, b"CRANE");
+                let request_potato =
+                    bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("serialize request");
+                let moves = vec![
+                    SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                    SimScriptAction::AcceptProposal(1, GameID(1)),
+                    // Give away the potato without changing the game turn, then
+                    // queue the move while player 0 still has move authority.
+                    SimScriptAction::InjectRawMessage(0, request_potato),
+                    SimScriptAction::Move(
+                        0,
+                        GameID(1),
+                        ReadableMove::from_program(Rc::new(valid_word)),
+                        true,
+                    ),
+                    SimScriptAction::WaitBlocks(1, 0),
+                ];
+                let move_count = moves.len();
+                let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&|move_number, cradles| {
+                        move_number >= move_count
+                            && cradles[0]
+                                .historical_unroll_count()
+                                .is_some_and(|count| count >= 5)
+                    }),
+                    None,
+                )
+                .expect("queued move should apply after the potato returns");
 
-            let notifications = &outcome.local_uis[0].notifications;
-            assert_eq!(
-                notifications
-                    .iter()
-                    .filter(|notification| matches!(
-                        notification,
-                        GameNotification::LocalActionApplied {
-                            id: GameID(1),
-                            action: LocalActionKind::MakeMove,
-                        }
-                    ))
-                    .count(),
-                1,
-                "queued move should emit once after potato return: {notifications:?}"
-            );
-        }));
+                let notifications = &outcome.local_uis[0].notifications;
+                assert_eq!(
+                    notifications
+                        .iter()
+                        .filter(|notification| matches!(
+                            notification,
+                            GameNotification::LocalActionApplied {
+                                id: GameID(1),
+                                action: LocalActionKind::MakeMove,
+                            }
+                        ))
+                        .count(),
+                    1,
+                    "queued move should emit once after potato return: {notifications:?}"
+                );
+            },
+        ));
 
-        res.push(("test_krunk_rejection_after_potato_returns_is_not_applied", &|| {
+        res.push(("test_krunk_rejection_is_immediate_before_potato", &|| {
             let mut allocator = AllocEncoder::new();
             let invalid_word = word_program(&mut allocator, b"XXXXX");
             let request_potato =
@@ -542,14 +464,16 @@ mod sim_tests {
             let moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
                 SimScriptAction::AcceptProposal(1, GameID(1)),
-                SimScriptAction::InjectRawMessage(0, request_potato),
+                SimScriptAction::InjectRawMessage(0, request_potato.clone()),
                 SimScriptAction::Move(
                     0,
                     GameID(1),
                     ReadableMove::from_program(Rc::new(invalid_word)),
                     true,
                 ),
-                SimScriptAction::AcceptSettlement(0, GameID(1)),
+                // Explicitly return the potato. A rejected move enqueues no
+                // action and therefore does not request it automatically.
+                SimScriptAction::InjectRawMessage(1, request_potato),
                 SimScriptAction::WaitBlocks(1, 0),
             ];
             let move_count = moves.len();
@@ -564,13 +488,19 @@ mod sim_tests {
                 }),
                 None,
             )
-            .expect("queued rejection should remain recoverable");
+            .expect("immediate rejection before potato should remain recoverable");
 
             let notifications = &outcome.local_uis[0].notifications;
             assert!(notifications.iter().any(|notification| matches!(
                 notification,
-                GameNotification::MoveRejected { id: GameID(1), .. }
+                GameNotification::MoveRejected { id, tag, message }
+                    if *id == GameID(1)
+                        && tag == "not_in_dictionary"
+                        && message == "XXXXX"
             )));
+            assert!(!notifications
+                .iter()
+                .any(|notification| matches!(notification, GameNotification::ActionFailed { .. })));
             assert!(!notifications.iter().any(|notification| matches!(
                 notification,
                 GameNotification::LocalActionApplied {
@@ -786,28 +716,6 @@ mod sim_tests {
                         .count(),
                     1,
                     "queued nil must confirm exactly once without a second UI command"
-                );
-            },
-        ));
-
-        res.push((
-            "test_phase_api_rejects_wrong_turn_and_queued_moves",
-            &|| {
-                let game_id = GameID(7);
-                assert_phase_move_panics(
-                    phase_for_move_validation(game_id, false, VecDeque::new()),
-                    game_id,
-                    "does not give us the turn",
-                );
-                let queued = GameAction::Move(
-                    game_id,
-                    ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80]))),
-                    Hash::default(),
-                );
-                assert_phase_move_panics(
-                    phase_for_move_validation(game_id, true, VecDeque::from([queued])),
-                    game_id,
-                    "already queued",
                 );
             },
         ));

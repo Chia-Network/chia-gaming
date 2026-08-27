@@ -7,6 +7,7 @@ import type {
 import { coerceToBytes } from '../../util';
 import { handProposalsEqual } from '../gameRegistry';
 import { parseAmount } from '../wasm/parseAmount';
+import { applyHandProposalToComposeDraft } from './composeDraft';
 import { durableNotificationKind } from './sessionTransition';
 import { proposalGroupFromProposalMade } from './incomingProposal';
 import { parseGameStatusTerminalInfo, terminalInfoFromGameSettled } from './gameSessionEvents';
@@ -21,12 +22,6 @@ import type {
 } from './sessionMachineTypes';
 
 const ERROR_CHANNEL_STATUSES = new Set(['ResolvedStale', 'Failed']);
-const TERMINAL_CHANNEL_STATUSES = new Set([
-  'ResolvedClean',
-  'ResolvedUnrolled',
-  'ResolvedStale',
-  'Failed',
-]);
 const LOCAL_CANCEL_REASONS = new Set(['SupersededByIncoming', 'PeerProposalPending', 'GameActive']);
 
 type Reducer = (state: SessionMachineState, event: SessionMachineEvent) => SessionMachineTransition;
@@ -68,11 +63,6 @@ export function reduceSessionNotification(
     if (!payload) return { state, effects: [] };
     const status = channelStatusModelFromPayload(payload);
     step({ type: 'channel-status', status });
-    if (TERMINAL_CHANNEL_STATUSES.has(payload.state)) {
-      for (const id of Object.keys(current.model.game.pendingCandidates)) {
-        step({ type: 'discard-pending-candidate', id });
-      }
-    }
     const generation = current.coordination.channelEnrichmentGeneration + 1;
     current = {
       ...current,
@@ -167,27 +157,7 @@ export function reduceSessionNotification(
       current.model.game.currentHandOrigin,
     );
     if (between.mode === 'decision') {
-      if (current.coordination.expectingCounterProposal) {
-        effects.push({ type: 'timer-cancel', key: 'rejection-fallback' });
-        current = {
-          ...current,
-          coordination: { ...current.coordination, expectingCounterProposal: false },
-          model: {
-            ...current.model,
-            betweenHand: {
-              ...between,
-              pendingRetryHandProposal: null,
-              newHandRequested: false,
-              proposalGroups: between.proposalGroups.map((group) =>
-                group.primaryId === incoming.primaryId
-                  ? { ...group, disposition: 'incoming-review' as const }
-                  : group,
-              ),
-              mode: 'review-incoming-proposal',
-            },
-          },
-        };
-      } else if (matchesLast && current.coordination.sameTermsRequested) {
+      if (matchesLast && current.coordination.sameTermsRequested) {
         current = {
           ...current,
           coordination: { ...current.coordination, sameTermsRequested: false },
@@ -323,6 +293,7 @@ export function reduceSessionNotification(
       type: 'notification-accepted-group',
       members,
     });
+    step({ type: 'remove-game-notifications', kind: 'proposal-rejected' });
     const first =
       previousHandIds.length !== current.model.game.currentHandIds.length ||
       previousHandIds.some(
@@ -452,21 +423,20 @@ export function reduceSessionNotification(
       step({ type: 'set-same-terms-requested', requested: false });
       step({ type: 'set-new-hand-requested', requested: false });
       if (sameTerms) {
-        const generation = current.coordination.rejectionTimerGeneration + 1;
         current = {
           ...current,
-          coordination: {
-            ...current.coordination,
-            expectingCounterProposal: true,
-            rejectionTimerGeneration: generation,
+          model: {
+            ...current.model,
+            betweenHand: {
+              ...current.model.betweenHand,
+              compose: applyHandProposalToComposeDraft(
+                current.model.betweenHand.compose,
+                before.model.betweenHand.lastHandProposal,
+              ),
+              mode: 'compose-proposal',
+            },
           },
         };
-        effects.push({
-          type: 'timer-schedule',
-          key: 'rejection-fallback',
-          generation,
-          delayMs: 300,
-        });
       } else {
         step({
           type: 'push-game-notification',
@@ -491,22 +461,8 @@ export function reduceSessionNotification(
       id: String(notification.LocalActionApplied.id),
       action: notification.LocalActionApplied.action,
     });
-  } else if ('MoveRejected' in notification && notification.MoveRejected) {
-    step({
-      type: 'notification-move-rejected',
-      id: String(notification.MoveRejected.id),
-      tag: String(notification.MoveRejected.tag),
-      message: String(notification.MoveRejected.message),
-    });
   } else if ('ActionFailed' in notification && notification.ActionFailed) {
     const failed = notification.ActionFailed as ActionFailedPayload;
-    if (failed.id !== undefined && failed.action !== undefined) {
-      step({
-        type: 'discard-pending-candidate',
-        id: String(failed.id),
-        action: failed.action,
-      });
-    }
     step({ type: 'enqueue-error', kind: 'action-failed', message: String(failed.reason) });
   }
   return { state: current, effects };

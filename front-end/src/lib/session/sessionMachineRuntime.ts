@@ -133,7 +133,7 @@ export class SessionMachineRuntime {
   }
 
   commitLocalGameAction(request: LocalGameActionRequest): void {
-    const checkpoint = this.state.model.game.handState;
+    const checkpoint = structuredClone(this.state.model.game.handState);
     try {
       const game = this.state.model.game;
       if (game.activeGameType !== request.gameType) {
@@ -147,9 +147,6 @@ export class SessionMachineRuntime {
       if (!game.activeIds.includes(request.id)) {
         throw new Error(`Internal local action game id ${request.id} is not active`);
       }
-      if (game.pendingCandidates[request.id]) {
-        throw new Error(`Internal local action game ${request.id} already has a pending candidate`);
-      }
       const instance = game.instances[request.id];
       if (!instance) {
         throw new Error(`Internal local action game id ${request.id} has no game instance`);
@@ -160,24 +157,17 @@ export class SessionMachineRuntime {
       ) {
         throw new Error(`Internal local action for game ${request.id} attempted outside our turn`);
       }
-      const action =
-        request.command.type === 'make-move'
-          ? 'make_move'
-          : request.command.type === 'accept-settlement'
-            ? 'accept_settlement'
-            : 'cheat';
       const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
       if (disposition === 'rejected') {
         this.restoreAndRender(checkpoint);
         return;
       }
-      const candidate = this.snapshotActiveHand();
+      const accepted = this.snapshotActiveHand();
       this.dispatch({
-        type: disposition === 'applied' ? 'local-game-action-applied' : 'local-game-action-staged',
+        type: 'local-game-action-committed',
         gameType: request.gameType,
         id: request.id,
-        action,
-        state: candidate.state,
+        state: accepted.state,
       });
     } catch (error) {
       this.restoreAndRender(checkpoint);
@@ -195,17 +185,8 @@ export class SessionMachineRuntime {
     });
   }
 
-  dispose(): void {
-    this.interpreter.dispose();
-  }
-
   private restoreActiveHand(state: SessionMachineState): void {
-    const game = state.model.game;
-    const pending = game.currentHandIds
-      .map((gameId) => game.pendingCandidates[gameId])
-      .find((candidate) => candidate !== undefined);
-    const saved = pending ? { gameType: pending.gameType, state: pending.state } : game.handState;
-    this.restoreHandFrom(saved);
+    this.restoreHandFrom(state.model.game.handState);
   }
 
   private requireActiveHand(): RegisteredGameHand {
@@ -222,8 +203,7 @@ export class SessionMachineRuntime {
   private prepareGameEvent(event: SessionMachineEvent): SessionMachineEvent {
     switch (event.type) {
       case 'hand-state-changed':
-      case 'local-game-action-staged':
-      case 'local-game-action-applied':
+      case 'local-game-action-committed':
         return { ...event, handState: this.snapshotActiveHand() } as SessionMachineEvent;
       default:
         return event;

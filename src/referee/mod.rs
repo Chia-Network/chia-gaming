@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
@@ -271,20 +272,31 @@ impl Referee {
         None
     }
 
-    pub fn my_turn_make_move(
+    pub fn prepare_my_turn_move(
         &self,
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
         new_entropy: Hash,
+    ) -> Result<PreparedMove, Error> {
+        match self {
+            Referee::MyTurn(t) => t.prepare_my_turn_move(allocator, readable_move, new_entropy),
+            Referee::TheirTurn(_) => Err(Error::Channel(
+                "prepare_my_turn_move called on TheirTurn referee".to_string(),
+            )),
+        }
+    }
+
+    pub fn apply_prepared_move(
+        &self,
+        allocator: &mut AllocEncoder,
+        prepared: PreparedMove,
         state_number: usize,
     ) -> Result<(Rc<Referee>, GameMoveWireData), Error> {
         let (replacement, result) = match self {
-            Referee::MyTurn(t) => {
-                t.my_turn_make_move(allocator, readable_move, new_entropy, state_number)?
-            }
+            Referee::MyTurn(t) => t.apply_prepared_move(allocator, prepared, state_number)?,
             Referee::TheirTurn(_) => {
                 return Err(Error::Channel(
-                    "my_turn_make_move called on TheirTurn referee".to_string(),
+                    "apply_prepared_move called on TheirTurn referee".to_string(),
                 ));
             }
         };

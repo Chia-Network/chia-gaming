@@ -1406,7 +1406,17 @@ impl GameSession {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.make_move(&mut env, id, &readable, new_entropy)?
+            match self.peer.make_move(&mut env, id, &readable, new_entropy) {
+                Ok(effects) => effects,
+                Err(Error::GameMoveRejected { tag, message }) => {
+                    vec![Effect::Notify(GameNotification::MoveRejected {
+                        id: *id,
+                        tag: String::from_utf8_lossy(&tag).into_owned(),
+                        message: String::from_utf8_lossy(&message).into_owned(),
+                    })]
+                }
+                Err(error) => return Err(error),
+            }
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1423,7 +1433,17 @@ impl GameSession {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             let mut effects = self.peer.accept_proposal(&mut env, id)?;
-            effects.extend(self.peer.make_move(&mut env, id, &readable, new_entropy)?);
+            match self.peer.make_move(&mut env, id, &readable, new_entropy) {
+                Ok(move_effects) => effects.extend(move_effects),
+                Err(Error::GameMoveRejected { tag, message }) => {
+                    effects.push(Effect::Notify(GameNotification::MoveRejected {
+                        id: *id,
+                        tag: String::from_utf8_lossy(&tag).into_owned(),
+                        message: String::from_utf8_lossy(&message).into_owned(),
+                    }));
+                }
+                Err(error) => return Err(error),
+            }
             effects
         };
         self.process_effects(reported_effects, allocator)?;

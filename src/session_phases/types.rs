@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
@@ -223,7 +224,7 @@ pub enum PotatoState {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GameAction {
-    Move(GameID, ReadableMove, Hash),
+    Move(GameID, PreparedMove),
     #[serde(rename = "AcceptSettlement")]
     AcceptSettlement(GameID),
     CleanShutdown,
@@ -263,7 +264,7 @@ pub(crate) fn validate_new_move_action<'a>(
 impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
+            GameAction::Move(gi, prepared) => write!(formatter, "Move({gi:?},{prepared:?})"),
             GameAction::AcceptSettlement(gi) => write!(formatter, "AcceptSettlement({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::QueuedProposalGroup(_, _) => write!(formatter, "QueuedProposalGroup(..)"),
@@ -286,13 +287,34 @@ impl std::fmt::Debug for GameAction {
 #[cfg(test)]
 mod move_authority_tests {
     use super::*;
+    use crate::channel_state::game_handler::PreparedMove;
+    use crate::channel_state::types::StateUpdateProgram;
+    use crate::common::types::{AllocEncoder, Amount};
+    use std::collections::VecDeque;
 
-    fn queued_move(game_id: GameID) -> GameAction {
+    fn queued_move_with_bytes(game_id: GameID, move_bytes: Vec<u8>) -> GameAction {
+        let mut allocator = AllocEncoder::new();
+        let validator = StateUpdateProgram::new(
+            &mut allocator,
+            "queued test",
+            Rc::new(Program::from_bytes(&[0x80])),
+        );
         GameAction::Move(
             game_id,
-            ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80]))),
-            Hash::default(),
+            PreparedMove {
+                move_bytes,
+                outgoing_move_state_update_program: validator.clone(),
+                incoming_move_state_update_program: validator,
+                max_move_size: 0,
+                mover_share: Amount::default(),
+                waiting_handler: None,
+                message_parser: None,
+            },
         )
+    }
+
+    fn queued_move(game_id: GameID) -> GameAction {
+        queued_move_with_bytes(game_id, vec![])
     }
 
     #[test]
@@ -313,6 +335,42 @@ mod move_authority_tests {
     #[should_panic(expected = "does not give us the turn")]
     fn move_when_game_authority_says_their_turn_fails_loudly() {
         let _ = validate_new_move_action(&GameID(7), Some(false), &[], false);
+    }
+
+    #[test]
+    fn prepared_move_queue_round_trips_multiple_game_ids_in_order() {
+        let queue = VecDeque::from([
+            queued_move_with_bytes(GameID(7), b"first".to_vec()),
+            queued_move_with_bytes(GameID(9), b"second".to_vec()),
+        ]);
+
+        let encoded = bencodex::to_vec(&queue).expect("serialize prepared move queue");
+        assert!(!encoded.windows(8).any(|window| window == b"readable"));
+        assert!(!encoded.windows(7).any(|window| window == b"entropy"));
+
+        let restored: VecDeque<GameAction> =
+            bencodex::from_slice(&encoded).expect("deserialize prepared move queue");
+        let restored: Vec<_> = restored
+            .into_iter()
+            .map(|action| match action {
+                GameAction::Move(id, prepared) => (id, prepared.move_bytes),
+                other => panic!("unexpected restored action: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            restored,
+            vec![
+                (GameID(7), b"first".to_vec()),
+                (GameID(9), b"second".to_vec())
+            ]
+        );
+    }
+
+    #[test]
+    fn prepared_moves_for_different_games_may_coexist() {
+        let queue = [queued_move(GameID(7))];
+        validate_new_move_action(&GameID(9), Some(true), &queue, false)
+            .expect("different game ids may each have one prepared move");
     }
 }
 

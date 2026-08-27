@@ -14,6 +14,7 @@ use clvmr::allocator::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     CachedAcceptSettlement, CachedRedoActions, CachedSendMove, ChannelCoinSpendInfo,
@@ -1305,24 +1306,30 @@ impl ChannelState {
             })
     }
 
-    /// Apply a send-side move mutation. Does NOT finalize signatures.
+    pub fn prepare_move(
+        &self,
+        env: &mut ChannelEnv<'_>,
+        game_id: &GameID,
+        readable_move: &ReadableMove,
+        new_entropy: Hash,
+    ) -> Result<PreparedMove, Error> {
+        let game_idx = self.get_game_by_id(game_id)?;
+        self.live_games[game_idx].prepare_move(env.allocator, readable_move, new_entropy)
+    }
+
+    /// Apply a prepared send-side move mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo.
     pub fn send_move_no_finalize(
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        readable_move: &ReadableMove,
-        new_entropy: Hash,
+        prepared: PreparedMove,
     ) -> Result<MoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let state_number = self.state_number;
 
-        let referee_result = self.live_games[game_idx].internal_make_move(
-            env.allocator,
-            readable_move,
-            new_entropy.clone(),
-            state_number,
-        )?;
+        let referee_result =
+            self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
 
         let match_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
 
@@ -2001,8 +2008,7 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        readable_move: &ReadableMove,
-        entropy: Hash,
+        prepared: PreparedMove,
         existing_coin: &CoinString,
     ) -> Result<(PuzzleHash, PuzzleHash, usize, GameMoveDetails, Spend), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
@@ -2010,12 +2016,8 @@ impl ChannelState {
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
         let state_number = self.state_number;
 
-        let move_result = self.live_games[game_idx].internal_make_move(
-            env.allocator,
-            readable_move,
-            entropy,
-            state_number,
-        )?;
+        let move_result =
+            self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
 
         let tx =
             self.live_games[game_idx].get_transaction_for_move(env.allocator, existing_coin)?;

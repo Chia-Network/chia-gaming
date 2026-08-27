@@ -27,7 +27,7 @@ import {
   INITIAL_CHANNEL_STATUS_MODEL,
   normalizeSessionPresentation,
 } from './normalization';
-import type { BetweenHandModeModel, HandProposal, LocalActionKind, SessionModel } from './types';
+import type { BetweenHandModeModel, HandProposal, SessionModel } from './types';
 import { isTerminalChannelSnapshot } from './selectors';
 import {
   parseComposeDraftState,
@@ -316,35 +316,6 @@ function parsePresentation(value: unknown): SessionPresentationSave {
   if (fields.handState !== null && decodedHandState === null) {
     throw new Error('Garbled save: invalid handState');
   }
-  if (!Array.isArray(fields.pendingCandidates)) {
-    throw new Error('Garbled save: invalid pendingCandidates');
-  }
-  const pendingCandidates = fields.pendingCandidates.map((value, index) => {
-    const pending = requireRecord(value, `pendingCandidates[${index}]`);
-    if (!isCatalogGameType(pending.gameType)) {
-      throw new Error(`Garbled save: invalid pendingCandidates[${index}].gameType`);
-    }
-    const id = requireString(pending.id, `pendingCandidates[${index}].id`);
-    const action = parseDiscriminant<LocalActionKind>(
-      pending.action,
-      new Set(['make_move', 'accept_settlement', 'cheat']),
-      `pendingCandidates[${index}].action`,
-    );
-    if (!Object.hasOwn(pending, 'state')) {
-      throw new Error(`Garbled save: pendingCandidates[${index}] is missing state`);
-    }
-    if (
-      pending.gameType !== fields.activeGameType ||
-      !currentHandGameIds.includes(id) ||
-      !activeGameIds.includes(id)
-    ) {
-      throw new Error(`Garbled save: pending candidate ${id} is not an active hand member`);
-    }
-    return { gameType: pending.gameType, id, action, state: pending.state };
-  });
-  if (new Set(pendingCandidates.map((pending) => pending.id)).size !== pendingCandidates.length) {
-    throw new Error('Garbled save: duplicate pending candidate id');
-  }
   const dismissedChannelStatus =
     fields.dismissedChannelStatus === null
       ? null
@@ -386,7 +357,6 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     gameInstances,
     activeGameType: fields.activeGameType,
     handState: decodedHandState?.persisted ?? null,
-    pendingCandidates,
     channelStatus: decodeChannelStatusPayload(fields.channelStatus),
     myRunningBalance: (() => {
       parseDecimalString(fields.myRunningBalance, 'myRunningBalance');
@@ -694,9 +664,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         lastDisplayedId,
         activeGameType: save.activeGameType,
         handState,
-        pendingCandidates: Object.fromEntries(
-          save.pendingCandidates.map((pending) => [pending.id, pending]),
-        ),
         queue: parseQueuedNotifications(save.gameNotifQueue),
       },
       betweenHand: {

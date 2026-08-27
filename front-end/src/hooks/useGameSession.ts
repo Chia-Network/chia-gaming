@@ -283,16 +283,6 @@ export function useGameSession(
     return () => controller.detachBlockchain(blockchain);
   }, [blockchain, controller, terminalMode]);
 
-  useEffect(
-    () => () => {
-      runtime.dispose();
-    },
-    [runtime],
-  );
-  useEffect(() => {
-    if (terminalMode) runtime.dispose();
-  }, [runtime, terminalMode]);
-
   const setComposeGameTimeout = useCallback(
     (timeout: bigint) => dispatch({ type: 'set-compose-timeout', timeout }),
     [dispatch],

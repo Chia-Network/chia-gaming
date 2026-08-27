@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_state::game_handler::{GameHandler, MessageHandler, MyTurnInputs, MyTurnResult};
+use crate::channel_state::game_handler::{
+    GameHandler, MessageHandler, MyTurnInputs, MyTurnResult, PreparedMove,
+};
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{Evidence, ReadableMove, ValidationInfo};
 
@@ -284,7 +286,7 @@ impl MyTurnReferee {
         current_state: Rc<Program>,
         current_puzzle_args: Rc<RefereePuzzleArgs>,
         new_puzzle_args: Rc<RefereePuzzleArgs>,
-        my_turn_result: Rc<MyTurnResult>,
+        my_turn_result: Rc<PreparedMove>,
         message_handler: Option<MessageHandler>,
         state_number: usize,
     ) -> Result<TheirTurnReferee, Error> {
@@ -318,18 +320,15 @@ impl MyTurnReferee {
         })
     }
 
-    // Since we may need to know new_entropy at a higher layer, we'll need to ensure it
-    // gets passed in rather than originating it here.
-    pub fn my_turn_make_move(
+    pub fn prepare_my_turn_move(
         &self,
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
         new_entropy: Hash,
-        state_number: usize,
-    ) -> Result<(Referee, GameMoveWireData), Error> {
+    ) -> Result<PreparedMove, Error> {
         game_assert!(
             self.is_my_turn(),
-            "my_turn_make_move called when not my turn"
+            "prepare_my_turn_move called when not my turn"
         );
 
         // A move attempted after a terminal move is a clear error: the prior
@@ -357,7 +356,7 @@ impl MyTurnReferee {
         };
 
         let result = if let Some((ref fake_move, ref cheat_share)) = self.enable_cheating {
-            Rc::new(MyTurnResult {
+            MyTurnResult {
                 name: "cheat".to_string(),
                 move_bytes: fake_move.clone(),
                 mover_share: cheat_share.clone(),
@@ -366,9 +365,9 @@ impl MyTurnReferee {
                 incoming_move_state_update_program: args.validation_program.clone(),
                 waiting_handler: Some(game_handler.clone()),
                 message_parser: None,
-            })
+            }
         } else {
-            Rc::new(game_handler.call_my_turn_handler(
+            game_handler.call_my_turn_handler(
                 allocator,
                 &MyTurnInputs {
                     readable_new_move: readable_move.clone(),
@@ -377,10 +376,9 @@ impl MyTurnReferee {
                     entropy: new_entropy.clone(),
                     state: ProgramRef::new(state_to_update.clone()),
                 },
-            )?)
+            )?
         };
 
-        let puzzle_args = self.spend_this_coin();
         if self.enable_cheating.is_none()
             && result.move_bytes.len() > args.game_move.basic.max_move_size
         {
@@ -392,6 +390,34 @@ impl MyTurnReferee {
             )));
         }
 
+        Ok(result.into())
+    }
+
+    pub fn apply_prepared_move(
+        &self,
+        allocator: &mut AllocEncoder,
+        result: PreparedMove,
+        state_number: usize,
+    ) -> Result<(Referee, GameMoveWireData), Error> {
+        game_assert!(
+            self.is_my_turn(),
+            "apply_prepared_move called when not my turn"
+        );
+        game_assert!(
+            self.get_game_handler().is_some(),
+            "apply_prepared_move: prepared move became stale for this game"
+        );
+
+        let args = self.spend_this_coin();
+        let state_to_update = match self.state.borrow() {
+            MyTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
+            MyTurnRefereeGameState::AfterTheirTurn {
+                state_after_their_turn,
+                ..
+            } => state_after_their_turn.clone(),
+        };
+        let result = Rc::new(result);
+        let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let v = ValidationInfo::new_state_update(
             allocator,

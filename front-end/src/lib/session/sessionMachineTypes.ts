@@ -19,9 +19,7 @@ import type { PersistedGameState } from '@games/host';
 export interface SessionMachineCoordination {
   firstGameAccepted: boolean;
   sameTermsRequested: boolean;
-  expectingCounterProposal: boolean;
   nextNotificationId: bigint;
-  rejectionTimerGeneration: number;
   channelEnrichmentGeneration: number;
   gameEnrichmentGeneration: Record<string, number>;
   hostOnChain: boolean;
@@ -62,8 +60,6 @@ export type SessionMachineEffect =
   | { type: 'controller-propose-game'; handProposal: HandProposal }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
-  | { type: 'timer-schedule'; key: 'rejection-fallback'; generation: number; delayMs: number }
-  | { type: 'timer-cancel'; key: 'rejection-fallback' }
   | { type: 'persist-session' }
   | {
       type: 'request-coin-enrichment';
@@ -115,7 +111,6 @@ export type SessionMachineEvent =
   | { type: 'set-compose-proposal-sent'; sent: boolean }
   | { type: 'clear-proposals'; ids?: readonly string[] }
   | { type: 'set-same-terms-requested'; requested: boolean }
-  | { type: 'set-expecting-counter-proposal'; expecting: boolean }
   | { type: 'set-first-game-accepted'; accepted: boolean }
   | {
       type: 'notification-accepted-group';
@@ -144,12 +139,6 @@ export type SessionMachineEvent =
       handState?: PersistedGameState;
     }
   | {
-      type: 'notification-move-rejected';
-      id: string;
-      tag: string;
-      message: string;
-    }
-  | {
       type: 'notification-insufficient-balance';
       id: string;
       notification: QueuedNotificationModel;
@@ -162,23 +151,13 @@ export type SessionMachineEvent =
       handState?: PersistedGameState;
     }
   | {
-      type: 'local-game-action-staged';
+      type: 'local-game-action-committed';
       gameType: RegisteredGameType;
       id: string;
-      action: LocalActionKind;
-      state: unknown;
-      handState?: PersistedGameState;
-    }
-  | {
-      type: 'local-game-action-applied';
-      gameType: RegisteredGameType;
-      id: string;
-      action: LocalActionKind;
       state: unknown;
       handState?: PersistedGameState;
     }
   | { type: 'local-action-applied'; id: string; action: LocalActionKind }
-  | { type: 'discard-pending-candidate'; id: string; action?: LocalActionKind }
   | { type: 'request-accept-proposal'; id: string }
   | { type: 'request-cancel-proposal'; id: string }
   | { type: 'request-propose-game'; handProposal: HandProposal }
@@ -200,7 +179,6 @@ export type SessionMachineEvent =
   | { type: 'start-clean-shutdown' }
   | { type: 'go-on-chain' }
   | { type: 'go-on-chain-result'; started: boolean }
-  | { type: 'rejection-fallback-fired'; generation: number }
   | { type: 'wasm-notification'; notification: WasmNotification; iStarted: boolean }
   | {
       type: 'enqueue-error';

@@ -103,20 +103,7 @@ describe('game mount registry', () => {
 
   it('passes the current machine snapshot and host-owned hand key to a live mount', () => {
     const base = modelFor('calpoker');
-    const model = createSessionModel({
-      ...base,
-      game: {
-        ...base.game,
-        pendingCandidates: {
-          '1': {
-            gameType: 'calpoker',
-            id: '1',
-            action: 'make_move',
-            state: base.game.handState!.state,
-          },
-        },
-      },
-    });
+    const model = createSessionModel(base);
     const port = { isChannelReady: () => true, dispatch: jest.fn() } as LiveGamePort;
     const session = {
       sessionModel: model,

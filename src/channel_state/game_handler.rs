@@ -61,6 +61,31 @@ pub struct MyTurnResult {
     pub message_parser: Option<MessageHandler>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PreparedMove {
+    pub move_bytes: Vec<u8>,
+    pub outgoing_move_state_update_program: StateUpdateProgram,
+    pub incoming_move_state_update_program: StateUpdateProgram,
+    pub max_move_size: usize,
+    pub mover_share: Amount,
+    pub waiting_handler: Option<GameHandler>,
+    pub message_parser: Option<MessageHandler>,
+}
+
+impl From<MyTurnResult> for PreparedMove {
+    fn from(result: MyTurnResult) -> Self {
+        PreparedMove {
+            move_bytes: result.move_bytes,
+            outgoing_move_state_update_program: result.outgoing_move_state_update_program,
+            incoming_move_state_update_program: result.incoming_move_state_update_program,
+            max_move_size: result.max_move_size,
+            mover_share: result.mover_share,
+            waiting_handler: result.waiting_handler,
+            message_parser: result.message_parser,
+        }
+    }
+}
+
 pub struct TheirTurnInputs<'a> {
     pub amount: Amount,
     pub pre_state: NodePtr,

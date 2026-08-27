@@ -324,7 +324,7 @@ describe('session model proposal and normalization contracts', () => {
     const snapshot = snapshotFromSessionModel(model);
     const restored = sessionModelFromSave(
       baseSave({
-        version: 20n,
+        version: 21n,
         playerId: 'p1',
         activeGameIds: [],
         currentHandGameIds: snapshot.currentHandGameIds,
@@ -492,7 +492,7 @@ describe('session model proposal and normalization contracts', () => {
     );
     const restored = sessionModelFromSave(
       baseSave({
-        version: 20n,
+        version: 21n,
         playerId: 'p1',
         activeGameIds: staleSnapshot.activeGameIds,
         currentHandGameIds: staleSnapshot.currentHandGameIds,
@@ -523,7 +523,7 @@ describe('session model proposal and normalization contracts', () => {
   it('restores a finished session without legacy active game ids', () => {
     const restored = sessionModelFromSave(
       baseSave({
-        version: 20n,
+        version: 21n,
         playerId: 'p1',
         channelStatus: {
           state: 'ResolvedClean',

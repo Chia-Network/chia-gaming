@@ -269,6 +269,16 @@ A successful my-turn handler returns seven or eight values:
 `(error_tag message_bytes)` return rejects local UI input as `MoveRejected`; a
 CLVM raise is an internal handler failure.
 
+The host validates that the addressed member currently grants local move
+authority, then runs this my-turn handler synchronously at the move-directive
+boundary. A tagged rejection is therefore synchronous and queues no readable
+input. On success Rust retains only a durable uncurried `PreparedMove` containing
+the relevant handler outputs, including the optional parser when present. It does not
+retain the readable, entropy, a transaction, a curried referee, or a derived
+puzzle hash. Potato acquisition or later on-chain actuation consumes that
+prepared output to apply/curry/sign/send; it never reruns your handler.
+Post-application redo caching is a separate protocol mechanism.
+
 Import validators using their compiled `program` export, as above. Factory field
 10 and handler validator returns contain those program values. Handler functions
 are also program values; use `(curry handler captured_value...)` when the next
@@ -782,8 +792,11 @@ the factory's two members for the hand's lifetime and settle independently.
 Its factory assigns the A contribution to member 0 and the B contribution to
 member 1, leaving the opposite contribution zero in each member. One mounted
 UI renders both members and dispatches each panel's actions with its fixed
-index. This demonstrates that member topology is factory-defined and need not
-be two symmetric copies of the proposal stake.
+index. Each local mutation and host update replaces only that addressed member
+slot; it must never spread or overwrite move/handler state in the sibling slot.
+The complete persisted hand still contains both members. This demonstrates that
+member topology is factory-defined and need not be two symmetric copies of the
+proposal stake.
 Single-member games use index 0. The host treats `getState()` as opaque
 Bencodex-compatible data and saves `{ gameType, state }` generically. Game-owned
 persisted state stores member order/indices, not protocol IDs.
@@ -792,7 +805,10 @@ migrations.
 
 Every playable package must support a frozen mount and `restoreHand`. A finished
 session always attempts a cold read-only remount when a valid
-`PersistedGameState` exists.
+`PersistedGameState` exists. During in-place finalization the host restores the
+hand from the finalized terminal model before rendering the frozen branch.
+`frozen` means terminal, read-only, and structurally without a port; it does not
+mean “keep whatever mutable hand happened to be mounted.”
 
 Proposal snapshots persist the exact opaque `parameters` value and all generic
 A/B terms. Do not add game-specific proposal save keys or a second persistence
@@ -906,9 +922,9 @@ type GameIntent =
   the entire hand and persist a local-only durable change; it works for both
   single- and multi-member hands.
 - For an action that changes local state and invokes the protocol, perform both
-  mutations before dispatching the protocol intent. The host snapshots the
-  already-mutated complete hand as the candidate and restores the prior
-  checkpoint if the command fails.
+  mutations before dispatching the protocol intent. The host temporarily retains
+  the prior canonical hand and restores it if the synchronous command rejects or
+  throws.
 - `make-move` asks the local CLVM handler to process `readable`. `null` means
   CLVM nil.
 - `memberIndex` addresses the stable factory-ordered member. The host checks the
@@ -953,28 +969,31 @@ for these helpers around manual selections, nil moves, and automatic actions.
 
 Use `commitState` for durable UI facts that do not invoke CLVM, such as card
 selection or display order. Use `commitMove` for a protocol action. Mutating
-first is required: the host snapshots the resulting complete hand as the
-pending candidate and restores the previous snapshot if the action fails.
+first is required: the host keeps the previous canonical hand as a temporary
+synchronous checkpoint and restores it if the command is rejected or throws.
 
-Protocol calls remain Rust-first. After Rust accepts or queues the request, the
-runtime rereads `getState()` as the complete candidate. An immediately applied
-candidate becomes canonical. A queued candidate is persisted beside the
-unchanged canonical checkpoint until Rust reports application. The game does
-not observe whether this delay involved potato acquisition, on-chain progress,
-or protocol redo.
+Protocol calls remain Rust-first. After Rust accepts the request as queued or
+already applied, the runtime rereads `getState()` and commits that complete
+mutated hand canonically. The checkpoint exists only across the synchronous
+call; it is not persisted. There is no `pendingCandidates` layer and
+`LocalActionApplied` does not promote package state. The canonical hand and
+Rust's serialized prepared-action queue are written in the same session
+snapshot. The game does not observe whether later actuation involved potato
+acquisition, on-chain progress, or protocol redo.
 
-Move rejection and unexpected `ActionFailed` restore the generic checkpoint and
-go to shared host UX. Synchronous command rejection and cleanup do the same.
-Restoration replaces the hand through `restoreHand(checkpoint)`; there is no
-shared mutation setter. Rejection is never delivered to the game.
+Synchronous `MoveRejected` and command exceptions restore the generic checkpoint
+and go to shared host UX. Restoration replaces the hand through
+`restoreHand(checkpoint)`; there is no shared mutation setter. Rejection is never
+delivered to the game.
 
 This is also the restart rule for automatic actions. After restoration, run the
 same ordinary state-driven effect as during live play. A restored pre-action
-state may issue the action; a restored queued or applied candidate already
-contains the advanced handler/turn and must not. Do not persist a separate
+state may issue the action; a command accepted into Rust's durable queue commits
+the advanced handler/turn in the same atomic snapshot and must not issue again
+after restore. Do not persist a separate
 “automatic action attempted” flag. The player app waits for queued WASM events
 to drain before assembling a background snapshot, so the serialized WASM state
-and the pending/applied hand candidate cross the storage boundary together.
+and canonical accepted hand state cross the storage boundary together.
 
 California Poker's opening automatic nil move follows this pattern:
 
@@ -997,9 +1016,10 @@ useEffect(() => {
 ```
 
 The ref prevents duplicate effects within one React mount; durable correctness
-comes from advancing `moveNumber` and turn state in the same candidate as the
-action. A restored pre-action snapshot still satisfies the effect and retries.
-A queued or applied snapshot contains the advanced state and does not.
+comes from advancing `moveNumber` and turn state in the same canonical commit as
+the accepted action. A restored pre-action snapshot still satisfies the effect
+and retries. A snapshot taken after Rust durably queued or applied the command
+contains the advanced state and does not.
 
 After such a snapshot commits, rehydration must not run the gameplay transition
 again. The only effects a committed restore may retry are delivery of a

@@ -5,7 +5,7 @@ import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame } from '../../types/ChiaGaming';
 import { wasClientErrorReported } from '../clientError';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
-import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -130,49 +130,6 @@ describe('session machine effect interpreter', () => {
 
     expect(order).toEqual(['persist', 'controller', 'dispatch']);
     expect(events).toEqual([{ type: 'proposal-sent', ids: ['7', '9'], handProposal: TERMS }]);
-  });
-
-  it('cancels and replaces the rejection timer', () => {
-    const callbacks = new Map<number, () => void>();
-    const cleared: number[] = [];
-    const events: SessionMachineEvent[] = [];
-    let timerId = 0;
-    const interpreter = new SessionMachineInterpreter({
-      controller: fakeController(),
-      iStarted: true,
-      getState: () => createSessionMachineState(createSessionModel()),
-      dispatch: (event) => events.push(event),
-      persist: async () => {},
-      onError: (error) => {
-        throw error;
-      },
-      setTimer: ((callback: () => void) => {
-        const id = ++timerId;
-        callbacks.set(id, callback);
-        return id;
-      }) as typeof setTimeout,
-      clearTimer: ((id: number) => {
-        cleared.push(id);
-        callbacks.delete(id);
-      }) as typeof clearTimeout,
-    });
-
-    interpreter.run({
-      type: 'timer-schedule',
-      key: 'rejection-fallback',
-      generation: 1,
-      delayMs: 300,
-    });
-    interpreter.run({
-      type: 'timer-schedule',
-      key: 'rejection-fallback',
-      generation: 2,
-      delayMs: 300,
-    });
-    callbacks.get(2)?.();
-
-    expect(cleared).toEqual([1]);
-    expect(events).toEqual([{ type: 'rejection-fallback-fired', generation: 2 }]);
   });
 });
 
@@ -484,7 +441,7 @@ describe('session machine causal sequences', () => {
     expect(transition.effects).toEqual([{ type: 'persist-session' }]);
   });
 
-  it('runs choose, rejection, counterproposal, review, and acceptance as typed events', () => {
+  function sameTermsProposalState() {
     let state = createSessionMachineState(
       createSessionModel({
         channel: {
@@ -495,12 +452,12 @@ describe('session machine causal sequences', () => {
             theirBalance: '100',
           },
         },
-        game: { handKey: 1 },
+        game: { handKey: 1, currentHandOrigin: 'local' },
         betweenHand: { lastHandProposal: TERMS },
       }),
       { firstGameAccepted: true },
     );
-    let transition = reduceSessionMachine(state, { type: 'choose-same-terms' });
+    const transition = reduceSessionMachine(state, { type: 'choose-same-terms' });
     state = transition.state;
     expect(transition.effects.map((effect) => effect.type)).toEqual(['controller-propose-game']);
     state = reduceSessionMachine(state, {
@@ -508,14 +465,116 @@ describe('session machine causal sequences', () => {
       ids: ['7'],
       handProposal: TERMS,
     }).state;
-    transition = reduceSessionMachine(state, {
+    return state;
+  }
+
+  function matchingIncomingProposal() {
+    return {
+      ProposalMade: {
+        id: '9',
+        group_ids: ['9'],
+        player_a_contribution: '10',
+        player_b_contribution: '10',
+        sender_is_player_a: true,
+        timeout: '15',
+        game_type: testProtocolId('calpoker'),
+        parameters: null,
+      },
+    };
+  }
+
+  it('returns a rejected same-terms proposal immediately to seeded compose without timers', () => {
+    const transition = reduceSessionMachine(sameTermsProposalState(), {
       type: 'wasm-notification',
       iStarted: true,
       notification: { ProposalCancelled: { id: '7', reason: 'CancelledByPeer' } },
     });
-    state = transition.state;
-    expect(state.coordination.expectingCounterProposal).toBe(true);
-    expect(transition.effects.some((effect) => effect.type === 'timer-schedule')).toBe(true);
+    expect(transition.state.model.betweenHand).toMatchObject({
+      mode: 'compose-proposal',
+      newHandRequested: false,
+      compose: {
+        selectedGame: TERMS.gameType,
+        gameTimeout: TERMS.gameTimeout,
+        proposalSent: false,
+      },
+    });
+    expect(transition.state.coordination.sameTermsRequested).toBe(false);
+    expect(transition.effects.map((effect) => effect.type)).toEqual(['persist-session']);
+  });
+
+  it('reviews a crossed incoming proposal that arrives after immediate fallback', () => {
+    let state = reduceSessionMachine(sameTermsProposalState(), {
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: { ProposalCancelled: { id: '7', reason: 'CancelledByPeer' } },
+    }).state;
+    state = reduceSessionMachine(state, {
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: matchingIncomingProposal(),
+    }).state;
+
+    expect(state.model.betweenHand.mode).toBe('review-incoming-proposal');
+    expect(state.model.betweenHand.proposalGroups).toEqual([
+      expect.objectContaining({ primaryId: '9', disposition: 'incoming-review' }),
+    ]);
+  });
+
+  it('keeps the direct same-terms short circuit for a normally arriving match', () => {
+    const transition = reduceSessionMachine(sameTermsProposalState(), {
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: matchingIncomingProposal(),
+    });
+
+    expect(transition.state.model.betweenHand.mode).toBe('decision');
+    expect(transition.effects).toContainEqual({
+      type: 'controller-accept-proposal',
+      id: '9',
+    });
+  });
+
+  it('clears every stale rejection notice after proposal acceptance', () => {
+    const base = stateWithProposals([{ memberIds: ['7'], handProposal: TERMS }]);
+    const state = {
+      ...base,
+      model: {
+        ...base.model,
+        game: {
+          ...base.model.game,
+          queue: [
+            { id: 1n, kind: 'proposal-rejected' as const, title: 'Notice', message: 'Rejected' },
+            { id: 2n, kind: 'action-failed' as const, title: 'Error', message: 'Keep me' },
+            {
+              id: 3n,
+              kind: 'proposal-rejected' as const,
+              title: 'Notice',
+              message: 'Also rejected',
+            },
+          ],
+        },
+      },
+    };
+    const transition = reduceSessionMachine(state, {
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: {
+        ProposalAcceptedGroup: {
+          members: [
+            {
+              id: '7',
+              player_a_contribution: '10',
+              player_b_contribution: '10',
+              our_turn: true,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(transition.state.model.game.queue).toEqual([
+      expect.objectContaining({ id: 2n, kind: 'action-failed' }),
+    ]);
   });
 });
 
@@ -814,11 +873,13 @@ describe('session machine local game action boundary', () => {
     (runtime.getGameHand() as CalpokerHand).update(reducer);
   }
 
-  function stagedKrunkRuntime(): SessionMachineRuntime {
+  function stagedKrunkRuntime(
+    makeMove: SessionController['makeMove'] = () => 'queued',
+  ): SessionMachineRuntime {
     const runtime = new SessionMachineRuntime(
       stateWithProposals([{ memberIds: ['2', '4'], handProposal: KRUNK_TERMS, origin: 'local' }]),
       {
-        controller: fakeController({ makeMove: () => 'queued' }),
+        controller: fakeController({ makeMove }),
         iStarted: true,
         restoring: false,
         getRestoreStatus: () => 'idle',
@@ -912,123 +973,33 @@ describe('session machine local game action boundary', () => {
     expect(makeMove).toHaveBeenCalledWith('2', null);
   });
 
-  it.each(['acknowledgement', 'rejection'] as const)(
-    'merges a sibling Krunk update through pending candidate %s',
-    (outcome) => {
-      const runtime = stagedKrunkRuntime();
+  it('preserves an accepted Krunk member while updating its sibling', () => {
+    const runtime = stagedKrunkRuntime();
 
-      runtime.dispatch({
-        type: 'wasm-notification',
-        iStarted: true,
-        notification: {
-          GameStatus: {
-            id: '4',
-            status: 'my-turn',
-            coin_id: null,
-            other_params: {
-              readable: Program.fromBytes(new Uint8Array()).serialize(),
-              mover_share: '100',
-            },
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: {
+        GameStatus: {
+          id: '4',
+          status: 'my-turn',
+          coin_id: null,
+          other_params: {
+            readable: Program.fromBytes(new Uint8Array()).serialize(),
+            mover_share: '100',
           },
         },
-      });
+      },
+    });
 
-      const afterInbound = runtime.getState().model.game;
-      const canonicalAfterInbound = krunkStateCodec.decode(afterInbound.handState)!;
-      const pendingAfterInbound = afterInbound.pendingCandidates['2'];
-      const pendingHandAfterInbound = krunkStateCodec.decode({
-        gameType: pendingAfterInbound.gameType,
-        state: pendingAfterInbound.state,
-      })!;
-      expect(canonicalAfterInbound.members[0].secretWord).toBeNull();
-      expect(canonicalAfterInbound.members[1].handler).toBe(4n);
-      expect(pendingHandAfterInbound.members[0].secretWord).toBe('CRANE');
-      expect(pendingHandAfterInbound.members[1].handler).toBe(4n);
-      expect(runtime.getGameHand()!.getState()).toEqual(pendingHandAfterInbound);
+    const game = runtime.getState().model.game;
+    const canonical = krunkStateCodec.decode(game.handState)!;
+    expect(canonical.members[0].secretWord).toBe('CRANE');
+    expect(canonical.members[1].handler).toBe(4n);
+    expect(runtime.getGameHand()!.getState()).toEqual(canonical);
+  });
 
-      runtime.dispatch({
-        type: 'wasm-notification',
-        iStarted: true,
-        notification:
-          outcome === 'acknowledgement'
-            ? { LocalActionApplied: { id: 2n, action: 'make_move' } }
-            : { MoveRejected: { id: 2n, tag: 'invalid', message: 'Try another move' } },
-      });
-
-      const finalGame = runtime.getState().model.game;
-      const finalCanonical = krunkStateCodec.decode(finalGame.handState)!;
-      expect(finalCanonical.members[0].secretWord).toBe(
-        outcome === 'acknowledgement' ? 'CRANE' : null,
-      );
-      expect(finalCanonical.members[1].handler).toBe(4n);
-      expect(finalGame.pendingCandidates).toEqual({});
-      expect(runtime.getGameHand()!.getState()).toEqual(finalCanonical);
-    },
-  );
-
-  it.each(['acknowledgement', 'rejection'] as const)(
-    'merges a sibling Krunk terminal through pending candidate %s',
-    (outcome) => {
-      const runtime = stagedKrunkRuntime();
-
-      runtime.dispatch({
-        type: 'wasm-notification',
-        iStarted: true,
-        notification: {
-          GameSettled: {
-            id: 4n,
-            outcome: 'opponent_timed_out',
-            our_share: '100',
-            coin_id: null,
-          },
-        },
-      });
-
-      const afterTerminal = runtime.getState().model.game;
-      const canonicalAfterTerminal = krunkStateCodec.decode(afterTerminal.handState)!;
-      const pendingAfterTerminal = afterTerminal.pendingCandidates['2'];
-      const pendingHandAfterTerminal = krunkStateCodec.decode({
-        gameType: pendingAfterTerminal.gameType,
-        state: pendingAfterTerminal.state,
-      })!;
-      expect(afterTerminal.activeIds).toEqual(['2']);
-      expect(afterTerminal.instances['4'].presentation).toBe('ended');
-      expect(Object.keys(afterTerminal.pendingCandidates)).toEqual(['2']);
-      expect(canonicalAfterTerminal.members[0].secretWord).toBeNull();
-      expect(canonicalAfterTerminal.members[1]).toMatchObject({
-        handler: KrunkHandler.Terminal,
-        settlementOutcome: 'opponent_timed_out',
-      });
-      expect(pendingHandAfterTerminal.members[0].secretWord).toBe('CRANE');
-      expect(pendingHandAfterTerminal.members[1]).toEqual(canonicalAfterTerminal.members[1]);
-      expect(runtime.getGameHand()!.getState()).toEqual(pendingHandAfterTerminal);
-
-      runtime.dispatch({
-        type: 'wasm-notification',
-        iStarted: true,
-        notification:
-          outcome === 'acknowledgement'
-            ? { LocalActionApplied: { id: 2n, action: 'make_move' } }
-            : { MoveRejected: { id: 2n, tag: 'invalid', message: 'Try another move' } },
-      });
-
-      const finalGame = runtime.getState().model.game;
-      const finalCanonical = krunkStateCodec.decode(finalGame.handState)!;
-      expect(finalGame.activeIds).toEqual(['2']);
-      expect(finalGame.instances['4'].presentation).toBe('ended');
-      expect(finalGame.pendingCandidates).toEqual({});
-      expect(finalCanonical.members[0].secretWord).toBe(
-        outcome === 'acknowledgement' ? 'CRANE' : null,
-      );
-      expect(finalCanonical.members[1]).toMatchObject({
-        handler: KrunkHandler.Terminal,
-        settlementOutcome: 'opponent_timed_out',
-      });
-      expect(runtime.getGameHand()!.getState()).toEqual(finalCanonical);
-    },
-  );
-
-  it('discards a Krunk candidate before reducing its own terminal', () => {
+  it('preserves an accepted Krunk member while its sibling settles', () => {
     const runtime = stagedKrunkRuntime();
 
     runtime.dispatch({
@@ -1036,9 +1007,9 @@ describe('session machine local game action boundary', () => {
       iStarted: true,
       notification: {
         GameSettled: {
-          id: 2n,
-          outcome: 'lost',
-          our_share: '0',
+          id: 4n,
+          outcome: 'opponent_timed_out',
+          our_share: '100',
           coin_id: null,
         },
       },
@@ -1046,14 +1017,52 @@ describe('session machine local game action boundary', () => {
 
     const game = runtime.getState().model.game;
     const canonical = krunkStateCodec.decode(game.handState)!;
-    expect(game.activeIds).toEqual(['4']);
-    expect(game.pendingCandidates).toEqual({});
-    expect(canonical.members[0]).toMatchObject({
+    expect(game.activeIds).toEqual(['2']);
+    expect(game.instances['4'].presentation).toBe('ended');
+    expect(canonical.members[0].secretWord).toBe('CRANE');
+    expect(canonical.members[1]).toMatchObject({
       handler: KrunkHandler.Terminal,
-      secretWord: null,
-      settlementOutcome: 'lost',
+      settlementOutcome: 'opponent_timed_out',
     });
     expect(runtime.getGameHand()!.getState()).toEqual(canonical);
+  });
+
+  it('restores the whole Krunk checkpoint on immediate sibling rejection', () => {
+    const makeMove = jest
+      .fn<ReturnType<SessionController['makeMove']>, Parameters<SessionController['makeMove']>>()
+      .mockReturnValueOnce('queued')
+      .mockReturnValueOnce('rejected');
+    const runtime = stagedKrunkRuntime(makeMove);
+    runtime.dispatch({
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: {
+        GameStatus: {
+          id: '4',
+          status: 'my-turn',
+          coin_id: null,
+          other_params: {
+            readable: Program.fromBytes(new Uint8Array()).serialize(),
+            mover_share: '100',
+          },
+        },
+      },
+    });
+    const checkpoint = krunkStateCodec.decode(runtime.getState().model.game.handState)!;
+    (runtime.getGameHand() as KrunkHand).updateGame(1, (game) => ({
+      ...game,
+      handler: KrunkHandler.BobWaiting,
+      myTurn: false,
+    }));
+    runtime.commitLocalGameAction({
+      gameType: 'krunk',
+      id: '4',
+      command: { type: 'make-move', readable: null },
+    });
+
+    expect(krunkStateCodec.decode(runtime.getState().model.game.handState)).toEqual(checkpoint);
+    expect(runtime.getGameHand()!.getState()).toEqual(checkpoint);
+    expect(checkpoint.members[0].secretWord).toBe('CRANE');
   });
 
   it('uses Rust acceptance authority for the first Space Poker action', () => {
@@ -1134,10 +1143,27 @@ describe('session machine local game action boundary', () => {
     expect(runtime.getGameHand()?.getState()).toEqual(current);
   });
 
-  it('stages after command success, projects optimistically, and promotes on applied', () => {
+  it('rolls back an immediate tagged rejection without persisting rejected state', () => {
+    const makeMove = jest.fn(() => 'rejected' as const);
+    const { runtime, persisted } = localActionHarness(makeMove);
+    const canonical = runtime.getState().model.game.handState;
+    const checkpoint = calpokerStateCodec.decode(canonical)!;
+
+    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
+    runtime.commitLocalGameAction({
+      gameType: 'calpoker',
+      id: '7',
+      command: { type: 'make-move', readable: null },
+    });
+
+    expect(runtime.getState().model.game.handState).toBe(canonical);
+    expect(runtime.getGameHand()?.getState()).toEqual(checkpoint);
+    expect(persisted).toHaveLength(0);
+  });
+
+  it('commits queued success as canonical and persists it immediately', () => {
     const makeMove = jest.fn(() => 'queued' as const);
     const { runtime, persisted, rendered } = localActionHarness(makeMove);
-    const canonical = runtime.getState().model.game.handState;
 
     updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
@@ -1148,35 +1174,39 @@ describe('session machine local game action boundary', () => {
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(rendered).toHaveLength(1);
-    expect(rendered[0].model.game.handState).toBe(canonical);
-    expect(rendered[0].model.game.pendingCandidates['7']).toMatchObject({
-      id: '7',
-      action: 'make_move',
-    });
-    expect(runtime.getGameHand()?.getState()).toMatchObject({
+    expect(calpokerStateCodec.decode(rendered[0].model.game.handState)).toMatchObject({
       moveNumber: 1n,
       isPlayerTurn: false,
     });
     expect(rendered[0].model.game.instances['7'].presentation).toBe('off-chain-my-turn');
     expect(persisted).toHaveLength(1);
+    expect(persisted[0].model.game.handState).toEqual(runtime.getState().model.game.handState);
 
+    const canonical = runtime.getState().model.game.handState;
     runtime.dispatch({
       type: 'wasm-notification',
       iStarted: false,
       notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
     });
-    expect(calpokerStateCodec.decode(runtime.getState().model.game.handState)).toMatchObject({
-      moveNumber: 1n,
-      isPlayerTurn: false,
-    });
-    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
+    expect(runtime.getState().model.game.handState).toBe(canonical);
+    expect(runtime.getGameHand()?.getState()).toEqual(calpokerStateCodec.decode(canonical));
     expect(persisted).toHaveLength(2);
   });
 
-  it('commits an immediately applied candidate without entering pending state or save', () => {
-    const makeMove = jest.fn(() => 'applied' as const);
-    const { runtime, persisted, rendered } = localActionHarness(makeMove);
+  it('ends an immediately applied action with Rust-reported presentation', () => {
+    const context: { runtime?: SessionMachineRuntime } = {};
+    const makeMove = jest.fn(() => {
+      context.runtime!.dispatch({
+        type: 'wasm-notification',
+        iStarted: false,
+        notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
+      });
+      return 'applied' as const;
+    });
+    const harness = localActionHarness(makeMove);
+    const runtime = harness.runtime;
+    context.runtime = runtime;
 
     updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
@@ -1185,61 +1215,22 @@ describe('session machine local game action boundary', () => {
       command: { type: 'make-move', readable: null },
     });
 
-    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
     expect(calpokerStateCodec.decode(runtime.getState().model.game.handState)).toMatchObject({
       moveNumber: 1n,
       isPlayerTurn: false,
     });
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
-    expect(rendered).toHaveLength(1);
-    expect(persisted).toHaveLength(1);
-    expect(persisted[0].model.game.pendingCandidates).toEqual({});
-
-    const applied = runtime.getState();
-    runtime.dispatch({
-      type: 'wasm-notification',
-      iStarted: false,
-      notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
-    });
-    expect(runtime.getState()).toBe(applied);
-    expect(persisted).toHaveLength(1);
+    expect(harness.rendered).toHaveLength(2);
+    expect(harness.persisted).toHaveLength(2);
   });
 
-  it('denies duplicate pending actions and reduces delayed rejection on canonical state', () => {
-    const { runtime, persisted } = localActionHarness(jest.fn(() => 'queued' as const));
-    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
-    const request = {
-      gameType: 'calpoker' as const,
-      id: '7',
-      command: { type: 'make-move' as const, readable: null },
-    };
-    runtime.commitLocalGameAction(request);
-    expect(() => runtime.commitLocalGameAction(request)).toThrow('already has a pending candidate');
-
-    runtime.dispatch({
-      type: 'wasm-notification',
-      iStarted: false,
-      notification: {
-        MoveRejected: { id: 7n, tag: 'invalid', message: 'Try another move' },
-      },
-    });
-    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
-    expect(runtime.getState().model.game.handState).toEqual(calpokerStateCodec.encode(current));
-    expect(runtime.getGameHand()?.getState()).toEqual(current);
-    expect(persisted).toHaveLength(2);
-    expect(persisted[1].model.game.pendingCandidates).toEqual({});
-    expect(persisted[1].model.game.handState).toEqual(runtime.getState().model.game.handState);
-  });
-
-  it('discards a matching delayed cheat failure while retaining shared error UX', () => {
+  it('retains accepted state when later action failure UX is reported', () => {
     const { runtime } = localActionHarness(
       jest.fn(() => 'queued' as const),
       {
         cheat: jest.fn(() => 'queued'),
       },
     );
-    const current = calpokerStateCodec.decode(runtime.getState().model.game.handState)!;
     updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
       gameType: 'calpoker',
@@ -1254,84 +1245,26 @@ describe('session machine local game action boundary', () => {
         ActionFailed: { id: 7n, action: 'cheat', reason: 'queued cheat became stale' },
       },
     });
-    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
-    expect(runtime.getGameHand()?.getState()).toEqual(current);
+    expect(runtime.getGameHand()?.getState()).toMatchObject({
+      moveNumber: 1n,
+      isPlayerTurn: false,
+    });
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
       message: 'queued cheat became stale',
     });
   });
 
-  it('clears pending candidates when a hand is replaced or abandoned', () => {
-    const runtime = new SessionMachineRuntime(
-      stateWithProposals([
-        { memberIds: ['7'], handProposal: TERMS },
-        { memberIds: ['9'], handProposal: TERMS, origin: 'peer' },
-      ]),
-      {
-        controller: fakeController({
-          makeMove: () => 'queued',
-          clearDerivedGamePresentation: jest.fn(),
-        }),
-        iStarted: false,
-        restoring: false,
-        getRestoreStatus: () => 'idle',
-        getRestoreError: () => null,
-        onError: (error) => {
-          throw error;
-        },
-        persist: async () => {},
-      },
-    );
-    runtime.dispatch({
-      type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
-    });
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
-    runtime.commitLocalGameAction({
-      gameType: 'calpoker',
-      id: '7',
-      command: { type: 'make-move', readable: null },
-    });
-    runtime.dispatch({
-      type: 'notification-accepted-group',
-      members: [{ id: '9', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
-    });
-    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
-
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
-    runtime.commitLocalGameAction({
-      gameType: 'calpoker',
-      id: '9',
-      command: { type: 'make-move', readable: null },
-    });
-    runtime.dispatch({ type: 'notification-abandoned' });
-    expect(runtime.getState().model.game.pendingCandidates).toEqual({});
-  });
-
-  it('ignores an unmatched applied signal and fails fast on a mismatched pending action', () => {
+  it('applies LocalActionApplied only to host protocol presentation', () => {
     const { runtime } = localActionHarness(jest.fn(() => 'queued' as const));
-    const before = runtime.getState();
+    const handState = runtime.getState().model.game.handState;
     runtime.dispatch({
       type: 'wasm-notification',
       iStarted: false,
       notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
     });
-    expect(runtime.getState()).toBe(before);
-
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
-    runtime.commitLocalGameAction({
-      gameType: 'calpoker',
-      id: '7',
-      command: { type: 'make-move', readable: null },
-    });
-    expect(() =>
-      runtime.dispatch({
-        type: 'wasm-notification',
-        iStarted: false,
-        notification: { LocalActionApplied: { id: 7n, action: 'accept_settlement' } },
-      }),
-    ).toThrow('does not match pending');
+    expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
+    expect(runtime.getState().model.game.handState).toBe(handState);
   });
 
   it.each([

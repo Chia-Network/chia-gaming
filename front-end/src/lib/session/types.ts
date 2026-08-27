@@ -56,13 +56,6 @@ export type GameTurnState =
   | 'finishing-spending'
   | 'ended';
 
-export interface PendingGameCandidate {
-  gameType: RegisteredGameType;
-  id: string;
-  action: LocalActionKind;
-  state: unknown;
-}
-
 export type HandProposal = Omit<HostHandProposal, 'gameType'> & {
   gameType: CatalogGameType;
 };
@@ -198,7 +191,6 @@ export interface GameModel {
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
-  pendingCandidates: Record<string, PendingGameCandidate>;
   queue: QueuedNotificationModel[];
 }
 

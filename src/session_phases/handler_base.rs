@@ -4,7 +4,8 @@ use clvmr::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove};
+use crate::channel_state::game_handler::PreparedMove;
+use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv};
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
@@ -166,9 +167,9 @@ impl ChannelStateBase {
         Ok(vec![])
     }
 
-    pub fn park_move(&mut self, id: &GameID, readable: &ReadableMove, new_entropy: Hash) {
+    pub fn park_move(&mut self, id: &GameID, prepared: PreparedMove) {
         self.game_action_queue
-            .push_back(GameAction::Move(*id, readable.clone(), new_entropy));
+            .push_back(GameAction::Move(*id, prepared));
     }
 
     pub fn park_accept_settlement(&mut self, id: &GameID) {

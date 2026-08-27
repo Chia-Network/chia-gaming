@@ -18,14 +18,10 @@ export interface SessionMachineInterpreterDependencies {
   dispatch(event: SessionMachineEvent): void;
   persist(): Promise<void>;
   onError(error: unknown): void;
-  setTimer?: typeof setTimeout;
-  clearTimer?: typeof clearTimeout;
   enrichCoin?: typeof coinIdHex;
 }
 
 export class SessionMachineInterpreter {
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
-
   constructor(private readonly dependencies: SessionMachineInterpreterDependencies) {}
 
   runLocalGameCommand(command: LocalGameCommand, id: string): GameCommandDisposition {
@@ -118,22 +114,6 @@ export class SessionMachineInterpreter {
         );
         return;
       }
-      case 'timer-schedule': {
-        this.cancelTimer(effect.key);
-        const timer = (dependencies.setTimer ?? setTimeout)(() => {
-          this.timers.delete(effect.key);
-          dependencies.dispatch({
-            type: 'rejection-fallback-fired',
-            generation: effect.generation,
-          });
-        }, effect.delayMs);
-        if (typeof timer === 'object' && 'unref' in timer) timer.unref();
-        this.timers.set(effect.key, timer);
-        return;
-      }
-      case 'timer-cancel':
-        this.cancelTimer(effect.key);
-        return;
       case 'persist-session':
         void dependencies.persist().catch(dependencies.onError);
         return;
@@ -152,10 +132,6 @@ export class SessionMachineInterpreter {
           .catch(dependencies.onError);
         return;
     }
-  }
-
-  dispose(): void {
-    for (const key of this.timers.keys()) this.cancelTimer(key);
   }
 
   private runControllerCommand<T>(
@@ -179,13 +155,5 @@ export class SessionMachineInterpreter {
       command,
       message: error instanceof Error ? error.message : String(error),
     });
-  }
-
-  private cancelTimer(key: string): void {
-    const timer = this.timers.get(key);
-    if (timer !== undefined) {
-      (this.dependencies.clearTimer ?? clearTimeout)(timer);
-      this.timers.delete(key);
-    }
   }
 }

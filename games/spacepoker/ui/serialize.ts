@@ -408,10 +408,8 @@ export function reduceSpacepokerFeatureState(
 ): SpacepokerHandState {
   const items = parseReadable(event.readable);
   const readableTag = tag(items);
-  if (!readableTag) {
-    return event.type === 'opponent-moved'
-      ? { ...current, gameState: { handler: 1n, myTurn: true, N: 4n } }
-      : current;
+  if (!readableTag && event.type === 'opponent-moved') {
+    return { ...current, gameState: { handler: 1n, myTurn: true, N: 4n } };
   }
 
   if (event.type === 'game-message') {
@@ -437,7 +435,7 @@ export function reduceSpacepokerFeatureState(
           )
         : current;
     }
-    return current;
+    throw new Error(`Unsupported Space Poker game message readable tag: ${readableTag}`);
   }
 
   const units = (value: bigint) => value / current.unitSizeMojos;

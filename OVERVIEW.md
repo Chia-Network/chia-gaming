@@ -315,13 +315,32 @@ means the peer is misbehaving.
 When a local action is requested (move, proposal, accept, etc.), it follows a
 unified pattern:
 
-1. The action is placed on an internal queue
-2. `flush_or_request_potato` is called:
+1. The action is placed on an internal queue.
+2. The session requests or uses the potato:
   - If we hold the potato: drain all queued actions into a single batch and send
   - If we don't hold the potato: send a `RequestPotato` message
 
 This ensures that multiple user actions between potato receives are
 automatically batched together.
+
+Moves have a stricter preparation boundary than the other queue entries. The
+local move directive first validates that this game currently grants us the
+turn and has no queued or pending move, then immediately runs the my-turn
+handler. A tagged two-value rejection is returned synchronously as
+`MoveRejected`; the invalid readable is never queued. Success queues only the
+durable, uncurried `PreparedMove` handler outputs: move bytes, outgoing and
+incoming validator programs, maximum move size, mover share, waiting handler,
+and optional message parser. The readable UI input and entropy are not retained,
+nor are later-derived transaction data, a curried referee, or a referee puzzle
+hash.
+
+When the potato is available—or when an already prepared move is actuated
+on-chain—the engine consumes that `PreparedMove` to apply the referee
+transition, curry and hash the resulting puzzle, sign as required, and send the
+batch or spend. It does not run the my-turn handler again. Only after application
+does the separate `cached_redo_actions` state record the post-application facts
+needed to replay a move after an unroll; the prepared queue is not the redo
+cache.
 
 The `game_action_queue` is populated only by local API calls (user/UI actions),
 never directly by received peer messages. Received batches can still make queued
@@ -605,9 +624,15 @@ the restored canonical state still precedes that action.
 Each game package owns its concrete mutable hand. Fresh hands are created from
 accepted initialization terms; restored hands are constructed directly from
 only their saved state. The shared hand boundary exposes `getState()` plus
-host-delivered updates, while the browser rereads the complete hand after a
-state-change notification or protocol request and reconstructs it from the
-canonical checkpoint on rejection.
+host-delivered updates. For a protocol action the game mutates its own hand
+first; the browser keeps the previous canonical hand only as a temporary
+synchronous rollback checkpoint. If Rust rejects the command, the browser
+restores that checkpoint. If Rust accepts the command as queued or already
+applied, the mutated complete hand becomes canonical immediately and is
+persisted atomically with Rust's serialized prepared-action queue. There is no
+durable `pendingCandidates` layer. `LocalActionApplied` is host-only
+protocol-presentation bookkeeping: it may advance the host's turn display, but
+does not promote game-owned state or grant the game permission to act.
 
 Proposal persistence stores the exact opaque Bencodex parameter value together
 with the generic player-A/player-B terms and sender orientation. Each package
@@ -628,7 +653,9 @@ terminal snapshot are flushed, at which point the real controller and transport
 attachments are destroyed. Visual lifetime can continue: the same React hand
 component and `handKey` remain mounted, but receive the finalized model through
 the `frozen: true` branch of the same mount contract, which structurally has no
-intent port. Cold restoration is separate again:
+intent port. The retained hand is restored from that finalized terminal model;
+`frozen` means terminal, read-only, and no port, not stale pre-finalization game
+state. Cold restoration is separate again:
 `FinishedSessionGameView` always attempts a package's frozen mount from valid
 persisted hand state when no live tree survived (for example, after reload).
 
@@ -725,7 +752,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedRedoActions` | `channel_state/types/potato.rs`              | Internal protocol replay entries: `CachedSendMove`, `CachedAcceptSettlement`, and per-ID `ProposalAccepted` (not the UI `ProposalAcceptedGroup`) |
 | `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, `AcceptProposalGroup`, `CancelProposalGroup`, plus per-game `Move` and `AcceptSettlement` |
-| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposalGroup`, `QueuedCancelProposalGroup`, `QueuedCancelProposalGroupSilently`, `Cheat` |
+| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move(GameID, PreparedMove)`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposalGroup`, `QueuedCancelProposalGroup`, `QueuedCancelProposalGroupSilently`, `Cheat` |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
 | `OnChainGameState`              | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout` |
 | `SettlementOutcome`             | `session_phases/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |

@@ -56,7 +56,7 @@ describe('game slice reducer', () => {
     );
     const restored = sessionModelFromSave(
       liveSave({
-        version: 20n,
+        version: 21n,
         playerId: 'player',
         serializedGameSession: new Uint8Array([1]),
         gameSessionSchemaVersion: 3n,

@@ -109,6 +109,17 @@ fn empty_bytestring() {
 }
 
 #[test]
+fn bytestring_length_overflow_is_an_error() {
+    let encoded = format!("{}:", usize::MAX);
+    assert!(from_slice::<serde_bytes::ByteBuf>(encoded.as_bytes()).is_err());
+}
+
+#[test]
+fn bytestring_larger_than_remaining_input_is_an_error() {
+    assert!(from_slice::<serde_bytes::ByteBuf>(b"5:spam").is_err());
+}
+
+#[test]
 fn unicode_string() {
     assert_eq!(to_vec(&"hello").unwrap(), b"u5:hello");
     assert_eq!(from_slice::<String>(b"u5:hello").unwrap(), "hello");

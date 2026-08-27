@@ -183,7 +183,6 @@ describe('validateSessionSaveEnvelope', () => {
     'gameInstances',
     'activeGameType',
     'handState',
-    'pendingCandidates',
     'channelStatus',
     'myRunningBalance',
     'channelNotifQueue',
@@ -276,39 +275,6 @@ describe('validateSessionSaveEnvelope', () => {
         }),
       ),
     ).toThrow('activeGameType does not match');
-  });
-
-  it('validates pending candidate envelope fields while keeping game state opaque', () => {
-    const base = activeSave();
-    if (base.phase !== 'live') throw new Error('expected live fixture');
-    const state = calpokerStateCodec.decode(base.presentation.handState)!;
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          pendingCandidates: [{ gameType: 'calpoker', id: 'game-1', action: 'make_move', state }],
-        }),
-      ),
-    ).not.toThrow();
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          pendingCandidates: [
-            { gameType: 'calpoker', id: 'game-1', action: 'make_move', state: {} },
-          ],
-        }),
-      ),
-    ).not.toThrow();
-    for (const pendingCandidates of [
-      [
-        { gameType: 'calpoker', id: 'game-1', action: 'make_move', state },
-        { gameType: 'calpoker', id: 'game-1', action: 'cheat', state },
-      ],
-      [{ gameType: 'calpoker', id: 'other', action: 'make_move', state }],
-      [{ gameType: 'calpoker', id: 'game-1', action: 'unknown', state }],
-      [{ gameType: 'spacepoker', id: 'game-1', action: 'make_move', state }],
-    ]) {
-      expect(() => validateSessionSaveEnvelope(activeSave({ pendingCandidates }))).toThrow();
-    }
   });
 
   it('rejects unrelated keyed instances but retains a terminal display member', () => {

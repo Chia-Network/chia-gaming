@@ -16,7 +16,6 @@ type CommandEvent = Extract<
   | { type: 'submit-compose' }
   | { type: 'accept-review' }
   | { type: 'reject-review' }
-  | { type: 'rejection-fallback-fired' }
 >;
 
 function canCover(balance: string | null, amount: bigint): boolean {
@@ -259,30 +258,5 @@ export function reduceSessionCommand(
         ],
       };
     }
-    case 'rejection-fallback-fired':
-      if (
-        event.generation !== state.coordination.rejectionTimerGeneration ||
-        !state.coordination.expectingCounterProposal
-      ) {
-        return { state, effects: [] };
-      }
-      return {
-        state: {
-          ...state,
-          model: {
-            ...state.model,
-            betweenHand: {
-              ...betweenHand,
-              compose: applyHandProposalToComposeDraft(
-                betweenHand.compose,
-                betweenHand.lastHandProposal,
-              ),
-              mode: 'compose-proposal',
-            },
-          },
-          coordination: { ...state.coordination, expectingCounterProposal: false },
-        },
-        effects: [{ type: 'persist-session' }],
-      };
   }
 }

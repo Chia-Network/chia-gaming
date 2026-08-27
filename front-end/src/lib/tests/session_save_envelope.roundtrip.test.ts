@@ -195,31 +195,14 @@ describe('durable game envelope round trips', () => {
     expect(sessionModelFromSave(loaded!).betweenHand.compose).toEqual(compose);
   });
 
-  it('round-trips canonical hand state separately from a pending candidate', () => {
+  it('round-trips canonical hand state without candidate state', () => {
     const save = activeSave();
     if (save.phase !== 'live') throw new Error('expected live fixture');
     const canonical = save.presentation.handState;
-    const state = {
-      ...calpokerStateCodec.decode(canonical)!,
-      moveNumber: 2n,
-      isPlayerTurn: false,
-    };
-    const restored = sessionModelFromSave(
-      activeSave({
-        pendingCandidates: [{ gameType: 'calpoker', id: 'game-1', action: 'make_move', state }],
-      }),
-    );
+    const restored = sessionModelFromSave(save);
 
     expect(restored.game.handState).toEqual(canonical);
-    expect(restored.game.pendingCandidates['game-1']).toEqual({
-      gameType: 'calpoker',
-      id: 'game-1',
-      action: 'make_move',
-      state,
-    });
-    expect(snapshotFromSessionModel(restored).pendingCandidates).toEqual([
-      { gameType: 'calpoker', id: 'game-1', action: 'make_move', state },
-    ]);
+    expect(snapshotFromSessionModel(restored).handState).toEqual(canonical);
   });
 
   it('round-trips a session with no lastHandProposal and an unsubmittable compose draft', () => {

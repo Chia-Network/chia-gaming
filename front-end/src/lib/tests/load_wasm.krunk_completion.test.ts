@@ -1,6 +1,7 @@
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import { flushSessionSave, peekSession, saveSession } from '../../hooks/save';
+import type { ProposalAcceptedGroupPayload } from '../../types/ChiaGaming';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/serialize';
 import { terminalInfoFromGameSettled } from '../session/gameSessionEvents';
@@ -51,6 +52,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   const errors: unknown[] = [];
   const runtimes: SessionMachineRuntime[] = [];
   const settlementTraces: KrunkSettlementTrace[][] = [[], []];
+  const acceptedGroups: ProposalAcceptedGroupPayload[][] = [[], []];
 
   const settlementTrace = (
     index: number,
@@ -131,6 +133,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
         if (event.type === 'notification') {
+          if ('ProposalAcceptedGroup' in event.data && event.data.ProposalAcceptedGroup) {
+            acceptedGroups[index].push(event.data.ProposalAcceptedGroup);
+          }
           if ('GameSettled' in event.data && event.data.GameSettled) {
             const id = String(event.data.GameSettled.id);
             const terminal = terminalInfoFromGameSettled(event.data.GameSettled, null);
@@ -182,6 +187,41 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
 
     runtimes[1].dispatch({ type: 'accept-review' });
     await exchangeAndPersist();
+
+    for (const [index, groups] of acceptedGroups.entries()) {
+      assert.equal(groups.length, 1, `krunk completion player ${index}: one real acceptance`);
+      const acceptance = groups[0];
+      assert.ok(acceptance);
+      assert.deepEqual(
+        acceptance.members.map((member) => [
+          String(member.player_a_contribution),
+          String(member.player_b_contribution),
+        ]),
+        [
+          ['100', '0'],
+          ['0', '100'],
+        ],
+      );
+      const hand = krunkStateCodec.decode(runtimes[index].getState().model.game.handState);
+      assert.ok(hand);
+      assert.deepEqual(
+        hand.members.map((member) => member.role),
+        acceptance.members.map((member) => (member.our_turn ? 'alice' : 'bob')),
+        `krunk completion player ${index}: roles must follow accepted turn authority`,
+      );
+      assert.deepEqual([...hand.members.map((member) => member.role)].sort(), ['alice', 'bob']);
+    }
+    const playerZeroAcceptance = acceptedGroups[0][0];
+    const playerOneAcceptance = acceptedGroups[1][0];
+    assert.ok(playerZeroAcceptance);
+    assert.ok(playerOneAcceptance);
+    for (let memberIndex = 0; memberIndex < 2; memberIndex += 1) {
+      assert.notEqual(
+        playerZeroAcceptance.members[memberIndex].our_turn,
+        playerOneAcceptance.members[memberIndex].our_turn,
+        `krunk completion member ${memberIndex}: peer turn authority must be complementary`,
+      );
+    }
 
     controllers[0].makeMove(ids[0], word);
     await exchangeAndPersist();
@@ -346,7 +386,6 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       }
     }
   } finally {
-    runtimes.forEach((runtime) => runtime.dispose());
     controllers.forEach((controller) => {
       controller.onSaveNeeded = null;
     });

@@ -110,6 +110,21 @@ describe('canonical feature gameplay reducers', () => {
     expect(() =>
       advanceSpacepokerHand(freshSpacepokerState(), status(readable(text('unknown')))),
     ).toThrow('Unsupported Space Poker move readable tag');
+    expect(() =>
+      advanceSpacepokerHand(
+        freshSpacepokerState(),
+        status(readable(text('deal'), Program.fromBigInt(1n)), null),
+      ),
+    ).toThrow('Unsupported Space Poker game message readable tag: deal');
+    expect(() =>
+      advanceSpacepokerHand(
+        freshSpacepokerState(),
+        status(readable(text('unknown-message')), null),
+      ),
+    ).toThrow('Unsupported Space Poker game message readable tag');
+    expect(() => advanceSpacepokerHand(freshSpacepokerState(), status(readable(), null))).toThrow(
+      'Unsupported Space Poker game message readable tag: null',
+    );
     const krunk = freshKrunkHand({
       parameters: null,
       members: [

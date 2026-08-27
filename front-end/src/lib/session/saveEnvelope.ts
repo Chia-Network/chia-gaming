@@ -3,7 +3,6 @@ import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
   BetweenHandModeModel,
-  LocalActionKind,
   NotificationKind,
   ProposalGroupDisposition,
   ProposalGroupOrigin,
@@ -11,7 +10,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 20n;
+export const SESSION_SAVE_VERSION = 21n;
 
 export type BlockchainType = 'simulator' | 'walletconnect';
 
@@ -108,12 +107,6 @@ export interface SessionPresentationSave {
   gameInstances: Record<string, SavedGameInstance>;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
-  pendingCandidates: Array<{
-    gameType: RegisteredGameType;
-    id: string;
-    action: LocalActionKind;
-    state: unknown;
-  }>;
   channelStatus: ChannelStatusPayload | null;
   myRunningBalance: string;
   channelNotifQueue: SavedQueuedNotification[];

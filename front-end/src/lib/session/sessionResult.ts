@@ -152,7 +152,7 @@ export function projectTerminalSessionResult(
     iProposedHand: selectIProposedHand(model),
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
-    handSource: terminalGameHandSource(live.handSource.hand ?? restoreRegisteredGameHand(model)),
+    handSource: terminalGameHandSource(restoreRegisteredGameHand(model)),
     appendGameLog: NOOP,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: selectIncomingProposalGroup(model),

@@ -280,7 +280,11 @@ impl SpendChannelCoinPhase {
             &self.base.game_action_queue,
             false,
         )?;
-        self.base.park_move(id, readable, new_entropy);
+        let prepared = self
+            .base
+            .channel_state()?
+            .prepare_move(_env, id, readable, new_entropy)?;
+        self.base.park_move(id, prepared);
         Ok(vec![])
     }
 

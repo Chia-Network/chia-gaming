@@ -293,7 +293,7 @@ describe('session machine behavior sequences', () => {
     ).not.toThrow();
   });
 
-  it('stores complete independent Krunk hand candidates without merging siblings', () => {
+  it('commits complete Krunk hands while preserving sibling members', () => {
     let state = createSessionMachineState(createSessionModel());
     state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
     state = send(state, {
@@ -303,24 +303,12 @@ describe('session machine behavior sequences', () => {
         { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
       ],
     });
-    const canonical = state.model.game.handState;
-    const hand = krunkStateCodec.decode(canonical)!;
+    const hand = krunkStateCodec.decode(state.model.game.handState)!;
 
     state = send(state, {
-      type: 'local-game-action-staged',
-      gameType: 'krunk',
-      id: '2',
-      action: 'make_move',
-      state: {
-        ...hand,
-        members: [hand.members[0], { ...hand.members[1], handler: 4n, myTurn: true }],
-      },
-    });
-    state = send(state, {
-      type: 'local-game-action-staged',
+      type: 'local-game-action-committed',
       gameType: 'krunk',
       id: '1',
-      action: 'make_move',
       state: {
         ...hand,
         members: [
@@ -329,18 +317,20 @@ describe('session machine behavior sequences', () => {
         ],
       },
     });
+    const afterFirst = krunkStateCodec.decode(state.model.game.handState)!;
+    state = send(state, {
+      type: 'local-game-action-committed',
+      gameType: 'krunk',
+      id: '2',
+      state: {
+        ...afterFirst,
+        members: [afterFirst.members[0], { ...afterFirst.members[1], handler: 4n, myTurn: false }],
+      },
+    });
 
-    expect(state.model.game.handState).toBe(canonical);
-    const projected = state.model.game.pendingCandidates['1'].state as NonNullable<
-      ReturnType<typeof krunkStateCodec.decode>
-    >;
-    expect(projected.members).toHaveLength(2);
-    expect(projected.members[0].secretWord).toBe('CRANE');
-    expect(projected.members[1].handler).toBe(3n);
-
-    state = send(state, { type: 'local-action-applied', id: '1', action: 'make_move' });
-    expect(krunkStateCodec.decode(state.model.game.handState)!.members[0].secretWord).toBe('CRANE');
-    expect(krunkStateCodec.decode(state.model.game.handState)!.members[1].handler).toBe(3n);
-    expect(Object.keys(state.model.game.pendingCandidates)).toEqual(['2']);
+    const canonical = krunkStateCodec.decode(state.model.game.handState)!;
+    expect(canonical.members).toHaveLength(2);
+    expect(canonical.members[0].secretWord).toBe('CRANE');
+    expect(canonical.members[1].handler).toBe(4n);
   });
 });

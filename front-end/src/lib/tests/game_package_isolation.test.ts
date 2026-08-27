@@ -3,6 +3,30 @@ import path from 'node:path';
 
 const GAMES_ROOT = path.resolve(__dirname, '../../../../games');
 
+function notificationNamesFromRust(source: string): string[] {
+  const enumStart = source.indexOf('pub enum GameNotification {');
+  const enumEnd = source.indexOf('\n}\n', enumStart);
+  expect(enumStart).toBeGreaterThanOrEqual(0);
+  expect(enumEnd).toBeGreaterThan(enumStart);
+  const body = source.slice(enumStart, enumEnd);
+  expect(body).not.toContain('serde(rename_all');
+  return [...body.matchAll(/^ {4}(?:#\[serde\(rename = "([^"]+)"\)\]\n {4})?([A-Z]\w*)\s*[({]/gm)]
+    .map((match) => match[1] ?? match[2])
+    .sort();
+}
+
+function notificationNamesFromTypeMap(source: string): string[] {
+  const body = source.match(/export interface WasmNotificationMap \{([\s\S]*?)\n\}/)?.[1];
+  expect(body).toBeDefined();
+  return [...body!.matchAll(/^ {2}([A-Z]\w*):/gm)].map((match) => match[1]).sort();
+}
+
+function notificationNamesFromFrontendSet(source: string): string[] {
+  const body = source.match(/const WASM_NOTIFICATION_TAGS = new Set\(\[([\s\S]*?)\]\);/)?.[1];
+  expect(body).toBeDefined();
+  return [...body!.matchAll(/^\s*'([A-Z]\w*)',?$/gm)].map((match) => match[1]).sort();
+}
+
 function walk(dir: string, files: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -13,7 +37,7 @@ function walk(dir: string, files: string[] = []): string[] {
 }
 
 describe('game package isolation', () => {
-  it('assembles generated packages through the typed keyed boundary', () => {
+  it('guards the generated package assembly layout', () => {
     const generated = fs.readFileSync(
       path.resolve(__dirname, '../../generated/gamePackages.ts'),
       'utf8',
@@ -26,13 +50,29 @@ describe('game package isolation', () => {
     expect(generated).not.toContain('as unknown as GamePackage');
   });
 
-  it('derives prepared factory presets without reading the Rust package manifest', () => {
+  it('guards the factory preset generator input layout', () => {
     const generator = fs.readFileSync(
       path.resolve(__dirname, '../../../scripts/generate-game-registry.mjs'),
       'utf8',
     );
     expect(generator).toContain('factory_prepared.clvm.bin');
     expect(generator).not.toContain('package_manifest.json');
+  });
+
+  it('guards notification source layouts against contract drift', () => {
+    const rust = fs.readFileSync(
+      path.resolve(__dirname, '../../../../src/session_phases/effects.rs'),
+      'utf8',
+    );
+    const wasmContract = fs.readFileSync(
+      path.resolve(__dirname, '../../../../wasm/contract.d.ts'),
+      'utf8',
+    );
+    const frontend = fs.readFileSync(path.resolve(__dirname, '../../types/ChiaGaming.ts'), 'utf8');
+
+    const rustNames = notificationNamesFromRust(rust);
+    expect(notificationNamesFromTypeMap(wasmContract)).toEqual(rustNames);
+    expect(notificationNamesFromFrontendSet(frontend)).toEqual(rustNames);
   });
 
   it('does not import this player app from game UI or game tests', () => {

@@ -7022,6 +7022,32 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    res.push(("test_overflowing_peer_bytestring_goes_on_chain", &|| {
+        let mut allocator = AllocEncoder::new();
+        let malformed = format!("{}:", usize::MAX).into_bytes();
+        let moves = vec![
+            SimScriptAction::WaitBlocks(5, 0),
+            SimScriptAction::InjectRawMessage(0, malformed),
+            SimScriptAction::WaitBlocks(20, 0),
+        ];
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[0].is_on_chain() || cradles[0].is_failed()),
+            None,
+        )
+        .expect("overflowing peer bytestring should be handled without panic");
+
+        assert!(
+            outcome.cradles[0].is_on_chain(),
+            "overflowing peer bytestring should escalate on-chain instead of crashing"
+        );
+        assert!(
+            !outcome.cradles[0].is_failed(),
+            "overflowing peer bytestring should follow peer-protocol recovery"
+        );
+    }));
+
     res.push(("test_wrong_parity_proposal_rejected", &|| {
         let mut allocator = AllocEncoder::new();
 

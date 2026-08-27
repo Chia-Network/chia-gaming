@@ -406,7 +406,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     }
   } finally {
     if (hookRenderer) act(() => hookRenderer?.unmount());
-    runtimes.forEach((runtime) => runtime.dispose());
     controllers.forEach((controller) => {
       controller.onSaveNeeded = null;
     });

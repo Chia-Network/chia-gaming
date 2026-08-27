@@ -825,6 +825,7 @@ export class SessionController implements PollingGameSession {
         : result;
     this.processResult(processed);
     this.assertActionSucceeded(result, action);
+    this.scheduleSave();
   }
 
   private processGameCommandResult(

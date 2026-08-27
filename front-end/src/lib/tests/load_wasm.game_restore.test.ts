@@ -19,8 +19,6 @@ import {
 } from '../session/model';
 import { krunkStateCodec } from '@games/krunk/ui/serialize';
 import type { HandProposal } from '../session/types';
-import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import {
   createActivePair,
   exchangeUntilIdle,
@@ -174,17 +172,6 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       );
 
       const restoredModel = sessionModelFromSave(reloaded);
-      const runtime = new SessionMachineRuntime(createSessionMachineState(restoredModel), {
-        controller: restored,
-        iStarted: reloaded.pairing.iStarted,
-        restoring: true,
-        getRestoreStatus: () => restored.getRestoreStatus(),
-        getRestoreError: () => restored.getRestoreError(),
-        onError: (error) => {
-          throw error;
-        },
-        persist: async () => {},
-      });
       assert.deepEqual(restoredModel.game.currentHandIds, ids);
       assert.deepEqual(restoredModel.game.handState, postMove.handState);
       assert.ok(decodePersistedGameState(restoredModel.game.handState));
@@ -194,7 +181,6 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         assert.equal(krunk.members.length, ids.length);
         assert.notEqual(krunk.members[0].role, krunk.members[1].role);
       }
-      runtime.dispose();
     } finally {
       restored.cleanup();
     }
