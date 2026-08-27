@@ -239,9 +239,10 @@ describe('session machine causal sequences', () => {
       const ids = ['1', '2'];
       runtime.dispatch({
         type: 'notification-accepted-group',
-        members: ids.map((id) => ({
+        members: ids.map((id, index) => ({
           id,
-          amount: '100',
+          playerAContribution: index === 0 ? 100n : 0n,
+          playerBContribution: index === 0 ? 0n : 100n,
           ourTurn: id === pickerId,
         })),
       });
@@ -315,8 +316,8 @@ describe('session machine causal sequences', () => {
     runtime.dispatch({
       type: 'notification-accepted-group',
       members: [
-        { id: '1', amount: '100', ourTurn: true },
-        { id: '2', amount: '100', ourTurn: false },
+        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
       ],
     });
     runtime.dispatch({
@@ -332,7 +333,7 @@ describe('session machine causal sequences', () => {
     });
     runtime.dispatch({
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: true }],
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
     });
     const authority = runtime.getState();
     expect(() => runtime.commitHandStateChanged('krunk')).toThrow('gameType');
@@ -345,7 +346,7 @@ describe('session machine causal sequences', () => {
     const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
     const hand = createRegisteredGameHand('calpoker', {
       handProposal: TERMS,
-      members: [{ amount: 20n, ourTurn: true }],
+      members: [{ playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
     });
     const handState = snapshotRegisteredGameHand('calpoker', hand);
     const runtime = new SessionMachineRuntime(
@@ -811,7 +812,7 @@ describe('session machine local game action boundary', () => {
     runtime.setRender((state) => rendered.push(state));
     runtime.dispatch({
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: true }],
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
     });
     persisted.length = 0;
     rendered.length = 0;
@@ -843,8 +844,8 @@ describe('session machine local game action boundary', () => {
     runtime.dispatch({
       type: 'notification-accepted-group',
       members: [
-        { id: '2', amount: '100', ourTurn: true },
-        { id: '4', amount: '100', ourTurn: false },
+        { id: '2', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { id: '4', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
       ],
     });
     (runtime.getGameHand() as KrunkHand).updateGame(0, (game) => ({
@@ -884,8 +885,18 @@ describe('session machine local game action boundary', () => {
       notification: {
         ProposalAcceptedGroup: {
           members: [
-            { id: '2', amount: '100', our_turn: true },
-            { id: '4', amount: '100', our_turn: false },
+            {
+              id: '2',
+              player_a_contribution: '100',
+              player_b_contribution: '0',
+              our_turn: true,
+            },
+            {
+              id: '4',
+              player_a_contribution: '0',
+              player_b_contribution: '100',
+              our_turn: false,
+            },
           ],
         },
       },
@@ -1079,7 +1090,14 @@ describe('session machine local game action boundary', () => {
       iStarted: true,
       notification: {
         ProposalAcceptedGroup: {
-          members: [{ id: '7', amount: '200', our_turn: true }],
+          members: [
+            {
+              id: '7',
+              player_a_contribution: '100',
+              player_b_contribution: '100',
+              our_turn: true,
+            },
+          ],
         },
       },
     });
@@ -1279,7 +1297,7 @@ describe('session machine local game action boundary', () => {
     );
     runtime.dispatch({
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: true }],
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
     });
     updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
@@ -1289,7 +1307,7 @@ describe('session machine local game action boundary', () => {
     });
     runtime.dispatch({
       type: 'notification-accepted-group',
-      members: [{ id: '9', amount: '20', ourTurn: true }],
+      members: [{ id: '9', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
     });
     expect(runtime.getState().model.game.pendingCandidates).toEqual({});
 

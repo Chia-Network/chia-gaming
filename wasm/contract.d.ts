@@ -154,7 +154,8 @@ export interface ProposalMadePayload {
 
 export interface AcceptedGameMember {
   id: bigint;
-  amount: unknown;
+  player_a_contribution: unknown;
+  player_b_contribution: unknown;
   our_turn: boolean;
 }
 

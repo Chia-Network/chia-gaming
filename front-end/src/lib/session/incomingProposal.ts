@@ -39,8 +39,8 @@ export function proposalGroupFromProposalMade(
     memberIds,
     handProposal: {
       gameType,
-      playerAContribution: BigInt(playerA),
-      playerBContribution: BigInt(playerB),
+      playerAContribution: playerA,
+      playerBContribution: playerB,
       senderIsPlayerA: payload.sender_is_player_a,
       gameTimeout: timeout,
       parameters: payload.parameters,

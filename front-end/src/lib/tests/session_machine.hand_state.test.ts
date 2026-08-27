@@ -13,7 +13,7 @@ describe('session machine behavior sequences', () => {
     state = trackProposal(state, ['7'], CALPOKER_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: false }],
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
     });
 
     expect(() =>
@@ -23,7 +23,7 @@ describe('session machine behavior sequences', () => {
         payload: { id: '9', status: 'my-turn', coin_id: null },
         channelState: 'Active',
         readable: new Uint8Array([0x80]),
-        moverShare: '10',
+        moverShare: 10n,
         iStarted: false,
       }),
     ).toThrow('Game slice invariant broken: missing instance 9');
@@ -36,7 +36,7 @@ describe('session machine behavior sequences', () => {
     state = trackProposal(state, ['9'], CALPOKER_TERMS, 'peer');
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: false }],
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
     });
 
     expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
@@ -78,7 +78,7 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: false }],
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
     });
 
     expect(state.model.game.handState).toEqual(progressed);
@@ -87,7 +87,7 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '9', amount: '20', ourTurn: false }],
+      members: [{ id: '9', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
     });
 
     expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
@@ -125,7 +125,7 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: false }],
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
     });
 
     state = send(state, {
@@ -297,7 +297,8 @@ describe('session machine behavior sequences', () => {
           type: 'notification-accepted-group',
           members: ids.map((id, index) => ({
             id,
-            amount: '100',
+            playerAContribution: gameType === 'krunk' ? (index === 0 ? 100n : 0n) : 50n,
+            playerBContribution: gameType === 'krunk' ? (index === 0 ? 0n : 100n) : 50n,
             ourTurn: gameType === 'krunk' ? index === 0 : true,
           })),
         },
@@ -341,7 +342,7 @@ describe('session machine behavior sequences', () => {
 
         readable: gameType === 'calpoker' ? null : new Uint8Array([0x80]),
 
-        moverShare: '100',
+        moverShare: 100n,
 
         iStarted: false,
       });
@@ -439,7 +440,7 @@ describe('session machine behavior sequences', () => {
 
     state = run(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '100', ourTurn: true }],
+      members: [{ id: '7', playerAContribution: 50n, playerBContribution: 50n, ourTurn: true }],
     });
 
     const accepted = state.model.game.handState;
@@ -483,7 +484,7 @@ describe('session machine behavior sequences', () => {
 
     const state = send(initial, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '10', ourTurn: true }],
+      members: [{ id: '7', playerAContribution: 5n, playerBContribution: 5n, ourTurn: true }],
     });
 
     expect(() =>

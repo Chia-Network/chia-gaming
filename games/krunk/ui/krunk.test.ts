@@ -528,7 +528,7 @@ describe('Krunk draft continuity', () => {
       revealedWord: 'CRANE',
       outcome: 'win',
       settlementOutcome: null,
-      moverShare: '100',
+      moverShare: 100n,
       error: null,
     };
     expect(krunkTerminalStatus(bobWin, 'Peer', 100n)).toBe('You won 100 mojo!');
@@ -599,7 +599,7 @@ describe('Krunk draft continuity', () => {
       revealedWord: 'CRANE',
       outcome: 'win',
       settlementOutcome: outcome,
-      moverShare: '100',
+      moverShare: 100n,
       error: null,
     };
 
@@ -630,10 +630,10 @@ describe('Krunk draft continuity', () => {
   });
 
   it('formats bob win amounts as mojo below 1e6 and chia at or above', () => {
-    expect(krunkWinMessage('100')).toBe('You won 100 mojo!');
-    expect(krunkWinMessage('999999')).toBe('You won 999999 mojo!');
-    expect(krunkWinMessage('1000000')).toBe('You won 0.000001 chia!');
-    expect(krunkWinMessage('1000000000000')).toBe('You won 1 chia!');
+    expect(krunkWinMessage(100n)).toBe('You won 100 mojo!');
+    expect(krunkWinMessage(999999n)).toBe('You won 999999 mojo!');
+    expect(krunkWinMessage(1000000n)).toBe('You won 0.000001 chia!');
+    expect(krunkWinMessage(1000000000000n)).toBe('You won 1 chia!');
   });
 
   it('formats an opponent clean win in chia from game amount minus our share', () => {

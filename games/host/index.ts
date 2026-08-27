@@ -1,5 +1,5 @@
 import type { ReactElement, Ref } from 'react';
-import { Program } from 'clvm-lib';
+import type { Program } from 'clvm-lib';
 
 /** Compact settlement outcome ids (snake_case; match Rust `SettlementOutcome`). */
 export type SettlementOutcome =
@@ -42,10 +42,8 @@ export interface HandProposalBase {
   parameters: ProposalParameterValue;
 }
 
-export type RegisteredGameType = string;
-
 export type HandProposal = HandProposalBase & {
-  gameType: RegisteredGameType;
+  gameType: string;
 };
 
 export interface PersistedGameState<T = unknown> {
@@ -75,7 +73,11 @@ export type GameIntent =
 
 export interface GameHandInitialization {
   handProposal: HandProposal;
-  members: readonly { amount: bigint; ourTurn: boolean }[];
+  members: readonly {
+    playerAContribution: bigint;
+    playerBContribution: bigint;
+    ourTurn: boolean;
+  }[];
 }
 
 export type GameUpdate =
@@ -83,7 +85,7 @@ export type GameUpdate =
       type: 'move-readable';
       memberIndex: number;
       readable: Uint8Array;
-      moverShare: string;
+      moverShare: bigint;
     }
   | { type: 'message-readable'; memberIndex: number; readable: Uint8Array }
   | { type: 'hand-ended'; memberIndex: number; outcome: SettlementOutcome | null };
@@ -128,7 +130,7 @@ export function equalHandProposalBase(a: HandProposalBase, b: HandProposalBase):
   );
 }
 
-export function equalProposalParameterValue(
+function equalProposalParameterValue(
   a: ProposalParameterValue,
   b: ProposalParameterValue,
 ): boolean {

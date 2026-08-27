@@ -136,11 +136,14 @@ export function isCalpokerHandState(value: unknown): value is CalpokerHandState 
 
 function initialState(init: GameHandInitialization): CalpokerHandState {
   const member = init.members[0]!;
-  if (member.amount <= 0n || member.amount % 2n !== 0n) {
-    throw new Error('California Poker requires an even positive approved member amount');
+  if (
+    member.playerAContribution <= 0n ||
+    member.playerAContribution !== member.playerBContribution
+  ) {
+    throw new Error('California Poker requires equal positive approved contributions');
   }
   return {
-    perPlayerStake: member.amount / 2n,
+    perPlayerStake: member.playerAContribution,
     playerHand: [],
     opponentHand: [],
     cardSelections: [],

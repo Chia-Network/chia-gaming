@@ -12,7 +12,14 @@ describe('session machine behavior sequences', () => {
     expect(() =>
       reduceSessionMachine(state, {
         type: 'notification-accepted-group',
-        members: [{ id: 'missing', amount: '20', ourTurn: false }],
+        members: [
+          {
+            id: 'missing',
+            playerAContribution: 10n,
+            playerBContribution: 10n,
+            ourTurn: false,
+          },
+        ],
       }),
     ).toThrow('ProposalAcceptedGroup missing missing normalized proposal group');
     expect(() =>
@@ -41,7 +48,14 @@ describe('session machine behavior sequences', () => {
       state,
       {
         ProposalAcceptedGroup: {
-          members: [{ id: '7', amount: '20', our_turn: true }],
+          members: [
+            {
+              id: '7',
+              player_a_contribution: '10',
+              player_b_contribution: '10',
+              our_turn: true,
+            },
+          ],
         },
       },
       true,
@@ -51,7 +65,14 @@ describe('session machine behavior sequences', () => {
 
     expect(events[0]).toEqual({
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: true }],
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: true,
+        },
+      ],
     });
     expect(events[1]).toMatchObject({
       type: 'notification-insufficient-balance',
@@ -153,8 +174,18 @@ describe('session machine behavior sequences', () => {
       {
         ProposalAcceptedGroup: {
           members: [
-            { id: '1', amount: '200', our_turn: false },
-            { id: '2', amount: '200', our_turn: true },
+            {
+              id: '1',
+              player_a_contribution: '100',
+              player_b_contribution: '0',
+              our_turn: false,
+            },
+            {
+              id: '2',
+              player_a_contribution: '0',
+              player_b_contribution: '100',
+              our_turn: true,
+            },
           ],
         },
       },

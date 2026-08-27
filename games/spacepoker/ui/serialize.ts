@@ -219,11 +219,14 @@ function initialState(
   unitSizeMojos: bigint,
 ): SpacepokerHandState {
   const member = init.members[0]!;
-  if (member.amount <= 0n || member.amount % 2n !== 0n) {
-    throw new Error('Space Poker requires an even positive approved member amount');
+  if (
+    member.playerAContribution <= 0n ||
+    member.playerAContribution !== member.playerBContribution
+  ) {
+    throw new Error('Space Poker requires equal positive approved contributions');
   }
   return {
-    perPlayerStake: member.amount / 2n,
+    perPlayerStake: member.playerAContribution,
     gameState: { handler: 0n, myTurn: member.ourTurn, N: 4n },
     playerHoleCards: null,
     playerBoost: false,

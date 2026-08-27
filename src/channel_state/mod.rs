@@ -919,6 +919,8 @@ impl ChannelState {
             group_id,
             ph,
             Rc::new(r),
+            start_info.player_a_contribution.clone(),
+            start_info.player_b_contribution.clone(),
             start_info.my_contribution_this_game.clone(),
             start_info.their_contribution_this_game.clone(),
         ));
@@ -1033,6 +1035,8 @@ impl ChannelState {
             group_id,
             ph,
             Rc::new(r),
+            start_info.player_a_contribution.clone(),
+            start_info.player_b_contribution.clone(),
             start_info.my_contribution_this_game.clone(),
             start_info.their_contribution_this_game.clone(),
         ));

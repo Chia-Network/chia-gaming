@@ -128,6 +128,9 @@ describe('game package proposal adapters', () => {
       game_type: protocolIdForCatalog('spacepoker'),
       parameters: 10n,
     };
+    expect(
+      proposalGroupFromProposalMade({ ...base, player_a_contribution: 'not-an-amount' }),
+    ).toBeNull();
     expect(proposalGroupFromProposalMade({ ...base, sender_is_player_a: 1 })).toBeNull();
     expect(proposalGroupFromProposalMade({ ...base, parameters: '10' })).toBeNull();
     expect(proposalGroupFromProposalMade({ ...base, parameters: Uint8Array.of(10) })).toBeNull();

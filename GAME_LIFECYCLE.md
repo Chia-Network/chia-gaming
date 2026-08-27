@@ -201,7 +201,8 @@ A single game's lifecycle, independent of other concurrent games:
 2. Accept   (one BatchAction::AcceptProposalGroup for the canonical group ID)
    → all referees + game handlers are instantiated atomically
    → each side receives exactly one ProposalAcceptedGroup
-     { members: [{ id, amount, our_turn }, ...] } in factory order
+     { members: [{ id, player_a_contribution, player_b_contribution, our_turn }, ...] }
+     in factory order
 
 3. Play     (BatchAction::Move, alternating turns)
    → each move updates the referee state and mover_share

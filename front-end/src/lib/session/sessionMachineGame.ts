@@ -85,29 +85,6 @@ function withHandState(
   };
 }
 
-function fallbackHandInitialization(state: SessionMachineState): GameHandInitialization {
-  const handProposal = state.model.betweenHand.lastHandProposal;
-  if (handProposal === null) {
-    throw new Error('Game update requires accepted hand terms');
-  }
-  if (state.model.game.currentHandIds.length === 0) {
-    throw new Error('Game update requires a current hand member');
-  }
-  return {
-    handProposal,
-    members: state.model.game.currentHandIds.map((id) => {
-      const instance = state.model.game.instances[id];
-      if (!instance) throw new Error(`Game update missing current hand member ${id}`);
-      return {
-        amount: BigInt(instance.amount),
-        ourTurn:
-          instance.presentation === 'off-chain-my-turn' ||
-          instance.presentation === 'on-chain-my-turn',
-      };
-    }),
-  };
-}
-
 function memberIndexForProtocolId(state: SessionMachineState, id: string): number {
   const matches = state.model.game.currentHandIds
     .map((candidate, index) => (candidate === id ? index : -1))
@@ -124,10 +101,10 @@ function reduceHandSnapshot(
   update: GameUpdate,
 ): PersistedGameState {
   const gameType = state.model.game.activeGameType;
-  const hand =
-    saved === null
-      ? createRegisteredGameHand(gameType, fallbackHandInitialization(state))
-      : restoreRegisteredGameHandState(gameType, saved);
+  if (saved === null) {
+    throw new Error('Game update requires persisted game-owned hand state');
+  }
+  const hand = restoreRegisteredGameHandState(gameType, saved);
   hand.receive(update);
   return snapshotRegisteredGameHand(gameType, hand);
 }
@@ -224,7 +201,7 @@ export function reduceDurableGameEvent(
         type: 'accepted-group',
         groupIds: proposal.memberIds,
         members: event.members.map((member) => ({
-          amount: member.amount,
+          amount: (member.playerAContribution + member.playerBContribution).toString(),
           startTurn: member.ourTurn ? 'my-turn' : 'their-turn',
         })),
         origin: proposal.origin,
@@ -274,7 +251,8 @@ export function reduceDurableGameEvent(
       const init: GameHandInitialization = {
         handProposal: proposal.handProposal,
         members: event.members.map((member) => ({
-          amount: BigInt(member.amount),
+          playerAContribution: member.playerAContribution,
+          playerBContribution: member.playerBContribution,
           ourTurn: member.ourTurn,
         })),
       };

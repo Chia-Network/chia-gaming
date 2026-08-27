@@ -119,7 +119,12 @@ export type SessionMachineEvent =
   | { type: 'set-first-game-accepted'; accepted: boolean }
   | {
       type: 'notification-accepted-group';
-      members: readonly { id: string; amount: string; ourTurn: boolean }[];
+      members: readonly {
+        id: string;
+        playerAContribution: bigint;
+        playerBContribution: bigint;
+        ourTurn: boolean;
+      }[];
       handState?: PersistedGameState;
     }
   | {
@@ -128,7 +133,7 @@ export type SessionMachineEvent =
       payload: NonTerminalGameStatusPayload;
       channelState: ChannelStatus;
       readable: Uint8Array | null;
-      moverShare: string | null;
+      moverShare: bigint | null;
       iStarted: boolean;
       handState?: PersistedGameState;
     }

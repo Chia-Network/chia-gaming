@@ -374,13 +374,20 @@ The complete initialization shape is:
 ```ts
 interface GameHandInitialization {
   handProposal: HandProposal;
-  members: readonly { amount: bigint; ourTurn: boolean }[];
+  members: readonly {
+    playerAContribution: bigint;
+    playerBContribution: bigint;
+    ourTurn: boolean;
+  }[];
 }
 ```
 
 The initial state must copy every accepted fact the play UI needs: stakes and
-game-specific proposal terms from `handProposal`, plus member amounts and local
-initial turns from `members`. Assert the expected member count and game type.
+game-specific proposal terms from `handProposal`, plus each factory member's
+approved A/B contributions and local initial turn from `members`. These member
+contributions are factory output and may differ from the proposal-wide inputs;
+derive a member's total only as `playerAContribution + playerBContribution`.
+Assert the expected member count, contribution topology, and game type.
 Protocol IDs, proposal origin, and session `iStarted` are deliberately
 inaccessible to packages.
 
@@ -445,6 +452,12 @@ unchanged. The host applies its `handKey` to the returned element, which
 intentionally starts a fresh component lifecycle for each new hand. Game code
 does not need to add a React key or manage this lifecycle itself.
 
+`port.isChannelReady()` reports whether the underlying session has completed
+the setup needed to accept game commands. It is a submission gate for effects
+that may run while setup is still finishing, especially automatic actions. It
+does not report whose turn it is, whether a particular move is legal, or whether
+the command will apply synchronously; derive those facts from game-owned state.
+
 Narrow the `GameMountView` on `frozen` before dispatching an intent. The
 complete outgoing contract is:
 
@@ -459,6 +472,10 @@ type GameIntent =
 - Mutate the concrete hand first. `state-changed` tells the player app to reread
   the entire hand and persist a local-only durable change; it works for both
   single- and multi-member hands.
+- For an action that changes local state and invokes the protocol, perform both
+  mutations before dispatching the protocol intent. The host snapshots the
+  already-mutated complete hand as the candidate and restores the prior
+  checkpoint if the command fails.
 - `make-move` asks the local CLVM handler to process `readable`. `null` means
   CLVM nil.
 - `memberIndex` addresses the stable factory-ordered member. The host checks the
@@ -492,7 +509,11 @@ The complete incoming contract is:
 ```ts
 interface GameHandInitialization {
   handProposal: HandProposal;
-  members: readonly { amount: bigint; ourTurn: boolean }[];
+  members: readonly {
+    playerAContribution: bigint;
+    playerBContribution: bigint;
+    ourTurn: boolean;
+  }[];
 }
 
 type GameUpdate =
@@ -500,7 +521,7 @@ type GameUpdate =
       type: 'move-readable';
       memberIndex: number;
       readable: Uint8Array;
-      moverShare: string;
+      moverShare: bigint;
     }
   | { type: 'message-readable'; memberIndex: number; readable: Uint8Array }
   | { type: 'hand-ended'; memberIndex: number; outcome: SettlementOutcome | null };
@@ -508,19 +529,42 @@ type GameUpdate =
 
 `GameHandInitialization` is supplied only to `createHand`. `members` is the
 authoritative ordered package membership and `handProposal` contains validated
-accepted terms. A typical single-member initialization reads `members[0].amount`
-and `members[0].ourTurn`. Assert your expected member count and proposal game
-type in `createHand`.
+accepted terms. A typical equal-stake single-member game asserts that
+`members[0].playerAContribution === members[0].playerBContribution`, then stores
+that contribution and `members[0].ourTurn`. Assert your expected member count,
+contribution topology, and proposal game type in `createHand`.
 - `move-readable` addresses one member of the hand. `readable` is the
   serialized CLVM readable returned by the opponent-move handler.
-  `moverShare` is a decimal mojo string because it originated at the WASM
-  boundary.
+  `moverShare` is a mojo-denominated `bigint`.
 - `message-readable` carries serialized advisory readable data for one member. It
   does not itself imply a move, turn change, or protocol-state transition.
 - `hand-ended` supplies the normalized settlement outcome, when one exists, for
   one member. Multi-member hands receive independent terminal inputs as their
   members finish. Set that member's turn false and retain the outcome in the
   complete state so a frozen mount renders without host terminal maps.
+
+Readables are serialized CLVM values, unlike structured Bencodex proposal
+parameters. Decode only the exact shape your handlers return:
+
+```ts
+const items = Program.deserialize(update.readable).toList();
+const count = items[0].toBigInt();
+const label = new TextDecoder().decode(items[1].atom);
+```
+
+For an outgoing move, construct the handler's documented CLVM input directly:
+
+```ts
+const readable = Program.fromList([
+  Program.fromBigInt(count),
+  Program.fromBytes(new TextEncoder().encode(label)),
+]);
+port.dispatch({ type: 'make-move', memberIndex: 0, readable });
+```
+
+CLVM atoms do not retain a text-versus-bytes distinction. Validate list length,
+integer ranges, and byte lengths while parsing; use UTF-8 decoding only for
+fields your handler contract defines as text.
 
 The terminal outcome vocabulary is:
 
@@ -576,6 +620,12 @@ The following are frontend implementation details, not APIs for games:
 - The session model, `useGameSession`, and the catalog-to-protocol-ID mapping
 
 ## Testing checklist
+
+After adding or changing package files, run `./cb.sh` first. It compiles
+Chialisp, prepares factory binaries, regenerates package registries and contract
+types, and builds the project in the required order. Then run `./ct.sh` for the
+full Rust, frontend, and simulator-backed test suite. Do not invoke individual
+Cargo test commands in place of these repository scripts.
 
 Before considering the game complete, check that:
 

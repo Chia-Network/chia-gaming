@@ -13,8 +13,8 @@ describe('session machine behavior sequences', () => {
     state = send(state, {
       type: 'notification-accepted-group',
       members: [
-        { id: '1', amount: '100', ourTurn: false },
-        { id: '2', amount: '100', ourTurn: true },
+        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: false },
+        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: true },
       ],
     });
 
@@ -48,7 +48,7 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', amount: '20', ourTurn: true }],
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
     });
 
     expect(state.model.game.activeIds).toEqual(['7']);
@@ -71,8 +71,8 @@ describe('session machine behavior sequences', () => {
     state = send(state, {
       type: 'notification-accepted-group',
       members: [
-        { id: '1', amount: '100', ourTurn: true },
-        { id: '2', amount: '100', ourTurn: false },
+        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
       ],
     });
 
@@ -193,8 +193,8 @@ describe('session machine behavior sequences', () => {
     state = run(state, {
       type: 'notification-accepted-group',
       members: [
-        { id: '7', amount: '100', ourTurn: true },
-        { id: '9', amount: '100', ourTurn: false },
+        { id: '7', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { id: '9', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
       ],
     });
 
@@ -299,8 +299,8 @@ describe('session machine behavior sequences', () => {
     state = send(state, {
       type: 'notification-accepted-group',
       members: [
-        { id: '1', amount: '100', ourTurn: true },
-        { id: '2', amount: '100', ourTurn: false },
+        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
       ],
     });
     const canonical = state.model.game.handState;

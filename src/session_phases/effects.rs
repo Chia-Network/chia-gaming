@@ -232,7 +232,8 @@ impl CancelReason {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AcceptedGameMember {
     pub id: GameID,
-    pub amount: Amount,
+    pub player_a_contribution: Amount,
+    pub player_b_contribution: Amount,
     pub our_turn: bool,
 }
 

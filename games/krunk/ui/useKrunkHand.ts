@@ -90,7 +90,7 @@ function krunkTerminalNotice(
       const guesserTimedOut = state.role === 'bob' ? weTimedOut : !weTimedOut;
       return {
         text: `${guesserLabel} got ${
-          guesserTimedOut ? 'nothing' : krunkAmountLabel(perPlayerStake.toString())
+          guesserTimedOut ? 'nothing' : krunkAmountLabel(perPlayerStake)
         } due to timeout.`,
         kind: 'info',
       };
@@ -103,14 +103,13 @@ function krunkTerminalNotice(
       return { text: krunkSettlementStatus(state.settlementOutcome, opponentLabel), kind: 'info' };
     }
     const outcome = state.outcome ?? krunkOutcomeFromPlay(state);
-    const winnerAmount =
-      state.moverShare === null ? perPlayerStake : BigInt(state.moverShare);
+    const winnerAmount = state.moverShare === null ? perPlayerStake : state.moverShare;
     if (outcome === 'win') {
       if (state.role === 'alice') {
         return { text: `${opponentLabel} didn't win anything.`, kind: 'info' };
       }
       return {
-        text: krunkWinMessage(winnerAmount.toString()),
+        text: krunkWinMessage(winnerAmount),
         kind: 'win',
       };
     }
@@ -120,13 +119,13 @@ function krunkTerminalNotice(
       }
       return {
         text:
-          krunkWinnerMessage(opponentLabel, winnerAmount.toString()),
+          krunkWinnerMessage(opponentLabel, winnerAmount),
         kind: 'info',
       };
     }
     return { text: 'Result unavailable.', kind: 'info' };
   }
-  if (state.outcome === 'win' && state.moverShare !== null && BigInt(state.moverShare) > 0n) {
+  if (state.outcome === 'win' && state.moverShare !== null && state.moverShare > 0n) {
     return { text: krunkWinMessage(state.moverShare), kind: 'win' };
   }
   if (state.role === 'bob') {
@@ -158,12 +157,11 @@ export function krunkBoardNotice(
 }
 
 /** Win banner copy: mojo below 1e6, chia at/above (same crossover as formatAmount). */
-export function krunkWinMessage(moverShare: string): string {
+export function krunkWinMessage(moverShare: bigint): string {
   return krunkWinnerMessage('You', moverShare);
 }
 
-function krunkAmountLabel(amount: string): string {
-  const mojos = BigInt(amount);
+function krunkAmountLabel(mojos: bigint): string {
   if (mojos < 1_000_000n) return `${mojos} mojo`;
   const TRILLION = 1_000_000_000_000n;
   const whole = mojos / TRILLION;
@@ -173,7 +171,7 @@ function krunkAmountLabel(amount: string): string {
   return `${whole}.${fracStr} chia`;
 }
 
-export function krunkWinnerMessage(winner: string, amount: string): string {
+export function krunkWinnerMessage(winner: string, amount: bigint): string {
   return `${winner} won ${krunkAmountLabel(amount)}!`;
 }
 
@@ -189,7 +187,7 @@ function finishedKrunkState(
   current: KrunkGameState,
   revealedWord: string | null,
   lastClue: KrunkGuess['clue'] | null,
-  moverShare: string | null = null,
+  moverShare: bigint | null = null,
 ): KrunkGameState {
   const correct = (clue: KrunkGuess['clue']) => clue.every((value) => value === 2n);
   const bobGuessedCorrectly =

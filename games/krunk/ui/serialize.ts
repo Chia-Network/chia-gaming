@@ -34,7 +34,7 @@ export interface KrunkGameState {
   revealedWord: string | null;
   outcome: 'win' | 'lose' | null;
   settlementOutcome: SettlementOutcome | null;
-  moverShare: string | null;
+  moverShare: bigint | null;
 }
 
 export interface KrunkHandState {
@@ -83,14 +83,8 @@ function isWord(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Z]{5}$/.test(value);
 }
 
-function isAmount(value: unknown): value is string | null {
-  if (value === null) return true;
-  if (typeof value !== 'string') return false;
-  try {
-    return BigInt(value) >= 0n;
-  } catch {
-    return false;
-  }
+function isAmount(value: unknown): value is bigint | null {
+  return value === null || (typeof value === 'bigint' && value >= 0n);
 }
 
 function isKrunkGameState(value: unknown): value is KrunkGameState {
@@ -230,7 +224,7 @@ function finishedState(
   state: KrunkGameState,
   revealedWord: string | null,
   clue: KrunkGuess['clue'] | null,
-  moverShare: string | null,
+  moverShare: bigint | null,
 ): KrunkGameState {
   const correct = (value: KrunkGuess['clue']) => value.every((item) => item === 2n);
   const bobWon =
@@ -248,7 +242,7 @@ function finishedState(
 }
 
 type KrunkFeatureEvent =
-  | { type: 'opponent-moved'; readable: Uint8Array; moverShare: string | null }
+  | { type: 'opponent-moved'; readable: Uint8Array; moverShare: bigint | null }
   | { type: 'settled'; outcome: SettlementOutcome | null };
 
 export function krunkOutcomeFromPlay(game: KrunkGameState): KrunkGameState['outcome'] {
@@ -347,13 +341,15 @@ export function createKrunkHand(init: GameHandInitialization): KrunkHand {
     throw new Error('Krunk requires two games and Krunk proposal terms');
   }
   if (
-    init.members.some((member) => member.amount <= 0n || member.amount % 2n !== 0n) ||
-    init.members[0]!.amount !== init.members[1]!.amount
+    init.members[0]!.playerAContribution <= 0n ||
+    init.members[0]!.playerBContribution !== 0n ||
+    init.members[1]!.playerAContribution !== 0n ||
+    init.members[1]!.playerBContribution !== init.members[0]!.playerAContribution
   ) {
-    throw new Error('Krunk requires two equal, even, positive approved member amounts');
+    throw new Error('Krunk requires its approved A and B contributions in separate members');
   }
   return krunkHandFromState({
-    perPlayerStake: init.members[0]!.amount / 2n,
+    perPlayerStake: init.members[0]!.playerAContribution,
     members: [
       initialKrunkGameState(init.members[0]!.ourTurn ? 'alice' : 'bob'),
       initialKrunkGameState(init.members[1]!.ourTurn ? 'alice' : 'bob'),

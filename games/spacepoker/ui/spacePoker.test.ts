@@ -148,7 +148,7 @@ describe('Space Poker terminal UX', () => {
       type: 'move-readable',
       memberIndex: 0,
       readable: new Uint8Array([0x80]),
-      moverShare: '0',
+      moverShare: 0n,
     });
     expect(hand.getState().gameState).toEqual({
       handler: SpHandler.CommitB,

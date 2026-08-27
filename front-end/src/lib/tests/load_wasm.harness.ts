@@ -399,7 +399,10 @@ export function postMoveHandState(
   const hand = createRegisteredGameHand(handProposal.gameType, {
     handProposal,
     members: ids.map((_, index) => ({
-      amount: handProposal.playerAContribution + handProposal.playerBContribution,
+      playerAContribution:
+        handProposal.gameType === 'krunk' && index !== 0 ? 0n : handProposal.playerAContribution,
+      playerBContribution:
+        handProposal.gameType === 'krunk' && index === 0 ? 0n : handProposal.playerBContribution,
       ourTurn: handProposal.gameType === 'krunk' ? index === 1 : true,
     })),
   });

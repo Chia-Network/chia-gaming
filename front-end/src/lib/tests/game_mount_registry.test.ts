@@ -40,7 +40,8 @@ function modelFor(gameType: 'calpoker' | 'spacepoker' | 'krunk') {
   const hand = createRegisteredGameHand(gameType, {
     handProposal,
     members: ids.map((_, index) => ({
-      amount: 200n,
+      playerAContribution: gameType === 'krunk' ? (index === 0 ? 100n : 0n) : 100n,
+      playerBContribution: gameType === 'krunk' ? (index === 0 ? 0n : 100n) : 100n,
       ourTurn: gameType === 'krunk' ? index === 0 : true,
     })),
   });
@@ -130,7 +131,7 @@ describe('game mount registry', () => {
           'calpoker',
           {
             handProposal: model.betweenHand.lastHandProposal!,
-            members: [{ amount: 200n, ourTurn: true }],
+            members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: true }],
           },
           model.game.handState,
         ),

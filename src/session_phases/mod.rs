@@ -730,8 +730,8 @@ impl OffChainPhase {
                                 })?;
                                 Ok(AcceptedGameMember {
                                     id: *id,
-                                    amount: proposal.my_contribution.clone()
-                                        + proposal.their_contribution.clone(),
+                                    player_a_contribution: proposal.player_a_contribution.clone(),
+                                    player_b_contribution: proposal.player_b_contribution.clone(),
                                     our_turn,
                                 })
                             })
@@ -1121,8 +1121,8 @@ impl OffChainPhase {
                             their_required += proposal.their_contribution.clone();
                             members.push(AcceptedGameMember {
                                 id: *id,
-                                amount: proposal.my_contribution.clone()
-                                    + proposal.their_contribution.clone(),
+                                player_a_contribution: proposal.player_a_contribution.clone(),
+                                player_b_contribution: proposal.player_b_contribution.clone(),
                                 our_turn: ch.game_is_my_turn(id).ok_or_else(|| {
                                     Error::StrErr(format!(
                                         "accepted game {id} has no turn authority"

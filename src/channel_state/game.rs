@@ -83,6 +83,8 @@ impl FactoryGame {
             amount: self.amount.clone(),
             game_handler,
             timeout: timeout.clone(),
+            player_a_contribution: self.player_a_contribution.clone(),
+            player_b_contribution: self.player_b_contribution.clone(),
             my_contribution_this_game: my_contribution,
             their_contribution_this_game: their_contribution,
             initial_validation_program: StateUpdateProgram::new_hash(
@@ -285,6 +287,10 @@ mod atomic_factory_tests {
 
             assert_eq!(player_a.is_my_turn(), player_a_goes_first);
             assert_eq!(player_b.is_my_turn(), !player_a_goes_first);
+            assert_eq!(player_a.player_a_contribution, Amount::new(10));
+            assert_eq!(player_a.player_b_contribution, Amount::new(20));
+            assert_eq!(player_b.player_a_contribution, Amount::new(10));
+            assert_eq!(player_b.player_b_contribution, Amount::new(20));
             assert_eq!(player_a.my_contribution_this_game, Amount::new(10));
             assert_eq!(player_a.their_contribution_this_game, Amount::new(20));
             assert_eq!(player_b.my_contribution_this_game, Amount::new(20));

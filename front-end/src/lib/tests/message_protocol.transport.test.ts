@@ -472,8 +472,18 @@ describe('active game tracking', () => {
             Notification: {
               ProposalAcceptedGroup: {
                 members: [
-                  { id: '1', amount: '100', our_turn: true },
-                  { id: '3', amount: '100', our_turn: false },
+                  {
+                    id: '1',
+                    player_a_contribution: '100',
+                    player_b_contribution: '0',
+                    our_turn: true,
+                  },
+                  {
+                    id: '3',
+                    player_a_contribution: '0',
+                    player_b_contribution: '100',
+                    our_turn: false,
+                  },
                 ],
               },
             },

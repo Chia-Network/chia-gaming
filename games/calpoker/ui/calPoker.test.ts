@@ -676,7 +676,7 @@ describe('Calpoker terminal hand projection', () => {
           type: 'move-readable',
           memberIndex: 0,
           readable: finalReadable,
-          moverShare: '0',
+          moverShare: 0n,
         });
         gameHand.receive({
           type: 'hand-ended',

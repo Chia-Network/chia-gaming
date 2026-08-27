@@ -292,12 +292,15 @@ export function reduceSessionNotification(
     }
     const members = accepted.members.map((member) => {
       const id = String(member.id);
-      const amount = parseAmount(member.amount);
-      if (amount == null) throw new Error(`ProposalAcceptedGroup ${id} missing amount`);
+      const playerAContribution = parseAmount(member.player_a_contribution);
+      const playerBContribution = parseAmount(member.player_b_contribution);
+      if (playerAContribution == null || playerBContribution == null) {
+        throw new Error(`ProposalAcceptedGroup ${id} missing approved contributions`);
+      }
       if (typeof member.our_turn !== 'boolean') {
         throw new Error(`ProposalAcceptedGroup ${id} missing Rust turn authority`);
       }
-      return { id, amount, ourTurn: member.our_turn };
+      return { id, playerAContribution, playerBContribution, ourTurn: member.our_turn };
     });
     if (new Set(members.map((member) => member.id)).size !== members.length) {
       throw new Error('ProposalAcceptedGroup contains duplicate member IDs');

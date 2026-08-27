@@ -29,7 +29,7 @@ const text = (value: string) => Program.fromBytes(new TextEncoder().encode(value
 const ints = (values: bigint[]) => Program.fromList(values.map(Program.fromBigInt));
 const readable = (...items: Program[]) => Program.fromList(items).serialize();
 
-const status = (payload: Uint8Array, moverShare: string | null = '0'): GameUpdate =>
+const status = (payload: Uint8Array, moverShare: bigint | null = 0n): GameUpdate =>
   moverShare === null
     ? { type: 'message-readable', memberIndex: 0, readable: payload }
     : {
@@ -55,7 +55,7 @@ const spacepokerInit = (): GameHandInitialization => ({
     gameTimeout: 15n,
     parameters: 10n,
   },
-  members: [{ amount: 2_000n, ourTurn: true }],
+  members: [{ playerAContribution: 1_000n, playerBContribution: 1_000n, ourTurn: true }],
 });
 
 function freshSpacepokerState(): SpacepokerHandState {
@@ -125,7 +125,11 @@ describe('canonical feature gameplay reducers', () => {
         gameTimeout: 15n,
         parameters: null,
       },
-      members: turns.map((ourTurn) => ({ amount: 200n, ourTurn })),
+      members: turns.map((ourTurn, index) => ({
+        playerAContribution: index === 0 ? 100n : 0n,
+        playerBContribution: index === 0 ? 0n : 100n,
+        ourTurn,
+      })),
     });
 
     expect(state?.members[0].role).toBe(first);
@@ -694,7 +698,7 @@ describe('canonical feature gameplay reducers', () => {
     const projected = reduceKrunkFeatureState(pending, {
       type: 'opponent-moved',
       readable: clue,
-      moverShare: '0',
+      moverShare: 0n,
     });
     const durable = advanceKrunkHand(
       {
@@ -705,7 +709,7 @@ describe('canonical feature gameplay reducers', () => {
         type: 'move-readable',
         memberIndex: 0,
         readable: clue,
-        moverShare: '0',
+        moverShare: 0n,
       },
     );
     expect(durable?.members[0]).toEqual(projected);
@@ -719,7 +723,7 @@ describe('canonical feature gameplay reducers', () => {
       myTurn: false,
       revealedWord: 'CRANE',
       outcome: 'win' as const,
-      moverShare: '20',
+      moverShare: 20n,
     };
 
     const projected = reduceKrunkFeatureState(terminal, {
@@ -737,7 +741,7 @@ describe('canonical feature gameplay reducers', () => {
       },
     );
 
-    expect(projected.moverShare).toBe('20');
+    expect(projected.moverShare).toBe(20n);
     expect(projected.outcome).toBe('win');
     expect(durable?.members[0]).toEqual({
       ...projected,
@@ -757,8 +761,8 @@ describe('canonical feature gameplay reducers', () => {
         parameters: null,
       },
       members: [
-        { amount: 200n, ourTurn: true },
-        { amount: 200n, ourTurn: false },
+        { playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
       ],
     };
 
