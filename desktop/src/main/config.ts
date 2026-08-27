@@ -15,9 +15,22 @@ import { log } from './log';
 export type DesktopConfig = {
   /** Bare http(s) origins the app may load the hub lobby UI from. */
   hubOrigins: string[];
+  /**
+   * Bare http(s) origins the app may reach for Cloud Wallet OAuth (API + UI).
+   * Popups and `fetch` to these origins are allowed; they are not framed.
+   */
+  cloudWalletOrigins: string[];
 };
 
 const DEFAULT_HUB_ORIGINS = ['http://localhost:3003', 'http://127.0.0.1:3003'];
+
+/** Matches `CLOUD_WALLET_*_URL` defaults in `front-end/src/constants/env.ts`. */
+const DEFAULT_CLOUD_WALLET_ORIGINS = [
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
 
 export const hubOriginSchema = z.string().refine((value) => {
   try {
@@ -30,6 +43,7 @@ export const hubOriginSchema = z.string().refine((value) => {
 
 const configSchema = z.strictObject({
   hubOrigins: z.array(hubOriginSchema).min(1).optional(),
+  cloudWalletOrigins: z.array(hubOriginSchema).min(1).optional(),
 });
 
 function configFilePath(): string {
@@ -55,14 +69,20 @@ function readConfigFile(filePath: string): Record<string, unknown> {
 }
 
 /**
- * Write the hub allowlist back to the config file, so a hub the user approved
- * at runtime is still trusted next launch. Written via a temporary file and a
+ * Write the allowlists back to the config file, so a hub the user approved
+ * at runtime is still trusted next launch. Preserves `cloudWalletOrigins` so a
+ * hub grant cannot wipe Cloud Wallet config. Written via a temporary file and a
  * rename: a crash mid-write would otherwise leave config.json truncated, and
  * the app refuses to start on malformed config.
  */
 export function persistHubOrigins(hubOrigins: readonly string[]): void {
   const target = configFilePath();
-  const contents = `${JSON.stringify({ hubOrigins }, null, 2)}\n`;
+  const existing = existsSync(target) ? readConfigFile(target) : {};
+  const payload: Record<string, unknown> = { hubOrigins };
+  if (existing.cloudWalletOrigins !== undefined) {
+    payload.cloudWalletOrigins = existing.cloudWalletOrigins;
+  }
+  const contents = `${JSON.stringify(payload, null, 2)}\n`;
   const temporary = `${target}.tmp`;
 
   mkdirSync(path.dirname(target), { recursive: true });
@@ -84,7 +104,9 @@ export function loadDesktopConfig(): DesktopConfig {
 
   const config: DesktopConfig = {
     hubOrigins: result.data.hubOrigins ?? [...DEFAULT_HUB_ORIGINS],
+    cloudWalletOrigins: result.data.cloudWalletOrigins ?? [...DEFAULT_CLOUD_WALLET_ORIGINS],
   };
   log.info(`hub origins: ${config.hubOrigins.join(', ')}`);
+  log.info(`cloud wallet origins: ${config.cloudWalletOrigins.join(', ')}`);
   return config;
 }
