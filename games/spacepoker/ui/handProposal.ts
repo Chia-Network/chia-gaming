@@ -12,7 +12,6 @@ import {
 } from './unitSize';
 
 export {
-  reduceSpacepokerHandState,
   reduceSpacepokerFeatureState,
   reduceSpacepokerSettlementState,
 } from './serialize';

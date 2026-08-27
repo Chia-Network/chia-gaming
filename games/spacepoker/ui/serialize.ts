@@ -247,20 +247,12 @@ function initialState(
 }
 
 function parseReadable(readable: Uint8Array): Program[] {
-  try {
-    return Program.deserialize(readable).toList();
-  } catch {
-    return [];
-  }
+  return Program.deserialize(readable).toList();
 }
 
 function tag(items: Program[]): string | null {
   if (items.length === 0) return null;
-  try {
-    return new TextDecoder().decode(items[0].atom);
-  } catch {
-    return null;
-  }
+  return new TextDecoder().decode(items[0].atom);
 }
 
 function appendHistory(current: SpacepokerHandState, entry: SpHandEntry): SpacepokerHandState {
@@ -378,11 +370,7 @@ export function reduceSpacepokerSettlementState(
 }
 
 function bigints(program: Program): bigint[] {
-  try {
-    return program.toList().map((item) => item.toBigInt());
-  } catch {
-    return [];
-  }
+  return program.toList().map((item) => item.toBigInt());
 }
 
 function placeCards(
@@ -547,10 +535,10 @@ export function reduceSpacepokerFeatureState(
       { player: 'opponent', action: 'reveal' },
     );
   }
-  return current;
+  throw new Error(`Unsupported Space Poker move readable tag: ${readableTag}`);
 }
 
-export function reduceSpacepokerHandState(
+function reduceSpacepokerHandState(
   current: SpacepokerHandState,
   event: GameUpdate,
 ): SpacepokerHandState {

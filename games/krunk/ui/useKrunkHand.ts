@@ -12,9 +12,7 @@ import {
   type KrunkRole,
 } from './serialize';
 
-type LocalGameCommand =
-  | { type: 'make-move'; readable: Program | null }
-  | { type: 'accept-settlement' };
+type LocalGameCommand = { type: 'make-move'; readable: Program | null };
 
 export { KrunkHandler };
 export type { KrunkGameState, KrunkGuess, KrunkRole };
@@ -229,11 +227,7 @@ export function useKrunkHand(
     const memberIndex = memberIndexRef.current;
     const live = requireLiveGameMount(viewRef.current);
     live.hand.updateGame(memberIndex, () => next);
-    live.port.dispatch(
-      command.type === 'make-move'
-        ? { type: 'make-move', memberIndex, readable: command.readable }
-        : { type: 'accept-settlement', memberIndex },
-    );
+    live.port.dispatch({ type: 'make-move', memberIndex, readable: command.readable });
   }, []);
 
   // ── Auto-play ──

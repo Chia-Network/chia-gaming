@@ -10,7 +10,7 @@ import {
 } from './serialize';
 import { formatKrunkMojos } from './formatting';
 
-export { krunkOutcomeFromPlay, reduceKrunkHandState, reduceKrunkFeatureState } from './serialize';
+export { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './serialize';
 
 export type KrunkFactoryParameters = Record<string, never>;
 

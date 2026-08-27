@@ -161,10 +161,6 @@ function isKrunkGameState(value: unknown): value is KrunkGameState {
   );
 }
 
-export function decodeKrunkGameState(value: unknown): KrunkGameState | null {
-  return isKrunkGameState(value) ? value : null;
-}
-
 export function isKrunkHandState(value: unknown): value is KrunkHandState {
   if (typeof value !== 'object' || value === null) return false;
   const hand = value as Partial<KrunkHandState>;
@@ -194,29 +190,24 @@ function parseReadable(readable: Uint8Array): {
   word: string | null;
   clue: KrunkGuess['clue'] | null;
 } {
-  const program = Program.deserialize(readable);
-  try {
-    if (program.atom.length === 0) return { word: null, clue: null };
-  } catch {
-    // Non-atom readables are the normal clue and reveal list shapes.
-  }
-  const clueFrom = (value: Program): KrunkGuess['clue'] | null => {
-    try {
-      const values = value.toList().map((item) => item.toBigInt());
-      return values.length === 5 && values.every((item) => item >= 0n && item <= 2n)
-        ? (values as KrunkGuess['clue'])
-        : null;
-    } catch {
-      return null;
+  const items = Program.deserialize(readable).toList();
+  if (items.length === 0) return { word: null, clue: null };
+  const clueFrom = (values: Program[]): KrunkGuess['clue'] => {
+    const clue = values.map((item) => item.toBigInt());
+    if (clue.length !== 5 || clue.some((item) => item < 0n || item > 2n)) {
+      throw new Error('Krunk handler returned an invalid clue');
     }
+    return clue as KrunkGuess['clue'];
   };
-  const clue = clueFrom(program);
-  if (clue) return { word: null, clue };
-  const items = program.toList();
-  if (items.length !== 2) return { word: null, clue: null };
+  if (items.length === 5) return { word: null, clue: clueFrom(items) };
+  if (items.length !== 2) {
+    throw new Error(`Krunk handler returned ${items.length} readable fields`);
+  }
+  const word = new TextDecoder('utf-8', { fatal: true }).decode(items[0].atom).toUpperCase();
+  if (!isWord(word)) throw new Error('Krunk handler returned an invalid word');
   return {
-    word: new TextDecoder().decode(items[0].atom).toUpperCase(),
-    clue: clueFrom(items[1]),
+    word,
+    clue: clueFrom(items[1].toList()),
   };
 }
 
@@ -280,9 +271,10 @@ export function reduceKrunkFeatureState(
   if (game.role === 'bob' && parsed.clue && !parsed.word) {
     const guesses = [...game.guesses];
     const index = guesses.length - 1;
-    if (index >= 0 && guesses[index].clue.every((value) => value === -1n)) {
-      guesses[index] = { ...guesses[index], clue: parsed.clue };
+    if (index < 0 || !guesses[index].clue.every((value) => value === -1n)) {
+      throw new Error('Krunk handler returned a clue without a pending guess');
     }
+    guesses[index] = { ...guesses[index], clue: parsed.clue };
     const terminalClue = parsed.clue.every((value) => value === 2n) || guesses.length >= 5;
     return {
       ...game,
@@ -299,13 +291,14 @@ export function reduceKrunkFeatureState(
     }
     return finishedState({ ...game, guesses }, parsed.word, parsed.clue, event.moverShare);
   }
-  return game;
+  throw new Error(
+    `Krunk handler returned an unexpected readable for ${game.role} handler ${game.handler}`,
+  );
 }
 
-export function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate): KrunkHandState {
-  const game = current.members[event.memberIndex];
-  if (!game) return current;
-  let next = game;
+function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate): KrunkHandState {
+  const game = krunkGameStateFromHand(current, event.memberIndex);
+  let next: KrunkGameState;
   if (event.type === 'hand-ended') {
     next = reduceKrunkFeatureState(game, { type: 'settled', outcome: event.outcome });
   } else if (event.type === 'move-readable') {
@@ -314,6 +307,8 @@ export function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate)
       readable: event.readable,
       moverShare: event.moverShare,
     });
+  } else {
+    throw new Error('Krunk does not support handler message readables');
   }
   const members = [...current.members] as [KrunkGameState, KrunkGameState];
   members[event.memberIndex] = next;

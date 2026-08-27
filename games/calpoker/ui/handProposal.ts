@@ -10,12 +10,7 @@ import {
 } from './serialize';
 import { formatCalpokerMojos } from './formatting';
 
-export {
-  calpokerOutcomeFromState,
-  isCalpokerOutcomeReadable,
-  reduceCalpokerHandState,
-  reduceCalpokerFeatureState,
-} from './serialize';
+export { reduceCalpokerFeatureState } from './serialize';
 
 export type CalpokerFactoryParameters = Record<string, never>;
 

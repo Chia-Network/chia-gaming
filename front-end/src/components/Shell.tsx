@@ -4196,7 +4196,6 @@ const Shell = () => {
                           model={sessionModelForReactProps(dashboardSessionModel!)}
                           myName={finishedSessionIdentity?.myName ?? peekAlias()}
                           opponentName={finishedSessionIdentity?.opponentName}
-                          iStarted={finishedSessionIdentity?.iStarted ?? false}
                         />
                         {sessionConsentOverlay}
                       </div>

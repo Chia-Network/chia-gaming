@@ -758,9 +758,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     text: 'You got 100 mojo due to timeout.',
     kind: 'info',
   });
-  const frozen = renderFrozenGameMount(terminal.model, {
-    iStarted: false,
-  });
+  const frozen = renderFrozenGameMount(terminal.model, {});
   expect(frozen.props).toMatchObject({
     view: {
       frozen: true,

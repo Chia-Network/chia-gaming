@@ -10,7 +10,6 @@ export interface FinishedSessionGameViewProps {
   model: SessionModel;
   myName?: string;
   opponentName?: string;
-  iStarted?: boolean;
 }
 
 function FinishedSessionFallback({
@@ -110,7 +109,6 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   model,
   myName,
   opponentName,
-  iStarted = false,
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
@@ -139,7 +137,6 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
             options={{
               myName,
               opponentName,
-              iStarted,
             }}
           />
         </Suspense>

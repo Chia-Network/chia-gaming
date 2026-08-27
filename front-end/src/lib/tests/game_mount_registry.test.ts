@@ -151,7 +151,7 @@ describe('game mount registry', () => {
 
   it('cold-restores a frozen mount without protocol capabilities', () => {
     const model = modelFor('calpoker');
-    const mount = renderFrozenGameMount(model, { iStarted: false });
+    const mount = renderFrozenGameMount(model, {});
 
     expect(mount.key).toBe('7');
     expect(mount.props.view.frozen).toBe(true);

@@ -112,6 +112,30 @@ function applyReadable(state: SpacepokerHandState, payload: Uint8Array): Spacepo
 }
 
 describe('canonical feature gameplay reducers', () => {
+  it('fails loudly when trusted handler readables are malformed', () => {
+    expect(() => advanceCalpokerHand(calpokerState(), status(Uint8Array.of(0xff)))).toThrow();
+    expect(() =>
+      advanceSpacepokerHand(freshSpacepokerState(), status(readable(text('unknown')))),
+    ).toThrow('Unsupported Space Poker move readable tag');
+    const krunk = freshKrunkHand({
+      handProposal: {
+        gameType: 'krunk',
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: true,
+        gameTimeout: 15n,
+        parameters: null,
+      },
+      members: [
+        { playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+      ],
+    });
+    expect(() => advanceKrunkHand(krunk, status(readable(Program.fromBigInt(1n)), 0n))).toThrow(
+      'Krunk handler returned 1 readable fields',
+    );
+  });
+
   it.each([
     [[true, false], 'alice', 'bob'],
     [[false, true], 'bob', 'alice'],

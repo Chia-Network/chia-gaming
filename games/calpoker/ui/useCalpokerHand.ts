@@ -11,9 +11,7 @@ import {
 
 export type { CalpokerDisplaySnapshot, CalpokerHandState } from './serialize';
 
-type LocalGameCommand =
-  | { type: 'make-move'; readable: Program | null }
-  | { type: 'accept-settlement' };
+type LocalGameCommand = { type: 'make-move'; readable: Program | null };
 
 export interface UseCalpokerHandResult {
   playerHand: bigint[];
@@ -92,15 +90,11 @@ export function useCalpokerHand(
     ): void => {
       const live = requireLiveGameMount(viewRef.current);
       live.hand.update(update);
-      live.port.dispatch(
-        command.type === 'make-move'
-          ? {
-              type: 'make-move',
-              memberIndex: 0,
-              readable: command.readable,
-            }
-          : { type: 'accept-settlement', memberIndex: 0 },
-      );
+      live.port.dispatch({
+        type: 'make-move',
+        memberIndex: 0,
+        readable: command.readable,
+      });
     },
     [],
   );

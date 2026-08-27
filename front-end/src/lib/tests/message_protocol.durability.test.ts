@@ -50,6 +50,36 @@ describe('durability failures', () => {
     }
   });
 
+  it('defers a background snapshot until queued WASM events drain', async () => {
+    jest.useFakeTimers();
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    const save = jest.fn(() => {
+      expect((blob as any).eventQueue).toEqual([]);
+    });
+    blob.onSaveNeeded = save;
+
+    try {
+      blob.scheduleSave();
+      await jest.advanceTimersByTimeAsync(499);
+      blob.processResult({
+        ...wasmResult(),
+        events: [{ Notification: { ActionFailed: { reason: 'late rejection' } } }],
+      });
+      clearTimeout((blob as any).drainTimer);
+      (blob as any).drainTimer = null;
+
+      await jest.advanceTimersByTimeAsync(1);
+      expect(save).not.toHaveBeenCalled();
+
+      blob.flushDeferredWork();
+      await jest.advanceTimersByTimeAsync(500);
+      expect(save).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('warns the user and keeps messages and ACKs queued', async () => {
     const helloBytes = enc('hello');
     const { blob, sentMessages, sentAcks } = createReadyBlob(() => ({

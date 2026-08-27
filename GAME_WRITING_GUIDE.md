@@ -521,7 +521,18 @@ This is also the restart rule for automatic actions. After restoration, run the
 same ordinary state-driven effect as during live play. A restored pre-action
 state may issue the action; a restored queued or applied candidate already
 contains the advanced handler/turn and must not. Do not persist a separate
-“automatic action attempted” flag.
+“automatic action attempted” flag. The player app waits for queued WASM events
+to drain before assembling a background snapshot, so the serialized WASM state
+and the pending/applied hand candidate cross the storage boundary together.
+
+After such a snapshot commits, rehydration must not run the gameplay transition
+again. The only effects a committed restore may retry are delivery of a
+persisted outbound message to the peer or resubmission of a recorded
+transaction to the chain; both transports already deduplicate those retries. If
+the latest durable snapshot is still pre-action, the ordinary state-driven
+effect may compute the action again because that transition never committed.
+That is completion from the last durable state, not replay of committed
+gameplay.
 
 The complete incoming contract is:
 
@@ -563,7 +574,8 @@ contribution topology, and proposal game type in `createHand`.
   complete state so a frozen mount renders without host terminal maps.
 
 Readables are serialized CLVM values, unlike structured Bencodex proposal
-parameters. Decode only the exact shape your handlers return:
+parameters. Rust has already validated handler output before the frontend
+receives it. Decode the exact trusted shape your handlers return:
 
 ```ts
 const items = Program.deserialize(update.readable).toList();
@@ -581,9 +593,12 @@ const readable = Program.fromList([
 port.dispatch({ type: 'make-move', memberIndex: 0, readable });
 ```
 
-CLVM atoms do not retain a text-versus-bytes distinction. Validate list length,
-integer ranges, and byte lengths while parsing; use UTF-8 decoding only for
-fields your handler contract defines as text.
+CLVM atoms do not retain a text-versus-bytes distinction. Use UTF-8 decoding
+only for fields your handler contract defines as text. Do not catch malformed
+serialization, substitute defaults, or silently ignore an unknown move-readable
+shape. Such a mismatch is an internal contract bug and must reach the player
+app's general error handling. Explicit shape assertions are useful only to make
+that invariant failure clearer.
 
 The terminal outcome vocabulary is:
 

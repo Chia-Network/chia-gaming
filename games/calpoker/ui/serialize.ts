@@ -178,13 +178,9 @@ function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigin
   );
 }
 
-export function isCalpokerOutcomeReadable(readable: Uint8Array | number[]): boolean {
-  try {
-    const result = Program.deserialize(Uint8Array.from(readable)).toList();
-    return result.length === 6 && result[3].toList().length > 0 && result[4].toList().length > 0;
-  } catch {
-    return false;
-  }
+function isCalpokerOutcomeReadable(readable: Uint8Array | number[]): boolean {
+  const result = Program.deserialize(Uint8Array.from(readable)).toList();
+  return result.length === 6 && result[3].toList().length > 0 && result[4].toList().length > 0;
 }
 
 function assertCalpokerOutcomeStage(current: CalpokerHandState): void {
@@ -203,7 +199,7 @@ function assertCalpokerOutcomeStage(current: CalpokerHandState): void {
   }
 }
 
-export function calpokerOutcomeFromState(
+function calpokerOutcomeFromState(
   current: CalpokerHandState,
   readable: Uint8Array | number[],
   iStarted: boolean,
@@ -270,7 +266,7 @@ export function reduceCalpokerFeatureState(
   };
 }
 
-export function reduceCalpokerHandState(
+function reduceCalpokerHandState(
   current: CalpokerHandState,
   event: GameUpdate,
 ): CalpokerHandState {

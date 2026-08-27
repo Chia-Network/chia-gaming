@@ -45,25 +45,16 @@ export type {
 } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
 
-export function runLocalGameActionWithReporting(
-  request: LocalGameActionRequest,
+export function runWithRuntimeErrorReporting(
   run: () => void,
-  report: (failure: {
-    gameId: string;
-    action: LocalGameActionRequest['command']['type'];
-    message: string;
-  }) => void,
+  report: (message: string) => void,
 ): void {
   try {
     run();
   } catch (error) {
     if (!wasClientErrorReported(error)) {
       markClientErrorReported(error);
-      report({
-        gameId: request.id,
-        action: request.command.type,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      report(error instanceof Error ? error.message : String(error));
     }
     throw error;
   }
@@ -209,16 +200,9 @@ export function useGameSession(
                 ? { type: 'accept-settlement' }
                 : { type: 'cheat', moverShare: intent.moverShare },
         };
-        runLocalGameActionWithReporting(
-          request,
+        runWithRuntimeErrorReporting(
           () => runtime.commitLocalGameAction(request),
-          ({ action, message }) => {
-            if (action === 'cheat') {
-              dispatch({ type: 'enqueue-error', kind: 'infra-error', message });
-              return;
-            }
-            dispatch({ type: 'enqueue-error', kind: 'action-failed', message });
-          },
+          (message) => dispatch({ type: 'enqueue-error', kind: 'infra-error', message }),
         );
       },
     }),

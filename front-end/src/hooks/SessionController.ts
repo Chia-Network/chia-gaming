@@ -1293,6 +1293,10 @@ export class SessionController implements PollingGameSession {
     if (this.saveTimer) return;
     const timer = setTimeout(() => {
       this.saveTimer = null;
+      if (this.drainScheduled || this.eventQueue.length > 0) {
+        this.scheduleSave();
+        return;
+      }
       try {
         void Promise.resolve(this.onSaveNeeded?.()).catch((error) =>
           this.reportBackgroundSaveError(error),

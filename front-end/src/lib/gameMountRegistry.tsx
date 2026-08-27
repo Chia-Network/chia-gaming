@@ -4,9 +4,7 @@ import { isCatalogGameType, packageFor, restoreRegisteredGameHand } from './game
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { SessionModel } from './session/model';
 
-export interface FrozenGameMountOptions extends GameMountNames {
-  iStarted: boolean;
-}
+export type FrozenGameMountOptions = GameMountNames;
 
 export function renderLiveGameMount(
   session: UseGameSessionResult,
