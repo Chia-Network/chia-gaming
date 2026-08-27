@@ -10,7 +10,6 @@ import {
 } from './useCalpokerHand';
 import { calpokerSettlementVerb, calpokerTimeoutBadge, isForfeitOutcome } from './settlement';
 import {
-  type GameHandOrigin,
   type GameIntent,
   type GameMountView,
   type GameProposalFormHandle,
@@ -86,10 +85,7 @@ function makeDispatch(makeMove: jest.Mock) {
   };
 }
 
-function liveSource(
-  port: TestLiveGamePort,
-  handOrigin: Exclude<GameHandOrigin, 'terminal'> = 'fresh',
-): GameMountView<CalpokerHand> {
+function liveSource(port: TestLiveGamePort): GameMountView<CalpokerHand> {
   let hand = testHands.get(port);
   if (!hand) {
     hand = {
@@ -111,7 +107,6 @@ function liveSource(
     frozen: false,
     hand,
     port,
-    handOrigin,
     appendGameLog: jest.fn(),
   };
 }
@@ -325,15 +320,14 @@ describe('Calpoker fresh hand startup', () => {
       dispatch: makeDispatch(makeMove),
     };
 
-    function Harness({ handOrigin }: { handOrigin: GameHandOrigin }) {
-      useCalpokerHand(liveSource(controller, handOrigin));
+    function Harness() {
+      useCalpokerHand(liveSource(controller));
       return null;
     }
-    const mount = (key: number, handOrigin: GameHandOrigin) =>
-      React.createElement(Harness, { key, handOrigin });
+    const mount = (key: number) => React.createElement(Harness, { key });
 
     act(() => {
-      renderer = create(mount(1, 'restored'));
+      renderer = create(mount(1));
     });
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(makeMove).toHaveBeenLastCalledWith(0, null);
@@ -350,7 +344,7 @@ describe('Calpoker fresh hand startup', () => {
         settlementOutcome: null,
         error: null,
       });
-      renderer!.update(mount(2, 'fresh'));
+      renderer!.update(mount(2));
     });
     expect(makeMove).toHaveBeenCalledTimes(2);
     expect(makeMove).toHaveBeenLastCalledWith(0, null);
@@ -619,7 +613,6 @@ describe('Calpoker terminal hand projection', () => {
           : {
               frozen: true,
               hand: terminalHand!,
-              handOrigin: 'terminal',
             },
       );
       const outcomeViewValue: CalpokerOutcomeView | undefined = hand.outcome

@@ -1512,16 +1512,16 @@ details.
 In-game and between-hand events pushed to the game-scoped FIFO queue
 (`pushGame`). Overlays appear at `z-40` within the game area.
 
-| Kind                | Source                                                                                                         |
-| ------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `game-terminal`     | Adverse `GameSettled` outcomes during on-chain flow (via `isErrorSettlementOutcome`), except bar-only forfeits |
-| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice)                                     |
-| `insufficient-bal`  | `InsufficientBalance` notification                                                                             |
+| Kind                | Source                                                                     |
+| ------------------- | -------------------------------------------------------------------------- |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice) |
+| `insufficient-bal`  | `InsufficientBalance` notification                                         |
 
 Settlement banner labels come from `SETTLEMENT_OUTCOME_LABELS` in
 `front-end/src/lib/settlement.ts` (see [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)
 and `CONNECTIVITY.md` "Settlement labels"). Adverse outcomes are flagged via
-`isErrorSettlementOutcome` on `GameTerminalInfo.outcome`.
+`isErrorSettlementOutcome` on `GameTerminalInfo.outcome`; terminal details stay
+in host dashboard/status surfaces rather than creating a second queue entry.
 
 ### Game lifecycle (handled internally by session)
 
@@ -1544,7 +1544,7 @@ The runtime applies exactly three package-facing updates after construction:
 
 `hand-ended` contains only the member ID and normalized settlement outcome.
 Reward amounts, coin IDs, labels, and abnormal-termination explanations remain
-in the host's keyed instances and notification overlays. The package stores the
+in the host's keyed instances and status surfaces. The package stores the
 outcome and terminal/member activity it needs in its complete hand state.
 
 There is no separate game-status event or action echo. Turn, replay, timeout,

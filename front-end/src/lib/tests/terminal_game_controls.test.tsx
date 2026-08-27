@@ -183,7 +183,6 @@ describe('terminal game controls', () => {
           view: {
             frozen: true,
             hand: restoreKrunkHand(krunkStateCodec.decode(handState)!),
-            handOrigin: 'terminal',
           },
           onGameLog: () => {},
         }),
@@ -225,7 +224,6 @@ describe('terminal game controls', () => {
           view: {
             frozen: true,
             hand: restoreSpacepokerHand(spacepokerStateCodec.decode(handState)!),
-            handOrigin: 'terminal',
           },
           onGameLog: () => {},
         }),

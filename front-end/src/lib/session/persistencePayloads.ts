@@ -58,7 +58,6 @@ const NOTIFICATION_KINDS = new Set([
   'action-failed',
   'infra-error',
   'durability-error',
-  'game-terminal',
   'proposal-rejected',
   'insufficient-bal',
 ]);

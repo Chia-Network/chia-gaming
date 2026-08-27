@@ -368,9 +368,8 @@ details remain available in the expanded dashboard rows.
 There is no session-level **Folded** label. Poker UIs may still say **Fold**
 locally when calling `accept_settlement`.
 
-Forfeits and routine clean settlements are usually bar-only (no pop-up).
-Adverse settlements (`isErrorSettlementOutcome`) may also enqueue `game-terminal`
-notifications.
+All settlement details remain in the dashboard/session bar and the mounted
+game result. Settlements do not enqueue a second game-scoped pop-up.
 
 ---
 
@@ -633,18 +632,16 @@ failures, and general errors.
 Displayed at `z-40`, bounded to the game area. Covers in-game and between-hand
 events.
 
-| `kind`              | Source                                                                                | Behavior                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `game-terminal`     | Adverse `GameSettled` outcomes (`isErrorSettlementOutcome`), except bar-only forfeits | Shows reward amount and coin info.                                        |
-| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer`                                            | Peer-side cancellation notice; cleared when a `ProposalAcceptedGroup` arrives. |
-| `insufficient-bal`  | `InsufficientBalance` notification                                                    | Game could not start due to balance.                                      |
+| `kind`              | Source                                     | Behavior                                                                       |
+| ------------------- | ------------------------------------------ | ------------------------------------------------------------------------------ |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` | Peer-side cancellation notice; cleared when a `ProposalAcceptedGroup` arrives. |
+| `insufficient-bal`  | `InsufficientBalance` notification         | Game could not start due to balance.                                           |
 
 ### Data Model
 
 Each notification carries an `id` (unique integer), `kind`, `title`, `message`,
-and an optional `payload` (typed for `channel-state` and `game-terminal`
-entries). Queues are persisted to `SessionSave` (without non-serializable
-payloads) and restored on reload.
+and an optional `channel-state` payload. Queues are persisted to `SessionSave`
+(without non-serializable payloads) and restored on reload.
 
 ### Overlay Behavior
 
@@ -656,8 +653,8 @@ Both overlays share a unified `NotificationOverlay` component that:
   select and copy notification text.
 - Has no backdrop/scrim — the UI underneath remains fully interactive.
 - Renders based on the `kind` of the front notification: channel-state shows
-  coin info, game-terminal shows reward details, errors use `<pre>` for
-  copyable stack traces, and notices show centered text.
+  coin info, errors use `<pre>` for copyable stack traces, and notices show
+  centered text.
 
 ### Resilience
 

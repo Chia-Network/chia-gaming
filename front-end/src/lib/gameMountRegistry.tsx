@@ -16,7 +16,6 @@ export function renderLiveGameMount(
     throw new Error('Cannot mount a game before its hand instance exists');
   }
   const common = {
-    handOrigin: session.handOrigin,
     hand: session.handSource.hand,
     ...names,
   };
@@ -43,7 +42,6 @@ export function renderFrozenGameMount(
   if (hand === null) throw new Error('Cannot mount a frozen game without saved hand state');
   const view: GameMountView<GameHandState<unknown>> = {
     frozen: true,
-    handOrigin: 'terminal',
     hand,
     myName: options.myName,
     opponentName: options.opponentName,

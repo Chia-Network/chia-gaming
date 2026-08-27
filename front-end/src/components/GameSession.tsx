@@ -12,7 +12,6 @@ import {
 import {
   useGameSession,
   useSessionControllerAfterCommit,
-  GameTerminalAttentionInfo,
   QueuedNotification,
 } from '../hooks/useGameSession';
 import { formatMojos } from '../util';
@@ -360,27 +359,6 @@ function ChannelStatusContent({ info }: { info: ChannelStatusModel }) {
   );
 }
 
-function GameTerminalContent({ info }: { info: GameTerminalAttentionInfo }) {
-  return (
-    <div className="rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2 select-text cursor-text">
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-canvas-text">My reward:</span>
-        <span className="font-semibold text-canvas-text-contrast">
-          {formatOptionalMojos(info.myReward)}
-        </span>
-      </p>
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-canvas-text">Reward coin ID:</span>
-        {info.rewardCoinHex ? (
-          <CoinId hex={info.rewardCoinHex} />
-        ) : (
-          <span className="font-semibold text-canvas-text-contrast">None</span>
-        )}
-      </p>
-    </div>
-  );
-}
-
 function NotificationOverlay({
   notification,
   onDismiss,
@@ -431,24 +409,16 @@ function NotificationOverlay({
             'state' in notification.payload && (
               <ChannelStatusContent info={notification.payload as ChannelStatusModel} />
             )}
-          {notification.kind === 'game-terminal' &&
-            notification.payload &&
-            'label' in notification.payload && (
-              <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
-            )}
           {isError && notification.message && (
             <pre className="text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto">
               {notification.message}
             </pre>
           )}
-          {!isError &&
-            notification.kind !== 'channel-state' &&
-            notification.kind !== 'game-terminal' &&
-            notification.message && (
-              <p className="text-sm text-canvas-text-contrast text-center select-text cursor-text">
-                {notification.message}
-              </p>
-            )}
+          {!isError && notification.kind !== 'channel-state' && notification.message && (
+            <p className="text-sm text-canvas-text-contrast text-center select-text cursor-text">
+              {notification.message}
+            </p>
+          )}
           <Button
             variant="solid"
             size="sm"

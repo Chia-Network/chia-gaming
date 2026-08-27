@@ -316,7 +316,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         frozen: false,
         hand: runtime.getGameHand(),
         port: ports[index],
-        handOrigin: 'restored',
         appendGameLog: jest.fn(),
       });
       return null;

@@ -37,7 +37,7 @@ describe('session model round trips', () => {
     const save = liveEnvelope({
       activeGameIds: [],
       channelNotifQueue: [{ id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
-      gameNotifQueue: [{ id: '8', kind: 'game-terminal', title: 'Game', message: 'Done' }],
+      gameNotifQueue: [{ id: '8', kind: 'proposal-rejected', title: 'Game', message: 'Done' }],
     } as unknown as Partial<SessionSave>);
 
     const restored = sessionModelFromSave(save);

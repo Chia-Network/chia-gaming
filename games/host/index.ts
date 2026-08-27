@@ -131,8 +131,6 @@ export interface LiveGamePort {
   dispatch(intent: GameIntent): void;
 }
 
-export type GameHandOrigin = 'fresh' | 'restored' | 'terminal';
-
 export interface GameMountNames {
   myName?: string;
   opponentName?: string;
@@ -140,7 +138,6 @@ export interface GameMountNames {
 
 interface GameMountViewBase<THand extends GameHandState<unknown>> extends GameMountNames {
   hand: THand;
-  handOrigin: GameHandOrigin;
 }
 
 export type GameMountView<THand extends GameHandState<unknown>> =

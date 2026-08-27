@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import type { GameHandOrigin } from '@games/host';
 import { terminalGameHandSource, type GameHandSource } from '../gameHandSource';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
@@ -36,7 +35,6 @@ export interface UseGameSessionResult {
   gameCoin: GameCoinModel;
   gameTerminal: GameTerminalModel;
   handKey: number;
-  handOrigin: GameHandOrigin;
   activeGameId: string | null;
   activeGameIds: string[];
   currentHandGameIds: string[];
@@ -148,7 +146,6 @@ export function projectTerminalSessionResult(
     gameCoin: view.gameCoin,
     gameTerminal: view.gameTerminal,
     handKey: model.game.handKey,
-    handOrigin: 'terminal',
     activeGameId: view.activeGameId,
     activeGameIds: view.activeGameIds,
     currentHandGameIds: model.game.currentHandIds,

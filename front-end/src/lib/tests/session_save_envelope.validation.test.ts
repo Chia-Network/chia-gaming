@@ -593,7 +593,7 @@ describe('validateSessionSaveEnvelope', () => {
       'notification id',
       {
         gameNotifQueue: [
-          { id: 'not-an-id', kind: 'game-terminal', title: 'Title', message: 'Message' },
+          { id: 'not-an-id', kind: 'proposal-rejected', title: 'Title', message: 'Message' },
         ],
       },
       'notification id',

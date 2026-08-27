@@ -40,7 +40,6 @@ function liveView(
   return {
     frozen: false,
     hand: testHand(persisted),
-    handOrigin: 'fresh',
     port,
     appendGameLog: jest.fn(),
   };
@@ -49,7 +48,7 @@ function liveView(
 function frozenView(
   persisted: ReturnType<typeof krunkStateCodec.encode>,
 ): GameMountView<KrunkHand> {
-  return { frozen: true, hand: testHand(persisted), handOrigin: 'terminal' };
+  return { frozen: true, hand: testHand(persisted) };
 }
 
 describe('Krunk hand restoration', () => {

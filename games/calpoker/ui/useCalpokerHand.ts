@@ -63,8 +63,7 @@ export function useCalpokerHand(
   const pendingPlayRef = useRef(false);
   const autoSubmissionRef = useRef<string | null>(null);
   const suppressInitialOutcomeRef = useRef(
-    view.handOrigin !== 'fresh' &&
-      handState.outcome !== undefined &&
+    handState.outcome !== undefined &&
       handState.displaySnapshot?.gameState === 'final',
   );
 

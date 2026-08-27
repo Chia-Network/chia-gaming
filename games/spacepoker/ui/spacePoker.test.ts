@@ -77,7 +77,7 @@ function liveSource(
   const current = spacepokerStateCodec.decode(state)!;
   const hand = restoreSpacepokerHand(current);
   testHands.set(port, hand);
-  return { frozen: false, hand, port, handOrigin: 'fresh', appendGameLog: jest.fn() };
+  return { frozen: false, hand, port, appendGameLog: jest.fn() };
 }
 
 describe('Space Poker terminal UX', () => {
@@ -357,7 +357,6 @@ describe('Space Poker machine-owned hand state', () => {
     const source = {
       frozen: true as const,
       hand: restoreSpacepokerHand(handState()),
-      handOrigin: 'terminal' as const,
     };
     act(() => {
       renderer = create(

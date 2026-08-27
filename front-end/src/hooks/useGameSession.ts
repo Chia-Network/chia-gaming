@@ -29,7 +29,7 @@ import type {
 import type { RegisteredGameType } from '../lib/session/types';
 import { DEFAULT_CATALOG_GAME_TYPE } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
-import { liveGameHandOrigin, type GameHandSource } from '../lib/gameHandSource';
+import type { GameHandSource } from '../lib/gameHandSource';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
@@ -38,11 +38,7 @@ import type { SessionController } from './SessionController';
 import type { SessionSave } from './save';
 import { getDefaultFee, getPlayerId } from './save';
 
-export type {
-  GameTerminalAttentionInfo,
-  GameTerminalInfo,
-  QueuedNotification,
-} from '../lib/session/gameSessionEvents';
+export type { GameTerminalInfo, QueuedNotification } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
 
 export function runWithRuntimeErrorReporting(
@@ -128,7 +124,6 @@ export function useGameSession(
     () => (sessionSave ? sessionModelFromSave(sessionSave) : null),
     [sessionSave],
   );
-  const restoredHandKeyRef = useRef<number | null>(null);
   const initialState = useMemo(() => {
     const handProposal: HandProposal = {
       gameType: DEFAULT_CATALOG_GAME_TYPE,
@@ -156,7 +151,6 @@ export function useGameSession(
   }, [controller, iStarted, perGameAmount, restoredModel, sessionSave]);
   const runtimeRef = useRef<SessionMachineRuntime | null>(null);
   if (!runtimeRef.current) {
-    restoredHandKeyRef.current = restoredModel?.game.handState ? restoredModel.game.handKey : null;
     runtimeRef.current = new SessionMachineRuntime(initialState, {
       controller,
       iStarted,
@@ -325,7 +319,6 @@ export function useGameSession(
     gameCoin: view.gameCoin,
     gameTerminal: view.gameTerminal,
     handKey: model.game.handKey,
-    handOrigin: liveGameHandOrigin(restoredHandKeyRef.current, model.game.handKey),
     activeGameId: view.activeGameId,
     activeGameIds: view.activeGameIds,
     currentHandGameIds: model.game.currentHandIds,

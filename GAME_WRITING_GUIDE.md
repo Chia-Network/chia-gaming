@@ -445,13 +445,12 @@ cross this package boundary.
 move permission. Your components decide whether each control is enabled from
 their own turn, handler, and terminal state; the frozen branch merely makes it
 structurally impossible to dispatch a protocol command. Detailed abnormal
-termination text remains in the player-app overlay rather than crossing this
-boundary.
+termination text remains in player-app status surfaces rather than crossing
+this boundary.
 
 ```ts
 type GameMountView = {
   hand: ConcretePackageHand;
-  handOrigin: 'fresh' | 'restored' | 'terminal';
   myName?: string;
   opponentName?: string;
 } & (

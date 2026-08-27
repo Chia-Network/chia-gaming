@@ -124,7 +124,6 @@ export type NotificationKind =
   | 'action-failed'
   | 'infra-error'
   | 'durability-error'
-  | 'game-terminal'
   | 'proposal-rejected'
   | 'insufficient-bal';
 
@@ -152,9 +151,7 @@ export interface QueuedNotificationModel {
   kind: NotificationKind;
   title: string;
   message: string;
-  payload?:
-    | ChannelStatusModel
-    | { label: string; myReward: string | null; rewardCoinHex: string | null };
+  payload?: ChannelStatusModel;
 }
 
 export type ProposalGroupDisposition =

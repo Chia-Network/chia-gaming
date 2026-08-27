@@ -84,7 +84,6 @@ describe('game mount registry', () => {
       const port = { isChannelReady: () => true, dispatch: jest.fn() } as LiveGamePort;
       const model = modelFor(gameType);
       const common = {
-        handOrigin: 'fresh' as const,
         hand: restoreRegisteredGameHandState(gameType, model.game.handState!),
       };
       const live: GameMountView = {
@@ -93,7 +92,7 @@ describe('game mount registry', () => {
         port,
         appendGameLog: jest.fn(),
       };
-      const frozen: GameMountView = { ...common, frozen: true, handOrigin: 'terminal' };
+      const frozen: GameMountView = { ...common, frozen: true };
 
       expect(() => packageFor(gameType).render(live)).not.toThrow();
       expect(() => packageFor(gameType).render(frozen)).not.toThrow();
@@ -122,7 +121,6 @@ describe('game mount registry', () => {
     const session = {
       sessionModel: model,
       handKey: 7,
-      handOrigin: 'fresh',
       iStarted: true,
       playerNumber: 1,
       handSource: {
