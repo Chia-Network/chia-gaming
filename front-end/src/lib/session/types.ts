@@ -118,7 +118,8 @@ export type NotificationKind =
   | 'infra-error'
   | 'durability-error'
   | 'proposal-rejected'
-  | 'insufficient-bal';
+  | 'insufficient-bal'
+  | 'move-rejected';
 
 export interface ChannelStatusModel {
   state: ChannelStatus;

@@ -1534,6 +1534,7 @@ In-game and between-hand events pushed to the game-scoped FIFO queue
 | ------------------- | -------------------------------------------------------------------------- |
 | `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice) |
 | `insufficient-bal`  | `InsufficientBalance` notification                                         |
+| `move-rejected`     | `MoveRejected` — recoverable local input rejection (for example Krunk `not_in_dictionary`) |
 
 Settlement banner labels come from `SETTLEMENT_OUTCOME_LABELS` in
 `front-end/src/lib/settlement.ts` (see [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)

@@ -26,6 +26,17 @@ const LOCAL_CANCEL_REASONS = new Set(['SupersededByIncoming', 'PeerProposalPendi
 
 type Reducer = (state: SessionMachineState, event: SessionMachineEvent) => SessionMachineTransition;
 
+export function moveRejectedMessage(tag: string, message: string): string {
+  if (tag === 'not_in_dictionary') {
+    const word = message.trim();
+    return word ? `${word} is not in the dictionary.` : 'That word is not in the dictionary.';
+  }
+  const detail = message.trim();
+  if (detail) return detail;
+  const label = tag.trim().replace(/_/g, ' ');
+  return label || 'That move was rejected.';
+}
+
 export function reduceSessionNotification(
   state: SessionMachineState,
   notification: WasmNotification,
@@ -451,6 +462,21 @@ export function reduceSessionNotification(
     } else {
       step({ type: 'set-pending-retry-terms', handProposal: null });
     }
+    effects.push({ type: 'persist-session' });
+    return { state: current, effects };
+  }
+
+  if ('MoveRejected' in notification && notification.MoveRejected) {
+    const rejected = notification.MoveRejected;
+    step({
+      type: 'push-game-notification',
+      notification: {
+        id: nextId(),
+        kind: 'move-rejected',
+        title: 'Notice',
+        message: moveRejectedMessage(String(rejected.tag ?? ''), String(rejected.message ?? '')),
+      },
+    });
     effects.push({ type: 'persist-session' });
     return { state: current, effects };
   }

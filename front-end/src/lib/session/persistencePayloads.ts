@@ -60,6 +60,7 @@ const NOTIFICATION_KINDS = new Set([
   'durability-error',
   'proposal-rejected',
   'insufficient-bal',
+  'move-rejected',
 ]);
 const SESSION_DISPOSITIONS = new Set(['AwaitOutboundTerminal', 'Abandoned']);
 const CHANNEL_SEMANTIC_PHASE_SET = new Set<string>(CHANNEL_SEMANTIC_PHASES);

@@ -47,6 +47,7 @@ import {
   wasClientErrorReported,
 } from '../lib/clientError';
 import { ComposeProposalDialog, ReviewProposalDialog } from './GameProposalDialogs';
+import { bindNotificationOverlayDismissKeys } from './notificationOverlayKeyboard';
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -365,19 +366,38 @@ function NotificationOverlay({
   boundsRef,
   zClass,
   focusBoundaryPriority,
+  ownsKeyboard,
 }: {
   notification: QueuedNotification;
   onDismiss: () => void;
   boundsRef: RefObject<HTMLElement | null>;
   zClass: string;
   focusBoundaryPriority: number;
+  ownsKeyboard: boolean;
 }) {
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, {
     top: 8,
   });
   const dragControls = useDragControls();
+  const dismissButtonRef = useRef<HTMLButtonElement>(null);
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
   const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
   const titleColor = 'text-canvas-text-contrast';
+
+  useEffect(() => {
+    if (!ownsKeyboard) return;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dismissButtonRef.current?.focus();
+    const unbind = bindNotificationOverlayDismissKeys(() => onDismissRef.current());
+    return () => {
+      unbind();
+      if (previouslyFocused?.isConnected && previouslyFocused !== document.body) {
+        previouslyFocused.focus();
+      }
+    };
+  }, [ownsKeyboard, notification.id]);
 
   return (
     <motion.div
@@ -420,6 +440,7 @@ function NotificationOverlay({
             </p>
           )}
           <Button
+            ref={dismissButtonRef}
             variant="solid"
             size="sm"
             onClick={onDismiss}
@@ -747,6 +768,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           boundsRef={channelOverlayBoundsRef}
           zClass="z-40"
           focusBoundaryPriority={40}
+          ownsKeyboard={!session.channelQueue[0]}
         />
       )}
       {/* Main content area */}
@@ -859,6 +881,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           boundsRef={channelOverlayBoundsRef}
           zClass="z-50"
           focusBoundaryPriority={50}
+          ownsKeyboard
         />
       )}
     </div>

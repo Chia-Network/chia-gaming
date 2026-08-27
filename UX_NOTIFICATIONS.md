@@ -643,6 +643,7 @@ events.
 | ------------------- | ------------------------------------------ | ------------------------------------------------------------------------------ |
 | `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` | Peer-side cancellation notice; cleared when a `ProposalAcceptedGroup` arrives. |
 | `insufficient-bal`  | `InsufficientBalance` notification         | Game could not start due to balance.                                           |
+| `move-rejected`     | `MoveRejected`                             | Recoverable local input rejection (for example Krunk `not_in_dictionary`).     |
 
 ### Data Model
 
@@ -659,6 +660,9 @@ Both overlays share a unified `NotificationOverlay` component that:
 - Applies `select-text cursor-text` CSS classes on content so the user can
   select and copy notification text.
 - Has no backdrop/scrim — the UI underneath remains fully interactive.
+- Focuses Dismiss and handles Enter/Escape in the capture phase so a game
+  window key handler cannot steal Return; the front-most overlay owns that
+  keyboard path.
 - Renders based on the `kind` of the front notification: channel-state shows
   coin info, errors use `<pre>` for copyable stack traces, and notices show
   centered text.
@@ -704,15 +708,15 @@ These are not lifecycle invariants but important rules enforced in the code:
 the machine-owned hand model. Game hooks never see raw notifications or an
 observable. The package input list is:
 
-- `hand-started`
-- `opponent-moved`
-- `game-message`
-- `move-rejected`
+- `move-readable`
+- `message-readable`
 - `hand-ended`
 
-`ActionFailed`, JavaScript command exceptions, proposal/session lifecycle, and
-infrastructure failures remain host-owned and use the shared notification
-queues.
+Synchronous `MoveRejected` is a recoverable game-scoped host notice
+(`move-rejected` in the game notification queue). It is not delivered to the
+game package. `ActionFailed`, JavaScript command exceptions, proposal/session
+lifecycle, and infrastructure failures remain host-owned and use the shared
+notification queues.
 
 Settlement label helpers live in `front-end/src/lib/settlement.ts`
 (`settlementLabel`, `isForfeitOutcome`, game-specific copy helpers).

@@ -333,4 +333,40 @@ describe('session machine behavior sequences', () => {
     expect(canonical.members[0].secretWord).toBe('CRANE');
     expect(canonical.members[1].handler).toBe(4n);
   });
+
+  it('surfaces a dictionary rejection as a game-scoped host notice', () => {
+    const state = createSessionMachineState(createSessionModel());
+    const transition = reduceSessionNotification(
+      state,
+      { MoveRejected: { id: 2n, tag: 'not_in_dictionary', message: 'XXXXX' } },
+      false,
+      reduceSessionMachine,
+    );
+
+    expect(transition.state.model.game.queue).toEqual([
+      {
+        id: 1n,
+        kind: 'move-rejected',
+        title: 'Notice',
+        message: 'XXXXX is not in the dictionary.',
+      },
+    ]);
+    expect(transition.effects).toEqual([{ type: 'persist-session' }]);
+  });
+
+  it('surfaces a tagged rejection message when the tag has no dedicated copy', () => {
+    const state = createSessionMachineState(createSessionModel());
+    const transition = reduceSessionNotification(
+      state,
+      { MoveRejected: { id: 41n, tag: 'illegal_move', message: 'not allowed' } },
+      false,
+      reduceSessionMachine,
+    );
+
+    expect(transition.state.model.game.queue[0]).toMatchObject({
+      kind: 'move-rejected',
+      title: 'Notice',
+      message: 'not allowed',
+    });
+  });
 });
