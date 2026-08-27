@@ -38,7 +38,7 @@ function modelFor(gameType: 'calpoker' | 'spacepoker' | 'krunk') {
           parameters: null,
         };
   const hand = createRegisteredGameHand(gameType, {
-    handProposal,
+    parameters: handProposal.parameters,
     members: ids.map((_, index) => ({
       playerAContribution: gameType === 'krunk' ? (index === 0 ? 100n : 0n) : 100n,
       playerBContribution: gameType === 'krunk' ? (index === 0 ? 0n : 100n) : 100n,
@@ -125,14 +125,10 @@ describe('game mount registry', () => {
       playerNumber: 1,
       handSource: {
         frozen: false,
-        hand: createRegisteredGameHand(
-          'calpoker',
-          {
-            handProposal: model.betweenHand.lastHandProposal!,
-            members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: true }],
-          },
-          model.game.handState,
-        ),
+        hand: createRegisteredGameHand('calpoker', {
+          parameters: model.betweenHand.lastHandProposal!.parameters,
+          members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: true }],
+        }),
         port,
       },
       appendGameLog: jest.fn(),

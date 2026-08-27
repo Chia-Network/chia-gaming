@@ -333,7 +333,7 @@ describe('session machine causal sequences', () => {
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
     const hand = createRegisteredGameHand('calpoker', {
-      handProposal: TERMS,
+      parameters: TERMS.parameters,
       members: [{ playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
     });
     const handState = snapshotRegisteredGameHand('calpoker', hand);

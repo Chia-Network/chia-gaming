@@ -72,7 +72,7 @@ export type GameIntent =
   | { type: 'cheat'; memberIndex: number; moverShare: bigint };
 
 export interface GameHandInitialization {
-  handProposal: HandProposal;
+  parameters: ProposalParameterValue;
   members: readonly {
     playerAContribution: bigint;
     playerBContribution: bigint;

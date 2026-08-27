@@ -249,7 +249,7 @@ export function reduceDurableGameEvent(
       };
       if (!first) return { state: initialized, effects: [] };
       const init: GameHandInitialization = {
-        handProposal: proposal.handProposal,
+        parameters: proposal.handProposal.parameters,
         members: event.members.map((member) => ({
           playerAContribution: member.playerAContribution,
           playerBContribution: member.playerBContribution,

@@ -290,7 +290,7 @@ describe('Calpoker fresh hand startup', () => {
     };
 
     function Harness() {
-      useCalpokerHand(liveSource(controller, 'restored'));
+      useCalpokerHand(liveSource(controller));
       return null;
     }
 
@@ -390,7 +390,7 @@ describe('Calpoker terminal hand projection', () => {
     let hand: ReturnType<typeof useCalpokerHand> | undefined;
 
     function Harness() {
-      hand = useCalpokerHand(liveSource(controller, 'restored'));
+      hand = useCalpokerHand(liveSource(controller));
       return null;
     }
 

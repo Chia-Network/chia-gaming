@@ -296,8 +296,8 @@ function calpokerHandFromState(initial: CalpokerHandState): CalpokerHand {
 }
 
 export function createCalpokerHand(init: GameHandInitialization): CalpokerHand {
-  if (init.members.length !== 1 || init.handProposal.gameType !== 'calpoker') {
-    throw new Error('California Poker requires one game and California Poker proposal terms');
+  if (init.members.length !== 1) {
+    throw new Error('California Poker requires one game');
   }
   return calpokerHandFromState(initialState(init));
 }

@@ -18,8 +18,24 @@ uses the protocol and package interfaces in
 interface so it remains independent of this particular frontend.
 
 If state channels are new to you, read [`OVERVIEW.md`](OVERVIEW.md) first. For
-the detailed CLVM function signatures, use
-[`clsp/handler_api.md`](clsp/handler_api.md).
+deeper protocol rationale and advanced CLVM patterns, use
+[`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) and
+[`clsp/handler_api.md`](clsp/handler_api.md). This guide includes the contracts
+and examples needed to connect a game to the host; those documents explain why
+the referee and validator design works.
+
+## The example used in this guide
+
+California Poker is the main worked example because it is the smallest
+production game with a factory, handlers, on-chain validators, proposal UI,
+durable hand state, automatic moves, and a finished-hand mount. Short excerpts
+are included here. Follow the links when the complete implementation is more
+useful than another large code block.
+
+The walkthrough focuses on the package API. California Poker internally masks
+some simultaneous commitment and reveal steps behind ordinary turns; you do not
+need to reproduce or understand every poker phase to use the same boundaries in
+another game.
 
 ## Start from an existing game
 
@@ -62,6 +78,7 @@ games/<key>/
 Production packages require `handProposal.ts`, `handProposalForm.tsx`, and
 `play.tsx`. Other UI modules are package-private organization: the reference
 games use `serialize.ts`, but the build neither requires nor imports that name.
+If `ui/styles.css` exists, the frontend generator includes it automatically.
 
 The frontend catalog is generated, so do not create `ui/index.ts`. Each UI
 file has a conventional export that the generator discovers:
@@ -74,7 +91,8 @@ The generator passes those three exports through the frontend-owned
 `defineGamePackage`. This is the compile-time boundary that proves the proposal
 draft, complete hand state, concrete hand type, factory parameters, form, and
 mount belong to one coherent package. The generated keyed registry then exposes
-a frontend-only erased runtime facade.
+a frontend-only erased runtime facade. Game packages do not import or call
+`defineGamePackage`.
 
 ## Step 1: Register the game
 
@@ -89,6 +107,12 @@ That is the only catalog you edit by hand. The build generates frontend imports
 and the factory preset list for every production package. When `rust/mod.rs` or
 `rust/tests/mod.rs` exists, it also generates the corresponding Rust module or
 internal test-suite aggregation.
+
+The catalog key must equal the `games/<key>/` directory name. The build
+automatically compiles `clsp/factory.clsp`, `clsp/factory_probe.clsp`, and
+production `.clsp` files below `clsp/onchain/`; do not add package entries to
+`chialisp.toml`. Run `./cb.sh` before the first frontend build so the generated
+prepared factory exists for the frontend registry generator.
 
 Do not edit or check in compiled `.hex` files, prepared factory binaries, or
 `games/package_manifest.json`; they are generated implementation artifacts.
@@ -122,6 +146,20 @@ Most factories create one game. A factory may create several games that must
 be accepted or cancelled together; the code calls these an atomic group.
 Krunk is the reference example for that case.
 
+`factory.clsp` is normally only an exported entry point. California Poker uses:
+
+```clojure
+(include *standard-cl-23*)
+
+(import games.calpoker.clsp.calpoker_generate exposing calpoker_factory)
+
+(export calpoker_factory)
+```
+
+Module paths start at a repository include root, so package modules use names
+such as `games.<key>.clsp.<module>`. The factory implementation may live in a
+`.clinc` module so handlers and tests can import the same definitions.
+
 The result is a nonempty proper list. Every member is a proper list with exactly
 these 10 fields:
 
@@ -131,10 +169,55 @@ these 10 fields:
  their_turn_handler initial_validator)
 ```
 
-`player_a_goes_first` is canonical nil or `1`. The two handlers have a stable
-meaning and order: `my_turn_handler` is run by whichever player goes first;
-`their_turn_handler` is run by the waiting player. Member order is factory
-order and never flips between peers.
+The fields mean:
+
+| Field | Required value |
+| --- | --- |
+| `player_a_contribution`, `player_b_contribution` | Factory-approved mojo contributions for this member. |
+| `player_a_goes_first` | Canonical nil or `1`. |
+| `initial_move` | The first committed move as a CLVM atom; use nil when there is no pre-existing move. |
+| `initial_max_move_size` | Maximum byte length accepted for that move. |
+| `initial_state` | Initial validator state; any CLVM value. |
+| `initial_mover_share` | Mover's timeout payout in mojos, between zero and the member's total amount. |
+| `my_turn_handler` | Off-chain program for the player who starts. |
+| `their_turn_handler` | Off-chain program for the waiting player. |
+| `initial_validator` | On-chain program committed at game start and used to begin validator chaining. |
+
+The handler fields are program values, not names. Curry secrets or
+role-specific data into them when needed. California Poker validates equal
+positive contributions and nil parameters, then emits one record:
+
+```clojure
+(import games.calpoker.clsp.onchain.a exposing (program as pokera))
+(import std.li)
+(import std.assert)
+(import std.relops)
+(import std.deep_compare)
+
+(defun calpoker_factory
+    (@ _args (player_a_contribution player_b_contribution game_parameters))
+    (assert
+        (> player_a_contribution 0)
+        (= player_a_contribution player_b_contribution)
+        (not game_parameters)
+        (deep= _args (li player_a_contribution player_b_contribution game_parameters))
+        (li
+            (li player_a_contribution player_b_contribution 1
+                0 32 0 0
+                calpoker_alice_handler_a
+                calpoker_bob_handler_a
+                pokera
+            )
+        )
+    )
+)
+```
+
+Validate the exact contribution and parameter shape in the factory. It is the
+semantic authority for proposal acceptance; a frontend form is only an earlier
+user-facing check. See the complete
+[`calpoker_generate.clinc`](games/calpoker/clsp/calpoker_generate.clinc) for
+handler currying and the remaining move sequence.
 
 The proposal sender is mapped to A or B once by the proposal-wide
 `senderIsPlayerA`/`sender_is_player_a` value. Rust uses that mapping to project
@@ -155,13 +238,134 @@ During play, the engine uses:
 - An optional **message parser** for game messages that update the UI without
   changing whose turn it is.
 
-A handler can reject a local action with an error tag and message. The UI
-receives that as `MoveRejected`. A validator returning no valid result means
-the move is invalid and can be used as evidence in an on-chain dispute.
+Handlers run off-chain. Their signatures are:
 
-Read [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) for an explanation and worked
-examples. Use [`clsp/handler_api.md`](clsp/handler_api.md) for exact argument
-and return shapes. [`CLVM_DOS.md`](CLVM_DOS.md) covers cost and size limits.
+```clojure
+; Local player creates a move.
+(curried_args... local_move amount state mover_share entropy)
+
+; Opponent's move has been applied.
+(curried_args... amount pre_state state move validation_program_hash mover_share)
+```
+
+`amount` is the member's combined pot. `entropy` is fresh 32-byte input for the
+local turn. The their-turn `validation_program_hash` is the raw tree hash of
+the validator program, not the state-bound validation-info hash.
+
+`mover_share` is the mover's timeout payout on the currently committed referee
+coin; the waiting player receives `amount - mover_share`. A local move chooses
+the share for the next coin. The opponent-facing handler and validator must
+reject a peer move whose declared share disagrees with the game result.
+
+A successful my-turn handler returns seven or eight values:
+
+```clojure
+(label move outgoing_validator incoming_validator max_move_size
+ mover_share their_turn_handler optional_message_parser)
+```
+
+`outgoing_validator` validates the move just created.
+`incoming_validator` commits to the opponent's next move. A two-value
+`(error_tag message_bytes)` return rejects local UI input as `MoveRejected`; a
+CLVM raise is an internal handler failure.
+
+Import validators using their compiled `program` export, as above. Factory field
+10 and handler validator returns contain those program values. Handler functions
+are also program values; use `(curry handler captured_value...)` when the next
+phase needs a secret or other role-specific data.
+
+A their-turn handler returns:
+
+```clojure
+(readable_move evidence_candidates optional_next_my_turn_handler optional_message)
+```
+
+`readable_move` becomes the frontend's serialized `move-readable`.
+`evidence_candidates` is a list of possible fraud proofs. A missing or nil next
+handler ends the game. An optional message is sent separately and parsed by the
+message parser `(message state amount)`, whose result becomes
+`message-readable`.
+
+California Poker's first pair illustrates both entry directions. The starting
+player creates a commitment and curries its secret into a later handler. The
+waiting player's initial their-turn handler interprets that commitment and
+returns its first my-turn handler:
+
+```clojure
+(defun calpoker_alice_handler_a (local_move amount state split entropy)
+  (assign
+    preimage (substr entropy 0 16)
+    (list "calpoker_alice_handler_a"
+          (sha256 preimage)
+          pokera pokerb 48 0
+          (curry calpoker_alice_handler_b preimage))))
+
+(defun calpoker_bob_handler_a
+    (amount pre_state state move validation_program_hash split)
+  (list 0 0 calpoker_bob_handler_b))
+```
+
+The zero readables are CLVM nil and the empty evidence list. Your own handlers
+may expose meaningful readables immediately; the important structure is that
+the two factory entry handlers meet at the same validated state transition.
+
+Their-turn handlers process adversarial peer input. Check cheap shape and
+length constraints before indexing, hashing, or allocating. A game-rule
+violation must produce slash evidence that makes the validator return nil, not
+crash the handler. The framework checks the envelope's committed maximum move
+size and tries nil evidence before calling the handler.
+
+Validators run both off-chain when checking evidence and on-chain during a
+slash. Every validator has this input shape:
+
+```clojure
+(export
+  (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+     MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE
+     PREVIOUS_VALIDATION_INFO_HASH)
+    previous_state previous_validation_program evidence)
+  ...)
+```
+
+`mod_hash` is the current validator's tree hash. `MOD_HASH` identifies the
+referee puzzle. `MOVE`,
+`MAX_MOVE_SIZE`, `VALIDATION_INFO_HASH`, and `MOVER_SHARE` are the values
+committed by the move being challenged. The final arguments provide the
+previous state, the previous validator program, and the proposed evidence.
+
+Return a nonempty proper list for a valid move:
+
+```clojure
+(next_validation_program_hash new_state next_max_move_size optional_conditions...)
+```
+
+Return nil when the move is illegal for that evidence and should slash.
+Terminal validators may return `(list 0)`. Check move shape before operations
+such as `substr`; malformed evidence for a valid move must not accidentally
+turn that move into a slash. California Poker's first validator is a compact
+example:
+
+```clojure
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+     MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE
+     PREVIOUS_VALIDATION_INFO_HASH)
+    previous_state previous_validation_program evidence)
+  (if (= (strlen MOVE) 32)
+      (list bhash MOVE 16)
+      0))
+```
+
+The first validator is not executed to create the first local move; the factory
+supplies `initial_state`, and the handler returns the validators that continue
+the chain. Each outgoing validator hash must match the prior incoming
+commitment. See California Poker's
+[`onchain/`](games/calpoker/clsp/onchain) directory for the complete chain,
+[`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) for complete move-chain,
+nil-move, evidence, and conditional-slash examples,
+[`clsp/handler_api.md`](clsp/handler_api.md) for the full return contracts, and
+[`CLVM_DOS.md`](CLVM_DOS.md) for cost and size limits.
 
 ## Step 3: Add the factory probe
 
@@ -198,6 +402,40 @@ tests are present, `rust/mod.rs` must declare `#[cfg(test)] pub mod tests;`, and
 `rust/tests/mod.rs` must expose `pub fn test_funs()`. The build discovers that
 file and adds its closures to the internal full-suite runner; there is no
 handwritten per-package test list.
+
+A typical `rust/tests/mod.rs` is:
+
+```rust
+pub mod handlers;
+pub mod validation;
+
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
+    let mut funs = handlers::test_funs();
+    funs.extend(validation::test_funs());
+    funs
+}
+```
+
+Rust tests load generated CLVM by repository path:
+
+```rust
+let validator =
+    read_hex_puzzle(&mut allocator, "games/<key>/clsp/onchain/step.hex")
+        .expect("compiled validator");
+```
+
+Test handlers as state transitions and validators through the referee/slash
+path, not only by invoking validator programs with invented arguments.
+California Poker's
+[`handlers.rs`](games/calpoker/rust/tests/handlers.rs) and
+[`validation.rs`](games/calpoker/rust/tests/validation.rs) are the complete
+examples; their card calculations are game-specific, but their puzzle loading,
+move-chain, and slash harness structure are reusable.
+Start from `calpoker_factory_succeeds` for factory invocation and
+`test_calpoker_handlers_happy_path` for a two-sided handler chain. There is no
+package-facing Rust helper that can infer your handler arguments or readable
+shapes, so adapt those explicit lists to the contract your CLVM defines rather
+than inventing a second runtime adapter.
 
 The `test` array in `games/registry.json` is a separate internal mechanism for
 Rust-only test packages. The existing `debug` package uses it to register its
@@ -306,10 +544,63 @@ values. There is deliberately no shared game UI component or currency-formatting
 service: reference games may duplicate small controls so their presentation
 implementations remain independent.
 
-Implement the package registration in `handProposal.ts`. It provides the one
-typed parameter codec and `describeHandProposal`.
-`describeHandProposal` decodes `handProposal.parameters` through that codec and
-must fail if the player app cannot project the Rust-approved value.
+Implement the package registration in `handProposal.ts`. The complete
+registration contract is:
+
+```ts
+interface GamePackageRegistration<TState, THand extends GameHand<TState>, TParams> {
+  readonly displayName: string;
+  createHand(init: GameHandInitialization): THand;
+  restoreHand(savedState: unknown): THand;
+  readonly proposalParameters: ProposalParameterCodec<TParams>;
+  describeHandProposal(handProposal: HandProposal): string;
+}
+```
+
+`displayName` is player-facing catalog text. `proposalParameters` is the one
+typed parameter codec. `describeHandProposal` decodes
+`handProposal.parameters` through that codec and must fail if the player app
+cannot project the Rust-approved value. `handProposal.ts` must default-export
+this object because the generated registry imports that default.
+
+California Poker has no game-specific proposal parameter, so its complete
+codec and registration are small:
+
+```ts
+type CalpokerFactoryParameters = Record<string, never>;
+
+const proposalParameters: ProposalParameterCodec<CalpokerFactoryParameters> = {
+  decode: (value) => (value === null ? {} : null),
+  encode: () => null,
+};
+
+const registration: GamePackageRegistration<
+  CalpokerHandState,
+  CalpokerHand,
+  CalpokerFactoryParameters
+> = {
+  displayName: 'California Poker',
+  createHand: createCalpokerHand,
+  restoreHand: restoreCalpokerHand,
+  proposalParameters,
+  describeHandProposal(proposal) {
+    if (proposalParameters.decode(proposal.parameters) === null) {
+      throw new Error('California Poker proposal parameters are invalid');
+    }
+    return `Stake ${proposal.playerAContribution} mojos each`;
+  },
+};
+
+export default registration;
+```
+
+Space Poker is the reference for a nonempty typed parameter record: it maps a
+positive Bencodex integer to `{ betUnitMojos: bigint }`. Reuse the same codec in
+the form, `describeHandProposal`, and `createHand`; do not maintain separate
+decoders.
+
+The unabridged example is
+[`games/calpoker/ui/handProposal.ts`](games/calpoker/ui/handProposal.ts).
 
 Game frontend code must not construct, deserialize, or inspect CLVM here. Rust
 converts the opaque Bencodex value to factory input and remains the semantic
@@ -385,7 +676,7 @@ The complete initialization shape is:
 
 ```ts
 interface GameHandInitialization {
-  handProposal: HandProposal;
+  parameters: ProposalParameterValue;
   members: readonly {
     playerAContribution: bigint;
     playerBContribution: bigint;
@@ -394,18 +685,105 @@ interface GameHandInitialization {
 }
 ```
 
-The initial state must copy every accepted fact the play UI needs: stakes and
-game-specific proposal terms from `handProposal`, plus each factory member's
-approved A/B contributions and local initial turn from `members`. These member
-contributions are factory output and may differ from the proposal-wide inputs;
-derive a member's total only as `playerAContribution + playerBContribution`.
-Assert the expected member count, contribution topology, and game type.
+The initial state must copy every accepted fact the play UI needs:
+game-specific proposal terms decoded from `parameters`, plus each factory
+member's approved A/B contributions and local initial turn from `members`.
+These member contributions are factory output and may differ from the
+proposal-wide inputs; derive a member's total only as
+`playerAContribution + playerBContribution`. Assert the expected member count
+and contribution topology.
 Protocol IDs, proposal origin, and session `iStarted` are deliberately
 inaccessible to packages.
+
+A concrete hand is normally a small mutable closure around the complete state.
+California Poker's pattern, trimmed to the package boundary, is:
+
+```ts
+interface CalpokerHand extends GameHand<CalpokerHandState> {
+  update(reducer: (state: CalpokerHandState) => CalpokerHandState): void;
+}
+
+function handFromState(initial: CalpokerHandState): CalpokerHand {
+  let state = initial;
+  return {
+    getState: () => state,
+    receive(update) {
+      state = reduceHandState(state, update);
+    },
+    update(reducer) {
+      state = reducer(state);
+    },
+  };
+}
+
+function createHand(init: GameHandInitialization): CalpokerHand {
+  if (init.members.length !== 1) throw new Error('Expected one member');
+  const member = init.members[0];
+  if (
+    member.playerAContribution <= 0n ||
+    member.playerAContribution !== member.playerBContribution
+  ) {
+    throw new Error('Expected equal positive contributions');
+  }
+  return handFromState({
+    perPlayerStake: member.playerAContribution,
+    playerHand: [],
+    opponentHand: [],
+    cardSelections: [],
+    moveNumber: 0n,
+    isPlayerTurn: member.ourTurn,
+    iStarted: !member.ourTurn,
+    settlementOutcome: null,
+  });
+}
+
+function restoreHand(savedState: unknown): CalpokerHand {
+  if (!isCalpokerHandState(savedState)) {
+    throw new Error('Saved California Poker state is invalid');
+  }
+  return handFromState(savedState);
+}
+```
+
+See [`games/calpoker/ui/serialize.ts`](games/calpoker/ui/serialize.ts) for the
+complete state predicate and readable reducers.
+
+For a parameterized game, decode `init.parameters` through the registration's
+`proposalParameters` codec before constructing state and fail if it returns
+`null`. `restoreHand` receives only the inner game-owned state, not the generic
+`{ gameType, state }` host envelope. A game may derive and persist a local role
+such as California Poker's `iStarted` from `member.ourTurn`; it does not receive
+the similarly named player-app session field.
+
+Route all host updates through `receive`. A minimal reducer shape is:
+
+```ts
+function reduceHandState(state: MyHandState, update: GameUpdate): MyHandState {
+  switch (update.type) {
+    case 'move-readable':
+      return applyOpponentMove(state, update.readable, update.moverShare);
+    case 'message-readable':
+      return applyAdvisoryMessage(state, update.readable);
+    case 'hand-ended':
+      return { ...state, myTurn: false, settlementOutcome: update.outcome };
+  }
+}
+```
+
+If the handler chain never returns a message parser, receiving
+`message-readable` is an internal contract violation and may throw. Otherwise,
+an advisory message updates game-owned display state but does not imply a turn
+change. `hand-ended.outcome` may be null; always mark the addressed member
+finished and persist whatever terminal result the frozen mount needs.
 
 Multi-member games keep members in this stable factory order. Krunk stores
 `members: readonly [KrunkGameState, KrunkGameState]`; index 0 and index 1 remain
 the factory's two members for the hand's lifetime and settle independently.
+Its factory assigns the A contribution to member 0 and the B contribution to
+member 1, leaving the opposite contribution zero in each member. One mounted
+UI renders both members and dispatches each panel's actions with its fixed
+index. This demonstrates that member topology is factory-defined and need not
+be two symmetric copies of the proposal stake.
 Single-member games use index 0. The host treats `getState()` as opaque
 Bencodex-compatible data and saves `{ gameType, state }` generically. Game-owned
 persisted state stores member order/indices, not protocol IDs.
@@ -459,6 +837,39 @@ type GameMountView = {
 );
 ```
 
+Keep `play.tsx` thin. California Poker's registration is essentially:
+
+```tsx
+function CalpokerMount({ view }: { view: GameMountView<CalpokerHand> }) {
+  const hand = useCalpokerHand(view);
+  return (
+    <Calpoker
+      frozen={view.frozen}
+      myName={view.myName}
+      opponentName={view.opponentName}
+      playerHand={hand.playerHand.map(String)}
+      handleMakeMove={hand.handleMakeMove}
+      terminalOutcome={hand.terminalOutcome}
+      // Other game-specific presentation props.
+    />
+  );
+}
+
+export const play: GameMountRegistration<CalpokerHand> = {
+  render(view) {
+    return <CalpokerMount view={view} />;
+  },
+};
+```
+
+See [`games/calpoker/ui/play.tsx`](games/calpoker/ui/play.tsx) for the full
+presentation adapter.
+
+The same component may render live and frozen state. Branch on `view.frozen`
+before touching `port` or `appendGameLog`; the game-owned state still supplies
+all cards, phases, and results in either branch. The host supplies the React key
+that starts a new component lifecycle for a new hand.
+
 The host passes accepted terms only to `createHand`; `restoreHand` and the
 mounted hand never receive proposal, group, rejection, abandonment, connection,
 or on-chain lifecycle objects.
@@ -477,7 +888,11 @@ does not report whose turn it is, whether a particular move is legal, or whether
 the command will apply synchronously; derive those facts from game-owned state.
 
 Narrow the `GameMountView` on `frozen` before dispatching an intent. The
-complete outgoing contract is:
+discriminant narrows directly during render. Inside delayed callbacks and
+effects, where TypeScript cannot retain that narrowing, call
+`requireLiveGameMount(viewRef.current)` immediately before using `port`; it
+throws if a protocol action escapes into a frozen mount. The complete outgoing
+contract is:
 
 ```ts
 type GameIntent =
@@ -504,6 +919,43 @@ type GameIntent =
   optional; among the reference games only Space Poker exposes it, including
   its game-local `cheat^` keyboard shortcut.
 
+Use `accept-settlement` only when the game has already reached a local terminal
+state and its rules call for voluntarily accepting that result instead of
+making another move. Space Poker's fold path is the reference example. Update
+the local terminal state before dispatch, just as for `make-move`.
+
+Two helpers cover nearly every local UI transition. California Poker uses this
+shape:
+
+```ts
+const viewRef = useRef(view);
+viewRef.current = view;
+
+const commitState = (reducer: (state: HandState) => HandState) => {
+  const live = requireLiveGameMount(viewRef.current);
+  live.hand.update(reducer);
+  live.port.dispatch({ type: 'state-changed' });
+};
+
+const commitMove = (
+  reducer: (state: HandState) => HandState,
+  readable: Program | null,
+) => {
+  const live = requireLiveGameMount(viewRef.current);
+  live.hand.update(reducer);
+  live.port.dispatch({ type: 'make-move', memberIndex: 0, readable });
+};
+```
+
+See
+[`games/calpoker/ui/useCalpokerHand.ts`](games/calpoker/ui/useCalpokerHand.ts)
+for these helpers around manual selections, nil moves, and automatic actions.
+
+Use `commitState` for durable UI facts that do not invoke CLVM, such as card
+selection or display order. Use `commitMove` for a protocol action. Mutating
+first is required: the host snapshots the resulting complete hand as the
+pending candidate and restores the previous snapshot if the action fails.
+
 Protocol calls remain Rust-first. After Rust accepts or queues the request, the
 runtime rereads `getState()` as the complete candidate. An immediately applied
 candidate becomes canonical. A queued candidate is persisted beside the
@@ -524,6 +976,31 @@ contains the advanced handler/turn and must not. Do not persist a separate
 to drain before assembling a background snapshot, so the serialized WASM state
 and the pending/applied hand candidate cross the storage boundary together.
 
+California Poker's opening automatic nil move follows this pattern:
+
+```ts
+const submittedRef = useRef<string | null>(null);
+
+useEffect(() => {
+  if (view.frozen || !state.isPlayerTurn || state.moveNumber !== 0n) return;
+  const live = requireLiveGameMount(viewRef.current);
+  if (!live.port.isChannelReady()) return;
+
+  const key = `opening:${state.moveNumber}`;
+  if (submittedRef.current === key) return;
+  submittedRef.current = key;
+  commitMove(
+    (current) => ({ ...current, moveNumber: 1n, isPlayerTurn: false }),
+    null,
+  );
+}, [view.frozen, state.isPlayerTurn, state.moveNumber, commitMove]);
+```
+
+The ref prevents duplicate effects within one React mount; durable correctness
+comes from advancing `moveNumber` and turn state in the same candidate as the
+action. A restored pre-action snapshot still satisfies the effect and retries.
+A queued or applied snapshot contains the advanced state and does not.
+
 After such a snapshot commits, rehydration must not run the gameplay transition
 again. The only effects a committed restore may retry are delivery of a
 persisted outbound message to the peer or resubmission of a recorded
@@ -537,7 +1014,7 @@ The complete incoming contract is:
 
 ```ts
 interface GameHandInitialization {
-  handProposal: HandProposal;
+  parameters: ProposalParameterValue;
   members: readonly {
     playerAContribution: bigint;
     playerBContribution: bigint;
@@ -557,11 +1034,12 @@ type GameUpdate =
 ```
 
 `GameHandInitialization` is supplied only to `createHand`. `members` is the
-authoritative ordered package membership and `handProposal` contains validated
-accepted terms. A typical equal-stake single-member game asserts that
+authoritative ordered package membership, and `parameters` is the exact
+Rust-approved opaque proposal value. A typical equal-stake single-member game
+asserts that
 `members[0].playerAContribution === members[0].playerBContribution`, then stores
 that contribution and `members[0].ourTurn`. Assert your expected member count,
-contribution topology, and proposal game type in `createHand`.
+contribution topology, and decoded parameters in `createHand`.
 - `move-readable` addresses one member of the hand. `readable` is the
   serialized CLVM readable returned by the opponent-move handler.
   `moverShare` is a mojo-denominated `bigint`.
@@ -655,10 +1133,35 @@ The following are frontend implementation details, not APIs for games:
 ## Testing checklist
 
 After adding or changing package files, run `./cb.sh` first. It compiles
-Chialisp, prepares factory binaries, regenerates package registries and contract
-types, and builds the project in the required order. Then run `./ct.sh` for the
-full Rust, frontend, and simulator-backed test suite. Do not invoke individual
-Cargo test commands in place of these repository scripts.
+Chialisp, prepares factory binaries, regenerates Rust-side package artifacts,
+and builds the Rust project in the required order. Then run `./ct.sh` for the
+full Rust, frontend, and simulator-backed test suite. The frontend test/build
+step runs `generate:games`, which regenerates
+`front-end/src/generated/gamePackages.ts` from `games/registry.json`. Do not
+invoke individual Cargo test commands in place of these repository scripts.
+
+Place frontend package tests beside the game under
+`games/<key>/ui/**/*.{test,spec}.{ts,tsx}`. The frontend Jest configuration
+discovers that directory automatically. Test the package boundary with a fake
+`LiveGamePort`: construct a live `GameMountView`, assert emitted
+`memberIndex`/`readable` values, feed `GameUpdate` values to `receive`, and
+render the same hand through a frozen view with no port. California Poker's
+[`calPoker.test.ts`](games/calpoker/ui/calPoker.test.ts) demonstrates local
+state persistence, automatic nil moves, rejection propagation, restoration,
+and terminal projection.
+
+The minimum useful test layers are:
+
+1. **Factory:** valid terms produce the expected ordered 10-field records;
+   malformed parameters and contribution rules fail.
+2. **Handlers:** each legal local move returns the intended move, validator
+   chain, next handler, and readable; invalid local UI input rejects.
+3. **Validators/referee:** legal moves survive invalid slash attempts and each
+   illegal peer move is slashable with the intended evidence.
+4. **Package state:** `createHand`, `receive`, `getState`, and `restoreHand`
+   preserve the complete game-owned state.
+5. **Mount/actions:** live actions mutate then dispatch, automatic actions fire
+   only from the required durable phase, and frozen mounts cannot dispatch.
 
 Before considering the game complete, check that:
 

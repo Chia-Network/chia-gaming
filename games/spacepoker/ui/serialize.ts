@@ -572,10 +572,10 @@ function spacepokerHandFromState(initial: SpacepokerHandState): SpacepokerHand {
 }
 
 export function createSpacepokerHand(init: GameHandInitialization): SpacepokerHand {
-  if (init.members.length !== 1 || init.handProposal.gameType !== 'spacepoker') {
-    throw new Error('Space Poker hand requires one game and Space Poker proposal terms');
+  if (init.members.length !== 1) {
+    throw new Error('Space Poker hand requires one game');
   }
-  const parameters = spacepokerProposalParameters.decode(init.handProposal.parameters);
+  const parameters = spacepokerProposalParameters.decode(init.parameters);
   if (!parameters) {
     throw new Error('Space Poker hand requires valid proposal parameters');
   }

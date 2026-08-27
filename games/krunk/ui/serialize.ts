@@ -332,8 +332,8 @@ function krunkHandFromState(initial: KrunkHandState): KrunkHand {
 }
 
 export function createKrunkHand(init: GameHandInitialization): KrunkHand {
-  if (init.members.length !== 2 || init.handProposal.gameType !== 'krunk') {
-    throw new Error('Krunk requires two games and Krunk proposal terms');
+  if (init.members.length !== 2) {
+    throw new Error('Krunk requires two games');
   }
   if (
     init.members[0]!.playerAContribution <= 0n ||

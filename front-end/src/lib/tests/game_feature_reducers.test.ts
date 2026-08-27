@@ -47,14 +47,7 @@ function assertCodecValid(state: SpacepokerHandState | null): SpacepokerHandStat
 }
 
 const spacepokerInit = (): GameHandInitialization => ({
-  handProposal: {
-    gameType: 'spacepoker',
-    playerAContribution: 1_000n,
-    playerBContribution: 1_000n,
-    senderIsPlayerA: false,
-    gameTimeout: 15n,
-    parameters: 10n,
-  },
+  parameters: 10n,
   members: [{ playerAContribution: 1_000n, playerBContribution: 1_000n, ourTurn: true }],
 });
 
@@ -118,14 +111,7 @@ describe('canonical feature gameplay reducers', () => {
       advanceSpacepokerHand(freshSpacepokerState(), status(readable(text('unknown')))),
     ).toThrow('Unsupported Space Poker move readable tag');
     const krunk = freshKrunkHand({
-      handProposal: {
-        gameType: 'krunk',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
-        senderIsPlayerA: true,
-        gameTimeout: 15n,
-        parameters: null,
-      },
+      parameters: null,
       members: [
         { playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
         { playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
@@ -141,14 +127,7 @@ describe('canonical feature gameplay reducers', () => {
     [[false, true], 'bob', 'alice'],
   ] as const)('assigns ordered Krunk roles from approved turns', (turns, first, second) => {
     const state = freshKrunkHand({
-      handProposal: {
-        gameType: 'krunk',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
-        senderIsPlayerA: true,
-        gameTimeout: 15n,
-        parameters: null,
-      },
+      parameters: null,
       members: turns.map((ourTurn, index) => ({
         playerAContribution: index === 0 ? 100n : 0n,
         playerBContribution: index === 0 ? 0n : 100n,
@@ -776,14 +755,7 @@ describe('canonical feature gameplay reducers', () => {
 
   it('restores a replacement Krunk hand directly from complete local state', () => {
     const init: GameHandInitialization = {
-      handProposal: {
-        gameType: 'krunk',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
-        senderIsPlayerA: true,
-        gameTimeout: 15n,
-        parameters: null,
-      },
+      parameters: null,
       members: [
         { playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
         { playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },

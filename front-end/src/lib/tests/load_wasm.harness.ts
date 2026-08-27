@@ -397,7 +397,7 @@ export function postMoveHandState(
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
   const hand = createRegisteredGameHand(handProposal.gameType, {
-    handProposal,
+    parameters: handProposal.parameters,
     members: ids.map((_, index) => ({
       playerAContribution:
         handProposal.gameType === 'krunk' && index !== 0 ? 0n : handProposal.playerAContribution,
