@@ -48,7 +48,7 @@ export const sampleSession = {
   theirContribution: '40',
   perGameAmount: '10',
   rewardPuzzleHash: '11'.repeat(32),
-  betweenHandLastTerms: {
+  betweenHandLastHandProposal: {
     my_contribution: '10',
     their_contribution: '10',
     game_timeout: '15',

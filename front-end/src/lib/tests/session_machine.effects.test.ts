@@ -1,35 +1,14 @@
 import type { SessionController } from '../../hooks/SessionController';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
-import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
+import { createSessionMachineState } from '../session/sessionMachine';
 import { runSessionMachineTransition } from '../session/sessionMachineEffects';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { send } from './session_machine.harness';
 
 describe('session machine behavior sequences', () => {
-  it('keeps bigint-bearing Calpoker outcomes out of shared React session state', () => {
-    const transition = reduceSessionMachine(createSessionMachineState(createSessionModel()), {
-      type: 'hand-outcome',
-
-      outcomeWin: 'lose',
-    });
-
-    expect(transition.state.coordination.lastOutcomeWin).toBe('lose');
-
-    expect(transition.effects).toContainEqual({
-      type: 'controller-set-last-outcome',
-
-      outcomeWin: 'lose',
-    });
-
-    expect(JSON.stringify(transition.state.coordination.lastOutcomeWin)).toBe('"lose"');
-
-    expect(transition.state.coordination).not.toHaveProperty('lastOutcome');
-  });
-
   it('queues dispatches requested during a React projection instead of re-entering it', () => {
     const controller = {
       clearDerivedGamePresentation: () => {},
-      projectHandState: () => () => {},
     } as unknown as SessionController;
 
     const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
@@ -42,8 +21,6 @@ describe('session machine behavior sequences', () => {
       getRestoreStatus: () => 'idle',
 
       getRestoreError: () => null,
-
-      emitGameplay: () => {},
 
       onError: () => {},
 

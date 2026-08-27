@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Observable } from 'rxjs';
-import type { CalpokerOutcome } from '../../features/calPoker/outcome';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import { terminalGameHandSource, type GameHandOrigin, type GameHandSource } from '../gameMount';
+import { terminalGameHandSource, type GameHandOrigin, type GameHandSource } from '@games/host';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
-import type { GameplayEvent } from './gameSessionEvents';
+import type { ComposeDraftValue } from '@games/host';
 import type {
   BetweenHandModeModel,
   ChannelStatusModel,
   GameCoinModel,
   GameTerminalModel,
-  HandTermsModel,
+  HandProposal,
   ProposalGroupModel,
   QueuedNotificationModel,
   SessionModel,
@@ -42,28 +40,23 @@ export interface UseGameSessionResult {
   activeGameIds: string[];
   currentHandGameIds: string[];
   iProposedHand: boolean;
-  activeGameType: HandTermsModel['gameType'];
+  activeGameType: HandProposal['gameType'];
   displayGameId: string | null;
   handSource: GameHandSource;
-  gameplayEvent$: Observable<GameplayEvent>;
   appendGameLog: (line: string) => void;
-  onHandOutcome: (outcome: CalpokerOutcome) => void;
-  onTurnChanged: (gameId: string, isMyTurn: boolean) => void;
   betweenHandMode: BetweenHandModeModel;
   incomingProposalGroup: ProposalGroupModel | null;
-  lastHandTerms: HandTermsModel;
+  lastHandProposal: HandProposal | null;
   composeDraftState: ComposeDraftState;
   chooseNewHandSameTerms: () => void;
   chooseDoNotUseCurrentProposal: () => void;
   openComposeProposal: () => void;
   setComposeGameTimeout: (value: bigint) => void;
-  setComposeGameType: (value: HandTermsModel['gameType']) => void;
-  setCalpokerComposeAmount: (value: bigint) => void;
-  setKrunkComposeAmount: (value: bigint) => void;
-  setSpacepokerComposeDraft: (draft: Partial<ComposeDraftState['spacepoker']>) => void;
+  setComposeGameType: (value: HandProposal['gameType']) => void;
+  updateSelectedComposeDraft: (draft: Partial<ComposeDraftValue>) => void;
   composeProposalSent: boolean;
   newHandRequested: boolean;
-  submitComposedProposal: (terms: HandTermsModel) => void;
+  submitComposedProposal: (handProposal: HandProposal) => void;
   acceptReviewedProposal: () => void;
   rejectReviewedProposal: () => void;
   startCleanShutdown: () => void;
@@ -140,7 +133,6 @@ export function useTerminalSessionPresentation(
 export function projectTerminalSessionResult(
   live: UseGameSessionResult,
   presentation: TerminalSessionPresentation,
-  gameplayEvent$: Observable<GameplayEvent>,
   dismissals?: Pick<TerminalSessionPresentationState, 'dismissChannel' | 'dismissGame'>,
 ): UseGameSessionResult {
   const { model, iStarted } = presentation;
@@ -166,22 +158,17 @@ export function projectTerminalSessionResult(
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
     handSource: terminalGameHandSource(model.game.handState),
-    gameplayEvent$,
     appendGameLog: NOOP,
-    onHandOutcome: NOOP,
-    onTurnChanged: NOOP,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: selectIncomingProposalGroup(model),
-    lastHandTerms: model.betweenHand.lastTerms,
+    lastHandProposal: model.betweenHand.lastHandProposal,
     composeDraftState: model.betweenHand.compose,
     chooseNewHandSameTerms: NOOP,
     chooseDoNotUseCurrentProposal: NOOP,
     openComposeProposal: NOOP,
     setComposeGameTimeout: NOOP,
     setComposeGameType: NOOP,
-    setCalpokerComposeAmount: NOOP,
-    setKrunkComposeAmount: NOOP,
-    setSpacepokerComposeDraft: NOOP,
+    updateSelectedComposeDraft: NOOP,
     composeProposalSent: model.betweenHand.compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: NOOP,

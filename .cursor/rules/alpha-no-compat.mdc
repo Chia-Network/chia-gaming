@@ -1,0 +1,18 @@
+---
+description: Alpha has no installed base; do not treat format breaks as bugs
+alwaysApply: true
+---
+
+# Alpha: no compatibility
+
+This project is alpha. There is no installed base. Do not preserve, migrate, or dual-read old formats.
+
+Not bugs:
+- Changing a persistence, wire, CLVM, or API shape
+- Dropping an old save schema, localStorage key, or envelope version
+- Requiring a new session after a format change
+- Missing a migration, fallback decoder, or "existing users" path
+
+Do not propose compatibility shims, version dual-paths, or "this will break saved games" as a finding.
+
+Still a bug: the **current** encoder and decoder disagree, so a value written now cannot be read now in the same build (refresh, resume, round-trip in this code). Fix that by making today's format consistent, not by keeping an old one.

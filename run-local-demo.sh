@@ -8,6 +8,7 @@ WASM_DIR="$SCRIPT_DIR/wasm"
 HUB_SERVICE_DIR="$SCRIPT_DIR/hub/hub-service"
 HUB_FRONTEND_DIR="$SCRIPT_DIR/hub/hub-frontend"
 CLSP_DIR="$SCRIPT_DIR/clsp"
+GAMES_DIR="$SCRIPT_DIR/games"
 
 GAME_PORT=${GAME_PORT:-3002}
 HUB_PORT=${HUB_PORT:-3003}
@@ -154,6 +155,14 @@ echo "{\"hub\": \"http://localhost:$HUB_PORT\"}" > "$GAME_NONCE_DIR/urls"
     mkdir -p "$GAME_NONCE_DIR/clsp/$(dirname "$f")"
     cp "$f" "$GAME_NONCE_DIR/clsp/$f"
 done)
+(cd "$GAMES_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
+    mkdir -p "$GAME_NONCE_DIR/games/$(dirname "$f")"
+    cp "$f" "$GAME_NONCE_DIR/games/$f"
+done)
+if ! find "$GAME_NONCE_DIR/games" -name '*.hex' | grep -q .; then
+    echo "Error: no game factory .hex files copied into $GAME_NONCE_DIR/games" >&2
+    exit 1
+fi
 if [ -d "$FE_DIR/public/images" ]; then
     cp -r "$FE_DIR/public/images" "$GAME_NONCE_DIR/images"
 fi

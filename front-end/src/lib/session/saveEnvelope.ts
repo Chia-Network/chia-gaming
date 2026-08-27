@@ -3,6 +3,7 @@ import type { PersistedGameState } from './gameStateCodec';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
   BetweenHandModeModel,
+  LocalActionKind,
   NotificationKind,
   ProposalGroupDisposition,
   ProposalGroupOrigin,
@@ -10,7 +11,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 13n;
+export const SESSION_SAVE_VERSION = 15n;
 
 export type BlockchainType = 'simulator' | 'walletconnect';
 
@@ -80,16 +81,15 @@ export interface SavedGameInstance {
   };
 }
 
-interface SavedHandTermsBase {
+interface SavedHandProposalBase {
   my_contribution: string;
   their_contribution: string;
   game_timeout: string;
 }
 
-export type SavedHandTerms =
-  | (SavedHandTermsBase & { game_type: 'calpoker' })
-  | (SavedHandTermsBase & { game_type: 'krunk' })
-  | (SavedHandTermsBase & { game_type: 'spacepoker'; spacepoker_unit_size: string });
+export type SavedHandProposal = SavedHandProposalBase & {
+  game_type: RegisteredGameType;
+} & Record<string, string | undefined>;
 
 export interface SavedQueuedNotification {
   id: bigint;
@@ -106,6 +106,12 @@ export interface SessionPresentationSave {
   gameInstances: Record<string, SavedGameInstance>;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
+  pendingCandidates: Array<{
+    gameType: RegisteredGameType;
+    id: string;
+    action: LocalActionKind;
+    featureState: unknown;
+  }>;
   channelStatus: ChannelStatusPayload | null;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | null;
   myRunningBalance: string;
@@ -118,19 +124,17 @@ export interface SessionPresentationSave {
     selected_game: RegisteredGameType;
     game_timeout: string;
     proposal_sent: boolean;
-    calpoker: { amount: string };
-    krunk: { amount: string };
-    spacepoker: { unit_size: string; stack_size: string };
+    drafts: Record<string, Record<string, string>>;
   };
-  betweenHandLastTerms: SavedHandTerms | null;
-  betweenHandRejectedOnceTerms: SavedHandTerms | null;
-  betweenHandPendingRetryTerms: SavedHandTerms | null;
+  betweenHandLastHandProposal: SavedHandProposal | null;
+  betweenHandRejectedOnceHandProposal: SavedHandProposal | null;
+  betweenHandPendingRetryHandProposal: SavedHandProposal | null;
   proposalGroups: Array<{
     primary_id: string;
     member_ids: string[];
     origin: ProposalGroupOrigin;
     disposition: ProposalGroupDisposition;
-    terms: SavedHandTerms;
+    hand_proposal: SavedHandProposal;
   }>;
   waitingStateEnteredAt: bigint | null;
   cleanShutdownGraceStartedAt: bigint | null;

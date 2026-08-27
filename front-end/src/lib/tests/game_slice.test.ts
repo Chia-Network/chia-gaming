@@ -3,7 +3,7 @@ import {
   sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
-import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import {
   gameInstanceModelFromSlice,
   gameSliceReducer,
@@ -42,7 +42,7 @@ describe('game slice reducer', () => {
           queue: [],
         },
         betweenHand: {
-          lastTerms: {
+          lastHandProposal: {
             gameType: 'krunk',
             myContribution: 100n,
             theirContribution: 100n,

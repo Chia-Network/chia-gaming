@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useHubSocket, ChallengeReceived, hubHsLog } from './useHubSocket';
+import { useHubSocket, ChallengeReceived } from './useHubSocket';
 import { getSearchParams } from './util';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
 import { Button } from './button';
@@ -78,32 +78,17 @@ const HubScreen = () => {
   useEffect(() => {
     if (!aliasLoaded || autoJoinedRef.current) return;
     if (savedAlias) {
-      hubHsLog('alias_autojoin', {
-        session_id: sessionId,
-        unique_id: uniqueId,
-        alias_len: savedAlias.length,
-      });
       autoJoinedRef.current = true;
       setMyAlias(savedAlias);
       setAliasConfirmed(true);
       notifyParentAlias(savedAlias);
       joinHub(savedAlias);
-    } else {
-      hubHsLog('alias_missing_waiting_for_user', {
-        session_id: sessionId,
-        unique_id: uniqueId,
-      });
     }
-  }, [aliasLoaded, savedAlias, joinHub, sessionId, uniqueId]);
+  }, [aliasLoaded, savedAlias, joinHub]);
 
   function confirmAlias() {
     const trimmed = myAlias.trim();
     if (!trimmed) return;
-    hubHsLog('alias_confirm', {
-      session_id: sessionId,
-      unique_id: uniqueId,
-      alias_len: trimmed.length,
-    });
     setAlias(trimmed);
     setMyAlias(trimmed);
     setAliasConfirmed(true);

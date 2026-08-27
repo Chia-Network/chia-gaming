@@ -1,13 +1,13 @@
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import {
   initialKrunkGameState,
   krunkGameStateFromPersisted,
   krunkStateCodec,
   KrunkHandler,
   persistedKrunkGameState,
-} from '../../features/krunk/stateCodec';
-import { SpHandler } from '../../features/spacePoker/useSpacepokerHand';
-import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
+} from '@games/krunk/ui/serialize';
+import { SpHandler } from '@games/spacepoker/ui/useSpacepokerHand';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { canRemountFinishedGameState, decodePersistedGameState } from '../gameRegistry';
 
 describe('game-owned state codecs', () => {
@@ -17,7 +17,9 @@ describe('game-owned state codecs', () => {
       opponentHand: [3n, 4n],
       moveNumber: 1n,
       isPlayerTurn: true,
+      iStarted: true,
       cardSelections: [1n],
+      error: null,
     };
     const encoded = calpokerStateCodec.encode(state);
     expect(calpokerStateCodec.decode(encoded)).toEqual(state);
@@ -55,29 +57,13 @@ describe('game-owned state codecs', () => {
       handHistory: [],
       outcome: null,
       terminalState: 'none' as const,
-      terminalRecovery: null,
-      pendingTerminalAction: null,
       coinTossIOpen: null,
       unitSizeMojos: 10n,
       displayMode: 'mojos' as const,
+      error: null,
     };
     const encoded = spacepokerStateCodec.encode(state);
     expect(spacepokerStateCodec.decode(encoded)).toEqual(state);
-    const pendingFold = {
-      ...state,
-      gameState: { handler: SpHandler.Folded, myTurn: false, N: 3n },
-      handHistory: [{ player: 'you' as const, action: 'fold' as const }],
-      terminalState: 'folded-by-you' as const,
-      pendingTerminalAction: {
-        action: 'fold' as const,
-        submission: 'accept-settlement' as const,
-        previousTerminalState: 'none' as const,
-        previousGameState: { handler: SpHandler.MidRound, myTurn: true, N: 3n },
-      },
-    };
-    expect(spacepokerStateCodec.decode(spacepokerStateCodec.encode(pendingFold))).toEqual(
-      pendingFold,
-    );
     expect(
       spacepokerStateCodec.decode({
         ...encoded,
@@ -100,6 +86,12 @@ describe('game-owned state codecs', () => {
       spacepokerStateCodec.decode({
         ...encoded,
         state: { ...state, terminalState: 'revealed' },
+      }),
+    ).toBeNull();
+    expect(
+      spacepokerStateCodec.decode({
+        ...encoded,
+        state: { ...state, error: { tag: 'INVALID', message: '' } },
       }),
     ).toBeNull();
   });

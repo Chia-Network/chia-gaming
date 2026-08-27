@@ -1,62 +1,80 @@
-import type { GameComposeDrafts } from '../gameAdapter';
+import type { ComposeDraftValue, GameComposeDrafts } from '@games/host';
 import {
   defaultGameComposeDraft,
-  gameComposeDraftFromTerms,
-  gameTermsFromComposeDraft,
+  gameComposeDraftFromHandProposal,
+  handProposalFromComposeDraft,
   REGISTERED_GAMES,
   updateGameComposeDraft,
+  type CatalogGameType,
 } from '../gameRegistry';
-import type { HandTermsModel, RegisteredGameType } from './types';
+import type { HandProposal, RegisteredGameType } from './types';
 
-export type ComposeDraftValues = GameComposeDrafts & {
+export interface ComposeDraftState {
+  selectedGame: RegisteredGameType;
   gameTimeout: bigint;
   proposalSent: boolean;
-};
-
-export type ComposeDraftState = ComposeDraftValues & { selectedGame: RegisteredGameType };
+  drafts: GameComposeDrafts;
+}
 
 function defaultComposeDrafts(perGameAmount: bigint): GameComposeDrafts {
-  // Object construction erases each key's draft type; the registration record
-  // guarantees one correctly typed default for every RegisteredGameType.
   return Object.fromEntries(
     REGISTERED_GAMES.map(({ gameType }) => [
       gameType,
       defaultGameComposeDraft(gameType, perGameAmount),
     ]),
-  ) as GameComposeDrafts;
+  );
 }
 
-export const EMPTY_COMPOSE_DRAFT_STATE: ComposeDraftState = {
-  ...defaultComposeDrafts(0n),
-  selectedGame: 'calpoker',
-  gameTimeout: 15n,
-  proposalSent: false,
-};
+export function composeDraftValue(
+  state: ComposeDraftState,
+  gameType: CatalogGameType,
+): ComposeDraftValue {
+  const value = state.drafts[gameType];
+  if (value === undefined) {
+    throw new Error(`Missing compose draft for ${gameType}`);
+  }
+  return value;
+}
+
+export function emptyComposeDraftState(): ComposeDraftState {
+  return {
+    selectedGame: REGISTERED_GAMES[0].gameType,
+    gameTimeout: 15n,
+    proposalSent: false,
+    drafts: defaultComposeDrafts(0n),
+  };
+}
 
 export function createComposeDraftState(
   perGameAmount: bigint,
-  lastTerms: HandTermsModel,
+  lastHandProposal: HandProposal,
 ): ComposeDraftState {
-  const state: ComposeDraftState = {
-    ...defaultComposeDrafts(perGameAmount),
-    selectedGame: lastTerms.gameType,
-    gameTimeout: lastTerms.gameTimeout,
-    proposalSent: false,
-  };
-  return applyTermsToComposeDraft(state, lastTerms);
+  return applyHandProposalToComposeDraft(
+    {
+      selectedGame: lastHandProposal.gameType,
+      gameTimeout: lastHandProposal.gameTimeout,
+      proposalSent: false,
+      drafts: defaultComposeDrafts(perGameAmount),
+    },
+    lastHandProposal,
+  );
 }
 
-export function applyTermsToComposeDraft(
+export function applyHandProposalToComposeDraft(
   state: ComposeDraftState,
-  terms: HandTermsModel,
+  handProposal: HandProposal | null,
 ): ComposeDraftState {
-  const common = {
+  if (handProposal === null) return state;
+  return {
     ...state,
-    selectedGame: terms.gameType,
-    gameTimeout: terms.gameTimeout,
+    selectedGame: handProposal.gameType,
+    gameTimeout: handProposal.gameTimeout,
     proposalSent: false,
+    drafts: {
+      ...state.drafts,
+      [handProposal.gameType]: gameComposeDraftFromHandProposal(handProposal),
+    },
   };
-  return { ...common, [terms.gameType]: gameComposeDraftFromTerms(terms) };
 }
 
 export function selectComposeGame(
@@ -66,33 +84,23 @@ export function selectComposeGame(
   return { ...state, selectedGame };
 }
 
-export function setComposeDraftAmount(
+export function updateSelectedComposeDraft(
   state: ComposeDraftState,
-  gameType: 'calpoker' | 'krunk',
-  amount: bigint,
+  update: Partial<ComposeDraftValue>,
 ): ComposeDraftState {
+  const key = state.selectedGame;
   return {
     ...state,
-    [gameType]: updateGameComposeDraft(gameType, state[gameType], { amount }),
+    drafts: {
+      ...state.drafts,
+      [key]: updateGameComposeDraft(key, composeDraftValue(state, key), update),
+    },
   };
 }
 
-export function setSpacepokerComposeDraft(
-  state: ComposeDraftState,
-  draft: Partial<ComposeDraftState['spacepoker']>,
-): ComposeDraftState {
-  return {
-    ...state,
-    spacepoker: updateGameComposeDraft('spacepoker', state.spacepoker, draft),
-  };
-}
-
-export function composeDraftTerms(state: ComposeDraftState): HandTermsModel | null {
-  return gameTermsFromComposeDraft(
-    state.selectedGame,
-    state[state.selectedGame],
-    state.gameTimeout,
-  );
+export function composeDraftTerms(state: ComposeDraftState): HandProposal | null {
+  const key = state.selectedGame;
+  return handProposalFromComposeDraft(key, composeDraftValue(state, key), state.gameTimeout);
 }
 
 export function composeDraftCanSubmit(

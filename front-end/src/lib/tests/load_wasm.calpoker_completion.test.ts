@@ -1,15 +1,13 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { Subject } from 'rxjs';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { CalpokerOutcome } from '../../features/calPoker/outcome';
+import { calpokerStateCodec, type CalpokerHandState } from '@games/calpoker/ui/serialize';
 import {
   shouldAutoFireCalpokerMove,
   useCalpokerHand,
   type UseCalpokerHandResult,
-} from '../../features/calPoker/useCalpokerHand';
+} from '@games/calpoker/ui/useCalpokerHand';
 import {
   channelStatusModelFromPayload,
   createSessionModel,
@@ -17,8 +15,9 @@ import {
 } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import type { HandTermsModel } from '../session/types';
-import type { GameplayEvent } from '../session/gameSessionEvents';
+import type { HandProposal } from '../session/types';
+import type { GameIntent, LiveGamePort } from '@games/host';
+import { projectRegisteredPendingCandidates } from '../gameRegistry';
 import {
   addActiveSubscription,
   createActivePair,
@@ -35,18 +34,17 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     SessionController,
     SessionController,
   ];
-  const terms: HandTermsModel = {
+  const handProposal: HandProposal = {
     gameType: 'calpoker',
     myContribution: 20n,
     theirContribution: 20n,
     gameTimeout: 15n,
   };
   const runtimes: SessionMachineRuntime[] = [];
+  const ports: LiveGamePort[] = [];
   const errors: unknown[] = [];
-  const gameplayEvents: GameplayEvent[][] = [[], []];
-  const gameplaySubjects = [new Subject<GameplayEvent>(), new Subject<GameplayEvent>()];
   const statuses: Array<Array<{ id: string; moverShare: unknown }>> = [[], []];
-  const stageTrace: Array<Array<{ runtime: bigint; controller: bigint }>> = [[], []];
+  const stageTrace: bigint[][] = [[], []];
   const submittedMoves = [0, 0];
   let hookRenderer: ReactTestRenderer | null = null;
 
@@ -58,7 +56,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         createSessionModel({
           channel: { status: channelStatusModelFromPayload(status) },
           game: { handKey: 1 },
-          betweenHand: { mode: 'compose-proposal', lastTerms: terms },
+          betweenHand: { mode: 'compose-proposal', lastHandProposal: handProposal },
         }),
       ),
       {
@@ -67,28 +65,41 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         restoring: false,
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
-        emitGameplay: (event) => {
-          gameplayEvents[index].push(event);
-          gameplaySubjects[index].next(event);
-        },
         onError: (error) => errors.push(error),
         persist: async () => {},
       },
     );
     runtime.setRender((state) => {
       const runtimeHand = calpokerStateCodec.decode(state.model.game.handState);
-      const controllerHand = calpokerStateCodec.decode(controller.handState);
-      if (runtimeHand && controllerHand) {
-        stageTrace[index].push({
-          runtime: runtimeHand.moveNumber,
-          controller: controllerHand.moveNumber,
-        });
-      }
+      if (runtimeHand) stageTrace[index].push(runtimeHand.moveNumber);
     });
     runtimes.push(runtime);
-    controller.onFeatureStateTransition = (gameType, id, state) =>
-      runtime.transitionFeatureState(gameType, id, state);
-    controller.onLocalGameAction = (request) => runtime.commitLocalGameAction(request);
+    ports.push({
+      isChannelReady: () => controller.isChannelReady(),
+      dispatch: (intent: GameIntent<unknown>) => {
+        const game = runtime.getState().model.game;
+        assert.equal(game.activeGameType, 'calpoker');
+        if (intent.type === 'update-local-state') {
+          assert.equal(
+            runtime.transitionFeatureState('calpoker', game.currentHandIds[0], intent.state),
+            true,
+          );
+          return;
+        }
+        submittedMoves[index] += intent.type === 'make-move' ? 1 : 0;
+        runtime.commitLocalGameAction({
+          gameType: 'calpoker',
+          id: intent.gameId,
+          state: intent.state,
+          command:
+            intent.type === 'make-move'
+              ? { type: 'make-move', readable: intent.readable }
+              : intent.type === 'accept-settlement'
+                ? { type: 'accept-settlement' }
+                : { type: 'cheat', moverShare: intent.moverShare },
+        });
+      },
+    });
     controller.onSaveNeeded = () => Promise.resolve();
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
@@ -119,40 +130,30 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.ok(state, `calpoker initial deal player ${index}: missing hand state`);
     return state;
   };
-  const latestOpponentMove = (index: number) => {
-    const event = [...gameplayEvents[index]]
-      .reverse()
-      .find((candidate) => 'OpponentMoved' in candidate);
-    assert.ok(event && 'OpponentMoved' in event);
-    return event.OpponentMoved;
-  };
   const submitSelections = (index: number, gameId: string, selections: bigint[]) => {
-    assert.equal(
-      runtimes[index].transitionFeatureState('calpoker', gameId, {
+    ports[index].dispatch<CalpokerHandState>({
+      type: 'make-move',
+      gameId,
+      readable: Program.fromList(selections.map((card) => Program.fromBigInt(card))),
+      state: {
         ...hand(index),
         cardSelections: selections,
         moveNumber: 2n,
         isPlayerTurn: false,
-      }),
-      true,
-    );
-    submittedMoves[index] += 1;
-    controllers[index].makeMove(
-      gameId,
-      Program.fromList(selections.map((card) => Program.fromBigInt(card))),
-    );
+      },
+    });
   };
   const submitNil = (index: number, gameId: string, moveNumber: bigint) => {
-    assert.equal(
-      runtimes[index].transitionFeatureState('calpoker', gameId, {
+    ports[index].dispatch<CalpokerHandState>({
+      type: 'make-move',
+      gameId,
+      readable: null,
+      state: {
         ...hand(index),
         moveNumber,
         isPlayerTurn: false,
-      }),
-      true,
-    );
-    submittedMoves[index] += 1;
-    controllers[index].makeMove(gameId, null);
+      },
+    });
   };
   const autofireOpening = (index: number, gameId: string) => {
     const state = hand(index);
@@ -161,7 +162,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
   };
 
   try {
-    runtimes[0].dispatch({ type: 'submit-compose', terms });
+    runtimes[0].dispatch({ type: 'submit-compose', handProposal });
     await exchange();
     const review = runtimes[1]
       .getState()
@@ -206,23 +207,13 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     const bobSelections = hand(0).playerHand.slice(0, 4);
     submitSelections(0, gameId, bobSelections);
     await exchange();
-    const aliceOutcome = new CalpokerOutcome(
-      false,
-      15n,
-      hand(1).playerHand,
-      hand(1).opponentHand,
-      latestOpponentMove(1).readable,
-    );
+    const aliceOutcome = hand(1).outcome;
+    assert.ok(aliceOutcome, 'Alice must derive the outcome from Bob’s final readable');
 
     submitNil(1, gameId, 3n);
     await exchange();
-    const bobOutcome = new CalpokerOutcome(
-      true,
-      15n,
-      hand(0).opponentHand,
-      hand(0).playerHand,
-      latestOpponentMove(0).readable,
-    );
+    const bobOutcome = hand(0).outcome;
+    assert.ok(bobOutcome, 'Bob must derive the outcome from Alice’s terminal readable');
 
     assert.deepEqual(aliceOutcome.my_cards, bobOutcome.their_cards);
     assert.deepEqual(aliceOutcome.their_cards, bobOutcome.my_cards);
@@ -236,11 +227,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
           : 'win',
       bobOutcome.my_win_outcome,
     );
-    assert.deepEqual(
-      gameplayEvents.map((events) => events.filter((event) => 'OpponentMoved' in event).length),
-      [3, 2],
-      'the five-step hand must emit exactly one authoritative event per move',
-    );
     for (const [index, runtime] of runtimes.entries()) {
       assert.ok(
         calpokerStateCodec.decode(runtime.getState().model.game.handState),
@@ -248,21 +234,17 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
       );
     }
 
-    controllers[0].acceptSettlement(gameId);
-    await exchange();
-    for (const runtime of runtimes) {
-      assert.deepEqual(runtime.getState().model.game.activeIds, []);
+    for (const [index, runtime] of runtimes.entries()) {
+      const game = runtime.getState().model.game;
+      assert.deepEqual(game.activeIds, []);
+      assert.equal(game.instances[gameId]?.terminal.type, 'settled');
+      assert.notEqual(game.instances[gameId]?.terminal.outcome, null);
+      assert.ok(
+        calpokerStateCodec.decode(game.handState),
+        `calpoker completion player ${index}: terminal hand state must remain valid`,
+      );
     }
 
-    assert.equal(
-      runtimes[0].transitionFeatureState('calpoker', gameId, {
-        ...hand(0),
-        moveNumber: 2n,
-        isPlayerTurn: true,
-      }),
-      true,
-      'a late terminal mount projection must still belong to the completed hand',
-    );
     const firstHandKeys = runtimes.map((runtime) => runtime.getState().model.game.handKey);
     runtimes[0].dispatch({ type: 'choose-same-terms' });
     await exchange();
@@ -317,114 +299,118 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.deepEqual(secondAlice.opponentHand, secondBob.playerHand);
 
     const hookHands: Array<UseCalpokerHandResult | undefined> = [undefined, undefined];
-    const hookOutcomes: Array<CalpokerOutcome | undefined> = [undefined, undefined];
     function HookHarness({ index }: { index: number }) {
+      const runtime = runtimes[index];
       hookHands[index] = useCalpokerHand(
-        { interactionMode: 'live', controller: controllers[index] },
+        {
+          interactionMode: 'live',
+          get handState() {
+            const game = runtime.getState().model.game;
+            return projectRegisteredPendingCandidates(
+              game.activeGameType,
+              game.handState,
+              game.currentHandIds,
+              game.pendingCandidates,
+            );
+          },
+          port: ports[index],
+        },
         secondGameId,
         index === 0,
-        gameplaySubjects[index],
-        (outcome) => {
-          hookOutcomes[index] = outcome;
-          runtimes[index].dispatch({
-            type: 'hand-outcome',
-            outcomeWin: outcome.my_win_outcome,
-          });
-        },
-        (isMyTurn) =>
-          runtimes[index].dispatch({
-            type: 'durable-local-turn',
-            id: secondGameId,
-            isMyTurn,
-          }),
-        INITIAL_GAME_TERMINAL_MODEL,
-        controllers[index].handState ?? undefined,
+        runtime.getState().model.game.instances[secondGameId]?.terminal ??
+          INITIAL_GAME_TERMINAL_MODEL,
         'restored',
       );
       return null;
     }
-    act(() => {
-      hookRenderer = create(
-        React.createElement(
-          React.Fragment,
-          null,
-          React.createElement(HookHarness, { index: 0 }),
-          React.createElement(HookHarness, { index: 1 }),
-        ),
+    const hookTree = () =>
+      React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(HookHarness, { index: 0 }),
+        React.createElement(HookHarness, { index: 1 }),
       );
-    });
+    const renderHooks = () => {
+      if (hookRenderer) {
+        hookRenderer.update(hookTree());
+      } else {
+        hookRenderer = create(hookTree());
+      }
+    };
+    act(renderHooks);
 
     const stages = (index: number) => {
       const runtimeHand = hand(index);
-      const controllerHand = calpokerStateCodec.decode(controllers[index].handState);
-      assert.ok(controllerHand);
       assert.ok(hookHands[index]);
       return {
         runtime: runtimeHand.moveNumber,
-        controller: controllerHand.moveNumber,
         hook: hookHands[index].moveNumber,
       };
     };
-    assert.deepEqual(stages(0), { runtime: 1n, controller: 1n, hook: 1n });
-    assert.deepEqual(stages(1), { runtime: 1n, controller: 1n, hook: 1n });
+    assert.deepEqual(stages(0), { runtime: 1n, hook: 1n });
+    assert.deepEqual(stages(1), { runtime: 1n, hook: 1n });
 
     act(() => {
       hookHands[1]!.setCardSelections(secondAlice.playerHand.slice(0, 4));
+    });
+    act(renderHooks);
+    act(() => {
       hookHands[1]!.handleMakeMove();
     });
-    assert.deepEqual(stages(1), { runtime: 2n, controller: 2n, hook: 2n });
+    act(renderHooks);
+    assert.deepEqual(stages(1), { runtime: 2n, hook: 2n });
     await act(async () => {
       await exchange();
     });
+    act(renderHooks);
 
     act(() => {
       hookHands[0]!.setCardSelections(hand(0).playerHand.slice(0, 4));
+    });
+    act(renderHooks);
+    act(() => {
       hookHands[0]!.handleMakeMove();
     });
-    assert.deepEqual(stages(0), { runtime: 2n, controller: 2n, hook: 2n });
+    act(renderHooks);
+    assert.deepEqual(stages(0), { runtime: 2n, hook: 2n });
 
     await act(async () => {
       await exchange();
     });
+    act(renderHooks);
     await act(async () => {
       await exchange();
     });
+    act(renderHooks);
 
-    assert.ok(hookOutcomes[0], 'Bob must receive Alice’s final move readable');
-    assert.ok(hookOutcomes[1], 'Alice must receive Bob’s final-result readable');
+    assert.ok(hookHands[0]!.outcome, 'Bob must receive Alice’s final move readable');
+    assert.ok(hookHands[1]!.outcome, 'Alice must receive Bob’s final-result readable');
     assert.ok(
-      stages(1).runtime >= 2n && stages(1).controller >= 2n && stages(1).hook >= 2n,
+      stages(1).runtime >= 2n && stages(1).hook >= 2n,
       'Alice selection stage must remain submitted through final-result delivery',
     );
     for (const trace of stageTrace) {
-      const submittedIndex = trace.findIndex((entry) => entry.runtime >= 2n);
+      const submittedIndex = trace.findIndex((moveNumber) => moveNumber >= 2n);
       if (submittedIndex >= 0) {
         assert.ok(
-          trace
-            .slice(submittedIndex)
-            .every((entry) => entry.runtime >= 2n && entry.controller >= 2n),
+          trace.slice(submittedIndex).every((moveNumber) => moveNumber >= 2n),
           `Calpoker durable stage regressed after selection submission: ${JSON.stringify(
-            trace.map((entry) => ({
-              runtime: String(entry.runtime),
-              controller: String(entry.controller),
-            })),
+            trace.map(String),
           )}`,
         );
       }
     }
 
-    controllers[0].acceptSettlement(secondGameId);
-    await act(async () => {
-      await exchange();
-    });
     for (const runtime of runtimes) {
-      assert.deepEqual(runtime.getState().model.game.activeIds, []);
+      const game = runtime.getState().model.game;
+      assert.deepEqual(game.activeIds, []);
+      assert.equal(game.instances[secondGameId]?.terminal.type, 'settled');
+      assert.notEqual(game.instances[secondGameId]?.terminal.outcome, null);
     }
   } finally {
     if (hookRenderer) act(() => hookRenderer?.unmount());
     runtimes.forEach((runtime) => runtime.dispose());
     controllers.forEach((controller) => {
-      controller.onFeatureStateTransition = null;
       controller.onSaveNeeded = null;
     });
   }

@@ -5,10 +5,11 @@ used by the game framework. It covers how game logic is structured, how
 handlers produce moves, how validators enforce rules, and how the two systems
 connect through the referee puzzle.
 
-For the broader architecture (state channels, potato protocol, dispute
-resolution), see `OVERVIEW.md`. For the raw calling conventions, see
-`clsp/handler_api.md`. For DoS considerations (move size bounds, validation
-program cost, argument checking), see `CLVM_DOS.md`.
+For adding a game (package layout, registry, host APIs), see
+`GAME_WRITING_GUIDE.md`. For the broader architecture (state channels, potato
+protocol, dispute resolution), see `OVERVIEW.md`. For the raw calling
+conventions, see `clsp/handler_api.md`. For DoS considerations (move size
+bounds, validation program cost, argument checking), see `CLVM_DOS.md`.
 
 ## Table of Contents
 
@@ -39,8 +40,9 @@ Games are driven by two cooperating systems:
 
 - **Validators** enforce the rules of each move. They are chialisp programs,
   one per protocol step (e.g. `a.clsp` through `e.clsp` for calpoker). They
-  run both off-chain (for move verification during normal play) and on-chain
-  (inside the referee puzzle, for slash enforcement during disputes).
+  run both off-chain (to check a move before sending it) and on-chain (inside
+  the referee puzzle, for slash enforcement during disputes). Package layout
+  and registration are in `GAME_WRITING_GUIDE.md`.
 
 Handlers and validators are complementary: handlers decide *what* to play,
 validators prove *that it was legal*. A handler that produces an illegal
@@ -238,7 +240,8 @@ The proposal API takes one atomic group request:
 ```
 
 `parameters` is the game-specific CLVM object and `timeout` is shared by every
-game produced for the group. Both peers look up and run the same registered,
+game produced for the group. Each game package's `factoryParameters` codec is
+the parser for that object (see `clsp/handler_api.md`). Both peers look up and run the same registered,
 deterministic factory using those parameters. The factory returns a non-empty
 ordered list of canonical 12-field game records:
 
@@ -776,8 +779,8 @@ and nil for `incoming_validator_hash`, signaling the game is over.
 
 ### Key Code
 
-- Handlers: `clsp/games/calpoker/calpoker_generate.clinc`
-- Validators: `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
+- Handlers: `games/calpoker/clsp/calpoker_generate.clinc`
+- Validators: `games/calpoker/clsp/onchain/a.clsp` through `e.clsp`
 - Rust-side handler invocation: `src/channel_state/game_handler.rs`
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
@@ -799,7 +802,6 @@ changing the authoritative move flow.
 
 **Key code:**
 
-- Handlers: `clsp/games/spacepoker/spacepoker_generate.clinc`
-- Validators: `clsp/games/spacepoker/onchain/*.clsp`
-- Rust tests: `src/test_support/spacepoker.rs`, `src/tests/spacepoker_handlers.rs`,
-  `src/tests/spacepoker_validation.rs`
+- Handlers: `games/spacepoker/clsp/spacepoker_generate.clinc`
+- Validators: `games/spacepoker/clsp/onchain/*.clsp`
+- Rust tests: `games/spacepoker/rust/tests/`

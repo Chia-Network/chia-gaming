@@ -1,4 +1,3 @@
-#[allow(unused_variables)] // enable this so 'typescript_type' can be named 'typescript_type'
 mod gaming_wasm {
 
     use std::cell::RefCell;
@@ -52,75 +51,7 @@ mod gaming_wasm {
         LockedAllocator::new(FreeListAllocator::new());
 
     #[wasm_bindgen(typescript_custom_section)]
-    const TS_APPEND_CONTENT: &'static str = r#"
-    export type Amount = {
-        "amt": number,
-    };
-
-    export type Spend = {
-        "puzzle": string,
-        "solution": string,
-        "signature": string
-    };
-
-    export type CoinSpend = {
-        "coin": string,
-        "bundle": Spend
-    };
-
-    export type SpendBundle = {
-        "name"?: string,
-        "spends": Array<CoinSpend>
-    };
-
-    export type IChiaIdentity = {
-        "private_key": string,
-        "synthetic_private_key": string,
-        "public_key": string,
-        "synthetic_public_key": string,
-        "puzzle": string,
-        "puzzle_hash": string,
-    };
-
-    export type NeedCoinSpendRequest = {
-        "amount": string,
-        "conditions": Array<{ "opcode": bigint | number, "args": Array<string> }>,
-        "coin_id"?: string,
-        "max_height"?: bigint | number,
-    };
-
-    export type GameSessionEvent =
-        | { OutboundMessage: string }
-        | { OutboundTransaction: SpendBundle }
-        | { Notification: any }
-        | { Log: string }
-        | { CoinSolutionRequest: string }
-        | { ReceiveError: string }
-        | { NeedCoinSpend: NeedCoinSpendRequest }
-        | { NeedLauncherCoin: boolean };
-
-    export type DrainResult = {
-        "events": Array<GameSessionEvent>,
-        "watchCoins": Array<{ coin_name: string, coin_string: string }>,
-        "unwatchCoins": Array<{ coin_name: string, coin_string: string }>,
-    };
-
-    export type GameSessionConfig = {
-        "seed": string | undefined,
-        "have_potato": boolean,
-        "my_contribution": Amount,
-        "their_contribution": Amount,
-        "channel_timeout": number,
-        "reward_puzzle_hash": string
-    };
-
-    export type GameSessionResult = {
-        "id": number,
-        "puzzle_hash": string,
-    };
-
-    export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
-    "#;
+    const TS_APPEND_CONTENT: &'static str = include_str!("../contract.d.ts");
 
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsAmount {
@@ -138,7 +69,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 5;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 6;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -221,8 +152,10 @@ mod gaming_wasm {
 
     fn parse_game_config(js_config: JsValue) -> Result<GameConfigPartial, JsValue> {
         let jsconfig: JsGameSessionConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
-        let mut allocator = AllocEncoder::new();
-        let game_types = game_collection(&mut allocator);
+        // Handshake does not need factories. Page load warms them in the
+        // background; OffChainPhase installs the cached collection when the
+        // channel becomes live.
+        let game_types = BTreeMap::new();
         let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).map_err(|e| {
             js_error(&format!(
                 "reward_puzzle_hash hex decode: {e:?} (length={})",
@@ -289,12 +222,6 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(typescript_type = "ICreateGameSession")]
-        pub type ICreateGameSession;
-    }
-
-    #[wasm_bindgen]
     pub fn create_rng(seed: String) -> Result<i32, JsValue> {
         let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
         let rng = ChaCha8Rng::from_seed(*hashed.bytes());
@@ -319,9 +246,10 @@ mod gaming_wasm {
         })
     }
 
-    /// The name 'typescript_type' is part of the FFI
-    #[wasm_bindgen(typescript_type = "ICreateGameSession")]
-    pub fn create_game_session(js_config: JsValue) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(unchecked_return_type = "GameSessionCreateResult")]
+    pub fn create_game_session(
+        #[wasm_bindgen(unchecked_param_type = "GameSessionConfig")] js_config: JsValue,
+    ) -> Result<JsValue, JsValue> {
         let new_id = get_next_id();
         let partial = parse_game_config(js_config)?;
         with_rng(partial.rng_id, move |rng: &mut ChaCha8Rng| {
@@ -425,15 +353,8 @@ mod gaming_wasm {
             .collect()
     }
 
-    #[wasm_bindgen]
-    pub fn get_watching_coins(cid: i32) -> Result<JsValue, JsValue> {
-        let result = with_game(cid, move |cradle: &mut JsGameSession| Ok(watch_coin_entries(cradle)))?;
-        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
     /// Durable watched-coin snapshot for seeding host polling after attach or
-    /// restore. Same shape as [`get_watching_coins`]; both delegate to the
-    /// manager.
+    /// restore.
     #[wasm_bindgen]
     pub fn snapshot_watched_coins(cid: i32) -> Result<JsValue, JsValue> {
         let result = with_game(cid, move |cradle: &mut JsGameSession| Ok(watch_coin_entries(cradle)))?;
@@ -805,7 +726,7 @@ mod gaming_wasm {
 
     #[derive(Deserialize)]
     struct JsGameProposal {
-        // Game name
+        // First generated member's initial validation puzzle hash, as 32-byte hex.
         game_type: String,
         timeout: u64,
     }
@@ -820,6 +741,54 @@ mod gaming_wasm {
         })?))
     }
 
+    fn parse_game_type_hex(hex_id: &str) -> Result<GameType, JsValue> {
+        let trimmed = hex_id.strip_prefix("0x").unwrap_or(hex_id);
+        let bytes = hex::decode(trimmed).map_err(|e| {
+            JsValue::from_str(&format!("game_type must be hex of a 32-byte hash: {e}"))
+        })?;
+        let hash = Hash::from_slice(&bytes).map_err(|e| {
+            JsValue::from_str(&format!("game_type must be a 32-byte hash: {e}"))
+        })?;
+        Ok(GameType::from_hash(hash))
+    }
+
+    #[derive(Serialize)]
+    struct JsPackageIdentity {
+        key: String,
+        id: String,
+    }
+
+    /// Bootstrap metadata: catalog `key` plus first-member validation puzzle hash `id`.
+    /// Registration discovers `id` by running the factory with representative parameters.
+    /// Peer/WASM wire uses `id` (the hash). The JS session model and saves use catalog keys.
+    #[wasm_bindgen]
+    pub fn registered_game_packages() -> Result<JsValue, JsValue> {
+        let mut allocator = AllocEncoder::new();
+        let ids = game_collection::production_package_ids(&mut allocator);
+        let list: Vec<JsPackageIdentity> = ids
+            .into_iter()
+            .map(|(key, id)| JsPackageIdentity {
+                key,
+                id: id.to_string(),
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&list).map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Probe one production factory into the process-wide cache. Idempotent.
+    /// The host yields between calls so the browser event loop can stay responsive.
+    #[wasm_bindgen]
+    pub fn warm_game_package(key: String) -> Result<JsValue, JsValue> {
+        let mut allocator = AllocEncoder::new();
+        let id = game_collection::warm_production_package(&mut allocator, &key)
+            .map_err(|e| JsValue::from_str(&e))?;
+        serde_wasm_bindgen::to_value(&JsPackageIdentity {
+            key,
+            id: id.to_string(),
+        })
+        .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
     #[wasm_bindgen]
     pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
         let js_games: Vec<JsGameProposal> =
@@ -830,15 +799,16 @@ mod gaming_wasm {
             return Err(JsValue::from_str("games and parameters_list must have the same length"));
         }
         with_game(cid, move |cradle: &mut JsGameSession| {
-            let game_starts: Vec<GameProposal> = js_games
-                .iter()
-                .zip(params_arr.iter())
-                .map(|(g, p)| GameProposal {
-                    game_type: GameType(g.game_type.as_bytes().to_vec()),
+            let mut game_starts = Vec::with_capacity(js_games.len());
+            for (g, p) in js_games.iter().zip(params_arr.iter()) {
+                let game_type = parse_game_type_hex(&g.game_type)
+                    .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
+                game_starts.push(GameProposal {
+                    game_type,
                     timeout: Timeout::new(g.timeout),
                     parameters: Program::from_bytes(p),
-                })
-                .collect();
+                });
+            }
             let ids = cradle.cradle.propose_games(
                 &mut cradle.allocator,
                 &game_starts,
@@ -944,11 +914,16 @@ mod gaming_wasm {
                 .parse::<u64>()
                 .map_err(|e| JsValue::from_str(&e.to_string()))?,
         );
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle
-                .cradle
-                .cheat(&mut cradle.allocator, &game_id, share)
-        })
+        with_game_action_drain(
+            cid,
+            game_id.clone(),
+            FailedGameAction::Cheat,
+            move |cradle: &mut JsGameSession| {
+                cradle
+                    .cradle
+                    .cheat(&mut cradle.allocator, &game_id, share)
+            },
+        )
     }
 
     #[wasm_bindgen]
@@ -1020,30 +995,6 @@ mod gaming_wasm {
     pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsGameSession| {
             Ok(Into::<JsChiaIdentity>::into(cradle.cradle.identity()))
-        })?)
-        .into_js()
-    }
-
-    #[wasm_bindgen]
-    #[deprecated(note = "Game state should come from notifications in the DrainResult")]
-    #[allow(deprecated)]
-    pub fn get_game_state_id(cid: i32) -> Result<Option<String>, JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
-            Ok(cradle
-                .cradle
-                .get_game_state_id(&mut cradle.allocator)?
-                .map(|h| hex::encode(h.bytes())))
-        })
-    }
-
-    #[wasm_bindgen]
-    #[deprecated(note = "Duplicate of game_session_amount; balance should come from notifications")]
-    #[allow(deprecated)]
-    pub fn get_amount(cid: i32) -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsGameSession| {
-            Ok(JsAmount {
-                amt: cradle.cradle.amount(),
-            })
         })?)
         .into_js()
     }
@@ -1279,9 +1230,10 @@ mod gaming_wasm {
                 "OutboundTerminalMessage should be intercepted before JS event serialization"
                     .to_string(),
             )),
-            GameSessionEvent::OutboundTransaction(bundle, _expiry) => {
-                json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
-            }
+            GameSessionEvent::OutboundTransaction(_, _) => Err(types::Error::StrErr(
+                "OutboundTransaction should be intercepted before JS event serialization"
+                    .to_string(),
+            )),
             GameSessionEvent::Notification(n) => notification_event_to_js(n),
             GameSessionEvent::Log(line) => {
                 json_event_to_js(serde_json::json!({ "Log": line }))
@@ -1301,6 +1253,25 @@ mod gaming_wasm {
             GameSessionEvent::WatchCoin { .. } => Err(types::Error::StrErr(
                 "WatchCoin should be intercepted before JS event serialization".to_string(),
             )),
+        }
+    }
+
+    #[cfg(test)]
+    mod drain_event_tests {
+        use super::*;
+
+        #[test]
+        fn leaked_outbound_transaction_fails_before_js_serialization() {
+            let event = GameSessionEvent::OutboundTransaction(
+                SpendBundle {
+                    name: None,
+                    spends: Vec::new(),
+                },
+                None,
+            );
+
+            let err = game_session_event_to_js(&event).expect_err("transaction must not leak");
+            assert!(format!("{err:?}").contains("OutboundTransaction should be intercepted"));
         }
     }
 
@@ -1417,32 +1388,6 @@ mod gaming_wasm {
         })
     }
 
-    #[wasm_bindgen]
-    pub fn game_session_amount(cid: i32) -> Result<JsValue, JsValue> {
-        let amount = with_game(cid, move |cradle: &mut JsGameSession| Ok(cradle.cradle.amount()))?;
-        serde_wasm_bindgen::to_value(&JsAmount { amt: amount }).into_js()
-    }
-
-    #[wasm_bindgen]
-    #[deprecated(note = "Share information should come from game notifications")]
-    #[allow(deprecated)]
-    pub fn game_session_our_share(cid: i32) -> Result<JsValue, JsValue> {
-        let amount = with_game(cid, move |cradle: &mut JsGameSession| {
-            Ok(cradle.cradle.get_our_current_share())
-        })?;
-        serde_wasm_bindgen::to_value(&amount.map(|a| JsAmount { amt: a })).into_js()
-    }
-
-    #[wasm_bindgen]
-    #[deprecated(note = "Share information should come from game notifications")]
-    #[allow(deprecated)]
-    pub fn game_session_their_share(cid: i32) -> Result<JsValue, JsValue> {
-        let amount = with_game(cid, move |cradle: &mut JsGameSession| {
-            Ok(cradle.cradle.get_their_current_share())
-        })?;
-        serde_wasm_bindgen::to_value(&amount.map(|a| JsAmount { amt: a })).into_js()
-    }
-
     #[derive(Serialize, Deserialize)]
     struct JsChiaIdentity {
         pub private_key: String,
@@ -1512,7 +1457,7 @@ mod gaming_wasm {
         Ok(hex::encode(puzzle_hash.bytes()))
     }
 
-    #[wasm_bindgen(typescript_type = "IChiaIdentityFun")]
+    #[wasm_bindgen(unchecked_return_type = "IChiaIdentity")]
     pub fn chia_identity(rng_id: i32) -> Result<JsValue, JsValue> {
         with_rng(rng_id, move |rng: &mut ChaCha8Rng| {
             let mut allocator = AllocEncoder::new();

@@ -13,9 +13,10 @@ seed.
 
 Rust notifications are protocol facts. JavaScript renders and persists their
 browser envelope, but does not infer settlement, channel lifecycle, or
-protocol validity from display data. A UI action is an intent sent to Rust; its
-result becomes authoritative only when Rust emits the corresponding
-notification. The sole JS exception is explicit client capability policy, such
+protocol validity from display data. A UI action is an intent sent to Rust.
+`LocalActionApplied` is the host-only fact that an immediate or queued local
+action was actually applied; merely accepting an API call into Rust's queue is
+not enough. The sole JS exception is explicit client capability policy, such
 as declining a second concurrent proposal group while still supporting each
 independently progressing game within an accepted group.
 
@@ -40,7 +41,7 @@ like "OpponentMoved" for readability. The canonical wire model in Rust is
 
 - dedicated variants: `ProposalMade`, `ProposalAccepted`,
   `ProposalCancelled`, `InsufficientBalance`, `MoveRejected`, `ActionFailed`,
-  `ChannelStatus`
+  host-only `LocalActionApplied`, and `ChannelStatus`
 - gameplay lifecycle (non-terminal): `GameNotification::GameStatus { status:
 GameStatusKind, ... }`
 - **settlements (terminal):** `GameNotification::GameSettled { id, outcome,
@@ -383,6 +384,7 @@ These fire during active gameplay (after a game proposal has been accepted).
 | OpponentPlayedIllegalMove | `GameStatus { status: IllegalMoveDetected, ... }`                                       | Opponent's on-chain move detected as illegal                                           | Emitted before slash resolution                                                                                                                                                                                                                                                                                                     |
 | GameMessage               | `GameStatus { status: MyTurn/TheirTurn, other_params: { readable } }`                   | Informational game message                                                             | Decoded advisory/readable message payload                                                                                                                                                                                                                                                                                           |
 | MoveRejected              | `MoveRejected { id, tag, message }`                                                     | A local my-turn handler rejects user input                                             | Recoverable game-scoped rejection; no peer batch is sent for the rejected move                                                                                                                                                                                                                                                      |
+| LocalActionApplied        | `LocalActionApplied { id, action }`                                                     | A local move, settlement acceptance, or diagnostic cheat is actually applied           | Host-only candidate lifecycle signal. The host promotes the separately staged candidate exactly once; game packages never receive this notification.                                                                                                                                                                                |
 | GameOnChain               | `GameStatus { status: OnChainMyTurn / OnChainTheirTurn / Replaying, coin_id }`          | Game transitions on-chain                                                              | On-chain phase begins for this game. `Replaying` means a cached off-chain send-move exists for this game id and will be spent as an on-chain redo (same criterion as `take_cached_move_for_game`).                                                                                                                                  |
 | PlayingMove               | `GameStatus { status: PlayingMove, coin_id }`                                           | The host accepted an on-chain move for publication and we are waiting for confirmation | Transient pending-move status. In the browser, the preceding spend has entered the serialized wallet RPC submission lane; this does not claim that the asynchronous RPC succeeded, reached a full-node mempool, or confirmed on chain. In the simulator, the synchronous host boundary has already submitted it to the simulator mempool before delivering this notification. Followed by `OnChainTheirTurn { moved_by_us: true }` when the spend lands. Distinct from `Replaying`, which is a cached off-chain redo action being replayed on-chain. |
 | WeMoved                   | `GameStatus { status: OnChainTheirTurn, other_params: { moved_by_us: true }, coin_id }` | Our on-chain move confirms                                                             | New game coin is tracked in `coin_id`                                                                                                                                                                                                                                                                                               |
@@ -406,7 +408,7 @@ user is notified.
 | `CancelReason`         | Emitted when                                                                                                                                                                                                                                                                                                                                 | Frontend behavior                                                                                                                                                         |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SupersededByIncoming` | A peer proposal arrived in a batch while our own proposal was queued locally. WASM removes our queued proposal because the state it was built against is now stale.                                                                                                                                                                          | **Local/silent.** Terms stashed in `pendingRetryTermsRef` for automatic re-submission (see [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)). |
-| `PeerProposalPending`  | JS called `propose_game` while an unresolved peer proposal already exists in `proposed_games`. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect.                                                                                                                                                   | **Local/silent.** Same retry stash as `SupersededByIncoming`.                                                                                                             |
+| `PeerProposalPending`  | JS called `propose_games` while an unresolved peer proposal already exists in `proposed_games`. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect.                                                                                                                                                  | **Local/silent.** Same retry stash as `SupersededByIncoming`.                                                                                                             |
 | `GameActive`           | Reserved for future use. The JS-side guard prevents this from occurring in practice.                                                                                                                                                                                                                                                         | **Local/silent.** Clears retry state.                                                                                                                                     |
 | `CancelledByPeer`      | The peer sent `BatchAction::CancelProposal` for our proposal. This usually means the peer rejected it, but the same protocol message is also used as the peer-side follow-up for failed accept attempts such as insufficient balance (see [Race Conditions in Proposal Lifecycle](GAME_LIFECYCLE.md#race-conditions-in-proposal-lifecycle)). | **User-facing notice:** the proposal did not proceed on the peer side.                                                                                                    |
 | `CancelledByUs`        | We explicitly cancelled the peer's proposal (via `cancel_proposal`).                                                                                                                                                                                                                                                                         | **Silent.** We initiated the cancellation; nothing to tell the user.                                                                                                      |
@@ -441,9 +443,9 @@ GameSettled { id, outcome: SettlementOutcome, our_share, coin_id? }
 `opponent_timed_out`, `forfeited_skipped_reveal`, …). `our_share` is always
 present, including `0`.
 
-**Dual delivery:** the same payload drives (1) the session banner / dashboard
-label and (2) the active reference-game UI via `GameplayEvent.Settled`.
-Neither sink may invent a parallel event shape or skip "boring" outcomes.
+The host normalizes the payload once into the terminal instance and
+`hand-ended` model input. Session banners and game mounts both render that
+machine-owned result; there is no second event delivery.
 
 Display labels come from `SETTLEMENT_OUTCOME_LABELS` in
 `front-end/src/lib/settlement.ts`.
@@ -523,7 +525,7 @@ open item is explicitly resolved.
 
 ### Local actions are advisory
 
-Calling `propose_game`, `accept_proposal`, or `cancel_proposal` queues an
+Calling `propose_games`, `accept_proposal`, or `cancel_proposal` queues an
 intent. The potato protocol resolves it when the potato is held and the queue
 is drained. The notification stream — not the API call — is the source of
 truth. One proposal call represents one factory-derived group and the receiver
@@ -535,7 +537,7 @@ is drained).
 
 ### Rule A — Proposal lifecycle
 
-Every group-start event — a `propose_game` call (proposer side) or the single
+Every group-start event — a `propose_games` call (proposer side) or the single
 `ProposalMade` notification (receiver side) — covers the ordered IDs returned
 by the deterministic factory. Each member ID yields exactly one
 `ProposalAccepted` or `ProposalCancelled` on that player's side, but group
@@ -690,29 +692,26 @@ These are not lifecycle invariants but important rules enforced in the code:
 
 ---
 
-## GameplayEvent Mapping
+## Game Model Input Mapping
 
-The `useGameSession` hook translates raw `WasmNotification` events into
-game-agnostic `GameplayEvent` variants before forwarding them to
-game-specific hooks (`useCalpokerHand`, `useSpacepokerHand`, `useKrunkHand`).
-Game hooks never see raw notifications; they receive one of:
+`sessionMachineNotifications.ts` normalizes raw notifications directly into
+the machine-owned hand model. Game hooks never see raw notifications or an
+observable. The package input list is:
 
-| Variant            | Shape                                              | When                                                                                                                                                                               |
-| ------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OpponentMoved`    | `{ readable, gameId?, moverShare: string }`        | Remapped from `GameStatus` with `other_params.readable` and `other_params.mover_share`. `moverShare` is our share after the opponent's move (including on timeout from that move). |
-| `GameMessage`      | `{ readable, gameId? }`                            | Remapped from `GameStatus` with readable but no `mover_share` (advisory / out-of-band message).                                                                                    |
-| `ProposalAccepted` | `{ id }`                                           | A new game is starting                                                                                                                                                             |
-| `Settled`          | `{ gameId, outcome, ourShare }`                    | From `GameSettled`; same payload drives session banner labels via `terminalInfoFromGameSettled`                                                                                    |
-| `MoveRejected`     | `{ gameId: string, tag: string, message: string }` | Recoverable local handler rejection routed only to the matching game hook                                                                                                          |
-| `GameError`        | `{ gameId, reason }`                               | `EndedCancelled`, `EndedError`, `InsufficientBalance`, or unknown settlement outcome                                                                                               |
+- `hand-started`
+- `opponent-moved`
+- `game-message`
+- `move-rejected`
+- `hand-ended`
+
+`ActionFailed`, JavaScript command exceptions, proposal/session lifecycle, and
+infrastructure failures remain host-owned and use the shared notification
+queues.
 
 Settlement label helpers live in `front-end/src/lib/settlement.ts`
 (`settlementLabel`, `isForfeitOutcome`, game-specific copy helpers).
 
-Non-terminal move/status notifications are remapped by
-`gameplayEventsForGameStatus` into the `OpponentMoved` / `GameMessage` shapes
-above (including `moverShare` on `OpponentMoved`).
-
-**Key code:** `front-end/src/hooks/useGameSession.ts` (`terminalInfoFromGameSettled`,
-`settledEventForInfo`, `gameplayEventsForGameStatus`),
+**Key code:** `front-end/src/lib/session/sessionMachineNotifications.ts`,
+`front-end/src/lib/session/sessionMachineGame.ts`,
+`front-end/src/lib/session/gameSessionEvents.ts`, and
 `front-end/src/lib/settlement.ts`

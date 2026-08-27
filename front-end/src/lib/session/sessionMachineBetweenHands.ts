@@ -1,8 +1,4 @@
-import {
-  selectComposeGame,
-  setComposeDraftAmount,
-  setSpacepokerComposeDraft,
-} from './composeDraft';
+import { selectComposeGame, updateSelectedComposeDraft } from './composeDraft';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -19,8 +15,7 @@ export type BetweenHandEvent = Extract<
   | { type: 'set-compose-draft' }
   | { type: 'select-compose-game' }
   | { type: 'set-compose-timeout' }
-  | { type: 'set-compose-amount' }
-  | { type: 'set-spacepoker-compose' }
+  | { type: 'update-selected-compose-draft' }
   | { type: 'set-compose-proposal-sent' }
   | { type: 'set-same-terms-requested' }
   | { type: 'set-expecting-counter-proposal' }
@@ -49,7 +44,7 @@ export function reduceBetweenHandEvent(
         ...state,
         model: {
           ...state.model,
-          betweenHand: { ...state.model.betweenHand, rejectedOnceTerms: event.terms },
+          betweenHand: { ...state.model.betweenHand, rejectedOnceHandProposal: event.handProposal },
         },
       };
       break;
@@ -58,7 +53,7 @@ export function reduceBetweenHandEvent(
         ...state,
         model: {
           ...state.model,
-          betweenHand: { ...state.model.betweenHand, lastTerms: event.terms },
+          betweenHand: { ...state.model.betweenHand, lastHandProposal: event.handProposal },
         },
       };
       break;
@@ -67,7 +62,7 @@ export function reduceBetweenHandEvent(
         ...state,
         model: {
           ...state.model,
-          betweenHand: { ...state.model.betweenHand, pendingRetryTerms: event.terms },
+          betweenHand: { ...state.model.betweenHand, pendingRetryHandProposal: event.handProposal },
         },
       };
       break;
@@ -113,30 +108,14 @@ export function reduceBetweenHandEvent(
         },
       };
       break;
-    case 'set-compose-amount':
+    case 'update-selected-compose-draft':
       next = {
         ...state,
         model: {
           ...state.model,
           betweenHand: {
             ...state.model.betweenHand,
-            compose: setComposeDraftAmount(
-              state.model.betweenHand.compose,
-              event.gameType,
-              event.amount,
-            ),
-          },
-        },
-      };
-      break;
-    case 'set-spacepoker-compose':
-      next = {
-        ...state,
-        model: {
-          ...state.model,
-          betweenHand: {
-            ...state.model.betweenHand,
-            compose: setSpacepokerComposeDraft(state.model.betweenHand.compose, event.draft),
+            compose: updateSelectedComposeDraft(state.model.betweenHand.compose, event.draft),
           },
         },
       };
@@ -184,8 +163,7 @@ export function reduceBetweenHandEvent(
   const shouldPersist =
     event.type === 'select-compose-game' ||
     event.type === 'set-compose-timeout' ||
-    event.type === 'set-compose-amount' ||
-    event.type === 'set-spacepoker-compose' ||
+    event.type === 'update-selected-compose-draft' ||
     event.type === 'set-compose-draft' ||
     event.type === 'set-last-outcome';
   return {

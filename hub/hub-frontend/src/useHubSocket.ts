@@ -37,23 +37,6 @@ type InboundMessage =
   | { type: 'keepalive' }
   | { type: 'error'; error?: string };
 
-let nextHubConnId = 1;
-
-export function hubHsLog(event: string, fields?: Record<string, unknown>) {
-  const parts = [
-    '[hub-hs]',
-    `ev=${event}`,
-    `iso=${new Date().toISOString()}`,
-    `mono_ms=${(typeof performance !== 'undefined' ? performance.now() : 0).toFixed(1)}`,
-  ];
-  if (fields) {
-    for (const [k, v] of Object.entries(fields)) {
-      parts.push(`${k}=${String(v)}`);
-    }
-  }
-  console.warn(parts.join(' '));
-}
-
 function toWsUrl(input: string): string {
   const url = new URL(input);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -64,7 +47,6 @@ function toWsUrl(input: string): string {
 }
 
 export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string) {
-  const connIdRef = useRef<number>(nextHubConnId++);
   const [players, setPlayers] = useState<Player[]>([]);
   const [hubUpdateReceived, setHubUpdateReceived] = useState(false);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
@@ -76,7 +58,6 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
   const [savedAlias, setSavedAlias] = useState<string | null>(null);
   const [aliasLoaded, setAliasLoaded] = useState(false);
   const [publicId, setPublicId] = useState<string | null>(null);
-  const uniqueIdRef = useRef(uniqueId);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingWsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -87,47 +68,22 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
   const joinedAliasRef = useRef<string | null>(null);
   const hasConnectedRef = useRef(false);
 
-  useEffect(() => {
-    uniqueIdRef.current = uniqueId;
-  }, [uniqueId]);
-
-  const send = useCallback(
-    (payload: Record<string, unknown>, queueIfClosed = true) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        if (queueIfClosed) {
-          pendingOutboundRef.current.push(payload);
-          hubHsLog('outbound_buffered', {
-            conn_id: connIdRef.current,
-            session_id: sessionId,
-            type: String(payload.type ?? 'unknown'),
-            buffered_len: pendingOutboundRef.current.length,
-          });
-        }
-        return false;
+  const send = useCallback((payload: Record<string, unknown>, queueIfClosed = true) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (queueIfClosed) {
+        pendingOutboundRef.current.push(payload);
       }
-      hubHsLog('outbound_sent', {
-        conn_id: connIdRef.current,
-        session_id: sessionId,
-        type: String(payload.type ?? 'unknown'),
-      });
-      ws.send(JSON.stringify(payload));
-      return true;
-    },
-    [sessionId],
-  );
+      return false;
+    }
+    ws.send(JSON.stringify(payload));
+    return true;
+  }, []);
 
   useEffect(() => {
     if (!uniqueId) return;
 
-    const connId = connIdRef.current;
     const wsUrl = toWsUrl(hubUrl);
-    hubHsLog('connection_init', {
-      conn_id: connIdRef.current,
-      session_id: sessionId,
-      unique_id: uniqueId,
-      ws_url: wsUrl,
-    });
 
     closingRef.current = false;
     setReconnectBlocked(false);
@@ -142,22 +98,11 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
 
     const connect = () => {
       if (closingRef.current) return;
-      hubHsLog('connect_start', {
-        conn_id: connIdRef.current,
-        session_id: sessionId,
-        ws_url: wsUrl,
-      });
       const ws = new WebSocket(wsUrl);
-      const connectStartedAt = Date.now();
       pendingWsRef.current = ws;
 
       const connectTimeout = window.setTimeout(() => {
         if (ws.readyState !== WebSocket.CONNECTING) return;
-        hubHsLog('ws_connect_timeout', {
-          conn_id: connIdRef.current,
-          session_id: sessionId,
-          elapsed_ms: Date.now() - connectStartedAt,
-        });
         try {
           ws.close();
         } catch {
@@ -171,42 +116,21 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
         pendingWsRef.current = null;
         wsRef.current = ws;
         reconnectAttemptRef.current = 0;
-        hubHsLog('ws_open', {
-          conn_id: connIdRef.current,
-          session_id: sessionId,
-          ready_state: ws.readyState,
-          connect_elapsed_ms: Date.now() - connectStartedAt,
-        });
         setIsConnected(true);
         setHasConnected(true);
         hasConnectedRef.current = true;
         setInitialConnectionFailed(false);
         ws.send(JSON.stringify({ type: 'get_alias', session_id: sessionId }));
-        hubHsLog('get_alias_send', {
-          conn_id: connIdRef.current,
-          session_id: sessionId,
-          unique_id: uniqueIdRef.current,
-        });
         if (joinedAliasRef.current) {
           const payload = {
             type: 'join',
             session_id: sessionId,
             alias: joinedAliasRef.current,
           };
-          hubHsLog('join_resend_on_open', {
-            conn_id: connIdRef.current,
-            session_id: sessionId,
-            alias_len: joinedAliasRef.current.length,
-          });
           ws.send(JSON.stringify(payload));
         }
         if (pendingOutboundRef.current.length > 0) {
           const queued = pendingOutboundRef.current.splice(0, pendingOutboundRef.current.length);
-          hubHsLog('flush_buffered_outbound', {
-            conn_id: connIdRef.current,
-            session_id: sessionId,
-            count: queued.length,
-          });
           for (const payload of queued) {
             ws.send(JSON.stringify(payload));
           }
@@ -238,11 +162,6 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
               console.error('[hub] hub_update missing players array', msg);
               break;
             }
-            hubHsLog('hub_update_recv', {
-              conn_id: connIdRef.current,
-              session_id: sessionId,
-              players: msg.players.length,
-            });
             setPlayers(msg.players);
             setHubUpdateReceived(true);
             break;
@@ -256,11 +175,6 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
             );
             break;
           case 'alias_result':
-            hubHsLog('alias_result_recv', {
-              conn_id: connIdRef.current,
-              session_id: sessionId,
-              has_alias: msg.alias !== null,
-            });
             setSavedAlias(msg.alias);
             setAliasLoaded(true);
             break;
@@ -282,15 +196,6 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
         }
         const isCurrentWs = wsRef.current === ws || pendingWsRef.current === ws;
         if (!isCurrentWs) return;
-        hubHsLog('ws_close', {
-          conn_id: connIdRef.current,
-          session_id: sessionId,
-          code: event.code,
-          reason: event.reason || '',
-          clean: event.wasClean,
-          closing: closingRef.current,
-          connect_elapsed_ms: Date.now() - connectStartedAt,
-        });
         setIsConnected(false);
         wsRef.current = null;
         pendingWsRef.current = null;
@@ -306,17 +211,7 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
           RECONNECT_DELAYS[Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS.length - 1)];
         const delay = Math.round(base * (0.75 + Math.random() * 0.5));
         reconnectAttemptRef.current++;
-        hubHsLog('reconnect_timer_set', {
-          conn_id: connIdRef.current,
-          session_id: sessionId,
-          delay_ms: delay,
-          attempt: reconnectAttemptRef.current,
-        });
         reconnectTimerRef.current = window.setTimeout(() => {
-          hubHsLog('reconnect_timer_fire', {
-            conn_id: connIdRef.current,
-            session_id: sessionId,
-          });
           connect();
         }, delay);
       };
@@ -325,11 +220,6 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
         clearTimeout(connectTimeout);
         const isCurrentWs = wsRef.current === ws || pendingWsRef.current === ws;
         if (!isCurrentWs) return;
-        hubHsLog('ws_error', {
-          conn_id: connIdRef.current,
-          session_id: sessionId,
-          connect_elapsed_ms: Date.now() - connectStartedAt,
-        });
         try {
           ws.close();
         } catch {
@@ -357,10 +247,6 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload);
       closingRef.current = true;
-      hubHsLog('connection_cleanup', {
-        conn_id: connId,
-        session_id: sessionId,
-      });
       setIsConnected(false);
       if (reconnectTimerRef.current !== null) {
         clearTimeout(reconnectTimerRef.current);
@@ -392,11 +278,6 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
       const trimmed = alias.trim();
       if (!trimmed) return;
       joinedAliasRef.current = trimmed;
-      hubHsLog('join_call', {
-        conn_id: connIdRef.current,
-        session_id: sessionId,
-        alias_len: trimmed.length,
-      });
       send(
         {
           type: 'join',

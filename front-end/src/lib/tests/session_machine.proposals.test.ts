@@ -1,7 +1,11 @@
+import { Program } from 'clvm-lib';
+import { encodeGameProposalParameters } from '../gameProposalCodec';
+import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { CALPOKER_TERMS, KRUNK_TERMS, send } from './session_machine.harness';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
 
 describe('session machine behavior sequences', () => {
   it('fails fast when acceptance or balance failure has no normalized proposal group', () => {
@@ -68,7 +72,7 @@ describe('session machine behavior sequences', () => {
       group: {
         primaryId: '11',
         memberIds: ['11'],
-        terms: CALPOKER_TERMS,
+        handProposal: CALPOKER_TERMS,
         origin: 'local',
         disposition: 'outgoing',
       },
@@ -145,7 +149,7 @@ describe('session machine behavior sequences', () => {
       group: {
         primaryId: '1',
         memberIds: ['1', '2'],
-        terms: KRUNK_TERMS,
+        handProposal: KRUNK_TERMS,
         origin: 'local',
         disposition: 'outgoing',
       },
@@ -161,7 +165,7 @@ describe('session machine behavior sequences', () => {
       reduceSessionMachine,
     ).state;
 
-    expect(state.model.betweenHand.proposalGroups[0]?.terms).toEqual(KRUNK_TERMS);
+    expect(state.model.betweenHand.proposalGroups[0]?.handProposal).toEqual(KRUNK_TERMS);
 
     expect(() => {
       state = reduceSessionNotification(
@@ -181,7 +185,7 @@ describe('session machine behavior sequences', () => {
 
     expect(restored.model.betweenHand.proposalGroups[0]).toMatchObject({
       memberIds: ['1', '2'],
-      terms: KRUNK_TERMS,
+      handProposal: KRUNK_TERMS,
       disposition: 'accepted',
     });
   });
@@ -190,7 +194,7 @@ describe('session machine behavior sequences', () => {
     const proposal = {
       primaryId: '21',
       memberIds: ['21'],
-      terms: CALPOKER_TERMS,
+      handProposal: CALPOKER_TERMS,
       origin: 'peer' as const,
       disposition: 'incoming-review' as const,
     };
@@ -226,12 +230,12 @@ describe('session machine behavior sequences', () => {
       reduceSessionMachine(state, {
         type: 'request-propose-game',
 
-        terms: CALPOKER_TERMS,
+        handProposal: CALPOKER_TERMS,
       }),
     ).toEqual({
       state,
 
-      effects: [{ type: 'controller-propose-game', terms: CALPOKER_TERMS }],
+      effects: [{ type: 'controller-propose-game', handProposal: CALPOKER_TERMS }],
     });
 
     expect(
@@ -241,5 +245,80 @@ describe('session machine behavior sequences', () => {
     expect(
       reduceSessionMachine(state, { type: 'request-cancel-proposal', id: '7' }).effects,
     ).toEqual([{ type: 'controller-cancel-proposal', id: '7' }]);
+  });
+
+  it('reviews a Space Poker proposal after Calpoker hands instead of going on-chain', () => {
+    setProtocolIds(TEST_PROTOCOL_IDS);
+    try {
+      const terms = {
+        gameType: 'spacepoker' as const,
+        myContribution: 100n,
+        theirContribution: 100n,
+        gameTimeout: 15n,
+        unitSizeMojos: 10n,
+      };
+      const state = createSessionMachineState(
+        createSessionModel({
+          game: { handKey: 1 },
+          betweenHand: { mode: 'compose-proposal', lastHandProposal: CALPOKER_TERMS },
+        }),
+      );
+      const unreadable = reduceSessionMachine(state, {
+        type: 'wasm-notification',
+        notification: {
+          ProposalMade: {
+            id: '9',
+            group_ids: ['9'],
+            my_contribution: '100',
+            their_contribution: '100',
+            timeout: '15',
+            game_type: testProtocolId('spacepoker'),
+            parameters: Program.fromList([]).serialize(),
+          },
+        },
+        iStarted: false,
+      });
+      expect(unreadable.effects.map((effect) => effect.type)).toContain('controller-go-on-chain');
+
+      const missingParameters = reduceSessionMachine(state, {
+        type: 'wasm-notification',
+        notification: {
+          ProposalMade: {
+            id: '9',
+            group_ids: ['9'],
+            my_contribution: '100',
+            their_contribution: '100',
+            timeout: '15',
+            game_type: testProtocolId('spacepoker'),
+            initial_state: encodeGameProposalParameters(terms, true).serialize(),
+          },
+        },
+        iStarted: false,
+      });
+      expect(missingParameters.effects.map((effect) => effect.type)).toContain(
+        'controller-go-on-chain',
+      );
+
+      const readable = reduceSessionMachine(state, {
+        type: 'wasm-notification',
+        notification: {
+          ProposalMade: {
+            id: '9',
+            group_ids: ['9'],
+            my_contribution: '100',
+            their_contribution: '100',
+            timeout: '15',
+            game_type: testProtocolId('spacepoker'),
+            parameters: encodeGameProposalParameters(terms, true).serialize(),
+          },
+        },
+        iStarted: false,
+      });
+      expect(readable.effects.map((effect) => effect.type)).not.toContain('controller-go-on-chain');
+      expect(readable.state.model.betweenHand.mode).toBe('review-incoming-proposal');
+      expect(readable.state.model.betweenHand.proposalGroups[0]?.handProposal).toEqual(terms);
+    } finally {
+      resetProtocolIds();
+    }
   });
 });

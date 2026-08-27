@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use crate::channel_state::types::ReadableMove;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, Hash, ProgramRef, PuzzleHash,
-    SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, Hash, Program, ProgramRef,
+    PuzzleHash, SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
     CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE,
@@ -178,6 +178,15 @@ pub enum SettlementOutcome {
 pub enum FailedGameAction {
     MakeMove,
     AcceptSettlement,
+    Cheat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalActionKind {
+    MakeMove,
+    AcceptSettlement,
+    Cheat,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -248,6 +257,7 @@ pub enum GameNotification {
         initial_validation_program_hash: Hash,
         initial_state: ProgramRef,
         game_type: GameType,
+        parameters: Program,
     },
     ProposalAccepted {
         id: GameID,
@@ -275,6 +285,10 @@ pub enum GameNotification {
         id: GameID,
         tag: String,
         message: String,
+    },
+    LocalActionApplied {
+        id: GameID,
+        action: LocalActionKind,
     },
     ChannelStatus(ChannelStatusSnapshot),
 }
@@ -561,5 +575,23 @@ mod tests {
         assert_eq!(CoinOfInterest::UnrollPayout.label(), "Unroll payout coin");
         assert_eq!(CoinOfInterest::CurrentGame.label(), "Current game coin");
         assert_eq!(CoinOfInterest::GamePayout.label(), "Game payout coin");
+    }
+
+    #[test]
+    fn local_action_applied_uses_host_notification_wire_shape() {
+        let notification = GameNotification::LocalActionApplied {
+            id: GameID(7),
+            action: LocalActionKind::AcceptSettlement,
+        };
+        let json = serde_json::to_value(notification).expect("serialize notification");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "LocalActionApplied": {
+                    "id": 7,
+                    "action": "accept_settlement",
+                }
+            })
+        );
     }
 }

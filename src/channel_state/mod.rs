@@ -29,7 +29,6 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key,
     puzzle_hash_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
-use crate::common::types::Sha256Input;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
@@ -2123,14 +2122,5 @@ impl ChannelState {
                 game_id
             )))
         }
-    }
-
-    pub fn get_game_state_id(&self, env: &mut ChannelEnv<'_>) -> Result<Hash, Error> {
-        let mut bytes: Vec<u8> = Vec::with_capacity(self.live_games.len() * 32);
-        for l in self.live_games.iter() {
-            let ph = l.current_puzzle_hash(env.allocator)?;
-            bytes.extend_from_slice(ph.bytes());
-        }
-        Ok(Sha256Input::Bytes(&bytes).hash())
     }
 }

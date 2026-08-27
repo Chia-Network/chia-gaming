@@ -4,7 +4,7 @@ import type {
   LiveSessionSave,
   PreHandshakeSessionSave,
   PreferencesSessionSave,
-  SavedHandTerms,
+  SavedHandProposal,
   SessionHistorySave,
   SessionIdentitySave,
   SessionPairingSave,
@@ -16,8 +16,10 @@ import type {
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
 import {
   decodePersistedGameState,
+  decodeGameFeatureState,
+  encodeHandProposalExtras,
   gameHandMembershipDescription,
-  isRegisteredGameType,
+  isCatalogGameType,
   validateGameHandMembership,
 } from '../gameRegistry';
 import {
@@ -32,13 +34,14 @@ import {
   INITIAL_CHANNEL_STATUS_MODEL,
   normalizeSessionPresentation,
 } from './normalization';
-import type { BetweenHandModeModel, HandTermsModel, SessionModel } from './types';
+import type { BetweenHandModeModel, HandProposal, LocalActionKind, SessionModel } from './types';
 import { isTerminalChannelSnapshot } from './selectors';
 import {
   parseComposeDraftState,
-  parseOptionalTermsSnapshot,
+  encodeComposeDraftState,
+  parseOptionalHandProposalSnapshot,
   parseProposalGroups,
-  parseTermsSnapshot,
+  parseHandProposalSnapshot,
 } from './persistenceBetweenHands';
 import {
   BETWEEN_HAND_MODES,
@@ -278,51 +281,14 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
   };
 }
 
-function savedTermsFromModel(terms: HandTermsModel): SavedHandTerms {
-  const base = {
-    my_contribution: terms.myContribution.toString(),
-    their_contribution: terms.theirContribution.toString(),
-    game_timeout: terms.gameTimeout.toString(),
+function savedHandProposalFromModel(handProposal: HandProposal): SavedHandProposal {
+  return {
+    my_contribution: handProposal.myContribution.toString(),
+    their_contribution: handProposal.theirContribution.toString(),
+    game_timeout: handProposal.gameTimeout.toString(),
+    game_type: handProposal.gameType,
+    ...encodeHandProposalExtras(handProposal),
   };
-  return terms.gameType === 'spacepoker'
-    ? {
-        ...base,
-        game_type: terms.gameType,
-        spacepoker_unit_size: terms.unitSizeMojos.toString(),
-      }
-    : { ...base, game_type: terms.gameType };
-}
-
-function initialTermsFromCompose(
-  compose: ReturnType<typeof parseComposeDraftState>,
-): HandTermsModel {
-  const common = { gameTimeout: compose.gameTimeout };
-  switch (compose.selectedGame) {
-    case 'calpoker':
-      return {
-        ...common,
-        gameType: compose.selectedGame,
-        myContribution: compose.calpoker.amount,
-        theirContribution: compose.calpoker.amount,
-      };
-    case 'krunk':
-      return {
-        ...common,
-        gameType: compose.selectedGame,
-        myContribution: compose.krunk.amount,
-        theirContribution: compose.krunk.amount,
-      };
-    case 'spacepoker': {
-      const contribution = compose.spacepoker.unitSize * compose.spacepoker.stackSize;
-      return {
-        ...common,
-        gameType: compose.selectedGame,
-        myContribution: contribution,
-        theirContribution: contribution,
-        unitSizeMojos: compose.spacepoker.unitSize,
-      };
-    }
-  }
 }
 
 function parsePresentation(value: unknown): SessionPresentationSave {
@@ -348,13 +314,43 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       return [id, parsed];
     }),
   );
-  if (!isRegisteredGameType(fields.activeGameType)) {
+  if (!isCatalogGameType(fields.activeGameType)) {
     throw new Error(`Garbled save: invalid activeGameType ${String(fields.activeGameType)}`);
   }
   const decodedHandState =
     fields.handState === null ? null : decodePersistedGameState(fields.handState);
   if (fields.handState !== null && decodedHandState === null) {
     throw new Error('Garbled save: invalid handState');
+  }
+  if (!Array.isArray(fields.pendingCandidates)) {
+    throw new Error('Garbled save: invalid pendingCandidates');
+  }
+  const pendingCandidates = fields.pendingCandidates.map((value, index) => {
+    const pending = requireRecord(value, `pendingCandidates[${index}]`);
+    if (!isCatalogGameType(pending.gameType)) {
+      throw new Error(`Garbled save: invalid pendingCandidates[${index}].gameType`);
+    }
+    const id = requireString(pending.id, `pendingCandidates[${index}].id`);
+    const action = parseDiscriminant<LocalActionKind>(
+      pending.action,
+      new Set(['make_move', 'accept_settlement', 'cheat']),
+      `pendingCandidates[${index}].action`,
+    );
+    const featureState = decodeGameFeatureState(pending.gameType, pending.featureState);
+    if (featureState === null) {
+      throw new Error(`Garbled save: invalid pendingCandidates[${index}].featureState`);
+    }
+    if (
+      pending.gameType !== fields.activeGameType ||
+      !currentHandGameIds.includes(id) ||
+      !activeGameIds.includes(id)
+    ) {
+      throw new Error(`Garbled save: pending candidate ${id} is not an active hand member`);
+    }
+    return { gameType: pending.gameType, id, action, featureState };
+  });
+  if (new Set(pendingCandidates.map((pending) => pending.id)).size !== pendingCandidates.length) {
+    throw new Error('Garbled save: duplicate pending candidate id');
   }
   const lastOutcomeWin =
     fields.lastOutcomeWin === null
@@ -373,17 +369,20 @@ function parsePresentation(value: unknown): SessionPresentationSave {
           'dismissedChannelStatus',
         );
   const compose = parseComposeDraftState(fields.betweenHandCompose);
-  const lastTerms =
-    fields.betweenHandLastTerms === null
+  const lastHandProposal =
+    fields.betweenHandLastHandProposal === null
       ? null
-      : parseTermsSnapshot(fields.betweenHandLastTerms, 'betweenHandLastTerms');
-  const rejectedOnceTerms = parseOptionalTermsSnapshot(
-    fields.betweenHandRejectedOnceTerms,
-    'betweenHandRejectedOnceTerms',
+      : parseHandProposalSnapshot(
+          fields.betweenHandLastHandProposal,
+          'betweenHandLastHandProposal',
+        );
+  const rejectedOnceHandProposal = parseOptionalHandProposalSnapshot(
+    fields.betweenHandRejectedOnceHandProposal,
+    'betweenHandRejectedOnceHandProposal',
   );
-  const pendingRetryTerms = parseOptionalTermsSnapshot(
-    fields.betweenHandPendingRetryTerms,
-    'betweenHandPendingRetryTerms',
+  const pendingRetryHandProposal = parseOptionalHandProposalSnapshot(
+    fields.betweenHandPendingRetryHandProposal,
+    'betweenHandPendingRetryHandProposal',
   );
   const proposalGroups = parseProposalGroups(fields.proposalGroups, 'proposalGroups');
   const waitingStateEnteredAt =
@@ -402,6 +401,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     gameInstances,
     activeGameType: fields.activeGameType,
     handState: decodedHandState?.persisted ?? null,
+    pendingCandidates,
     channelStatus: decodeChannelStatusPayload(fields.channelStatus),
     lastOutcomeWin,
     myRunningBalance: (() => {
@@ -417,28 +417,23 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       BETWEEN_HAND_MODES,
       'betweenHandMode',
     ),
-    betweenHandCompose: {
-      selected_game: compose.selectedGame,
-      game_timeout: compose.gameTimeout.toString(),
-      proposal_sent: compose.proposalSent,
-      calpoker: { amount: compose.calpoker.amount.toString() },
-      krunk: { amount: compose.krunk.amount.toString() },
-      spacepoker: {
-        unit_size: compose.spacepoker.unitSize.toString(),
-        stack_size: compose.spacepoker.stackSize.toString(),
-      },
-    },
-    betweenHandLastTerms: lastTerms === null ? null : savedTermsFromModel(lastTerms),
-    betweenHandRejectedOnceTerms:
-      rejectedOnceTerms === null ? null : savedTermsFromModel(rejectedOnceTerms),
-    betweenHandPendingRetryTerms:
-      pendingRetryTerms === null ? null : savedTermsFromModel(pendingRetryTerms),
+    betweenHandCompose: encodeComposeDraftState(compose),
+    betweenHandLastHandProposal:
+      lastHandProposal === null ? null : savedHandProposalFromModel(lastHandProposal),
+    betweenHandRejectedOnceHandProposal:
+      rejectedOnceHandProposal === null
+        ? null
+        : savedHandProposalFromModel(rejectedOnceHandProposal),
+    betweenHandPendingRetryHandProposal:
+      pendingRetryHandProposal === null
+        ? null
+        : savedHandProposalFromModel(pendingRetryHandProposal),
     proposalGroups: proposalGroups.map((group) => ({
       primary_id: group.primaryId,
       member_ids: group.memberIds,
       origin: group.origin,
       disposition: group.disposition,
-      terms: savedTermsFromModel(group.terms),
+      hand_proposal: savedHandProposalFromModel(group.handProposal),
     })),
     waitingStateEnteredAt,
     cleanShutdownGraceStartedAt,
@@ -466,13 +461,13 @@ export function sessionAmountsFromSave(save: SessionSave): {
   };
 }
 
-export interface ParsedSessionSaveV12 {
+export interface ParsedSessionSave {
   model: SessionModel;
   phase: SessionSave['phase'];
   save: SessionSave;
 }
 
-export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 {
+export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   const envelope = requireRecord(value, 'session envelope');
   if (envelope.schema !== SESSION_SAVE_SCHEMA) {
     throw new Error(`Garbled save: unsupported schema ${String(envelope.schema)}`);
@@ -662,7 +657,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
   }
   if (
     currentHandIds.length > 0 &&
-    isRegisteredGameType(save.activeGameType) &&
+    isCatalogGameType(save.activeGameType) &&
     !validateGameHandMembership(save.activeGameType, currentHandIds, handState)
   ) {
     throw new Error(
@@ -671,20 +666,23 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
   }
 
   const compose = parseComposeDraftState(save.betweenHandCompose);
-  const lastTerms =
-    save.betweenHandLastTerms === null
-      ? initialTermsFromCompose(compose)
-      : parseTermsSnapshot(save.betweenHandLastTerms, 'betweenHandLastTerms');
+  const lastHandProposal =
+    save.betweenHandLastHandProposal === null
+      ? null
+      : parseHandProposalSnapshot(save.betweenHandLastHandProposal, 'betweenHandLastHandProposal');
   const hasPersistedHand = activeIds.length > 0 || currentHandIds.length > 0 || handState !== null;
-  if (hasPersistedHand && save.betweenHandLastTerms === null) {
-    throw new Error('Garbled save: persisted hand is missing betweenHandLastTerms');
+  if (hasPersistedHand && lastHandProposal === null) {
+    throw new Error('Garbled save: persisted hand is missing betweenHandLastHandProposal');
   }
   if (
     hasPersistedHand &&
-    isRegisteredGameType(save.activeGameType) &&
-    lastTerms.gameType !== save.activeGameType
+    lastHandProposal !== null &&
+    isCatalogGameType(save.activeGameType) &&
+    lastHandProposal.gameType !== save.activeGameType
   ) {
-    throw new Error('Garbled save: activeGameType does not match betweenHandLastTerms.game_type');
+    throw new Error(
+      'Garbled save: activeGameType does not match betweenHandLastHandProposal.game_type',
+    );
   }
   const restoredActiveIds = [...activeIds];
   const lastDisplayedId = save.lastDisplayedGameId;
@@ -712,7 +710,9 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
       },
       game: {
         handKey:
-          restoredActiveIds.length > 0 || save.handState || save.betweenHandLastTerms ? 1 : 0,
+          restoredActiveIds.length > 0 || save.handState || save.betweenHandLastHandProposal
+            ? 1
+            : 0,
         activeIds: restoredActiveIds,
         currentHandIds,
         currentHandOrigin: save.currentHandOrigin,
@@ -720,20 +720,23 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSaveV12 
         lastDisplayedId,
         activeGameType: save.activeGameType,
         handState,
+        pendingCandidates: Object.fromEntries(
+          save.pendingCandidates.map((pending) => [pending.id, pending]),
+        ),
         queue: parseQueuedNotifications(save.gameNotifQueue),
       },
       betweenHand: {
         mode,
         proposalGroups,
-        rejectedOnceTerms: parseOptionalTermsSnapshot(
-          save.betweenHandRejectedOnceTerms,
-          'betweenHandRejectedOnceTerms',
+        rejectedOnceHandProposal: parseOptionalHandProposalSnapshot(
+          save.betweenHandRejectedOnceHandProposal,
+          'betweenHandRejectedOnceHandProposal',
         ),
-        pendingRetryTerms: parseOptionalTermsSnapshot(
-          save.betweenHandPendingRetryTerms,
-          'betweenHandPendingRetryTerms',
+        pendingRetryHandProposal: parseOptionalHandProposalSnapshot(
+          save.betweenHandPendingRetryHandProposal,
+          'betweenHandPendingRetryHandProposal',
         ),
-        lastTerms,
+        lastHandProposal,
         compose,
         newHandRequested: hasOutgoing && mode === 'decision',
       },

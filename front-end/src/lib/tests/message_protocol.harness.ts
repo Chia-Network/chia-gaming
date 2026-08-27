@@ -11,7 +11,9 @@ import type {
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { _resetForTests as resetSaveState, saveSession } from '../../hooks/save';
+import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
+import { mockGamePackageIdentity, TEST_PROTOCOL_IDS } from './protocolIdentities';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
   get: (target, property) =>
@@ -30,9 +32,35 @@ export function saveLiveSession(fields: Record<string, unknown>): Promise<void> 
 }
 export const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
+export function wasmResult(overrides: Partial<WasmResult> = {}): WasmResult {
+  return {
+    events: [],
+    watchCoins: [],
+    unwatchCoins: [],
+    actionSucceeded: true,
+    disposition: { kind: 'active' },
+    ...overrides,
+  };
+}
+
+export function processWasmResult(
+  controller: SessionController,
+  overrides: Partial<WasmResult>,
+): void {
+  controller.processResult(wasmResult(overrides));
+}
+
 export const mockWasmConnection = new Proxy({} as WasmConnection, {
-  get: (_target, property) =>
-    property === 'game_session_serialization_schema' ? () => 1 : () => undefined,
+  get: (_target, property) => {
+    if (property === 'game_session_serialization_schema') return () => 1;
+    if (property === 'registered_game_packages') {
+      return () => [...TEST_PROTOCOL_IDS];
+    }
+    if (property === 'warm_game_package') {
+      return (key: string) => mockGamePackageIdentity(key);
+    }
+    return () => undefined;
+  },
 });
 
 export function channelStatus(
@@ -88,21 +116,24 @@ export function testSpendBundle(coinHex: string): SpendBundle {
 }
 
 export function makeMockCradle(
-  onDeliver: (msg: Uint8Array) => WasmResult | undefined = () => ({ events: [] }),
+  onDeliver: (msg: Uint8Array) => Partial<WasmResult> | undefined = () => wasmResult(),
 ): ChiaGame {
   return {
-    deliver_message: jest.fn((msg: Uint8Array) => onDeliver(msg)),
-    report_coin_states: jest.fn(() => ({ events: [] }) as WasmResult),
-    report_height: jest.fn(() => ({ events: [] }) as WasmResult),
+    deliver_message: jest.fn((msg: Uint8Array) => {
+      const result = onDeliver(msg);
+      return result === undefined ? undefined : wasmResult(result);
+    }),
+    report_coin_states: jest.fn(() => wasmResult()),
+    report_height: jest.fn(() => wasmResult()),
     snapshot_watched_coins: jest.fn(() => []),
     drain_submissions: jest.fn(() => []),
     resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
-    go_on_chain: jest.fn(() => ({ events: [] }) as WasmResult),
-    abandon: jest.fn(() => ({ events: [] }) as WasmResult),
-    completeOutboundTerminalHandoff: jest.fn(() => ({ events: [] }) as WasmResult),
+    go_on_chain: jest.fn(() => wasmResult()),
+    abandon: jest.fn(() => wasmResult()),
+    completeOutboundTerminalHandoff: jest.fn(() => wasmResult()),
     pendingTerminalHandoff: jest.fn(() => null),
-    provide_coin_spend_bundle: jest.fn(() => ({ events: [] }) as WasmResult),
+    provide_coin_spend_bundle: jest.fn(() => wasmResult()),
     cradle: 0,
   } as unknown as ChiaGame;
 }
@@ -138,7 +169,7 @@ export interface TestHarness {
  * Setup: loadWasm → setGameSession → kickSystem(2) → qe=7.
  */
 export function createReadyBlob(
-  onDeliver?: (msg: Uint8Array) => WasmResult | undefined,
+  onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
 ): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
@@ -185,7 +216,7 @@ export function createReadyBlob(
 
 /** Returns a SessionController at qe=1 — messages will be buffered until kickSystem(2). */
 export function createUnreadyBlob(
-  onDeliver?: (msg: Uint8Array) => WasmResult | undefined,
+  onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
 ): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
@@ -272,6 +303,7 @@ afterEach(async () => {
     }
   } finally {
     resetSaveState();
+    _resetGameIdentityWarmupForTests();
     clearTestGlobal('localStorage');
     clearTestGlobal('sessionStorage');
   }

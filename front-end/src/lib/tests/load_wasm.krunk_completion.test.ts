@@ -1,15 +1,15 @@
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import { flushSessionSave, peekSession, saveSession } from '../../hooks/save';
-import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
-import { krunkStateCodec, type KrunkGameState } from '../../features/krunk/stateCodec';
+import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
+import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/serialize';
 import { terminalInfoFromGameSettled } from '../session/gameSessionEvents';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { persistSessionSnapshot } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { validateSessionSaveEnvelope } from '../session/persistence';
-import type { GameTerminalModel, HandTermsModel } from '../session/types';
+import type { GameTerminalModel, HandProposal } from '../session/types';
 import {
   addActiveSubscription,
   createActivePair,
@@ -21,7 +21,7 @@ import {
 import * as assert from 'assert';
 
 interface KrunkSettlementTrace {
-  phase: 'before-settled' | 'after-settled';
+  phase: 'before-terminal' | 'after-terminal';
   gameId: string;
   state: KrunkGameState;
   terminal: GameTerminalModel;
@@ -36,7 +36,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     SessionController,
     SessionController,
   ];
-  const terms: HandTermsModel = {
+  const handProposal: HandProposal = {
     gameType: 'krunk',
     myContribution: 100n,
     theirContribution: 100n,
@@ -83,7 +83,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       );
       const machine = runtime.getState();
       const currentHandIds = [...machine.model.game.currentHandIds];
-      const hand = krunkStateCodec.decode(controller.handState);
+      const hand = krunkStateCodec.decode(machine.model.game.handState);
       const payloadIds = hand ? Object.keys(hand.games) : [];
       traces[index].push({
         currentHandIds,
@@ -107,7 +107,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         createSessionModel({
           channel: { status: channelStatusModelFromPayload(status) },
           game: { handKey: 1 },
-          betweenHand: { mode: 'compose-proposal', lastTerms: terms },
+          betweenHand: { mode: 'compose-proposal', lastHandProposal: handProposal },
         }),
         { firstGameAccepted: true },
       ),
@@ -117,35 +117,30 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         restoring: false,
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
-        emitGameplay: (event) => {
-          if (!('Settled' in event)) return;
-          const instance = runtimes[index].getState().model.game.instances[event.Settled.gameId];
-          assert.ok(instance, `krunk completion player ${index}: missing settled instance`);
-          settlementTraces[index].push(
-            settlementTrace(index, event.Settled.gameId, 'after-settled', instance.terminal),
-          );
-        },
         onError: (error) => errors.push(error),
         persist,
       },
     );
     runtimes.push(runtime);
-    controller.onFeatureStateTransition = (gameType, id, state) =>
-      runtime.transitionFeatureState(gameType, id, state);
     controller.onSaveNeeded = persist;
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
         if (event.type === 'notification') {
           if ('GameSettled' in event.data && event.data.GameSettled) {
             const id = String(event.data.GameSettled.id);
+            const terminal = terminalInfoFromGameSettled(event.data.GameSettled, null);
+            settlementTraces[index].push(settlementTrace(index, id, 'before-terminal', terminal));
+            runtime.dispatch({
+              type: 'wasm-notification',
+              notification: event.data,
+              iStarted: index === 0,
+            });
+            const instance = runtime.getState().model.game.instances[id];
+            assert.ok(instance, `krunk completion player ${index}: missing settled instance`);
             settlementTraces[index].push(
-              settlementTrace(
-                index,
-                id,
-                'before-settled',
-                terminalInfoFromGameSettled(event.data.GameSettled, null),
-              ),
+              settlementTrace(index, id, 'after-terminal', instance.terminal),
             );
+            return;
           }
           runtime.dispatch({
             type: 'wasm-notification',
@@ -171,7 +166,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   const word = Program.fromBytes(new TextEncoder().encode('CRANE'));
 
   try {
-    runtimes[0].dispatch({ type: 'submit-compose', terms });
+    runtimes[0].dispatch({ type: 'submit-compose', handProposal });
     await exchangeAndPersist();
     const review = runtimes[1]
       .getState()
@@ -225,10 +220,10 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     for (const id of ids) {
       const byPlayer = settlementTraces.map((playerTraces, index) => {
         const before = playerTraces.filter(
-          (trace) => trace.gameId === id && trace.phase === 'before-settled',
+          (trace) => trace.gameId === id && trace.phase === 'before-terminal',
         );
         const after = playerTraces.filter(
-          (trace) => trace.gameId === id && trace.phase === 'after-settled',
+          (trace) => trace.gameId === id && trace.phase === 'after-terminal',
         );
         assert.equal(
           before.length,
@@ -238,18 +233,18 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         assert.equal(
           after.length,
           1,
-          `krunk completion player ${index}: one terminal gameplay projection for ${id}`,
+          `krunk completion player ${index}: one durable terminal reduction for ${id}`,
         );
         assert.equal(
           after[0].state.moverShare,
           before[0].state.moverShare,
-          `krunk completion player ${index}: Settled must preserve moverShare for ${id}`,
+          `krunk completion player ${index}: terminal reduction must preserve moverShare for ${id}`,
         );
         if (before[0].state.outcome !== null) {
           assert.equal(
             after[0].state.outcome,
             before[0].state.outcome,
-            `krunk completion player ${index}: Settled must preserve outcome for ${id}`,
+            `krunk completion player ${index}: terminal reduction must preserve outcome for ${id}`,
           );
         }
         assert.equal(after[0].terminal.outcome, 'accept_settlement');
@@ -330,7 +325,6 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   } finally {
     runtimes.forEach((runtime) => runtime.dispose());
     controllers.forEach((controller) => {
-      controller.onFeatureStateTransition = null;
       controller.onSaveNeeded = null;
     });
   }

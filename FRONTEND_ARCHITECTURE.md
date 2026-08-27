@@ -415,11 +415,11 @@ resumable-session marker, and tab/reset coordination keys, inside the same-origi
 trust model described above.
 
 The current and only legal envelope schema is `chia-gaming-session` version
-`13`. Because the project is
+`15`. Because the project is
 still alpha, every other version is deleted wholesale without decoding or
-migration. A decoded v13 record must also satisfy the complete phase-owned
+migration. A decoded v15 record must also satisfy the complete phase-owned
 envelope contract (keyed game membership, game-owned payload/type agreement,
-terminal data, and frozen terminal coin list); malformed v13 records are
+pending local candidates, terminal data, and frozen terminal coin list); malformed v15 records are
 deleted rather than partially restored. The boot marker is retained after an
 incompatible or malformed resumable record is discarded so the failure remains
 visible at the Resume / Start Over boundary. The `version` field is kept as a
@@ -443,7 +443,7 @@ are grouped under those phase-owned payloads:
 
 | Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | `bigint`                                                                                                   | Save schema version; currently `13`.                                                                                                                                                                                                                                                                            |
+| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `14`.                                                                                                                                                                                                                                                                          |
 | `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                     | `string?`                                                                                                  | Stable token linking the hub iframe and game-channel WebSocket.                                                                                                                                                                                                                                                 |
 | `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -457,7 +457,7 @@ are grouped under those phase-owned payloads:
 | `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
 | `blockchainType`                | `'simulator' \| 'walletconnect'?`                                                                          | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
-| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `4`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
+| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `6`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
 | `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
@@ -495,11 +495,11 @@ are grouped under those phase-owned payloads:
 | `dismissedChannelStatus`        | `string \| null`                                                                                           | Last dismissed channel-status notification value.                                                                                                                                                                                                                                                               |
 | `cleanShutdownStarted`          | `boolean`                                                                                                  | Whether clean shutdown has been requested.                                                                                                                                                                                                                                                                      |
 | `betweenHandMode`               | `string`                                                                                                   | Between-hand overlay state.                                                                                                                                                                                                                                                                                     |
-| `betweenHandCompose`            | `{ selected_game, game_timeout, proposal_sent, calpoker: { amount }, krunk: { amount }, spacepoker: { unit_size, stack_size } }` | Complete session-owned compose draft. Every registered game draft is present and all amounts are decimal bigint strings. Space Poker persists the exact editable unit and stack independently; the stake is derived as `unit_size * stack_size`. |
-| `betweenHandLastTerms`          | `SavedHandTerms \| null`                                                                                   | Last agreed hand terms.                                                                                                                                                                                                                                                                                         |
-| `betweenHandRejectedOnceTerms`  | `SavedHandTerms \| null`                                                                                   | Terms already rejected once, used to avoid repeated automatic retries.                                                                                                                                                                                                                                          |
-| `betweenHandPendingRetryTerms`  | `SavedHandTerms \| null`                                                                                   | Local proposal terms waiting for retry after a proposal collision.                                                                                                                                                                                                                                              |
-| `proposalGroups`                | `Array<{ primary_id, member_ids, terms, origin, disposition }>`                                            | Normalized proposal projection. Each group owns its canonical first ID, ordered factory members, one terms object, local/peer origin, and outgoing/incoming-cached/incoming-review/accepted disposition. Member lookup is derived rather than persisted.                                                            |
+| `betweenHandCompose`            | `{ selected_game, game_timeout, proposal_sent, drafts: { calpoker: { amount }, krunk: { amount }, spacepoker: { unitSize, stackSize } } }` | Complete session-owned compose draft. Every registered game draft lives under `drafts`. Amounts are decimal bigint strings. Space Poker persists the exact editable unit and stack independently; the stake is derived as `unitSize * stackSize`. |
+| `betweenHandLastHandProposal`          | `SavedHandProposal \| null`                                                                                   | Last agreed hand proposal, independent of the compose draft. Null when there is no agreed hand yet.                                                                                                                                                                                                                |
+| `betweenHandRejectedOnceHandProposal`  | `SavedHandProposal \| null`                                                                                   | Hand proposal already rejected once, used to avoid repeated automatic retries.                                                                                                                                                                                                                                          |
+| `betweenHandPendingRetryHandProposal`  | `SavedHandProposal \| null`                                                                                   | Local hand proposal waiting for retry after a proposal collision.                                                                                                                                                                                                                                              |
+| `proposalGroups`                | `Array<{ primary_id, member_ids, hand_proposal, origin, disposition }>`                                            | Normalized proposal projection. Each group owns its canonical first ID, ordered factory members, one HandProposal object, local/peer origin, and outgoing/incoming-cached/incoming-review/accepted disposition. Member lookup is derived rather than persisted.                                                            |
 | `waitingStateEnteredAt`         | `bigint \| null`                                                                                           | Epoch ms when the channel entered an abandon-eligible waiting state.                                                                                                                                                                                                                                            |
 | `cleanShutdownGraceStartedAt`   | `bigint \| null`                                                                                           | Epoch ms when the clean-shutdown grace timer started.                                                                                                                                                                                                                                                           |
 
@@ -518,21 +518,23 @@ two authoritative sources:
 
 The pure root reducer returns the next authority and ordered effects.
 `SessionMachineRuntime` publishes that authority, runs commands (including
-`persist-session`), and only then schedules React. Local game commands use the
-shared `commitLocalGameAction` boundary: Rust/WASM accepts the command first,
-then one machine transition commits the game-owned candidate state and local
-turn together. A synchronous rejection therefore cannot enter authority or a
-save. `assembleSessionSave` reads
-game-owned `handState` only from current machine authority and combines it with
-the controller's WASM-origin snapshot at effect execution time. Live game mounts
-receive a discriminated hand source containing the real controller; terminal
-mounts receive only readonly persisted hand state. There is no controller-owned
-feature-state mirror, render-driven save effect, or React/model mirror ref.
-Every game reads that hand source through `useInitialGameHandState` exactly once
-per keyed mount. The captured value is initialization/restore input only;
-subsequent canonical state transitions do not re-decode the source. A new
-`handKey` or a cold terminal mount creates the next lifetime and therefore the
-next snapshot.
+`persist-session`), and only then schedules React. Games dispatch a
+`GameIntent`. A command result distinguishes rejection, queueing, and actual
+application. Immediate application commits the candidate and local turn in one
+machine transition. A queued candidate is persisted separately from canonical
+`handState` and projected only for live rendering; the host promotes it when
+Rust emits host-only `LocalActionApplied`, or discards it on `MoveRejected` or
+`ActionFailed`. A rejected candidate therefore never enters canonical hand
+authority.
+`assembleSessionSave` reads
+game-owned canonical `handState` and separately validated pending candidates
+from current machine authority and combines them with
+the controller's WASM-origin snapshot at effect execution time. Every package
+has one `render(view)` mount. Its `frozen` boolean is a type discriminant: only
+the live branch has an intent port. Games decode the current machine-owned hand
+state on every render; there is no controller-owned mirror, event stream,
+one-shot live snapshot, render-driven save effect, or React/model mirror ref.
+A new `handKey` still creates a fresh component lifetime.
 `SessionController.onSaveNeeded` invokes the same runtime persistence path for
 ordinary debounced WASM changes. Transaction submission and resubmission remain
 owned by Rust's `TransactionManager`, not by a frontend transaction field.
@@ -546,16 +548,19 @@ instance's coin and protocol presentation together, so there are no separately
 mutable aggregate current-game fields that can drift across game IDs. A game
 instance's initial turn comes from Rust's per-game `ProposalAccepted.our_turn`
 fact; the frontend does not reconstruct it from channel role or factory order. A game
-hook computes a candidate state and submits it through `commitLocalGameAction`;
-after Rust accepts, the root reducer applies the game-owned state and local-turn
-projection atomically. Feature hooks never write controller persistence state
-or call persistence directly.
+hook computes a candidate state and submits it through `commitLocalGameAction`.
+The host either applies it immediately or stores one pending candidate per game
+ID until Rust reports application. Pending feature states are projected in
+ordered hand-ID order, never replace canonical `handState`, and make that ID
+non-actionable until application or rejection. Feature hooks never write
+controller persistence state, interpret protocol replay, or call persistence
+directly.
 `GameSettled` retires only its own game ID from the slice's active set.
 This allows separate members of an atomic factory group to settle independently
 without removing the still-live member from persistence or presentation.
 
 Proposal state is one normalized `proposalGroups` collection. Each entry owns
-its canonical first ID, ordered members, one terms object, origin, and explicit
+its canonical first ID, ordered members, one HandProposal object, origin, and explicit
 UI/lifecycle disposition. Member-ID lookup scans this collection as a pure
 derivation; there are no per-ID terms/group maps or parallel outgoing/accepted
 ledgers to rebuild on restore. Product policy permits at most one outgoing local
@@ -564,10 +569,12 @@ same entry changes to `accepted`, preserving terms and ordered Krunk membership
 across both `ProposalAccepted` notifications. An `InsufficientBalance` removes
 the affected group atomically; successful Krunk members still settle
 independently, and the accepted entry is removed only after the hand is fully
-settled. Schema version 12 also makes
+settled. The current v15 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
-presentation and stores the canonical `GameProtocolPresentation` discriminant.
-Under the alpha no-migration policy, version 12 and all other incompatible
+presentation, stores the canonical `GameProtocolPresentation` discriminant,
+and keeps validated pending local candidates separate from game-owned
+`handState`.
+Under the alpha no-migration policy, all incompatible
 records are deleted rather than translated from aggregate current-game fields.
 
 #### Delivery-critical saves
@@ -658,19 +665,23 @@ React-only copy that restore has to reconstruct by hand.
 `SessionModel` is the generic shell boundary. It owns the canonical keyed
 protocol presentation and carries `handState` only as an opaque
 `PersistedGameState { gameType, version, state }` envelope. The shell does not
-interpret the payload. Calpoker, Space Poker, and Krunk each expose exactly one
-feature-owned pure registration. That registration owns the state codec, proposal
-encoding/decoding, term validation/equality, compose defaults, persisted term
-extras, lifecycle defaults, and durable-state reduction.
-`GAME_REGISTRATIONS` is the single pure keyed source and derives display
-metadata; its mapped type is exhaustive over `RegisteredGameType`. React mounts
-live in the separate exhaustive `GAME_MOUNTS` registry so the pure registration
-graph does not import React. Rendering indexes that registry directly—there are
-no duplicate game arrays or switch dispatchers—and the dependency direction
-does not cycle. All three codecs support live restore. The codec's explicit
-`canRemountFinished` capability is `true` for Cal Poker, Space Poker, and Krunk,
-so cold finished-session rendering validates the game-owned payload before
-remounting instead of inferring support from payload presence alone.
+interpret the payload. Production games export a `GamePackage`; the host
+contract, layout, and APIs are in [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md).
+`games/registry.json` is the only catalog. First-member initial validation
+puzzle hashes live in `gameIdentities.ts` (warmup fills the table by running
+factories with representative valid parameters; Active completes leftover
+probes). The JS session model and saves store catalog keys (`calpoker`,
+`spacepoker`, `krunk`). `packageFor` accepts those keys only. The puzzle hashes
+are protocol ids at the WASM propose/notify boundary (`protocolIdForCatalog`
+out, `catalogGameTypeFromWire` in). WASM and factory probes start on page load
+so the protocol id table is filled before play. Each game may ship
+`games/<key>/ui/styles.css`; the registry generator imports those files into
+the player-app stylesheet, and Tailwind scans `games/` for utility classes.
+Core never branches on Calpoker/Krunk/Space Poker when composing or reviewing a
+proposal. All three codecs support live restore. The codec's explicit
+`canRemountFinished` capability is `true` for Cal Poker, Space Poker, and
+Krunk, so cold finished-session rendering validates the game-owned payload
+before remounting instead of inferring support from payload presence alone.
 
 **Game dashboard (status banner):** The compact strip above the Game tab content
 (`GameDashboard` in `Shell.tsx`) is selector-driven. `selectGameDashboardView`
@@ -748,6 +759,12 @@ next boot still shows Resume / Start Over instead of silently booting into
 leftover preferences.
 
 #### Boot state machine
+
+On page load, `index.tsx` starts WASM bootstrap in parallel with React:
+fetch the module and `.hex`/`.dat` presets, then probe each production
+factory one at a time (yielding between packages). Handshake uses that
+already-loaded module for BLS identity only. Protocol game identities are
+bound when the channel becomes `Active`, from the warmed cache.
 
 On page load, `Shell.tsx` runs a boot sequence that determines which dialog
 (if any) to show before the app becomes interactive. The initializer never
@@ -1380,9 +1397,10 @@ The cohesive session modules own those responsibilities:
 - `sessionMachineEffects.ts` enforces authority → commands/save → React
   ordering; saves combine WASM cradle bytes with machine-owned `handState`.
 - `sessionMachineInterpreter.ts` performs controller calls, timers,
-  persistence, gameplay emission, and async enrichment.
+  persistence, and async enrichment.
 - `sessionMachinePersist.ts` assembles and writes snapshots at effect time.
-- `gameSessionEvents.ts` normalizes raw notification payloads.
+- `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
+- `lib/gameProposalCodec.ts` encodes proposal factory parameters and decodes `ProposalMade` envelopes; `session/incomingProposal.ts` assembles `ProposalGroupModel`.
 
 The controller still waits for its normal macrotask boundary, then drains one
 active FIFO to quiescence so synchronously re-entrant WASM effects enter the
@@ -1394,35 +1412,32 @@ across unmounts and reloads.
 
 ### Game Components
 
-The active game UI is rendered inside `GameSession` based on the current game
-type. `front-end/src/lib/gameRegistry.ts` holds the pure feature registrations
-for California Poker (`calpoker`), Space Poker (`spacepoker`), and Krunk
-(`krunk`). `front-end/src/lib/gameMountRegistry.tsx` separately and
-exhaustively registers their lazy live/frozen React mounts.
+The active game UI is rendered inside `GameSession` from the selected
+`GamePackage`. `front-end/src/lib/gameRegistry.ts` looks packages up by catalog
+key only. `front-end/src/lib/gameMountRegistry.tsx` creates one
+boolean-discriminated mount view for active, in-session terminal, and
+cold-restored hands. The first generated member's initial validation
+puzzle hash is the protocol id at the WASM propose/notify boundary
+(`protocolIdForCatalog` out, `catalogGameTypeFromWire` in).
+`front-end/src/lib/gameProposalCodec.ts` is the inverse pair for that boundary:
+`encodeGameProposalParameters` on the way out and `decodeProposalMadeTerms` on
+the way in. Each package still owns its `factoryParameters` codec and
+`decodeHandProposal`.
 
-`CalpokerHand` receives gameplay events via an RxJS observable and submits moves
-through the shared Rust-first local-action boundary.
+Each hook decodes the current machine-owned hand state on every render. It
+submits only `GameIntent` values through the shared Rust-first local-action
+boundary.
 
 Space Poker keeps its hand history and terminal presentation inside
 `useSpacepokerHand`. A betting-round fold, a showdown no-reveal concession, and
 a revealed showdown remain distinct displays. The hook attributes a terminal
 opponent action only when the current readable handler proves it; a
-`GameSettled` notification alone does not imply that either player folded. Its
-terminal reveal, concession, and fold entries are committed only after Rust
-accepts the local command. They are removed and the playable hand restored only
-when a later matching game-scoped
-`MoveRejected`, `game-action-error`, or context-bearing Rust `ActionFailed`
-event reports that `makeMove` or `acceptSettlement` failed. Rust preserves that
-context when a potato-gated queued move or settlement fails during a later
-flush; unscoped failures are never attributed to a hand. A failed automatic
-reveal or concession enters an explicit recovery state and waits for a user retry
-or authoritative update; it never resubmits on a React effect rerun. Generic
-terminal errors and non-voluntary settlements replace optimistic terminal state
-with the authoritative generic presentation. A revealed presentation survives
-only its voluntary settlement acknowledgement, never a timeout, slash, or other
-settlement outcome. This is UI state only: the session
-controller and Rust `GameSettled` outcome remain the authority, and the game
-component never observes the chain itself.
+`GameSettled` notification alone does not imply that either player folded.
+Terminal reveal, concession, and fold candidates commit only when Rust reports
+that it applied the intent. `MoveRejected` leaves gameplay state unchanged and
+records a visible package error. There is no game-owned rollback,
+retry-recovery, or protocol-redo subsystem; unexpected infrastructure failures
+are shown by shared host error UX, and the game never observes the chain itself.
 
 The `useCalpokerHand` hook manages the five-step protocol:
 
@@ -1431,9 +1446,10 @@ The `useCalpokerHand` hook manages the five-step protocol:
 - **Move 2** (auto) — final reveal
 - **Outcome** — parsed from the opponent's final move into a `CalpokerOutcome`
 
-Game components are **remounted from scratch for every hand** via React key
-(`key={session.handKey}`). This ensures no stale state accumulates between
-hands.
+Game components are **remounted from scratch for every hand**. The host mount
+registry applies `session.handKey` as the React key after the game returns its
+root element. Games do not manage this lifecycle policy themselves. This
+ensures no stale state accumulates between hands.
 
 What the game UI does **not** know about:
 
@@ -1447,8 +1463,8 @@ What the game UI does **not** know about:
 
 `useGameSession` normalizes each WASM notification into a typed machine event.
 `sessionMachineNotifications.ts` then reduces it and emits ordered effects into
-the scoped queues, gameplay stream, controller, persistence path, or async
-enrichment boundary:
+the scoped queues, controller, persistence path, or async enrichment boundary.
+Normalized game inputs update `model.game.handState` before React renders:
 
 ### Channel notification queue
 
@@ -1490,26 +1506,22 @@ the notification reducer and never forwarded raw to the game UI:
 - `ProposalMade` — one notification per factory group; carries the first ID and
   always-non-empty ordered `group_ids` (singleton ⇒ `[id]`), and triggers
   group auto-accept
+- `ProposalAccepted` — starts the accepted hand, initializes its durable game
+  state, and advances `handKey`
 
-### Gameplay events (forwarded to game UI via observable)
+### Normalized game inputs
 
-These are the normal flow of play, forwarded to the active game UI component
-via the `gameplayEventSubject` RxJS stream:
+The machine applies exactly five package-facing inputs:
 
-- `ProposalAccepted` — a new game is starting (also clears stale
-  `proposal-rejected` entries from the game queue)
-- `OpponentMoved` — the opponent made a move (with readable data and
-  `moverShare`, our share after that move / on timeout from it)
-- `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
-- `MoveRejected` — a recoverable delayed rejection with game id, tag, and
-  message; game hooks roll back only the matching Rust-accepted local action
-- `Settled` — `{ gameId, outcome, ourShare }` from `GameSettled`; dual-delivered
-  to the session banner and the active game hook via `gameplayEvent$`
-- `GameError` — non-settlement terminals (`EndedCancelled`, `EndedError`,
-  `InsufficientBalance`) and unknown settlement outcomes
+- `hand-started`
+- `opponent-moved`
+- `game-message`
+- `move-rejected`
+- `hand-ended`
 
-Legacy `GameStatus` slash/timeout `Ended*` kinds are no longer forwarded to
-gameplay hooks; settlements use `GameSettled` only.
+There is no separate game-status event or action echo. Turn, replay, timeout,
+on-chain, proposal, removal, abandonment, and freezing transitions remain in
+the host model. `ActionFailed` and controller exceptions go to shared error UX.
 
 ## Single-Hand Enforcement
 
@@ -1559,7 +1571,7 @@ protocol's asynchronous nature and cannot be deferred to JS:
    the definitive state). WASM emits one `ProposalCancelled { reason:
 SupersededByIncoming }` for each removed group, keyed by its first ID.
 
-2. **`PeerProposalPending`** — When JS calls `propose_game` while an
+2. **`PeerProposalPending`** — When JS calls `propose_games` while an
    unresolved peer proposal exists in `proposed_games`, WASM rejects
    immediately with `ProposalCancelled { reason: PeerProposalPending }`.
    This prevents silently cancelling the peer's proposal as a side effect
@@ -1589,16 +1601,18 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v13 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v13 presentation snapshot encoder                                                            |
-| `front-end/src/lib/gameRegistry.ts`              | Exhaustive pure feature registration and game-owned codec/terms/compose dispatch                                        |
-| `front-end/src/lib/gameMountRegistry.tsx`        | Exhaustive React live/frozen mount registration                                                                         |
-| `front-end/src/features/calPoker/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v15 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v15 presentation snapshot encoder                                                            |
+| `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup and game-owned codec/terms/compose dispatch                                                   |
+| `front-end/src/lib/gameProposalCodec.ts`         | Symmetric proposal encode/decode at the WASM `propose_games` / `ProposalMade` boundary                                 |
+| `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                               |
+| `games/calpoker/ui/useCalpokerHand.ts`          | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
 | `front-end/src/hooks/SessionController.ts`       | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence   |
-| `front-end/src/hooks/WasmStateInit.ts`           | WASM initialization: load binary, deposit .hex files, create cradle                                                     |
+| `front-end/src/hooks/WasmStateInit.ts`           | WASM bootstrap: page-load binary/preset fetch, background factory warm, create cradle                            |
+| `front-end/src/lib/gameIdentities.ts`            | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                  |
 | `front-end/src/hooks/blobSingleton.ts`           | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
 | `front-end/src/services/PeerSession.ts`          | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                          |
-| `front-end/src/hooks/save.ts`                    | v13 cache/write and live/terminal lifecycle facade                                                                      |
+| `front-end/src/hooks/save.ts`                    | v15 cache/write and live/terminal lifecycle facade                                                                      |
 | `front-end/src/hooks/saveCoordination.ts`        | Resume markers, active-tab lease, and cross-tab persistence fencing                                                     |
 | `front-end/src/hooks/saveHardReset.ts`           | Hard-reset and WalletConnect browser-storage cleanup                                                                     |
 | `front-end/src/hooks/savePreferences.ts`         | Local preference encoding and decoding                                                                                    |

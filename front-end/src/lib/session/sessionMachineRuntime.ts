@@ -3,7 +3,6 @@ import { runSessionMachineTransition } from './sessionMachineEffects';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
 import { persistSessionSnapshot } from './sessionMachinePersist';
 import { reduceSessionMachine } from './sessionMachine';
-import type { GameplayEvent } from './gameSessionEvents';
 import type {
   LocalGameActionRequest,
   SessionMachineEvent,
@@ -19,7 +18,6 @@ export interface SessionMachineRuntimeDependencies {
   restoring: boolean;
   getRestoreStatus(): RestoreStatus;
   getRestoreError(): string | null;
-  emitGameplay(event: GameplayEvent): void;
   onError(error: unknown): void;
   persist?(): Promise<void>;
   enrichCoin?: typeof coinIdHex;
@@ -30,16 +28,12 @@ export class SessionMachineRuntime {
   private render: (state: SessionMachineState) => void = () => {};
   private readonly interpreter: SessionMachineInterpreter;
   private readonly controller: SessionController;
-  private readonly stopHandStateProjection: () => void;
   private dispatching = false;
   private readonly pendingEvents: SessionMachineEvent[] = [];
 
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
     this.state = initial;
     this.controller = dependencies.controller;
-    this.stopHandStateProjection = this.controller.projectHandState(
-      () => this.state.model.game.handState,
-    );
     this.interpreter = new SessionMachineInterpreter({
       controller: dependencies.controller,
       iStarted: dependencies.iStarted,
@@ -55,7 +49,6 @@ export class SessionMachineRuntime {
             getRestoreStatus: dependencies.getRestoreStatus,
             getRestoreError: dependencies.getRestoreError,
           })),
-      emitGameplay: dependencies.emitGameplay,
       onError: dependencies.onError,
       enrichCoin: dependencies.enrichCoin,
     });
@@ -104,18 +97,6 @@ export class SessionMachineRuntime {
     return true;
   }
 
-  transitionFeatureStateWithLocalTurn(
-    gameType: RegisteredGameType,
-    id: string,
-    state: unknown,
-    isMyTurn: boolean,
-  ): boolean {
-    const game = this.state.model.game;
-    if (game.activeGameType !== gameType || !game.currentHandIds.includes(id)) return false;
-    this.dispatch({ type: 'feature-state-with-local-turn', gameType, id, state, isMyTurn });
-    return true;
-  }
-
   commitLocalGameAction(request: LocalGameActionRequest): void {
     const game = this.state.model.game;
     if (game.activeGameType !== request.gameType) {
@@ -129,6 +110,9 @@ export class SessionMachineRuntime {
     if (!game.activeIds.includes(request.id)) {
       throw new Error(`Internal local action game id ${request.id} is not active`);
     }
+    if (game.pendingCandidates[request.id]) {
+      throw new Error(`Internal local action game ${request.id} already has a pending candidate`);
+    }
     const instance = game.instances[request.id];
     if (!instance) {
       throw new Error(`Internal local action game id ${request.id} has no game instance`);
@@ -139,16 +123,25 @@ export class SessionMachineRuntime {
     ) {
       throw new Error(`Internal local action for game ${request.id} attempted outside our turn`);
     }
-    if (decodeGameFeatureState(request.gameType, request.state) === null) {
+    const featureState = decodeGameFeatureState(request.gameType, request.state);
+    if (featureState === null) {
       throw new Error(`Internal local action payload is invalid for ${request.gameType}`);
     }
 
-    this.interpreter.runLocalGameCommand(request.command, request.id);
+    const action =
+      request.command.type === 'make-move'
+        ? 'make_move'
+        : request.command.type === 'accept-settlement'
+          ? 'accept_settlement'
+          : 'cheat';
+    const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
+    if (disposition === 'rejected') return;
     this.dispatch({
-      type: 'local-game-action-committed',
+      type: disposition === 'applied' ? 'local-game-action-applied' : 'local-game-action-staged',
       gameType: request.gameType,
       id: request.id,
-      state: request.state,
+      action,
+      state: featureState,
     });
   }
 
@@ -163,7 +156,6 @@ export class SessionMachineRuntime {
   }
 
   dispose(): void {
-    this.stopHandStateProjection();
     this.interpreter.dispose();
   }
 }

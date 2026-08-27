@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { EMPTY, Subject } from 'rxjs';
-import type { CalpokerOutcome } from '../features/calPoker/outcome';
 import {
   createComposeDraftState,
   createSessionModel,
@@ -12,14 +10,10 @@ import {
   selectIProposedHand,
   selectSessionPhase,
   sessionModelFromSave,
-  type ComposeDraftState,
-  type HandTermsModel,
+  type HandProposal,
 } from '../lib/session/model';
-import {
-  dispatchWasmNotification,
-  gameplayEventForGameActionError,
-  type GameplayEvent,
-} from '../lib/session/gameSessionEvents';
+import type { ComposeDraftValue, GameIntent } from '@games/host';
+import { dispatchWasmNotification } from '../lib/session/gameSessionEvents';
 import { createSessionMachineState } from '../lib/session/sessionMachine';
 import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
 import {
@@ -28,8 +22,14 @@ import {
   type UseGameSessionResult,
   useTerminalSessionPresentation,
 } from '../lib/session/sessionResult';
-import type { SessionMachineEvent } from '../lib/session/sessionMachineTypes';
-import { liveGameHandOrigin, type GameHandSource } from '../lib/gameMount';
+import type {
+  LocalGameActionRequest,
+  SessionMachineEvent,
+} from '../lib/session/sessionMachineTypes';
+import type { RegisteredGameType } from '../lib/session/types';
+import { projectRegisteredPendingCandidates, REGISTERED_GAMES } from '../lib/gameRegistry';
+import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
+import { liveGameHandOrigin, type GameHandSource } from '@games/host';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
@@ -39,24 +39,35 @@ import type { SessionSave } from './save';
 import { getDefaultFee, getPlayerId } from './save';
 
 export type {
-  GameplayEvent,
   GameTerminalAttentionInfo,
   GameTerminalInfo,
-  HandTerms,
   QueuedNotification,
 } from '../lib/session/gameSessionEvents';
-export {
-  dispatchWasmNotification,
-  gameplayEventForActionFailed,
-  gameplayEventForGameActionError,
-  gameplayEventForMoveRejected,
-  gameplayEventsForGameStatus,
-  parseGameStatusTerminalInfo,
-  parseTermsFromNotificationValue,
-  settledEventForInfo,
-  terminalInfoFromGameSettled,
-} from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
+
+export function runLocalGameActionWithReporting(
+  request: LocalGameActionRequest,
+  run: () => void,
+  report: (failure: {
+    gameId: string;
+    action: LocalGameActionRequest['command']['type'];
+    message: string;
+  }) => void,
+): void {
+  try {
+    run();
+  } catch (error) {
+    if (!wasClientErrorReported(error)) {
+      markClientErrorReported(error);
+      report({
+        gameId: request.id,
+        action: request.command.type,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw error;
+  }
+}
 
 export function useSessionControllerAfterCommit(
   params: GameSessionParams,
@@ -121,21 +132,15 @@ export function useGameSession(
   const { iStarted, perGameAmount } = params;
   const terminalState = useTerminalSessionPresentation(terminalPresentation);
   const terminalMode = terminalState.presentation != null;
-  const liveHandSource = useMemo<GameHandSource>(
-    () => ({ interactionMode: 'live', controller }),
-    [controller],
-  );
 
   const restoredModel = useMemo(
     () => (sessionSave ? sessionModelFromSave(sessionSave) : null),
     [sessionSave],
   );
   const restoredHandKeyRef = useRef<number | null>(null);
-  const gameplaySubject = useRef(new Subject<GameplayEvent>()).current;
-  const gameplayEvent$ = useMemo(() => gameplaySubject.asObservable(), [gameplaySubject]);
   const initialState = useMemo(() => {
-    const terms: HandTermsModel = {
-      gameType: 'calpoker',
+    const handProposal: HandProposal = {
+      gameType: REGISTERED_GAMES[0].gameType,
       myContribution: perGameAmount,
       theirContribution: perGameAmount,
       gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
@@ -145,8 +150,8 @@ export function useGameSession(
         createSessionModel({
           channel: { cleanShutdownStarted: controller.cleanShutdownCalled },
           betweenHand: {
-            lastTerms: terms,
-            compose: createComposeDraftState(perGameAmount, terms),
+            lastHandProposal: null,
+            compose: createComposeDraftState(perGameAmount, handProposal),
           },
         }),
       {
@@ -165,17 +170,72 @@ export function useGameSession(
       restoring: params.restoring ?? false,
       getRestoreStatus: () => controller.getRestoreStatus(),
       getRestoreError: () => controller.getRestoreError(),
-      emitGameplay: (event) => gameplaySubject.next(event),
       onError: (error) => controller.reportRuntimeError(error),
     });
   }
   const runtime = runtimeRef.current;
   const [machineState, setMachineState] = useState(runtime.getState());
+  const dispatch = useCallback((event: SessionMachineEvent) => runtime.dispatch(event), [runtime]);
+  const liveGamePort = useMemo(
+    () => ({
+      isChannelReady: () => controller.isChannelReady(),
+      dispatch: (intent: GameIntent<unknown>) => {
+        const game = runtime.getState().model.game;
+        const gameType = game.activeGameType as RegisteredGameType;
+        if (intent.type === 'update-local-state') {
+          if (game.currentHandIds.length !== 1) {
+            throw new Error('Local hand-state updates require a single-game hand');
+          }
+          runtime.transitionFeatureState(gameType, game.currentHandIds[0], intent.state);
+          return;
+        }
+        const request: LocalGameActionRequest = {
+          gameType,
+          id: intent.gameId,
+          state: intent.state,
+          command:
+            intent.type === 'make-move'
+              ? { type: 'make-move', readable: intent.readable }
+              : intent.type === 'accept-settlement'
+                ? { type: 'accept-settlement' }
+                : { type: 'cheat', moverShare: intent.moverShare },
+        };
+        runLocalGameActionWithReporting(
+          request,
+          () => runtime.commitLocalGameAction(request),
+          ({ action, message }) => {
+            if (action === 'cheat') {
+              dispatch({ type: 'enqueue-error', kind: 'infra-error', message });
+              return;
+            }
+            dispatch({ type: 'enqueue-error', kind: 'action-failed', message });
+          },
+        );
+      },
+    }),
+    [controller, dispatch, runtime],
+  );
+  const projectedHandState = useMemo(() => {
+    const game = machineState.model.game;
+    return projectRegisteredPendingCandidates(
+      game.activeGameType,
+      game.handState,
+      game.currentHandIds,
+      game.pendingCandidates,
+    );
+  }, [machineState.model.game]);
+  const liveHandSource = useMemo<GameHandSource>(
+    () => ({
+      interactionMode: 'live',
+      handState: projectedHandState,
+      port: liveGamePort,
+    }),
+    [liveGamePort, projectedHandState],
+  );
   useEffect(() => {
     runtime.setRender(setMachineState);
     return () => runtime.setRender(() => {});
   }, [runtime]);
-  const dispatch = useCallback((event: SessionMachineEvent) => runtime.dispatch(event), [runtime]);
   const dispatchHostProjection = useCallback(() => {
     const status = controller.getRestoreStatus();
     dispatch({
@@ -201,20 +261,11 @@ export function useGameSession(
 
   useEffect(() => {
     if (terminalMode) return;
-    controller.onFeatureStateTransition = (gameType, id, state) => {
-      return runtime.transitionFeatureState(gameType, id, state);
-    };
-    controller.onFeatureStateWithLocalTurnTransition = (gameType, id, state, isMyTurn) =>
-      runtime.transitionFeatureStateWithLocalTurn(gameType, id, state, isMyTurn);
-    controller.onLocalGameAction = (request) => runtime.commitLocalGameAction(request);
     controller.onSaveNeeded = () => runtime.persist();
     return () => {
-      controller.onFeatureStateTransition = null;
-      controller.onFeatureStateWithLocalTurnTransition = null;
-      controller.onLocalGameAction = null;
       controller.onSaveNeeded = null;
     };
-  }, [controller, dispatch, runtime, terminalMode]);
+  }, [controller, runtime, terminalMode]);
 
   useEffect(() => {
     if (terminalMode) return;
@@ -234,11 +285,6 @@ export function useGameSession(
             dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
             break;
           case 'game-action-error':
-            if (event.action !== 'feature-state') {
-              gameplaySubject.next(
-                gameplayEventForGameActionError(event.gameId, event.action, event.error),
-              );
-            }
             dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
             break;
           case 'durability-error':
@@ -255,7 +301,7 @@ export function useGameSession(
     });
     if (!initStarted) setInitStarted(true);
     return () => subscription.unsubscribe();
-  }, [controller, dispatch, dispatchHostProjection, gameplaySubject, iStarted, terminalMode]);
+  }, [controller, dispatch, dispatchHostProjection, iStarted, terminalMode]);
 
   useEffect(() => {
     if (!blockchain || terminalMode) return;
@@ -278,36 +324,13 @@ export function useGameSession(
     [dispatch],
   );
   const setComposeGameType = useCallback(
-    (gameType: HandTermsModel['gameType']) => dispatch({ type: 'select-compose-game', gameType }),
+    (gameType: HandProposal['gameType']) => dispatch({ type: 'select-compose-game', gameType }),
     [dispatch],
   );
-  const setCalpokerComposeAmount = useCallback(
-    (amount: bigint) => dispatch({ type: 'set-compose-amount', gameType: 'calpoker', amount }),
+  const updateSelectedComposeDraft = useCallback(
+    (draft: Partial<ComposeDraftValue>) =>
+      dispatch({ type: 'update-selected-compose-draft', draft }),
     [dispatch],
-  );
-  const setKrunkComposeAmount = useCallback(
-    (amount: bigint) => dispatch({ type: 'set-compose-amount', gameType: 'krunk', amount }),
-    [dispatch],
-  );
-  const setSpacepokerComposeDraft = useCallback(
-    (draft: Partial<ComposeDraftState['spacepoker']>) =>
-      dispatch({ type: 'set-spacepoker-compose', draft }),
-    [dispatch],
-  );
-  const onHandOutcome = useCallback(
-    (outcome: CalpokerOutcome) =>
-      dispatch({ type: 'hand-outcome', outcomeWin: outcome.my_win_outcome }),
-    [dispatch],
-  );
-  const onTurnChanged = useCallback(
-    (id: string, isMyTurn: boolean) =>
-      dispatch({
-        type: 'durable-local-turn',
-        id,
-        isMyTurn,
-        channelState: runtime.getState().model.channel.status.state,
-      }),
-    [dispatch, runtime],
   );
 
   const { model, coordination } = machineState;
@@ -336,25 +359,20 @@ export function useGameSession(
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
     handSource: liveHandSource,
-    gameplayEvent$,
     appendGameLog,
-    onHandOutcome,
-    onTurnChanged,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: view.incomingProposalGroup,
-    lastHandTerms: model.betweenHand.lastTerms,
+    lastHandProposal: model.betweenHand.lastHandProposal,
     composeDraftState: compose,
     chooseNewHandSameTerms: () => dispatch({ type: 'choose-same-terms' }),
     chooseDoNotUseCurrentProposal: () => dispatch({ type: 'reject-current-proposal' }),
     openComposeProposal: () => dispatch({ type: 'open-compose' }),
     setComposeGameTimeout,
     setComposeGameType,
-    setCalpokerComposeAmount,
-    setKrunkComposeAmount,
-    setSpacepokerComposeDraft,
+    updateSelectedComposeDraft,
     composeProposalSent: compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
-    submitComposedProposal: (terms) => dispatch({ type: 'submit-compose', terms }),
+    submitComposedProposal: (handProposal) => dispatch({ type: 'submit-compose', handProposal }),
     acceptReviewedProposal: () => dispatch({ type: 'accept-review' }),
     rejectReviewedProposal: () => dispatch({ type: 'reject-review' }),
     startCleanShutdown: () => dispatch({ type: 'start-clean-shutdown' }),
@@ -376,6 +394,6 @@ export function useGameSession(
     gameSpecificView,
   };
   return terminalState.presentation
-    ? projectTerminalSessionResult(liveResult, terminalState.presentation, EMPTY, terminalState)
+    ? projectTerminalSessionResult(liveResult, terminalState.presentation, terminalState)
     : liveResult;
 }

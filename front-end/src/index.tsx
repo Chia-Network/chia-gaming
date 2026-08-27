@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { startWasmBootstrap } from './hooks/WasmStateInit';
 import App from './App';
 // Install theme-sync listener as early as possible so cross-origin iframes
 // can receive theme updates from the parent. Also request the parent
@@ -24,4 +25,5 @@ try {
 const container = document.getElementById('root');
 const root = createRoot(container!);
 
+startWasmBootstrap();
 root.render(<App />);

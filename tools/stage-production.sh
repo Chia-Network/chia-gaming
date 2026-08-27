@@ -51,8 +51,8 @@ while IFS= read -r -d '' f; do
 
 echo "=== Sanity-checking Krunk files ==="
 for f in \
-    "clsp/games/krunk/krunk_include_krunk_factory.hex" \
-    "clsp/games/krunk/krunk_signed_dict_tree.dat"
+    "games/krunk/clsp/factory_krunk_factory.hex" \
+    "games/krunk/clsp/krunk_signed_dict_tree.dat"
 do
     if [ ! -f "$PLAYER_STAGE/$f" ]; then
         echo "ERROR: missing $f in player staging"

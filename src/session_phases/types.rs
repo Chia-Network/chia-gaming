@@ -151,7 +151,6 @@ pub enum GameAction {
     #[serde(rename = "AcceptSettlement")]
     AcceptSettlement(GameID),
     CleanShutdown,
-    SendPotato,
     QueuedProposalGroup(Vec<Rc<GameStartInfo>>, WireProposalGroup),
     QueuedAcceptProposal(GameID),
     QueuedCancelProposal(GameID),
@@ -191,7 +190,6 @@ impl std::fmt::Debug for GameAction {
             GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
             GameAction::AcceptSettlement(gi) => write!(formatter, "AcceptSettlement({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
-            GameAction::SendPotato => write!(formatter, "SendPotato"),
             GameAction::QueuedProposalGroup(_, _) => write!(formatter, "QueuedProposalGroup(..)"),
             GameAction::QueuedAcceptProposal(gi) => {
                 write!(formatter, "QueuedAcceptProposal({gi:?})")

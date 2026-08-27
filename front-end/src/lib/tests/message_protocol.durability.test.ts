@@ -25,7 +25,9 @@ import {
   setActiveBlob,
   setTestGlobal,
   testIndexedDb,
+  wasmResult,
 } from './message_protocol.harness';
+import { mockGamePackageIdentity, TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 describe('durability failures', () => {
   it('routes a rejected background save to the durability channel', async () => {
@@ -223,6 +225,8 @@ describe('restore ordering', () => {
     const cradle = makeMockCradle();
     const restoreWasmConnection = {
       game_session_serialization_schema: () => 4,
+      registered_game_packages: () => [...TEST_PROTOCOL_IDS],
+      warm_game_package: (key: string) => mockGamePackageIdentity(key),
     } as unknown as WasmConnection;
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => restoreWasmConnection),
@@ -342,6 +346,8 @@ describe('cradle serialization schema restore guard', () => {
         async () =>
           ({
             game_session_serialization_schema: () => 4,
+            registered_game_packages: () => [...TEST_PROTOCOL_IDS],
+            warm_game_package: (key: string) => mockGamePackageIdentity(key),
           }) as unknown as WasmConnection,
       ),
       deserializeGame: deserializeMock,
@@ -421,7 +427,7 @@ describe('cleanShutdown calls shut_down on cradle', () => {
 
     const cradle = {
       ...makeMockCradle(),
-      shut_down: jest.fn(() => ({ events: [] }) as WasmResult),
+      shut_down: jest.fn(() => wasmResult()),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -508,6 +514,7 @@ describe('go-on-chain terminal remap', () => {
     blob.setGameSession(makeMockCradle());
 
     blob.processResult({
+      ...wasmResult(),
       events: [{ Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } }],
     });
     blob.flushDeferredWork();
@@ -515,6 +522,7 @@ describe('go-on-chain terminal remap', () => {
     expect(blob.isOffChainActive()).toBe(true);
 
     blob.processResult({
+      ...wasmResult(),
       events: [{ Notification: { ChannelStatus: channelStatus({ state: 'Unrolling' }) } }],
     });
     blob.flushDeferredWork();
@@ -538,6 +546,7 @@ describe('go-on-chain terminal remap', () => {
       go_on_chain: jest.fn(
         () =>
           ({
+            ...wasmResult(),
             actionSucceeded: true,
             disposition: { kind: 'active' },
             events: [],
@@ -567,6 +576,7 @@ describe('go-on-chain terminal remap', () => {
       go_on_chain: jest.fn(
         () =>
           ({
+            ...wasmResult(),
             disposition: { kind: 'terminal' },
             events: [
               {
@@ -604,6 +614,7 @@ describe('go-on-chain terminal remap', () => {
       go_on_chain: jest.fn(
         () =>
           ({
+            ...wasmResult(),
             actionSucceeded: false,
             disposition: { kind: 'active' },
             events: [

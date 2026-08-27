@@ -29,44 +29,24 @@ use crate::common::types::{
 use crate::utils::map_m;
 
 #[cfg(test)]
+use crate::common::types::divmod::test_funs as divmod_tests;
+#[cfg(test)]
 use crate::simulator::tests::session_phases_sim::test_funs as session_phases_sim_tests;
 #[cfg(test)]
 use crate::simulator::tests::simulator_tests::test_funs as simulator_tests;
 #[cfg(test)]
-use crate::test_support::calpoker_sim::test_funs as calpoker_tests;
-#[cfg(test)]
-use crate::test_support::krunk_sim::test_funs as krunk_sim_tests;
-#[cfg(test)]
-use crate::test_support::spacepoker_sim::test_funs as spacepoker_tests;
-
-#[cfg(test)]
-use crate::common::types::divmod::test_funs as divmod_tests;
-#[cfg(test)]
-use crate::test_support::debug_game::test_funs as debug_game_tests;
-#[cfg(test)]
 use crate::test_support::peer::peer_harness::test_funs as peer_harness_tests;
-#[cfg(test)]
-use crate::tests::calpoker_handlers::test_funs as calpoker_handler_tests;
-#[cfg(test)]
-use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
 #[cfg(test)]
 use crate::tests::channel_state::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
 #[cfg(test)]
-use crate::tests::dict_tree_lookup::test_funs as dict_tree_lookup_tests;
-#[cfg(test)]
-use crate::tests::krunk_handlers::test_funs as krunk_handler_tests;
-#[cfg(test)]
-use crate::tests::krunk_validation::test_funs as krunk_validation_tests;
-#[cfg(test)]
 use crate::tests::referee_conditions::test_funs as referee_conditions_tests;
 #[cfg(test)]
-use crate::tests::spacepoker_handlers::test_funs as spacepoker_handler_tests;
-#[cfg(test)]
-use crate::tests::spacepoker_validation::test_funs as spacepoker_validation_tests;
-#[cfg(test)]
 use crate::tests::standard_coin::test_funs as standard_coin_tests;
+
+#[cfg(test)]
+include!(concat!(env!("OUT_DIR"), "/game_package_test_funs.rs"));
 
 #[derive(Debug, Clone)]
 pub struct IncludeTransactionResult {
@@ -171,7 +151,7 @@ impl SimulatorState {
             true,
         );
 
-        let pending: Vec<PendingSpend> = self.mempool.drain(..).collect();
+        let pending = std::mem::take(&mut self.mempool);
         for spend in pending {
             self.confirmed_spend_fingerprints.insert(spend.fingerprint);
             for removal in &spend.removals {
@@ -1034,21 +1014,11 @@ pub fn run_simulation_tests() {
         divmod_tests(),
         standard_coin_tests(),
         chialisp_tests(),
-        calpoker_validation_tests(),
-        spacepoker_validation_tests(),
-        krunk_validation_tests(),
-        dict_tree_lookup_tests(),
-        spacepoker_handler_tests(),
-        calpoker_handler_tests(),
-        krunk_handler_tests(),
+        game_package_test_funs(),
         channel_handler_tests(),
         referee_conditions_tests(),
-        debug_game_tests(),
         peer_harness_tests(),
         simulator_tests(),
-        calpoker_tests(),
-        spacepoker_tests(),
-        krunk_sim_tests(),
         session_phases_sim_tests(),
     ];
 

@@ -1,0 +1,107 @@
+#!/usr/bin/env node
+// Generates front-end/src/generated/gamePackages.ts from games/registry.json.
+import { mkdirSync, readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const FE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(FE, '..', '..');
+const registry = JSON.parse(readFileSync(join(ROOT, 'games', 'registry.json'), 'utf8'));
+const production = registry.production;
+if (!Array.isArray(production) || production.length === 0) {
+  throw new Error('games/registry.json production list is empty');
+}
+
+function factoryHex(key) {
+  return `games/${key}/clsp/factory_${key}_factory.hex`;
+}
+
+function extraPresets(key) {
+  const clsp = join(ROOT, 'games', key, 'clsp');
+  try {
+    return readdirSync(clsp)
+      .filter((name) => name.endsWith('.dat'))
+      .map((name) => `games/${key}/clsp/${name}`);
+  } catch {
+    return [];
+  }
+}
+
+function tsString(value) {
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+function tsProperty(value) {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value) ? value : tsString(value);
+}
+
+function tsArray(values, multiline = false) {
+  if (!multiline) return `[${values.join(', ')}]`;
+  return `[\n${values.map((value) => `  ${value},`).join('\n')}\n]`;
+}
+
+const presetFiles = production.flatMap((key) => [factoryHex(key), ...extraPresets(key)]);
+function relTo(key, file) {
+  const rel = relative(join(FE, '../src/generated'), join(ROOT, 'games', key, 'ui', file))
+    .replace(/\\/g, '/')
+    .replace(/\.tsx?$/, '');
+  return rel.startsWith('.') ? rel : `./${rel}`;
+}
+const imports = production
+  .map((key, index) => {
+    return [
+      `import handProposal${index} from '${relTo(key, 'handProposal.ts')}';`,
+      `import { HandProposalForm as HandProposalForm${index} } from '${relTo(key, 'handProposalForm.tsx')}';`,
+      `import { play as play${index} } from '${relTo(key, 'play.tsx')}';`,
+      `const pkg${index} = defineGamePackage(handProposal${index}, HandProposalForm${index}, play${index});`,
+    ].join('\n');
+  })
+  .join('\n');
+const productionList = tsArray(production.map(tsString));
+const presetList = tsArray(presetFiles.map(tsString), true);
+const packageMap = production.map((key, index) => `  ${tsProperty(key)}: pkg${index},`).join('\n');
+
+const destDir = join(FE, '../src/generated');
+mkdirSync(destDir, { recursive: true });
+
+writeFileSync(
+  join(destDir, 'gamePresets.ts'),
+  `// Generated from games/registry.json. Do not edit.
+export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;
+export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
+export const CORE_PRESET_FILES = [
+  'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
+  'clsp/referee/onchain/referee.hex',
+] as const;
+export const GAME_PRESET_FILES = ${presetList} as const;
+export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
+`,
+);
+
+writeFileSync(
+  join(destDir, 'gamePackages.ts'),
+  `// Generated from games/registry.json. Do not edit.
+import { defineGamePackage } from '../../../games/host';
+${imports}
+
+export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;
+export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
+export const GENERATED_GAME_PACKAGES_BY_KEY = {
+${packageMap}
+} as const;
+export const GENERATED_GAME_PACKAGES = Object.values(GENERATED_GAME_PACKAGES_BY_KEY);
+export { PRESET_FILES, GAME_PRESET_FILES, CORE_PRESET_FILES } from './gamePresets';
+`,
+);
+
+const styleImports = production.flatMap((key) => {
+  const styles = join(ROOT, 'games', key, 'ui/styles.css');
+  if (!existsSync(styles)) return [];
+  const rel = relative(join(FE, '../src/generated'), styles).replace(/\\/g, '/');
+  return [`@import '${rel.startsWith('.') ? rel : `./${rel}`}';`];
+});
+writeFileSync(
+  join(destDir, 'gameStyles.css'),
+  `/* Generated from games/registry.json. Do not edit. */\n${styleImports.join('\n')}${styleImports.length ? '\n' : ''}`,
+);
+console.log(`generate-game-registry: ${production.length} production packages`);

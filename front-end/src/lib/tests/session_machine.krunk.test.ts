@@ -1,5 +1,5 @@
 import { Program } from 'clvm-lib';
-import { krunkStateCodec } from '../../features/krunk/stateCodec';
+import { krunkStateCodec } from '@games/krunk/ui/serialize';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -10,6 +10,7 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { CALPOKER_TERMS, KRUNK_TERMS, run, send, trackProposal } from './session_machine.harness';
 import { liveSave } from './session_save_envelope.fixtures';
+import { projectRegisteredPendingCandidates } from '../gameRegistry';
 
 describe('session machine behavior sequences', () => {
   it('atomically replaces Krunk authority when the next group arrives after one member settles', () => {
@@ -116,6 +117,12 @@ describe('session machine behavior sequences', () => {
 
     const terminalPayload = krunkStateCodec.decode(state.model.game.handState)!.games['1'];
 
+    expect(state.model.game.activeIds).toEqual(['2']);
+    expect(state.model.game.currentHandIds).toEqual(['1', '2']);
+    expect(Object.keys(state.model.game.instances)).toEqual(['1', '2']);
+    expect(state.model.game.instances['1'].presentation).toBe('ended');
+    expect(state.model.game.instances['2'].presentation).not.toBe('ended');
+
     const staleReadable = Program.fromList([
       Program.fromBytes(new TextEncoder().encode('SLATE')),
 
@@ -148,7 +155,7 @@ describe('session machine behavior sequences', () => {
       terminalPayload,
     );
 
-    expect(stale.effects.filter((effect) => effect.type === 'emit-gameplay')).toEqual([]);
+    expect(stale.effects).toEqual([]);
 
     const sibling = reduceSessionNotification(
       stale.state,
@@ -176,19 +183,23 @@ describe('session machine behavior sequences', () => {
 
     expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.games['2'].handler).toBe(4n);
 
-    expect(sibling.effects).toContainEqual({
-      type: 'emit-gameplay',
-
-      event: {
-        OpponentMoved: {
-          gameId: '2',
-
-          readable: Program.fromBytes(new Uint8Array()).serialize(),
-
-          moverShare: '100',
-        },
+    expect(sibling.state.model.game.activeIds).toEqual(['2']);
+    expect(sibling.state.model.game.currentHandIds).toEqual(['1', '2']);
+    expect(Object.keys(krunkStateCodec.decode(sibling.state.model.game.handState)!.games)).toEqual([
+      '1',
+      '2',
+    ]);
+    expect(sibling.state.model.game.instances['1']).toEqual(terminalInstance);
+    expect(sibling.state.model.game.instances['2'].presentation).toBe('off-chain-my-turn');
+    expect(sibling.effects).toEqual([
+      {
+        type: 'request-coin-enrichment',
+        target: 'game',
+        id: '2',
+        coin: null,
+        generation: 1,
       },
-    });
+    ]);
   });
 
   it('keeps Krunk WaitingCommit durable state valid across post-unroll status projection', () => {
@@ -335,5 +346,52 @@ describe('session machine behavior sequences', () => {
         }),
       ),
     ).not.toThrow();
+  });
+
+  it('projects and promotes independent pending candidates for ordered Krunk IDs', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
+    state = send(state, {
+      type: 'notification-accepted-group',
+      id: '1',
+      amount: '100',
+      iStarted: true,
+      isMyTurn: true,
+    });
+    const canonical = state.model.game.handState;
+    const hand = krunkStateCodec.decode(canonical)!;
+
+    state = send(state, {
+      type: 'local-game-action-staged',
+      gameType: 'krunk',
+      id: '2',
+      action: 'make_move',
+      state: { ...hand.games['2'], handler: 4n, myTurn: true },
+    });
+    state = send(state, {
+      type: 'local-game-action-staged',
+      gameType: 'krunk',
+      id: '1',
+      action: 'make_move',
+      state: { ...hand.games['1'], handler: 1n, myTurn: false, secretWord: 'CRANE' },
+    });
+
+    expect(state.model.game.handState).toBe(canonical);
+    const projected = krunkStateCodec.decode(
+      projectRegisteredPendingCandidates(
+        'krunk',
+        canonical,
+        state.model.game.currentHandIds,
+        state.model.game.pendingCandidates,
+      ),
+    )!;
+    expect(Object.keys(projected.games)).toEqual(['1', '2']);
+    expect(projected.games['1'].secretWord).toBe('CRANE');
+    expect(projected.games['2'].handler).toBe(4n);
+
+    state = send(state, { type: 'local-action-applied', id: '1', action: 'make_move' });
+    expect(krunkStateCodec.decode(state.model.game.handState)!.games['1'].secretWord).toBe('CRANE');
+    expect(krunkStateCodec.decode(state.model.game.handState)!.games['2'].handler).toBe(3n);
+    expect(Object.keys(state.model.game.pendingCandidates)).toEqual(['2']);
   });
 });

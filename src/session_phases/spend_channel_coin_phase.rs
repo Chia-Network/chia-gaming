@@ -12,10 +12,10 @@ use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
     IntoErr, Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout, MAX_BLOCK_COST_CLVM,
 };
-use crate::game_session::PeerLifecyclePhase;
+use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelSemanticPhase, ChannelStatus, ChannelStatusSnapshot,
-    CoinOfInterest, Effect, GameNotification, GameStatusKind, SettlementOutcome,
+    CoinOfInterest, Effect, FailedGameAction, GameNotification, GameStatusKind, SettlementOutcome,
     TimeoutClaimSemantic, UnrollInitiator,
 };
 use crate::session_phases::handler_base::{
@@ -24,6 +24,7 @@ use crate::session_phases::handler_base::{
 use crate::session_phases::on_chain::{
     OnChainPhase, OnChainPhaseArgs, PendingMoveKind, PendingMoveSavedState,
 };
+use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
     validate_new_move_action, GameAction, PotatoState, SpendWalletReceiver,
 };
@@ -182,27 +183,12 @@ impl SpendChannelCoinPhase {
         }
     }
 
-    // --- Delegated query methods ---
-
-    pub fn amount(&self) -> Amount {
-        self.base.amount()
-    }
-    pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.base.get_our_current_share()
-    }
-    pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.base.get_their_current_share()
-    }
     pub fn has_potato(&self) -> bool {
         self.base.has_potato()
     }
 
     pub fn get_reward_puzzle_hash(&self, env: &mut ChannelEnv<'_>) -> Result<PuzzleHash, Error> {
         self.base.get_reward_puzzle_hash(env)
-    }
-
-    pub fn get_game_state_id(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Hash>, Error> {
-        self.base.get_game_state_id(env)
     }
 
     pub fn take_next_phase(&mut self) -> Option<Box<OnChainPhase>> {
@@ -1141,11 +1127,20 @@ impl SpendWalletReceiver for SpendChannelCoinPhase {
 
 #[typetag::serde]
 impl PeerLifecyclePhase for SpendChannelCoinPhase {
+    fn phase_name(&self) -> &'static str {
+        "channel-spend phase"
+    }
     fn has_queued_message(&self) -> bool {
         SpendChannelCoinPhase::has_queued_message(self)
     }
     fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinPhase::process_queued_message(self, env)
+    }
+    fn has_queued_action(&self) -> bool {
+        false
+    }
+    fn process_queued_action(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
     }
     fn received_message(
         &mut self,
@@ -1201,8 +1196,89 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
     ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinPhase::cheat_game(self, env, game_id, mover_share, entropy)
     }
+    #[cfg(test)]
+    fn self_accept_proposal(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "self_accept_proposal",
+        ))
+    }
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
         SpendChannelCoinPhase::take_next_phase(self).map(|oc| oc as Box<dyn PeerLifecyclePhase>)
+    }
+    fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
+    }
+    fn handshake_finished(&self) -> bool {
+        true
+    }
+    fn is_on_chain(&self) -> bool {
+        false
+    }
+    fn start_handshake(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Option<Effect>, Error> {
+        Err(phase_operation_error(self.phase_name(), "start_handshake"))
+    }
+    fn channel_offer(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: SpendBundle,
+    ) -> Result<Option<Effect>, Error> {
+        Ok(None)
+    }
+    fn channel_transaction_completion(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: &SpendBundle,
+    ) -> Result<Option<Effect>, Error> {
+        Ok(None)
+    }
+    fn provide_launcher_coin(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _launcher_coin: CoinString,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "provide_launcher_coin",
+        ))
+    }
+    fn provide_coin_spend_bundle(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: SpendBundle,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "provide_coin_spend_bundle",
+        ))
+    }
+    fn propose_games(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _games: &[GameProposal],
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
+        Err(phase_operation_error(self.phase_name(), "propose_games"))
+    }
+    fn accept_proposal(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(self.phase_name(), "accept_proposal"))
+    }
+    fn cancel_proposal(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(self.phase_name(), "cancel_proposal"))
+    }
+    fn shut_down(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(self.phase_name(), "shut_down"))
     }
     fn go_on_chain(
         &mut self,
@@ -1210,6 +1286,12 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
         _got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinPhase::go_on_chain(self, env)
+    }
+    fn flush_pending_actions(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
+    }
+    fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
+        None
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         struct SpendSnapshotView {
@@ -1340,11 +1422,63 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         self.base.channel_state()
     }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn wallet_callback_failed(&mut self, _reason: String) {}
+    fn has_active_on_chain_games(&self) -> bool {
+        false
     }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn timeout_claim_submitted(
+        &mut self,
+        semantic: TimeoutClaimSemantic,
+    ) -> Result<Option<GameNotification>, Error> {
+        if matches!(semantic, TimeoutClaimSemantic::ChannelTimeoutFinish) {
+            SpendChannelCoinPhase::timeout_claim_submitted(self, semantic);
+        }
+        Ok(None)
+    }
+    fn timeout_claim_rearmed(
+        &mut self,
+        semantic: TimeoutClaimSemantic,
+    ) -> Result<Option<GameNotification>, Error> {
+        if matches!(semantic, TimeoutClaimSemantic::ChannelTimeoutFinish) {
+            SpendChannelCoinPhase::timeout_claim_rearmed(self, semantic);
+        }
+        Ok(None)
+    }
+    #[cfg(test)]
+    fn corrupt_state_for_testing(&mut self, _new_sn: usize) -> Result<(), Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "corrupt_state_for_testing",
+        ))
+    }
+    #[cfg(test)]
+    fn force_unroll_spend_for_testing(
+        &self,
+        env: &mut ChannelEnv<'_>,
+    ) -> Result<SpendBundle, Error> {
+        SpendChannelCoinPhase::force_unroll_spend(self, env)
+    }
+    #[cfg(test)]
+    fn last_channel_coin_spend_info_for_testing(&self) -> Option<ChannelCoinSpendInfo> {
+        self.last_channel_coin_spend_info.clone()
+    }
+    #[cfg(test)]
+    fn force_stale_unroll_spend_for_testing(
+        &self,
+        _env: &mut ChannelEnv<'_>,
+        _saved: &ChannelCoinSpendInfo,
+    ) -> Result<SpendBundle, Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "force_stale_unroll_spend_for_testing",
+        ))
+    }
+    #[cfg(test)]
+    fn take_off_chain_phase_for_testing(&mut self) -> Option<crate::session_phases::OffChainPhase> {
+        None
+    }
+    fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
+        None
     }
 }
 
@@ -1523,12 +1657,26 @@ mod tests {
             replacement: None,
         };
 
-        assert!(phase.timeout_claim_submitted(TimeoutClaimSemantic::ChannelTimeoutFinish));
+        assert!(
+            <SpendChannelCoinPhase as PeerLifecyclePhase>::timeout_claim_submitted(
+                &mut phase,
+                TimeoutClaimSemantic::ChannelTimeoutFinish,
+            )
+            .expect("timeout submission")
+            .is_none()
+        );
         assert_eq!(
             phase.channel_status_snapshot().unwrap().semantic_phase,
             Some(ChannelSemanticPhase::FinishingSpending)
         );
-        assert!(phase.timeout_claim_rearmed(TimeoutClaimSemantic::ChannelTimeoutFinish));
+        assert!(
+            <SpendChannelCoinPhase as PeerLifecyclePhase>::timeout_claim_rearmed(
+                &mut phase,
+                TimeoutClaimSemantic::ChannelTimeoutFinish,
+            )
+            .expect("timeout rearm")
+            .is_none()
+        );
         assert_eq!(
             phase.channel_status_snapshot().unwrap().semantic_phase,
             Some(ChannelSemanticPhase::FinishingWaitingTimeout)

@@ -120,7 +120,7 @@ pub(in super::super) fn run_script(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     identities: &[ChiaIdentity],
-    game_type: &[u8],
+    package_key: &str,
     extras: &Program,
     moves_input: &[SimScriptAction],
     pred: GameRunEarlySuccessPredicate,
@@ -134,6 +134,10 @@ pub(in super::super) fn run_script(
     let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
     let mut ending = None;
     let mut assertion_scheduler = AssertionScheduler::default();
+    let proposal_type =
+        crate::session_phases::game_collection::game_type_for_package(allocator, package_key);
+    let krunk_type =
+        crate::session_phases::game_collection::game_type_for_package(allocator, "krunk");
 
     let has_explicit_go_on_chain = moves_input
         .iter()
@@ -216,17 +220,17 @@ pub(in super::super) fn run_script(
                             SimScriptAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
                             _ => 15,
                         };
-                        let parameters = if game_type == b"calpoker" {
+                        let parameters = if package_key == "calpoker" {
                             let node = (Amount::new(100), (my_turn, ()))
                                 .to_clvm(allocator)
                                 .into_gen()?;
                             Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"spacepoker" {
+                        } else if package_key == "spacepoker" {
                             let node = (Amount::new(100), (extras.clone(), (my_turn, ())))
                                 .to_clvm(allocator)
                                 .into_gen()?;
                             Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"debug" {
+                        } else if package_key == "debug" {
                             let node = (
                                 Amount::new(100),
                                 (Amount::new(100), (my_turn, (extras.clone(), ()))),
@@ -241,7 +245,7 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                game_type: GameType(game_type.to_vec()),
+                                game_type: proposal_type.clone(),
                                 timeout: Timeout::new(timeout),
                                 parameters,
                             }],
@@ -253,7 +257,7 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                game_type: GameType(b"krunk".to_vec()),
+                                game_type: krunk_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters: Program::from_hex("64")?,
                             }],
@@ -395,12 +399,12 @@ pub(in super::super) fn run_script(
                         ()
                     }
                     SimScriptAction::WrongParityProposal(who) => {
-                        let parameters = if game_type == b"calpoker" {
+                        let parameters = if package_key == "calpoker" {
                             let node = (Amount::new(100), (true, ()))
                                 .to_clvm(allocator)
                                 .into_gen()?;
                             Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"spacepoker" {
+                        } else if package_key == "spacepoker" {
                             let node = (Amount::new(100), (extras.clone(), (true, ())))
                                 .to_clvm(allocator)
                                 .into_gen()?;
@@ -412,7 +416,7 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                game_type: GameType(game_type.to_vec()),
+                                game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
@@ -424,12 +428,12 @@ pub(in super::super) fn run_script(
                         ()
                     }
                     SimScriptAction::InvalidProposalParameters(who) => {
-                        let parameters = if game_type == b"calpoker" {
+                        let parameters = if package_key == "calpoker" {
                             let node = (Amount::new(100), (true, ()))
                                 .to_clvm(allocator)
                                 .into_gen()?;
                             Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"spacepoker" {
+                        } else if package_key == "spacepoker" {
                             let node = (Amount::new(100), (extras.clone(), (true, ())))
                                 .to_clvm(allocator)
                                 .into_gen()?;
@@ -441,7 +445,7 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                game_type: GameType(game_type.to_vec()),
+                                game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
@@ -453,12 +457,12 @@ pub(in super::super) fn run_script(
                         ()
                     }
                     SimScriptAction::InvalidProposalTimeout(who) => {
-                        let parameters = if game_type == b"calpoker" {
+                        let parameters = if package_key == "calpoker" {
                             let node = (Amount::new(100), (true, ()))
                                 .to_clvm(allocator)
                                 .into_gen()?;
                             Program::from_nodeptr(allocator, node)?
-                        } else if game_type == b"spacepoker" {
+                        } else if package_key == "spacepoker" {
                             let node = (Amount::new(100), (extras.clone(), (true, ())))
                                 .to_clvm(allocator)
                                 .into_gen()?;
@@ -470,7 +474,7 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                game_type: GameType(game_type.to_vec()),
+                                game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],

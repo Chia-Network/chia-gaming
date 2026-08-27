@@ -1,6 +1,6 @@
 (include *standard-cl-23*)
 
-(import games.krunk.krunk_dict_tree exposing dict_lookup)
+(import games.krunk.clsp.krunk_dict_tree exposing dict_lookup)
 
 ; Args: (tree word left_sentinel right_sentinel)
 ; Returns dict_lookup result: () if in dict, (left_bound right_bound signature) if not.

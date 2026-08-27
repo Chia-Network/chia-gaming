@@ -1,6 +1,8 @@
-import type { SessionController } from '../../hooks/SessionController';
-import { encodeGameProposalParameters, validateGameTerms } from '../gameRegistry';
-import { coinIdHex, type GameplayEvent } from './gameSessionEvents';
+import type { GameCommandDisposition, SessionController } from '../../hooks/SessionController';
+import { protocolIdForCatalog } from '../gameIdentities';
+import { encodeGameProposalParameters } from '../gameProposalCodec';
+import { validateHandProposal } from '../gameRegistry';
+import { coinIdHex } from './gameSessionEvents';
 import type {
   SessionMachineEffect,
   SessionMachineEvent,
@@ -17,7 +19,6 @@ export interface SessionMachineInterpreterDependencies {
   getState(): SessionMachineState;
   dispatch(event: SessionMachineEvent): void;
   persist(): Promise<void>;
-  emitGameplay(event: GameplayEvent): void;
   onError(error: unknown): void;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
@@ -29,17 +30,14 @@ export class SessionMachineInterpreter {
 
   constructor(private readonly dependencies: SessionMachineInterpreterDependencies) {}
 
-  runLocalGameCommand(command: LocalGameCommand, id: string): void {
+  runLocalGameCommand(command: LocalGameCommand, id: string): GameCommandDisposition {
     switch (command.type) {
       case 'make-move':
-        this.dependencies.controller.makeMove(id, command.readable);
-        return;
+        return this.dependencies.controller.makeMove(id, command.readable);
       case 'accept-settlement':
-        this.dependencies.controller.acceptSettlement(id);
-        return;
+        return this.dependencies.controller.acceptSettlement(id);
       case 'cheat':
-        this.dependencies.controller.cheat(id, command.moverShare);
-        return;
+        return this.dependencies.controller.cheat(id, command.moverShare);
     }
   }
 
@@ -77,7 +75,7 @@ export class SessionMachineInterpreter {
           this.commandFailed('propose-game', new Error('channel is not active off-chain'));
           return;
         }
-        if (!validateGameTerms(effect.terms)) {
+        if (!validateHandProposal(effect.handProposal)) {
           this.commandFailed('propose-game', new Error('proposal terms are invalid'));
           return;
         }
@@ -89,11 +87,16 @@ export class SessionMachineInterpreter {
           'propose-game',
           () =>
             dependencies.controller.proposeGame({
-              game_type: effect.terms.gameType,
-              timeout: effect.terms.gameTimeout,
-              parameters: encodeGameProposalParameters(effect.terms, dependencies.iStarted),
+              game_type: protocolIdForCatalog(effect.handProposal.gameType),
+              timeout: effect.handProposal.gameTimeout,
+              parameters: encodeGameProposalParameters(effect.handProposal, dependencies.iStarted),
             }),
-          (ids) => dependencies.dispatch({ type: 'proposal-sent', ids, terms: effect.terms }),
+          (ids) =>
+            dependencies.dispatch({
+              type: 'proposal-sent',
+              ids,
+              handProposal: effect.handProposal,
+            }),
         );
         return;
       }
@@ -139,9 +142,6 @@ export class SessionMachineInterpreter {
         return;
       case 'persist-session':
         void dependencies.persist().catch(dependencies.onError);
-        return;
-      case 'emit-gameplay':
-        dependencies.emitGameplay(effect.event);
         return;
       case 'request-coin-enrichment':
         void (dependencies.enrichCoin ?? coinIdHex)(effect.coin)

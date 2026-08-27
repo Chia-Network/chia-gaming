@@ -4,13 +4,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { SessionController } from '../../hooks/SessionController';
-import {
-  initialKrunkGameState,
-  krunkStateCodec,
-  KrunkHandler,
-} from '../../features/krunk/stateCodec';
-import { reduceKrunkDurableState } from '../../features/krunk/adapter';
-import { krunkBoardNotice } from '../../features/krunk/useKrunkHand';
+import { initialKrunkGameState, krunkStateCodec, KrunkHandler } from '@games/krunk/ui/serialize';
+import { reduceKrunkDurableState } from '@games/krunk/ui/handProposal';
+import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
   _resetForTests,
@@ -43,13 +39,15 @@ const testIndexedDb = indexedDB;
 const liveCradle = new Uint8Array([1, 2, 3]);
 const handState = {
   gameType: 'calpoker',
-  version: 1n,
+  version: 3n,
   state: {
     playerHand: [8n, 7n, 6n, 5n],
     opponentHand: [4n, 3n, 2n, 1n],
     moveNumber: 1n,
     isPlayerTurn: true,
+    iStarted: true,
     cardSelections: [8n, 7n],
+    error: null,
     displaySnapshot: {
       gameState: 'selecting',
       winner: null,
@@ -126,7 +124,7 @@ const model = createSessionModel({
     },
   },
   betweenHand: {
-    lastTerms: {
+    lastHandProposal: {
       gameType: 'calpoker',
       myContribution: 10n,
       theirContribution: 10n,
@@ -652,7 +650,17 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   });
   let terminalHand = krunkStateCodec.decode(acceptedHandState)!;
   for (const settledId of ids) {
-    terminalHand = reduceKrunkDurableState(terminalHand, { type: 'settled', id: settledId })!;
+    terminalHand = reduceKrunkDurableState(terminalHand, {
+      type: 'hand-ended',
+      gameId: settledId,
+      terminal: {
+        type: 'settled',
+        outcome: 'opponent_timed_out',
+        label: 'Opponent timed out',
+        myReward: '100',
+        rewardCoinHex: null,
+      },
+    })!;
   }
   const terminalHandState = krunkStateCodec.encode(terminalHand);
   const timeoutModel = createSessionModel({
@@ -700,7 +708,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       },
     },
     betweenHand: {
-      lastTerms: {
+      lastHandProposal: {
         gameType: 'krunk',
         myContribution: 100n,
         theirContribution: 100n,

@@ -6,9 +6,8 @@ import {
 import type { SettlementOutcome } from '../settlement';
 import {
   parseGameStatusTerminalInfo,
-  settledEventForInfo,
   terminalInfoFromGameSettled,
-} from '../../hooks/useGameSession';
+} from '../session/gameSessionEvents';
 
 function keyedTerminalGame(
   outcome: SettlementOutcome,
@@ -140,19 +139,18 @@ describe('terminal session model', () => {
     });
 
     expect(
-      settledEventForInfo(
-        '7',
-        terminalInfoFromGameSettled(
-          {
-            id: '7',
-            outcome: 'settled_cleanly',
-            our_share: '20',
-          },
-          null,
-        ),
+      terminalInfoFromGameSettled(
+        {
+          id: '7',
+          outcome: 'settled_cleanly',
+          our_share: '20',
+        },
+        null,
       ),
-    ).toEqual({
-      Settled: { gameId: '7', outcome: 'settled_cleanly', ourShare: '20' },
+    ).toMatchObject({
+      type: 'settled',
+      outcome: 'settled_cleanly',
+      myReward: '20',
     });
   });
 

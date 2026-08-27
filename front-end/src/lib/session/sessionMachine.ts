@@ -99,8 +99,7 @@ export function reduceSessionMachine(
     case 'set-compose-draft':
     case 'select-compose-game':
     case 'set-compose-timeout':
-    case 'set-compose-amount':
-    case 'set-spacepoker-compose':
+    case 'update-selected-compose-draft':
     case 'set-compose-proposal-sent':
     case 'set-same-terms-requested':
     case 'set-expecting-counter-proposal':
@@ -119,16 +118,17 @@ export function reduceSessionMachine(
       return reduceProposalEvent(state, event);
 
     case 'game':
-    case 'hand-outcome':
     case 'notification-accepted-group':
     case 'notification-game-status':
     case 'notification-game-terminal':
+    case 'notification-move-rejected':
     case 'notification-insufficient-balance':
     case 'notification-abandoned':
     case 'feature-state':
-    case 'feature-state-with-local-turn':
-    case 'local-game-action-committed':
-    case 'durable-local-turn':
+    case 'local-game-action-staged':
+    case 'local-game-action-applied':
+    case 'local-action-applied':
+    case 'discard-pending-candidate':
       return reduceDurableGameEvent(state, event);
 
     default:

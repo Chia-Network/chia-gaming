@@ -7,9 +7,26 @@ import type {
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import type { SettlementOutcome } from '../settlement';
 import type { ComposeDraftState } from './composeDraft';
 import type { PersistedGameState } from './gameStateCodec';
+
+export type {
+  GameTerminalType,
+  GameTerminalModel,
+  HandProposalBase,
+  ProposalGroupOrigin,
+} from '@games/host';
+import type {
+  GameTerminalModel,
+  HandProposal as HostHandProposal,
+  ProposalGroupOrigin,
+} from '@games/host';
+import type { CatalogGameType } from '../../generated/gamePresets';
+
+export type RegisteredGameType = CatalogGameType;
+export type { CatalogGameType };
+
+export type LocalActionKind = 'make_move' | 'accept_settlement' | 'cheat';
 
 export type GameTurnState =
   | 'my-turn'
@@ -22,6 +39,17 @@ export type GameTurnState =
   | 'finishing-waiting-timeout'
   | 'finishing-spending'
   | 'ended';
+
+export interface PendingGameCandidate {
+  gameType: RegisteredGameType;
+  id: string;
+  action: LocalActionKind;
+  featureState: unknown;
+}
+
+export type HandProposal = Omit<HostHandProposal, 'gameType'> & {
+  gameType: CatalogGameType;
+};
 
 export type HandStatus =
   | 'none'
@@ -50,21 +78,6 @@ export type GameProtocolPresentation =
   | 'finishing-waiting-timeout'
   | 'finishing-spending'
   | 'ended';
-
-export type GameTerminalType =
-  | 'none'
-  | 'settled'
-  | 'insufficient-balance'
-  | 'ended-cancelled'
-  | 'game-error';
-
-export interface GameTerminalModel {
-  type: GameTerminalType;
-  outcome: SettlementOutcome | null;
-  label: string | null;
-  myReward: string | null;
-  rewardCoinHex: string | null;
-}
 
 /** Canonical mutable/persisted game instance. */
 export interface GameInstanceModel {
@@ -128,20 +141,6 @@ export interface QueuedNotificationModel {
     | { label: string; myReward: string | null; rewardCoinHex: string | null };
 }
 
-export interface HandTermsBaseModel {
-  myContribution: bigint;
-  theirContribution: bigint;
-  gameTimeout: bigint;
-}
-
-export type RegisteredGameType = 'calpoker' | 'spacepoker' | 'krunk';
-
-export type HandTermsModel =
-  | (HandTermsBaseModel & { gameType: 'calpoker' })
-  | (HandTermsBaseModel & { gameType: 'spacepoker'; unitSizeMojos: bigint })
-  | (HandTermsBaseModel & { gameType: 'krunk' });
-
-export type ProposalGroupOrigin = 'local' | 'peer';
 export type ProposalGroupDisposition =
   | 'outgoing'
   | 'incoming-cached'
@@ -151,7 +150,7 @@ export type ProposalGroupDisposition =
 export interface ProposalGroupModel {
   primaryId: string;
   memberIds: string[];
-  terms: HandTermsModel;
+  handProposal: HandProposal;
   origin: ProposalGroupOrigin;
   disposition: ProposalGroupDisposition;
 }
@@ -186,17 +185,18 @@ export interface GameModel {
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
+  pendingCandidates: Record<string, PendingGameCandidate>;
   queue: QueuedNotificationModel[];
 }
 
 export interface BetweenHandModel {
   mode: BetweenHandModeModel;
   proposalGroups: ProposalGroupModel[];
-  rejectedOnceTerms: HandTermsModel | null;
-  lastTerms: HandTermsModel;
+  rejectedOnceHandProposal: HandProposal | null;
+  lastHandProposal: HandProposal | null;
   compose: ComposeDraftState;
   newHandRequested: boolean;
-  pendingRetryTerms: HandTermsModel | null;
+  pendingRetryHandProposal: HandProposal | null;
 }
 
 export interface SessionHistoryModel {

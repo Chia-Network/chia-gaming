@@ -13,17 +13,18 @@ use crate::channel_state::types::{
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::session_phases::effects::{
     format_coin, CancelReason, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect,
-    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, SettlementOutcome,
+    FailedGameAction, GameNotification, GameStatusKind, GameStatusOtherParams, LocalActionKind,
+    SettlementOutcome, TimeoutClaimSemantic,
 };
 use crate::shutdown::get_conditions_with_channel_state;
 use crate::utils::proper_list;
 
-use crate::game_session::PeerLifecyclePhase;
+use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::types::{
     validate_new_move_action, BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage,
     PotatoState, WireGameSpec, WireProposalGroup,
@@ -43,7 +44,7 @@ pub mod spend_channel_coin_phase;
 pub mod types;
 pub mod wallet_traits;
 
-pub use game_collection::{game_collection, register_all};
+pub use game_collection::game_collection;
 pub use wallet_traits::{ChannelFundingWallet, SpendWalletReceiver, WalletSpendInterface};
 
 fn serialize_game_type_map<S: Serializer>(
@@ -137,13 +138,22 @@ pub struct OffChainPhase {
         Option<Box<crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase>>,
 }
 
+fn failed_game_action_context(action: &GameAction) -> Option<(GameID, FailedGameAction)> {
+    match action {
+        GameAction::Move(id, ..) => Some((*id, FailedGameAction::MakeMove)),
+        GameAction::AcceptSettlement(id) => Some((*id, FailedGameAction::AcceptSettlement)),
+        GameAction::Cheat(id, ..) => Some((*id, FailedGameAction::Cheat)),
+        _ => None,
+    }
+}
+
 fn format_batch_action(action: &BatchAction) -> String {
     match action {
         BatchAction::ProposeGroup(group) => {
             format!(
                 "ProposeGroup ids={:?} type={} timeout={}",
                 group.members.iter().map(|m| m.game_id).collect::<Vec<_>>(),
-                hex::encode(&group.start.game_type.0),
+                group.start.game_type,
                 group.start.timeout,
             )
         }
@@ -238,6 +248,11 @@ impl OffChainPhase {
         env: &mut ChannelEnv<'_>,
         start: &GameProposal,
     ) -> Result<Vec<game::FactoryGame>, Error> {
+        if self.game_types.is_empty() {
+            // Restored handshake-era sessions may still serialize an empty map.
+            self.game_types =
+                crate::session_phases::game_collection::game_collection(env.allocator);
+        }
         let factory = self
             .game_types
             .get(&start.game_type)
@@ -247,7 +262,18 @@ impl OffChainPhase {
             .as_ref()
             .ok_or_else(|| Error::StrErr("GameFactory program missing".to_string()))?
             .clone();
-        game::Game::run_factory(env.allocator, program.into(), &start.parameters)
+        let games = game::Game::run_factory(env.allocator, program.into(), &start.parameters)?;
+        let first_hash = games
+            .first()
+            .map(|g| g.initial_validation_program_hash.clone())
+            .ok_or_else(|| Error::StrErr("proposal factory returned no games".to_string()))?;
+        if &first_hash != start.game_type.hash() {
+            return Err(Error::StrErr(format!(
+                "factory for {} returned first validator hash {}, expected {}",
+                start.game_type, first_hash, start.game_type
+            )));
+        }
+        Ok(games)
     }
 
     fn hydrate_wire_proposal_group(
@@ -306,6 +332,12 @@ impl OffChainPhase {
         incoming_messages: VecDeque<Rc<PeerMessage>>,
         last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
     ) -> OffChainPhase {
+        let game_types = if game_types.is_empty() {
+            let mut allocator = AllocEncoder::new();
+            crate::session_phases::game_collection::game_collection(&mut allocator)
+        } else {
+            game_types
+        };
         OffChainPhase {
             initiator,
             have_potato,
@@ -331,22 +363,6 @@ impl OffChainPhase {
         &mut self,
     ) -> Option<Box<crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase>> {
         self.channel_spend_next_phase.take()
-    }
-
-    pub fn amount(&self) -> Amount {
-        self.my_contribution.clone() + self.their_contribution.clone()
-    }
-
-    pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.channel_state
-            .as_ref()
-            .map(|ch| ch.get_our_current_share())
-    }
-
-    pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.channel_state
-            .as_ref()
-            .map(|ch| ch.get_their_current_share())
     }
 
     pub fn is_failed(&self) -> bool {
@@ -735,6 +751,7 @@ impl OffChainPhase {
                             initial_validation_program_hash: ivp_hash,
                             initial_state,
                             game_type: resolved_game_type,
+                            parameters: wire.start.parameters.clone(),
                         }));
                     }
                 }
@@ -1033,13 +1050,10 @@ impl OffChainPhase {
         let mut clean_shutdown_data: Option<Box<(Aggsig, ProgramRef)>> = None;
         let mut pending_shutdown: Option<(CoinString, ProgramRef)> = None;
         let mut deferred = VecDeque::new();
+        let mut applied_actions = Vec::new();
 
         while let Some(action) = self.game_action_queue.pop_front() {
-            self.last_failed_queued_action = match &action {
-                GameAction::Move(id, ..) => Some((*id, FailedGameAction::MakeMove)),
-                GameAction::AcceptSettlement(id) => Some((*id, FailedGameAction::AcceptSettlement)),
-                _ => None,
-            };
+            self.last_failed_queued_action = failed_game_action_context(&action);
             match action {
                 GameAction::Move(game_id, readable_move, new_entropy) => {
                     let ch = self.channel_state_mut()?;
@@ -1049,6 +1063,7 @@ impl OffChainPhase {
                             Ok(move_result) => {
                                 batch_actions
                                     .push(BatchAction::Move(game_id, move_result.game_move));
+                                applied_actions.push((game_id, LocalActionKind::MakeMove));
                             }
                             Err(Error::GameMoveRejected { tag, message }) => {
                                 effects.push(Effect::Notify(GameNotification::MoveRejected {
@@ -1073,6 +1088,7 @@ impl OffChainPhase {
                         let move_result =
                             ch.send_move_no_finalize(env, &game_id, &readable_move, entropy)?;
                         batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
+                        applied_actions.push((game_id, LocalActionKind::Cheat));
                     } else {
                         deferred.push_back(GameAction::Cheat(game_id, mover_share, entropy));
                     }
@@ -1083,6 +1099,7 @@ impl OffChainPhase {
                         ch.send_accept_settlement_no_finalize(&game_id)?
                     };
                     batch_actions.push(BatchAction::AcceptSettlement(game_id, amount));
+                    applied_actions.push((game_id, LocalActionKind::AcceptSettlement));
                 }
                 GameAction::QueuedProposalGroup(my_games, their_wire) => {
                     let saved_channel = self.channel_state.clone();
@@ -1217,12 +1234,6 @@ impl OffChainPhase {
 
                     pending_shutdown = Some((channel_coin.clone(), spend.solution.clone()));
                 }
-                GameAction::SendPotato => {
-                    return Err(Error::StrErr(
-                        "SendPotato action is obsolete and must not appear in the queue"
-                            .to_string(),
-                    ));
-                }
                 #[cfg(test)]
                 GameAction::ForcedSelfAccept(game_id) => {
                     let ch = self.channel_state_mut()?;
@@ -1245,6 +1256,10 @@ impl OffChainPhase {
             let ch = self.channel_state_mut()?;
             ch.update_cached_unroll_state(env)?
         };
+
+        effects.extend(applied_actions.into_iter().map(|(id, action)| {
+            Effect::Notify(GameNotification::LocalActionApplied { id, action })
+        }));
 
         {
             let ch = self.channel_state()?;
@@ -1514,14 +1529,6 @@ impl OffChainPhase {
         let (_has_potato, effect) = self.send_potato_request_if_needed()?;
         Ok((false, effect.into_iter().collect()))
     }
-
-    pub fn get_game_state_id(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Hash>, Error> {
-        let player_ch = self.channel_state().ok();
-        if let Some(player_ch) = player_ch {
-            return player_ch.get_game_state_id(env).map(Some);
-        }
-        Ok(None)
-    }
 }
 
 impl FromLocalUI for OffChainPhase {
@@ -1759,11 +1766,20 @@ impl SpendWalletReceiver for OffChainPhase {
 
 #[typetag::serde]
 impl PeerLifecyclePhase for OffChainPhase {
+    fn phase_name(&self) -> &'static str {
+        "off-chain phase"
+    }
     fn has_queued_message(&self) -> bool {
         OffChainPhase::has_queued_message(self)
     }
     fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         OffChainPhase::process_queued_message(self, env)
+    }
+    fn has_queued_action(&self) -> bool {
+        false
+    }
+    fn process_queued_action(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
     }
     fn received_message(
         &mut self,
@@ -1842,8 +1858,51 @@ impl PeerLifecyclePhase for OffChainPhase {
         self.take_channel_spend_next_phase()
             .map(|h| h as Box<dyn PeerLifecyclePhase>)
     }
+    fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
+    }
     fn handshake_finished(&self) -> bool {
         OffChainPhase::handshake_finished(self)
+    }
+    fn is_on_chain(&self) -> bool {
+        false
+    }
+    fn start_handshake(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Option<Effect>, Error> {
+        Err(phase_operation_error(self.phase_name(), "start_handshake"))
+    }
+    fn channel_offer(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: SpendBundle,
+    ) -> Result<Option<Effect>, Error> {
+        Ok(None)
+    }
+    fn channel_transaction_completion(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: &SpendBundle,
+    ) -> Result<Option<Effect>, Error> {
+        Ok(None)
+    }
+    fn provide_launcher_coin(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _launcher_coin: CoinString,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "provide_launcher_coin",
+        ))
+    }
+    fn provide_coin_spend_bundle(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _bundle: SpendBundle,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "provide_coin_spend_bundle",
+        ))
     }
     fn propose_games(
         &mut self,
@@ -1907,17 +1966,69 @@ impl PeerLifecyclePhase for OffChainPhase {
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         OffChainPhase::channel_state(self)
     }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn wallet_callback_failed(&mut self, _reason: String) {}
+    fn has_active_on_chain_games(&self) -> bool {
+        false
     }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn timeout_claim_submitted(
+        &mut self,
+        _semantic: TimeoutClaimSemantic,
+    ) -> Result<Option<GameNotification>, Error> {
+        Ok(None)
+    }
+    fn timeout_claim_rearmed(
+        &mut self,
+        _semantic: TimeoutClaimSemantic,
+    ) -> Result<Option<GameNotification>, Error> {
+        Ok(None)
+    }
+    #[cfg(test)]
+    fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
+        OffChainPhase::corrupt_state_for_testing(self, new_sn)
+    }
+    #[cfg(test)]
+    fn force_unroll_spend_for_testing(
+        &self,
+        env: &mut ChannelEnv<'_>,
+    ) -> Result<SpendBundle, Error> {
+        OffChainPhase::force_unroll_spend(self, env)
+    }
+    #[cfg(test)]
+    fn last_channel_coin_spend_info_for_testing(&self) -> Option<ChannelCoinSpendInfo> {
+        self.get_last_channel_coin_spend_info().cloned()
+    }
+    #[cfg(test)]
+    fn force_stale_unroll_spend_for_testing(
+        &self,
+        env: &mut ChannelEnv<'_>,
+        saved: &ChannelCoinSpendInfo,
+    ) -> Result<SpendBundle, Error> {
+        OffChainPhase::force_stale_unroll_spend(self, env, saved)
+    }
+    #[cfg(test)]
+    fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase> {
+        None
+    }
+    fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
+        None
     }
 }
 
 #[cfg(test)]
 mod atomic_group_tests {
     use super::*;
+
+    #[test]
+    fn queued_cheat_failure_keeps_game_action_context() {
+        assert_eq!(
+            failed_game_action_context(&GameAction::Cheat(
+                GameID(7),
+                Amount::default(),
+                Hash::default(),
+            )),
+            Some((GameID(7), FailedGameAction::Cheat)),
+        );
+    }
 
     fn member(id: u64) -> WireGameSpec {
         WireGameSpec {
@@ -1937,7 +2048,7 @@ mod atomic_group_tests {
     fn group(members: Vec<WireGameSpec>, group_id: GameID) -> WireProposalGroup {
         WireProposalGroup {
             start: GameProposal {
-                game_type: GameType(b"test".to_vec()),
+                game_type: GameType::from_hash(Hash::default()),
                 timeout: Timeout::new(15),
                 parameters: Program::from_bytes(&[0x80]),
             },

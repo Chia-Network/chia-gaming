@@ -1,7 +1,7 @@
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { runSessionMachineTransition } from '../session/sessionMachineEffects';
-import type { HandTermsModel, ProposalGroupOrigin } from '../session/types';
+import type { HandProposal, ProposalGroupOrigin } from '../session/types';
 
 export const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
@@ -27,7 +27,7 @@ export function send(
 export function trackProposal(
   state: ReturnType<typeof createSessionMachineState>,
   memberIds: string[],
-  terms: HandTermsModel,
+  handProposal: HandProposal,
   origin: ProposalGroupOrigin = 'local',
 ) {
   return send(state, {
@@ -35,7 +35,7 @@ export function trackProposal(
     group: {
       primaryId: memberIds[0],
       memberIds,
-      terms,
+      handProposal,
       origin,
       disposition: origin === 'local' ? 'outgoing' : 'incoming-cached',
     },

@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import {
   CURRENT_VERSION,
   _resetForTests,
@@ -65,6 +65,7 @@ const PRESENTATION_KEYS = new Set([
   'activeGameType',
   'gameInstances',
   'handState',
+  'pendingCandidates',
   'channelStatus',
   'lastOutcomeWin',
   'myRunningBalance',
@@ -74,9 +75,9 @@ const PRESENTATION_KEYS = new Set([
   'cleanShutdownStarted',
   'betweenHandMode',
   'betweenHandCompose',
-  'betweenHandLastTerms',
-  'betweenHandRejectedOnceTerms',
-  'betweenHandPendingRetryTerms',
+  'betweenHandLastHandProposal',
+  'betweenHandRejectedOnceHandProposal',
+  'betweenHandPendingRetryHandProposal',
   'proposalGroups',
   'waitingStateEnteredAt',
   'cleanShutdownGraceStartedAt',
@@ -126,6 +127,7 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
     gameInstances: {},
     activeGameType: 'calpoker',
     handState: null,
+    pendingCandidates: [],
     channelStatus: null,
     lastOutcomeWin: null,
     myRunningBalance: '0',
@@ -138,18 +140,20 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
       selected_game: 'calpoker',
       game_timeout: '15',
       proposal_sent: false,
-      calpoker: { amount: perGameAmount },
-      krunk: { amount: '100' },
-      spacepoker: { unit_size: '1', stack_size: '20' },
+      drafts: {
+        calpoker: { amount: perGameAmount },
+        krunk: { amount: '100' },
+        spacepoker: { unitSize: '1', stackSize: '20' },
+      },
     },
-    betweenHandLastTerms: {
+    betweenHandLastHandProposal: {
       my_contribution: perGameAmount,
       their_contribution: perGameAmount,
       game_timeout: '15',
       game_type: 'calpoker',
     },
-    betweenHandRejectedOnceTerms: null,
-    betweenHandPendingRetryTerms: null,
+    betweenHandRejectedOnceHandProposal: null,
+    betweenHandPendingRetryHandProposal: null,
     proposalGroups: [],
     waitingStateEnteredAt: null,
     cleanShutdownGraceStartedAt: null,
@@ -248,8 +252,10 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
       opponentHand: [3n, 4n],
       moveNumber: 1n,
       isPlayerTurn: true,
+      iStarted: true,
+      error: null,
     }),
-    betweenHandLastTerms: {
+    betweenHandLastHandProposal: {
       my_contribution: '20',
       their_contribution: '20',
       game_timeout: '15',

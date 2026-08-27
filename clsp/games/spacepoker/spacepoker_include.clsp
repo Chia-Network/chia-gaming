@@ -1,5 +1,0 @@
-(include *standard-cl-23*)
-
-(import games.spacepoker.spacepoker_generate exposing spacepoker_factory)
-
-(export spacepoker_factory)

@@ -19,12 +19,12 @@ import { formatMojos } from '../util';
 import { SessionPhase } from '../types/ChiaGaming';
 import { RestoreStatus, type SessionController } from '../hooks/SessionController';
 import type { BlockchainPoller } from '../hooks/BlockchainPoller';
-import { requireLiveGameHandSource } from '../lib/gameMount';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
 import { isErrorSettlementOutcome } from '../lib/settlement';
 import {
+  acceptedHandNeedsGameTabAttention,
   channelStateNeedsGameTabAttention,
-  gameplayEventNeedsGameTabAttention,
+  gameModelNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
@@ -610,10 +610,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       onProtocolStateProviderChange(null);
       return;
     }
-    const gameObject = requireLiveGameHandSource(session.handSource);
-    onProtocolStateProviderChange(() => gameObject.getProtocolStatePretty());
+    onProtocolStateProviderChange(() => sessionController.getProtocolStatePretty());
     return () => onProtocolStateProviderChange(null);
-  }, [session.handSource, onProtocolStateProviderChange, terminalMode]);
+  }, [sessionController, onProtocolStateProviderChange, terminalMode]);
 
   useEffect(() => {
     if (!onCoinsProviderChange) return;
@@ -621,10 +620,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       onCoinsProviderChange(null);
       return;
     }
-    const gameObject = requireLiveGameHandSource(session.handSource);
-    onCoinsProviderChange(() => gameObject.getCoinsOfInterest());
+    onCoinsProviderChange(() => sessionController.getCoinsOfInterest());
     return () => onCoinsProviderChange(null);
-  }, [session.handSource, onCoinsProviderChange, terminalMode]);
+  }, [sessionController, onCoinsProviderChange, terminalMode]);
 
   const resolvedPhaseReportedRef = useRef(false);
   useEffect(() => {
@@ -656,15 +654,24 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
     suppressPhaseReporting,
   ]);
 
+  const previousGameModel = useRef(session.sessionModel.game);
   useEffect(() => {
-    if (!onGameActivity) return;
-    const sub = session.gameplayEvent$.subscribe((evt) => {
-      if (gameplayEventNeedsGameTabAttention(evt)) {
-        onGameActivity();
-      }
-    });
-    return () => sub.unsubscribe();
-  }, [session.gameplayEvent$, onGameActivity]);
+    const previous = previousGameModel.current;
+    previousGameModel.current = session.sessionModel.game;
+    if (onGameActivity && gameModelNeedsGameTabAttention(previous, session.sessionModel.game)) {
+      onGameActivity();
+    }
+  }, [session.sessionModel.game, onGameActivity]);
+
+  // A new accepted hand is session activity, not a gameplay event.
+  const prevHandKey = useRef(session.handKey);
+  useEffect(() => {
+    const previous = prevHandKey.current;
+    prevHandKey.current = session.handKey;
+    if (acceptedHandNeedsGameTabAttention(previous, session.handKey, session.currentHandGameIds)) {
+      onGameActivity?.();
+    }
+  }, [session.handKey, session.currentHandGameIds, onGameActivity]);
 
   const prevGameQueueLen = useRef(session.gameQueue.length);
   const prevChannelQueueLen = useRef(session.channelQueue.length);

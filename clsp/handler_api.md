@@ -24,7 +24,7 @@ my-turn followed by their-turn. Because both peers execute the identical
 factory output, sender/receiver and my/their are interpreted relative to the
 proposal sender when the records are installed.
 
-Canonical parameters:
+Canonical parameters, also exposed by each game's `factoryParameters` codec:
 
 - Calpoker: proper list `(per_player_stake sender_goes_first)`.
 - Space Poker: proper list

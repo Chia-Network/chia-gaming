@@ -20,7 +20,6 @@ import {
   projectGameStatus,
 } from '../session/model';
 import type { SessionSave } from '../../hooks/save';
-import { gameplayEventsForGameStatus, settledEventForInfo } from '../../hooks/useGameSession';
 import { liveSave } from './session_save_envelope.fixtures';
 
 function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
@@ -148,7 +147,7 @@ describe('session model restore, schema, and event contracts', () => {
         have_potato: true,
       },
       betweenHandMode: 'review-incoming-proposal',
-      betweenHandLastTerms: {
+      betweenHandLastHandProposal: {
         my_contribution: '10',
         their_contribution: '10',
         game_timeout: '23',
@@ -161,7 +160,7 @@ describe('session model restore, schema, and event contracts', () => {
           member_ids: ['42'],
           origin: 'peer',
           disposition: 'incoming-review',
-          terms: {
+          hand_proposal: {
             my_contribution: '20',
             their_contribution: '20',
             game_timeout: '31',
@@ -197,7 +196,7 @@ describe('session model restore, schema, and event contracts', () => {
             memberIds: ['42'],
             origin: 'peer',
             disposition: 'incoming-review',
-            terms: {
+            handProposal: {
               gameType: 'spacepoker',
               myContribution: 20n,
               theirContribution: 20n,
@@ -206,8 +205,8 @@ describe('session model restore, schema, and event contracts', () => {
             },
           },
         ],
-        rejectedOnceTerms: null,
-        lastTerms: {
+        rejectedOnceHandProposal: null,
+        lastHandProposal: {
           gameType: 'spacepoker',
           myContribution: 10n,
           theirContribution: 10n,
@@ -218,12 +217,14 @@ describe('session model restore, schema, and event contracts', () => {
           selectedGame: 'spacepoker',
           gameTimeout: 23n,
           proposalSent: false,
-          calpoker: { amount: 7n },
-          krunk: { amount: 300n },
-          spacepoker: { unitSize: 1n, stackSize: 10n },
+          drafts: {
+            calpoker: { amount: 7n },
+            krunk: { amount: 300n },
+            spacepoker: { unitSize: 1n, stackSize: 10n },
+          },
         },
         newHandRequested: false,
-        pendingRetryTerms: null,
+        pendingRetryHandProposal: null,
       },
     });
 
@@ -525,42 +526,6 @@ describe('session model restore, schema, and event contracts', () => {
     ).toMatchObject({
       coin: { turnState: 'finishing-spending', onChain: true },
       handStatus: 'finishing-spending',
-    });
-  });
-
-  it('orders readable gameplay events before the Settled marker', () => {
-    const notification = {
-      GameStatus: {
-        id: '7',
-        status: 'their-turn',
-        coin_id: null,
-        other_params: {
-          readable: [1, 2, 3],
-          mover_share: '0',
-        },
-      },
-    };
-
-    const terminalEvent = {
-      Settled: { gameId: '7', outcome: 'lost' as const, ourShare: '0' },
-    };
-    expect(gameplayEventsForGameStatus(notification, ['7'], terminalEvent)).toEqual([
-      { OpponentMoved: { readable: Uint8Array.from([1, 2, 3]), gameId: '7', moverShare: '0' } },
-      { Settled: { gameId: '7', outcome: 'lost', ourShare: '0' } },
-    ]);
-  });
-
-  it('always emits Settled gameplay events including clean settles', () => {
-    expect(
-      settledEventForInfo('7', {
-        type: 'settled',
-        outcome: 'settled_cleanly',
-        label: 'Settled cleanly',
-        myReward: '20',
-        rewardCoinHex: null,
-      }),
-    ).toEqual({
-      Settled: { gameId: '7', outcome: 'settled_cleanly', ourShare: '20' },
     });
   });
 });

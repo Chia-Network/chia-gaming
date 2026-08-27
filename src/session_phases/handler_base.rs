@@ -103,34 +103,8 @@ impl ChannelStateBase {
         }
     }
 
-    pub fn amount(&self) -> Amount {
-        self.channel_state
-            .as_ref()
-            .map(|ch| ch.amount(true))
-            .unwrap_or_default()
-    }
-
-    pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.channel_state
-            .as_ref()
-            .map(|ch| ch.my_out_of_game_balance())
-    }
-
-    pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.channel_state
-            .as_ref()
-            .map(|ch| ch.their_out_of_game_balance())
-    }
-
     pub fn get_reward_puzzle_hash(&self, env: &mut ChannelEnv<'_>) -> Result<PuzzleHash, Error> {
         self.channel_state()?.get_reward_puzzle_hash(env)
-    }
-
-    pub fn get_game_state_id(&self, env: &mut ChannelEnv<'_>) -> Result<Option<Hash>, Error> {
-        if let Some(ch) = self.channel_state.as_ref() {
-            return ch.get_game_state_id(env).map(Some);
-        }
-        Ok(None)
     }
 
     pub fn has_potato(&self) -> bool {

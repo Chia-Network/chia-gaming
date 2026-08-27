@@ -12,13 +12,13 @@ use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, SINGLETO
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
-    PrivateKey, Program, PuzzleHash, Spend, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, PrivateKey,
+    Program, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
     CancelReason, ChannelStatus, ChannelStatusSnapshot, GameNotification, GameSessionEvent,
-    GameStatusKind, SettlementOutcome, UnrollInitiator,
+    GameStatusKind, LocalActionKind, SettlementOutcome, UnrollInitiator,
 };
 use crate::session_phases::game_collection;
 use crate::session_phases::handshake::CoinSpendRequest;
@@ -521,6 +521,9 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
             GameNotification::ActionFailed { reason, .. } => format!("Notif(ActionFailed(reason={reason}))"),
             GameNotification::MoveRejected { id, tag, message } => format!("Notif(MoveRejected(id={id:?},tag={tag},message={message}))"),
+            GameNotification::LocalActionApplied { id, action } => {
+                format!("Notif(LocalActionApplied(id={id:?},action={action:?}))")
+            }
             GameNotification::ChannelStatus(ChannelStatusSnapshot { state, .. }) => format!("Notif(ChannelStatus(state={state:?}))"),
         },
     }
@@ -812,6 +815,10 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
+            GameNotification::LocalActionApplied { .. } => {
+                self.assert_channel_created("local_action_applied");
+                self.notifications.push(notification.clone());
+            }
             GameNotification::ChannelStatus(ChannelStatusSnapshot { state, .. }) => {
                 if matches!(state, ChannelStatus::Active) {
                     self.channel_created = true;
@@ -914,7 +921,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     rng: &mut ChaCha8Rng,
     private_keys: [ChannelPrivateKeys; 2],
     identities: &[ChiaIdentity],
-    game_type: &[u8],
+    package_key: &str,
     extras: &Program,
     moves_input: &[SimScriptAction],
     pred: GameRunEarlySuccessPredicate,
@@ -1002,7 +1009,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         allocator,
         rng,
         identities,
-        game_type,
+        package_key,
         extras,
         moves_input,
         pred,
@@ -1343,7 +1350,7 @@ pub fn run_calpoker_container_with_action_list_with_success_predicate(
         &mut rng,
         private_keys,
         &identities,
-        b"calpoker",
+        "calpoker",
         &Program::from_hex("80")?,
         moves,
         predicate,
@@ -1395,7 +1402,7 @@ pub fn run_spacepoker_container_with_action_list_with_seed(
         &mut rng,
         private_keys,
         &identities,
-        b"spacepoker",
+        "spacepoker",
         &spacepoker_parameters,
         moves,
         predicate,
@@ -1430,7 +1437,7 @@ pub fn run_krunk_container_with_action_list_with_success_predicate(
         &mut rng,
         private_keys,
         &identities,
-        b"krunk",
+        "krunk",
         &Program::from_hex("64")?,
         moves,
         predicate,
@@ -1896,7 +1903,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &mut rng,
                 private_keys,
                 &identities,
-                b"calpoker",
+                "calpoker",
                 &Program::from_hex("80").unwrap(),
                 &moves,
                 Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
@@ -2621,7 +2628,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
@@ -2703,7 +2710,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
@@ -2788,7 +2795,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
@@ -2878,7 +2885,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
@@ -2959,14 +2966,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         add_debug_test_accept_shutdown(&mut sim_setup, 20, 1);
-        let game_type: &[u8] = b"debug";
+        let package_key: &str = "debug";
 
         let mut outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            game_type,
+            package_key,
             &sim_setup.args_program,
             &sim_setup.game_actions,
             Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
@@ -2984,10 +2991,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .expect("encode debug parameters");
         let params1 =
             Program::from_nodeptr(&mut allocator, params1_node).expect("debug parameters");
+        let debug_type = crate::session_phases::game_collection::game_type_for_package(
+            &mut allocator,
+            package_key,
+        );
         let result1 = outcome.cradles[0].propose_games(
             &mut allocator,
             &[GameProposal {
-                game_type: GameType(game_type.to_vec()),
+                game_type: debug_type.clone(),
                 timeout: Timeout::new(15),
                 parameters: params1,
             }],
@@ -3007,7 +3018,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let result2 = outcome.cradles[1].propose_games(
             &mut allocator,
             &[GameProposal {
-                game_type: GameType(game_type.to_vec()),
+                game_type: debug_type,
                 timeout: Timeout::new(15),
                 parameters: params2,
             }],
@@ -3058,7 +3069,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             Some(&|_, cradles| cradles[0].channel_status_terminal() && cradles[1].is_abandoned()),
@@ -3101,7 +3112,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys,
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
@@ -3985,6 +3996,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
 
         let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(p1_notifs.iter().any(|notification| matches!(
+            notification,
+            GameNotification::LocalActionApplied {
+                id: GameID(1),
+                action: LocalActionKind::Cheat,
+            }
+        )));
         assert!(
             p1_notifs
                 .iter()
@@ -4203,6 +4221,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 notification_coin_in_mempool,
                 "PlayingMove became observable before its spend reached the mempool: {host_events:?}"
             );
+            assert!(host_events[..playing_index].iter().any(|event| matches!(
+                event,
+                HostBoundaryEvent::Notification {
+                    notification: GameNotification::LocalActionApplied {
+                        id: GameID(1),
+                        action: LocalActionKind::MakeMove,
+                    },
+                    ..
+                }
+            )));
             assert!(
                 host_events[..playing_index].iter().any(|event| {
                     matches!(
@@ -4267,6 +4295,27 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         let p1_notifs = &outcome.local_uis[1].notifications;
+        let applied_index = p0_notifs
+            .iter()
+            .position(|notification| matches!(
+                notification,
+                GameNotification::LocalActionApplied {
+                    id: GameID(1),
+                    action: LocalActionKind::AcceptSettlement,
+                }
+            ))
+            .expect("on-chain accept should emit LocalActionApplied");
+        let terminal_index = p0_notifs
+            .iter()
+            .position(|notification| matches!(
+                notification,
+                GameNotification::GameSettled { id: GameID(1), .. }
+            ))
+            .expect("on-chain accept should eventually settle");
+        assert!(
+            applied_index < terminal_index,
+            "action-applied must precede its terminal notification: {p0_notifs:?}"
+        );
         assert_reward_coin_consistency(p0_notifs, "accept_finished p0");
         assert_reward_coin_consistency(p1_notifs, "accept_finished p1");
         assert!(
@@ -4393,7 +4442,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
@@ -4822,7 +4871,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &mut rng,
                 private_keys,
                 &identities,
-                b"calpoker",
+                "calpoker",
                 &Program::from_hex("80").unwrap(),
                 &moves,
                 None,
@@ -4892,7 +4941,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &mut rng,
                 private_keys,
                 &identities,
-                b"calpoker",
+                "calpoker",
                 &Program::from_hex("80").unwrap(),
                 &moves,
                 None,
@@ -5858,7 +5907,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             Some(&|_, cradles| {
@@ -5943,7 +5992,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             Some(&|_, cradles| {
@@ -6041,7 +6090,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             Some(&|_, cradles| cradles[0].is_on_chain() || cradles[0].is_failed()),
@@ -6132,7 +6181,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             Some(&|_, cradles| {
@@ -6215,7 +6264,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
@@ -6274,7 +6323,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
@@ -6320,7 +6369,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
@@ -6373,7 +6422,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
@@ -6665,7 +6714,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &mut rng,
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
-            b"debug",
+            "debug",
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,

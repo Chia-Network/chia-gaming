@@ -7,8 +7,6 @@ use crate::channel_state::types::ChannelEnv;
 #[cfg(test)]
 use crate::channel_state::types::{ChannelPrivateKeys, ReadableMove};
 use crate::common::standard_coin::private_to_public_key;
-#[cfg(test)]
-use crate::common::types::GameType;
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
@@ -378,13 +376,7 @@ fn get_channel_coin_for_handler(p: &dyn PeerLifecyclePhase) -> Result<CoinString
 
 #[cfg(test)]
 fn extract_off_chain_phase(peer: &mut Box<dyn PeerLifecyclePhase>) -> Option<OffChainPhase> {
-    if let Some(ih) = peer.as_any_mut().downcast_mut::<HandshakeInitiatorPhase>() {
-        return ih.take_off_chain_phase();
-    }
-    if let Some(rh) = peer.as_any_mut().downcast_mut::<HandshakeReceiverPhase>() {
-        return rh.take_off_chain_phase();
-    }
-    None
+    peer.take_off_chain_phase_for_testing()
 }
 
 #[cfg(test)]
@@ -524,11 +516,7 @@ pub fn test_peer_smoke() {
     {
         let start_effect = {
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
-            let ih = handlers[0]
-                .as_any_mut()
-                .downcast_mut::<HandshakeInitiatorPhase>()
-                .expect("handler[0] should be initiator");
-            ih.start(&mut env).expect("should work")
+            handlers[0].start_handshake(&mut env).expect("should work")
         };
         apply_effects(
             start_effect.into_iter().collect(),
@@ -572,12 +560,13 @@ pub fn test_peer_smoke() {
                 .expect("encode proposal parameters");
             let parameters =
                 Program::from_nodeptr(&mut allocator, params_node).expect("proposal parameters");
+            let calpoker_type = game_collection::game_type_for_package(&mut allocator, "calpoker");
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
             let (game_ids, effects1) = FromLocalUI::propose_games(
                 &mut peers[1],
                 &mut env,
                 &[GameProposal {
-                    game_type: GameType(b"calpoker".to_vec()),
+                    game_type: calpoker_type,
                     timeout: Timeout::new(15),
                     parameters,
                 }],

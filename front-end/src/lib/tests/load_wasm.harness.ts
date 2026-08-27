@@ -11,14 +11,10 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
 import { reduceRegisteredGameState } from '../gameRegistry';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
-import {
-  initialKrunkGameState,
-  KrunkHandler,
-  krunkStateCodec,
-} from '../../features/krunk/stateCodec';
-import type { HandTermsModel, PersistedGameState } from '../session/types';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
+import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
+import type { HandProposal, PersistedGameState } from '../session/types';
 import 'fake-indexeddb/auto';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
@@ -397,20 +393,22 @@ export async function createActivePair(
 }
 
 export function postMoveHandState(
-  terms: HandTermsModel,
+  handProposal: HandProposal,
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
-  const accepted = reduceRegisteredGameState(terms.gameType, null, {
-    type: 'accepted-group',
-    id: ids[0],
-    groupIds: ids,
-    iStarted: false,
-    isMyTurn: true,
-    origin: 'peer',
-    terms,
+  const accepted = reduceRegisteredGameState(handProposal.gameType, null, {
+    type: 'hand-started',
+    init: {
+      id: ids[0],
+      gameIds: ids,
+      iStarted: false,
+      canAct: true,
+      origin: 'peer',
+      handProposal,
+    },
   });
-  assert.ok(accepted, `${terms.gameType}: accepted group must create hand state`);
-  if (terms.gameType === 'calpoker') {
+  assert.ok(accepted, `${handProposal.gameType}: accepted group must create hand state`);
+  if (handProposal.gameType === 'calpoker') {
     const state = calpokerStateCodec.decode(accepted);
     assert.ok(state);
     return {
@@ -423,7 +421,7 @@ export function postMoveHandState(
       move: null,
     };
   }
-  if (terms.gameType === 'spacepoker') {
+  if (handProposal.gameType === 'spacepoker') {
     const state = spacepokerStateCodec.decode(accepted);
     assert.ok(state);
     return {

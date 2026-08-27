@@ -1,5 +1,5 @@
-import { applyTermsToComposeDraft } from './composeDraft';
-import { gameTermsEqual, validateGameTerms } from '../gameRegistry';
+import { applyHandProposalToComposeDraft } from './composeDraft';
+import { handProposalsEqual, validateHandProposal } from '../gameRegistry';
 import { selectProposalGroupByDisposition } from './selectors';
 import type {
   SessionMachineEvent,
@@ -36,7 +36,7 @@ export function reduceSessionCommand(
     case 'choose-same-terms': {
       const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
       if (cached) {
-        if (gameTermsEqual(cached.terms, betweenHand.lastTerms)) {
+        if (handProposalsEqual(cached.handProposal, betweenHand.lastHandProposal)) {
           return {
             state,
             effects: [
@@ -67,7 +67,19 @@ export function reduceSessionCommand(
           effects: [{ type: 'persist-session' }],
         };
       }
-      const terms = betweenHand.lastTerms;
+      const terms = betweenHand.lastHandProposal;
+      if (terms === null) {
+        return {
+          state: {
+            ...state,
+            model: {
+              ...state.model,
+              betweenHand: { ...betweenHand, mode: 'compose-proposal' },
+            },
+          },
+          effects: [{ type: 'persist-session' }],
+        };
+      }
       const enough =
         canCover(state.model.channel.status.ourBalance, terms.myContribution) &&
         canCover(state.model.channel.status.theirBalance, terms.theirContribution);
@@ -79,7 +91,7 @@ export function reduceSessionCommand(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                compose: applyTermsToComposeDraft(betweenHand.compose, terms),
+                compose: applyHandProposalToComposeDraft(betweenHand.compose, terms),
                 mode: 'compose-proposal',
                 newHandRequested: false,
               },
@@ -98,12 +110,12 @@ export function reduceSessionCommand(
           },
           coordination: { ...state.coordination, sameTermsRequested: true },
         },
-        effects: [{ type: 'controller-propose-game', terms }],
+        effects: [{ type: 'controller-propose-game', handProposal: terms }],
       };
     }
     case 'reject-current-proposal': {
       const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
-      if (cached && !gameTermsEqual(cached.terms, betweenHand.lastTerms)) {
+      if (cached && !handProposalsEqual(cached.handProposal, betweenHand.lastHandProposal)) {
         return {
           state: {
             ...state,
@@ -132,8 +144,11 @@ export function reduceSessionCommand(
                 ...state.model,
                 betweenHand: {
                   ...betweenHand,
-                  rejectedOnceTerms: betweenHand.lastTerms,
-                  compose: applyTermsToComposeDraft(betweenHand.compose, betweenHand.lastTerms),
+                  rejectedOnceHandProposal: betweenHand.lastHandProposal,
+                  compose: applyHandProposalToComposeDraft(
+                    betweenHand.compose,
+                    betweenHand.lastHandProposal,
+                  ),
                   mode: 'compose-proposal',
                 },
               },
@@ -157,7 +172,10 @@ export function reduceSessionCommand(
             ...state.model,
             betweenHand: {
               ...betweenHand,
-              compose: applyTermsToComposeDraft(betweenHand.compose, betweenHand.lastTerms),
+              compose: applyHandProposalToComposeDraft(
+                betweenHand.compose,
+                betweenHand.lastHandProposal,
+              ),
               mode: 'compose-proposal',
             },
           },
@@ -165,10 +183,10 @@ export function reduceSessionCommand(
         effects: [{ type: 'persist-session' }],
       };
     case 'submit-compose':
-      if (!validateGameTerms(event.terms)) return { state, effects: [] };
+      if (!validateHandProposal(event.handProposal)) return { state, effects: [] };
       return {
         state,
-        effects: [{ type: 'controller-propose-game', terms: event.terms }],
+        effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],
       };
     case 'accept-review': {
       const review = selectProposalGroupByDisposition(state.model, 'incoming-review');
@@ -227,7 +245,10 @@ export function reduceSessionCommand(
             ...state.model,
             betweenHand: {
               ...betweenHand,
-              compose: applyTermsToComposeDraft(betweenHand.compose, betweenHand.lastTerms),
+              compose: applyHandProposalToComposeDraft(
+                betweenHand.compose,
+                betweenHand.lastHandProposal,
+              ),
               mode: 'compose-proposal',
             },
           },

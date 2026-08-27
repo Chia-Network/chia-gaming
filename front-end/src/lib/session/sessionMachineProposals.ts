@@ -1,4 +1,4 @@
-import { applyTermsToComposeDraft } from './composeDraft';
+import { applyHandProposalToComposeDraft } from './composeDraft';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -93,12 +93,15 @@ export function reduceProposalEvent(
     case 'request-cancel-proposal':
       return { state, effects: [{ type: 'controller-cancel-proposal', id: event.id }] };
     case 'request-propose-game':
-      return { state, effects: [{ type: 'controller-propose-game', terms: event.terms }] };
+      return {
+        state,
+        effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],
+      };
     case 'proposal-sent': {
       const group = {
         primaryId: event.ids[0],
         memberIds: [...event.ids],
-        terms: event.terms,
+        handProposal: event.handProposal,
         origin: 'local' as const,
         disposition: 'outgoing' as const,
       };
@@ -164,8 +167,11 @@ export function reduceProposalEvent(
                 proposalGroups: betweenHand.proposalGroups.filter(
                   (group) => group.primaryId !== event.id,
                 ),
-                rejectedOnceTerms: betweenHand.lastTerms,
-                compose: applyTermsToComposeDraft(betweenHand.compose, betweenHand.lastTerms),
+                rejectedOnceHandProposal: betweenHand.lastHandProposal,
+                compose: applyHandProposalToComposeDraft(
+                  betweenHand.compose,
+                  betweenHand.lastHandProposal,
+                ),
                 mode: 'compose-proposal',
               },
             },

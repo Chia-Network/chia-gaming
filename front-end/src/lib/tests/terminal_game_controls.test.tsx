@@ -1,9 +1,8 @@
 import { createElement, type ComponentProps } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { EMPTY } from 'rxjs';
 
 jest.mock(
-  '@/src/components/button',
+  '@/components/button',
   () => {
     const React = jest.requireActual<typeof import('react')>('react');
     return {
@@ -12,7 +11,7 @@ jest.mock(
   },
   { virtual: true },
 );
-jest.mock('../../features/calPoker/components/components', () => {
+jest.mock('@games/calpoker/ui/components/components', () => {
   const React = jest.requireActual<typeof import('react')>('react');
   return {
     HandDisplay: (props: Record<string, unknown>) => React.createElement('div', props),
@@ -20,16 +19,16 @@ jest.mock('../../features/calPoker/components/components', () => {
   };
 });
 
-import CaliforniaPoker from '../../features/calPoker/components/CaliforniaPoker';
-import { HandDisplay } from '../../features/calPoker/components/components';
-import { GAME_STATES } from '../../features/calPoker/components/constants/constants';
-import Krunk from '../../features/krunk/Krunk';
-import { initialKrunkGameState, krunkStateCodec } from '../../features/krunk/stateCodec';
-import SpacePoker from '../../features/spacePoker/SpacePoker';
-import { spacepokerStateCodec } from '../../features/spacePoker/stateCodec';
+import CaliforniaPoker from '@games/calpoker/ui/components/CaliforniaPoker';
+import { HandDisplay } from '@games/calpoker/ui/components/components';
+import { GAME_STATES } from '@games/calpoker/ui/components/constants/constants';
+import Krunk from '@games/krunk/ui/Krunk';
+import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import SpacePoker from '@games/spacepoker/ui/SpacePoker';
+import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { UncaughtClientErrorReporter } from '../../components/GameSession';
 import { markClientErrorReported } from '../clientError';
-import { terminalGameHandSource } from '../gameMount';
+import { terminalGameHandSource } from '@games/host';
 import type { GameTerminalModel } from '../session/types';
 
 const NO_TERMINAL: GameTerminalModel = {
@@ -192,12 +191,6 @@ describe('terminal game controls', () => {
           handSource: terminalGameHandSource(handState),
           currentHandGameIds: ['alice', 'bob'],
           activeGameIds: [],
-          iProposedHand: true,
-          gameplayEvent$: EMPTY,
-          betSize: 100n,
-          onTurnChanged: () => {
-            throw new Error('turn change invoked');
-          },
           onGameLog: () => {},
           terminalsById: { alice: NO_TERMINAL, bob: NO_TERMINAL },
           amountsById: { alice: '100', bob: '100' },
@@ -225,11 +218,10 @@ describe('terminal game controls', () => {
       handHistory: [{ player: 'you', action: 'raise', units: 2n }],
       outcome: null,
       terminalState: 'none',
-      terminalRecovery: null,
-      pendingTerminalAction: null,
       coinTossIOpen: true,
       unitSizeMojos: 10n,
       displayMode: 'mojos',
+      error: null,
     });
 
     act(() => {
@@ -237,13 +229,8 @@ describe('terminal game controls', () => {
         createElement(SpacePoker, {
           handSource: terminalGameHandSource(handState),
           gameId: 'space',
-          iStarted: true,
-          gameplayEvent$: EMPTY,
           betSize: '100',
           unitSizeMojos: '10',
-          onTurnChanged: () => {
-            throw new Error('turn change invoked');
-          },
           onGameLog: () => {},
           terminal: NO_TERMINAL,
         }),

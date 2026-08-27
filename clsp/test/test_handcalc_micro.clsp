@@ -1,8 +1,8 @@
 (include *standard-cl-23*)
-(import games.calpoker.handcalc)
-(import games.calpoker.onchain.make_cards)
-(import games.calpoker.onchain.onehandcalc)
-(import games.calpoker.onchain.arrange_cards)
+(import games.calpoker.clsp.handcalc)
+(import games.calpoker.clsp.onchain.make_cards)
+(import games.calpoker.clsp.onchain.onehandcalc)
+(import games.calpoker.clsp.onchain.arrange_cards)
 
 (export (kind . arguments)
   (if

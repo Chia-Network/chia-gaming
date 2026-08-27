@@ -33,20 +33,23 @@ use crate::session_phases::types::{
 };
 
 #[cfg(test)]
-use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
-#[cfg(test)]
 use crate::session_phases::OffChainPhase;
 
+pub(crate) fn phase_operation_error(phase: &str, operation: &str) -> Error {
+    Error::StrErr(format!("{operation} is not available in {phase}"))
+}
+
+/// Complete protocol surface implemented explicitly by every lifecycle phase.
+///
+/// Methods intentionally have no behavioral defaults: a phase must state
+/// whether each operation is active, invalid, or a deliberate no-op.
 #[typetag::serde]
 pub trait PeerLifecyclePhase {
+    fn phase_name(&self) -> &'static str;
     fn has_queued_message(&self) -> bool;
     fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
-    fn has_queued_action(&self) -> bool {
-        false
-    }
-    fn process_queued_action(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        Ok(vec![])
-    }
+    fn has_queued_action(&self) -> bool;
+    fn process_queued_action(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
     fn received_message(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -90,124 +93,92 @@ pub trait PeerLifecyclePhase {
     #[cfg(test)]
     fn self_accept_proposal(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(Error::StrErr(
-            "self_accept_proposal: not in off-chain phase".to_string(),
-        ))
-    }
+        env: &mut ChannelEnv<'_>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>>;
-
-    fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
-        Ok(vec![])
-    }
-
-    fn handshake_finished(&self) -> bool {
-        true
-    }
+    fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error>;
+    fn handshake_finished(&self) -> bool;
+    fn is_on_chain(&self) -> bool;
+    fn start_handshake(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Effect>, Error>;
     fn channel_offer(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _bundle: SpendBundle,
-    ) -> Result<Option<Effect>, Error> {
-        Ok(None)
-    }
+        env: &mut ChannelEnv<'_>,
+        bundle: SpendBundle,
+    ) -> Result<Option<Effect>, Error>;
     fn channel_transaction_completion(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _bundle: &SpendBundle,
-    ) -> Result<Option<Effect>, Error> {
-        Ok(None)
-    }
+        env: &mut ChannelEnv<'_>,
+        bundle: &SpendBundle,
+    ) -> Result<Option<Effect>, Error>;
     fn provide_launcher_coin(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _launcher_coin: CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(Error::StrErr(
-            "provide_launcher_coin not available in this phase".to_string(),
-        ))
-    }
+        env: &mut ChannelEnv<'_>,
+        launcher_coin: CoinString,
+    ) -> Result<Vec<Effect>, Error>;
     fn provide_coin_spend_bundle(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _bundle: SpendBundle,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(Error::StrErr(
-            "provide_coin_spend_bundle not available in this phase".to_string(),
-        ))
-    }
+        env: &mut ChannelEnv<'_>,
+        bundle: SpendBundle,
+    ) -> Result<Vec<Effect>, Error>;
     fn propose_games(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        Err(Error::StrErr(
-            "propose_games: not in off-chain phase".to_string(),
-        ))
-    }
+        env: &mut ChannelEnv<'_>,
+        games: &[GameProposal],
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
     fn accept_proposal(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(Error::StrErr(
-            "accept_proposal: not in off-chain phase".to_string(),
-        ))
-    }
+        env: &mut ChannelEnv<'_>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
     fn cancel_proposal(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(Error::StrErr(
-            "cancel_proposal: not in off-chain phase".to_string(),
-        ))
-    }
-    fn shut_down(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        Err(Error::StrErr(
-            "shut_down: not in off-chain phase".to_string(),
-        ))
-    }
+        env: &mut ChannelEnv<'_>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
+    fn shut_down(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
     fn go_on_chain(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _got_error: bool,
-    ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![])
-    }
-    fn flush_pending_actions(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        Ok(vec![])
-    }
-    fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
-        None
-    }
-    fn channel_state(&self) -> Result<&ChannelState, Error> {
-        Err(Error::StrErr(
-            "no channel handler in this phase".to_string(),
-        ))
-    }
-
-    fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
-        None
-    }
-
-    fn wallet_callback_failed(&mut self, _reason: String) {}
-
-    fn has_active_on_chain_games(&self) -> bool {
-        false
-    }
+        env: &mut ChannelEnv<'_>,
+        got_error: bool,
+    ) -> Result<Vec<Effect>, Error>;
+    fn flush_pending_actions(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
+    fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)>;
+    fn channel_state(&self) -> Result<&ChannelState, Error>;
+    fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot>;
+    fn wallet_callback_failed(&mut self, reason: String);
+    fn has_active_on_chain_games(&self) -> bool;
+    fn timeout_claim_submitted(
+        &mut self,
+        semantic: TimeoutClaimSemantic,
+    ) -> Result<Option<GameNotification>, Error>;
+    fn timeout_claim_rearmed(
+        &mut self,
+        semantic: TimeoutClaimSemantic,
+    ) -> Result<Option<GameNotification>, Error>;
 
     /// Coin ids worth surfacing in the dashboard (channel/unroll/change/game/
-    /// game-change), each tagged with its kind. Defaults to none, which is the
-    /// correct answer during handshake before any coin exists.
-    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        vec![]
-    }
+    /// game-change), each tagged with its kind.
+    fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)>;
 
-    fn as_any(&self) -> &dyn std::any::Any;
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    #[cfg(test)]
+    fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error>;
+    #[cfg(test)]
+    fn force_unroll_spend_for_testing(
+        &self,
+        env: &mut ChannelEnv<'_>,
+    ) -> Result<SpendBundle, Error>;
+    #[cfg(test)]
+    fn last_channel_coin_spend_info_for_testing(&self) -> Option<ChannelCoinSpendInfo>;
+    #[cfg(test)]
+    fn force_stale_unroll_spend_for_testing(
+        &self,
+        env: &mut ChannelEnv<'_>,
+        saved: &ChannelCoinSpendInfo,
+    ) -> Result<SpendBundle, Error>;
+    #[cfg(test)]
+    fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase>;
+    fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString>;
 }
 
 impl SpendWalletReceiver for Box<dyn PeerLifecyclePhase> {
@@ -408,7 +379,6 @@ impl WalletSpendInterface for GameSessionState {
 pub struct GameSession {
     state: GameSessionState,
     peer: Box<dyn PeerLifecyclePhase>,
-    amount: Amount,
     last_channel_status: Option<ChannelStatusSnapshot>,
     #[cfg(test)]
     #[serde(skip)]
@@ -530,7 +500,6 @@ impl GameSession {
                     Box::new(HandshakeReceiverPhase::new(phi)) as Box<dyn PeerLifecyclePhase>
                 }
             },
-            amount: config.my_contribution + config.their_contribution,
             last_channel_status: None,
             #[cfg(test)]
             saved_unroll_snapshot: None,
@@ -573,27 +542,13 @@ impl GameSession {
     pub fn proposal_contributions_for_testing(
         &self,
     ) -> Result<Vec<(GameID, Amount, Amount)>, Error> {
-        let handler = self
-            .peer
-            .as_any()
-            .downcast_ref::<OffChainPhase>()
-            .ok_or_else(|| {
-                Error::StrErr("proposal_contributions_for_testing: not a OffChainPhase".to_string())
-            })?;
-        let channel = handler.channel_state()?;
+        let channel = self.peer.channel_state()?;
         Ok(channel.proposal_contributions_for_testing())
     }
 
     #[cfg(test)]
     pub fn allocated_balances_for_testing(&self) -> Result<(Amount, Amount), Error> {
-        let handler = self
-            .peer
-            .as_any()
-            .downcast_ref::<OffChainPhase>()
-            .ok_or_else(|| {
-                Error::StrErr("allocated_balances_for_testing: not a OffChainPhase".to_string())
-            })?;
-        let channel = handler.channel_state()?;
+        let channel = self.peer.channel_state()?;
         Ok((
             channel.my_allocated_balance(),
             channel.their_allocated_balance(),
@@ -602,36 +557,19 @@ impl GameSession {
 
     #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
-        let ph = self
-            .peer
-            .as_any_mut()
-            .downcast_mut::<OffChainPhase>()
-            .ok_or_else(|| {
-                Error::StrErr("corrupt_state_for_testing: not a OffChainPhase".to_string())
-            })?;
-        ph.corrupt_state_for_testing(new_sn)
+        self.peer.corrupt_state_for_testing(new_sn)
     }
 
     #[cfg(test)]
     pub fn force_unroll_spend(&self, allocator: &mut AllocEncoder) -> Result<SpendBundle, Error> {
         let mut env =
             ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-        if let Some(ph) = self.peer.as_any().downcast_ref::<OffChainPhase>() {
-            return ph.force_unroll_spend(&mut env);
-        }
-        if let Some(h) = self.peer.as_any().downcast_ref::<SpendChannelCoinPhase>() {
-            return h.force_unroll_spend(&mut env);
-        }
-        Err(Error::StrErr(
-            "force_unroll_spend: not available in this phase".to_string(),
-        ))
+        self.peer.force_unroll_spend_for_testing(&mut env)
     }
 
     #[cfg(test)]
     pub fn save_unroll_snapshot(&mut self) {
-        if let Some(ph) = self.peer.as_any().downcast_ref::<OffChainPhase>() {
-            self.saved_unroll_snapshot = ph.get_last_channel_coin_spend_info().cloned();
-        }
+        self.saved_unroll_snapshot = self.peer.last_channel_coin_spend_info_for_testing();
     }
 
     #[cfg(test)]
@@ -644,18 +582,8 @@ impl GameSession {
         })?;
         let mut env =
             ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-        let ph = self
-            .peer
-            .as_any()
-            .downcast_ref::<OffChainPhase>()
-            .ok_or_else(|| {
-                Error::StrErr("force_stale_unroll_spend: not a OffChainPhase".to_string())
-            })?;
-        ph.force_stale_unroll_spend(&mut env, saved)
-    }
-
-    pub fn amount(&self) -> Amount {
-        self.amount.clone()
+        self.peer
+            .force_stale_unroll_spend_for_testing(&mut env, saved)
     }
 
     /// Render the current protocol-level peer state as indented text for the
@@ -686,20 +614,6 @@ impl GameSession {
             .into_iter()
             .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
             .collect()
-    }
-
-    pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.peer
-            .channel_state()
-            .ok()
-            .map(|ch| ch.get_our_current_share())
-    }
-
-    pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.peer
-            .channel_state()
-            .ok()
-            .map(|ch| ch.get_their_current_share())
     }
 
     pub fn is_peer_disconnected(&self) -> bool {
@@ -891,10 +805,7 @@ impl GameSession {
         if let Some(next) = self.peer.take_next_phase() {
             self.peer = next;
         }
-        // Update phase metadata from current handler
-        use crate::session_phases::on_chain::OnChainPhase;
-
-        self.state.is_on_chain = self.peer.as_any().downcast_ref::<OnChainPhase>().is_some();
+        self.state.is_on_chain = self.peer.is_on_chain();
         self.state.is_failed = self
             .peer
             .channel_status_snapshot()
@@ -989,33 +900,12 @@ impl GameSession {
         &mut self,
         semantic: TimeoutClaimSemantic,
     ) -> Result<(), Error> {
-        use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
-
-        match semantic {
-            TimeoutClaimSemantic::ChannelTimeoutFinish => {
-                let changed = self
-                    .peer
-                    .as_any_mut()
-                    .downcast_mut::<SpendChannelCoinPhase>()
-                    .is_some_and(|phase| phase.timeout_claim_submitted(semantic));
-                if changed {
-                    self.emit_channel_status_if_changed();
-                }
-            }
-            TimeoutClaimSemantic::GameOpponentTurn { id }
-            | TimeoutClaimSemantic::GameFinishTimeout { id } => {
-                let notification = self
-                    .peer
-                    .as_any_mut()
-                    .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
-                    .and_then(|phase| phase.timeout_claim_status(id, true));
-                if let Some(notification) = notification {
-                    self.state
-                        .events
-                        .push_back(GameSessionEvent::Notification(notification));
-                }
-            }
+        if let Some(notification) = self.peer.timeout_claim_submitted(semantic)? {
+            self.state
+                .events
+                .push_back(GameSessionEvent::Notification(notification));
         }
+        self.emit_channel_status_if_changed();
         Ok(())
     }
 
@@ -1023,33 +913,12 @@ impl GameSession {
         &mut self,
         semantic: TimeoutClaimSemantic,
     ) -> Result<(), Error> {
-        use crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase;
-
-        match semantic {
-            TimeoutClaimSemantic::ChannelTimeoutFinish => {
-                let changed = self
-                    .peer
-                    .as_any_mut()
-                    .downcast_mut::<SpendChannelCoinPhase>()
-                    .is_some_and(|phase| phase.timeout_claim_rearmed(semantic));
-                if changed {
-                    self.emit_channel_status_if_changed();
-                }
-            }
-            TimeoutClaimSemantic::GameOpponentTurn { id }
-            | TimeoutClaimSemantic::GameFinishTimeout { id } => {
-                let notification = self
-                    .peer
-                    .as_any_mut()
-                    .downcast_mut::<crate::session_phases::on_chain::OnChainPhase>()
-                    .and_then(|phase| phase.timeout_claim_status(id, false));
-                if let Some(notification) = notification {
-                    self.state
-                        .events
-                        .push_back(GameSessionEvent::Notification(notification));
-                }
-            }
+        if let Some(notification) = self.peer.timeout_claim_rearmed(semantic)? {
+            self.state
+                .events
+                .push_back(GameSessionEvent::Notification(notification));
         }
+        self.emit_channel_status_if_changed();
         Ok(())
     }
 
@@ -1444,18 +1313,6 @@ impl GameSession {
         self.peer.channel_state()?.get_reward_puzzle_hash(&mut env)
     }
 
-    pub fn get_game_state_id(
-        &mut self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<Option<Hash>, Error> {
-        let mut env =
-            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-        match self.peer.channel_state() {
-            Ok(ch) => ch.get_game_state_id(&mut env).map(Some),
-            Err(_) => Ok(None),
-        }
-    }
-
     pub fn set_funding_coin(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -1463,22 +1320,10 @@ impl GameSession {
     ) -> Result<(), Error> {
         self.state.funding_coin = Some(coin.clone());
 
-        if !self.state.is_initiator {
-            return Ok(());
-        }
-
         let start_effect = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            if let Some(hh) = self
-                .peer
-                .as_any_mut()
-                .downcast_mut::<HandshakeInitiatorPhase>()
-            {
-                hh.start(&mut env)?
-            } else {
-                None
-            }
+            self.peer.start_handshake(&mut env)?
         };
         let mut effects = Vec::new();
         effects.extend(start_effect);
@@ -1488,22 +1333,10 @@ impl GameSession {
     }
 
     pub fn start_handshake(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
-        if !self.state.is_initiator {
-            return Ok(());
-        }
-
         let start_effect = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            if let Some(hh) = self
-                .peer
-                .as_any_mut()
-                .downcast_mut::<HandshakeInitiatorPhase>()
-            {
-                hh.start(&mut env)?
-            } else {
-                None
-            }
+            self.peer.start_handshake(&mut env)?
         };
         let mut effects = Vec::new();
         effects.extend(start_effect);
@@ -1759,14 +1592,9 @@ impl GameSession {
 
 #[cfg(test)]
 impl GameSession {
-    /// Get the on-chain game coin for a game (test harness only). Downcasts to
-    /// OnChainPhase when the cradle is in on-chain phase.
+    /// Get the on-chain game coin for a game (test harness only).
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
-        use crate::session_phases::on_chain::OnChainPhase;
-        if let Some(och) = self.peer.as_any().downcast_ref::<OnChainPhase>() {
-            return och.get_game_coin(game_id);
-        }
-        None
+        self.peer.get_game_coin(game_id)
     }
 }
 
@@ -1996,5 +1824,39 @@ mod genesis_challenge_tests {
             restored.state.agg_sig_me_additional_data,
             Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA)
         );
+    }
+
+    #[test]
+    fn receiver_phase_explicitly_handles_start_and_rejects_game_proposals() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([2u8; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                have_potato: false,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([2; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x11; 32]),
+            },
+            rng.random(),
+        );
+
+        session
+            .start_handshake(&mut allocator)
+            .expect("receiver start is an intentional no-op");
+        let error = session
+            .propose_games(&mut allocator, &[])
+            .expect_err("receiver cannot propose games during handshake");
+        assert!(matches!(
+            error,
+            Error::StrErr(message)
+                if message == "propose_games is not available in handshake receiver phase"
+        ));
     }
 }

@@ -1,5 +1,5 @@
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { applyTermsToComposeDraft } from '../session/composeDraft';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { applyHandProposalToComposeDraft } from '../session/composeDraft';
 import {
   createSessionModel,
   INITIAL_GAME_TERMINAL_MODEL,
@@ -14,7 +14,7 @@ describe('session machine behavior sequences', () => {
     let state = createSessionMachineState(
       createSessionModel({
         betweenHand: {
-          compose: applyTermsToComposeDraft(
+          compose: applyHandProposalToComposeDraft(
             createSessionModel().betweenHand.compose,
 
             CALPOKER_TERMS,
@@ -23,15 +23,15 @@ describe('session machine behavior sequences', () => {
       }),
     );
 
-    state = send(state, { type: 'set-compose-amount', gameType: 'calpoker', amount: 37n });
+    state = send(state, { type: 'select-compose-game', gameType: 'calpoker' });
+    state = send(state, { type: 'update-selected-compose-draft', draft: { amount: 37n } });
 
-    state = send(state, { type: 'set-compose-amount', gameType: 'krunk', amount: 900n });
+    state = send(state, { type: 'select-compose-game', gameType: 'krunk' });
+    state = send(state, { type: 'update-selected-compose-draft', draft: { amount: 900n } });
 
     state = send(state, { type: 'select-compose-game', gameType: 'spacepoker' });
-
     state = send(state, {
-      type: 'set-spacepoker-compose',
-
+      type: 'update-selected-compose-draft',
       draft: { unitSize: 11n, stackSize: 17n },
     });
 
@@ -46,11 +46,11 @@ describe('session machine behavior sequences', () => {
 
       proposalSent: true,
 
-      calpoker: { amount: 37n },
-
-      krunk: { amount: 900n },
-
-      spacepoker: { unitSize: 11n, stackSize: 17n },
+      drafts: {
+        calpoker: { amount: 37n },
+        krunk: { amount: 900n },
+        spacepoker: { unitSize: 11n, stackSize: 17n },
+      },
     });
   });
 
@@ -106,7 +106,7 @@ describe('session machine behavior sequences', () => {
 
         betweenHandMode: 'compose-proposal',
 
-        betweenHandLastTerms: {
+        betweenHandLastHandProposal: {
           my_contribution: '20',
 
           their_contribution: '20',
@@ -124,6 +124,8 @@ describe('session machine behavior sequences', () => {
           moveNumber: 0n,
 
           isPlayerTurn: false,
+          iStarted: true,
+          error: null,
         }),
 
         proposalGroups: [
@@ -132,7 +134,7 @@ describe('session machine behavior sequences', () => {
             member_ids: ['11'],
             origin: 'local',
             disposition: 'outgoing',
-            terms: {
+            hand_proposal: {
               my_contribution: '10',
               their_contribution: '10',
               game_timeout: '15',

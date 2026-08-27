@@ -4,39 +4,32 @@ import {
   reduceSpacepokerDurableState,
   reduceSpacepokerSettlementState,
   spacepokerRegistration,
-} from '../../features/spacePoker/adapter';
+} from '@games/spacepoker/ui/handProposal';
 import {
   reduceCalpokerDurableState,
   reduceCalpokerFeatureState,
-} from '../../features/calPoker/adapter';
-import { calpokerStateCodec } from '../../features/calPoker/stateCodec';
-import { reduceKrunkDurableState, reduceKrunkFeatureState } from '../../features/krunk/adapter';
-import {
-  initialKrunkGameState,
-  KrunkHandler,
-  krunkStateCodec,
-} from '../../features/krunk/stateCodec';
-import {
-  spacepokerStateCodec,
-  type SpacepokerHandState,
-} from '../../features/spacePoker/stateCodec';
-import type { DurableGameStateEvent } from '../gameAdapter';
+} from '@games/calpoker/ui/handProposal';
+import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { reduceKrunkDurableState, reduceKrunkFeatureState } from '@games/krunk/ui/handProposal';
+import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { spacepokerStateCodec, type SpacepokerHandState } from '@games/spacepoker/ui/serialize';
+import type { GameInput } from '@games/host';
+import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 const text = (value: string) => Program.fromBytes(new TextEncoder().encode(value));
 const ints = (values: bigint[]) => Program.fromList(values.map(Program.fromBigInt));
 const readable = (...items: Program[]) => Program.fromList(items).serialize();
 
-const status = (
-  payload: Uint8Array | null,
-  moverShare: string | null = '0',
-): DurableGameStateEvent => ({
-  type: 'game-status',
-  id: 'space-1',
-  status: 'my-turn',
-  readable: payload,
-  moverShare,
-  iStarted: false,
-});
+const status = (payload: Uint8Array, moverShare: string | null = '0'): GameInput =>
+  moverShare === null
+    ? { type: 'game-message', gameId: 'space-1', readable: payload }
+    : {
+        type: 'opponent-moved',
+        gameId: 'space-1',
+        readable: payload,
+        moverShare,
+      };
 
 function assertCodecValid(state: SpacepokerHandState | null): SpacepokerHandState {
   expect(state).not.toBeNull();
@@ -45,19 +38,21 @@ function assertCodecValid(state: SpacepokerHandState | null): SpacepokerHandStat
   return restored!;
 }
 
-const acceptedSpacepoker = (): DurableGameStateEvent => ({
-  type: 'accepted-group',
-  id: 'space-1',
-  groupIds: ['space-1'],
-  iStarted: false,
-  isMyTurn: true,
-  origin: 'local',
-  terms: {
-    gameType: 'spacepoker',
-    myContribution: 1_000n,
-    theirContribution: 1_000n,
-    gameTimeout: 15n,
-    unitSizeMojos: 10n,
+const acceptedSpacepoker = (): GameInput => ({
+  type: 'hand-started',
+  init: {
+    id: 'space-1',
+    gameIds: ['space-1'],
+    iStarted: false,
+    canAct: true,
+    origin: 'local',
+    handProposal: {
+      gameType: 'spacepoker',
+      myContribution: 1_000n,
+      theirContribution: 1_000n,
+      gameTimeout: 15n,
+      unitSizeMojos: 10n,
+    },
   },
 });
 
@@ -77,22 +72,35 @@ describe('canonical feature gameplay reducers', () => {
     ['peer', 'bob', 'alice'],
   ] as const)('assigns ordered Krunk roles from %s proposal origin', (origin, first, second) => {
     const state = reduceKrunkDurableState(null, {
-      type: 'accepted-group',
-      id: 'krunk-1',
-      groupIds: ['krunk-1', 'krunk-2'],
-      iStarted: false,
-      isMyTurn: true,
-      origin,
-      terms: {
-        gameType: 'krunk',
-        myContribution: 100n,
-        theirContribution: 100n,
-        gameTimeout: 15n,
+      type: 'hand-started',
+      init: {
+        id: 'krunk-1',
+        gameIds: ['krunk-1', 'krunk-2'],
+        iStarted: false,
+        canAct: true,
+        origin,
+        handProposal: {
+          gameType: 'krunk',
+          myContribution: 100n,
+          theirContribution: 100n,
+          gameTimeout: 15n,
+        },
       },
     });
 
     expect(state?.games['krunk-1'].role).toBe(first);
     expect(state?.games['krunk-2'].role).toBe(second);
+  });
+
+  it('initializes Space Poker while protocol identities are bound', () => {
+    setProtocolIds(TEST_PROTOCOL_IDS);
+    try {
+      const state = reduceSpacepokerDurableState(null, acceptedSpacepoker());
+      expect(state?.unitSizeMojos).toBe(10n);
+      expect(spacepokerStateCodec.gameType).toBe('spacepoker');
+    } finally {
+      resetProtocolIds();
+    }
   });
 
   it('keeps Space Poker streets, board, betting, and codec projection identical at every step', () => {
@@ -337,8 +345,8 @@ describe('canonical feature gameplay reducers', () => {
       readable(text('open'), Program.fromBigInt(10n), Program.fromBigInt(20n)),
     );
     const folded = reduceSpacepokerDurableState(state, {
-      type: 'settled',
-      id: 'space-1',
+      type: 'hand-ended',
+      gameId: 'space-1',
       terminal: {
         type: 'settled',
         outcome: 'we_accepted',
@@ -492,17 +500,15 @@ describe('canonical feature gameplay reducers', () => {
       cardSelections: [],
       moveNumber: 1n,
       isPlayerTurn: false,
+      iStarted: false,
+      error: null,
     };
     const cards = readable(ints([0n, 1n, 2n]), ints([3n, 4n, 5n]));
     const projected = reduceCalpokerFeatureState(current, {
       type: 'opponent-moved',
       readable: cards,
-      iStarted: false,
     });
-    const durable = reduceCalpokerDurableState(current, {
-      ...status(cards),
-      iStarted: false,
-    });
+    const durable = reduceCalpokerDurableState(current, status(cards));
     expect(durable).toEqual(projected);
     expect(calpokerStateCodec.decode(calpokerStateCodec.encode(durable!))).toEqual(projected);
   });
@@ -541,12 +547,13 @@ describe('canonical feature gameplay reducers', () => {
       cardSelections: testCase.playerHand.slice(0, 4),
       moveNumber: testCase.moveNumber,
       isPlayerTurn: false,
+      iStarted: testCase.iStarted,
+      error: null,
     };
 
     const projected = reduceCalpokerDurableState(current, {
       ...status(finalReadable),
-      id: 'calpoker-1',
-      iStarted: testCase.iStarted,
+      gameId: 'calpoker-1',
     });
 
     expect(projected?.displaySnapshot).toMatchObject({
@@ -579,6 +586,8 @@ describe('canonical feature gameplay reducers', () => {
           cardSelections: playerHand.slice(0, 4),
           moveNumber: 1n,
           isPlayerTurn: false,
+          iStarted: false,
+          error: null,
         },
         { ...status(finalReadable), id: 'calpoker-1', iStarted: false },
       ),
@@ -592,12 +601,14 @@ describe('canonical feature gameplay reducers', () => {
       cardSelections: [0n, 1n, 2n, 3n],
       moveNumber: 2n,
       isPlayerTurn: true,
+      iStarted: true,
+      error: null,
     };
 
     expect(
       reduceCalpokerDurableState(current, {
-        type: 'settled',
-        id: 'calpoker-1',
+        type: 'hand-ended',
+        gameId: 'calpoker-1',
         terminal: {
           type: 'settled',
           outcome: 'timed_out_waiting_for_our_move',
@@ -617,6 +628,8 @@ describe('canonical feature gameplay reducers', () => {
       cardSelections: [],
       moveNumber: 1n,
       isPlayerTurn: false,
+      iStarted: true,
+      error: null,
     };
     expect(
       reduceCalpokerDurableState(calpoker, {
@@ -663,9 +676,8 @@ describe('canonical feature gameplay reducers', () => {
     const durable = reduceKrunkDurableState(
       { games: { 'krunk-1': pending } },
       {
-        type: 'game-status',
-        id: 'krunk-1',
-        status: 'my-turn',
+        type: 'opponent-moved',
+        gameId: 'krunk-1',
         readable: clue,
         moverShare: '0',
         iStarted: true,
@@ -696,8 +708,8 @@ describe('canonical feature gameplay reducers', () => {
         },
       },
       {
-        type: 'settled',
-        id: 'krunk-1',
+        type: 'hand-ended',
+        gameId: 'krunk-1',
         terminal: {
           type: 'settled',
           outcome: 'settled_cleanly',
@@ -721,18 +733,20 @@ describe('canonical feature gameplay reducers', () => {
       myTurn: false,
       secretWord: 'CRANE',
     };
-    const firstAcceptance: DurableGameStateEvent = {
-      type: 'accepted-group',
-      id: 'krunk-3',
-      groupIds: ['krunk-3', 'krunk-4'],
-      iStarted: true,
-      isMyTurn: true,
-      origin: 'local',
-      terms: {
-        gameType: 'krunk',
-        myContribution: 100n,
-        theirContribution: 100n,
-        gameTimeout: 15n,
+    const firstAcceptance: GameInput = {
+      type: 'hand-started',
+      init: {
+        id: 'krunk-3',
+        gameIds: ['krunk-3', 'krunk-4'],
+        iStarted: true,
+        canAct: true,
+        origin: 'local',
+        handProposal: {
+          gameType: 'krunk',
+          myContribution: 100n,
+          theirContribution: 100n,
+          gameTimeout: 15n,
+        },
       },
     };
 

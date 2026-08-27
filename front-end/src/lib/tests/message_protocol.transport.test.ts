@@ -1,6 +1,7 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { SessionController } from '../../hooks/SessionController';
 import type { NeedCoinSpendRequest, WasmResult } from '../../types/ChiaGaming';
+import { requireWasmResult } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { peekSession } from '../../hooks/save';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
@@ -8,13 +9,61 @@ import { reduceSessionNotification } from '../session/sessionMachineNotification
 import { createSessionModel } from '../session/model';
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
 import {
+  channelStatus,
   createReadyBlob,
   createUnreadyBlob,
   enc,
   mockRpc,
   setActiveBlob,
   testSpendBundle,
+  wasmResult,
 } from './message_protocol.harness';
+import {
+  protocolIdentitiesReady,
+  setProtocolIds,
+  _resetGameIdentityWarmupForTests,
+} from '../gameIdentities';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
+
+describe('WASM result boundary', () => {
+  it.each(['events', 'watchCoins', 'unwatchCoins', 'actionSucceeded', 'disposition'] as const)(
+    'rejects a drain missing required %s',
+    (field) => {
+      const result = wasmResult();
+      delete (result as unknown as Record<string, unknown>)[field];
+      expect(() => requireWasmResult(result)).toThrow();
+    },
+  );
+
+  it('rejects notification tags outside the closed contract', () => {
+    const result = wasmResult({
+      events: [
+        { Notification: { FutureNotification: {} } } as unknown as WasmResult['events'][number],
+      ],
+    });
+    expect(() => requireWasmResult(result)).toThrow('unknown notification');
+  });
+
+  it('accepts the host-only local action notification', () => {
+    const result = wasmResult({
+      events: [
+        {
+          Notification: {
+            LocalActionApplied: { id: 1n, action: 'make_move' },
+          },
+        },
+      ],
+    });
+    expect(requireWasmResult(result)).toBe(result);
+  });
+
+  it('requires outbound protocol messages to remain bytes', () => {
+    const result = wasmResult({
+      events: [{ OutboundMessage: 'not bytes' } as unknown as WasmResult['events'][number]],
+    });
+    expect(() => requireWasmResult(result)).toThrow('non-byte OutboundMessage');
+  });
+});
 
 describe('in-order delivery', () => {
   it('drains an active result to quiescence in one macrotask', async () => {
@@ -28,6 +77,7 @@ describe('in-order delivery', () => {
     });
 
     blob.processResult({
+      ...wasmResult(),
       disposition: { kind: 'active' },
       events: [
         { Notification: { ActionFailed: { reason: 'first' } } },
@@ -50,6 +100,7 @@ describe('in-order delivery', () => {
       reasons.push(reason);
       if (reason === 'first') {
         blob.processResult({
+          ...wasmResult(),
           disposition: { kind: 'active' },
           events: [{ Notification: { ActionFailed: { reason: 'second' } } }],
         });
@@ -57,6 +108,7 @@ describe('in-order delivery', () => {
     });
 
     blob.processResult({
+      ...wasmResult(),
       disposition: { kind: 'active' },
       events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
     });
@@ -74,6 +126,7 @@ describe('in-order delivery', () => {
       delivered += 1;
       if (delivered < 101) {
         blob.processResult({
+          ...wasmResult(),
           disposition: { kind: 'active' },
           events: [{ Notification: { ActionFailed: { reason: String(delivered) } } }],
         });
@@ -81,6 +134,7 @@ describe('in-order delivery', () => {
     });
 
     blob.processResult({
+      ...wasmResult(),
       disposition: { kind: 'active' },
       events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
     });
@@ -103,6 +157,7 @@ describe('in-order delivery', () => {
     });
 
     blob.processResult({
+      ...wasmResult(),
       disposition: { kind: 'active' },
       events: [
         { Notification: { ActionFailed: { reason: 'first' } } },
@@ -141,9 +196,136 @@ describe('in-order delivery', () => {
   });
 });
 
+describe('protocol identity loading', () => {
+  it('delivers a hash ProposalMade in arrival order once protocol ids are known', () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    setProtocolIds(TEST_PROTOCOL_IDS);
+    const tags: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'notification') {
+        tags.push(Object.keys(event.data)[0] ?? '');
+      }
+    });
+
+    blob.processResult({
+      ...wasmResult(),
+      disposition: { kind: 'active' },
+      events: [
+        {
+          Notification: {
+            ProposalMade: {
+              id: '7',
+              group_ids: ['7'],
+              my_contribution: '100',
+              their_contribution: '100',
+              timeout: '15',
+              game_type: testProtocolId('calpoker'),
+              parameters: null,
+            },
+          },
+        },
+        { Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } },
+      ],
+    });
+    blob.flushDeferredWork();
+    expect(protocolIdentitiesReady()).toBe(true);
+    expect(tags).toEqual(['ProposalMade', 'ChannelStatus']);
+  });
+
+  it('holds a puzzle-hash ProposalMade until protocol identities are ready', () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    _resetGameIdentityWarmupForTests();
+    const tags: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'notification') {
+        tags.push(Object.keys(event.data)[0] ?? '');
+      }
+    });
+
+    blob.processResult({
+      ...wasmResult(),
+      disposition: { kind: 'active' },
+      events: [
+        {
+          Notification: {
+            ProposalMade: {
+              id: '7',
+              group_ids: ['7'],
+              my_contribution: '100',
+              their_contribution: '100',
+              timeout: '15',
+              game_type: testProtocolId('calpoker'),
+              parameters: null,
+            },
+          },
+        },
+      ],
+    });
+    blob.flushDeferredWork();
+    expect(tags).toEqual([]);
+    expect(protocolIdentitiesReady()).toBe(false);
+
+    blob.processResult({
+      ...wasmResult(),
+      disposition: { kind: 'active' },
+      events: [{ Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } }],
+    });
+    blob.flushDeferredWork();
+    expect(protocolIdentitiesReady()).toBe(true);
+    expect(tags).toEqual(['ChannelStatus', 'ProposalMade']);
+  });
+
+  it('reports a bind failure on Active and still delivers ChannelStatus', () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    _resetGameIdentityWarmupForTests();
+    blob.wc = {
+      registered_game_packages: () => [],
+    } as (typeof blob)['wc'];
+    expectConsoleError('completeRegisteredGames failed');
+    const tags: string[] = [];
+    const errors: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'notification') {
+        tags.push(Object.keys(event.data)[0] ?? '');
+      }
+      if (event.type === 'error') {
+        errors.push(event.error);
+      }
+    });
+
+    blob.processResult({
+      ...wasmResult(),
+      disposition: { kind: 'active' },
+      events: [
+        {
+          Notification: {
+            ProposalMade: {
+              id: '7',
+              group_ids: ['7'],
+              my_contribution: '100',
+              their_contribution: '100',
+              timeout: '15',
+              game_type: testProtocolId('calpoker'),
+              parameters: null,
+            },
+          },
+        },
+        { Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } },
+      ],
+    });
+    blob.flushDeferredWork();
+    expect(protocolIdentitiesReady()).toBe(false);
+    expect(tags).toEqual(['ChannelStatus']);
+    expect(errors.some((error) => error.includes('Missing warmed identity'))).toBe(true);
+  });
+});
+
 describe('SessionController WASM action results', () => {
   function failedResult(reason: string): WasmResult {
-    return {
+    return wasmResult({
       actionSucceeded: false,
       events: [
         {
@@ -152,14 +334,14 @@ describe('SessionController WASM action results', () => {
           },
         },
       ],
-    };
+    });
   }
 
   it.each([
     [
       'proposeGame',
       (blob: SessionController) =>
-        blob.proposeGame({ game_type: 'x', timeout: 5n, parameters: null }),
+        blob.proposeGame({ game_type: testProtocolId('calpoker'), timeout: 5n, parameters: null }),
     ],
     ['acceptProposal', (blob: SessionController) => blob.acceptProposal('7')],
     ['cancelProposal', (blob: SessionController) => blob.cancel_proposal('7')],
@@ -205,6 +387,7 @@ describe('active game tracking', () => {
     blob.activeGameIds = ['1', '3'];
 
     blob.processResult({
+      ...wasmResult(),
       events: [
         {
           Notification: {
@@ -223,6 +406,7 @@ describe('active game tracking', () => {
     expect(blob.activeGameIds).toEqual(['3']);
 
     blob.processResult({
+      ...wasmResult(),
       events: [
         {
           Notification: {
@@ -261,7 +445,7 @@ describe('active game tracking', () => {
         group: {
           primaryId: '1',
           memberIds: ['1', '3'],
-          terms,
+          handProposal: terms,
           origin: 'local',
           disposition: 'outgoing',
         },
@@ -274,6 +458,7 @@ describe('active game tracking', () => {
       });
 
       blob.processResult({
+        ...wasmResult(),
         disposition: { kind: 'active' },
         events: [
           { Notification: { ProposalAccepted: { id: '1', amount: '100', our_turn: true } } },
@@ -294,10 +479,12 @@ describe('active game tracking', () => {
         },
       };
       blob.processResult({
+        ...wasmResult(),
         disposition: { kind: 'active' },
         events: [firstSettlement, firstSettlement],
       });
       blob.processResult({
+        ...wasmResult(),
         disposition: { kind: 'terminal' },
         events: [
           {
@@ -345,34 +532,6 @@ describe('lifecycle flush', () => {
 });
 
 describe('game action failure events', () => {
-  it('reports feature-state authority failures without throwing from the event handler', () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const { blob } = createReadyBlob();
-    setActiveBlob(blob);
-    blob.onFeatureStateTransition = () => {
-      throw new Error('Feature-state current state does not belong to krunk');
-    };
-    const events: import('../../types/ChiaGaming').WasmEvent[] = [];
-    const subscription = blob.getObservable().subscribe((event) => events.push(event));
-
-    expect(() =>
-      blob.transitionFeatureState('krunk', '41', {
-        handler: 0n,
-      }),
-    ).not.toThrow();
-    subscription.unsubscribe();
-
-    expect(events).toEqual([
-      {
-        type: 'game-action-error',
-        gameId: '41',
-        action: 'feature-state',
-        error: 'Feature-state current state does not belong to krunk',
-      },
-    ]);
-    errorSpy.mockRestore();
-  });
-
   it('scopes failed terminal submissions to their game and action', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { blob, cradle } = createReadyBlob();
@@ -421,16 +580,17 @@ describe('game action failure events', () => {
       cradle as unknown as {
         make_move: (gameId: string, readable: Uint8Array) => WasmResult;
       }
-    ).make_move = () => ({
-      actionSucceeded: false,
-      events: [
-        {
-          Notification: {
-            ActionFailed: { id: '41', reason: 'not our turn' },
+    ).make_move = () =>
+      wasmResult({
+        actionSucceeded: false,
+        events: [
+          {
+            Notification: {
+              ActionFailed: { id: 41n, reason: 'not our turn' },
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
     const notifications: unknown[] = [];
     const subscription = blob.getObservable().subscribe((event) => {
       if (event.type === 'notification') notifications.push(event.data);
@@ -443,6 +603,42 @@ describe('game action failure events', () => {
     expect(save).not.toHaveBeenCalled();
     subscription.unsubscribe();
     errorSpy.mockRestore();
+  });
+
+  it('returns rejection before a local candidate can be committed', () => {
+    const { blob, cradle } = createReadyBlob();
+    const makeMove = jest.fn(() =>
+      wasmResult({
+        events: [
+          {
+            Notification: {
+              MoveRejected: { id: 41n, tag: 'illegal_move', message: 'not allowed' },
+            },
+          },
+        ],
+      }),
+    );
+    (
+      cradle as unknown as {
+        make_move: (gameId: string, readable: Uint8Array) => WasmResult;
+      }
+    ).make_move = makeMove;
+
+    expect(blob.makeMove('41', null)).toBe('rejected');
+    makeMove.mockReturnValue(wasmResult());
+    expect(blob.makeMove('41', null)).toBe('queued');
+    makeMove.mockReturnValue(
+      wasmResult({
+        events: [
+          {
+            Notification: {
+              LocalActionApplied: { id: 41n, action: 'make_move' },
+            },
+          },
+        ],
+      }),
+    );
+    expect(blob.makeMove('41', null)).toBe('applied');
   });
 });
 
@@ -602,6 +798,7 @@ describe('bounded controller histories', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.processResult({
+      ...wasmResult(),
       events: [
         ...Array.from({ length: WASM_NOTIFICATION_HISTORY_LIMIT + 2 }, (_, i) => ({
           Notification: { ActionFailed: { reason: `notification-${i}` } },
@@ -632,7 +829,7 @@ describe('WASM wallet funding requests', () => {
       max_height: 123,
     };
 
-    blob.processResult({ events: [{ NeedCoinSpend: request }] });
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     await blob.flushPendingWork();
 
     expect(createOfferForIds).toHaveBeenCalledWith(

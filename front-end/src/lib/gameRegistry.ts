@@ -1,85 +1,48 @@
-import type { Program } from 'clvm-lib';
-import { calpokerRegistration } from '../features/calPoker/adapter';
-import { krunkRegistration } from '../features/krunk/adapter';
-import { spacepokerRegistration } from '../features/spacePoker/adapter';
+import { GENERATED_GAME_PACKAGES, GENERATED_GAME_PACKAGES_BY_KEY } from '../generated/gamePackages';
+import type { CatalogGameType } from '../generated/gamePresets';
 import type {
-  ComposeDraftFor,
-  DurableGameStateEvent,
-  RegisteredGameType,
-  SavedTermsExtras,
-} from './gameAdapter';
+  ComposeDraftValue,
+  GameInput,
+  HandProposalDecodeContext,
+  HandProposal as HostHandProposal,
+  RegisteredGamePackage,
+  SavedHandProposalExtras,
+} from '@games/host';
 import type { GameStateCodec, PersistedGameState } from './session/gameStateCodec';
-import type { HandTermsBaseModel, HandTermsModel } from './session/types';
+import type { HandProposalBase, HandProposal } from './session/types';
+import type { PendingGameCandidate } from './session/types';
+import { formatMojos } from '../util';
 
-/**
- * The pure registration source of truth. `satisfies` makes adding a
- * RegisteredGameType fail until its complete feature registration is present.
- */
-type GameRegistrationIndex = {
-  [T in RegisteredGameType]: { readonly gameType: T; readonly displayName: string };
-};
+export type { CatalogGameType } from '../generated/gamePresets';
+export type RegisteredGameType = CatalogGameType;
 
-export const GAME_REGISTRATIONS = {
-  calpoker: calpokerRegistration,
-  spacepoker: spacepokerRegistration,
-  krunk: krunkRegistration,
-} satisfies GameRegistrationIndex;
+export const GAME_PACKAGES: readonly RegisteredGamePackage[] = GENERATED_GAME_PACKAGES;
 
-export const REGISTERED_GAMES = Object.values(GAME_REGISTRATIONS).map(
-  ({ gameType, displayName }) => ({ gameType, displayName }),
-);
-
-interface ErasedGameRegistration {
-  readonly gameType: RegisteredGameType;
-  readonly displayName: string;
-  readonly stateCodec: GameStateCodec<unknown>;
-  readonly handMembershipDescription: string;
-  validateHandMembership(gameIds: readonly string[], state: unknown | null): boolean;
-  decodeFeatureState(value: unknown): unknown | null;
-  readonly lifecycle: {
-    proposalSenderGoesFirst(iStarted: boolean): boolean;
-  };
-  readonly compose: {
-    defaultDraft(perGameAmount: bigint): ComposeDraftFor<RegisteredGameType>;
-    draftFromTerms(terms: HandTermsModel): ComposeDraftFor<RegisteredGameType>;
-    updateDraft(
-      current: ComposeDraftFor<RegisteredGameType>,
-      update: Partial<ComposeDraftFor<RegisteredGameType>>,
-    ): ComposeDraftFor<RegisteredGameType>;
-    toTerms(draft: ComposeDraftFor<RegisteredGameType>, gameTimeout: bigint): HandTermsModel | null;
-  };
-  decodeProposalTerms(base: HandTermsBaseModel, parameterState: unknown): HandTermsModel | null;
-  encodeProposalParameters(terms: HandTermsModel, iStarted: boolean): Program;
-  validateTerms(terms: HandTermsModel): boolean;
-  termsEqual(a: HandTermsModel, b: HandTermsModel): boolean;
-  readonly persistence: {
-    encodeExtras(terms: HandTermsModel): SavedTermsExtras;
-    decodeExtras(base: HandTermsBaseModel, extras: SavedTermsExtras): HandTermsModel | null;
-  };
-  readonly durableState: {
-    reduceEvent(current: unknown | null, event: DurableGameStateEvent): unknown | null;
-  };
+export function packageFor(gameType: CatalogGameType): RegisteredGamePackage {
+  return GENERATED_GAME_PACKAGES_BY_KEY[gameType];
 }
 
-/**
- * TypeScript cannot retain the correlation between a dynamically selected key
- * and that registration's state/terms types. Erasure is confined to this
- * boundary; callers validate the discriminant before dispatch.
- */
-function registrationFor(gameType: RegisteredGameType): ErasedGameRegistration {
-  return GAME_REGISTRATIONS[gameType] as unknown as ErasedGameRegistration;
+export function gameDisplayName(gameType: CatalogGameType): string {
+  return packageFor(gameType).displayName;
 }
 
-export function gameDisplayName(gameType: string): string {
-  return isRegisteredGameType(gameType) ? GAME_REGISTRATIONS[gameType].displayName : gameType;
+/** Catalog names only (`calpoker`, …). Saves and mounts use this — hashes are garbled. */
+export function isCatalogGameType(value: unknown): value is CatalogGameType {
+  return (
+    typeof value === 'string' &&
+    Object.prototype.hasOwnProperty.call(GENERATED_GAME_PACKAGES_BY_KEY, value)
+  );
 }
 
-export function isRegisteredGameType(value: unknown): value is RegisteredGameType {
-  return typeof value === 'string' && Object.hasOwn(GAME_REGISTRATIONS, value);
-}
+export const REGISTERED_GAMES = GAME_PACKAGES.map((pkg) => {
+  if (!isCatalogGameType(pkg.gameType)) {
+    throw new Error(`Generated package has non-catalog gameType ${pkg.gameType}`);
+  }
+  return { gameType: pkg.gameType, displayName: pkg.displayName };
+});
 
 export function gameStateCodecFor(gameType: string): GameStateCodec<unknown> | null {
-  return isRegisteredGameType(gameType) ? registrationFor(gameType).stateCodec : null;
+  return isCatalogGameType(gameType) ? packageFor(gameType).stateCodec : null;
 }
 
 export interface DecodedPersistedGameState {
@@ -109,117 +72,197 @@ export function validateGameHandMembership(
   gameIds: readonly string[],
   persisted: PersistedGameState | null,
 ): boolean {
-  const registration = registrationFor(gameType);
+  const registration = packageFor(gameType);
   if (persisted === null) return registration.validateHandMembership(gameIds, null);
-  if (persisted.gameType !== gameType) return false;
+  if (persisted.gameType !== gameType) {
+    return false;
+  }
   const state = registration.stateCodec.decode(persisted);
   return state !== null && registration.validateHandMembership(gameIds, state);
 }
 
 export function gameHandMembershipDescription(gameType: RegisteredGameType): string {
-  return registrationFor(gameType).handMembershipDescription;
+  return packageFor(gameType).handMembershipDescription;
 }
 
 export function decodeGameFeatureState(
   gameType: RegisteredGameType,
   value: unknown,
 ): unknown | null {
-  return registrationFor(gameType).decodeFeatureState(value);
+  return packageFor(gameType).decodeFeatureState(value);
 }
 
 export function canRemountFinishedGameState(value: unknown): boolean {
   return decodePersistedGameState(value)?.canRemountFinished === true;
 }
 
-export function decodeGameTerms(
+function handProposalWithCatalogType(
+  registration: RegisteredGamePackage,
+  handProposal: HostHandProposal | null,
+): HandProposal | null {
+  if (handProposal === null) return null;
+  if (handProposal.gameType !== registration.gameType) {
+    throw new Error(
+      `Package ${registration.gameType} decoded hand proposal as ${handProposal.gameType}`,
+    );
+  }
+  if (!isCatalogGameType(handProposal.gameType)) {
+    throw new Error(`Package ${registration.gameType} decoded a non-catalog gameType`);
+  }
+  return { ...handProposal, gameType: handProposal.gameType };
+}
+
+export function decodeHandProposal(
   gameType: RegisteredGameType,
-  base: HandTermsBaseModel,
+  base: HandProposalBase,
   parameterState: unknown,
-): HandTermsModel | null {
-  return registrationFor(gameType).decodeProposalTerms(base, parameterState);
+  context: Pick<HandProposalDecodeContext, 'iStarted' | 'origin'>,
+): HandProposal | null {
+  const registration = packageFor(gameType);
+  const proposerStarted = context.origin === 'local' ? context.iStarted : !context.iStarted;
+  const decodeContext: HandProposalDecodeContext = {
+    ...context,
+    expectedSenderGoesFirst: registration.lifecycle.proposalSenderGoesFirst(proposerStarted),
+  };
+  return handProposalWithCatalogType(
+    registration,
+    registration.decodeHandProposal(base, parameterState, decodeContext),
+  );
 }
 
-export function encodeGameProposalParameters(terms: HandTermsModel, iStarted: boolean): Program {
-  return registrationFor(terms.gameType).encodeProposalParameters(terms, iStarted);
+export function validateHandProposal(handProposal: HandProposal): boolean {
+  return packageFor(handProposal.gameType).validateHandProposal(handProposal);
 }
 
-export function validateGameTerms(terms: HandTermsModel): boolean {
-  return registrationFor(terms.gameType).validateTerms(terms);
-}
-
-export function gameTermsEqual(a: HandTermsModel | null, b: HandTermsModel | null): boolean {
+export function handProposalsEqual(a: HandProposal | null, b: HandProposal | null): boolean {
   if (!a || !b || a.gameType !== b.gameType) return false;
-  return registrationFor(a.gameType).termsEqual(a, b);
+  return packageFor(a.gameType).handProposalsEqual(a, b);
+}
+
+export function describeReceivedProposal(handProposal: HandProposal): string {
+  return packageFor(handProposal.gameType).describeHandProposal(handProposal, { formatMojos });
 }
 
 export function reduceRegisteredGameState(
   gameType: RegisteredGameType,
   current: PersistedGameState | null,
-  event: DurableGameStateEvent,
+  input: GameInput,
 ): PersistedGameState | null {
-  const registration = registrationFor(gameType);
-  if (event.type === 'feature-state' && event.gameType !== gameType) {
-    throw new Error(
-      `Feature-state registration mismatch: event ${event.gameType}, reducer ${gameType}`,
-    );
+  const registration = packageFor(gameType);
+  const decoded =
+    current !== null && current.gameType === gameType
+      ? registration.stateCodec.decode(current)
+      : null;
+  let next: unknown;
+  if (input.type === 'hand-started') {
+    next = registration.durableState.initialize(decoded, input);
+  } else {
+    if (decoded === null) {
+      throw new Error(`Internal ${gameType} ${input.type} input requires valid hand state`);
+    }
+    next = registration.durableState.reduceInput(decoded, input);
   }
-  if (event.type === 'feature-state' && current?.gameType !== gameType) {
-    throw new Error(`Feature-state current state does not belong to ${gameType}`);
-  }
-  const decoded = current?.gameType === gameType ? registration.stateCodec.decode(current) : null;
-  if (event.type === 'feature-state' && decoded === null) {
-    throw new Error(`Feature-state current ${gameType} payload is invalid`);
-  }
-  const next = registration.durableState.reduceEvent(decoded, event);
-  if (next === null) return null;
   if (!registration.stateCodec.isState(next)) {
     throw new Error(`Internal ${gameType} reducer produced invalid feature state`);
   }
   return registration.stateCodec.encode(next);
 }
 
-export function defaultGameComposeDraft<T extends RegisteredGameType>(
-  gameType: T,
-  perGameAmount: bigint,
-): ComposeDraftFor<T> {
-  return registrationFor(gameType).compose.defaultDraft(perGameAmount) as ComposeDraftFor<T>;
-}
-
-export function gameComposeDraftFromTerms<T extends HandTermsModel>(
-  terms: T,
-): ComposeDraftFor<T['gameType']> {
-  return registrationFor(terms.gameType).compose.draftFromTerms(terms) as ComposeDraftFor<
-    T['gameType']
-  >;
-}
-
-export function updateGameComposeDraft<T extends RegisteredGameType>(
-  gameType: T,
-  current: ComposeDraftFor<T>,
-  update: Partial<ComposeDraftFor<T>>,
-): ComposeDraftFor<T> {
-  return registrationFor(gameType).compose.updateDraft(current, update) as ComposeDraftFor<T>;
-}
-
-export function gameTermsFromComposeDraft<T extends RegisteredGameType>(
-  gameType: T,
-  draft: ComposeDraftFor<T>,
-  gameTimeout: bigint,
-): Extract<HandTermsModel, { gameType: T }> | null {
-  return registrationFor(gameType).compose.toTerms(draft, gameTimeout) as Extract<
-    HandTermsModel,
-    { gameType: T }
-  > | null;
-}
-
-export function encodeGameTermsExtras(terms: HandTermsModel): SavedTermsExtras {
-  return registrationFor(terms.gameType).persistence.encodeExtras(terms);
-}
-
-export function decodePersistedGameTerms(
+export function applyRegisteredFeatureState(
   gameType: RegisteredGameType,
-  base: HandTermsBaseModel,
-  extras: SavedTermsExtras,
-): HandTermsModel | null {
-  return registrationFor(gameType).persistence.decodeExtras(base, extras);
+  current: PersistedGameState | null,
+  gameId: string,
+  value: unknown,
+): PersistedGameState {
+  const registration = packageFor(gameType);
+  const decoded = current?.gameType === gameType ? registration.stateCodec.decode(current) : null;
+  if (decoded === null) {
+    throw new Error(`Feature-state current ${gameType} payload is invalid`);
+  }
+  const featureState = registration.decodeFeatureState(value);
+  if (featureState === null) {
+    throw new Error(`Invalid ${gameType} feature-state payload`);
+  }
+  const next = registration.durableState.applyFeatureState(decoded, gameId, featureState);
+  if (!registration.stateCodec.isState(next)) {
+    throw new Error(`Internal ${gameType} reducer produced invalid feature state`);
+  }
+  return registration.stateCodec.encode(next);
+}
+
+export function projectRegisteredPendingCandidates(
+  gameType: RegisteredGameType,
+  current: PersistedGameState | null,
+  currentHandIds: readonly string[],
+  pendingCandidates: Readonly<Record<string, PendingGameCandidate>>,
+): PersistedGameState | null {
+  let projected = current;
+  for (const id of currentHandIds) {
+    const pending = pendingCandidates[id];
+    if (!pending) continue;
+    if (pending.gameType !== gameType || pending.id !== id) {
+      throw new Error(`Internal pending candidate identity mismatch for game ${id}`);
+    }
+    projected = applyRegisteredFeatureState(gameType, projected, id, pending.featureState);
+  }
+  return projected;
+}
+
+export function selectRegisteredGameOutcome(
+  gameType: RegisteredGameType,
+  current: PersistedGameState | null,
+  gameId: string,
+): 'win' | 'lose' | 'tie' | null {
+  const registration = packageFor(gameType);
+  const decoded = current?.gameType === gameType ? registration.stateCodec.decode(current) : null;
+  return decoded === null
+    ? null
+    : (registration.selectOutcome(decoded, gameId)?.my_win_outcome ?? null);
+}
+
+export function defaultGameComposeDraft(
+  gameType: RegisteredGameType,
+  perGameAmount: bigint,
+): ComposeDraftValue {
+  return packageFor(gameType).draft.default(perGameAmount);
+}
+
+export function gameComposeDraftFromHandProposal(handProposal: HandProposal): ComposeDraftValue {
+  return packageFor(handProposal.gameType).draft.fromHandProposal(handProposal);
+}
+
+export function updateGameComposeDraft(
+  gameType: RegisteredGameType,
+  current: ComposeDraftValue,
+  update: Partial<ComposeDraftValue>,
+): ComposeDraftValue {
+  return packageFor(gameType).draft.update(current, update);
+}
+
+export function handProposalFromComposeDraft(
+  gameType: RegisteredGameType,
+  draft: ComposeDraftValue,
+  gameTimeout: bigint,
+): HandProposal | null {
+  const registration = packageFor(gameType);
+  return handProposalWithCatalogType(
+    registration,
+    registration.draft.toHandProposal(draft, gameTimeout),
+  );
+}
+
+export function encodeHandProposalExtras(handProposal: HandProposal): SavedHandProposalExtras {
+  return packageFor(handProposal.gameType).persistence.encodeExtras(handProposal);
+}
+
+export function decodePersistedHandProposal(
+  gameType: RegisteredGameType,
+  base: HandProposalBase,
+  extras: SavedHandProposalExtras,
+): HandProposal | null {
+  const registration = packageFor(gameType);
+  return handProposalWithCatalogType(
+    registration,
+    registration.persistence.decodeExtras(base, extras),
+  );
 }

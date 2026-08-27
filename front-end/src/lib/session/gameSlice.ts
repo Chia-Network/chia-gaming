@@ -1,3 +1,4 @@
+import { REGISTERED_GAMES } from '../gameRegistry';
 import type { ChannelStatus } from '../../types/ChiaGaming';
 import {
   INITIAL_GAME_TERMINAL_MODEL,
@@ -36,7 +37,7 @@ export const INITIAL_GAME_SLICE: GameSlice = {
   currentHandOrigin: null,
   instances: {},
   lastDisplayedId: null,
-  activeGameType: 'calpoker',
+  activeGameType: REGISTERED_GAMES[0].gameType,
 };
 
 export type GameSliceAction =

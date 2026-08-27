@@ -498,225 +498,30 @@ puzzle hash and combined amount.
 `verify_and_store_initial_peer_signatures`)
 
 ---
----
 
 ## Reference Games
 
-The repository includes three reference games. **Calpoker** was implemented first
-and is the simpler example: a five-step commit-reveal poker variant with one
-main hand-evaluation payoff and one optional advisory pre-reveal. **Space Poker**
-illustrates a more involved multi-round poker flow with repeated betting/open
-states and heavier use of advisory message parsers. **Krunk** is a Wordle-style
-word-guessing game that demonstrates BLS-signed dictionary enforcement and
-on-chain slashing for out-of-dictionary plays. Together they show different ways
-to structure validators and off-chain handlers on the same channel/referee
-foundation.
+The repository includes three production reference games:
 
-The Rust game collection also registers `debug` for simulator tests only. It is
-not a user-facing reference game.
+- **Calpoker** — simplest: a commit-reveal poker variant.
+- **Space Poker** — Texas Hold'em-style with messages and a terminal.
+- **Krunk** — Wordle-style atomic pair; illegal input surfaces as `MoveRejected`.
 
-### Calpoker
+Each game lives in one top-level package under `games/<key>/`, registered only
+in [`games/registry.json`](games/registry.json) (`production` vs `test`). Package
+keys are build/bootstrap identifiers. The protocol identity is the first
+generated member's initial validation puzzle hash
+(`initial_validation_program_hash`) — never the factory's hash or the
+human-readable key. Registration discovers it by running the factory with
+representative valid parameters. Adding a game means creating that conventional
+package and appending the key to the registry; Chialisp compile, Rust/WASM
+wiring, frontend imports, and the full-suite test aggregator are generated from
+that file. See [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md). Handler and
+validator walkthroughs for the reference games are in
+[`HANDLER_GUIDE.md`](HANDLER_GUIDE.md#worked-examples-reference-games).
 
-Calpoker is a poker variant used as the simplest reference game. Two players are
-dealt cards from a shared random deck and select hands through a commit-reveal
-protocol that prevents either player from cheating.
-
-### Commit-Reveal Protocol
-
-The protocol ensures **fair randomness** — neither player can bias the card deal:
-
-```
-Step a: Alice → commit(preimage)          Alice commits to her randomness
-Step b: Bob   → bob_seed                  Bob reveals his randomness
-Step c: Alice → preimage + commit(salt‖discards)   Alice reveals hers; cards are derived
-Step d: Bob   → bob_discards              Bob discards 4 cards
-Step e: Alice → salt‖discards‖selects     Alice reveals her discards and selects
-```
-
-**Card derivation:** `cards = make_cards(sha256(preimage ‖ bob_seed ‖ amount))`.
-Since Alice committed to her preimage before seeing Bob's seed, and Bob sent his
-seed before seeing Alice's preimage, neither can influence the randomness.
-
-**Card representation:** Integers 0–51 (`rank * 4 + suit`), called "mod-52"
-format.
-
-**Discard commitment:** Alice commits to her discards (with a salt) before seeing
-Bob's discards. This prevents Alice from choosing discards strategically based on
-what Bob discards.
-
-**Hand evaluation:** After both players discard and select, final hands are
-evaluated using `handcalc` (a chialisp hand evaluator). The final move sets
-`mover_share` to reflect the outcome — the losing player (who must respond
-next) receives `mover_share` on timeout, which is the smaller portion.
-
-### On-Chain Steps (a through e)
-
-Each step is a chialisp **validation program** that enforces the rules of that
-step of the commit-reveal protocol:
-
-
-| Step  | Mover           | Move                                          | State After                           | Validates                                                                          |
-| ----- | --------------- | --------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------- |
-| **a** | Alice (commits) | `sha256(preimage)` (32 bytes)                 | `alice_commit`                        | Move is exactly 32 bytes                                                           |
-| **b** | Bob (seeds)     | `bob_seed` (16 bytes)                         | `(alice_commit, bob_seed)`            | Move is exactly 16 bytes                                                           |
-| **c** | Alice (reveals) | `preimage ‖ sha256(salt‖discards)` (48 bytes) | `(new_commit, cards)`                 | `sha256(preimage) == alice_commit`; derives cards                                  |
-| **d** | Bob (discards)  | `bob_discards` (1 byte)                       | `(bob_discards, alice_cards, bob_cards, alice_commit)` | Valid discard bitmask (popcount = 4)                          |
-| **e** | Alice (final)   | `salt‖discards‖selects` (18 bytes)            | Game over                             | `sha256(salt‖discards) == alice_commit`; valid popcounts; hand eval; correct split |
-
-
-At step **e**, Bob can submit his card selections as **evidence** for a slash
-if Alice misclaims the split.
-
-### Advisory Messages (Symmetric UX)
-
-The commit-reveal protocol is inherently sequential — Alice and Bob take strict
-turns. Without help, Bob would see nothing while Alice deliberates her move.
-The game handler framework provides an **advisory message** mechanism that
-lets the player who just processed a move immediately send derived information
-back to the opponent, outside the logical flow of the game.
-
-When Alice processes Bob's step **b** (his seed), her `their_turn_handler`
-derives the card deal and produces an optional `message_data` blob. This is
-sent back to Bob immediately as a `PeerMessage::Message`. Bob's
-`message_parser` (a CLVM program returned by his earlier `my_turn_handler`)
-decodes the blob into a `ReadableMove` that the UI can display. Bob sees his
-cards and can start contemplating discards while Alice is still thinking.
-
-The message is purely advisory: it carries no authority, doesn't change game
-state, and cannot be used for cheating — the recipient will independently
-derive the same information once the real move arrives. Because it is
-advisory, there is no reason to bundle it with an authoritative potato pass.
-And because the information it contains will be derivable by the recipient
-anyway, sending it early does no strategic damage to the sender — it simply
-lets the opponent start thinking sooner, making the UX feel simultaneous
-even though the underlying protocol is turn-based.
-
-The same mechanism is available to any game, not just Calpoker. In the current
-reference games, Calpoker uses it at one specific point where Alice can
-pre-reveal information Bob will derive from the next formal move anyway. Space
-Poker uses the same optional channel for deal/open pre-reveals that make newly
-derivable card information visible earlier. In Space Poker this happens at the
-beginning of each street: there is no reason to fold before at least checking,
-so the player preemptively sends the reveal that will show the next street's
-cards. The `my_turn_handler` returns a `message_parser` (or omits it / returns
-nil if the game doesn't use advisory messages), and the `their_turn_handler`
-returns `message_data` as an optional fourth element of its result.
-
-### Space Poker
-
-Space Poker is a Texas Hold'em-style reference game. It exercises a different
-part of the handler API than Calpoker: multi-round state and betting/open
-actions. It is registered alongside Calpoker in the Rust game collection and has
-dedicated handler and validation tests.
-
-**Key code:**
-
-- `src/channel_state/game_handler.rs` — `MyTurnResult::message_parser`,
-`TheirTurnResult` (message field), `MessageHandler`
-- `src/session_phases/mod.rs` — sends `PeerMessage::Message` on receive;
-dispatches incoming messages via `received_message`
-- `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
-- `clsp/games/calpoker/calpoker_generate.clinc` — off-chain handlers
-- `src/test_support/calpoker_sim.rs` — Rust-side calpoker registration/helpers
-- `clsp/games/spacepoker/onchain/*.clsp`
-- `clsp/games/spacepoker/spacepoker_generate.clinc` — Space Poker handlers
-- `src/test_support/spacepoker_sim.rs` — Rust-side Space Poker helpers
-
-### Krunk
-
-Krunk is a Wordle-style word-guessing game. Alice picks a secret 5-letter word,
-commits to it (salted hash), and Bob has up to 5 guesses. After each wrong
-guess Alice gives a Wordle-style clue (correct/present/absent per letter).
-Bob either guesses correctly (winning a payout that decreases with each guess)
-or exhausts all 5 guesses (Alice keeps everything).
-
-Each Krunk hand is an atomic pair of games with the same stake. One deterministic
-Krunk factory invocation returns both games in a fixed order. In each individual
-game, the word-picker funds the entire pot and the guesser funds nothing;
-because each player is the picker once, both players put up one stake overall.
-Stakes must be positive multiples of 100 mojos.
-
-Payouts are expressed as multiples of `base_unit = game_pot / 100`:
-
-| Guess # | Payout (× base_unit) |
-|---------|---------------------|
-| 1       | 100                 |
-| 2       | 100                 |
-| 3       | 20                  |
-| 4       | 5                   |
-| 5       | 1                   |
-
-#### Dictionary enforcement
-
-Both players must play words from a fixed dictionary (`krunkwords.txt`, 5089
-five-letter words). The dictionary is enforced via **BLS signatures over gap
-ranges**: the sorted dictionary has gaps between consecutive words (byte ranges
-where no valid word exists). Each gap is signed with a BLS key, and the
-signatures are arranged in a binary tree alongside the words. When Bob guesses a
-word not in the dictionary, Alice can produce a signed gap range proving the word
-falls between two adjacent dictionary entries — an `AGG_SIG_UNSAFE` condition
-the blockchain can verify.
-
-#### Pre-signed dictionary tree
-
-The dictionary tree and its signatures are generated once at build time by
-`cargo run --bin gen-krunk-dict`. This binary:
-
-1. Generates an ephemeral BLS keypair (never written to disk)
-2. Signs every gap range in the sorted dictionary
-3. Writes `clsp/games/krunk/krunk_signed_dict_tree.dat` — a single binary file
-   containing the 48-byte BLS public key followed by the CLVM-serialized signed
-   dictionary tree. At runtime the Rust/WASM loader splits the file, and both
-   values are curried into the handler programs.
-
-**The generated `.dat` file is checked in.** It only needs regeneration if the
-dictionary changes. Regenerating requires rebuilding chialisp afterward
-(`./cb.sh`).
-
-The `.dat` file uses a `.dat` extension (not `.hex`) because `tools/build-chialisp.sh`
-deletes all `*.hex` files under `clsp/` before rebuilding to ensure a clean output
-tree.
-
-#### Atomic factory proposals
-
-A proposal is one group request containing `game_type`, game-specific
-`parameters`, and a timeout shared by every resulting game. Both peers run the
-same registered deterministic factory. Calpoker and Space Poker factories each
-return one game; Krunk returns two simultaneous games — one where each player
-is Alice (word-picker) and one where each is Bob (guesser).
-
-Each factory result is an ordered list of canonical 12-field records containing
-sender/receiver contributions, amount, `sender_goes_first`, initial move/state/
-validator commitments, fixed my-turn and their-turn handlers, and the validator
-program. The higher layer selects the local initial handler and swaps the
-sender/receiver contribution orientation for the receiving peer.
-
-One `ProposeGroup` wire action carries the whole derived group. Acceptance
-preflights aggregate balances for the complete group; accept and cancel apply
-to every member or none. The receiver
-gets one `ProposalMade` notification with ordered IDs. See
-[Grouped Proposals](GAME_LIFECYCLE.md#grouped-atomic-proposals) for the
-general mechanism.
-
-#### On-chain validators
-
-| Validator | Move | Validates |
-|-----------|------|-----------|
-| `commit.clsp` | `sha256(salt ‖ word)` (32 bytes) | Move is 32 bytes; initializes state with `(dict_pubkey, base_unit)` |
-| `guess.clsp` | 5-letter guess | Word is 5 bytes; evidence = signed gap range for out-of-dictionary slash |
-| `clue.clsp` | clue byte (1 byte) or `salt ‖ word` (21 bytes, reveal) | Clue correctness; reveal verifies `sha256(salt ‖ word) == commit`; wrong-clue slash via evidence index |
-
-**Key code:**
-
-- `clsp/games/krunk/krunk_generate.clinc` — off-chain handlers (Alice/Bob)
-- `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` — on-chain validators
-- `clsp/games/krunk/krunk_helpers.clinc` — clue encoding, payout tables
-- `clsp/games/krunk/krunk_signed_dict_tree.dat` — generated: 48-byte pubkey + signed tree (binary)
-- `src/games/krunk_dict_tree.rs` — tree construction and gap signing logic
-- `src/bin/gen_krunk_dict.rs` — dictionary tree generator binary
-- `src/tests/krunk_handlers.rs` — handler tests
-- `src/tests/krunk_validation.rs` — on-chain validation tests
-- `src/test_support/krunk_sim.rs` — Krunk test registration and helpers
+The Rust game collection also registers `debug` (test list) for simulator tests
+only. It is not a user-facing reference game.
 
 ---
 
@@ -727,11 +532,19 @@ All phases implement the `PeerLifecyclePhase` trait (defined in `src/game_sessio
 which provides a uniform interface for receiving messages, responding to
 coin-watching events, and performing game actions. The `GameSession`
 holds a single `Box<dyn PeerLifecyclePhase>` and routes all events through it.
+The trait has no behavioral defaults: every concrete phase explicitly defines
+every operation as valid behavior, an intentional no-op, or a phase-specific
+error. This keeps `GameSession` phase-agnostic and makes additions to the
+operation surface a compile-time checklist for every phase. Phase-specific
+operations such as handshake start and timeout status updates also use this
+interface rather than runtime type downcasts.
 
 When a phase is complete, it produces the next phase via
 `take_next_phase()`. The session detects this in `detect_phase_transition`
-and swaps in the new phase. This creates a linear progression through
-the channel lifecycle:
+and swaps in the new phase. Each concrete phase constructs its own successor
+because it owns the state-transfer knowledge; the successors deliberately have
+different constructor shapes. This creates a linear progression through the
+channel lifecycle:
 
 ```
 HandshakeInitiator ─┐
@@ -791,7 +604,8 @@ Protocol lifetime ends only after queued terminal reductions and the durable
 terminal snapshot are flushed, at which point the real controller and transport
 attachments are destroyed. Visual lifetime can continue: the same React hand
 component and `handKey` remain mounted, but receive the finalized model through
-an inert frozen bridge. Cold restoration is separate again:
+the `frozen: true` branch of the same mount contract, which structurally has no
+intent port. Cold restoration is separate again:
 `FinishedSessionGameView` remounts a validated persisted Cal Poker, Space Poker,
 or Krunk hand only when no live tree survived (for example, after reload).
 
@@ -838,14 +652,15 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | --------------------------------------------- | --------------------------------------------------------- |
 | `clsp/unroll/unroll_puzzle.clsp`              | Unroll coin: timeout vs challenge with sequence numbers   |
 | `clsp/referee/onchain/referee.clsp`           | Game coin: move / timeout / slash enforcement             |
-| `clsp/games/calpoker/onchain/{a,b,c,d,e}.clsp` | Calpoker validation programs (one per protocol step)      |
-| `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)           |
-| `clsp/games/spacepoker/onchain/*.clsp`       | Space Poker validation programs                           |
-| `clsp/games/spacepoker/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
-| `clsp/games/krunk/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
-| `clsp/games/krunk/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
-| `clsp/games/krunk/krunk_signed_dict_tree.dat`| Generated: pubkey + signed dict tree, binary (see [Krunk](#krunk)) |
-| `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory   |
+| `clsp/games/game_codes.clinc` | Shared game error codes                                      |
+| `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp` | Calpoker validation programs (one per protocol step) |
+| `games/calpoker/clsp/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)      |
+| `games/spacepoker/clsp/onchain/*.clsp`       | Space Poker validation programs                           |
+| `games/spacepoker/clsp/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
+| `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
+| `games/krunk/clsp/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
+| `games/krunk/clsp/krunk_signed_dict_tree.dat`| Generated: pubkey + signed dict tree, binary |
+| `games/debug/clsp/factory.clsp`             | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
 
@@ -854,10 +669,10 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 
 | File                                        | Purpose                                                  |
 | ------------------------------------------- | -------------------------------------------------------- |
-| `src/test_support/calpoker_sim.rs`              | Calpoker test registration and helpers                   |
-| `src/test_support/spacepoker_sim.rs`            | Space Poker test registration and helpers                |
-| `src/test_support/krunk_sim.rs`                 | Krunk test registration and helpers                      |
-| `src/test_support/debug_game.rs`            | Debug game: minimal game with controllable `mover_share` |
+| `games/calpoker/rust/tests/sim.rs`          | Calpoker test registration and helpers                   |
+| `games/spacepoker/rust/tests/sim.rs`        | Space Poker test registration and helpers                |
+| `games/krunk/rust/tests/sim.rs`             | Krunk test registration and helpers                      |
+| `games/debug/rust/mod.rs`                   | Debug game: minimal game with controllable `mover_share` |
 | `src/simulator/tests/session_phases_sim.rs` | Integration tests including notification suite           |
 | `src/test_support/peer/peer_harness.rs`   | Test peer helper                                         |
 | `src/test_support/sim_script.rs`                  | `SimScriptAction` enum and simulation loop driver        |
@@ -887,7 +702,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedRedoActions` | `channel_state/types/potato.rs`              | Enum for `cached_redo_actions` entries: `CachedSendMove`, `CachedAcceptSettlement`, `ProposalAccepted`     |
 | `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
-| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `SendPotato`, `QueuedProposalGroup`, `CleanShutdown`, `Cheat`              |
+| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposal`, `QueuedCancelProposal`, `QueuedCancelProposalSilently`, `Cheat` |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
 | `OnChainGameState`              | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout` |
 | `SettlementOutcome`             | `session_phases/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |
@@ -906,6 +721,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 
 | Document | Covers |
 | --- | --- |
+| [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md) | How to write a game: package layout, registry hook, host and CLVM APIs |
 | [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md) | Game proposals, off-chain game flow, AcceptSettlement lifecycle |
 | [`ON_CHAIN.md`](ON_CHAIN.md) | Dispute resolution, clean shutdown, preemption, stale unrolls, the referee, on-chain game state tracking |
 | [`UX_NOTIFICATIONS.md`](UX_NOTIFICATIONS.md) | Notification types, lifecycle invariants, WASM event FIFO |

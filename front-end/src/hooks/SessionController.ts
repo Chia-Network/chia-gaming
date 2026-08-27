@@ -12,16 +12,15 @@ import {
   SpendBundle,
   ProposeGameParams,
   WasmEvent,
+  WasmNotification,
   NeedCoinSpendRequest,
+  requireWasmResult,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
 import { spend_bundle_to_clvm, coerceToBytes } from '../util';
 import { log, diagStack } from '../services/log';
 import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
-import type { PersistedGameState } from './save';
-import type { RegisteredGameType } from '../lib/session/types';
-import type { LocalGameActionRequest } from '../lib/session/sessionMachineTypes';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendRecent,
@@ -30,7 +29,11 @@ import {
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
 import { decodeChannelStatusPayload } from '../lib/session/persistence';
-import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
+import { completeRegisteredGames } from '../lib/gameIdentities';
+import { catalogGameTypeFromWire } from '../lib/gameIdentities';
+import { markClientErrorReported } from '../lib/clientError';
+
+export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 
 export interface WasmFields {
   serializedGameSession: Uint8Array;
@@ -65,6 +68,14 @@ const KEEPALIVE_INTERVAL_MS = 15_000;
 const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
 /** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
 const ACTIVE_DRAIN_EVENT_BUDGET = 100;
+
+function proposalMadeAdmitted(notification: WasmNotification): boolean {
+  const payload = (notification as { ProposalMade?: { game_type?: unknown } }).ProposalMade;
+  if (payload === undefined) return true;
+  const raw = payload.game_type;
+  if (typeof raw !== 'string') return true;
+  return catalogGameTypeFromWire(raw) !== null;
+}
 
 function isActivatedChannelStatus(status: ChannelStatusPayload['state']): boolean {
   return (
@@ -144,6 +155,7 @@ export class SessionController implements PollingGameSession {
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: GameSessionEvent[] = [];
+  private heldProposalNotifications: WasmNotification[] = [];
   private drainScheduled = false;
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChainObservations: Array<
@@ -186,25 +198,13 @@ export class SessionController implements PollingGameSession {
     acknowledged: boolean;
   } | null = null;
   activeGameIds: string[] = [];
-  private handStateProjection: (() => PersistedGameState | null) | null = null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
   durabilityWarning: string | undefined = undefined;
   onSaveNeeded: (() => void | Promise<void>) | null = null;
-  onFeatureStateTransition:
-    | ((gameType: RegisteredGameType, gameId: string, state: unknown) => boolean)
-    | null = null;
-  onFeatureStateWithLocalTurnTransition:
-    | ((gameType: RegisteredGameType, gameId: string, state: unknown, isMyTurn: boolean) => boolean)
-    | null = null;
-  onLocalGameAction: ((request: LocalGameActionRequest) => void) | null = null;
   getFee: () => bigint = () => 0n;
-
-  get handState(): PersistedGameState | null {
-    return this.handStateProjection?.() ?? null;
-  }
 
   constructor(
     blockchain: BlockchainPoller | null,
@@ -303,6 +303,7 @@ export class SessionController implements PollingGameSession {
     this.protocolStopped = true;
     this.terminalHandoff = null;
     this.eventQueue = [];
+    this.heldProposalNotifications = [];
     this.pendingOutboundSends = [];
     this.pendingAcks = [];
     this.unackedMessages = [];
@@ -314,7 +315,6 @@ export class SessionController implements PollingGameSession {
     this.blockchainAttached = false;
     this.blockchain = null;
     this.onSaveNeeded = null;
-    this.handStateProjection = null;
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
@@ -392,6 +392,35 @@ export class SessionController implements PollingGameSession {
     return this.channelReady;
   }
 
+  private ensureProtocolIdentities(): void {
+    if (!this.wc) return;
+    try {
+      completeRegisteredGames(this.wc);
+    } catch (e) {
+      const message = extractErrorMessage(e);
+      diagStack('completeRegisteredGames failed', e);
+      log(`[wasm] completeRegisteredGames failed: ${message}`);
+      this.rxjsEmitter?.next({ type: 'error', error: message });
+    }
+  }
+
+  private flushHeldProposals(): void {
+    if (this.heldProposalNotifications.length === 0) {
+      return;
+    }
+    const held = this.heldProposalNotifications;
+    this.heldProposalNotifications = [];
+    const stillHeld: WasmNotification[] = [];
+    for (const notification of held) {
+      if (proposalMadeAdmitted(notification)) {
+        this.rxjsEmitter?.next({ type: 'notification', data: notification });
+      } else {
+        stillHeld.push(notification);
+      }
+    }
+    this.heldProposalNotifications = stillHeld;
+  }
+
   isOffChainActive(): boolean {
     return this.lastChannelStatus?.state === 'Active';
   }
@@ -399,6 +428,10 @@ export class SessionController implements PollingGameSession {
   restoreChannelStatus(status: ChannelStatusPayload | null): void {
     this.lastChannelStatus = status;
     this.channelReady = status !== null && isActivatedChannelStatus(status.state);
+    if (this.channelReady && this.wc) {
+      this.ensureProtocolIdentities();
+      this.flushHeldProposals();
+    }
   }
 
   getObservable() {
@@ -727,15 +760,13 @@ export class SessionController implements PollingGameSession {
   }
 
   processResult(result: WasmResult | undefined): void {
-    if (result === undefined) {
-      throw new Error('cradle returned no WasmResult');
-    }
+    result = requireWasmResult(result);
     if (this.protocolStopped) {
       return;
     }
     result = integersToBigInt(result);
 
-    const disposition = result.disposition ?? { kind: 'active' as const };
+    const disposition = result.disposition;
     const terminal = disposition.kind === 'terminal';
     if (terminal) {
       this.stopProtocolWork();
@@ -743,14 +774,14 @@ export class SessionController implements PollingGameSession {
 
     const blockchain = this.blockchain;
     if (!terminal) {
-      for (const coin of result.watchCoins || []) {
+      for (const coin of result.watchCoins) {
         blockchain?.watchCoin(this, coin);
       }
-      for (const coin of result.unwatchCoins || []) {
+      for (const coin of result.unwatchCoins) {
         blockchain?.unwatchCoin(this, coin);
       }
     }
-    for (const event of result.events || []) {
+    for (const event of result.events) {
       if (!terminal || this.isTerminalPresentationEvent(event)) {
         this.eventQueue.push(event);
       }
@@ -771,8 +802,9 @@ export class SessionController implements PollingGameSession {
   }
 
   private assertActionSucceeded(result: WasmResult | undefined, action: string): void {
-    if (result?.actionSucceeded !== false) return;
-    const failed = result.events?.find(
+    const required = requireWasmResult(result);
+    if (required.actionSucceeded) return;
+    const failed = required.events.find(
       (event) =>
         'Notification' in event &&
         event.Notification.ActionFailed &&
@@ -788,13 +820,37 @@ export class SessionController implements PollingGameSession {
       result?.actionSucceeded === false
         ? {
             ...result,
-            events: result.events?.filter(
+            events: result.events.filter(
               (event) => !('Notification' in event && event.Notification.ActionFailed),
             ),
           }
         : result;
     this.processResult(processed);
     this.assertActionSucceeded(result, action);
+  }
+
+  private processGameCommandResult(
+    result: WasmResult | undefined,
+    action: string,
+    gameId: string,
+    actionKind: 'make_move' | 'accept_settlement' | 'cheat',
+  ): GameCommandDisposition {
+    const required = requireWasmResult(result);
+    const rejected = required.events.some(
+      (event) =>
+        'Notification' in event &&
+        event.Notification.MoveRejected?.id != null &&
+        String(event.Notification.MoveRejected.id) === gameId,
+    );
+    const applied = required.events.some(
+      (event) =>
+        'Notification' in event &&
+        event.Notification.LocalActionApplied?.id != null &&
+        String(event.Notification.LocalActionApplied.id) === gameId &&
+        event.Notification.LocalActionApplied.action === actionKind,
+    );
+    this.processCommandResult(required, action);
+    return rejected ? 'rejected' : applied ? 'applied' : 'queued';
   }
 
   private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
@@ -958,37 +1014,36 @@ export class SessionController implements PollingGameSession {
       const n = event.Notification;
       let notification = n;
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
-      if (tag === 'ChannelStatus') {
-        const cs = (n as Record<string, Record<string, unknown>>).ChannelStatus;
-        if (cs) {
-          const channelStatus = decodeChannelStatusPayload({
-            ...cs,
-            coin: coerceToBytes(cs.coin),
-          });
-          if (channelStatus === null) {
-            throw new Error('ChannelStatus notification payload is null');
-          }
-          this.lastChannelStatus = channelStatus;
-          notification = { ...n, ChannelStatus: channelStatus };
-          if (channelStatus.state === 'Active') {
-            this.channelReady = true;
-          }
+      if (n.ChannelStatus !== undefined) {
+        const cs = n.ChannelStatus;
+        const channelStatus = decodeChannelStatusPayload({
+          ...cs,
+          coin: coerceToBytes(cs.coin),
+        });
+        if (channelStatus === null) {
+          throw new Error('ChannelStatus notification payload is null');
+        }
+        this.lastChannelStatus = channelStatus;
+        notification = { ChannelStatus: channelStatus };
+        if (channelStatus.state === 'Active') {
+          this.channelReady = true;
+          this.ensureProtocolIdentities();
         }
       }
-      if (tag === 'ProposalAccepted' && n.ProposalAccepted) {
+      if (n.ProposalAccepted !== undefined) {
         const acceptedId = String(n.ProposalAccepted.id);
         if (!this.activeGameIds.includes(acceptedId)) {
           this.activeGameIds.push(acceptedId);
         }
       }
-      if (tag === 'GameStatus') {
-        const gs = (n as Record<string, Record<string, unknown>>).GameStatus;
-        if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
+      if (n.GameStatus !== undefined) {
+        const gs = n.GameStatus;
+        if (gs.status.startsWith('ended-')) {
           const endedId = gs.id != null ? String(gs.id) : null;
           this.activeGameIds = this.activeGameIds.filter((id) => id !== endedId);
         }
       }
-      if (tag === 'GameSettled' && n.GameSettled) {
+      if (n.GameSettled !== undefined) {
         const settledId = String(n.GameSettled.id);
         this.activeGameIds = this.activeGameIds.filter((id) => id !== settledId);
       }
@@ -997,7 +1052,12 @@ export class SessionController implements PollingGameSession {
         jsonStringify(notification),
         WASM_NOTIFICATION_HISTORY_LIMIT,
       );
-      this.rxjsEmitter?.next({ type: 'notification', data: notification });
+      if (tag === 'ProposalMade' && !proposalMadeAdmitted(notification)) {
+        this.heldProposalNotifications.push(notification);
+      } else {
+        this.rxjsEmitter?.next({ type: 'notification', data: notification });
+        this.flushHeldProposals();
+      }
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
@@ -1009,8 +1069,6 @@ export class SessionController implements PollingGameSession {
       this.trackEffect(this.handleNeedLauncherCoin());
     } else if ('NeedCoinSpend' in event) {
       this.trackEffect(this.handleNeedCoinSpend(event.NeedCoinSpend));
-    } else if ('OutboundTransaction' in event) {
-      throw new Error('unexpected OutboundTransaction GameSessionEvent (use drain_submissions)');
     } else {
       const keys = Object.keys(event as object);
       throw new Error(`unknown GameSessionEvent: ${keys.join(',') || '(empty)'}`);
@@ -1412,7 +1470,7 @@ export class SessionController implements PollingGameSession {
     }
     try {
       const result = this.cradle.completeOutboundTerminalHandoff();
-      if ((result?.disposition?.kind ?? 'active') !== 'terminal') {
+      if (result.disposition.kind !== 'terminal') {
         throw new Error('cooperative terminal handoff did not produce a terminal result');
       }
       this.terminalHandoff = null;
@@ -1482,72 +1540,9 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  projectHandState(read: () => PersistedGameState | null): () => void {
-    this.handStateProjection = read;
-    return () => {
-      if (this.handStateProjection === read) this.handStateProjection = null;
-    };
-  }
-
-  transitionFeatureState(gameType: RegisteredGameType, gameId: string, state: unknown): boolean {
-    try {
-      if (!this.onFeatureStateTransition) {
-        throw new Error('Feature state transition callback is unavailable');
-      }
-      return this.onFeatureStateTransition(gameType, gameId, state);
-    } catch (error) {
-      const message = extractErrorMessage(error);
-      console.error('[session] feature state transition failed:', message);
-      this.rxjsEmitter?.next({
-        type: 'game-action-error',
-        gameId,
-        action: 'feature-state',
-        error: message,
-      });
-      return false;
-    }
-  }
-
-  commitLocalGameAction(request: LocalGameActionRequest): void {
-    if (!this.onLocalGameAction) {
-      throw new Error('Local game action callback is unavailable');
-    }
-    try {
-      this.onLocalGameAction(request);
-    } catch (error) {
-      if (!wasClientErrorReported(error)) {
-        markClientErrorReported(error);
-        const message = extractErrorMessage(error);
-        if (request.command.type === 'cheat') {
-          this.rxjsEmitter?.next({ type: 'error', error: message });
-        } else {
-          this.rxjsEmitter?.next({
-            type: 'game-action-error',
-            gameId: request.id,
-            action: request.command.type,
-            error: message,
-          });
-        }
-      }
-      throw error;
-    }
-  }
-
   reportRuntimeError(error: unknown): void {
     markClientErrorReported(error);
     this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(error) });
-  }
-
-  transitionFeatureStateWithLocalTurn(
-    gameType: RegisteredGameType,
-    gameId: string,
-    state: unknown,
-    isMyTurn: boolean,
-  ): boolean {
-    if (!this.onFeatureStateWithLocalTurnTransition) {
-      throw new Error('Feature state with local turn transition callback is unavailable');
-    }
-    return this.onFeatureStateWithLocalTurnTransition(gameType, gameId, state, isMyTurn);
   }
 
   /**
@@ -1571,6 +1566,7 @@ export class SessionController implements PollingGameSession {
 
   proposeGames(paramsList: ProposeGameParams[]): string[] {
     if (!this.cradle) throw new Error('no cradle');
+    if (!this.wc) throw new Error('no wasm');
     if (paramsList.length !== 1) {
       throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
     }
@@ -1610,12 +1606,12 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  makeMove(gameId: string, readable: Program | null): void {
+  makeMove(gameId: string, readable: Program | null): GameCommandDisposition {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const bytes = clvmToBytes(readable);
       const result = this.cradle.make_move(gameId, bytes);
-      this.processCommandResult(result, 'make move');
+      return this.processGameCommandResult(result, 'make move', gameId, 'make_move');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
@@ -1630,11 +1626,16 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  acceptSettlement(gameId: string): void {
+  acceptSettlement(gameId: string): GameCommandDisposition {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.acceptSettlement(gameId);
-      this.processCommandResult(result, 'accept settlement');
+      return this.processGameCommandResult(
+        result,
+        'accept settlement',
+        gameId,
+        'accept_settlement',
+      );
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
@@ -1649,11 +1650,11 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  cheat(gameId: string, moverShare: bigint): void {
+  cheat(gameId: string, moverShare: bigint): GameCommandDisposition {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.cheat(gameId, moverShare);
-      this.processCommandResult(result, 'cheat');
+      return this.processGameCommandResult(result, 'cheat', gameId, 'cheat');
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cheat failed:', msg);
@@ -1702,8 +1703,7 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) throw new Error('no cradle');
     try {
       const result = this.cradle.go_on_chain();
-      const startedOnChain =
-        result?.actionSucceeded === true && result.disposition?.kind === 'active';
+      const startedOnChain = result.actionSucceeded && result.disposition.kind === 'active';
       this.onChain = startedOnChain;
       this.processCommandResult(result, 'go on chain');
       return startedOnChain;

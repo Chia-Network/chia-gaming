@@ -1,0 +1,52 @@
+.card-face {
+  container-type: inline-size;
+  background-color: var(--suit-color);
+  color: #fff;
+}
+
+.dark .card-face {
+  background-color: #fff;
+  color: var(--suit-color);
+}
+
+.card-face.card-dimmed {
+  background-color: #fff;
+  color: #b0b0b0;
+}
+
+.dark .card-face.card-dimmed {
+  background-color: #b0b0b0;
+  color: #888;
+}
+
+.card-face.card-hidden {
+  background-color: transparent;
+  color: transparent;
+}
+
+.hand-reorder-group {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  gap: 0.5rem !important;
+  width: 100% !important;
+}
+
+.hand-reorder-group > * {
+  width: var(--card-w) !important;
+  flex-shrink: 0 !important;
+}
+
+.animate-move {
+  animation: moveCard ease-in-out forwards;
+}
+@keyframes moveCard {
+  from {
+    left: var(--start-x);
+    top: var(--start-y);
+  }
+  to {
+    left: var(--end-x);
+    top: var(--end-y);
+  }
+}
