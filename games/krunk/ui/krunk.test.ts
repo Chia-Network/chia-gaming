@@ -26,6 +26,7 @@ import {
   krunkStateCodec,
   restoreKrunkHand,
   type KrunkHand,
+  type KrunkHandState,
 } from './serialize';
 import type { GameMountView, LiveGamePort } from '../../host';
 
@@ -59,6 +60,17 @@ describe('Krunk hand restoration', () => {
 
   it('restores a valid saved state', () => {
     expect(restoreKrunkHand(savedState).getState()).toBe(savedState);
+  });
+
+  it('restores durable queued guesses', () => {
+    const queued = {
+      ...savedState,
+      members: [
+        savedState.members[0],
+        { ...savedState.members[1], queuedGuesses: ['CRANE', 'SLATE'] },
+      ] as const,
+    };
+    expect(restoreKrunkHand(queued).getState()).toEqual(queued);
   });
 
   it('rejects malformed saved state before constructing a hand', () => {
@@ -118,6 +130,56 @@ describe('Krunk automatic moves', () => {
         type: 'make-move',
         memberIndex: 0,
         readable: null,
+      }),
+    );
+  });
+
+  it('durably dequeues before submitting a restored queued guess', () => {
+    const persisted = krunkStateCodec.encode({
+      perPlayerStake: 100n,
+      members: [
+        initialKrunkGameState('alice'),
+        {
+          ...initialKrunkGameState('bob'),
+          handler: KrunkHandler.BobGuess,
+          myTurn: true,
+          queuedGuesses: ['CRANE', 'SLATE'],
+        },
+      ],
+    });
+    const snapshots: KrunkHandState[] = [];
+    const hand = testHand(persisted);
+    const dispatch = jest.fn(() => snapshots.push(structuredClone(hand.getState())));
+    const view: GameMountView<KrunkHand> = {
+      frozen: false,
+      hand,
+      port: { isChannelReady: () => true, dispatch },
+    };
+    let hook: ReturnType<typeof useKrunkHand> | null = null;
+
+    function Harness() {
+      hook = useKrunkHand(view, 1);
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    act(() => hook!.submitNextQueuedGuess());
+
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
+      'state-changed',
+      'make-move',
+    ]);
+    expect(snapshots[0].members[1]).toEqual(
+      expect.objectContaining({ guesses: [], queuedGuesses: ['SLATE'] }),
+    );
+    expect(snapshots[1].members[1]).toEqual(
+      expect.objectContaining({
+        handler: KrunkHandler.BobWaiting,
+        myTurn: false,
+        guesses: [{ word: 'CRANE', clue: [-1n, -1n, -1n, -1n, -1n] }],
+        queuedGuesses: ['SLATE'],
       }),
     );
   });
@@ -473,6 +535,7 @@ describe('Krunk draft continuity', () => {
       myTurn: false,
       role: 'bob',
       guesses: [],
+      queuedGuesses: [],
       secretWord: null,
       revealedWord: null,
       outcome: 'lose',
@@ -523,6 +586,7 @@ describe('Krunk draft continuity', () => {
       myTurn: false,
       role: 'bob',
       guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
+      queuedGuesses: [],
       secretWord: null,
       revealedWord: 'CRANE',
       outcome: 'win',
@@ -559,6 +623,7 @@ describe('Krunk draft continuity', () => {
         myTurn: false,
         role,
         guesses: role === 'bob' ? [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }] : [],
+        queuedGuesses: [],
         secretWord: role === 'alice' ? 'CRANE' : null,
         revealedWord: 'CRANE',
         outcome,
@@ -594,6 +659,7 @@ describe('Krunk draft continuity', () => {
       myTurn: false,
       role: 'alice',
       guesses: [],
+      queuedGuesses: [],
       secretWord: 'CRANE',
       revealedWord: 'CRANE',
       outcome: 'win',
@@ -614,6 +680,7 @@ describe('Krunk draft continuity', () => {
       myTurn: false,
       role: 'bob',
       guesses: [],
+      queuedGuesses: [],
       secretWord: null,
       revealedWord: null,
       outcome: 'win',
@@ -641,6 +708,7 @@ describe('Krunk draft continuity', () => {
       myTurn: false,
       role: 'alice',
       guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
+      queuedGuesses: [],
       secretWord: 'CRANE',
       revealedWord: 'CRANE',
       outcome: 'lose',
@@ -659,6 +727,7 @@ describe('Krunk draft continuity', () => {
       myTurn: false,
       role: 'alice',
       guesses: [{ word: 'CRANE', clue: [2n, 2n, 2n, 2n, 2n] }],
+      queuedGuesses: [],
       secretWord: 'CRANE',
       revealedWord: null,
       outcome: null,

@@ -925,6 +925,10 @@ type GameIntent =
   mutations before dispatching the protocol intent. The host temporarily retains
   the prior canonical hand and restores it if the synchronous command rejects or
   throws.
+- If a durable local queue supplies that action, persist removal of the selected
+  item with `state-changed` before mutating and dispatching the protocol action.
+  Otherwise the action's rejection checkpoint still contains the selected item,
+  so restore or synchronous rollback can submit it repeatedly.
 - `make-move` asks the local CLVM handler to process `readable`. `null` means
   CLVM nil.
 - `memberIndex` addresses the stable factory-ordered member. The host checks the
@@ -1206,6 +1210,9 @@ Before considering the game complete, check that:
   boundary; package code never receives an ID.
 - Automatic actions are ordinary state-driven effects: a restored pre-action
   state may fire once, while restored queued/applied state must not refire.
+- Every reload checkpoint test must drive the restored session beyond that
+  checkpoint. Equality immediately after restore proves serialization only;
+  post-restore protocol progress proves the state is actually resumable.
 - Every outgoing intent is tested for accepted, rejected, and unexpected-failure
   behavior.
 - Live and frozen branches of the single mount render the expected game state,

@@ -21,6 +21,8 @@ export interface UseKrunkHandResult {
   gameState: KrunkGameState;
   setSecretWord: (word: string) => void;
   submitGuess: (word: string) => void;
+  queueGuess: (word: string) => void;
+  submitNextQueuedGuess: () => void;
 }
 
 const MAX_KRUNK_GUESSES = 5;
@@ -230,6 +232,13 @@ export function useKrunkHand(
     live.port.dispatch({ type: 'make-move', memberIndex, readable: command.readable });
   }, []);
 
+  const commitStateChange = useCallback((next: KrunkGameState): void => {
+    const memberIndex = memberIndexRef.current;
+    const live = requireLiveGameMount(viewRef.current);
+    live.hand.updateGame(memberIndex, () => next);
+    live.port.dispatch({ type: 'state-changed' });
+  }, []);
+
   // ── Auto-play ──
   // Alice's `krunk_alice_handler_clue` decides internally whether to
   // send a clue or the final reveal. The user has nothing to choose;
@@ -283,7 +292,12 @@ export function useKrunkHand(
     (word: string) => {
       if (!activeRef.current) return;
       const cur = gameStateRef.current;
-      if (cur.role !== 'bob' || cur.handler !== KrunkHandler.BobGuess) return;
+      if (
+        cur.role !== 'bob' ||
+        cur.handler !== KrunkHandler.BobGuess ||
+        cur.queuedGuesses.length > 0
+      )
+        return;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {
         console.warn('[krunk] guess must be 5 letters');
@@ -309,9 +323,57 @@ export function useKrunkHand(
     [commitLocalAction],
   );
 
+  const queueGuess = useCallback(
+    (word: string) => {
+      if (!activeRef.current) return;
+      const cur = gameStateRef.current;
+      const canQueue =
+        cur.role === 'bob' &&
+        (cur.handler === KrunkHandler.BobWaiting ||
+          (cur.handler === KrunkHandler.BobGuess && cur.queuedGuesses.length > 0)) &&
+        cur.guesses.length + cur.queuedGuesses.length < MAX_KRUNK_GUESSES;
+      if (!canQueue) return;
+      const normalised = word.trim().toUpperCase();
+      if (!/^[A-Z]{5}$/.test(normalised)) {
+        console.warn('[krunk] queued guess must be 5 letters');
+        return;
+      }
+      commitStateChange({
+        ...cur,
+        queuedGuesses: [...cur.queuedGuesses, normalised],
+      });
+    },
+    [commitStateChange],
+  );
+
+  const submitNextQueuedGuess = useCallback(() => {
+    if (!activeRef.current) return;
+    const cur = gameStateRef.current;
+    if (
+      cur.role !== 'bob' ||
+      cur.handler !== KrunkHandler.BobGuess ||
+      cur.queuedGuesses.length === 0
+    )
+      return;
+    const [word, ...queuedGuesses] = cur.queuedGuesses;
+    const dequeued = { ...cur, queuedGuesses };
+    commitStateChange(dequeued);
+    commitLocalAction(
+      {
+        ...dequeued,
+        guesses: [...dequeued.guesses, { word, clue: PENDING_CLUE }],
+        handler: KrunkHandler.BobWaiting,
+        myTurn: false,
+      },
+      { type: 'make-move', readable: wordToProgram(word) },
+    );
+  }, [commitLocalAction, commitStateChange]);
+
   return {
     gameState,
     setSecretWord,
     submitGuess,
+    queueGuess,
+    submitNextQueuedGuess,
   };
 }

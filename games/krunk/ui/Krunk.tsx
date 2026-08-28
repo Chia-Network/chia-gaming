@@ -426,6 +426,8 @@ const Krunk: React.FC<KrunkProps> = ({
   const bobHand = useKrunkHand(view, bobMemberIndex);
   const setAliceSecretWord = aliceHand.setSecretWord;
   const submitBobGuessMove = bobHand.submitGuess;
+  const queueBobGuess = bobHand.queueGuess;
+  const submitNextQueuedBobGuess = bobHand.submitNextQueuedGuess;
 
   // Write each half to the session history panel when it finishes.
   // The two games can complete at different times; log them separately.
@@ -479,7 +481,7 @@ const Krunk: React.FC<KrunkProps> = ({
   const wordCommitted = aliceHand.gameState.secretWord !== null;
   const [wordDraft, setWordDraft] = useState('');
   const [guessDraft, setGuessDraft] = useState('');
-  const [guessQueue, setGuessQueue] = useState<string[]>([]);
+  const guessQueue = bobHand.gameState.queuedGuesses;
 
   // Resolved cells must receive their delay in the render where they mount:
   // LetterCell intentionally latches that initial delay.
@@ -519,7 +521,6 @@ const Krunk: React.FC<KrunkProps> = ({
     return () => clearTimeout(t);
   }, [bobMissed, animateBobReveal]);
 
-  const bobGameOver = bobHand.gameState.handler === KrunkHandler.Terminal;
   const filledGuessCount = bobHand.gameState.guesses.length + displayQueue.length;
   const isBobGuessPhase =
     interactive &&
@@ -536,24 +537,20 @@ const Krunk: React.FC<KrunkProps> = ({
     bobInHand &&
     canQueueKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
 
-  // Drain the queue whenever it becomes our turn to guess. Only pop after
-  // we know submit will accept (BobGuess); otherwise a rejected submit
-  // would silently drop the queued word.
-  //
-  // A dictionary rejection also lands in BobGuess — drop everything still
-  // queued rather than auto-sending guesses that assumed the rejected word.
+  // Persist the dequeue before attempting the move so a rejected word cannot
+  // be restored from the action checkpoint and submitted in a retry loop.
   useEffect(() => {
     if (!interactive) return;
     if (!isBobGuessPhase || guessQueue.length === 0) return;
     if (bobHand.gameState.handler !== KrunkHandler.BobGuess) return;
-    const next = guessQueue[0];
-    setGuessQueue((rest) => rest.slice(1));
-    submitBobGuessMove(next);
-  }, [isBobGuessPhase, interactive, guessQueue, bobHand.gameState.handler, submitBobGuessMove]);
-
-  useEffect(() => {
-    if (bobGameOver && guessQueue.length > 0) setGuessQueue([]);
-  }, [bobGameOver, guessQueue.length]);
+    submitNextQueuedBobGuess();
+  }, [
+    isBobGuessPhase,
+    interactive,
+    guessQueue.length,
+    bobHand.gameState.handler,
+    submitNextQueuedBobGuess,
+  ]);
 
   const pickingWord = aliceInteractive && !wordCommitted;
   const showWordDraft = aliceInHand && !wordCommitted;
@@ -584,7 +581,7 @@ const Krunk: React.FC<KrunkProps> = ({
       submitBobGuessMove(guessDraft);
     } else if (canQueueGuess || (isBobGuessPhase && guessQueue.length > 0)) {
       if (filledGuessCount >= MAX_GUESSES) return false;
-      setGuessQueue((prev) => [...prev, guessDraft]);
+      queueBobGuess(guessDraft);
     } else {
       return false;
     }
@@ -597,6 +594,7 @@ const Krunk: React.FC<KrunkProps> = ({
     guessQueue.length,
     filledGuessCount,
     submitBobGuessMove,
+    queueBobGuess,
   ]);
 
   const submitActive = useCallback(() => {

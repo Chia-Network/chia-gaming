@@ -132,9 +132,20 @@ afterEach(async () => {
 export class SessionControllerAdapter {
   blob: SessionController | undefined;
   waiting_messages: Array<SimpleMessage>;
+  readonly peerConnection: PeerConnectionResult;
 
   constructor() {
     this.waiting_messages = [];
+    this.peerConnection = {
+      sendMessage: (msgno: number, message: Uint8Array) => {
+        this.add_outbound_message(msgno, message);
+        return true;
+      },
+      sendAck: () => true,
+      sendKeepalive: () => true,
+      hostLog: () => {},
+      close: () => {},
+    };
   }
 
   getObservable() {
@@ -354,30 +365,18 @@ export async function createActivePair(
     addActiveCradle(new SessionControllerAdapter()),
     addActiveCradle(new SessionControllerAdapter()),
   ] as [SessionControllerAdapter, SessionControllerAdapter];
-  const peerConnections = cradles.map(
-    (cradle): PeerConnectionResult => ({
-      sendMessage: (msgno: number, message: Uint8Array) => {
-        cradle.add_outbound_message(msgno, message);
-        return true;
-      },
-      sendAck: () => true,
-      sendKeepalive: () => true,
-      hostLog: () => {},
-      close: () => {},
-    }),
-  );
   const first = await initSessionController(
     poller,
     `cafe000${index}`,
     true,
-    peerConnections[0],
+    cradles[0].peerConnection,
     new WasmStateInit(fetchPreset),
   );
   const second = await initSessionController(
     poller,
     `dead000${index}`,
     false,
-    peerConnections[1],
+    cradles[1].peerConnection,
     new WasmStateInit(fetchPreset),
   );
   first.pairingToken = `restore-games-${index}-first`;
@@ -459,10 +458,9 @@ export async function initSessionController(
   iStarted: boolean,
   peer_conn: PeerConnectionResult,
   wasmStateInit: WasmStateInit,
+  myContribution = 100n,
+  theirContribution = 100n,
 ) {
-  const myContribution = 100n;
-  const theirContribution = 100n;
-
   await fakeBlockchainInfo.registerUser(uniqueId);
   const gameObject = new SessionController(
     blockchain,

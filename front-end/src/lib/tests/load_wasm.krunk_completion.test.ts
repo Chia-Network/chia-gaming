@@ -18,6 +18,7 @@ import {
   flushWrapperDrain,
   startSimulator,
 } from './load_wasm.harness';
+import { runKrunkReloadCoverage } from './krunk_reload.scenario';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
@@ -401,6 +402,22 @@ it(
       await runRealKrunkCompletionCase(poller);
     } catch (e) {
       throw new Error(`[load_wasm Krunk completion failed]\n${String(e)}`, { cause: e });
+    }
+  },
+  300 * 1000,
+);
+
+it(
+  'restores every live Krunk hand phase and advances into a second pair',
+  async () => {
+    try {
+      const poller = await startSimulator(['cafe00011', 'dead00011']);
+      if (!poller) return;
+      await runKrunkReloadCoverage(poller);
+    } catch (error) {
+      throw new Error(`[load_wasm Krunk reload coverage failed]\n${String(error)}`, {
+        cause: error,
+      });
     }
   },
   300 * 1000,

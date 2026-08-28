@@ -30,6 +30,7 @@ export interface KrunkGameState {
   myTurn: boolean;
   role: KrunkRole;
   guesses: KrunkGuess[];
+  queuedGuesses: string[];
   secretWord: string | null;
   revealedWord: string | null;
   outcome: 'win' | 'lose' | null;
@@ -67,6 +68,7 @@ export function initialKrunkGameState(role: KrunkRole): KrunkGameState {
     myTurn: role === 'alice',
     role,
     guesses: [],
+    queuedGuesses: [],
     secretWord: null,
     revealedWord: null,
     outcome: null,
@@ -96,7 +98,11 @@ function isKrunkGameState(value: unknown): value is KrunkGameState {
     state.handler > KrunkHandler.Terminal ||
     (state.role !== 'alice' && state.role !== 'bob') ||
     !Array.isArray(state.guesses) ||
-    state.guesses.length > 5
+    state.guesses.length > 5 ||
+    !Array.isArray(state.queuedGuesses) ||
+    state.guesses.length + state.queuedGuesses.length > 5 ||
+    !state.queuedGuesses.every(isWord) ||
+    (state.role === 'alice' && state.queuedGuesses.length !== 0)
   ) {
     return false;
   }
@@ -225,6 +231,7 @@ function finishedState(
     ...state,
     handler: KrunkHandler.Terminal,
     myTurn: false,
+    queuedGuesses: [],
     revealedWord,
     moverShare,
     outcome:
@@ -252,6 +259,7 @@ export function reduceKrunkFeatureState(
       ...game,
       handler: KrunkHandler.Terminal,
       myTurn: false,
+      queuedGuesses: [],
       outcome: game.outcome ?? krunkOutcomeFromPlay(game),
       settlementOutcome: event.outcome,
     };
