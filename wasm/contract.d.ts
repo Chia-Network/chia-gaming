@@ -175,6 +175,7 @@ export type CancelReason =
 
 export interface ProposalCancelledPayload {
   id: bigint;
+  group_ids: bigint[];
   reason: CancelReason;
 }
 

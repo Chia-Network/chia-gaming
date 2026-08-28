@@ -487,7 +487,9 @@ describe('session machine causal sequences', () => {
     const transition = reduceSessionMachine(sameTermsProposalState(), {
       type: 'wasm-notification',
       iStarted: true,
-      notification: { ProposalCancelled: { id: '7', reason: 'CancelledByPeer' } },
+      notification: {
+        ProposalCancelled: { id: '7', group_ids: ['7'], reason: 'CancelledByPeer' },
+      },
     });
     expect(transition.state.model.betweenHand).toMatchObject({
       mode: 'compose-proposal',
@@ -502,11 +504,32 @@ describe('session machine causal sequences', () => {
     expect(transition.effects.map((effect) => effect.type)).toEqual(['persist-session']);
   });
 
+  it('retains Krunk retry terms after one canonical group cancellation', () => {
+    const state = stateWithProposals([{ memberIds: ['7', '9'], handProposal: KRUNK_TERMS }]);
+    const transition = reduceSessionMachine(state, {
+      type: 'wasm-notification',
+      iStarted: true,
+      notification: {
+        ProposalCancelled: {
+          id: '7',
+          group_ids: ['7', '9'],
+          reason: 'SupersededByIncoming',
+        },
+      },
+    });
+
+    expect(transition.state.model.betweenHand.proposalGroups).toEqual([]);
+    expect(transition.state.model.betweenHand.pendingRetryHandProposal).toEqual(KRUNK_TERMS);
+    expect(transition.effects.map((effect) => effect.type)).toEqual(['persist-session']);
+  });
+
   it('reviews a crossed incoming proposal that arrives after immediate fallback', () => {
     let state = reduceSessionMachine(sameTermsProposalState(), {
       type: 'wasm-notification',
       iStarted: true,
-      notification: { ProposalCancelled: { id: '7', reason: 'CancelledByPeer' } },
+      notification: {
+        ProposalCancelled: { id: '7', group_ids: ['7'], reason: 'CancelledByPeer' },
+      },
     }).state;
     state = reduceSessionMachine(state, {
       type: 'wasm-notification',

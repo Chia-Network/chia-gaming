@@ -403,13 +403,13 @@ These fire during active gameplay (after a game proposal has been accepted).
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ProposalMade { id, group_ids, player_a_contribution, player_b_contribution, sender_is_player_a, timeout, game_type, parameters }` | Atomic proposal group received from opponent | Fires exactly once for the receiver. `id` is the first factory-produced game ID; `group_ids` is always the full ordered member list (singleton ⇒ `[id]`). Parameters and A/B terms are preserved exactly. |
 | `ProposalAcceptedGroup { members: [{ id, player_a_contribution, player_b_contribution, our_turn }, ...] }` | Proposal accepted by either side | Fires once for the whole group. Members are in exact factory order and retain the factory-approved A/B contribution split; total amount is their sum. The two peers have opposite `our_turn` for every member. |
-| `ProposalCancelled { id, reason }`                                                             | Proposal cancelled or invalidated            | The proposal was cancelled explicitly, or automatically due to going on-chain                                                                                                                                                     |
+| `ProposalCancelled { id, group_ids, reason }`                                                  | Atomic proposal group cancelled or invalidated | Fires once for the whole group. `id` is the canonical first member and `group_ids` is the full ordered member list. The group was cancelled explicitly or automatically due to going on-chain. |
 
 ### Cancellation Reasons (`CancelReason`)
 
-`ProposalCancelled` carries a `reason` field indicating why the cancellation
-happened. The reason determines both the frontend's behavior and whether the
-user is notified.
+`ProposalCancelled` carries one group-level `reason` indicating why the
+cancellation happened. The reason determines both the frontend's behavior and
+whether the user is notified.
 
 | `CancelReason`         | Emitted when                                                                                                                                                                                                                                                                                                                                 | Frontend behavior                                                                                                                                                         |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

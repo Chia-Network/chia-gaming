@@ -1120,10 +1120,20 @@ impl ChannelState {
         Ok(())
     }
 
-    pub fn cancel_all_proposals(&mut self) -> Vec<GameID> {
-        let ids: Vec<GameID> = self.proposed_games.iter().map(|p| p.game_id).collect();
+    pub fn cancel_all_proposals(&mut self) -> Vec<Vec<GameID>> {
+        let mut groups: Vec<Vec<GameID>> = Vec::new();
+        for proposal in &self.proposed_games {
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|group| group[0] == proposal.group_id)
+            {
+                group.push(proposal.game_id);
+            } else {
+                groups.push(vec![proposal.game_id]);
+            }
+        }
         self.proposed_games.clear();
-        ids
+        groups
     }
 
     pub fn has_our_outstanding_proposals(&self) -> bool {

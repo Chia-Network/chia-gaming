@@ -272,7 +272,10 @@ pub enum GameNotification {
         members: Vec<AcceptedGameMember>,
     },
     ProposalCancelled {
+        /// Canonical first member of the cancelled proposal group.
         id: GameID,
+        /// Members in exact factory order (singleton => `[id]`).
+        group_ids: Vec<GameID>,
         reason: CancelReason,
     },
     InsufficientBalance {

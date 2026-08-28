@@ -327,6 +327,14 @@ fn proposal_accepted_contains(notification: &GameNotification, id: &GameID) -> b
     )
 }
 
+fn proposal_cancelled_contains(notification: &GameNotification, id: &GameID) -> bool {
+    match notification {
+        GameNotification::ProposalCancelled { group_ids, .. } => group_ids.contains(id),
+        GameNotification::InsufficientBalance { id: notified, .. } => notified == id,
+        _ => false,
+    }
+}
+
 fn accepted_game_ids(notifications: &[GameNotification]) -> HashSet<GameID> {
     notifications
         .iter()
@@ -542,7 +550,7 @@ fn event_shape(actual: &TestEvent) -> String {
                     members.iter().map(|member| member.id).collect::<Vec<_>>()
                 )
             }
-            GameNotification::ProposalCancelled { id, reason } => format!("Notif(ProposalCancelled(id={id:?},reason={reason:?}))"),
+            GameNotification::ProposalCancelled { id, reason, .. } => format!("Notif(ProposalCancelled(id={id:?},reason={reason:?}))"),
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
             GameNotification::ActionFailed { reason, .. } => format!("Notif(ActionFailed(reason={reason}))"),
             GameNotification::MoveRejected { id, tag, message } => format!("Notif(MoveRejected(id={id:?},tag={tag},message={message}))"),
@@ -1072,14 +1080,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             let cancelled = lui
                 .notifications
                 .iter()
-                .filter(|n| {
-                    matches!(
-                        n,
-                        GameNotification::ProposalCancelled { id: nid, .. }
-                            | GameNotification::InsufficientBalance { id: nid, .. }
-                            if nid == id
-                    )
-                })
+                .filter(|n| proposal_cancelled_contains(n, id))
                 .count();
             assert!(
                 accepted + cancelled == 1,
@@ -1103,14 +1104,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 let cancelled = lui
                     .notifications
                     .iter()
-                    .filter(|n2| {
-                        matches!(
-                            n2,
-                            GameNotification::ProposalCancelled { id: nid, .. }
-                                | GameNotification::InsufficientBalance { id: nid, .. }
-                                if nid == id
-                        )
-                    })
+                    .filter(|n2| proposal_cancelled_contains(n2, id))
                     .count();
                 assert!(
                     accepted + cancelled == 1,
@@ -1867,8 +1861,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 .collect();
             assert_eq!(
                 cancelled,
-                vec![GameID(1), GameID(3)],
-                "player {player} should receive ordered per-member cancellation facts",
+                vec![GameID(1)],
+                "player {player} should receive one canonical group cancellation fact",
             );
             assert!(
                 ui.game_accepted_ids.is_empty(),

@@ -649,21 +649,27 @@ impl OffChainPhase {
         for action in actions.iter() {
             match action {
                 BatchAction::ProposeGroup(wire) => {
-                    let cancelled: Vec<GameID> = self
+                    let cancelled: Vec<(GameID, Vec<GameID>)> = self
                         .game_action_queue
                         .iter()
                         .filter_map(|a| match a {
                             GameAction::QueuedProposalGroup(games, _) => {
-                                games.first().map(|g| g.game_id)
+                                games.first().map(|first| {
+                                    (
+                                        first.game_id,
+                                        games.iter().map(|game| game.game_id).collect(),
+                                    )
+                                })
                             }
                             _ => None,
                         })
                         .collect();
                     self.game_action_queue
                         .retain(|a| !matches!(a, GameAction::QueuedProposalGroup(..)));
-                    for id in cancelled {
+                    for (id, group_ids) in cancelled {
                         effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                             id,
+                            group_ids,
                             reason: CancelReason::SupersededByIncoming,
                         }));
                     }
@@ -745,13 +751,14 @@ impl OffChainPhase {
                 }
                 BatchAction::CancelProposalGroup(group_id) => {
                     let group_ids = self.channel_state()?.canonical_group_member_ids(group_id)?;
-                    for id in group_ids {
-                        self.channel_state_mut()?.received_cancel_proposal(&id)?;
-                        effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                            id,
-                            reason: CancelReason::CancelledByPeer,
-                        }));
+                    for id in &group_ids {
+                        self.channel_state_mut()?.received_cancel_proposal(id)?;
                     }
+                    effects.push(Effect::Notify(GameNotification::ProposalCancelled {
+                        id: *group_id,
+                        group_ids,
+                        reason: CancelReason::CancelledByPeer,
+                    }));
                 }
                 BatchAction::Move(game_id, game_move) => {
                     let move_result = {
@@ -830,10 +837,11 @@ impl OffChainPhase {
             }
             {
                 let ch = self.channel_state_mut()?;
-                let cancelled_ids = ch.cancel_all_proposals();
-                for id in cancelled_ids {
+                let cancelled_groups = ch.cancel_all_proposals();
+                for group_ids in cancelled_groups {
                     effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                        id,
+                        id: group_ids[0],
+                        group_ids,
                         reason: CancelReason::CleanShutdown,
                     }));
                 }
@@ -1159,13 +1167,14 @@ impl OffChainPhase {
                     let group_ids = self
                         .channel_state()?
                         .canonical_group_member_ids(&group_id)?;
-                    for id in group_ids {
-                        self.channel_state_mut()?.send_cancel_proposal(&id)?;
-                        effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                            id,
-                            reason: CancelReason::CancelledByUs,
-                        }));
+                    for id in &group_ids {
+                        self.channel_state_mut()?.send_cancel_proposal(id)?;
                     }
+                    effects.push(Effect::Notify(GameNotification::ProposalCancelled {
+                        id: group_id,
+                        group_ids,
+                        reason: CancelReason::CancelledByUs,
+                    }));
                     batch_actions.push(BatchAction::CancelProposalGroup(group_id));
                 }
                 GameAction::QueuedCancelProposalGroupSilently(group_id) => {
@@ -1188,10 +1197,11 @@ impl OffChainPhase {
                     }
                     {
                         let ch = self.channel_state_mut()?;
-                        let cancelled_ids = ch.cancel_all_proposals();
-                        for id in cancelled_ids {
+                        let cancelled_groups = ch.cancel_all_proposals();
+                        for group_ids in cancelled_groups {
                             effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                                id,
+                                id: group_ids[0],
+                                group_ids,
                                 reason: CancelReason::CleanShutdown,
                             }));
                         }
@@ -1423,10 +1433,11 @@ impl OffChainPhase {
 
         {
             let player_ch = self.channel_state_mut()?;
-            let cancelled_ids = player_ch.cancel_all_proposals();
-            for id in cancelled_ids {
+            let cancelled_groups = player_ch.cancel_all_proposals();
+            for group_ids in cancelled_groups {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id,
+                    id: group_ids[0],
+                    group_ids,
                     reason: CancelReason::WentOnChain,
                 }));
             }
@@ -1543,6 +1554,7 @@ impl FromLocalUI for OffChainPhase {
                 vec![cancelled_id],
                 vec![Effect::Notify(GameNotification::ProposalCancelled {
                     id: cancelled_id,
+                    group_ids: vec![cancelled_id],
                     reason: CancelReason::PeerProposalPending,
                 })],
             ));

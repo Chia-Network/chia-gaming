@@ -127,10 +127,11 @@ impl ChannelStateBase {
     pub fn emit_failure_cleanup(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
         if let Ok(ch) = self.channel_state_mut() {
-            let cancelled_ids = ch.cancel_all_proposals();
-            for id in cancelled_ids {
+            let cancelled_groups = ch.cancel_all_proposals();
+            for group_ids in cancelled_groups {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id,
+                    id: group_ids[0],
+                    group_ids,
                     reason: CancelReason::ChannelError,
                 }));
             }

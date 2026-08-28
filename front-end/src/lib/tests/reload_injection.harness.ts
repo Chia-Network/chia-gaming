@@ -27,6 +27,16 @@ export interface ReloadableSessionLane {
   subscription: Subscription;
 }
 
+let reloadBarrier: Promise<void> | null = null;
+let reloadController: SessionController | null = null;
+
+function persistOutsideReload<T>(
+  controller: SessionController,
+  persist: () => Promise<T>,
+): Promise<T> {
+  return reloadBarrier && reloadController !== controller ? reloadBarrier.then(persist) : persist();
+}
+
 function bindRuntime(
   adapter: SessionControllerAdapter,
   controller: SessionController,
@@ -34,6 +44,7 @@ function bindRuntime(
   iStarted: boolean,
   restoring: boolean,
 ): ReloadableSessionLane {
+  const persist = () => persistOutsideReload(controller, () => runtime.persist());
   const runtime = new SessionMachineRuntime(
     createSessionMachineState(model, {
       firstGameAccepted: model.channel.status.state === 'Active',
@@ -45,6 +56,7 @@ function bindRuntime(
       getRestoreStatus: () => controller.getRestoreStatus(),
       getRestoreError: () => controller.getRestoreError(),
       onError: (error) => controller.reportRuntimeError(error),
+      persist,
     },
   );
   const dispatchHostProjection = () => {
@@ -62,7 +74,7 @@ function bindRuntime(
     });
   };
   dispatchHostProjection();
-  controller.onSaveNeeded = () => runtime.persist();
+  controller.onSaveNeeded = persist;
   const subscription = addActiveSubscription(
     controller.getObservable().subscribe((event) => {
       switch (event.type) {
@@ -118,11 +130,23 @@ export async function injectSessionReload(
   wasmStateInit = new WasmStateInit(fetchPreset),
 ): Promise<{ lane: ReloadableSessionLane; save: LiveSessionSave }> {
   await lane.controller.flushPendingWork();
-  await lane.runtime.persist();
-  await flushSessionSave();
-
-  resetSaveState();
-  const save = await peekSession();
+  if (reloadBarrier) await reloadBarrier;
+  let releaseReload!: () => void;
+  reloadBarrier = new Promise<void>((resolve) => {
+    releaseReload = resolve;
+  });
+  reloadController = lane.controller;
+  let save: Awaited<ReturnType<typeof peekSession>>;
+  try {
+    await lane.runtime.persist();
+    await flushSessionSave();
+    resetSaveState();
+    save = await peekSession();
+  } finally {
+    reloadController = null;
+    reloadBarrier = null;
+    releaseReload();
+  }
   if (save?.phase !== 'live') {
     throw new Error(`reload injection expected a live session save, got ${save?.phase ?? 'none'}`);
   }

@@ -411,16 +411,19 @@ export function reduceSessionNotification(
   }
 
   if ('ProposalCancelled' in notification) {
-    const id = String(notification.ProposalCancelled?.id ?? '');
-    const reason = String(
-      (notification.ProposalCancelled as Record<string, unknown> | undefined)?.reason ?? '',
-    );
+    const cancelled = notification.ProposalCancelled;
+    const id = String(cancelled?.id ?? '');
+    const groupIds = cancelled?.group_ids.map(String) ?? [];
+    const reason = String(cancelled?.reason ?? '');
     const before = current;
-    const proposal = id ? selectProposalGroupByMemberId(before.model, id) : null;
+    const proposal =
+      groupIds
+        .map((memberId) => selectProposalGroupByMemberId(before.model, memberId))
+        .find(Boolean) ?? null;
     const terms = proposal?.handProposal ?? null;
     const wasOurs = proposal?.origin === 'local';
     if (id) {
-      step({ type: 'clear-proposals', ids: proposal?.memberIds ?? [id] });
+      step({ type: 'clear-proposals', ids: proposal?.memberIds ?? groupIds });
       if (proposal?.disposition === 'incoming-review') {
         step({ type: 'set-between-hand-mode', mode: 'compose-proposal' });
       }

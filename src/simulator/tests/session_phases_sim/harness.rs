@@ -137,11 +137,13 @@ impl SimulationHarness {
                 {
                     self.local_uis[player].game_accepted_ids.contains(&game_id)
                         || self.local_uis[player].notifications.iter().any(|n| {
-                            matches!(n,
-                                GameNotification::InsufficientBalance { id, .. }
-                                | GameNotification::ProposalCancelled { id, .. }
-                                    if id == &game_id
-                            ) || is_terminal_for_id(n, &game_id)
+                            matches!(n, GameNotification::InsufficientBalance { id, .. } if id == &game_id)
+                                || matches!(
+                                    n,
+                                    GameNotification::ProposalCancelled { group_ids, .. }
+                                        if group_ids.contains(&game_id)
+                                )
+                                || is_terminal_for_id(n, &game_id)
                         })
                 } else {
                     self.local_uis[player]
