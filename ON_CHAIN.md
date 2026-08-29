@@ -210,28 +210,30 @@ mechanism entirely.
 ### Preconditions
 
 Clean shutdown requires that **no games are active** (`has_active_games()` is
-false). The initiator's `drain_queue_into_batch` enforces this — attempting
+false). The initiator's queue drain enforces this — attempting
 `CleanShutdown` with active games is an error. Any pending proposals are
 cancelled automatically before the shutdown signature is produced.
 
-On the receiver side, if the batch carries `clean_shutdown` but the receiver
-still has active games (e.g., due to a misbehaving peer), the receiver
+On the receiver side, if `PeerMessage::CleanShutdown` arrives while active games
+remain (e.g., due to a misbehaving peer), the receiver
 immediately goes on-chain instead of cooperating.
 
 ### Protocol Exchange
 
-1. The initiator includes `clean_shutdown: Some((half_sig, conditions))` in
-  their next `Batch` message. The half-signature signs the channel coin spend
-   to reward conditions (each player's balance goes directly to their reward
-   puzzle hash, with no game coins). The `clean_shutdown` field is separate
-   from the `actions` list, so it is structurally processed after all actions
-   on the receive side. The initiator remains in `OffChainPhase` after sending
-   this batch — it does **not** transition to `SpendChannelCoinPhase` yet.
+1. The potato holder sends `PeerMessage::CleanShutdown {
+   channel_half_sig, payout_conditions }`. The half-signature signs the channel
+   coin spend to reward conditions (each player's balance goes directly to
+   their reward puzzle hash, with no game coins). This is a dedicated struct
+   variant, not a `Batch` field. If actions precede shutdown in the local queue,
+   those actions are first flushed in an ordinary Batch with always-verified
+   state-update signatures, and the sender requests the potato back before
+   attempting shutdown. The initiator remains in `OffChainPhase` after sending
+   `CleanShutdown` — it does **not** transition to `SpendChannelCoinPhase` yet.
    While waiting for the response, `OffChainPhase` rejects any peer message
    other than `CleanShutdownComplete` as a protocol violation (triggering
    go-on-chain).
-2. The responder receives the batch, processes any actions, then combines the
-  initiator's half-signature with their own to produce a complete `CoinSpend`.
+2. The responder receives `CleanShutdown` and combines the initiator's
+  half-signature with their own to produce a complete `CoinSpend`.
    They reply with `PeerMessage::CleanShutdownComplete(coin_spend)` — a
    standalone message outside the normal potato flow. Normally the responder
    transitions to `SpendChannelCoinPhase` immediately (it already has the
@@ -251,31 +253,6 @@ long-lived chain watching or wait for the peer's transaction. A zero-payout
 initiator abandons when it receives `CleanShutdownComplete`, because that
 response proves the peer already has all required close material. The
 non-zero-payout peer is responsible for any on-chain publication.
-
-### Assumes Single-Handing
-
-The current implementation assumes **single-handing** (at most one outstanding
-proposal at a time). Under this assumption, when the user requests a clean
-shutdown, there is never a pending proposal that could interfere — the shutdown
-batch is the only thing queued. This allows the front-end to immediately report
-`ShuttingDown` status, and allows `OffChainPhase` to reject any unexpected
-peer messages while waiting for `CleanShutdownComplete`.
-
-In a future **multi-handing** model, the initiator might have outstanding
-proposals when the user requests a shutdown. Those proposals would need to
-resolve (accepted, rejected, or cancelled) before the shutdown batch can be
-sent. This means:
-
-- The `ShuttingDown` status could not be emitted immediately — the system
-  would still be processing proposals.
-- The message-rejection guard in `OffChainPhase` (which currently rejects
-  everything except `CleanShutdownComplete`) would need to also accept
-  proposal-resolution messages during the wind-down phase.
-- The precondition check (`has_active_games()`) would need to account for
-  proposals that are still in flight.
-
-This is noted here as a future design consideration — the current code is
-correct for single-handing.
 
 ### Why "Advisory" — Race Handling
 

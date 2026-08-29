@@ -327,7 +327,7 @@ describe('restore ordering', () => {
     const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
 
     const save = liveSave({
-      version: 21n,
+      version: 22n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
       gameSessionSchemaVersion: 4n,
@@ -450,7 +450,7 @@ describe('cradle serialization schema restore guard', () => {
       expectConsoleError('[save] rejecting incompatible session record');
       markSavedSession();
       await writeSessionRecord({
-        version: 21n,
+        version: 22n,
         playerId: 'restore-schema-player',
         rewardPuzzleHash: '11'.repeat(32),
         serializedGameSession: new Uint8Array([1, 2, 3]),

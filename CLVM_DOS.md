@@ -199,13 +199,16 @@ allocator limits through normal CLVM execution.
 
 Peer messages (off-chain potato protocol) are bounded at multiple levels:
 
-1. **Wire-level size limit:** Messages larger than 10 MiB are rejected in
-   `received_message` before deserialization. This prevents a malicious peer
-   from consuming unbounded memory via message size alone.
+1. **Local receive policy:** The current browser and Rust handshake defaults
+   reject message bodies larger than 10 MiB before deserialization. This
+   configurable implementation policy prevents a malicious peer from consuming
+   unbounded memory via message size alone; it is not a negotiated wire
+   constant.
 
 2. **No backref deserialization:** CLVM programs embedded in messages (as
    `Program` = `Vec<u8>`) are deserialized with `node_from_bytes` (no
-   backrefs). A 10 MiB serialized payload produces at most ~10 MiB of tree.
+   backrefs). Under the current 10 MiB default, one serialized payload produces
+   at most approximately 10 MiB of tree.
 
 3. **Move data is typed as bytes:** The `move_made` field in
    `GameMoveStateInfo` is `Vec<u8>`, not a CLVM tree. It enters CLVM

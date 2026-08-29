@@ -24,6 +24,7 @@ import {
   _resetGameIdentityWarmupForTests,
 } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
+import { sessionReceivePolicy } from '../session/receivePolicy';
 
 describe('WASM result boundary', () => {
   it.each(['events', 'watchCoins', 'unwatchCoins', 'actionSucceeded', 'disposition'] as const)(
@@ -739,6 +740,49 @@ describe('out-of-order delivery with reorder queue', () => {
     expect(blob.remoteNumber).toBe(3n);
     await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 2, 3]);
+  });
+
+  it('fails and clears queued frames when the future gap is exceeded', () => {
+    const policy = sessionReceivePolicy({ maxFutureReliableMsgnoGap: 1n });
+    const { blob, cradle } = createReadyBlob(undefined, policy);
+
+    blob.deliverMessage(3n, enc('too-far'));
+
+    expect(cradle.deliver_message).not.toHaveBeenCalled();
+    expect(cradle.go_on_chain).toHaveBeenCalledTimes(1);
+    expect((blob as any).reorderQueue.size).toBe(0);
+    expect(blob.storedMessages).toEqual([]);
+  });
+
+  it('fails on queued message count and aggregate bytes', () => {
+    const countLimited = createReadyBlob(undefined, sessionReceivePolicy({ maxQueuedMessages: 1 }));
+    countLimited.blob.deliverMessage(2n, enc('a'));
+    countLimited.blob.deliverMessage(3n, enc('b'));
+    expect(countLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
+    expect((countLimited.blob as any).reorderQueue.size).toBe(0);
+
+    const byteLimited = createUnreadyBlob(undefined, sessionReceivePolicy({ maxQueuedBytes: 3 }));
+    byteLimited.blob.deliverMessage(1n, enc('ab'));
+    byteLimited.blob.deliverMessage(2n, enc('cd'));
+    expect(byteLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
+    expect(byteLimited.blob.storedMessages).toEqual([]);
+  });
+
+  it('does not double-account duplicate queued msgnos', () => {
+    const { blob, cradle } = createReadyBlob(
+      undefined,
+      sessionReceivePolicy({ maxQueuedMessages: 1, maxQueuedBytes: 1 }),
+    );
+
+    blob.deliverMessage(2n, enc('x'));
+    blob.deliverMessage(2n, enc('x'));
+    blob.deliverMessage(1n, enc('a'));
+
+    expect(cradle.go_on_chain).not.toHaveBeenCalled();
+    expect((cradle.deliver_message as jest.Mock).mock.calls.map((call) => call[0])).toEqual([
+      enc('a'),
+      enc('x'),
+    ]);
   });
 });
 

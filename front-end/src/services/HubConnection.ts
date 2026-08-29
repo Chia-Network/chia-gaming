@@ -45,8 +45,7 @@ type HubEnvelope =
   | { type: 'delivery_failure'; to: string }
   | { type: 'hub_attention' }
   | { type: 'closed' }
-  | { type: 'keepalive' }
-  | { type: 'error'; error?: string };
+  | { type: 'keepalive' };
 
 export type PeerAppMessage =
   | {
@@ -106,8 +105,6 @@ function decodeHubEnvelope(input: ArrayBuffer): HubEnvelope | null {
     case 'closed':
     case 'keepalive':
       return { type };
-    case 'error':
-      return { type, error: optionalText(decoded, 'error') };
     default:
       return null;
   }
@@ -192,7 +189,7 @@ export class HubConnection {
   private presencePayload(type: 'identify' | 'set_busy'): Record<string, unknown> {
     return {
       type,
-      session_id: this.sessionId,
+      ...(type === 'identify' ? { session_id: this.sessionId } : {}),
       busy: this.busy,
       ...(this.alias ? { alias: this.alias } : {}),
     };
@@ -356,9 +353,6 @@ export class HubConnection {
         break;
       case 'keepalive':
         break;
-      case 'error':
-        log(`[hub] server error: ${msg.error ?? 'unknown'}`);
-        break;
       default:
         break;
     }
@@ -429,7 +423,7 @@ export class HubConnection {
   }
 
   private sendCloseRequest() {
-    this.sendWs({ type: 'close', session_id: this.sessionId });
+    this.sendWs({ type: 'close' });
   }
 
   disconnect() {

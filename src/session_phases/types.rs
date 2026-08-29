@@ -24,6 +24,51 @@ pub use crate::session_phases::wallet_traits::{
     ChannelFundingWallet, SpendWalletReceiver, WalletSpendInterface,
 };
 
+pub(crate) mod peer_wire_bytes {
+    use std::fmt;
+
+    use serde::de::{self, Visitor};
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ByteStringVisitor;
+
+        impl<'de> Visitor<'de> for ByteStringVisitor {
+            type Value = Vec<u8>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a Bencodex binary string")
+            }
+
+            fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(value.to_vec())
+            }
+
+            fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(value)
+            }
+        }
+
+        deserializer.deserialize_byte_buf(ByteStringVisitor)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WireGameSpec {
     pub game_id: GameID,
@@ -32,8 +77,9 @@ pub struct WireGameSpec {
     pub player_a_goes_first: bool,
     pub initial_validation_program_hash: Hash,
     pub initial_validation_info_hash: Hash,
+    #[serde(with = "peer_wire_bytes")]
     pub initial_move: Vec<u8>,
-    pub initial_max_move_size: usize,
+    pub initial_max_move_size: u32,
     pub initial_mover_share: Amount,
 }
 
@@ -74,6 +120,12 @@ mod wire_proposal_tests {
         };
 
         let encoded_member = bencodex::to_vec(&member).expect("serialize wire member");
+        assert!(
+            encoded_member
+                .windows(b"u12:initial_move0:".len())
+                .any(|window| window == b"u12:initial_move0:"),
+            "empty initial_move must be a binary string"
+        );
         let value: crate::protocol_pretty::BencodexValue =
             bencodex::from_slice(&encoded_member).expect("decode wire member fields");
         let crate::protocol_pretty::BencodexValue::Map(fields) = value else {
@@ -190,11 +242,14 @@ pub enum PeerMessage {
     Batch {
         actions: Vec<BatchAction>,
         signatures: StateUpdateSignatures,
-        clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
+    },
+    CleanShutdown {
+        channel_half_sig: Aggsig,
+        payout_conditions: ProgramRef,
     },
     CleanShutdownComplete(CoinSpend),
     RequestPotato(()),
-    Message(GameID, Vec<u8>),
+    Message(GameID, #[serde(with = "peer_wire_bytes")] Vec<u8>),
 }
 
 impl PeerMessage {
@@ -384,4 +439,119 @@ pub struct OffChainPhaseInit {
     pub channel_timeout: Timeout,
     pub unroll_timeout: Timeout,
     pub reward_puzzle_hash: PuzzleHash,
+}
+
+#[cfg(test)]
+mod peer_wire_shape_tests {
+    use super::*;
+    use crate::common::types::SpendBundle;
+    use crate::referee::types::ValidationInfoHash;
+
+    #[test]
+    fn externally_tagged_peer_message_has_byte_exact_shape() {
+        assert_eq!(
+            bencodex::to_vec(&PeerMessage::HandshakeF(HandshakePayloadF {
+                bundle: SpendBundle {
+                    name: None,
+                    spends: vec![],
+                },
+            }))
+            .expect("encode handshake"),
+            b"du10:HandshakeFdu6:bundledu4:namenu6:spendsleeee"
+        );
+        assert_eq!(
+            bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("encode request"),
+            b"du13:RequestPotatone"
+        );
+        assert_eq!(
+            bencodex::to_vec(&PeerMessage::Message(GameID(7), vec![])).expect("encode message"),
+            b"du7:Messageli7e0:ee"
+        );
+        assert_eq!(
+            bencodex::to_vec(&PeerMessage::Batch {
+                actions: vec![],
+                signatures: StateUpdateSignatures {
+                    channel_half_sig: Aggsig::default(),
+                    unroll_preempt_half_sig: Aggsig::default(),
+                },
+            })
+            .expect("encode batch"),
+            b"du5:Batchdu7:actionsleu10:signaturesdu16:channel_half_sig0:u23:unroll_preempt_half_sig0:eee"
+        );
+        assert_eq!(
+            bencodex::to_vec(&PeerMessage::CleanShutdown {
+                channel_half_sig: Aggsig::default(),
+                payout_conditions: Rc::new(Program::from_bytes(&[0x80])).into(),
+            })
+            .expect("encode clean shutdown"),
+            b"du13:CleanShutdowndu16:channel_half_sig0:u17:payout_conditions1:\x80ee"
+        );
+    }
+
+    #[test]
+    fn externally_tagged_batch_action_has_byte_exact_shape() {
+        assert_eq!(
+            bencodex::to_vec(&BatchAction::AcceptProposalGroup(GameID(7))).expect("encode action"),
+            b"du19:AcceptProposalGroupi7ee"
+        );
+        assert_eq!(
+            bencodex::to_vec(&BatchAction::Move(
+                GameID(7),
+                GameMoveDetails {
+                    basic: crate::referee::types::GameMoveStateInfo {
+                        move_made: vec![],
+                        mover_share: Amount::default(),
+                        max_move_size: 1,
+                        max_move_size_raw: vec![],
+                    },
+                    validation_info_hash: ValidationInfoHash::None,
+                    validation_program_hash: None,
+                },
+            ))
+            .expect("encode move action"),
+            b"du4:Moveli7edu5:basicdu13:max_move_sizei1eu17:max_move_size_raw0:u9:move_made0:u11:mover_sharei0eeu20:validation_info_hashu4:Noneeee"
+        );
+    }
+
+    #[test]
+    fn externally_tagged_validation_info_hash_has_byte_exact_shape() {
+        assert_eq!(
+            bencodex::to_vec(&ValidationInfoHash::None).expect("encode none"),
+            b"u4:None"
+        );
+
+        let mut expected = b"du4:Hash32:".to_vec();
+        expected.extend_from_slice(&[0; 32]);
+        expected.push(b'e');
+        assert_eq!(
+            bencodex::to_vec(&ValidationInfoHash::Hash(Hash::default())).expect("encode hash"),
+            expected
+        );
+    }
+
+    #[test]
+    fn wire_enums_reject_malformed_and_trailing_data() {
+        assert!(bencodex::from_slice::<PeerMessage>(b"lu13:RequestPotatoee").is_err());
+        assert!(bencodex::from_slice::<BatchAction>(b"du19:AcceptProposalGroupli7eee").is_err());
+        assert!(bencodex::from_slice::<ValidationInfoHash>(b"du4:Hash0:e").is_err());
+
+        let mut peer = bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("encode peer");
+        peer.push(b'x');
+        assert!(bencodex::from_slice::<PeerMessage>(&peer).is_err());
+
+        let mut action =
+            bencodex::to_vec(&BatchAction::CancelProposalGroup(GameID(3))).expect("encode action");
+        action.push(b'x');
+        assert!(bencodex::from_slice::<BatchAction>(&action).is_err());
+
+        let mut validation =
+            bencodex::to_vec(&ValidationInfoHash::Initial).expect("encode validation");
+        validation.push(b'x');
+        assert!(bencodex::from_slice::<ValidationInfoHash>(&validation).is_err());
+    }
+
+    #[test]
+    fn peer_binary_fields_reject_generic_lists() {
+        assert!(bencodex::from_slice::<PeerMessage>(b"du7:Messageli7elee").is_err());
+    }
 }

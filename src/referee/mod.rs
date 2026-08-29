@@ -47,7 +47,8 @@ pub(crate) fn referee_initial_setup(
         mover_share: game_start_info.initial_mover_share.clone(),
         move_made: game_start_info.initial_move.clone(),
         max_move_size_raw: canonical_atom_from_usize(game_start_info.initial_max_move_size),
-        max_move_size: game_start_info.initial_max_move_size,
+        max_move_size: u32::try_from(game_start_info.initial_max_move_size)
+            .map_err(|_| Error::StrErr("initial max move size exceeds u32".to_string()))?,
     };
     let my_turn = game_start_info.game_handler.is_my_turn();
 
@@ -178,7 +179,7 @@ impl Referee {
     }
 
     pub fn get_max_move_size(&self) -> usize {
-        self.spend_this_coin().game_move.basic.max_move_size
+        self.spend_this_coin().game_move.basic.max_move_size as usize
     }
 
     fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {

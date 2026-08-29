@@ -25,8 +25,10 @@ use crate::session_phases::effects::{
     GameNotification, TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake::{
-    CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadE, HandshakePayloadF,
-    HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition,
+    local_capabilities, validate_peer_capabilities, CoinSpendRequest, HandshakePayloadB,
+    HandshakePayloadC, HandshakePayloadE, HandshakePayloadF, HandshakeStepInfo,
+    HandshakeStepWithSpend, RawCoinCondition, MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES,
+    MAX_QUEUED_PEER_MESSAGES,
 };
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
@@ -69,7 +71,7 @@ pub struct HandshakeInitiatorPhase {
 
     waiting_to_start: bool,
     transaction_pushed: bool,
-    incoming_messages: VecDeque<Rc<PeerMessage>>,
+    incoming_messages: VecDeque<(Rc<PeerMessage>, usize)>,
 
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
@@ -80,8 +82,6 @@ pub struct HandshakeInitiatorPhase {
     #[serde(skip)]
     replacement: Option<Box<OffChainPhase>>,
 }
-
-const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
 impl HandshakeInitiatorPhase {
     pub fn new(phi: OffChainPhaseInit) -> Self {
@@ -203,6 +203,7 @@ impl HandshakeInitiatorPhase {
             .my_unroll_coin_private_key
             .sign(unroll_public_key.bytes());
         HandshakePayloadB {
+            capabilities: local_capabilities(),
             channel_public_key,
             unroll_public_key,
             reward_puzzle_hash: self.reward_puzzle_hash.clone(),
@@ -357,7 +358,10 @@ impl HandshakeInitiatorPhase {
                 .channel_state
                 .take()
                 .expect("channel handler must exist at Finished");
-            let queued_messages = std::mem::take(&mut self.incoming_messages);
+            let queued_messages = std::mem::take(&mut self.incoming_messages)
+                .into_iter()
+                .map(|(message, _)| message)
+                .collect();
 
             let ph = OffChainPhase::from_completed_handshake(
                 true,
@@ -378,13 +382,12 @@ impl HandshakeInitiatorPhase {
         }
     }
 
-    fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+    fn process_message(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        msg_envelope: Rc<PeerMessage>,
+    ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
-        let msg_envelope = if let Some(msg) = self.incoming_messages.pop_front() {
-            msg
-        } else {
-            return Ok(effects);
-        };
 
         match &self.state {
             InitiatorState::WaitingForStart => {
@@ -402,6 +405,7 @@ impl HandshakeInitiatorPhase {
                     )));
                 };
 
+                validate_peer_capabilities(&msg.capabilities).map_err(Error::Channel)?;
                 if !verify_reward_payout_signature(
                     &msg.referee_pubkey,
                     &msg.reward_puzzle_hash,
@@ -456,7 +460,9 @@ impl HandshakeInitiatorPhase {
             }
 
             InitiatorState::WaitingForLauncher(_) => {
-                self.incoming_messages.push_front(msg_envelope);
+                return Err(Error::StrErr(format!(
+                    "initiator WaitingForLauncher: unexpected peer message: {msg_envelope:?}"
+                )));
             }
 
             InitiatorState::SentC(_info) => {
@@ -499,24 +505,32 @@ impl HandshakeInitiatorPhase {
             }
 
             InitiatorState::WaitingForOffer(_, _) => {
-                self.incoming_messages.push_front(msg_envelope);
+                return Err(Error::StrErr(format!(
+                    "initiator WaitingForOffer: unexpected peer message: {msg_envelope:?}"
+                )));
             }
 
             InitiatorState::Finished(_) => {
                 if let PeerMessage::HandshakeF(HandshakePayloadF { bundle }) = msg_envelope.borrow()
                 {
-                    effects.push(Effect::SpendTransaction(
-                        bundle.clone(),
-                        self.channel_deadline,
-                    ));
-                    self.transaction_pushed = true;
+                    if !self.transaction_pushed {
+                        effects.push(Effect::SpendTransaction(
+                            bundle.clone(),
+                            self.channel_deadline,
+                        ));
+                        self.transaction_pushed = true;
+                    }
                 } else {
-                    self.incoming_messages.push_front(msg_envelope);
+                    return Err(Error::StrErr(format!(
+                        "initiator Finished: expected handshake F, got {msg_envelope:?}"
+                    )));
                 }
             }
 
             InitiatorState::Done => {
-                self.incoming_messages.push_front(msg_envelope);
+                return Err(Error::StrErr(format!(
+                    "initiator Done: unexpected queued message: {msg_envelope:?}"
+                )));
             }
         }
 
@@ -524,20 +538,66 @@ impl HandshakeInitiatorPhase {
         Ok(effects)
     }
 
+    fn process_queued_message(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
+        let Some((message, _)) = self.incoming_messages.pop_front() else {
+            return Ok(vec![]);
+        };
+        self.process_message(env, message)
+    }
+
     fn received_message(
         &mut self,
         env: &mut ChannelEnv<'_>,
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error> {
-        if msg.len() > MAX_MESSAGE_SIZE {
+        if msg.len() > MAX_PEER_MESSAGE_SIZE {
             return Err(Error::StrErr(format!(
-                "message too large: {} bytes (max {MAX_MESSAGE_SIZE})",
+                "message too large: {} bytes (max {MAX_PEER_MESSAGE_SIZE})",
                 msg.len(),
             )));
         }
+        let raw_len = msg.len();
         let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
-        self.incoming_messages.push_back(Rc::new(msg_envelope));
-        self.process_queued_message(env)
+        if matches!(self.state, InitiatorState::Finished(_)) {
+            match &msg_envelope {
+                PeerMessage::HandshakeF(_) => {}
+                PeerMessage::HandshakeA(_)
+                | PeerMessage::HandshakeB(_)
+                | PeerMessage::HandshakeC(_)
+                | PeerMessage::HandshakeD(_)
+                | PeerMessage::HandshakeE(_) => {
+                    return Err(Error::StrErr(
+                        "initiator Finished: out-of-order handshake message".to_string(),
+                    ));
+                }
+                _ => {
+                    self.queue_activation_lag_message(Rc::new(msg_envelope), raw_len)?;
+                    return Ok(vec![]);
+                }
+            }
+        }
+        self.process_message(env, Rc::new(msg_envelope))
+    }
+
+    fn queue_activation_lag_message(
+        &mut self,
+        message: Rc<PeerMessage>,
+        raw_len: usize,
+    ) -> Result<(), Error> {
+        let queued_bytes: usize = self.incoming_messages.iter().map(|(_, len)| *len).sum();
+        if self.incoming_messages.len() + 1 > MAX_QUEUED_PEER_MESSAGES {
+            return Err(Error::StrErr(format!(
+                "initiator handshake queued message count exceeds maximum {MAX_QUEUED_PEER_MESSAGES}"
+            )));
+        }
+        if queued_bytes + raw_len > MAX_QUEUED_PEER_BYTES {
+            return Err(Error::StrErr(format!(
+                "initiator handshake queued message bytes {} exceeds maximum {MAX_QUEUED_PEER_BYTES}",
+                queued_bytes + raw_len
+            )));
+        }
+        self.incoming_messages.push_back((message, raw_len));
+        Ok(())
     }
 }
 
@@ -712,6 +772,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         _got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
         self.failed = true;
+        self.incoming_messages.clear();
         Ok(vec![])
     }
     fn wallet_callback_failed(&mut self, reason: String) {
@@ -1008,5 +1069,78 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
     }
     fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
         None
+    }
+}
+
+#[cfg(test)]
+mod finished_message_tests {
+    use super::*;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    fn finished_phase() -> HandshakeInitiatorPhase {
+        let mut rng = ChaCha8Rng::from_seed([20; 32]);
+        let mut phase = HandshakeInitiatorPhase::new(OffChainPhaseInit {
+            have_potato: true,
+            private_keys: rng.random(),
+            game_types: BTreeMap::new(),
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(5),
+            unroll_timeout: Timeout::new(15),
+            reward_puzzle_hash: PuzzleHash::default(),
+        });
+        let payload = HandshakePayloadB {
+            capabilities: local_capabilities(),
+            channel_public_key: Default::default(),
+            unroll_public_key: Default::default(),
+            reward_puzzle_hash: Default::default(),
+            referee_pubkey: Default::default(),
+            reward_payout_signature: Default::default(),
+            channel_key_pop: Default::default(),
+            unroll_key_pop: Default::default(),
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+        };
+        phase.state = InitiatorState::Finished(Box::new(HandshakeStepWithSpend {
+            info: HandshakeStepInfo {
+                first_player_hs_info: payload.clone(),
+                second_player_hs_info: payload,
+            },
+            spend: SpendBundle {
+                name: None,
+                spends: vec![],
+            },
+        }));
+        phase
+    }
+
+    #[test]
+    fn finished_submits_only_the_first_independently_delivered_handshake_f() {
+        let mut phase = finished_phase();
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        let encoded = bencodex::to_vec(&PeerMessage::HandshakeF(HandshakePayloadF {
+            bundle: SpendBundle {
+                name: None,
+                spends: vec![],
+            },
+        }))
+        .expect("encode F");
+
+        let first = phase
+            .received_message(&mut env, encoded.clone())
+            .expect("first F");
+        let second = phase.received_message(&mut env, encoded).expect("second F");
+
+        assert_eq!(
+            first
+                .iter()
+                .filter(|effect| matches!(effect, Effect::SpendTransaction(_, _)))
+                .count(),
+            1
+        );
+        assert!(second.is_empty());
+        assert!(phase.transaction_pushed);
     }
 }

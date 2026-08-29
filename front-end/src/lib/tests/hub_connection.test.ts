@@ -447,7 +447,7 @@ describe('setBusy', () => {
     const ws = MockWebSocket.instance!;
     ws.sentControl = [];
     conn.setBusy(false);
-    expect(ws.sentControl).toEqual([{ type: 'set_busy', session_id: 's1', busy: false }]);
+    expect(ws.sentControl).toEqual([{ type: 'set_busy', busy: false }]);
   });
 
   it('sends set_busy with busy=true', async () => {
@@ -457,7 +457,7 @@ describe('setBusy', () => {
     const ws = MockWebSocket.instance!;
     ws.sentControl = [];
     conn.setBusy(true);
-    expect(ws.sentControl).toEqual([{ type: 'set_busy', session_id: 's1', busy: true }]);
+    expect(ws.sentControl).toEqual([{ type: 'set_busy', busy: true }]);
   });
 
   it('sends set_busy with alias', async () => {
@@ -469,9 +469,7 @@ describe('setBusy', () => {
 
     conn.setBusy(true, 'Alice');
 
-    expect(ws.sentControl).toEqual([
-      { type: 'set_busy', session_id: 's1', busy: true, alias: 'Alice' },
-    ]);
+    expect(ws.sentControl).toEqual([{ type: 'set_busy', busy: true, alias: 'Alice' }]);
   });
 
   it('uses getPresence for identify on reconnect', async () => {
@@ -519,6 +517,24 @@ describe('setBusy', () => {
       alias: 'Alice',
     });
     jest.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// close
+// ---------------------------------------------------------------------------
+
+describe('close', () => {
+  it('sends close without session_id', async () => {
+    const cb = makeCallbacks();
+    const conn = makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    const ws = MockWebSocket.instance!;
+    ws.sentControl = [];
+
+    conn.close();
+
+    expect(ws.sentControl).toEqual([{ type: 'close' }]);
   });
 });
 

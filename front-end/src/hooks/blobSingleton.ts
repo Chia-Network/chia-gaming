@@ -207,6 +207,7 @@ export function getOrCreateSessionController(
     handler: (msgno: number, msg: Uint8Array) => void,
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
+    failureHandler: (reason: string) => void,
   ) => void,
   uniqueId: string,
   myContribution: bigint,
@@ -252,6 +253,9 @@ export function getOrCreateSessionController(
     },
     () => {
       sessionController?.receiveKeepalive();
+    },
+    (reason: string) => {
+      sessionController?.failPeerProcessing(reason);
     },
   );
 

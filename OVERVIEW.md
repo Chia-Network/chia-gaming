@@ -248,9 +248,9 @@ time, there's no ambiguity about move ordering.
 
 ### Batch Protocol
 
-Every potato pass is a single `PeerMessage::Batch` containing:
+Every ordinary potato pass is a single `PeerMessage::Batch` containing:
 
-1. `**actions: Vec<BatchAction>`** — one or more game operations to apply
+1. `**actions: Vec<BatchAction>`** — zero or more game operations to apply
   sequentially:
   - `ProposeGroup` — propose one factory-derived atomic game group
   - `AcceptProposalGroup` — accept one complete pending proposal group
@@ -267,13 +267,13 @@ Every potato pass is a single `PeerMessage::Batch` containing:
    Both are half-signatures because the channel coin and unroll coin are 2-of-2
    constructions — each potato pass carries the sender's half, and the receiver
    combines it with their own to form the full aggregate signature.
-3. `**clean_shutdown: Option<(Aggsig, ProgramRef)>`** — optional clean shutdown
-  initiation, always positioned logically after all other actions. Contains the
-   initiator's half-signature of the channel coin spend directly to reward coins
-   (bypassing unroll and game coins entirely), plus the conditions program. The
-   responder replies with a separate `PeerMessage::CleanShutdownComplete(CoinSpend)`
-   message — not another batch — carrying their half-signature combined into a
-   complete `CoinSpend` ready for on-chain submission.
+The signatures are always verified. Clean shutdown is not a Batch field: the
+potato holder sends a dedicated `PeerMessage::CleanShutdown {
+channel_half_sig, payout_conditions }`. If actions are queued before shutdown,
+they are first flushed in an ordinary Batch and the sender requests the potato
+back. The responder replies with
+`PeerMessage::CleanShutdownComplete(CoinSpend)`, unchanged, carrying the complete
+mutually signed spend.
 
 The receiver processes actions sequentially and rejects the entire batch if any
 action fails validation. Rejection uses a **rollback mechanism**: before peer
@@ -302,9 +302,10 @@ The `current_state_number` increments once per batch, not per action.
 
 Before batch processing begins, two checks protect the receiver:
 
-- **Message size limit:** Messages larger than 10 MiB are rejected immediately
-in `received_message`, before deserialization. This prevents a
-malicious peer from consuming unbounded memory.
+- **Local receive policy:** The browser defaults reject message bodies larger
+than 10 MiB and bound future-number distance, queued message count, and queued
+bytes. These configurable denial-of-service limits are local policy, not
+negotiated protocol constants.
 - **Double-potato detection:** If a `Batch` arrives while we already hold the
 potato (`PotatoState::Present`), it is rejected as a protocol violation.
 Only one player can hold the potato at a time; receiving a second batch
@@ -372,7 +373,9 @@ Each side runs its own handler: `HandshakeInitiatorPhase` (the player who
 starts the channel) and `HandshakeReceiverPhase`. The A-F labels are the
 wire/message protocol labels. Internally, the split handlers use semantic
 state names (`SentA`, `WaitingForLauncher`, `SentC`, etc.) while still speaking
-the same A-F wire messages. Handshake messages are not sent via `Batch`:
+the same A-F wire messages. A and B include a text-to-`u32` capabilities map;
+`peer_protocol = 1` is required and unknown capability keys are ignored.
+Handshake messages are not sent via `Batch`:
 
 | Step | Sender | Message | Payload type |
 |------|--------|---------|--------------|
@@ -433,10 +436,13 @@ WaitingForA → SentB → SentD → WaitingForCompletion → Finished
 Handshake-specific wallet callback plumbing now lives in the split handshake
 handlers, not in `OffChainPhase` monolithic handshake state.
 
-The transition to `OffChainPhase` is driven by `coin_created` — the channel
-coin appearing on-chain. Since the coin cannot exist before E is sent, this
-is the ground truth for "the channel is live." A late-arriving `HandshakeF`
-after the transition is silently ignored by `OffChainPhase`. Internally, the
+The transition to `OffChainPhase` requires completed role-specific handshake
+work and `coin_created` — the channel coin appearing on-chain. F and the local
+coin observation may arrive in either order. Before E, every wrong message is
+rejected even during wallet waits. After E, only non-handshake activation-lag
+messages are retained and transferred FIFO into the off-chain phase. A
+late-arriving `HandshakeF` after the transition is silently ignored, and
+duplicate F messages cause at most one funding submission. Internally, the
 split handshake handlers move from `Finished` to `Done` during this handoff:
 `Finished` means the handshake's own protocol work is complete, while `Done`
 means the replacement `OffChainPhase` has been created and the old handshake

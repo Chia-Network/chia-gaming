@@ -32,6 +32,10 @@ import { decodeChannelStatusPayload } from '../lib/session/persistence';
 import { completeRegisteredGames } from '../lib/gameIdentities';
 import { catalogGameTypeFromWire } from '../lib/gameIdentities';
 import { markClientErrorReported } from '../lib/clientError';
+import {
+  DEFAULT_SESSION_RECEIVE_POLICY,
+  type ReadonlySessionReceivePolicy,
+} from '../lib/session/receivePolicy';
 
 export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 
@@ -173,6 +177,8 @@ export class SessionController implements PollingGameSession {
   wasmNotificationHistory: string[] = [];
   diagnosticLog: string[] = [];
   private reorderQueue: Map<bigint, Uint8Array> = new Map();
+  private readonly receivePolicy: ReadonlySessionReceivePolicy;
+  private pendingPeerFailure: string | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
   private restoreStatus: RestoreStatus = 'idle';
@@ -212,6 +218,7 @@ export class SessionController implements PollingGameSession {
     peer_conn: PeerConnectionResult,
   ) {
     const { sendMessage, sendAck } = peer_conn;
+    this.receivePolicy = peer_conn.receivePolicy ?? DEFAULT_SESSION_RECEIVE_POLICY;
     this.uniqueId = uniqueId;
     this.pairingToken = '';
     this.messageNumber = 1n;
@@ -499,6 +506,10 @@ export class SessionController implements PollingGameSession {
 
   setGameSession(cradle: ChiaGame) {
     this.cradle = cradle;
+    if (this.pendingPeerFailure) {
+      this.escalatePeerFailure();
+      return;
+    }
     const command = cradle.pendingTerminalHandoff();
     if (command) this.queueTerminalHandoff(command);
     // A blockchain attach may have happened while asynchronous restore had no
@@ -1113,19 +1124,22 @@ export class SessionController implements PollingGameSession {
 
   deliverMessage(msgno: bigint, msg: Uint8Array) {
     if (this.retired) return;
+    if (this.pendingPeerFailure) return;
     // Terminal Rust state must not consume peer protocol messages, but the host
     // still acknowledges their transport delivery so the peer can retire them.
     if (this.protocolStopped) {
       this.sendAck(msgno);
       return;
     }
+    if (msg.byteLength > this.receivePolicy.maxPeerBodyBytes) {
+      this.failPeerProcessing(
+        `peer message body ${msg.byteLength} exceeds maximum ${this.receivePolicy.maxPeerBodyBytes}`,
+      );
+      return;
+    }
     this.notePeerActivity();
     if (this.onChain) {
       this.sendAck(msgno);
-      return;
-    }
-    if (!this.wc || !this.cradle || this.qualifyingEvents != 7 || this.reloading) {
-      this.storedMessages.push({ msgno, msg });
       return;
     }
     if (msgno <= this.remoteNumber) {
@@ -1141,13 +1155,70 @@ export class SessionController implements PollingGameSession {
       this.resendUnacked();
       return;
     }
+    const futureGap = msgno - (this.remoteNumber + 1n);
+    if (futureGap > this.receivePolicy.maxFutureReliableMsgnoGap) {
+      this.failPeerProcessing(
+        `peer message ${msgno} is ${futureGap} ahead of next expected ${this.remoteNumber + 1n}; maximum gap is ${this.receivePolicy.maxFutureReliableMsgnoGap}`,
+      );
+      return;
+    }
+    if (this.hasQueuedMessage(msgno)) {
+      return;
+    }
+    if (!this.wc || !this.cradle || this.qualifyingEvents != 7 || this.reloading) {
+      if (!this.admitQueuedMessage(msg.byteLength)) return;
+      this.storedMessages.push({ msgno, msg });
+      return;
+    }
     if (msgno > this.remoteNumber + 1n) {
+      if (!this.admitQueuedMessage(msg.byteLength)) return;
       this.reorderQueue.set(msgno, msg);
       return;
     }
 
     this.deliverSingleMessage(msgno, msg);
     this.flushReorderQueue();
+  }
+
+  private hasQueuedMessage(msgno: bigint): boolean {
+    return (
+      this.reorderQueue.has(msgno) || this.storedMessages.some((stored) => stored.msgno === msgno)
+    );
+  }
+
+  private admitQueuedMessage(messageBytes: number): boolean {
+    const queuedCount = this.reorderQueue.size + this.storedMessages.length;
+    const queuedBytes =
+      [...this.reorderQueue.values()].reduce((total, msg) => total + msg.byteLength, 0) +
+      this.storedMessages.reduce((total, stored) => total + stored.msg.byteLength, 0);
+    if (queuedCount + 1 > this.receivePolicy.maxQueuedMessages) {
+      this.failPeerProcessing(
+        `peer receive queue count ${queuedCount + 1} exceeds maximum ${this.receivePolicy.maxQueuedMessages}`,
+      );
+      return false;
+    }
+    if (queuedBytes + messageBytes > this.receivePolicy.maxQueuedBytes) {
+      this.failPeerProcessing(
+        `peer receive queue bytes ${queuedBytes + messageBytes} exceeds maximum ${this.receivePolicy.maxQueuedBytes}`,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  failPeerProcessing(reason: string): void {
+    if (this.retired || this.pendingPeerFailure) return;
+    this.pendingPeerFailure = reason;
+    this.storedMessages = [];
+    this.reorderQueue.clear();
+    log(`[peer-policy] ${reason}`);
+    this.rxjsEmitter?.next({ type: 'error', error: reason });
+    this.escalatePeerFailure();
+  }
+
+  private escalatePeerFailure(): void {
+    if (!this.pendingPeerFailure || !this.cradle) return;
+    this.goOnChain();
   }
 
   private deliverSingleMessage(msgno: bigint, msg: Uint8Array) {

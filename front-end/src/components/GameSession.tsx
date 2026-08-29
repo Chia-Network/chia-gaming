@@ -543,6 +543,7 @@ export interface GameSessionProps {
     handler: (msgno: number, msg: Uint8Array) => void,
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
+    failureHandler: (reason: string) => void,
   ) => void;
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionSave;

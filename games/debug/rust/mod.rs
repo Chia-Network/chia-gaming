@@ -373,7 +373,8 @@ impl BareDebugGameHandler {
                         move_made: move_to_check.to_vec(),
                         mover_share: mover_share.clone(),
                         max_move_size_raw: canonical_atom_from_usize(self.max_move_size),
-                        max_move_size: self.max_move_size,
+                        max_move_size: u32::try_from(self.max_move_size)
+                            .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?,
                     },
                     validation_info_hash: ValidationInfoHash::Hash(
                         ValidationInfo::new_state_update(
@@ -525,7 +526,13 @@ impl BareDebugGameHandler {
                                         max_move_size_raw: canonical_atom_from_usize(
                                             inputs.max_move_size,
                                         ),
-                                        max_move_size: inputs.max_move_size,
+                                        max_move_size: u32::try_from(inputs.max_move_size).map_err(
+                                            |_| {
+                                                Error::StrErr(
+                                                    "max move size exceeds u32".to_string(),
+                                                )
+                                            },
+                                        )?,
                                     },
                                     validation_info_hash: ValidationInfoHash::Hash(
                                         validation_info_hash,

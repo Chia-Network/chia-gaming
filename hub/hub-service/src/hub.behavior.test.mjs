@@ -206,7 +206,6 @@ test('game-channel identify does not clobber a hub-chosen alias', async () => {
 
     sendGame(game, {
       type: 'set_busy',
-      session_id: sessionId,
       busy: false,
       alias: 'Player_deadbeef',
     });
@@ -219,6 +218,22 @@ test('game-channel identify does not clobber a hub-chosen alias', async () => {
     await closeWs(ws);
     await closeWs(game);
     await closeWs(aliasProbe);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('post-identification game controls use the bound socket session', async () => {
+  const hub = await startHub();
+  try {
+    const game = await identifyGame(hub.origin, 'secret-bound-controls');
+    const closed = nextGame(game, (msg) => msg.type === 'closed');
+
+    sendGame(game, { type: 'set_busy', busy: true });
+    sendGame(game, { type: 'close' });
+
+    assert.equal((await closed).type, 'closed');
+    await closeWs(game);
   } finally {
     await hub.stop();
   }
@@ -314,7 +329,7 @@ test('challenge authority and availability come from bound sessions', async () =
     assert.equal(advisory.their_amount, '100');
 
     // Bob's client sets busy (simulating what the frontend does on advisory_start)
-    sendGame(bobGame, { type: 'set_busy', session_id: 'secret-bob-match', busy: true });
+    sendGame(bobGame, { type: 'set_busy', busy: true });
     // Wait for hub update to propagate
     await nextJson(carol.ws, (msg) => msg.type === 'hub_update');
 

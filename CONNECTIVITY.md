@@ -327,7 +327,8 @@ session remains `on-chain` because a hand is still being settled.
 
 **Player app → Hub (game channel):**
 
-Logical bencodex dictionary: `{ type: "set_busy", session_id: "...", busy: true }`.
+Logical bencodex dictionary: `{ type: "set_busy", busy: true }`. Identity comes
+from the `session_id` supplied earlier by `identify` on the same connection.
 
 Sent when the user accepts a session start, when restore reconnection reports
 an unresolved session, and when the broader session phase ends or the user

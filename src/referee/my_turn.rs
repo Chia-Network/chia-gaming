@@ -360,7 +360,7 @@ impl MyTurnReferee {
                 name: "cheat".to_string(),
                 move_bytes: fake_move.clone(),
                 mover_share: cheat_share.clone(),
-                max_move_size: args.game_move.basic.max_move_size,
+                max_move_size: args.game_move.basic.max_move_size as usize,
                 outgoing_move_state_update_program: args.validation_program.clone(),
                 incoming_move_state_update_program: args.validation_program.clone(),
                 waiting_handler: Some(game_handler.clone()),
@@ -380,7 +380,7 @@ impl MyTurnReferee {
         };
 
         if self.enable_cheating.is_none()
-            && result.move_bytes.len() > args.game_move.basic.max_move_size
+            && result.move_bytes.len() > args.game_move.basic.max_move_size as usize
         {
             return Err(Error::StrErr(format!(
                 "local move exceeds max_move_size: nonce={}, move_len={}, max_move_size={}",
@@ -445,7 +445,8 @@ impl MyTurnReferee {
                 move_made: result.move_bytes.clone(),
                 mover_share: result.mover_share.clone(),
                 max_move_size_raw: canonical_atom_from_usize(result.max_move_size),
-                max_move_size: result.max_move_size,
+                max_move_size: u32::try_from(result.max_move_size)
+                    .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?,
             },
             validation_info_hash,
             validation_program_hash,

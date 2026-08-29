@@ -21,7 +21,7 @@ describe('save boundary enforcement', () => {
   it('deletes an obsolete v11 envelope without migration and keeps the marker', async () => {
     markSavedSession();
     await writeSessionRecord({
-      version: 21n,
+      version: 22n,
       playerId: 'old-player',
       serializedGameSession: new Uint8Array([1, 2, 3]),
     } as unknown as Parameters<typeof writeSessionRecord>[0]);

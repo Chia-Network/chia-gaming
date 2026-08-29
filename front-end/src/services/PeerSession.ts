@@ -1,11 +1,16 @@
 import { PeerConnectionResult, PeerLiveness } from '../types/ChiaGaming';
 import { HubConnection, type PeerAppMessage } from './HubConnection';
 import { log } from './log';
+import {
+  DEFAULT_SESSION_RECEIVE_POLICY,
+  type ReadonlySessionReceivePolicy,
+} from '../lib/session/receivePolicy';
 
 export type MessageHandler = {
   handler: (msgno: number, msg: Uint8Array) => void;
   ackHandler: (ack: number) => void;
   keepaliveHandler: () => void;
+  failureHandler?: (reason: string) => void;
 };
 
 type BufferedFrame = { tag: number; msgno: number; data: Uint8Array };
@@ -29,18 +34,27 @@ function buildFrame(tag: number, msgno: number, data?: Uint8Array): Uint8Array {
 export class PeerSession implements PeerConnectionResult {
   readonly sessionId: string;
   readonly peerId: string;
+  readonly receivePolicy: ReadonlySessionReceivePolicy;
   private hubConn: HubConnection;
   private _liveness: PeerLiveness = null;
   private _lastActivity: number = 0;
   private messageHandler: MessageHandler | null = null;
   private messageBuffer: BufferedFrame[] = [];
+  private bufferedBytes = 0;
+  private failureReason: string | null = null;
   private destroyed = false;
   private livenessListeners = new Set<(liveness: PeerLiveness) => void>();
 
-  constructor(peerId: string, sessionId: string, hubConn: HubConnection) {
+  constructor(
+    peerId: string,
+    sessionId: string,
+    hubConn: HubConnection,
+    receivePolicy: ReadonlySessionReceivePolicy = DEFAULT_SESSION_RECEIVE_POLICY,
+  ) {
     this.peerId = peerId;
     this.sessionId = sessionId;
     this.hubConn = hubConn;
+    this.receivePolicy = receivePolicy;
   }
 
   // --- PeerConnectionResult interface ---
@@ -121,7 +135,12 @@ export class PeerSession implements PeerConnectionResult {
 
   registerMessageHandler(mh: MessageHandler): void {
     this.messageHandler = mh;
+    if (this.failureReason) {
+      mh.failureHandler?.(this.failureReason);
+      return;
+    }
     const buffered = this.messageBuffer.splice(0);
+    this.bufferedBytes = 0;
     for (const item of buffered) {
       if (item.tag === 0x01) mh.handler(item.msgno, item.data);
       else if (item.tag === 0x02) mh.ackHandler(item.msgno);
@@ -131,6 +150,42 @@ export class PeerSession implements PeerConnectionResult {
 
   clearMessageHandler(): void {
     this.messageHandler = null;
+  }
+
+  private failBufferedPeer(reason: string): void {
+    if (this.failureReason) return;
+    this.failureReason = reason;
+    this.messageBuffer = [];
+    this.bufferedBytes = 0;
+    log(`[PeerSession] ${reason} peer=${this.peerId}`);
+    this.markDead();
+    this.messageHandler?.failureHandler?.(reason);
+  }
+
+  private bufferFrame(frame: BufferedFrame): boolean {
+    if (
+      frame.tag === 0x01 &&
+      this.messageBuffer.some((item) => item.tag === 0x01 && item.msgno === frame.msgno)
+    ) {
+      return true;
+    }
+    const nextCount = this.messageBuffer.length + 1;
+    const nextBytes = this.bufferedBytes + frame.data.byteLength;
+    if (nextCount > this.receivePolicy.maxQueuedMessages) {
+      this.failBufferedPeer(
+        `peer receive queue count ${nextCount} exceeds maximum ${this.receivePolicy.maxQueuedMessages}`,
+      );
+      return false;
+    }
+    if (nextBytes > this.receivePolicy.maxQueuedBytes) {
+      this.failBufferedPeer(
+        `peer receive queue bytes ${nextBytes} exceeds maximum ${this.receivePolicy.maxQueuedBytes}`,
+      );
+      return false;
+    }
+    this.messageBuffer.push(frame);
+    this.bufferedBytes = nextBytes;
+    return true;
   }
 
   // --- Inbound message delivery (called by Shell's hub callbacks) ---
@@ -144,13 +199,19 @@ export class PeerSession implements PeerConnectionResult {
     }
     const tag = payload[0];
     if (tag === 0x01 && payload.length >= 5) {
-      this.notePeerActivity();
       const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
       const msgno = view.getUint32(1, false);
       const msg = payload.slice(5);
+      if (msg.byteLength > this.receivePolicy.maxPeerBodyBytes) {
+        this.failBufferedPeer(
+          `peer message body ${msg.byteLength} exceeds maximum ${this.receivePolicy.maxPeerBodyBytes}`,
+        );
+        return false;
+      }
+      this.notePeerActivity();
       log(`[peer] recv msg msgno=${msgno} len=${msg.byteLength} from=${fromId}`);
       if (this.messageHandler) this.messageHandler.handler(msgno, msg);
-      else this.messageBuffer.push({ tag, msgno, data: msg });
+      else return this.bufferFrame({ tag, msgno, data: msg });
       return true;
     }
     if (tag === 0x02 && payload.length >= 5) {
@@ -159,13 +220,13 @@ export class PeerSession implements PeerConnectionResult {
       const ack = view.getUint32(1, false);
       log(`[peer] recv ack msgno=${ack} from=${fromId}`);
       if (this.messageHandler) this.messageHandler.ackHandler(ack);
-      else this.messageBuffer.push({ tag, msgno: ack, data: new Uint8Array(0) });
+      else return this.bufferFrame({ tag, msgno: ack, data: new Uint8Array(0) });
       return true;
     }
     if (tag === 0x03) {
       this.notePeerActivity();
       if (this.messageHandler) this.messageHandler.keepaliveHandler();
-      else this.messageBuffer.push({ tag, msgno: 0, data: new Uint8Array(0) });
+      else return this.bufferFrame({ tag, msgno: 0, data: new Uint8Array(0) });
       return true;
     }
     log(
@@ -192,6 +253,7 @@ export class PeerSession implements PeerConnectionResult {
     this.destroyed = true;
     this.messageHandler = null;
     this.messageBuffer = [];
+    this.bufferedBytes = 0;
     this.livenessListeners.clear();
     log(`[PeerSession] destroyed session=${this.sessionId} peer=${this.peerId}`);
   }

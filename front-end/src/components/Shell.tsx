@@ -1267,8 +1267,9 @@ const Shell = () => {
       handler: (msgno: number, msg: Uint8Array) => void,
       ackHandler: (ack: number) => void,
       keepaliveHandler: () => void,
+      failureHandler: (reason: string) => void,
     ) => {
-      peerMessageHandlerRef.current = { handler, ackHandler, keepaliveHandler };
+      peerMessageHandlerRef.current = { handler, ackHandler, keepaliveHandler, failureHandler };
       bindPeerMessageHandler(peerSessionRef.current);
     },
     [bindPeerMessageHandler],

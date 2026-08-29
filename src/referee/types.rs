@@ -25,12 +25,14 @@ use crate::utils::proper_list;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct GameMoveStateInfo {
+    #[serde(with = "crate::session_phases::types::peer_wire_bytes")]
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
-    pub max_move_size: usize,
+    pub max_move_size: u32,
     /// Raw CLVM atom bytes for max_move_size, preserved exactly as seen on-chain.
     /// Used in to_clvm to ensure curry hashes match the on-chain puzzle hash
     /// even if the peer used a non-canonical encoding.
+    #[serde(with = "crate::session_phases::types::peer_wire_bytes")]
     pub max_move_size_raw: Vec<u8>,
 }
 

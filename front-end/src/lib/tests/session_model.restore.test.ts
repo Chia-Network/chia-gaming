@@ -122,7 +122,7 @@ describe('session model restore, schema, and event contracts', () => {
 
   it('restores between-hand state into the same game view shape live state uses', () => {
     const save: SessionSave = liveEnvelope({
-      version: 21n,
+      version: 22n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
       gameSessionSchemaVersion: 3n,

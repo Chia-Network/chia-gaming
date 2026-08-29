@@ -190,7 +190,12 @@ pub(crate) fn make_send_log(
     actions: &[BatchAction],
     clean_shutdown: bool,
 ) -> String {
-    let mut parts = vec![format!("[send] state={}", ch.state_number())];
+    let kind = if clean_shutdown {
+        "send-clean-shutdown"
+    } else {
+        "send"
+    };
+    let mut parts = vec![format!("[{kind}] state={}", ch.state_number())];
     for a in actions {
         parts.push(format!("  {}", format_batch_action(a)));
     }
@@ -281,7 +286,7 @@ impl OffChainPhase {
                 || member.initial_validation_info_hash
                     != factory_game.initial_validation_info_hash(allocator)
                 || member.initial_move != factory_game.initial_move
-                || member.initial_max_move_size != factory_game.initial_max_move_size
+                || member.initial_max_move_size as usize != factory_game.initial_max_move_size
                 || member.initial_mover_share != expected_share
             {
                 return Err(Error::StrErr(format!(
@@ -501,7 +506,6 @@ impl OffChainPhase {
             effects.push(Effect::PeerBatch {
                 actions: vec![],
                 signatures: sigs,
-                clean_shutdown: None,
             });
             self.have_potato = PotatoState::Absent;
             return Ok(effects);
@@ -519,7 +523,6 @@ impl OffChainPhase {
             effects.push(Effect::PeerBatch {
                 actions: vec![],
                 signatures: sigs,
-                clean_shutdown: None,
             });
             self.have_potato = PotatoState::Absent;
             return Ok(effects);
@@ -540,17 +543,10 @@ impl OffChainPhase {
             PeerMessage::Batch {
                 actions,
                 signatures,
-                clean_shutdown,
             } => {
                 let ch_snapshot = self.channel_state.clone();
                 let queue_snapshot = self.game_action_queue.clone();
-                match self.process_received_batch(
-                    env,
-                    &timeout,
-                    actions,
-                    signatures,
-                    clean_shutdown,
-                ) {
+                match self.process_received_batch(env, &timeout, actions, signatures) {
                     Ok(batch_effects) => {
                         effects.extend(batch_effects);
                     }
@@ -558,6 +554,22 @@ impl OffChainPhase {
                         self.channel_state = ch_snapshot;
                         self.game_action_queue = queue_snapshot;
                         return Err(e);
+                    }
+                }
+            }
+            PeerMessage::CleanShutdown {
+                channel_half_sig,
+                payout_conditions,
+            } => {
+                let ch_snapshot = self.channel_state.clone();
+                let queue_snapshot = self.game_action_queue.clone();
+                match self.process_received_clean_shutdown(env, channel_half_sig, payout_conditions)
+                {
+                    Ok(shutdown_effects) => effects.extend(shutdown_effects),
+                    Err(error) => {
+                        self.channel_state = ch_snapshot;
+                        self.game_action_queue = queue_snapshot;
+                        return Err(error);
                     }
                 }
             }
@@ -641,7 +653,6 @@ impl OffChainPhase {
         _timeout: &Timeout,
         actions: &[BatchAction],
         signatures: &StateUpdateSignatures,
-        clean_shutdown: &Option<Box<(Aggsig, ProgramRef)>>,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         let mut accepted_groups = Vec::new();
@@ -824,137 +835,6 @@ impl OffChainPhase {
                 .retain(|a| !matches!(a, GameAction::CleanShutdown));
         }
 
-        if let Some(shutdown) = clean_shutdown {
-            let (sig, conditions) = shutdown.as_ref();
-            let has_active = {
-                let ch = self.channel_state_mut()?;
-                ch.has_active_games()
-            };
-            if has_active {
-                return Err(Error::StrErr(
-                    "opponent requested clean shutdown while games are active".to_string(),
-                ));
-            }
-            {
-                let ch = self.channel_state_mut()?;
-                let cancelled_groups = ch.cancel_all_proposals();
-                for group_ids in cancelled_groups {
-                    effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                        id: group_ids[0],
-                        group_ids,
-                        reason: CancelReason::CleanShutdown,
-                    }));
-                }
-            }
-
-            let (coin, full_spend, channel_puzzle_public_key, zero_payout) = {
-                let ch = self.channel_state_mut()?;
-                let coin = ch.channel_coin().clone();
-                let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
-                let expected_conditions = get_conditions_with_channel_state(env, ch)?;
-
-                let peer_conds = proper_list(env.allocator.allocator_ref(), clvm_conditions, true)
-                    .ok_or_else(|| {
-                        Error::StrErr(
-                            "clean shutdown conditions: peer conditions are not a proper list"
-                                .to_string(),
-                        )
-                    })?;
-                let expected_conds =
-                    proper_list(env.allocator.allocator_ref(), expected_conditions, true)
-                        .ok_or_else(|| {
-                            Error::StrErr(
-                        "clean shutdown conditions: expected conditions are not a proper list"
-                            .to_string(),
-                    )
-                        })?;
-                if peer_conds.len() != expected_conds.len() {
-                    return Err(Error::StrErr(
-                        "clean shutdown conditions: wrong number of conditions".to_string(),
-                    ));
-                }
-
-                let mut peer_serialized: Vec<Vec<u8>> = peer_conds
-                    .iter()
-                    .map(|n| Program::from_nodeptr(env.allocator, *n))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .map(|p| p.bytes().to_vec())
-                    .collect();
-                let mut expected_serialized: Vec<Vec<u8>> = expected_conds
-                    .iter()
-                    .map(|n| Program::from_nodeptr(env.allocator, *n))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .map(|p| p.bytes().to_vec())
-                    .collect();
-                peer_serialized.sort();
-                expected_serialized.sort();
-                if peer_serialized != expected_serialized {
-                    return Err(Error::StrErr(
-                        "clean shutdown conditions don't match expected payout".to_string(),
-                    ));
-                }
-
-                let zero_payout = ch.has_zero_payout();
-                let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
-                let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
-                (coin, full_spend, channel_puzzle_public_key, zero_payout)
-            };
-
-            {
-                let ch = self.channel_state_mut()?;
-                for (id, amount, _game_finished) in ch.drain_cached_accept_settlements() {
-                    effects.push(Effect::Notify(GameNotification::game_settled(
-                        id,
-                        SettlementOutcome::AcceptSettlement,
-                        amount,
-                        None,
-                    )));
-                }
-            }
-
-            let puzzle = puzzle_for_synthetic_public_key(
-                env.allocator,
-                &env.standard_puzzle,
-                &channel_puzzle_public_key,
-            )?;
-            let spend = Spend {
-                solution: full_spend.solution.clone(),
-                puzzle,
-                signature: full_spend.signature.clone(),
-            };
-            let coin_spend = CoinSpend {
-                coin: coin.clone(),
-                bundle: spend,
-            };
-            if zero_payout {
-                effects.push(Effect::QueueTerminalHandoff(coin_spend));
-            } else {
-                effects.push(Effect::SpendTransaction(
-                    SpendBundle {
-                        name: Some("Create unroll".to_string()),
-                        spends: vec![coin_spend.clone()],
-                    },
-                    None,
-                ));
-                effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
-            }
-
-            let handler = crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase::new_for_clean_shutdown(
-                self.channel_state.take(),
-                coin.clone(),
-                full_spend.solution.clone(),
-                std::mem::take(&mut self.game_action_queue),
-                PotatoState::Present,
-                self.channel_timeout.clone(),
-                self.unroll_timeout.clone(),
-                self.last_channel_coin_spend_info.take(),
-            );
-            self.channel_spend_next_phase = Some(Box::new(handler));
-            return Ok(effects);
-        }
-
         let spend_info = {
             let ch = self.channel_state_mut()?;
             ch.verify_received_batch_signatures(env, signatures)?
@@ -967,9 +847,6 @@ impl OffChainPhase {
             let mut parts = vec![format!("[recv] state={state_num}")];
             for a in &actions_str {
                 parts.push(format!("  {a}"));
-            }
-            if clean_shutdown.is_some() {
-                parts.push("  clean_shutdown=true".to_string());
             }
             if let Some(s) = format_reward_coin(
                 "my_reward",
@@ -1002,6 +879,144 @@ impl OffChainPhase {
         Ok(effects)
     }
 
+    fn process_received_clean_shutdown(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        channel_half_sig: &Aggsig,
+        payout_conditions: &ProgramRef,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
+        if self.channel_state()?.has_active_games() {
+            return Err(Error::StrErr(
+                "opponent requested clean shutdown while games are active".to_string(),
+            ));
+        }
+
+        {
+            let ch = self.channel_state_mut()?;
+            for group_ids in ch.cancel_all_proposals() {
+                effects.push(Effect::Notify(GameNotification::ProposalCancelled {
+                    id: group_ids[0],
+                    group_ids,
+                    reason: CancelReason::CleanShutdown,
+                }));
+            }
+        }
+
+        let (coin, full_spend, channel_puzzle_public_key, zero_payout) = {
+            let ch = self.channel_state_mut()?;
+            let coin = ch.channel_coin().clone();
+            let clvm_conditions = payout_conditions.to_nodeptr(env.allocator)?;
+            let expected_conditions = get_conditions_with_channel_state(env, ch)?;
+
+            let peer_conds = proper_list(env.allocator.allocator_ref(), clvm_conditions, true)
+                .ok_or_else(|| {
+                    Error::StrErr(
+                        "clean shutdown conditions: peer conditions are not a proper list"
+                            .to_string(),
+                    )
+                })?;
+            let expected_conds =
+                proper_list(env.allocator.allocator_ref(), expected_conditions, true).ok_or_else(
+                    || {
+                        Error::StrErr(
+                            "clean shutdown conditions: expected conditions are not a proper list"
+                                .to_string(),
+                        )
+                    },
+                )?;
+            if peer_conds.len() != expected_conds.len() {
+                return Err(Error::StrErr(
+                    "clean shutdown conditions: wrong number of conditions".to_string(),
+                ));
+            }
+
+            let mut peer_serialized: Vec<Vec<u8>> = peer_conds
+                .iter()
+                .map(|node| Program::from_nodeptr(env.allocator, *node))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|program| program.bytes().to_vec())
+                .collect();
+            let mut expected_serialized: Vec<Vec<u8>> = expected_conds
+                .iter()
+                .map(|node| Program::from_nodeptr(env.allocator, *node))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|program| program.bytes().to_vec())
+                .collect();
+            peer_serialized.sort();
+            expected_serialized.sort();
+            if peer_serialized != expected_serialized {
+                return Err(Error::StrErr(
+                    "clean shutdown conditions don't match expected payout".to_string(),
+                ));
+            }
+
+            let zero_payout = ch.has_zero_payout();
+            let full_spend =
+                ch.received_potato_clean_shutdown(env, channel_half_sig, clvm_conditions)?;
+            (
+                coin,
+                full_spend,
+                ch.get_aggregate_channel_public_key(),
+                zero_payout,
+            )
+        };
+
+        {
+            let ch = self.channel_state_mut()?;
+            for (id, amount, _game_finished) in ch.drain_cached_accept_settlements() {
+                effects.push(Effect::Notify(GameNotification::game_settled(
+                    id,
+                    SettlementOutcome::AcceptSettlement,
+                    amount,
+                    None,
+                )));
+            }
+        }
+
+        let spend = Spend {
+            solution: full_spend.solution.clone(),
+            puzzle: puzzle_for_synthetic_public_key(
+                env.allocator,
+                &env.standard_puzzle,
+                &channel_puzzle_public_key,
+            )?,
+            signature: full_spend.signature.clone(),
+        };
+        let coin_spend = CoinSpend {
+            coin: coin.clone(),
+            bundle: spend,
+        };
+        if zero_payout {
+            effects.push(Effect::QueueTerminalHandoff(coin_spend));
+        } else {
+            effects.push(Effect::SpendTransaction(
+                SpendBundle {
+                    name: Some("Create unroll".to_string()),
+                    spends: vec![coin_spend.clone()],
+                },
+                None,
+            ));
+            effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
+        }
+
+        self.have_potato = PotatoState::Present;
+        let handler = crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase::new_for_clean_shutdown(
+            self.channel_state.take(),
+            coin,
+            full_spend.solution,
+            std::mem::take(&mut self.game_action_queue),
+            PotatoState::Present,
+            self.channel_timeout.clone(),
+            self.unroll_timeout.clone(),
+            self.last_channel_coin_spend_info.take(),
+        );
+        self.channel_spend_next_phase = Some(Box::new(handler));
+        Ok(effects)
+    }
+
     // We have the potato so we can send a message that starts a game if there are games
     // to start.
     //
@@ -1031,10 +1046,9 @@ impl OffChainPhase {
         );
         let mut effects = Vec::new();
         let mut batch_actions: Vec<BatchAction> = Vec::new();
-        let mut clean_shutdown_data: Option<Box<(Aggsig, ProgramRef)>> = None;
-        let mut pending_shutdown: Option<(CoinString, ProgramRef)> = None;
         let mut deferred = VecDeque::new();
         let mut applied_actions = Vec::new();
+        let mut request_potato_back = false;
 
         while let Some(action) = self.game_action_queue.pop_front() {
             self.last_failed_queued_action = failed_game_action_context(&action);
@@ -1187,6 +1201,12 @@ impl OffChainPhase {
                     batch_actions.push(BatchAction::CancelProposalGroup(group_id));
                 }
                 GameAction::CleanShutdown => {
+                    if !batch_actions.is_empty() {
+                        deferred.push_back(GameAction::CleanShutdown);
+                        deferred.append(&mut self.game_action_queue);
+                        request_potato_back = true;
+                        break;
+                    }
                     {
                         let ch = self.channel_state()?;
                         if ch.has_active_games() {
@@ -1219,12 +1239,21 @@ impl OffChainPhase {
 
                     let shutdown_condition_program =
                         Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
-                    clean_shutdown_data = Some(Box::new((
-                        spend.signature.clone(),
-                        shutdown_condition_program.into(),
-                    )));
-
-                    pending_shutdown = Some((channel_coin.clone(), spend.solution.clone()));
+                    let payout_conditions = shutdown_condition_program.into();
+                    self.pending_clean_shutdown =
+                        Some((channel_coin.clone(), spend.solution.clone()));
+                    self.game_action_queue = deferred;
+                    self.have_potato = PotatoState::Absent;
+                    {
+                        let ch = self.channel_state()?;
+                        effects.push(Effect::Log(make_send_log(ch, &[], true)));
+                    }
+                    effects.push(Effect::PeerCleanShutdown {
+                        channel_half_sig: spend.signature,
+                        payout_conditions,
+                    });
+                    self.last_failed_queued_action = None;
+                    return Ok((true, effects));
                 }
                 #[cfg(test)]
                 GameAction::ForcedSelfAccept(game_id) => {
@@ -1237,7 +1266,7 @@ impl OffChainPhase {
 
         self.game_action_queue = deferred;
 
-        if batch_actions.is_empty() && clean_shutdown_data.is_none() {
+        if batch_actions.is_empty() {
             // No batch was packaged; deferred actions remain pending for a
             // future potato receipt, so this flush has no attributable failure.
             self.last_failed_queued_action = None;
@@ -1255,22 +1284,20 @@ impl OffChainPhase {
 
         {
             let ch = self.channel_state()?;
-            effects.push(Effect::Log(make_send_log(
-                ch,
-                &batch_actions,
-                clean_shutdown_data.is_some(),
-            )));
+            effects.push(Effect::Log(make_send_log(ch, &batch_actions, false)));
         }
 
-        self.have_potato = PotatoState::Absent;
+        self.have_potato = if request_potato_back {
+            PotatoState::Requested
+        } else {
+            PotatoState::Absent
+        };
         effects.push(Effect::PeerBatch {
             actions: batch_actions,
             signatures: sigs,
-            clean_shutdown: clean_shutdown_data,
         });
-
-        if let Some(shutdown_info) = pending_shutdown {
-            self.pending_clean_shutdown = Some(shutdown_info);
+        if request_potato_back {
+            effects.push(Effect::PeerRequestPotato);
         }
 
         // Packaging and delivery intent succeeded. Later failures cannot be
@@ -1279,7 +1306,7 @@ impl OffChainPhase {
         Ok((true, effects))
     }
 
-    const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
+    const MAX_MESSAGE_SIZE: usize = handshake::MAX_PEER_MESSAGE_SIZE;
 
     pub fn received_message(
         &mut self,
@@ -1353,16 +1380,16 @@ impl OffChainPhase {
                     effects.push(Effect::PeerBatch {
                         actions: vec![],
                         signatures: sigs,
-                        clean_shutdown: None,
                     });
                     self.have_potato = PotatoState::Absent;
                     self.peer_wants_potato = false;
                 }
             }
-            PeerMessage::Batch { .. } => {
+            PeerMessage::Batch { .. } | PeerMessage::CleanShutdown { .. } => {
                 if matches!(self.have_potato, PotatoState::Present) {
                     return Err(Error::StrErr(
-                        "received batch while we hold the potato (double-potato)".to_string(),
+                        "received potato-bearing message while we hold the potato (double-potato)"
+                            .to_string(),
                     ));
                 }
                 effects.extend(self.pass_on_channel_state_message(env, msg_envelope)?);
@@ -1585,18 +1612,22 @@ impl FromLocalUI for OffChainPhase {
         let members = factory_games
             .iter()
             .zip(&all_ids)
-            .map(|(game, id)| WireGameSpec {
-                game_id: *id,
-                player_a_contribution: game.player_a_contribution.clone(),
-                player_b_contribution: game.player_b_contribution.clone(),
-                player_a_goes_first: game.player_a_goes_first,
-                initial_validation_program_hash: game.initial_validation_program_hash.clone(),
-                initial_validation_info_hash: game.initial_validation_info_hash(env.allocator),
-                initial_move: game.initial_move.clone(),
-                initial_max_move_size: game.initial_max_move_size,
-                initial_mover_share: Amount::new(game.initial_mover_share),
+            .map(|(game, id)| {
+                Ok(WireGameSpec {
+                    game_id: *id,
+                    player_a_contribution: game.player_a_contribution.clone(),
+                    player_b_contribution: game.player_b_contribution.clone(),
+                    player_a_goes_first: game.player_a_goes_first,
+                    initial_validation_program_hash: game.initial_validation_program_hash.clone(),
+                    initial_validation_info_hash: game.initial_validation_info_hash(env.allocator),
+                    initial_move: game.initial_move.clone(),
+                    initial_max_move_size: u32::try_from(game.initial_max_move_size).map_err(
+                        |_| Error::StrErr("proposal initial max move size exceeds u32".to_string()),
+                    )?,
+                    initial_mover_share: Amount::new(game.initial_mover_share),
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, Error>>()?;
         self.push_action(GameAction::QueuedProposalGroup(
             my_games,
             WireProposalGroup {

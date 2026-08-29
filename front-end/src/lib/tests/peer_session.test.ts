@@ -1,5 +1,6 @@
 import { PeerSession, generateSessionId } from '../../services/PeerSession';
 import type { HubConnection } from '../../services/HubConnection';
+import { sessionReceivePolicy } from '../session/receivePolicy';
 
 function mockHubConnection(): HubConnection & {
   sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>;
@@ -244,6 +245,79 @@ describe('PeerSession', () => {
       expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x02, 0x00, 0x00]))).toBe(false);
       expect(ps.liveness).toBeNull();
       expect(ps.lastActivity).toBe(0);
+    });
+
+    it('fails and clears the early buffer when count or bytes are exceeded', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession(
+        'peer1',
+        'session1',
+        conn,
+        sessionReceivePolicy({ maxQueuedMessages: 2, maxQueuedBytes: 2 }),
+      );
+      const failures: string[] = [];
+
+      expect(
+        ps.deliverRawPeerMessage('peer1', new Uint8Array([0x01, 0, 0, 0, 1, 0xaa, 0xbb])),
+      ).toBe(true);
+      expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x03]))).toBe(true);
+      expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x03]))).toBe(false);
+      ps.registerMessageHandler({
+        handler: () => fail('cleared data must not drain'),
+        ackHandler: () => fail('cleared ack must not drain'),
+        keepaliveHandler: () => fail('cleared keepalive must not drain'),
+        failureHandler: (reason) => failures.push(reason),
+      });
+
+      expect(ps.liveness).toBe('dead');
+      expect(failures[0]).toContain('queue count');
+    });
+
+    it('does not double-account duplicate numbered frames before binding', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession(
+        'peer1',
+        'session1',
+        conn,
+        sessionReceivePolicy({ maxQueuedMessages: 1, maxQueuedBytes: 1 }),
+      );
+      const frame = new Uint8Array([0x01, 0, 0, 0, 7, 0xaa]);
+      const received: number[] = [];
+
+      expect(ps.deliverRawPeerMessage('peer1', frame)).toBe(true);
+      expect(ps.deliverRawPeerMessage('peer1', frame)).toBe(true);
+      ps.registerMessageHandler({
+        handler: (msgno) => received.push(msgno),
+        ackHandler: () => {},
+        keepaliveHandler: () => {},
+      });
+
+      expect(received).toEqual([7]);
+      expect(ps.liveness).toBe('connected');
+    });
+
+    it('fails an oversized body before binding', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession(
+        'peer1',
+        'session1',
+        conn,
+        sessionReceivePolicy({ maxPeerBodyBytes: 1 }),
+      );
+      const failures: string[] = [];
+
+      expect(
+        ps.deliverRawPeerMessage('peer1', new Uint8Array([0x01, 0, 0, 0, 1, 0xaa, 0xbb])),
+      ).toBe(false);
+      ps.registerMessageHandler({
+        handler: () => {},
+        ackHandler: () => {},
+        keepaliveHandler: () => {},
+        failureHandler: (reason) => failures.push(reason),
+      });
+
+      expect(failures[0]).toContain('message body');
+      expect(ps.liveness).toBe('dead');
     });
   });
 

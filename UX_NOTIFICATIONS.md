@@ -188,16 +188,11 @@ for how those lenses relate.
 | `ResolvedStale`                  | Stale unroll completed                 | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                                                          |
 | `Failed`                         | Unrecoverable error                    | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                                                             |
 
-**Assumes single-handing for `ShuttingDown` timing.** The current clean shutdown
-flow emits `ShuttingDown` as soon as the user requests it, even before the
-potato arrives and the shutdown batch is actually sent. This is correct for
-single-handing (one proposal at a time) because there is no outstanding
-proposal that could fail. In a future multi-handing model, the shutdown batch
-could arrive while proposals are still in flight, and the peer could reject
-the shutdown or the proposals could fail. At that point, immediately reporting
-`ShuttingDown` to the user would be premature — the status would need to wait
-until the shutdown batch is actually sent. See `ON_CHAIN.md` for the protocol
-details.
+`ShuttingDown` reflects that the dedicated `CleanShutdown` message has been
+sent and the local phase is awaiting `CleanShutdownComplete`. If ordinary
+actions precede shutdown in the queue, they are first flushed in a Batch and
+the potato is requested back; the shutdown status does not describe that
+intermediate flush.
 
 Each `ChannelStatus` notification is emitted when the `PeerLifecyclePhase` is
 replaced (handler transition) or when the current handler's snapshot changes

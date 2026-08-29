@@ -464,7 +464,8 @@ impl TheirTurnReferee {
         };
         let max_move_size_raw = mms_raw.clone();
         let max_move_size = if let Some(mms) = u64_from_atom(&max_move_size_raw) {
-            mms as usize
+            u32::try_from(mms)
+                .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?
         } else {
             return Err(Error::StrErr(
                 "max move size wasn't a properly sized atom".to_string(),

@@ -403,7 +403,10 @@ pub enum Effect {
     PeerBatch {
         actions: Vec<BatchAction>,
         signatures: StateUpdateSignatures,
-        clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
+    },
+    PeerCleanShutdown {
+        channel_half_sig: Aggsig,
+        payout_conditions: ProgramRef,
     },
     PeerCleanShutdownComplete(CoinSpend),
     /// A durable host-owned clean-shutdown handoff. This is intercepted by
@@ -484,14 +487,19 @@ pub fn apply_effects(
             Effect::PeerBatch {
                 actions,
                 signatures,
-                clean_shutdown,
             } => {
                 system.send_message(&PeerMessage::Batch {
                     actions,
                     signatures,
-                    clean_shutdown,
                 })?;
             }
+            Effect::PeerCleanShutdown {
+                channel_half_sig,
+                payout_conditions,
+            } => system.send_message(&PeerMessage::CleanShutdown {
+                channel_half_sig,
+                payout_conditions,
+            })?,
             Effect::PeerCleanShutdownComplete(cs) => {
                 system.send_message(&PeerMessage::CleanShutdownComplete(cs))?;
             }

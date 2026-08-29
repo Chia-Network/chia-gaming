@@ -6926,7 +6926,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let queued_bad_batch = bencodex::to_vec(&PeerMessage::Batch {
             actions: vec![],
             signatures: Default::default(),
-            clean_shutdown: None,
         })
         .expect("should encode bad batch");
 
@@ -6982,7 +6981,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 }],
             })],
             signatures: Default::default(),
-            clean_shutdown: None,
         };
         let mut malformed = bencodex::to_vec(&message).expect("encode valid peer message");
         let needle = format!("i{valid_integer}e").into_bytes();

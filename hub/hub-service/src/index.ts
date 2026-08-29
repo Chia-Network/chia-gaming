@@ -57,9 +57,8 @@ type HubInboundMessage =
 
 type GameInboundMessage =
   | { type: 'identify'; session_id: string; busy?: boolean; alias?: string }
-  | { type: 'send'; to: string }
-  | { type: 'close'; session_id: string }
-  | { type: 'set_busy'; session_id: string; busy: boolean; alias?: string }
+  | { type: 'close' }
+  | { type: 'set_busy'; busy: boolean; alias?: string }
   | { type: 'keepalive' };
 
 interface HubConnMeta {
@@ -897,59 +896,6 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   });
 }
 
-function onGameSend(
-  ws: WebSocket,
-  msg: Extract<GameInboundMessage, { type: 'send' }>,
-  rawPayload: Buffer | null,
-): void {
-  const meta = wsGameMeta.get(ws);
-  if (!meta?.playerId) {
-    logHub('game_send_drop_no_player', { ws_id: wsId(ws) });
-    return;
-  }
-  const targetId = msg.to;
-  const targetSessionId = playerToSession.get(targetId);
-  const targetWs = targetSessionId ? gameConnections.get(targetSessionId) : undefined;
-
-  if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
-    // Includes unknown peer ids and known peers with no live game socket.
-    // Pre-cradle clients cancel; live sessions treat this as peer hard-disconnect.
-    logHub('game_send_delivery_failure', {
-      from: meta.playerId,
-      to: targetId,
-      reason: targetSessionId ? 'peer_offline' : 'unknown_peer',
-    });
-    sendGameWs(ws, 'delivery_failure', { to: targetId });
-    return;
-  }
-
-  const fromAlias = aliasForPlayer(meta.playerId);
-
-  if (rawPayload) {
-    // Binary payload: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
-    const fromIdBuf = Buffer.from(meta.playerId, 'utf8');
-    const fromAliasBuf = Buffer.from(fromAlias, 'utf8');
-    const header = Buffer.alloc(4 + fromIdBuf.byteLength + 4 + fromAliasBuf.byteLength);
-    let off = 0;
-    header.writeUInt32BE(fromIdBuf.byteLength, off);
-    off += 4;
-    fromIdBuf.copy(header, off);
-    off += fromIdBuf.byteLength;
-    header.writeUInt32BE(fromAliasBuf.byteLength, off);
-    off += 4;
-    fromAliasBuf.copy(header, off);
-    const frame = Buffer.concat([header, rawPayload]);
-    targetWs.send(frame);
-    logHubVerbose('game_relay_binary', {
-      from: meta.playerId,
-      to: targetId,
-      payload_bytes: rawPayload.byteLength,
-    });
-  } else {
-    logHubVerbose('game_relay_json_noop', { from: meta.playerId, to: targetId });
-  }
-}
-
 function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): void {
   const meta = wsGameMeta.get(ws);
   if (!meta?.playerId) {
@@ -992,21 +938,21 @@ function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): voi
   });
 }
 
-function onGameClose(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'close' }>): void {
+function onGameClose(ws: WebSocket): void {
   const meta = wsGameMeta.get(ws);
   if (!meta) {
-    logHub('game_close_drop_unknown_session', { session_id: msg.session_id });
+    logHub('game_close_drop_unidentified', { ws_id: wsId(ws) });
     return;
   }
   const playerId = meta.playerId;
-  logHub('game_close', { player_id: playerId, session_id: msg.session_id });
+  logHub('game_close', { player_id: playerId });
   sendGameEvent(playerId, 'closed', {});
 }
 
 function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_busy' }>): void {
   const meta = wsGameMeta.get(ws);
   if (!meta) {
-    logHub('set_busy_drop_unknown_session', { session_id: msg.session_id });
+    logHub('set_busy_drop_unidentified', { ws_id: wsId(ws) });
     return;
   }
   const playerId = meta.playerId;
@@ -1060,20 +1006,17 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
           busy: getBoolean(decoded, 'busy'),
           alias: optionalText(decoded, 'alias'),
         };
-      case 'send':
-        return { type, to: requireText(decoded, 'to') };
       case 'set_busy': {
         const busy = getBoolean(decoded, 'busy');
         if (busy === undefined) return null;
         return {
           type,
-          session_id: requireText(decoded, 'session_id'),
           busy,
           alias: optionalText(decoded, 'alias'),
         };
       }
       case 'close':
-        return { type, session_id: requireText(decoded, 'session_id') };
+        return { type };
       case 'keepalive':
         return { type };
       default:
@@ -1249,11 +1192,8 @@ gameWsServer.on('connection', (ws) => {
       case 'identify':
         onIdentify(ws, parsed);
         break;
-      case 'send':
-        onGameSend(ws, parsed, null);
-        break;
       case 'close':
-        onGameClose(ws, parsed);
+        onGameClose(ws);
         break;
       case 'set_busy':
         onSetBusy(ws, parsed);

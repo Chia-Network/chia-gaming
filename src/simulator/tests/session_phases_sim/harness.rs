@@ -388,7 +388,6 @@ impl SimulationHarness {
             let PeerMessage::Batch {
                 actions,
                 signatures,
-                clean_shutdown,
             } = message
             else {
                 return Err(Error::StrErr(format!(
@@ -409,7 +408,6 @@ impl SimulationHarness {
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
-                clean_shutdown: clean_shutdown.clone(),
             })
         })?;
         Ok(true)
@@ -461,7 +459,6 @@ impl SimulationHarness {
             let PeerMessage::Batch {
                 actions,
                 signatures,
-                clean_shutdown,
             } = message
             else {
                 return Err(Error::StrErr(format!(
@@ -480,7 +477,6 @@ impl SimulationHarness {
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
-                clean_shutdown: clean_shutdown.clone(),
             })
         })
     }
@@ -655,7 +651,6 @@ impl SimulationHarness {
             let PeerMessage::Batch {
                 actions,
                 signatures,
-                clean_shutdown,
             } = message
             else {
                 return Err(Error::StrErr(format!(
@@ -676,7 +671,6 @@ impl SimulationHarness {
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
-                clean_shutdown: clean_shutdown.clone(),
             })
         })
     }
@@ -783,7 +777,6 @@ impl SimulationHarness {
                             if let PeerMessage::Batch {
                                 actions,
                                 mut signatures,
-                                clean_shutdown,
                             } = peer_message
                             {
                                 signatures.channel_half_sig = Default::default();
@@ -791,7 +784,6 @@ impl SimulationHarness {
                                 bencodex::to_vec(&PeerMessage::Batch {
                                     actions,
                                     signatures,
-                                    clean_shutdown,
                                 })
                                 .into_gen()?
                             } else {
