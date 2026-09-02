@@ -38,86 +38,23 @@ Wallet RPC, blockchain polling, chain reorganization, transaction submission,
 and on-chain game resolution are out of scope. Chia objects that cross the peer
 wire are specified as data types even when their later use is out of scope.
 
-## 2. Trust and roles
+## 2. Peer relay-payload classes and reliable frame bytes
 
-Neither the peer nor the relaying hub is trusted. Every received frame and
-field is untrusted input.
-
-The handshake has two fixed roles:
-
-- **Initiator** sends handshake messages A, C, and E and initially holds the
-  potato.
-- **Receiver** sends handshake messages B, D, and F and initially does not hold
-  the potato.
-
-These roles remain fixed for the lifetime of the channel. They are also called
-the first and second player in internal state.
-
-The peer ID supplied by the hub is a routing selector, not a cryptographic
-identity. Cryptographic authority comes from the public keys and signatures
-exchanged and verified during this protocol.
-
-## 3. Pre-session peer app messages
-
-Pre-session messages are raw Bencodex dictionaries placed directly in an
-addressed hub relay payload. They are not numbered, acknowledged, replayed, or
-deduplicated by the reliable peer layer.
-
-The receiver identifies this class because the first payload byte is `0x64`,
-the Bencodex dictionary marker.
-
-### 3.1 `session_proposal`
-
-Requests local consent to start a session:
+The first byte of an addressed hub relay payload discriminates the peer payload
+class:
 
 ```text
-{
-  "type":            Text("session_proposal"),
-  "proposer_amount": Text,
-  "responder_amount":Text,
-  "from_alias":      Text,  // optional
-  "channel_timeout": Text,  // optional
-  "unroll_timeout":  Text,  // optional
-  "game_session_id": Text,  // optional in the current decoder
-  "network":         Text   // required by intake validation
-}
+0x64   pre-session Bencodex dictionary
+0x01   reliable data frame
+0x02   reliable acknowledgement frame
+0x03   reliable keepalive frame
 ```
 
-Amounts are positive canonical decimal integer strings. Optional timeouts are
-canonical decimal block counts in the range 3 through 30. `network` must be
-`mainnet` or `testnet` and must match the receiver's selected network.
+The `0x64` value is the Bencodex dictionary marker. Pre-session dictionaries are
+placed directly in the addressed relay payload. Reliable frames wrap every
+authoritative semantic message, including every handshake message.
 
-The current sender always supplies a randomly generated `game_session_id`.
-The current receiver accepts its absence and generates a local value. This
-identifier is host persistence metadata; it is not carried in reliable frames
-and is not a cryptographic session binding.
-
-A receiver rejects the proposal without starting the Rust protocol if:
-
-- it is unavailable or already handling another session;
-- either amount is invalid;
-- either timeout is invalid; or
-- the network is absent, invalid, or different.
-
-### 3.2 `session_reject`
-
-Declines or aborts a pre-session attempt:
-
-```text
-{
-  "type": Text("session_reject")
-}
-```
-
-This message has no acknowledgement. During an active session, the current host
-marks the matching peer route dead but does not pass this message into the Rust
-protocol.
-
-## 4. Reliable peer frames
-
-All `PeerMessage` values use this shared envelope.
-
-### 4.1 Frame encoding
+### 2.1 Reliable frame encoding
 
 ```text
 Data:
@@ -145,95 +82,13 @@ message number. The wire counter is an unsigned 32-bit integer. The current
 protocol does not define rollover; a sender must not wrap the counter within a
 session.
 
-### 4.2 Outbound durability
-
-Before sending a data frame, the host:
-
-1. allocates the next message number;
-2. stores the message in its unacknowledged-message list;
-3. persists the Rust session, next message number, last received number, and
-   unacknowledged-message list; and
-4. sends the frame only after that persistence operation succeeds.
-
-If sending fails because the hub connection is not open, the frame remains
-queued.
-
-The sender retains a data frame until it receives a cumulative acknowledgement
-covering that frame.
-
-### 4.3 Inbound ordering and deduplication
-
-Let `remoteNumber` be the highest contiguous message number already delivered
-to the Rust protocol.
-
-- `msgno <= remoteNumber`: the frame is a duplicate. Do not deliver it again.
-  Re-send an acknowledgement for `msgno` and replay locally unacknowledged
-  outbound messages.
-- `msgno == remoteNumber + 1`: deliver it once, then advance
-  `remoteNumber`.
-- `msgno > remoteNumber + 1`: retain it in the runtime reorder buffer until all
-  preceding messages arrive. Do not acknowledge it yet.
-
-After delivering one message, the host delivers every newly contiguous frame
-from the reorder buffer in ascending order.
-
-Before sending an acknowledgement for a newly delivered message, the host
-persists the advanced `remoteNumber` and resulting Rust session state.
-
-The reorder buffer is not persisted. After reload, the sender's persisted
-unacknowledged list is responsible for replaying frames that had not been
-acknowledged.
-
-### 4.4 Acknowledgements
-
-An acknowledgement for N is cumulative: it confirms every local outbound frame
-with `msgno <= N`. The sender removes all such frames from its unacknowledged
-list.
-
-An acknowledgement is a transport fact only. It means the receiver durably
-processed that numbered `PeerMessage`; it does not separately assert that an
-on-chain transaction succeeded.
-
-### 4.5 Replay
-
-The host replays all unacknowledged data frames:
-
-- after restoring a saved session;
-- when the hub game WebSocket reconnect callback fires;
-- after the hub sends `registered` on a reconnected game socket;
-- when it receives a peer keepalive; and
-- when it receives a duplicate data frame.
-
-The current sender throttles replay bursts to at most once per second.
-
-### 4.6 Keepalive
-
-Each active peer sends `0x03` every 15 seconds. No reply is required. Data,
-acknowledgement, and keepalive frames all count as peer activity.
-
-This keepalive tests the complete player-to-hub-to-peer path. It is independent
-from the hub control keepalive described in `WEBSOCKET_PROTOCOL.md`.
-
-### 4.7 Invalid reliable frames
-
-The host ignores:
-
-- empty frames;
-- data or acknowledgement frames shorter than five bytes; and
-- unknown tags.
-
-They do not count as peer activity.
-
-The reliable layer accepts only frames attributed by the hub to the selected
-peer ID. Other senders are ignored.
-
-## 5. Bencodex encoding
+## 3. Bencodex wire encoding
 
 The body of every data frame is exactly one Bencodex `PeerMessage`. There is no
 numeric message tag or magic prefix. The required peer protocol version is
 advertised in the Handshake A/B capability map described in section 7.1.
 
-### 5.1 Primitive values
+### 3.1 Primitive values
 
 ```text
 Null / unit / None    n
@@ -259,40 +114,45 @@ protocol structs use text keys.
 
 Decoders reject trailing bytes after the top-level value.
 
-### 5.2 Serde compound values
+### 3.2 Compound, record, variant, and optional values
 
-Rust `serde` shapes map to Bencodex as follows:
+Unless a later schema gives a more specific exact encoding, compound values use
+these normative Bencodex shapes:
 
 ```text
-Struct:
+Record:
   d <sorted field-name/value pairs> e
 
-Unit enum variant:
+Unit variant:
   Text(variant name)
 
-Newtype enum variant:
+Single-value variant:
   d Text(variant name) <value> e
 
-Tuple enum variant:
+Positional variant:
   d Text(variant name) l <tuple fields> e e
 
-Struct enum variant:
+Record variant:
   d Text(variant name) d <sorted field-name/value pairs> e e
 
-Option::None:
+Absent optional value:
   n
 
-Option::Some(value):
+Present optional value:
   <value>
 ```
 
-Every protocol `Vec<u8>` or `Bytes` value uses a Bencodex byte string. In
-particular, empty bytes encode as `0:`. Bencodex lists are reserved for
-semantic sequences and are not an alternate encoding for binary strings.
-The receiver rejects a generic Bencodex list wherever the schema requires
-semantic bytes.
+Record field names and variant names are case-sensitive UTF-8 text. Record
+fields are emitted in the canonical dictionary-key order from section 3.1.
+Unless a field schema explicitly says that an absent value omits the field, an
+optional field remains present and its absent value is `n`.
 
-### 5.3 Common wire types
+Every schema field declared `Bytes` uses a Bencodex byte string. In particular,
+empty bytes encode as `0:`. Bencodex lists are reserved for semantic sequences
+and are not an alternate encoding for binary strings. The receiver rejects a
+generic Bencodex list wherever the schema requires semantic bytes.
+
+### 3.3 Common wire types
 
 - `Amount`, `GameID`, and `Timeout` are non-negative Bencodex integers limited
   to `u64`.
@@ -342,7 +202,144 @@ StateUpdateSignatures {
 state. `unroll_preempt_half_sig` signs the preemption of an older unroll to that
 state. Each is one party's half of a two-party aggregate signature.
 
-### 5.4 Local receive policy
+## 4. Pre-session message wire dictionaries
+
+Pre-session messages are raw Bencodex dictionaries placed directly in an
+addressed hub relay payload. They are not numbered, acknowledged, replayed, or
+deduplicated by the reliable peer layer.
+
+### 4.1 `session_proposal`
+
+Requests local consent to start a session:
+
+```text
+{
+  "type":            Text("session_proposal"),
+  "proposer_amount": Text,
+  "responder_amount":Text,
+  "from_alias":      Text,  // optional
+  "channel_timeout": Text,  // optional
+  "unroll_timeout":  Text,  // optional
+  "game_session_id": Text,  // optional in the current decoder
+  "network":         Text   // required by intake validation
+}
+```
+
+Amounts are positive canonical decimal integer strings. Optional timeouts are
+canonical decimal block counts in the range 3 through 30. `network` must be
+`mainnet` or `testnet` and must match the receiver's selected network.
+
+The current sender always supplies a randomly generated `game_session_id`.
+The current receiver accepts its absence and generates a local value. This
+identifier is host persistence metadata; it is not carried in reliable frames
+and is not a cryptographic session binding.
+
+A receiver rejects the proposal without starting the peer protocol if:
+
+- it is unavailable or already handling another session;
+- either amount is invalid;
+- either timeout is invalid; or
+- the network is absent, invalid, or different.
+
+### 4.2 `session_reject`
+
+Declines or aborts a pre-session attempt:
+
+```text
+{
+  "type": Text("session_reject")
+}
+```
+
+This message has no acknowledgement. During an active session, the current host
+marks the matching peer route dead but does not pass this message into the peer
+protocol.
+
+## 5. Reliable delivery semantics
+
+### 5.1 Outbound durability
+
+Before sending a data frame, the host:
+
+1. allocates the next message number;
+2. stores the message in its unacknowledged-message list;
+3. persists the protocol session, next message number, last received number,
+   and unacknowledged-message list; and
+4. sends the frame only after that persistence operation succeeds.
+
+If sending fails because the hub connection is not open, the frame remains
+queued.
+
+The sender retains a data frame until it receives a cumulative acknowledgement
+covering that frame.
+
+### 5.2 Inbound ordering and deduplication
+
+Let `remoteNumber` be the highest contiguous message number already delivered
+to the peer protocol.
+
+- `msgno <= remoteNumber`: the frame is a duplicate. Do not deliver it again.
+  Re-send an acknowledgement for `msgno` and replay locally unacknowledged
+  outbound messages.
+- `msgno == remoteNumber + 1`: deliver it once, then advance
+  `remoteNumber`.
+- `msgno > remoteNumber + 1`: retain it in the runtime reorder buffer until all
+  preceding messages arrive. Do not acknowledge it yet.
+
+After delivering one message, the host delivers every newly contiguous frame
+from the reorder buffer in ascending order.
+
+Before sending an acknowledgement for a newly delivered message, the host
+persists the advanced `remoteNumber` and resulting protocol session state.
+
+The reorder buffer is not persisted. After reload, the sender's persisted
+unacknowledged list is responsible for replaying frames that had not been
+acknowledged.
+
+### 5.3 Acknowledgements
+
+An acknowledgement for N is cumulative: it confirms every local outbound frame
+with `msgno <= N`. The sender removes all such frames from its unacknowledged
+list.
+
+An acknowledgement is a transport fact only. It means the receiver durably
+processed that numbered `PeerMessage`; it does not separately assert that an
+on-chain transaction succeeded.
+
+### 5.4 Replay
+
+The host replays all unacknowledged data frames:
+
+- after restoring a saved session;
+- when the hub game WebSocket reconnect callback fires;
+- after the hub sends `registered` on a reconnected game socket;
+- when it receives a peer keepalive; and
+- when it receives a duplicate data frame.
+
+The current sender throttles replay bursts to at most once per second.
+
+### 5.5 Keepalive
+
+Each active peer sends `0x03` every 15 seconds. No reply is required. Data,
+acknowledgement, and keepalive frames all count as peer activity.
+
+This keepalive tests the complete player-to-hub-to-peer path. It is independent
+from the hub control keepalive described in `WEBSOCKET_PROTOCOL.md`.
+
+### 5.6 Invalid reliable frames
+
+The host ignores:
+
+- empty frames;
+- data or acknowledgement frames shorter than five bytes; and
+- unknown tags.
+
+They do not count as peer activity.
+
+The reliable layer accepts only frames attributed by the hub to the selected
+peer ID. Other senders are ignored.
+
+### 5.7 Local receive policy
 
 Receive limits are local denial-of-service policy, not negotiated protocol
 constants. A deployment may configure them more strictly or generously without
@@ -355,9 +352,8 @@ changing the wire format. The current browser defaults are:
 - at most 10 MiB in one Bencodex `PeerMessage` body (the five-byte reliable
   header and hub relay headers are outside this count).
 
-The Rust handshake activation-lag queue applies the same current body, count,
-and byte defaults. Exceeding local receive policy is handled as invalid peer
-input.
+The handshake activation-lag queue applies the same current body, count, and
+byte defaults. Exceeding local receive policy is handled as invalid peer input.
 
 Malformed, oversized, or semantically invalid messages are peer protocol
 violations. Before channel activation they fail the handshake. During off-chain
@@ -631,7 +627,7 @@ potato without another operation.
 
 ## 11. `BatchAction` messages
 
-Each action uses the compound enum rules in section 5.2. Its exact outer wire
+Each action uses the compound variant rules in section 3.2. Its exact outer wire
 shape is:
 
 ```text
@@ -836,7 +832,8 @@ state:
   after handshake completion;
 - it is valid during ordinary off-chain play, regardless of potato ownership;
 - it is invalid while awaiting `CleanShutdownComplete`; and
-- the host does not deliver it to Rust after leaving off-chain peer operation.
+- the host does not deliver it to the protocol engine after leaving off-chain
+  peer operation.
 
 ## 13. Cooperative shutdown
 
@@ -891,7 +888,28 @@ the local session.
 Further transaction publication and chain resolution are outside this
 specification.
 
-## 14. Lifecycle summary
+## 14. Lifecycle, trust, and roles
+
+### 14.1 Trust and fixed roles
+
+Neither the peer nor the relaying hub is trusted. Every received frame and
+field is untrusted input.
+
+The handshake has two fixed roles:
+
+- **Initiator** sends handshake messages A, C, and E and initially holds the
+  potato.
+- **Receiver** sends handshake messages B, D, and F and initially does not hold
+  the potato.
+
+These roles remain fixed for the lifetime of the channel. They are also called
+the first and second player in internal state.
+
+The peer ID supplied by the hub is a routing selector, not a cryptographic
+identity. Cryptographic authority comes from the public keys and signatures
+exchanged and verified during this protocol.
+
+### 14.2 Lifecycle summary
 
 ```text
 Pre-session negotiation
