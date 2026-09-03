@@ -9,6 +9,7 @@ import {
   decode as decodeBencodex,
   encode as encodeBencodex,
   getBoolean,
+  getBytes,
   getText,
   isDictionary,
   type BencodexKey,
@@ -56,9 +57,10 @@ type HubInboundMessage =
   | { type: 'keepalive' };
 
 type GameInboundMessage =
-  | { type: 'identify'; session_id: string; busy?: boolean; alias?: string }
+  | { type: 'identify'; session_id: string; busy?: boolean }
   | { type: 'close' }
-  | { type: 'set_busy'; busy: boolean; alias?: string }
+  | { type: 'set_busy'; busy: boolean }
+  | { type: 'relay'; to: string; payload: Uint8Array }
   | { type: 'keepalive' };
 
 interface HubConnMeta {
@@ -85,6 +87,14 @@ interface RateBudget {
 
 const HUB_DISCONNECT_GRACE_MS = 3000;
 const CONNECTION_TTL_MS = 60_000;
+const PLAYER_ID_BYTES = 16;
+const SESSION_ID_BYTES = 16;
+const MAX_ALIAS_BYTES = 128;
+const RECENT_CORRESPONDENT_TTL_MS = readPositiveIntegerEnv(
+  'GAME_RECENT_CORRESPONDENT_TTL_MS',
+  30 * 60_000,
+);
+const MAX_RECENT_CORRESPONDENTS = readPositiveIntegerEnv('GAME_MAX_RECENT_CORRESPONDENTS', 16);
 const MAX_TOTAL_CONNECTIONS = readPositiveIntegerEnv('HUB_MAX_TOTAL_CONNECTIONS', 2000);
 const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_IP', 8);
 const RATE_WINDOW_MS = readPositiveIntegerEnv('HUB_RATE_WINDOW_MS', 10_000);
@@ -204,6 +214,7 @@ const pendingHubLeaves = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionToPlayer = new Map<string, string>();
 const playerToSession = new Map<string, string>();
 const knownAliases = new Map<string, string>();
+const recentCorrespondents = new Map<string, Map<string, number>>();
 const wsLastActivity = new WeakMap<WebSocket, number>();
 const wsIds = new WeakMap<WebSocket, number>();
 const wsKeepaliveTimers = new WeakMap<WebSocket, ReturnType<typeof setInterval>>();
@@ -257,6 +268,45 @@ function closeIfRateLimited(
   logHub('ws_rate_limited', { ws_id: wsId(ws), channel, bytes });
   ws.close(4008, 'rate_limited');
   return true;
+}
+
+function requireFixedBytes(
+  map: Map<BencodexKey, BencodexValue>,
+  key: string,
+  length: number,
+): Uint8Array {
+  const value = getBytes(map, key);
+  if (!value || value.byteLength !== length) {
+    throw new Error(`${key} must be exactly ${length} bytes`);
+  }
+  return value;
+}
+
+function requireByteString(map: Map<BencodexKey, BencodexValue>, key: string): Uint8Array {
+  const value = getBytes(map, key);
+  if (!value) throw new Error(`${key} must be a byte string`);
+  return value;
+}
+
+function playerIdToWire(playerId: string): Uint8Array {
+  if (!/^p_[0-9a-f]{32}$/.test(playerId)) {
+    throw new Error(`invalid internal player id: ${playerId}`);
+  }
+  return Buffer.from(playerId.slice(2), 'hex');
+}
+
+function playerIdFromWire(bytes: Uint8Array): string {
+  if (bytes.byteLength !== PLAYER_ID_BYTES) {
+    throw new Error(`player id must be exactly ${PLAYER_ID_BYTES} bytes`);
+  }
+  return `p_${Buffer.from(bytes).toString('hex')}`;
+}
+
+function sessionIdFromWire(bytes: Uint8Array): string {
+  if (bytes.byteLength !== SESSION_ID_BYTES) {
+    throw new Error(`session id must be exactly ${SESSION_ID_BYTES} bytes`);
+  }
+  return Buffer.from(bytes).toString('hex');
 }
 
 function randomPublicId(): string {
@@ -367,16 +417,85 @@ function aliasForPlayer(playerId: string): string {
   return sessionId ? (knownAliases.get(sessionId) ?? playerId) : playerId;
 }
 
-function rememberGameAlias(sessionId: string, playerId: string, alias: string | undefined): void {
-  if (!alias) return;
-  // Hub set_alias / join / change_alias own the display name. Game-channel
-  // identify/set_busy may carry a generated prefs fallback (Player_*) and must
-  // not clobber a name the user already chose in the hub.
-  if (knownAliases.has(sessionId)) return;
+function normalizeAlias(alias: unknown): string | null {
+  if (typeof alias !== 'string') return null;
+  const trimmed = alias.trim();
+  if (!trimmed || Buffer.byteLength(trimmed, 'utf8') > MAX_ALIAS_BYTES) return null;
+  return trimmed;
+}
+
+function setKnownAlias(sessionId: string, playerId: string | undefined, alias: string): void {
+  const changed = knownAliases.get(sessionId) !== alias;
   knownAliases.set(sessionId, alias);
-  const player = hub.players[playerId];
+  const player = playerId ? hub.players[playerId] : undefined;
   if (player) {
     player.alias = alias;
+  }
+  if (changed && playerId) {
+    sendGameEvent(playerId, 'alias_updated', { alias });
+  }
+}
+
+function removeCorrespondentEdge(a: string, b: string): void {
+  const aPeers = recentCorrespondents.get(a);
+  aPeers?.delete(b);
+  if (aPeers?.size === 0) recentCorrespondents.delete(a);
+  const bPeers = recentCorrespondents.get(b);
+  bPeers?.delete(a);
+  if (bPeers?.size === 0) recentCorrespondents.delete(b);
+}
+
+function trimCorrespondents(sessionId: string): void {
+  const peers = recentCorrespondents.get(sessionId);
+  while (peers && peers.size > MAX_RECENT_CORRESPONDENTS) {
+    let oldestPeer: string | undefined;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    for (const [peerSessionId, lastRelayedAt] of peers) {
+      if (lastRelayedAt < oldestAt) {
+        oldestPeer = peerSessionId;
+        oldestAt = lastRelayedAt;
+      }
+    }
+    if (!oldestPeer) return;
+    removeCorrespondentEdge(sessionId, oldestPeer);
+  }
+}
+
+function rememberCorrespondence(a: string, b: string, now = Date.now()): void {
+  if (a === b) return;
+  const aPeers = recentCorrespondents.get(a) ?? new Map<string, number>();
+  const bPeers = recentCorrespondents.get(b) ?? new Map<string, number>();
+  recentCorrespondents.set(a, aPeers);
+  recentCorrespondents.set(b, bPeers);
+  aPeers.set(b, now);
+  bPeers.set(a, now);
+  trimCorrespondents(a);
+  trimCorrespondents(b);
+}
+
+function pruneRecentCorrespondents(now: number): void {
+  for (const [sessionId, peers] of [...recentCorrespondents]) {
+    for (const [peerSessionId, lastRelayedAt] of [...peers]) {
+      if (now - lastRelayedAt > RECENT_CORRESPONDENT_TTL_MS) {
+        removeCorrespondentEdge(sessionId, peerSessionId);
+      }
+    }
+  }
+}
+
+function notifyRecentCorrespondents(reconnectedSessionId: string, playerId: string): void {
+  const peers = recentCorrespondents.get(reconnectedSessionId);
+  if (!peers) return;
+  const now = Date.now();
+  for (const [peerSessionId, lastRelayedAt] of [...peers]) {
+    if (now - lastRelayedAt > RECENT_CORRESPONDENT_TTL_MS) {
+      removeCorrespondentEdge(reconnectedSessionId, peerSessionId);
+      continue;
+    }
+    const peerWs = gameConnections.get(peerSessionId);
+    if (peerWs?.readyState === WebSocket.OPEN) {
+      sendGameWs(peerWs, 'peer_available', { player_id: playerIdToWire(playerId) });
+    }
   }
 }
 
@@ -487,8 +606,12 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
   }
 
   const playerId = ensureSession(session_id);
-  const trimmedAlias = typeof alias === 'string' ? alias.trim() : '';
-  const resolvedAlias = trimmedAlias || knownAliases.get(session_id);
+  const suppliedAlias = alias === undefined ? undefined : normalizeAlias(alias);
+  if (alias !== undefined && !suppliedAlias) {
+    sendWs(ws, 'error', { error: `Alias must be 1-${MAX_ALIAS_BYTES} UTF-8 bytes.` });
+    return;
+  }
+  const resolvedAlias = suppliedAlias ?? knownAliases.get(session_id);
   if (!resolvedAlias) {
     sendWs(ws, 'error', { error: 'Missing lobby alias.' });
     return;
@@ -513,7 +636,7 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
   } else {
     hub.players[playerId].alias = resolvedAlias;
   }
-  knownAliases.set(session_id, resolvedAlias);
+  setKnownAlias(session_id, playerId, resolvedAlias);
   sendWs(ws, 'joined', { id: playerId, alias: resolvedAlias });
   broadcastHubUpdate();
   replayPendingChallengesToPlayer(playerId);
@@ -752,13 +875,17 @@ function onChallengeAccept(
   // Send advisory_start to the ACCEPTER (target) who becomes the initiator.
   // Map to the accepter's perspective: my_amount = target_amount, their_amount = challenger_amount.
   const advisoryPayload: Record<string, unknown> = {
-    peer_id: challenge.from_id,
+    peer_id: playerIdToWire(challenge.from_id),
     peer_alias: challengerAlias,
-    my_amount: challenge.target_amount,
-    their_amount: challenge.challenger_amount,
+    my_amount: BigInt(challenge.target_amount),
+    their_amount: BigInt(challenge.challenger_amount),
   };
-  if (challenge.channel_timeout) advisoryPayload.channel_timeout = challenge.channel_timeout;
-  if (challenge.unroll_timeout) advisoryPayload.unroll_timeout = challenge.unroll_timeout;
+  if (challenge.channel_timeout) {
+    advisoryPayload.channel_timeout = BigInt(challenge.channel_timeout);
+  }
+  if (challenge.unroll_timeout) {
+    advisoryPayload.unroll_timeout = BigInt(challenge.unroll_timeout);
+  }
   sendGameEvent(challenge.target_id, 'advisory_start', advisoryPayload);
 }
 
@@ -820,13 +947,14 @@ function onChangeAlias(
   const meta = wsHubMeta.get(ws);
   if (!meta) return;
   const playerId = meta.playerId;
-  logHub('alias_change', { ws_id: wsId(ws), player_id: playerId, new_alias: msg.newAlias });
-  knownAliases.set(meta.sessionId, msg.newAlias);
-  const player = hub.players[playerId];
-  if (player) {
-    player.alias = msg.newAlias;
-    broadcastHubUpdate();
+  const alias = normalizeAlias(msg.newAlias);
+  if (!alias) {
+    sendWs(ws, 'error', { error: `Alias must be 1-${MAX_ALIAS_BYTES} UTF-8 bytes.` });
+    return;
   }
+  logHub('alias_change', { ws_id: wsId(ws), player_id: playerId, new_alias: alias });
+  setKnownAlias(meta.sessionId, playerId, alias);
+  broadcastHubUpdate();
 }
 
 function onGetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'get_alias' }>): void {
@@ -844,19 +972,20 @@ function onSetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'set_
   const sessionId = msg.session_id ?? wsHubMeta.get(ws)?.sessionId;
   if (!sessionId) return;
   const playerId = sessionToPlayer.get(sessionId);
+  const alias = normalizeAlias(msg.alias);
+  if (!alias) {
+    sendWs(ws, 'error', { error: `Alias must be 1-${MAX_ALIAS_BYTES} UTF-8 bytes.` });
+    return;
+  }
   logHub('set_alias', {
     ws_id: wsId(ws),
     session_id: sessionId,
     player_id: playerId ?? null,
-    alias: msg.alias,
+    alias,
   });
-  knownAliases.set(sessionId, msg.alias);
-  const player = playerId ? hub.players[playerId] : undefined;
-  if (player) {
-    player.alias = msg.alias;
-    broadcastHubUpdate();
-  }
-  sendWs(ws, 'alias_result', { alias: msg.alias });
+  setKnownAlias(sessionId, playerId, alias);
+  if (playerId && hub.players[playerId]) broadcastHubUpdate();
+  sendWs(ws, 'alias_result', { alias });
 }
 
 // --- Game channel handlers ---
@@ -880,7 +1009,6 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   }
   wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy });
   gameConnections.set(msg.session_id, ws);
-  rememberGameAlias(msg.session_id, playerId, msg.alias);
 
   // Apply busy status if hub player exists
   if (msg.busy !== undefined && hub.players[playerId]) {
@@ -888,7 +1016,12 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
     broadcastHubUpdate();
   }
 
-  sendGameWs(ws, 'registered', { player_id: playerId });
+  sendGameWs(ws, 'registered', { player_id: playerIdToWire(playerId) });
+  const alias = knownAliases.get(msg.session_id);
+  if (alias) {
+    sendGameWs(ws, 'alias_updated', { alias });
+  }
+  notifyRecentCorrespondents(msg.session_id, playerId);
   logHub('identify_registered', {
     ws_id: wsId(ws),
     session_id: msg.session_id,
@@ -896,42 +1029,36 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   });
 }
 
-function onGameBinarySend(ws: WebSocket, targetId: string, payload: Buffer): void {
+function onGameRelay(ws: WebSocket, targetId: string, payload: Uint8Array): void {
   const meta = wsGameMeta.get(ws);
   if (!meta?.playerId) {
-    logHub('game_binary_send_drop_no_player', { ws_id: wsId(ws) });
+    logHub('game_relay_drop_no_player', { ws_id: wsId(ws) });
     return;
   }
 
   const targetSessionId = playerToSession.get(targetId);
+  if (targetSessionId) {
+    rememberCorrespondence(meta.sessionId, targetSessionId);
+  }
   const targetWs = targetSessionId ? gameConnections.get(targetSessionId) : undefined;
 
   if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
-    logHub('game_binary_delivery_failure', {
+    logHub('game_relay_delivery_failure', {
       from: meta.playerId,
       to: targetId,
       reason: targetSessionId ? 'peer_offline' : 'unknown_peer',
     });
-    sendGameWs(ws, 'delivery_failure', { to: targetId });
+    sendGameWs(ws, 'delivery_failure', { to: playerIdToWire(targetId) });
     return;
   }
 
-  // Relay binary: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
-  const fromIdBuf = Buffer.from(meta.playerId, 'utf8');
   const fromAlias = aliasForPlayer(meta.playerId);
-  const fromAliasBuf = Buffer.from(fromAlias, 'utf8');
-  const header = Buffer.alloc(4 + fromIdBuf.byteLength + 4 + fromAliasBuf.byteLength);
-  let offset = 0;
-  header.writeUInt32BE(fromIdBuf.byteLength, offset);
-  offset += 4;
-  fromIdBuf.copy(header, offset);
-  offset += fromIdBuf.byteLength;
-  header.writeUInt32BE(fromAliasBuf.byteLength, offset);
-  offset += 4;
-  fromAliasBuf.copy(header, offset);
-  const frame = Buffer.concat([header, payload]);
-  targetWs.send(frame);
-  logHubVerbose('game_relay_binary', {
+  sendGameWs(targetWs, 'relay', {
+    from: playerIdToWire(meta.playerId),
+    alias: fromAlias,
+    payload,
+  });
+  logHubVerbose('game_relay', {
     from: meta.playerId,
     to: targetId,
     payload_bytes: payload.byteLength,
@@ -956,7 +1083,6 @@ function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_
     return;
   }
   const playerId = meta.playerId;
-  rememberGameAlias(meta.sessionId, playerId, msg.alias);
   meta.busy = msg.busy;
   logHub('set_busy', { player_id: playerId, busy: msg.busy });
   applyPlayerBusy(playerId, msg.busy);
@@ -981,17 +1107,6 @@ function rawDataToBuffer(message: RawData): Buffer {
   return Buffer.from(message);
 }
 
-function optionalText(map: Map<BencodexKey, BencodexValue>, key: string): string | undefined {
-  const value = map.get(key);
-  return typeof value === 'string' ? value : undefined;
-}
-
-function requireText(map: Map<BencodexKey, BencodexValue>, key: string): string {
-  const value = optionalText(map, key);
-  if (value === undefined) throw new Error(`missing text field: ${key}`);
-  return value;
-}
-
 function parseGameInbound(raw: Buffer): GameInboundMessage | null {
   try {
     const decoded = decodeBencodex(raw);
@@ -1002,9 +1117,8 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
       case 'identify':
         return {
           type,
-          session_id: requireText(decoded, 'session_id'),
+          session_id: sessionIdFromWire(requireFixedBytes(decoded, 'session_id', SESSION_ID_BYTES)),
           busy: getBoolean(decoded, 'busy'),
-          alias: optionalText(decoded, 'alias'),
         };
       case 'set_busy': {
         const busy = getBoolean(decoded, 'busy');
@@ -1012,9 +1126,14 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
         return {
           type,
           busy,
-          alias: optionalText(decoded, 'alias'),
         };
       }
+      case 'relay':
+        return {
+          type,
+          to: playerIdFromWire(requireFixedBytes(decoded, 'to', PLAYER_ID_BYTES)),
+          payload: requireByteString(decoded, 'payload'),
+        };
       case 'close':
         return { type };
       case 'keepalive':
@@ -1135,10 +1254,6 @@ hubWsServer.on('connection', (ws) => {
 
 // --- Game WebSocket server ---
 
-// Binary frame format for addressed messaging:
-// Outbound (client -> hub): [4-byte target_id_len BE][target_id UTF-8][payload]
-// Inbound (hub -> client):  [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
-
 gameWsServer.on('connection', (ws) => {
   const currentWsId = wsId(ws);
   wsLastActivity.set(ws, Date.now());
@@ -1149,27 +1264,6 @@ gameWsServer.on('connection', (ws) => {
     wsLastActivity.set(ws, Date.now());
     if (closeIfRateLimited(ws, rawDataByteLength(message), GAME_RATE_LIMIT, 'game')) return;
     const buf = rawDataToBuffer(message);
-
-    if (isBinary && buf[0] !== 0x64) {
-      // Binary frame: addressed message to another peer
-      if (buf.byteLength < 4) {
-        logHub('game_binary_too_short', { ws_id: currentWsId, bytes: buf.byteLength });
-        return;
-      }
-      const targetIdLen = buf.readUInt32BE(0);
-      if (buf.byteLength < 4 + targetIdLen) {
-        logHub('game_binary_header_incomplete', {
-          ws_id: currentWsId,
-          bytes: buf.byteLength,
-          target_id_len: targetIdLen,
-        });
-        return;
-      }
-      const targetId = buf.slice(4, 4 + targetIdLen).toString('utf8');
-      const payload = buf.slice(4 + targetIdLen);
-      onGameBinarySend(ws, targetId, payload);
-      return;
-    }
 
     if (!isBinary) {
       const text = typeof message === 'string' ? message : message.toString();
@@ -1197,6 +1291,9 @@ gameWsServer.on('connection', (ws) => {
         break;
       case 'set_busy':
         onSetBusy(ws, parsed);
+        break;
+      case 'relay':
+        onGameRelay(ws, parsed.to, parsed.payload);
         break;
       case 'keepalive':
         break;
@@ -1282,6 +1379,7 @@ const sweepTimer = setInterval(() => {
   const now = Date.now();
   const hubChanged = sweepHubConnections(now);
   sweepGameConnections(now);
+  pruneRecentCorrespondents(now);
   if (hubChanged) {
     broadcastHubUpdate();
   }
@@ -1293,6 +1391,7 @@ const sweepTimer = setInterval(() => {
     pending_hub_leaves: pendingHubLeaves.size,
     session_to_player: sessionToPlayer.size,
     player_to_session: playerToSession.size,
+    recent_correspondent_sessions: recentCorrespondents.size,
   });
 }, 15_000);
 

@@ -786,6 +786,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) | Off-chain handler API, on-chain validator conventions |
 | [`clsp/handler_api.md`](clsp/handler_api.md) | CLVM calling conventions for handler functions |
 | [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md) | Debugging, testing, `./cb.sh` / `./ct.sh` usage |
+| [`WEBSOCKET_PROTOCOL.md`](WEBSOCKET_PROTOCOL.md) | Player-to-hub game relay carrier, messages, routing, and reconnect semantics |
+| [`PEER_PROTOCOL.md`](PEER_PROTOCOL.md) | Reliable peer framing and authoritative peer message semantics |
 | [`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md) | React frontend, WASM bridge, hub relay, session persistence |
 | [`CLVM_DOS.md`](CLVM_DOS.md) | CLVM denial-of-service vectors: ladder bombs, execution cost, trust categories per call site, solution constraints |
 

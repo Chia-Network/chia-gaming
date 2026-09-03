@@ -67,11 +67,12 @@ configuration.
 
 ### Hub Relay Protocol
 
-The player app's `HubConnection` uses bencodex control dictionaries and
-addressed binary relay frames over `/ws/game`. It supplies the secret hub
-session nonce in `identify`; the hub assigns a separate public player ID for
-peer routing. The hub HTML's internal protocol is not part of this architecture
-contract.
+The player app's `HubConnection` uses one Bencodex dictionary format for every
+binary `/ws/game` message, including addressed relays. It supplies the 16-byte
+secret hub session nonce in `identify`; the hub assigns a separate 16-byte
+public player ID for peer routing. Hexadecimal strings are only the reference
+implementation's local/URL representation. The hub HTML's internal protocol is
+not part of this architecture contract.
 
 An `advisory_start` is not authority to begin a session by itself. Local
 availability is authoritative:
@@ -94,12 +95,11 @@ leaves the backend). The app still connects to the hub normally while a backend
 is not ready; it just advertises busy. Shell mirrors the backend's readiness into
 `blockchainReadyRef` via `onPlayReadinessChange`, and a wallet disconnect clears
 it (the backend can no longer vouch for readiness). The `HubConnection` uses a
-`getPresence` callback — provided by Shell — to derive the authoritative
-busy+alias state at connect and reconnect time for the `identify` message; it
-reads `blockchainReadyRef` synchronously so a reconnect never reports a stale
-not-busy. Presence alias comes from the active session aliases or `peekAlias()`
-(hub-synced prefs). It must never call `getAlias()`, which invents and persists a
-`Player_*` fallback that can overwrite the hub-side hub name. Explicit
+`getPresence` callback — provided by Shell — to derive the authoritative busy
+state at connect and reconnect time for the `identify` message; it reads
+`blockchainReadyRef` synchronously so a reconnect never reports a stale
+not-busy. Aliases originate on the hub's internal interface and reach the
+player app independently through `alias_updated`. Explicit
 `setBusy(true)` is called when the user accepts a session (not when a consent
 dialog is merely displayed). Idle / terminal clear paths must go through
 `presenceBusy(...)` rather than bare `setBusy(false)`, so the backend-readiness
@@ -111,31 +111,28 @@ back to `'waiting'`.
 
 #### Game channel events
 
-The tables below describe logical dictionary fields. On `/ws/game`, hub
-control envelopes (`identify`, `set_busy`, `close`, `registered`,
-`advisory_start`, `delivery_failure`, `hub_attention`, `closed`, and
-`keepalive`) are bencodex
-binary dictionary frames. The addressed peer-relay envelope is still a
-length-prefixed binary frame; peer app messages inside that envelope
-(`session_proposal` and `session_reject`) are bencodex dictionaries,
-while WASM protocol frames remain raw bytes with the existing reliability tags.
+The tables below describe logical dictionary fields. Every `/ws/game` message
+is one Bencodex dictionary selected by `type`. Peer app messages and WASM
+protocol frames remain opaque bytes in the relay dictionary's `payload`.
 
 **Player App → Hub:**
 
-| Event        | Payload                                               | Purpose                                                                                                                                                                                         |
-| ------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identify`   | `{ session_id, busy }`                                | Sent immediately after the game channel opens. Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable.                        |
-| binary frame | `[4-byte target_id_len BE][target_id UTF-8][payload]` | Send a peer payload addressed to a specific peer through the hub relay pipe.                                                                                                                    |
-| `set_busy`   | `{ busy }`                                            | Update hub availability for the connection identified earlier. `busy: true` maps to hub `busy` or `playing` and cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
+| Event      | Payload                          | Purpose                                                                                                                                                                                         |
+| ---------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identify` | `{ session_id: Bytes(16), busy }` | Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable.                                                                        |
+| `relay`    | `{ to: Bytes(16), payload: Bytes }` | Send opaque peer bytes to a specific public player ID.                                                                                                                                          |
+| `set_busy` | `{ busy }`                       | Update hub availability for the identified connection. `busy: true` cancels pending challenges involving the player; `busy: false` maps to `waiting`.                                           |
 
 **Hub → Player App:**
 
 | Event              | Payload                                                                               | Purpose                                                                                                                                                                                                                                                   |
 | ------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `registered`       | `{ player_id }`                                                                       | Confirmation of identity. Sent in response to `identify`.                                                                                                                                                                                                 |
+| `registered`       | `{ player_id: Bytes(16) }`                                                            | Confirmation of routing identity. Sent in response to `identify`.                                                                                                                                                                                         |
 | `advisory_start`   | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The hub suggests starting a session with this peer (triggered by challenge acceptance in the hub). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. The client ignores advisories with invalid amounts or out-of-range timeouts (no consent UI; advisory is hub-originated, so no `session_reject`). |
-| binary frame       | `[4-byte from_id_len BE][from_id UTF-8][4-byte alias_len BE][alias UTF-8][payload]`   | A peer payload from another peer, relayed through the hub pipe with the sender's public id and alias.                                                                                                                                                     |
+| `relay`            | `{ from: Bytes(16), alias, payload: Bytes }`                                          | A peer payload with the hub-bound sender ID and hub-owned display alias.                                                                                                                                                                                  |
 | `delivery_failure` | `{ to }`                                                                              | The target peer is not connected; the message could not be delivered.                                                                                                                                                                                     |
+| `alias_updated`    | `{ alias }`                                                                           | Updates the player's own display alias independently of registration.                                                                                                                                                                                      |
+| `peer_available`   | `{ player_id: Bytes(16) }`                                                            | Advises that a recent correspondent reconnected; matching active peer state replays its own unacknowledged messages.                                                                                                                                      |
 | `hub_attention`    | `{}`                                                                                  | Signals that something happened in the hub that the user should look at.                                                                                                                                                                                  |
 
 **Connection lifecycle:**
@@ -193,12 +190,13 @@ while WASM protocol frames remain raw bytes with the existing reliability tags.
    The reliability layer (msgno/ack/keepalive) is encoded inside the binary
    payload, peer-to-peer — the hub never interprets it.
 
-**What the hub holds per game channel:** just the mapping from session ID to
-player ID and the WebSocket reference. The hub has no authoritative session
-pairing, message log, delivery receipts, or game state. Message routing is
-purely addressed. When a channel drops, messages to that peer are silently
-discarded. When a new game channel claims the slot (step 3), the hub resumes
-routing. Hub channel disconnects do NOT
+**What the hub holds per game channel:** the session-to-player mapping,
+WebSocket reference, and a bounded 30-minute graph of recent correspondents.
+The graph contains no payloads or message numbers and exists only to emit
+`peer_available` when a known route reconnects. The hub has no authoritative
+session pairing, message log, delivery receipts, or game state. Failed sends
+produce route-level `delivery_failure`; peer-owned ACK state decides what to
+replay. Hub channel disconnects do NOT
 immediately remove the player from the hub — the hub service applies a
 short TTL sweep to clean up truly departed players. The hub iframe re-`join`s
 on reconnect, refreshing `lastActive`.
@@ -227,7 +225,12 @@ keepalives at two separate layers:
 
 #### Hub Reconnection
 
-On game-channel reconnect, `HubConnection` re-sends `identify`.
+On game-channel reconnect, `HubConnection` re-sends `identify` and waits for
+`registered` before replaying unacknowledged peer messages. A matching
+`peer_available` triggers the same peer-owned replay when the other endpoint
+returns. A changed own `player_id` is not a reconnect: it invalidates the route,
+cancelling pre-active setup or automatically entering on-chain resolution for
+an established off-chain channel.
 
 `HubConnection` exposes `onHubDisconnected` and `onHubReconnected`
 callbacks for logging/diagnostics around game channel stream health.
@@ -1299,11 +1302,10 @@ object must cross a React boundary, keep BigInt-heavy implementation details out
 of ordinary enumerable props.
 
 **Wire protocol.** Peer-to-peer message sequence numbers (`msgno`) are `bigint`
-internally but are serialized as 32-bit unsigned integers in binary WebSocket
-frames (via `DataView.setUint32`). The `Number()` conversion happens at the
-`HubConnection` send boundary; incoming values are converted to `BigInt()`
-immediately upon receipt. The hub itself never interprets these values — it
-relays binary frames opaquely.
+internally but are serialized as 32-bit unsigned integers in reliable peer
+frames (via `DataView.setUint32`) inside `relay.payload`. The conversion happens
+in the peer transport layer. The hub itself never interprets these payload
+bytes.
 
 ### Hub Iframe (Hub)
 
@@ -1601,7 +1603,7 @@ not to limit concurrency.
 | `front-end/src/hooks/WalletConnectRpc.ts`        | WalletConnect RPC formatting/normalization helpers                                                                      |
 | `front-end/src/services/HubConnection.ts`        | Game relay WebSocket client (`/ws/game`)                                                                                |
 | `front-end/src/types/ChiaGaming.ts`              | TypeScript types for WASM interface and game data                                                                       |
-| `hub/hub-frontend/src/hub.tsx`                   | Hub UI; syncs chosen alias to parent via `hub-alias` postMessage                                                        |
+| `hub/hub-frontend/src/hub.tsx`                   | Hub UI; reports the chosen alias through the hub's internal WebSocket interface                                         |
 | `hub/hub-frontend/src/useHubSocket.ts`           | Hub channel hook (`useHubSocket`): hub WebSocket join/challenge/alias messaging                                         |
 | `hub/hub-service/src/index.ts`                   | Hub server: hub, challenges, addressed message relay, liveness sweep                                                    |
 | `hub/hub-service/src/hubState.ts`                | Hub state: players, challenges                                                                                          |

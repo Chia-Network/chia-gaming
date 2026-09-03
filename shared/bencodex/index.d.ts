@@ -18,3 +18,5 @@ export function decode(bytes: Uint8Array | ArrayBuffer): BencodexValue;
 export function isDictionary(value: BencodexValue): value is Map<BencodexKey, BencodexValue>;
 export function getText(map: Map<BencodexKey, BencodexValue>, key: string): string | undefined;
 export function getBoolean(map: Map<BencodexKey, BencodexValue>, key: string): boolean | undefined;
+export function getBytes(map: Map<BencodexKey, BencodexValue>, key: string): Uint8Array | undefined;
+export function getInteger(map: Map<BencodexKey, BencodexValue>, key: string): bigint | undefined;

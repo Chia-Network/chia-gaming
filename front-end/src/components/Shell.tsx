@@ -104,6 +104,7 @@ import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
   isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt,
+  hubPlayerIdRemapAction,
   isRestoreBlocked,
   restoreGateAfterTerminalFinalization,
   sessionLocksNetwork,
@@ -847,6 +848,7 @@ const Shell = () => {
   }, []);
   const hubWsUpRef = useRef(false);
   const lastHubActivityRef = useRef(0);
+  const pendingHubRemapEscalationRef = useRef(false);
   // --- Boot state machine ---
   //
   // The boot initializer NEVER claims the lease. Claiming the lease writes
@@ -1385,7 +1387,6 @@ const Shell = () => {
       // restore — otherwise a new Accept can race checkpoint cleanup.
       hubConnRef.current?.setBusy(
         freshStartPersistInFlightRef.current || presenceBusy(sessionPhaseRef.current),
-        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
       );
     },
     [bumpStartEpoch, freshStartPersistInFlightRef, presenceBusy, resetPeerRelayState],
@@ -1571,12 +1572,7 @@ const Shell = () => {
         endPersistFlight();
         // Abandon kept the hub busy while this callback drained; release now.
         if (epoch !== sessionStartEpochRef.current) {
-          hubConnRef.current?.setBusy(
-            presenceBusy(sessionPhaseRef.current),
-            sessionConfigRef.current?.myAlias ??
-              savedMyAlias(sessionSaveRef.current) ??
-              peekAlias(),
-          );
+          hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current));
         }
       }
     },
@@ -1621,8 +1617,6 @@ const Shell = () => {
             type: 'session_proposal',
             proposer_amount: advisory.my_amount,
             responder_amount: advisory.their_amount,
-            // Hub-synced alias only — never getAlias(), which invents Player_*.
-            from_alias: peekAlias(),
             channel_timeout: advisory.channel_timeout,
             unroll_timeout: advisory.unroll_timeout,
             game_session_id: gameSessionId,
@@ -1815,7 +1809,6 @@ const Shell = () => {
               blockchainReady: blockchainReadyRef.current,
             },
           ),
-          sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
         );
         const poller = activeBlockchainPoller;
         if (poller && sessionController) {
@@ -1829,10 +1822,7 @@ const Shell = () => {
         walletConnectedRef.current = false;
         // Wallet dropped mid-session (not a user disconnect): stay on the hub
         // but advertise busy so the lobby will not offer new matches.
-        hubConnRef.current?.setBusy(
-          shouldReportHubBusy(sessionPhaseRef.current, false),
-          sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
-        );
+        hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
       }
     });
   }, [
@@ -1907,7 +1897,7 @@ const Shell = () => {
             if (ps) ps.notePeerActivity();
             syncPeerLiveness();
             if (msg.type === 'session_proposal') {
-              const peerAlias = fromAlias || msg.from_alias || fromId;
+              const peerAlias = fromAlias || fromId;
               if (!isAvailableForNewSessionPrompt()) {
                 log(
                   `[Shell] session_reject to=${fromId}: proposal while unavailable phase=${sessionPhaseRef.current}`,
@@ -1997,6 +1987,15 @@ const Shell = () => {
             ps.markDegraded();
             syncPeerLiveness();
           },
+          onAliasUpdated: (alias: string) => {
+            if (peekAlias() !== alias) setAlias(alias);
+          },
+          onPeerAvailable: (playerId: string) => {
+            const peer = peerSessionRef.current;
+            if (peer?.peerId === playerId) {
+              sessionController?.resendUnacked();
+            }
+          },
           onRegistered: (playerId: string) => {
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
@@ -2005,12 +2004,15 @@ const Shell = () => {
             const pairing =
               save?.phase === 'live' || save?.phase === 'pre-handshake' ? save.pairing : undefined;
             const prevMine = save?.identity.myHubPlayerId ?? loadState().identity.myHubPlayerId;
-            // Pre-cradle routing is by peer player_id. If *we* remapped (hub
-            // restart or session_id churn), abort rather than handshaking at a
-            // stale sessionPeerId. First-ever register (no prior id) is fine.
-            // Cold Accept may not have pairing/sessionConfig tokens yet — still
-            // abort an in-flight Accept transition (same as session_reject).
-            if (prevMine && prevMine !== playerId && save?.phase !== 'live') {
+            const channelState = dashboardSessionModelRef.current?.channel.status.state;
+            const remapAction = hubPlayerIdRemapAction(
+              prevMine,
+              playerId,
+              save?.phase,
+              sessionPhaseRef.current,
+              channelState,
+            );
+            if (prevMine && prevMine !== playerId) {
               if (abortAcceptIfActive()) {
                 console.warn(
                   '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
@@ -2024,12 +2026,13 @@ const Shell = () => {
                 return;
               }
               if (
-                (pairing?.token || sessionConfigRef.current?.pairingToken) &&
-                shouldCancelOnPeerUnreachable(
-                  sessionPhaseRef.current,
-                  dashboardSessionModelRef.current?.channel.status.state,
-                  abandonPendingRef.current,
-                )
+                remapAction === 'cancel-attempt' ||
+                ((pairing?.token || sessionConfigRef.current?.pairingToken) &&
+                  shouldCancelOnPeerUnreachable(
+                    sessionPhaseRef.current,
+                    channelState,
+                    abandonPendingRef.current,
+                  ))
               ) {
                 console.warn(
                   '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
@@ -2043,6 +2046,26 @@ const Shell = () => {
                 cancelAttemptedSession();
                 return;
               }
+              if (remapAction === 'go-on-chain') {
+                console.warn(
+                  '[Shell] hub player_id remapped during live session (%s → %s); resolving on-chain',
+                  prevMine,
+                  playerId,
+                );
+                saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
+                if (save) save.identity.myHubPlayerId = playerId;
+                if (!sessionConfigRef.current?.restoring && sessionController?.goOnChain()) {
+                  pendingHubRemapEscalationRef.current = false;
+                  sessionPhaseRef.current = 'on-chain';
+                  setSessionPhase('on-chain');
+                  conn.setBusy(presenceBusy('on-chain'));
+                } else {
+                  pendingHubRemapEscalationRef.current = true;
+                }
+                markPeerDead();
+                return;
+              }
+              if (remapAction === 'ignore') markPeerDead();
             }
             saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
             if (save) save.identity.myHubPlayerId = playerId;
@@ -2066,12 +2089,16 @@ const Shell = () => {
               // otherwise the only place that marks the hub busy. Use restoreBusy
               // (session/wallet/peer-wait); terminal saves stay available unless
               // walletless or the full-node-peer wait still requires busy.
-              conn.setBusy(restoreBusy, pairing.myAlias ?? peekAlias());
+              conn.setBusy(restoreBusy);
             } else if (save?.phase === 'live' || save?.phase === 'pre-handshake') {
               setRestoreHubReconciled(true);
-              conn.setBusy(restoreBusy, pairing?.myAlias ?? peekAlias());
+              conn.setBusy(restoreBusy);
             }
-            if (peerSessionRef.current && sessionController) {
+            if (
+              peerSessionRef.current &&
+              sessionController &&
+              (!prevMine || prevMine === playerId)
+            ) {
               sessionController.resendUnacked();
             }
           },
@@ -2094,8 +2121,6 @@ const Shell = () => {
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
             setHubLiveness('connected');
-            // Retry outbound/acks that failed while the hub WS was down.
-            sessionController?.resendUnacked();
           },
           onHubActivity: () => {
             lastHubActivityRef.current = Date.now();
@@ -2119,9 +2144,6 @@ const Shell = () => {
                   blockchainReady: blockchainReadyRef.current,
                 },
               ),
-              // Prefer session aliases, then the hub-synced prefs alias. Never call
-              // getAlias() here — inventing Player_* would pollute identify/set_busy.
-              alias: sessionConfigRef.current?.myAlias ?? savedMyAlias(save) ?? peekAlias(),
             };
           },
         });
@@ -2155,6 +2177,7 @@ const Shell = () => {
       setActiveTab,
       setHubAlert,
       setRestoreHubReconciled,
+      setSessionPhase,
     ],
   );
 
@@ -2279,7 +2302,6 @@ const Shell = () => {
             blockchainReady: blockchainReadyRef.current,
           },
         ),
-        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
       );
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
@@ -2424,8 +2446,6 @@ const Shell = () => {
     (options?: { retainFinishedGuard?: boolean }) => {
       bumpStartEpoch();
       abandonPendingRef.current = false;
-      const alias =
-        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
       const saved = sessionSaveRef.current;
       const peerId =
         peerSessionRef.current?.peerId ??
@@ -2458,7 +2478,7 @@ const Shell = () => {
       setPendingAdvisoryState(null);
       setPendingProposalState(null);
       cancelTransition();
-      hubConnRef.current?.setBusy(presenceBusy('none'), alias);
+      hubConnRef.current?.setBusy(presenceBusy('none'));
     },
     [
       bumpStartEpoch,
@@ -2553,7 +2573,7 @@ const Shell = () => {
       sessionPhaseRef.current = 'resolved';
       setSessionPhase('resolved');
       setSessionError(hasError);
-      hubConnRef.current?.setBusy(presenceBusy('resolved'), alias);
+      hubConnRef.current?.setBusy(presenceBusy('resolved'));
 
       // Stop the live peer route and cradle; do not send session_reject and do
       // not wipe the dashboard model (that would flash "No Session").
@@ -2631,8 +2651,27 @@ const Shell = () => {
         markSavedSession();
         setSessionError(true);
       }
+      if (
+        status === 'restored' &&
+        pendingHubRemapEscalationRef.current &&
+        sessionController?.goOnChain()
+      ) {
+        pendingHubRemapEscalationRef.current = false;
+        sessionPhaseRef.current = 'on-chain';
+        setSessionPhase('on-chain');
+        hubConnRef.current?.setBusy(presenceBusy('on-chain'));
+        markPeerDead();
+      }
     },
-    [setDashboardSessionModel, setRestoreError, setRestoreStatus, setSessionError],
+    [
+      markPeerDead,
+      presenceBusy,
+      setDashboardSessionModel,
+      setRestoreError,
+      setRestoreStatus,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   const handleSessionModelChange = useCallback(
@@ -2667,8 +2706,6 @@ const Shell = () => {
       blockchainReadyRef.current = false;
       return;
     }
-    const alias = () =>
-      sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
     const applyReady = (ready: boolean) => {
       blockchainReadyRef.current = ready;
       hubConnRef.current?.setBusy(
@@ -2683,7 +2720,6 @@ const Shell = () => {
             blockchainReady: ready,
           },
         ),
-        alias(),
       );
     };
     applyReady(activeBlockchainPoller.rpc.isReadyForPlay());
@@ -2702,25 +2738,6 @@ const Shell = () => {
   );
 
   useThemeSyncToIframe({ iframeId: 'hub-iframe', frameOrigin: hubOrigin, frameUrl: iframeUrl });
-
-  // Hub owns the display name; keep local prefs aligned so presence and
-  // session_proposal do not invent a Player_* fallback that later overwrites
-  // the hub.
-  useEffect(() => {
-    const onMessage = (ev: MessageEvent) => {
-      if (hubOrigin === null || ev.origin !== hubOrigin) return;
-      const frame = document.getElementById('hub-iframe') as HTMLIFrameElement | null;
-      if (frame === null || ev.source !== frame.contentWindow) return;
-      const data = ev.data;
-      if (!data || data.type !== 'hub-alias' || typeof data.alias !== 'string') return;
-      const trimmed = data.alias.trim();
-      if (!trimmed) return;
-      if (peekAlias() === trimmed) return;
-      setAlias(trimmed);
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [hubOrigin]);
 
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
@@ -2756,7 +2773,7 @@ const Shell = () => {
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(true);
-      hubConnRef.current?.setBusy(presenceBusy('resolved'), save.terminal.myAlias ?? peekAlias());
+      hubConnRef.current?.setBusy(presenceBusy('resolved'));
       setResuming(false);
     },
     [
@@ -3228,10 +3245,7 @@ const Shell = () => {
     // matchmaking (no hub teardown). Then advertise busy — without a wallet we
     // cannot fund or resolve a channel, so the lobby must not offer matches.
     cancelPendingMatchmaking({ preserveHub: true });
-    hubConnRef.current?.setBusy(
-      shouldReportHubBusy(sessionPhaseRef.current, false),
-      sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
-    );
+    hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
   }, [stopBalancePolling, cancelPendingMatchmaking]);
 
   const handleDisconnectWallet = useCallback(() => {

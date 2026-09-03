@@ -283,6 +283,8 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 | `HUB_MAX_BYTES_PER_WINDOW`   | no       | Maximum control-channel bytes per connection per window (default `1000000`)                             |
 | `GAME_MAX_MESSAGES_PER_WINDOW` | no     | Maximum game-relay messages per connection per window (default `1000`)                                  |
 | `GAME_MAX_BYTES_PER_WINDOW`  | no       | Maximum game-relay bytes per connection per window (default `11534336`)                                 |
+| `GAME_MAX_RECENT_CORRESPONDENTS` | no  | Maximum recent relay correspondents retained per hub session (default `16`)                              |
+| `GAME_RECENT_CORRESPONDENT_TTL_MS` | no | Sliding lifetime for recent-correspondent reconnect hints (default `1800000`)                            |
 | `HUB_TRUST_PROXY`            | no       | Set to `1` only when direct access is blocked and a trusted proxy sets `X-Forwarded-For` (default `0`) |
 
 #### Simulator

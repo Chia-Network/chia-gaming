@@ -7,7 +7,7 @@ application and a hub. It covers:
 
 - the `/ws/game` connection lifecycle;
 - hub control messages carried on that connection;
-- addressed binary relay frames;
+- addressed relay messages;
 - hub routing and delivery behavior; and
 - connection liveness and resource limits.
 
@@ -33,61 +33,58 @@ Given a selected hub HTTP URL, the player application:
 All application frames on `/ws/game` are WebSocket binary messages. Text
 messages are invalid and are ignored.
 
-## 3. Bencodex control grammar
+## 3. Bencodex byte grammar
 
-Hub control frames use the following Bencodex encodings:
+Every application message is one canonical Bencodex value. The grammar is:
 
 ```text
+Null          n
 False         f
 True          t
+Integer       i<canonical signed decimal>e
+Bytes         <decimal byte length>:<raw bytes>
 UTF-8 text    u<decimal byte length>:<UTF-8 bytes>
+List          l<value>...e
 Dictionary    d<key><value>...e
 ```
 
-Control dictionaries use text keys sorted by unsigned bytewise lexical order of
-their UTF-8 encodings and have a required text field named `type`. Text lengths
-count UTF-8 bytes. A decoder rejects trailing bytes after the top-level
-dictionary.
+Bencodex integers are arbitrary precision. Zero is `i0e`; negative zero,
+leading zeroes, an omitted digit, and a leading plus sign are invalid. Bytes
+and text use canonical unsigned decimal lengths with no leading zero except
+the single digit `0`. Text lengths count UTF-8 bytes.
 
-The complete peer-wire Bencodex grammar is specified in
-[`PEER_PROTOCOL.md`](PEER_PROTOCOL.md#3-bencodex-wire-encoding).
+Dictionary keys may be bytes or text. Byte keys sort before text keys; keys of
+the same kind sort by unsigned bytewise lexical order of their unprefixed
+contents. This protocol uses text keys. A decoder rejects invalid value
+encodings and trailing bytes after the top-level value.
 
-Unknown control message types and malformed control dictionaries are ignored.
-Fields not defined for a known message have no protocol meaning and should be
-ignored.
+## 4. Common message envelope
 
-## 4. Frame-class multiplexing
+Every `/ws/game` WebSocket message is a Bencodex dictionary with a required
+text field named `type`. That field is the sole top-level message
+discriminator. There is no alternate relay framing and no first-byte
+multiplexer.
 
-The connection multiplexes two frame classes:
+Fields not defined for a known type have no protocol meaning and are ignored.
+Unknown types and malformed dictionaries are ignored.
 
-1. **Hub control frames** are Bencodex dictionaries. A dictionary begins with
-   byte `0x64` (`d`).
-2. **Addressed relay frames** begin with a four-byte big-endian identifier
-   length.
+The following named wire types are used below:
 
-The receiver distinguishes them using the first byte:
+- `PlayerID`: exactly 16 opaque bytes;
+- `SessionID`: exactly 16 secret bytes;
+- `Alias`: non-empty UTF-8 text of at most 128 bytes.
 
-```text
-first byte == 0x64   Bencodex hub control frame
-first byte != 0x64   addressed relay frame
-```
-
-Current player IDs are exactly 34 UTF-8 bytes, so an addressed client frame
-begins `00 00 00 22`. Implementations must address assigned player IDs rather
-than arbitrary identifiers. This keeps the first-byte multiplexing rule
-unambiguous.
-
-## 5. Addressed relay byte layouts
+## 5. Addressed relay messages
 
 ### 5.1 Player to hub
 
 ```text
-+----------------------+--------------------+------------------+
-| target_len: u32 BE   | target_id: UTF-8   | payload: bytes   |
-+----------------------+--------------------+------------------+
+{
+  "type":    Text("relay"),
+  "to":      PlayerID,
+  "payload": Bytes
+}
 ```
-
-`target_len` is the number of bytes, not characters, in `target_id`.
 
 The hub derives the sender identity from the identified WebSocket connection;
 there is no sender field in this frame. A frame from an unidentified connection
@@ -96,18 +93,17 @@ is discarded.
 ### 5.2 Hub to player
 
 ```text
-+----------------------+--------------------+
-| sender_len: u32 BE   | sender_id: UTF-8   |
-+----------------------+--------------------+
-| alias_len: u32 BE    | sender_alias: UTF-8|
-+----------------------+--------------------+
-| payload: bytes                            |
-+-------------------------------------------+
+{
+  "type":    Text("relay"),
+  "from":    PlayerID,
+  "alias":   Alias,
+  "payload": Bytes
+}
 ```
 
-Both lengths count UTF-8 bytes. The hub constructs `sender_id` from its
-connection metadata and chooses `sender_alias` as untrusted presentation
-metadata. Its internal alias-selection policy is out of scope.
+The hub constructs `from` from its connection metadata and obtains `alias`
+from its internal hub interface. The player cannot supply either field on the
+game connection.
 
 The player protocol treats both values as untrusted routing and presentation
 metadata. The hub does not enforce pair membership. Once a peer session is
@@ -123,18 +119,16 @@ Sent once whenever a game WebSocket opens.
 ```text
 {
   "type":       Text("identify"),
-  "session_id": Text,
-  "busy":       Bool,       // optional in the decoder; always sent by the current client
-  "alias":      Text        // optional
+  "session_id": SessionID,
+  "busy":       Bool       // optional in the decoder; always sent by the current client
 }
 ```
 
 `session_id` is required. `busy` reports whether the player application is
-currently unavailable for matchmaking. `alias` is presentation metadata.
+currently unavailable for matchmaking.
 
-The hub assigns or recovers the player ID, binds this connection, retains the
-reported presentation metadata, and replies with `registered`. Any use of that
-metadata by the hub HTML is out of scope.
+The hub assigns or recovers the player ID, binds this connection, and replies
+with `registered`. Alias ownership remains on the hub's internal interface.
 
 ### 6.2 `set_busy`
 
@@ -142,9 +136,8 @@ Updates player-reported matchmaking availability.
 
 ```text
 {
-  "type":  Text("set_busy"),
-  "busy":  Bool,
-  "alias": Text        // optional
+  "type": Text("set_busy"),
+  "busy": Bool
 }
 ```
 
@@ -191,7 +184,7 @@ Confirms registration or re-registration.
 ```text
 {
   "type":      Text("registered"),
-  "player_id": Text
+  "player_id": PlayerID
 }
 ```
 
@@ -204,19 +197,17 @@ Suggests that the player application initiate a peer session.
 ```text
 {
   "type":            Text("advisory_start"),
-  "peer_id":         Text,
-  "peer_alias":      Text,
-  "my_amount":       Text,
-  "their_amount":    Text,
-  "channel_timeout": Text,  // optional
-  "unroll_timeout":  Text   // optional
+  "peer_id":         PlayerID,
+  "peer_alias":      Alias,
+  "my_amount":       Integer,
+  "their_amount":    Integer,
+  "channel_timeout": Integer,  // optional
+  "unroll_timeout":  Integer   // optional
 }
 ```
 
-Amounts are positive canonical decimal integer strings. Here canonical means
-ASCII digits only, no sign, and no leading zero. Timeouts, when present, use the
-same canonical form and are block counts in the current accepted range 3
-through 30.
+Amounts are positive integers. Timeouts, when present, are block counts in the
+current accepted range 3 through 30.
 
 This message is advisory and untrusted. It does not start the peer protocol.
 The player validates it, checks local availability, and asks for local consent.
@@ -227,14 +218,14 @@ recipient's perspective.
 
 ### 7.3 `delivery_failure`
 
-Reports that the target of an addressed frame was not deliverable when the hub
+Reports that the target of a relay message was not deliverable when the hub
 attempted delivery. This includes both an unknown player ID and a known player
 without an open game connection.
 
 ```text
 {
   "type": Text("delivery_failure"),
-  "to":   Text
+  "to":   PlayerID
 }
 ```
 
@@ -242,7 +233,41 @@ This report is not an acknowledgement of any other frame and is not
 cryptographically trustworthy. It does not imply that previous frames were or
 were not delivered.
 
-### 7.4 `hub_attention`
+The failure is route-level, not message-level. The hub does not attach a relay
+identifier, retain the payload, or track which numbered peer messages remain
+unacknowledged.
+
+### 7.4 `alias_updated`
+
+Reports the player's current hub-owned display alias:
+
+```text
+{
+  "type":  Text("alias_updated"),
+  "alias": Alias
+}
+```
+
+If the hub knows an alias at registration time, it sends this after
+`registered`. It sends another whenever its internal interface changes the
+alias. Registration and alias update are separate because either can change
+without the other.
+
+### 7.5 `peer_available`
+
+Hints that a recent correspondent has re-established its game connection:
+
+```text
+{
+  "type":      Text("peer_available"),
+  "player_id": PlayerID
+}
+```
+
+This is neither delivery confirmation nor peer authentication. A player uses
+it only to trigger peer-owned retransmission for an already selected peer.
+
+### 7.6 `hub_attention`
 
 Requests that the player draw attention to the hub UI.
 
@@ -254,7 +279,7 @@ Requests that the player draw attention to the hub UI.
 
 It has no peer-protocol semantics.
 
-### 7.5 `closed`
+### 7.7 `closed`
 
 Acknowledges the application-level `close` request.
 
@@ -264,7 +289,7 @@ Acknowledges the application-level `close` request.
 }
 ```
 
-### 7.6 `keepalive`
+### 7.8 `keepalive`
 
 Sent by the hub every 15 seconds:
 
@@ -282,7 +307,9 @@ It proves only that this WebSocket path recently carried a hub frame.
 
 A new player application generates 16 cryptographically random bytes and
 encodes them as 32 lowercase hexadecimal characters. It persists this value and
-reuses it across reconnects and hub selections.
+reuses it across reconnects and hub selections. The URL and reference
+implementation use that hexadecimal representation; `identify.session_id`
+decodes it and sends the original 16 bytes.
 
 The hub HTML is opened at
 `<hub-origin>/?session=<hub-session-id>&uniqueId=<local-player-id>`. The same hub
@@ -328,26 +355,53 @@ The attempt counter resets after a successful open. Every successful open is a
 new registration and therefore sends a new `identify`.
 
 After receiving `registered`, the peer protocol may retransmit unacknowledged
-peer messages. The hub itself stores no messages and performs no replay.
+peer messages. It may also retransmit when a matching `peer_available` arrives.
+The hub itself stores no messages and performs no replay.
+
+The player persists its last registered player ID to detect a routing-epoch
+change. If a later registration returns a different ID:
+
+- a pre-channel attempt is cancelled and rematched;
+- an established off-chain channel or cooperative shutdown enters safe
+  on-chain resolution automatically;
+- a submitted shutdown transaction or already-on-chain/resolved channel needs
+  no additional escalation.
+
+The player must not try to rebind an existing peer session to an
+unauthenticated replacement routing ID.
 
 ## 9. Hub delivery behavior
 
-For each valid addressed frame, the hub:
+For each valid player-to-hub `relay`, the hub:
 
-1. resolves `target_id` to a hub session ID;
+1. resolves `to` to a hub session ID;
 2. finds that session's current `/ws/game` connection;
-3. prepends the sender ID and alias; and
+3. constructs a hub-to-player `relay` with the bound sender ID and current
+   hub-owned alias; and
 4. performs one WebSocket send to the target.
 
-If no open target connection exists, it sends `delivery_failure` to the sender.
+If no open target connection exists, it sends route-level `delivery_failure`
+to the sender.
 
-If an addressed frame is shorter than its declared header lengths, the
-receiver logs and drops it. It does not send `delivery_failure` or close the
-connection solely for that malformed frame.
+Malformed relay dictionaries are logged and dropped. The hub does not send
+`delivery_failure` or close the connection solely for malformed input.
+
+### 9.1 Recent correspondents
+
+For every relay attempt to a known target, the hub refreshes an undirected
+relationship between the two stable hub sessions. It stores no payload or
+message metadata. The current policy retains at most 16 correspondents per
+session for 30 minutes since the latest relay attempt, evicting the oldest
+relationship and pruning expired relationships.
+
+When a session identifies, each currently connected recent correspondent gets
+one `peer_available` naming the reconnected player ID. Unknown targets cannot
+form a relationship. This state is advisory, local to one hub process, and may
+be lost at any time.
 
 The hub provides no:
 
-- storage or offline queue;
+- payload storage or offline queue;
 - pairing enforcement;
 - message acknowledgement;
 - deduplication;
@@ -404,7 +458,8 @@ body limit.
   It is sent as `session_id` and identifies the same player application across
   hub reconnects.
 - **Player ID**: a public routing identifier assigned by the hub. Current hubs
-  encode it as `p_` followed by 32 lowercase hexadecimal characters.
+  send it as 16 opaque bytes. The reference hub represents the same bytes
+  internally as `p_` followed by 32 lowercase hexadecimal characters.
 - **Peer payload**: bytes addressed to another player ID. The hub does not
   interpret these bytes.
 

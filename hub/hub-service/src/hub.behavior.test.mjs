@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,26 @@ import bencodex from 'chia-gaming-bencodex';
 import { WebSocket } from 'ws';
 
 const { decode: decodeBencodex, encode: encodeBencodex, isDictionary } = bencodex;
+
+function sessionKey(label) {
+  return /^[0-9a-f]{32}$/.test(label)
+    ? label
+    : crypto.createHash('sha256').update(label).digest('hex').slice(0, 32);
+}
+
+function sessionBytes(label) {
+  return Buffer.from(sessionKey(label), 'hex');
+}
+
+function playerBytes(playerId) {
+  assert.match(playerId, /^p_[0-9a-f]{32}$/);
+  return Buffer.from(playerId.slice(2), 'hex');
+}
+
+function playerId(bytes) {
+  assert.equal(bytes.byteLength, 16);
+  return `p_${Buffer.from(bytes).toString('hex')}`;
+}
 
 async function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -170,39 +191,36 @@ async function nextClose(ws) {
 
 async function joinHub(origin, sessionId, alias, extra = {}) {
   const ws = await openWs(origin, '/ws/hub');
-  sendJson(ws, { type: 'join', session_id: sessionId, alias, ...extra });
+  sendJson(ws, { type: 'join', session_id: sessionKey(sessionId), alias, ...extra });
   const joined = await nextJson(ws, (msg) => msg.type === 'joined');
   return { ws, id: joined.id };
 }
 
 async function identifyGame(origin, sessionId) {
   const game = await openWs(origin, '/ws/game');
-  sendGame(game, { type: 'identify', session_id: sessionId, busy: false });
+  sendGame(game, { type: 'identify', session_id: sessionBytes(sessionId), busy: false });
   await nextGame(game, (msg) => msg.type === 'registered');
   return game;
 }
 
 async function identifyGameRegistered(origin, sessionId) {
   const game = await openWs(origin, '/ws/game');
-  sendGame(game, { type: 'identify', session_id: sessionId, busy: false });
+  sendGame(game, { type: 'identify', session_id: sessionBytes(sessionId), busy: false });
   const registered = await nextGame(game, (msg) => msg.type === 'registered');
-  return { game, playerId: registered.player_id };
+  return { game, playerId: playerId(registered.player_id) };
 }
 
-test('game-channel identify does not clobber a hub-chosen alias', async () => {
+test('hub-owned aliases update the game channel and cannot be set there', async () => {
   const hub = await startHub();
   try {
     const sessionId = 'secret-alias-clobber';
+    const game = await identifyGame(hub.origin, sessionId);
+    const aliasUpdated = nextGame(game, (msg) => msg.type === 'alias_updated');
     const { ws } = await joinHub(hub.origin, sessionId, 'Alice');
-
-    const game = await openWs(hub.origin, '/ws/game');
-    sendGame(game, {
-      type: 'identify',
-      session_id: sessionId,
-      busy: true,
-      alias: 'Player_deadbeef',
-    });
-    await nextGame(game, (msg) => msg.type === 'registered');
+    assert.equal((await aliasUpdated).alias, 'Alice');
+    const aliasChanged = nextGame(game, (msg) => msg.type === 'alias_updated');
+    sendJson(ws, { type: 'change_alias', newAlias: 'Alice Two' });
+    assert.equal((await aliasChanged).alias, 'Alice Two');
 
     sendGame(game, {
       type: 'set_busy',
@@ -211,9 +229,9 @@ test('game-channel identify does not clobber a hub-chosen alias', async () => {
     });
 
     const aliasProbe = await openWs(hub.origin, '/ws/hub');
-    sendJson(aliasProbe, { type: 'get_alias', session_id: sessionId });
+    sendJson(aliasProbe, { type: 'get_alias', session_id: sessionKey(sessionId) });
     const aliasResult = await nextJson(aliasProbe, (msg) => msg.type === 'alias_result');
-    assert.equal(aliasResult.alias, 'Alice');
+    assert.equal(aliasResult.alias, 'Alice Two');
 
     await closeWs(ws);
     await closeWs(game);
@@ -234,6 +252,33 @@ test('post-identification game controls use the bound socket session', async () 
 
     assert.equal((await closed).type, 'closed');
     await closeWs(game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('game messages reject text and wrong-width binary identifiers', async () => {
+  const hub = await startHub();
+  try {
+    const game = await openWs(hub.origin, '/ws/game');
+    const invalidRegistration = nextGame(game, (msg) => msg.type === 'registered', 100);
+    sendGame(game, { type: 'identify', session_id: 'not-bytes', busy: false });
+    await assert.rejects(invalidRegistration, /timed out/);
+
+    sendGame(game, {
+      type: 'identify',
+      session_id: sessionBytes('valid-after-invalid'),
+      busy: false,
+    });
+    await nextGame(game, (msg) => msg.type === 'registered');
+
+    const receiver = await identifyGameRegistered(hub.origin, 'malformed-relay-receiver');
+    const invalidRelay = nextGame(receiver.game, (msg) => msg.type === 'relay', 100);
+    sendGame(game, { type: 'relay', to: Buffer.alloc(15), payload: Buffer.from('no') });
+    await assert.rejects(invalidRelay, /timed out/);
+
+    await closeWs(game);
+    await closeWs(receiver.game);
   } finally {
     await hub.stop();
   }
@@ -324,9 +369,9 @@ test('challenge authority and availability come from bound sessions', async () =
     const bobAdvisory = nextGame(bobGame, (msg) => msg.type === 'advisory_start');
     sendJson(bob.ws, { type: 'challenge_accept', challenge_id: challenge.challenge_id });
     const advisory = await bobAdvisory;
-    assert.equal(advisory.peer_id, alice.id);
-    assert.equal(advisory.my_amount, '100');
-    assert.equal(advisory.their_amount, '100');
+    assert.deepEqual(advisory.peer_id, playerBytes(alice.id));
+    assert.equal(advisory.my_amount, 100n);
+    assert.equal(advisory.their_amount, 100n);
 
     // Bob's client sets busy (simulating what the frontend does on advisory_start)
     sendGame(bobGame, { type: 'set_busy', busy: true });
@@ -381,9 +426,9 @@ test('asymmetric buy-in amounts are perspective-corrected in advisory_start', as
     const bobAdvisory = nextGame(bobGame, (msg) => msg.type === 'advisory_start');
     sendJson(bob.ws, { type: 'challenge_accept', challenge_id: challenge.challenge_id });
     const advisory = await bobAdvisory;
-    assert.equal(advisory.peer_id, alice.id);
-    assert.equal(advisory.my_amount, '50');
-    assert.equal(advisory.their_amount, '200');
+    assert.deepEqual(advisory.peer_id, playerBytes(alice.id));
+    assert.equal(advisory.my_amount, 50n);
+    assert.equal(advisory.their_amount, 200n);
 
     await closeWs(alice.ws);
     await closeWs(bob.ws);
@@ -495,13 +540,12 @@ test('identify ignores client-supplied player_id and assigns from the secret', a
     const game = await openWs(hub.origin, '/ws/game');
     sendGame(game, {
       type: 'identify',
-      session_id: sessionId,
+      session_id: sessionBytes(sessionId),
       busy: false,
       player_id: 'p_attacker_chosen_id_abcdef',
     });
     const registered = await nextGame(game, (msg) => msg.type === 'registered');
-    assert.notEqual(registered.player_id, 'p_attacker_chosen_id_abcdef');
-    assert.match(registered.player_id, /^p_/);
+    assert.equal(registered.player_id.byteLength, 16);
     await closeWs(game);
   } finally {
     await hub.stop();
@@ -602,19 +646,117 @@ test('hub message flood closes the connection with a distinct rate-limit code', 
   }
 });
 
-test('game binary relay flood is limited by its cumulative byte budget', async () => {
+test('game relay dictionaries are limited by their encoded byte budget', async () => {
   const hub = await startHub({ GAME_MAX_BYTES_PER_WINDOW: '100' });
   try {
     const ws = await openWs(hub.origin, '/ws/game');
     const closed = nextClose(ws);
-    const frame = Buffer.alloc(80);
-    frame.writeUInt32BE(1, 0);
-    frame.write('x', 4);
+    const frame = encodeBencodex({
+      type: 'relay',
+      to: Buffer.alloc(16),
+      payload: Buffer.alloc(40),
+    });
 
     ws.send(frame);
     ws.send(frame);
 
     assert.deepEqual(await closed, { code: 4008, reason: 'rate_limited' });
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('delivery failure stays route-level and reconnect notifies recent correspondents', async () => {
+  const hub = await startHub();
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'recent-sender');
+    const receiver = await identifyGameRegistered(hub.origin, 'recent-receiver');
+    await closeWs(receiver.game);
+
+    const failed = nextGame(sender.game, (msg) => msg.type === 'delivery_failure');
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(receiver.playerId),
+      payload: Buffer.from('retry me'),
+    });
+    const failure = await failed;
+    assert.deepEqual(failure.to, playerBytes(receiver.playerId));
+    assert.equal('relay_id' in failure, false);
+
+    const available = nextGame(sender.game, (msg) => msg.type === 'peer_available');
+    const reconnected = await identifyGameRegistered(hub.origin, 'recent-receiver');
+    assert.equal(reconnected.playerId, receiver.playerId);
+    assert.deepEqual((await available).player_id, playerBytes(receiver.playerId));
+
+    await closeWs(sender.game);
+    await closeWs(reconnected.game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('recent correspondent tracking evicts the oldest route at its configured cap', async () => {
+  const hub = await startHub({ GAME_MAX_RECENT_CORRESPONDENTS: '1' });
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'cap-sender');
+    const first = await identifyGameRegistered(hub.origin, 'cap-first');
+    const second = await identifyGameRegistered(hub.origin, 'cap-second');
+
+    const firstRelay = nextGame(first.game, (msg) => msg.type === 'relay');
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(first.playerId),
+      payload: Buffer.from('first'),
+    });
+    await firstRelay;
+
+    const secondRelay = nextGame(second.game, (msg) => msg.type === 'relay');
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(second.playerId),
+      payload: Buffer.from('second'),
+    });
+    await secondRelay;
+
+    await closeWs(first.game);
+    const evictedHint = nextGame(sender.game, (msg) => msg.type === 'peer_available', 100);
+    const firstAgain = await identifyGameRegistered(hub.origin, 'cap-first');
+    await assert.rejects(evictedHint, /timed out/);
+
+    await closeWs(second.game);
+    const retainedHint = nextGame(sender.game, (msg) => msg.type === 'peer_available');
+    const secondAgain = await identifyGameRegistered(hub.origin, 'cap-second');
+    assert.deepEqual((await retainedHint).player_id, playerBytes(second.playerId));
+
+    await closeWs(sender.game);
+    await closeWs(firstAgain.game);
+    await closeWs(secondAgain.game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('recent correspondent hints expire after the configured TTL', async () => {
+  const hub = await startHub({ GAME_RECENT_CORRESPONDENT_TTL_MS: '20' });
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'ttl-sender');
+    const receiver = await identifyGameRegistered(hub.origin, 'ttl-receiver');
+    const relayed = nextGame(receiver.game, (msg) => msg.type === 'relay');
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(receiver.playerId),
+      payload: Buffer.from('expires'),
+    });
+    await relayed;
+    await closeWs(receiver.game);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const expiredHint = nextGame(sender.game, (msg) => msg.type === 'peer_available', 100);
+    const reconnected = await identifyGameRegistered(hub.origin, 'ttl-receiver');
+    await assert.rejects(expiredHint, /timed out/);
+
+    await closeWs(sender.game);
+    await closeWs(reconnected.game);
   } finally {
     await hub.stop();
   }
@@ -626,10 +768,6 @@ test('default game byte budget relays a maximum-size protocol message', async ()
     const sender = await identifyGameRegistered(hub.origin, 'secret-max-message-sender');
     const receiver = await identifyGameRegistered(hub.origin, 'secret-max-message-receiver');
     const payload = Buffer.alloc(10 * 1024 * 1024);
-    const targetId = Buffer.from(receiver.playerId, 'utf8');
-    const frame = Buffer.alloc(4 + targetId.byteLength + payload.byteLength);
-    frame.writeUInt32BE(targetId.byteLength, 0);
-    targetId.copy(frame, 4);
 
     const relayed = new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -641,14 +779,16 @@ test('default game byte budget relays a maximum-size protocol message', async ()
         resolve(Buffer.from(message));
       });
     });
-    sender.game.send(frame);
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(receiver.playerId),
+      payload,
+    });
 
-    const received = await relayed;
-    const fromIdLength = received.readUInt32BE(0);
-    const aliasLengthOffset = 4 + fromIdLength;
-    const aliasLength = received.readUInt32BE(aliasLengthOffset);
-    const payloadOffset = aliasLengthOffset + 4 + aliasLength;
-    assert.equal(received.byteLength - payloadOffset, payload.byteLength);
+    const received = plainBencodex(decodeBencodex(await relayed));
+    assert.equal(received.type, 'relay');
+    assert.deepEqual(received.from, playerBytes(sender.playerId));
+    assert.equal(received.payload.byteLength, payload.byteLength);
 
     await closeWs(sender.game);
     await closeWs(receiver.game);

@@ -1,4 +1,5 @@
 import {
+  hubPlayerIdRemapAction,
   isAvailableForNewSessionPrompt,
   isRestoreBlocked,
   restoreGateAfterTerminalFinalization,
@@ -262,6 +263,21 @@ describe('restore lifecycle gates', () => {
     expect(shouldAwaitShutdownOnPeerUnreachable('ShutdownTransactionPending')).toBe(true);
     expect(shouldAwaitShutdownOnPeerUnreachable('ShuttingDown')).toBe(false);
     expect(shouldAwaitShutdownOnPeerUnreachable('Active')).toBe(false);
+  });
+
+  it('treats a changed hub player id as a new routing epoch', () => {
+    const oldId = 'p_00000000000000000000000000000000';
+    const newId = 'p_11111111111111111111111111111111';
+    expect(hubPlayerIdRemapAction(undefined, newId, 'live', 'off-chain', 'Active')).toBe('none');
+    expect(hubPlayerIdRemapAction(oldId, oldId, 'live', 'off-chain', 'Active')).toBe('none');
+    expect(hubPlayerIdRemapAction(oldId, newId, 'pre-handshake', 'off-chain', 'Handshaking')).toBe(
+      'cancel-attempt',
+    );
+    expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'off-chain', 'Active')).toBe('go-on-chain');
+    expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'on-chain', 'GoingOnChain')).toBe('ignore');
+    expect(
+      hubPlayerIdRemapAction(oldId, newId, 'live', 'off-chain', 'ShutdownTransactionPending'),
+    ).toBe('ignore');
   });
 
   it('mounts a saved session without requiring a live blockchain connection', () => {

@@ -217,7 +217,6 @@ Requests local consent to start a session:
   "type":            Text("session_proposal"),
   "proposer_amount": Text,
   "responder_amount":Text,
-  "from_alias":      Text,  // optional
   "channel_timeout": Text,  // optional
   "unroll_timeout":  Text,  // optional
   "game_session_id": Text,  // optional in the current decoder
@@ -228,6 +227,9 @@ Requests local consent to start a session:
 Amounts are positive canonical decimal integer strings. Optional timeouts are
 canonical decimal block counts in the range 3 through 30. `network` must be
 `mainnet` or `testnet` and must match the receiver's selected network.
+
+The sender's display alias is not self-reported in this message. The outer
+hub-to-player `relay.alias` field supplies untrusted presentation metadata.
 
 The current sender always supplies a randomly generated `game_session_id`.
 The current receiver accepts its absence and generates a local value. This
@@ -350,7 +352,7 @@ changing the wire format. The current browser defaults are:
   out-of-order queues;
 - at most 64 MiB retained across those queues; and
 - at most 10 MiB in one Bencodex `PeerMessage` body (the five-byte reliable
-  header and hub relay headers are outside this count).
+  header and outer hub relay dictionary are outside this count).
 
 The handshake activation-lag queue applies the same current body, count, and
 byte defaults. Exceeding local receive policy is handled as invalid peer input.
