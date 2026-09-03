@@ -1,4 +1,5 @@
 import {
+  deferredHubRemapEscalationAction,
   hubPlayerIdRemapAction,
   isAvailableForNewSessionPrompt,
   isRestoreBlocked,
@@ -274,10 +275,28 @@ describe('restore lifecycle gates', () => {
       'cancel-attempt',
     );
     expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'off-chain', 'Active')).toBe('go-on-chain');
+    expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'none', null, true)).toBe('go-on-chain');
+    expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'off-chain', 'Handshaking', true)).toBe(
+      'go-on-chain',
+    );
     expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'on-chain', 'GoingOnChain')).toBe('ignore');
     expect(
       hubPlayerIdRemapAction(oldId, newId, 'live', 'off-chain', 'ShutdownTransactionPending'),
     ).toBe('ignore');
+    expect(hubPlayerIdRemapAction(oldId, newId, undefined, 'off-chain', 'Handshaking', true)).toBe(
+      'cancel-attempt',
+    );
+    expect(
+      hubPlayerIdRemapAction(oldId, newId, undefined, 'off-chain', 'Handshaking', true, true),
+    ).toBe('none');
+  });
+
+  it('scopes deferred hub remap escalation to one restore attempt', () => {
+    expect(deferredHubRemapEscalationAction(null, 'pair-1', 'restored')).toBe('wait');
+    expect(deferredHubRemapEscalationAction('pair-1', 'pair-1', 'restoring')).toBe('wait');
+    expect(deferredHubRemapEscalationAction('pair-1', 'pair-1', 'restored')).toBe('escalate');
+    expect(deferredHubRemapEscalationAction('pair-1', 'pair-2', 'restored')).toBe('discard');
+    expect(deferredHubRemapEscalationAction('pair-1', 'pair-1', 'failed')).toBe('discard');
   });
 
   it('mounts a saved session without requiring a live blockchain connection', () => {

@@ -103,6 +103,7 @@ import {
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
+  deferredHubRemapEscalationAction,
   isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt,
   hubPlayerIdRemapAction,
   isRestoreBlocked,
@@ -848,7 +849,7 @@ const Shell = () => {
   }, []);
   const hubWsUpRef = useRef(false);
   const lastHubActivityRef = useRef(0);
-  const pendingHubRemapEscalationRef = useRef(false);
+  const pendingHubRemapEscalationRef = useRef<string | null>(null);
   // --- Boot state machine ---
   //
   // The boot initializer NEVER claims the lease. Claiming the lease writes
@@ -1314,6 +1315,7 @@ const Shell = () => {
   const cancelAttemptedSession = useCallback(
     (options?: { error?: boolean }) => {
       bumpStartEpoch();
+      pendingHubRemapEscalationRef.current = null;
       abandonPendingRef.current = false;
       pendingAdvisoryRef.current = null;
       pendingProposalRef.current = null;
@@ -2005,12 +2007,15 @@ const Shell = () => {
               save?.phase === 'live' || save?.phase === 'pre-handshake' ? save.pairing : undefined;
             const prevMine = save?.identity.myHubPlayerId ?? loadState().identity.myHubPlayerId;
             const channelState = dashboardSessionModelRef.current?.channel.status.state;
+            const pairingToken = pairing?.token ?? sessionConfigRef.current?.pairingToken;
             const remapAction = hubPlayerIdRemapAction(
               prevMine,
               playerId,
               save?.phase,
               sessionPhaseRef.current,
               channelState,
+              !!pairingToken,
+              abandonPendingRef.current,
             );
             if (prevMine && prevMine !== playerId) {
               if (abortAcceptIfActive()) {
@@ -2025,15 +2030,7 @@ const Shell = () => {
                 saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
                 return;
               }
-              if (
-                remapAction === 'cancel-attempt' ||
-                ((pairing?.token || sessionConfigRef.current?.pairingToken) &&
-                  shouldCancelOnPeerUnreachable(
-                    sessionPhaseRef.current,
-                    channelState,
-                    abandonPendingRef.current,
-                  ))
-              ) {
+              if (remapAction === 'cancel-attempt') {
                 console.warn(
                   '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
                   prevMine,
@@ -2054,13 +2051,19 @@ const Shell = () => {
                 );
                 saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
                 if (save) save.identity.myHubPlayerId = playerId;
-                if (!sessionConfigRef.current?.restoring && sessionController?.goOnChain()) {
-                  pendingHubRemapEscalationRef.current = false;
+                if (sessionConfigRef.current?.restoring) {
+                  if (!pairingToken) {
+                    throw new Error('Live hub player_id remap is missing its pairing token');
+                  }
+                  pendingHubRemapEscalationRef.current = pairingToken;
+                } else if (sessionController?.goOnChain()) {
+                  pendingHubRemapEscalationRef.current = null;
                   sessionPhaseRef.current = 'on-chain';
                   setSessionPhase('on-chain');
                   conn.setBusy(presenceBusy('on-chain'));
                 } else {
-                  pendingHubRemapEscalationRef.current = true;
+                  pendingHubRemapEscalationRef.current = null;
+                  setSessionError(true);
                 }
                 markPeerDead();
                 return;
@@ -2177,6 +2180,7 @@ const Shell = () => {
       setActiveTab,
       setHubAlert,
       setRestoreHubReconciled,
+      setSessionError,
       setSessionPhase,
     ],
   );
@@ -2651,12 +2655,26 @@ const Shell = () => {
         markSavedSession();
         setSessionError(true);
       }
-      if (
-        status === 'restored' &&
-        pendingHubRemapEscalationRef.current &&
-        sessionController?.goOnChain()
-      ) {
-        pendingHubRemapEscalationRef.current = false;
+      const currentSave = sessionSaveRef.current;
+      const currentPairingToken =
+        sessionConfigRef.current?.pairingToken ??
+        (currentSave?.phase === 'live' || currentSave?.phase === 'pre-handshake'
+          ? currentSave.pairing.token
+          : undefined);
+      const pendingAction = deferredHubRemapEscalationAction(
+        pendingHubRemapEscalationRef.current,
+        currentPairingToken,
+        status,
+      );
+      if (pendingAction === 'discard') {
+        pendingHubRemapEscalationRef.current = null;
+      } else if (pendingAction === 'escalate') {
+        pendingHubRemapEscalationRef.current = null;
+        if (!sessionController?.goOnChain()) {
+          setSessionError(true);
+          markPeerDead();
+          return;
+        }
         sessionPhaseRef.current = 'on-chain';
         setSessionPhase('on-chain');
         hubConnRef.current?.setBusy(presenceBusy('on-chain'));
