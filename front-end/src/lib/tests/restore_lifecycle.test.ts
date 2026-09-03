@@ -9,6 +9,7 @@ import {
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
+  shouldDeferHubRemapEscalation,
   shouldMountGameSession,
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
@@ -292,6 +293,12 @@ describe('restore lifecycle gates', () => {
   });
 
   it('scopes deferred hub remap escalation to one restore attempt', () => {
+    expect(shouldDeferHubRemapEscalation(true, undefined)).toBe(true);
+    expect(shouldDeferHubRemapEscalation(true, 'idle')).toBe(true);
+    expect(shouldDeferHubRemapEscalation(true, 'restoring')).toBe(true);
+    expect(shouldDeferHubRemapEscalation(true, 'restored')).toBe(false);
+    expect(shouldDeferHubRemapEscalation(true, 'failed')).toBe(false);
+    expect(shouldDeferHubRemapEscalation(false, 'idle')).toBe(false);
     expect(deferredHubRemapEscalationAction(null, 'pair-1', 'restored')).toBe('wait');
     expect(deferredHubRemapEscalationAction('pair-1', 'pair-1', 'restoring')).toBe('wait');
     expect(deferredHubRemapEscalationAction('pair-1', 'pair-1', 'restored')).toBe('escalate');

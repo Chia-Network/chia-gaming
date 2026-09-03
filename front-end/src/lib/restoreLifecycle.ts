@@ -246,6 +246,13 @@ export function hubPlayerIdRemapAction(
 
 export type DeferredHubRemapEscalationAction = 'wait' | 'discard' | 'escalate';
 
+export function shouldDeferHubRemapEscalation(
+  restoring: boolean,
+  restoreStatus: RestoreStatus | undefined,
+): boolean {
+  return restoring && restoreStatus !== 'restored' && restoreStatus !== 'failed';
+}
+
 export function deferredHubRemapEscalationAction(
   pendingPairingToken: string | null,
   currentPairingToken: string | undefined,

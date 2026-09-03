@@ -114,6 +114,7 @@ import {
   shouldMountGameSession,
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
+  shouldDeferHubRemapEscalation,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
   shouldWarnOnSessionUnload,
@@ -849,7 +850,10 @@ const Shell = () => {
   }, []);
   const hubWsUpRef = useRef(false);
   const lastHubActivityRef = useRef(0);
-  const pendingHubRemapEscalationRef = useRef<string | null>(null);
+  const pendingHubRemapEscalationRef = useRef<{
+    pairingToken: string;
+    registeredPlayerId: string;
+  } | null>(null);
   // --- Boot state machine ---
   //
   // The boot initializer NEVER claims the lease. Claiming the lease writes
@@ -2049,15 +2053,27 @@ const Shell = () => {
                   prevMine,
                   playerId,
                 );
-                saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
-                if (save) save.identity.myHubPlayerId = playerId;
-                if (sessionConfigRef.current?.restoring) {
+                const controllerRestoreStatus = sessionController?.getRestoreStatus();
+                if (
+                  shouldDeferHubRemapEscalation(
+                    !!sessionConfigRef.current?.restoring,
+                    controllerRestoreStatus,
+                  )
+                ) {
                   if (!pairingToken) {
                     throw new Error('Live hub player_id remap is missing its pairing token');
                   }
-                  pendingHubRemapEscalationRef.current = pairingToken;
+                  pendingHubRemapEscalationRef.current = {
+                    pairingToken,
+                    registeredPlayerId: playerId,
+                  };
+                } else if (controllerRestoreStatus === 'failed') {
+                  pendingHubRemapEscalationRef.current = null;
+                  setSessionError(true);
                 } else if (sessionController?.goOnChain()) {
                   pendingHubRemapEscalationRef.current = null;
+                  saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
+                  if (save) save.identity.myHubPlayerId = playerId;
                   sessionPhaseRef.current = 'on-chain';
                   setSessionPhase('on-chain');
                   conn.setBusy(presenceBusy('on-chain'));
@@ -2662,19 +2678,28 @@ const Shell = () => {
           ? currentSave.pairing.token
           : undefined);
       const pendingAction = deferredHubRemapEscalationAction(
-        pendingHubRemapEscalationRef.current,
+        pendingHubRemapEscalationRef.current?.pairingToken ?? null,
         currentPairingToken,
         status,
       );
       if (pendingAction === 'discard') {
         pendingHubRemapEscalationRef.current = null;
       } else if (pendingAction === 'escalate') {
+        const pending = pendingHubRemapEscalationRef.current;
         pendingHubRemapEscalationRef.current = null;
+        if (!pending) {
+          throw new Error('Deferred hub remap escalation is missing its pending identity');
+        }
         if (!sessionController?.goOnChain()) {
           setSessionError(true);
           markPeerDead();
           return;
         }
+        saveSession({
+          scope: 'common',
+          identity: { myHubPlayerId: pending.registeredPlayerId },
+        });
+        if (currentSave) currentSave.identity.myHubPlayerId = pending.registeredPlayerId;
         sessionPhaseRef.current = 'on-chain';
         setSessionPhase('on-chain');
         hubConnRef.current?.setBusy(presenceBusy('on-chain'));
