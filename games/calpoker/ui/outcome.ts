@@ -135,9 +135,9 @@ export class CalpokerOutcome {
     myDiscards: bigint,
     aliceCards: bigint[],
     bobCards: bigint[],
-    readableBytes: Uint8Array | number[],
+    readable: Program,
   ) {
-    const resultList = Program.deserialize(Uint8Array.from(readableBytes)).toList();
+    const resultList = readable.toList();
     this.alice_cards = aliceCards;
     this.bob_cards = bobCards;
 

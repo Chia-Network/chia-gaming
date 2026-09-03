@@ -1,5 +1,6 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { Program } from 'clvm-lib';
 
 import {
   type GameIntent,
@@ -147,7 +148,7 @@ describe('Space Poker terminal UX', () => {
     hand.receive({
       type: 'move-readable',
       memberIndex: 0,
-      readable: new Uint8Array([0x80]),
+      readable: Program.fromList([]),
       moverShare: 0n,
     });
     expect(hand.getState().gameState).toEqual({

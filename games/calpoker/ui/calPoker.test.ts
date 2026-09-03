@@ -442,7 +442,7 @@ describe('Calpoker terminal hand projection', () => {
       Program.fromList([1n, 1n, 1n, 1n, 1n, 14n, 13n, 12n, 11n, 10n].map(Program.fromBigInt)),
       Program.fromList([1n, 1n, 1n, 1n, 1n, 10n, 9n, 8n, 7n, 6n].map(Program.fromBigInt)),
       Program.fromBigInt(-1n),
-    ]).serialize();
+    ]);
     const outcome = new CalpokerOutcome(true, 15n, opponentHand, playerHand, readable);
     const outcomeView: CalpokerOutcomeView = {
       my_win_outcome: outcome.my_win_outcome,
@@ -582,7 +582,7 @@ describe('Calpoker terminal hand projection', () => {
       Program.fromList([1n, 1n, 1n, 1n, 1n, 14n, 13n, 12n, 11n, 10n].map(Program.fromBigInt)),
       Program.fromList([1n, 1n, 1n, 1n, 1n, 10n, 9n, 8n, 7n, 6n].map(Program.fromBigInt)),
       Program.fromBigInt(-1n),
-    ]).serialize();
+    ]);
     const dispatch = jest.fn();
     const makeMove = jest.fn();
     const controller = {

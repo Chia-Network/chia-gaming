@@ -1488,7 +1488,11 @@ The runtime applies exactly three package-facing updates after construction:
 - `message-readable`
 - `hand-ended`
 
-`hand-ended` contains only the member ID and normalized settlement outcome.
+Raw move and message readables remain serialized bytes through the WASM
+notification and session-event layers. When constructing a package update, the
+host maps the private protocol game ID to its stable factory-ordered
+`memberIndex` and deserializes the readable once into a CLVM `Program`.
+`hand-ended` contains only that member index and normalized settlement outcome.
 Reward amounts, coin IDs, labels, and abnormal-termination explanations remain
 in the host's keyed instances and status surfaces. The package stores the
 outcome and terminal/member activity it needs in its complete hand state.

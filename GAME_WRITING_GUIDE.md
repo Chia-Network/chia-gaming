@@ -290,7 +290,9 @@ A their-turn handler returns:
 (readable_move evidence_candidates optional_next_my_turn_handler optional_message)
 ```
 
-`readable_move` becomes the frontend's serialized `move-readable`.
+`readable_move` is serialized across the Rust/WASM boundary. The JavaScript
+host deserializes it once and delivers it to the game package as the
+`Program` in `move-readable`.
 `evidence_candidates` is a list of possible fraud proofs. A missing or nil next
 handler ends the game. An optional message is sent separately and parsed by the
 message parser `(message state amount)`, whose result becomes
@@ -480,10 +482,11 @@ export const HandProposalForm = forwardRef<
   GameProposalFormHandle<MyParams>,
   HandProposalFormProps<MyParams>
 >(function HandProposalForm(
-  { disabled, maxPerHandMojos, defaultContribution, onSubmit },
+  { disabled, maxPerHandMojos, defaultContribution, initialValues, onSubmit },
   ref,
 ) {
-  const [amount, setAmount] = useState(defaultContribution);
+  const initialAmount = initialValues?.senderContribution ?? defaultContribution;
+  const [amount, setAmount] = useState(initialAmount);
   useImperativeHandle(ref, () => ({
     getProposal: () =>
       amount > 0n && (maxPerHandMojos === null || amount <= maxPerHandMojos)
@@ -525,8 +528,21 @@ interface HandProposalFormProps<TParams> {
 }
 ```
 
+`HandProposalFormProps` is the declarative React prop bag supplied by the host;
+it is not a constructor interface or a getter. When host session state changes,
+React renders the parent again and passes current values such as `disabled` to
+the form. The form passes those values to its controls. It does not need an
+enable/disable method or callback.
+
+The `ref` is the separate imperative part. A `forwardRef` component receives it
+as its second function argument, and `useImperativeHandle` exposes
+`getProposal()` through it. The host calls that method only when the user
+submits, so it can pull and validate the form's current private draft. The
+remaining fields, including `onSubmit`, are ordinary props.
+
 - `disabled` is true after submission while the host is preventing another
   proposal. Disable every editable control and submit action when it is true.
+  Changing it does not clear the form's local draft.
 - `maxPerHandMojos` is the largest currently available contribution per player,
   in mojos. `null` means the host cannot provide a balance-derived limit; it
   does not make an otherwise invalid draft valid.
@@ -534,7 +550,8 @@ interface HandProposalFormProps<TParams> {
   counter/retry form. Its parameters are already decoded to `TParams`, and its
   contributions are oriented to the proposal being composed now: `sender` is
   the local proposer and `receiver` is the peer, regardless of who proposed the
-  previous hand.
+  previous hand. These values initialize local `useState` when the form mounts;
+  they do not continuously overwrite edits if the parent later rerenders.
 - `onSubmit()` asks the host to call the active handle. `getProposal()` returns
   either `{ ok: true, senderContribution, receiverContribution, parameters }`
   or `{ ok: false, error }`. The form displays its own validation error.
@@ -797,6 +814,13 @@ slot; it must never spread or overwrite move/handler state in the sibling slot.
 The complete persisted hand still contains both members. This demonstrates that
 member topology is factory-defined and need not be two symmetric copies of the
 proposal stake.
+The protocol updates themselves identify games by private protocol ID. Before
+calling `GameHand.receive`, the host looks that ID up in the accepted group's
+ordered ID list and supplies the corresponding `memberIndex`. In the opposite
+direction it maps an intent's `memberIndex` back to the protocol ID. Packages
+therefore address Krunk's members as 0 and 1 without receiving or persisting
+protocol IDs.
+
 Single-member games use index 0. The host treats `getState()` as opaque
 Bencodex-compatible data and saves `{ gameType, state }` generically. Game-owned
 persisted state stores member order/indices, not protocol IDs.
@@ -811,8 +835,14 @@ hand from the finalized terminal model before rendering the frozen branch.
 mean “keep whatever mutable hand happened to be mounted.”
 
 Proposal snapshots persist the exact opaque `parameters` value and all generic
-A/B terms. Do not add game-specific proposal save keys or a second persistence
-codec. Hand state remains saved generically from `GameHand.getState()`.
+A/B terms in `lastHandProposal`. The compose model separately persists the
+selected game, timeout, and submission state; it does not persist a package
+form's individual controls. When mounting a counter or retry form, the host
+decodes the stored parameters and reorients the stored A/B contributions into
+local-sender/peer-receiver `initialValues`. The package then owns a new
+temporary draft initialized from those values. Do not add game-specific
+proposal save keys or a second persistence codec. Hand state remains saved
+generically from `GameHand.getState()`.
 
 “Same terms” and retry comparisons are player-app bookkeeping, not game
 semantics. The host compares game type, contributions, timeout, and the complete
@@ -1050,10 +1080,10 @@ type GameUpdate =
   | {
       type: 'move-readable';
       memberIndex: number;
-      readable: Uint8Array;
+      readable: Program;
       moverShare: bigint;
     }
-  | { type: 'message-readable'; memberIndex: number; readable: Uint8Array }
+  | { type: 'message-readable'; memberIndex: number; readable: Program }
   | { type: 'hand-ended'; memberIndex: number; outcome: SettlementOutcome | null };
 ```
 
@@ -1065,21 +1095,33 @@ asserts that
 that contribution and `members[0].ourTurn`. Assert your expected member count,
 contribution topology, and decoded parameters in `createHand`.
 - `move-readable` addresses one member of the hand. `readable` is the
-  serialized CLVM readable returned by the opponent-move handler.
+  deserialized CLVM readable returned by the opponent-move handler.
   `moverShare` is a mojo-denominated `bigint`.
-- `message-readable` carries serialized advisory readable data for one member. It
+- `message-readable` carries advisory readable data for one member. It
   does not itself imply a move, turn change, or protocol-state transition.
 - `hand-ended` supplies the normalized settlement outcome, when one exists, for
   one member. Multi-member hands receive independent terminal inputs as their
   members finish. Set that member's turn false and retain the outcome in the
   complete state so a frozen mount renders without host terminal maps.
 
-Readables are serialized CLVM values, unlike structured Bencodex proposal
-parameters. Rust has already validated handler output before the frontend
-receives it. Decode the exact trusted shape your handlers return:
+Readables are CLVM values, unlike structured Bencodex proposal parameters.
+Rust serializes them as bytes across the WASM boundary; the host parses those
+bytes once and gives packages a `Program` in both incoming updates and outgoing
+move intents. This deliberately reflects the current CLVM handler engine and
+avoids making each package repeat `Program.deserialize`.
+
+`Uint8Array` is JavaScript's byte-oriented typed array and is used for that
+serialized boundary representation; it is not an ordinary `number[]`.
+`bigint` represents one decoded integer, not a binary buffer. Inside a
+`Program`, list structure remains explicit, atoms expose their bytes through
+`.atom`, and an atom defined as an integer by the handler contract can be read
+with `.toBigInt()`.
+
+Rust has already validated handler output before the package receives it.
+Inspect the exact trusted shape your handlers return:
 
 ```ts
-const items = Program.deserialize(update.readable).toList();
+const items = update.readable.toList();
 const count = items[0].toBigInt();
 const label = new TextDecoder().decode(items[1].atom);
 ```
@@ -1095,11 +1137,11 @@ port.dispatch({ type: 'make-move', memberIndex: 0, readable });
 ```
 
 CLVM atoms do not retain a text-versus-bytes distinction. Use UTF-8 decoding
-only for fields your handler contract defines as text. Do not catch malformed
-serialization, substitute defaults, or silently ignore an unknown move-readable
-shape. Such a mismatch is an internal contract bug and must reach the player
-app's general error handling. Explicit shape assertions are useful only to make
-that invariant failure clearer.
+only for fields your handler contract defines as text. Malformed serialization
+fails at the host boundary. Packages must not substitute defaults or silently
+ignore an unknown move-readable shape; such a mismatch is an internal contract
+bug and must reach the player app's general error handling. Explicit shape
+assertions are useful only to make that invariant failure clearer.
 
 The terminal outcome vocabulary is:
 
@@ -1197,7 +1239,7 @@ Before considering the game complete, check that:
 - The proposal form converts to and from `HandProposal` correctly.
 - The package-owned `forwardRef` form exposes `getProposal()`, validates its
   transient controls, and returns sender/receiver contributions plus typed
-  parameters; transient form state is not persisted.
+  parameters; transient form state is seeded on mount and is not persisted.
 - Factory parameter encoding and decoding round-trip with exact
   text/bytes/integer typing.
 - A fresh `GameHand` initializes from accepted terms and `restoreHand` constructs

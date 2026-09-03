@@ -29,6 +29,27 @@ describe('session machine behavior sequences', () => {
     ).toThrow('Game slice invariant broken: missing instance 9');
   });
 
+  it('rejects malformed serialized readables at the package boundary', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = trackProposal(state, ['7'], CALPOKER_TERMS);
+    state = send(state, {
+      type: 'notification-accepted-group',
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
+    });
+
+    expect(() =>
+      reduceSessionMachine(state, {
+        type: 'notification-game-status',
+        id: '7',
+        payload: { id: '7', status: 'my-turn', coin_id: null },
+        channelState: 'Active',
+        readable: new Uint8Array([0xff]),
+        moverShare: 10n,
+        iStarted: false,
+      }),
+    ).toThrow();
+  });
+
   it('resets durable state only when an accepted group starts a new hand', () => {
     let state = createSessionMachineState(createSessionModel());
     state = trackProposal(state, ['7'], CALPOKER_TERMS);

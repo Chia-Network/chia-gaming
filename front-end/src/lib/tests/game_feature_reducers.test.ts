@@ -27,9 +27,9 @@ import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 const text = (value: string) => Program.fromBytes(new TextEncoder().encode(value));
 const ints = (values: bigint[]) => Program.fromList(values.map(Program.fromBigInt));
-const readable = (...items: Program[]) => Program.fromList(items).serialize();
+const readable = (...items: Program[]) => Program.fromList(items);
 
-const status = (payload: Uint8Array, moverShare: bigint | null = 0n): GameUpdate =>
+const status = (payload: Program, moverShare: bigint | null = 0n): GameUpdate =>
   moverShare === null
     ? { type: 'message-readable', memberIndex: 0, readable: payload }
     : {
@@ -94,7 +94,7 @@ function advanceKrunkHand(state: KrunkHandState, update: GameUpdate): KrunkHandS
   return hand.getState();
 }
 
-function applyReadable(state: SpacepokerHandState, payload: Uint8Array): SpacepokerHandState {
+function applyReadable(state: SpacepokerHandState, payload: Program): SpacepokerHandState {
   const projected = reduceSpacepokerFeatureState(state, {
     type: 'opponent-moved',
     readable: payload,
@@ -106,7 +106,6 @@ function applyReadable(state: SpacepokerHandState, payload: Uint8Array): Spacepo
 
 describe('canonical feature gameplay reducers', () => {
   it('fails loudly when trusted handler readables are malformed', () => {
-    expect(() => advanceCalpokerHand(calpokerState(), status(Uint8Array.of(0xff)))).toThrow();
     expect(() =>
       advanceSpacepokerHand(freshSpacepokerState(), status(readable(text('unknown')))),
     ).toThrow('Unsupported Space Poker move readable tag');
@@ -712,7 +711,7 @@ describe('canonical feature gameplay reducers', () => {
       myTurn: false,
       guesses: [{ word: 'CRANE', clue: [-1n, -1n, -1n, -1n, -1n] as const }],
     };
-    const clue = ints([2n, 0n, 1n, 0n, 0n]).serialize();
+    const clue = ints([2n, 0n, 1n, 0n, 0n]);
     const projected = reduceKrunkFeatureState(pending, {
       type: 'opponent-moved',
       readable: clue,

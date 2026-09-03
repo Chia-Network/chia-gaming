@@ -192,11 +192,11 @@ export function krunkGameStateFromHand(
   return game;
 }
 
-function parseReadable(readable: Uint8Array): {
+function parseReadable(readable: Program): {
   word: string | null;
   clue: KrunkGuess['clue'] | null;
 } {
-  const items = Program.deserialize(readable).toList();
+  const items = readable.toList();
   if (items.length === 0) return { word: null, clue: null };
   const clueFrom = (values: Program[]): KrunkGuess['clue'] => {
     const clue = values.map((item) => item.toBigInt());
@@ -240,7 +240,7 @@ function finishedState(
 }
 
 type KrunkFeatureEvent =
-  | { type: 'opponent-moved'; readable: Uint8Array; moverShare: bigint | null }
+  | { type: 'opponent-moved'; readable: Program; moverShare: bigint | null }
   | { type: 'settled'; outcome: SettlementOutcome | null };
 
 export function krunkOutcomeFromPlay(game: KrunkGameState): KrunkGameState['outcome'] {

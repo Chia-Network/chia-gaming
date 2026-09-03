@@ -707,6 +707,11 @@ observable. The package input list is:
 - `message-readable`
 - `hand-ended`
 
+The session event retains the WASM notification's serialized readable bytes.
+At the package boundary, `sessionMachineGame.ts` maps the notification's
+protocol game ID to the accepted hand's stable `memberIndex` and deserializes
+the bytes into the CLVM `Program` supplied by the first two updates.
+
 Synchronous `MoveRejected` is a recoverable game-scoped host notice
 (`move-rejected` in the game notification queue). It is not delivered to the
 game package. `ActionFailed`, JavaScript command exceptions, proposal/session

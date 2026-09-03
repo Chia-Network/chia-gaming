@@ -155,10 +155,10 @@ function initialState(init: GameHandInitialization): CalpokerHandState {
 }
 
 function cardsFromReadable(
-  readable: Uint8Array,
+  readable: Program,
   iStarted: boolean,
 ): Pick<CalpokerHandState, 'playerHand' | 'opponentHand'> {
-  const lists = Program.deserialize(readable)
+  const lists = readable
     .toList()
     .map((list) => list.toList().map((card) => card.toBigInt()));
   return iStarted
@@ -167,8 +167,8 @@ function cardsFromReadable(
 }
 
 type CalpokerFeatureEvent =
-  | { type: 'opponent-moved'; readable: Uint8Array }
-  | { type: 'game-message'; readable: Uint8Array };
+  | { type: 'opponent-moved'; readable: Program }
+  | { type: 'game-message'; readable: Program };
 
 function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigint {
   return hand.reduce(
@@ -178,8 +178,8 @@ function selectedCardsToBitfield(selectedCards: bigint[], hand: bigint[]): bigin
   );
 }
 
-function isCalpokerOutcomeReadable(readable: Uint8Array | number[]): boolean {
-  const result = Program.deserialize(Uint8Array.from(readable)).toList();
+function isCalpokerOutcomeReadable(readable: Program): boolean {
+  const result = readable.toList();
   return result.length === 6 && result[3].toList().length > 0 && result[4].toList().length > 0;
 }
 
@@ -201,7 +201,7 @@ function assertCalpokerOutcomeStage(current: CalpokerHandState): void {
 
 function calpokerOutcomeFromState(
   current: CalpokerHandState,
-  readable: Uint8Array | number[],
+  readable: Program,
   iStarted: boolean,
 ): CalpokerOutcome {
   return new CalpokerOutcome(

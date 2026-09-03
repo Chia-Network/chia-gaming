@@ -5,6 +5,7 @@ import {
   restoreRegisteredGameHandState,
   snapshotRegisteredGameHand,
 } from '../gameRegistry';
+import { Program } from 'clvm-lib';
 import type { GameHandInitialization, GameUpdate, PersistedGameState } from '@games/host';
 import { clearProposalIds } from './sessionMachineProposals';
 import { selectProposalGroupByMemberId } from './selectors';
@@ -235,17 +236,18 @@ export function reduceDurableGameEvent(
       if (event.readable === null) {
         return { state: projected, effects: [] };
       }
+      const readable = Program.deserialize(event.readable);
       const update: GameUpdate =
         event.moverShare === null
           ? {
               type: 'message-readable',
               memberIndex: memberIndexForProtocolId(projected, event.id),
-              readable: event.readable,
+              readable,
             }
           : {
               type: 'move-readable',
               memberIndex: memberIndexForProtocolId(projected, event.id),
-              readable: event.readable,
+              readable,
               moverShare: event.moverShare,
             };
       return reduceHandUpdateAcrossSnapshots(projected, update, event.handState, activeHand);

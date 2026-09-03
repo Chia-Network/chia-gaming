@@ -246,8 +246,8 @@ function initialState(
   };
 }
 
-function parseReadable(readable: Uint8Array): Program[] {
-  return Program.deserialize(readable).toList();
+function parseReadable(readable: Program): Program[] {
+  return readable.toList();
 }
 
 function tag(items: Program[]): string | null {
@@ -277,8 +277,8 @@ function withLocalConcession(current: SpacepokerHandState): SpacepokerHandState 
 }
 
 type SpacepokerReadableEvent =
-  | { type: 'opponent-moved'; readable: Uint8Array }
-  | { type: 'game-message'; readable: Uint8Array };
+  | { type: 'opponent-moved'; readable: Program }
+  | { type: 'game-message'; readable: Program };
 
 function reduceSpacepokerSettlementStateCore(
   current: SpacepokerHandState,

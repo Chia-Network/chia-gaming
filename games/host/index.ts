@@ -84,10 +84,10 @@ export type GameUpdate =
   | {
       type: 'move-readable';
       memberIndex: number;
-      readable: Uint8Array;
+      readable: Program;
       moverShare: bigint;
     }
-  | { type: 'message-readable'; memberIndex: number; readable: Uint8Array }
+  | { type: 'message-readable'; memberIndex: number; readable: Program }
   | { type: 'hand-ended'; memberIndex: number; outcome: SettlementOutcome | null };
 
 export interface GameHandState<TState> {
