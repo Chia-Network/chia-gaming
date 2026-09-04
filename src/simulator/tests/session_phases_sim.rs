@@ -2310,6 +2310,50 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
 
+    res.push((
+        "peer_terminal_mismatch_rejects_and_rolls_back_batch",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let mut moves = vec![
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+            ];
+            let mut hand_moves = prefix_test_moves(&mut allocator, GameID(1));
+            let final_move = hand_moves
+                .pop()
+                .expect("calpoker fixture should include a final move");
+            moves.extend(hand_moves);
+            if let SimScriptAction::Move(player, game_id, readable, _) = final_move {
+                moves.push(SimScriptAction::TerminalMismatchMove(
+                    player, game_id, readable,
+                ));
+            } else {
+                panic!("calpoker final fixture move should be a Move");
+            }
+            moves.push(SimScriptAction::WaitBlocks(120, 0));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .unwrap_or_else(|e| panic!("should finish terminal-mismatch test, got: {e:?}"));
+
+            assert!(
+                outcome.local_uis[1].got_error,
+                "receiver should reject a peer terminal flag that disagrees with the handler"
+            );
+            assert!(
+                !outcome.local_uis[1].notifications.iter().any(|n| matches!(
+                    n,
+                    GameNotification::GameSettled {
+                        outcome: SettlementOutcome::AcceptSettlement
+                            | SettlementOutcome::WeAccepted,
+                        ..
+                    }
+                )),
+                "failed terminal-mismatch batch must roll back its queued AcceptSettlement"
+            );
+        },
+    ));
+
     res.push(("failed_final_move_bad_signature_does_not_queue_accept_settlement", &|| {
         let mut allocator = AllocEncoder::new();
 

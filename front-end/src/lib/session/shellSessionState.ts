@@ -11,7 +11,7 @@ export type PendingSessionProposal = {
   responder_amount: string;
   channel_timeout?: string;
   unroll_timeout?: string;
-  game_session_id?: string;
+  game_session_id: string;
 };
 
 /** Accept is the only remaining session-pane transition reason. */

@@ -166,6 +166,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
     );
 
     lanes[0].runtime.dispatch({ type: 'submit-compose', handProposal });
+    await flushWrapperDrain(adapters);
     const outgoingProposal = lanes[0].runtime
       .getState()
       .model.betweenHand.proposalGroups.find((group) => group.disposition === 'outgoing');
@@ -567,6 +568,8 @@ async function runHandshakeRoleReload(
     );
     const next = outbound[outbound.length - 1];
     adapters[sender ^ 1].deliver_message(next.msgno, next.msg);
+    await flushWrapperDrain(adapters);
+    adapters[sender].blob?.receiveAck(BigInt(next.msgno));
     await flushWrapperDrain(adapters);
   };
 

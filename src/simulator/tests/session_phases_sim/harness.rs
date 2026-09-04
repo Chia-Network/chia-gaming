@@ -481,6 +481,44 @@ impl SimulationHarness {
         })
     }
 
+    pub(super) fn sabotage_move_terminal(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        player: usize,
+        game_id: &GameID,
+        readable: ReadableMove,
+        entropy: Hash,
+    ) -> Result<(), Error> {
+        self.make_move(allocator, player, game_id, readable, entropy)?;
+        self.cradles[player].flush_pending(allocator)?;
+        self.cradles[player].replace_last_message(|message| {
+            let PeerMessage::Batch {
+                actions,
+                signatures,
+            } = message
+            else {
+                return Err(Error::StrErr(format!(
+                    "TerminalMismatchMove expected Batch, got {message:?}"
+                )));
+            };
+            let mut actions = actions.clone();
+            let move_action = actions.iter_mut().find_map(|action| match action {
+                BatchAction::Move(_, data) => Some(data),
+                _ => None,
+            });
+            let Some(move_action) = move_action else {
+                return Err(Error::StrErr(
+                    "TerminalMismatchMove found no Move action".to_string(),
+                ));
+            };
+            move_action.terminal = !move_action.terminal;
+            Ok(PeerMessage::Batch {
+                actions,
+                signatures: signatures.clone(),
+            })
+        })
+    }
+
     pub(super) fn tamper_next_batch_signature(&mut self, player: usize) {
         self.tamper_next_batch_signature[player] = true;
     }

@@ -449,6 +449,21 @@ export interface WatchReport {
 }
 
 export interface PeerConnectionResult {
+  /**
+   * Shared durable reliability state. Real browser peer sessions expose this
+   * object before negotiation and SessionController continues using the same
+   * object after acceptance.
+   */
+  reliableState?: {
+    sessionId: string;
+    messageNumber: bigint;
+    remoteNumber: bigint;
+    unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
+    disposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
+  };
+  reliableTransport?: unknown;
+  persistInboundSessionReject?: (sessionId: string, remoteNumber: bigint) => Promise<void>;
+  onSessionReject?: (sessionId: string, remoteNumber: bigint) => void;
   /** Returns false when the hub WS is not OPEN (frame was not sent). */
   sendMessage: (msgno: number, input: Uint8Array) => boolean;
   /** Returns false when the hub WS is not OPEN (frame was not sent). */

@@ -24,6 +24,7 @@ import {
   exchangeUntilIdle,
   fetchPreset,
   flushWrapperDrain,
+  makeTestReliableState,
   postMoveHandState,
   startSimulator,
 } from './load_wasm.harness';
@@ -154,6 +155,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     assert.deepEqual(reloaded.presentation.activeGameIds, ids);
 
     const restored = new SessionController(poller, `feed000${index}`, 100n, 100n, {
+      reliableState: makeTestReliableState(),
       sendMessage: () => true,
       sendAck: () => true,
       sendKeepalive: () => true,

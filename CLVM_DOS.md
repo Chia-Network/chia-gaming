@@ -138,9 +138,12 @@ itself. The defender has no incentive to make their own slash expensive.
 When a peer sends a move via the potato protocol (`BatchAction::Move`), the
 receiving side:
 
-1. **Deserializes** the `GameMoveDetails` from the wire format. The move data
-   (`move_made`) is a `Vec<u8>` — a flat byte string, not a CLVM tree. The
-   Rust type system enforces this at deserialization.
+1. **Deserializes** the peer-wire move, which contains basic move data and a
+   terminal boolean. The move data (`move_made`) is a `Vec<u8>` — a flat byte
+   string, not a CLVM tree. The Rust type system enforces this at
+   deserialization. The peer does not supply either validation hash: the
+   receiver reconstructs those internal commitments from its locally held
+   validation program and pre-move state.
 
 2. **Checks move length** against the locally-stored `max_move_size` for the
    current game state (`apply_received_move` in `channel_state/mod.rs`).
@@ -155,7 +158,9 @@ receiving side:
 
 4. **Runs the game handler** (`call_their_turn_handler` in
    `channel_state/game_handler.rs`). Again, our locally-held handler
-   program, with the peer's move data as a bounded argument.
+   program, with the peer's move data as a bounded argument. The claimed
+   terminal bit must agree with whether this transition produces another
+   handler; disagreement is a peer protocol violation.
 
 The peer cannot send a CLVM program for us to evaluate. They send data, and
 we run our own programs against it.

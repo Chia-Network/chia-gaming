@@ -11,6 +11,7 @@ import type {
   SessionPreferencesSave,
   SessionPresentationSave,
   SessionSave,
+  SessionTransportSave,
   TerminalSessionSave,
 } from './saveEnvelope';
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
@@ -46,6 +47,7 @@ import {
   validatePairing,
   validateTerminalCoins,
   validateTerminalFields,
+  validateTransport,
 } from './persistencePayloads';
 import {
   optionalString,
@@ -159,7 +161,7 @@ function parsePairing(value: unknown): SessionPairingSave {
   const pairing: SessionPairingSave = {
     token: requireString(fields.token, 'pairing.token'),
     peerId: optionalString(fields.peerId, 'pairing.peerId'),
-    gameSessionId: optionalString(fields.gameSessionId, 'pairing.gameSessionId'),
+    gameSessionId: requireString(fields.gameSessionId, 'pairing.gameSessionId'),
     iStarted: requireBoolean(fields.iStarted, 'pairing.iStarted'),
     myContribution: requireString(fields.myContribution, 'pairing.myContribution'),
     theirContribution: requireString(fields.theirContribution, 'pairing.theirContribution'),
@@ -173,12 +175,45 @@ function parsePairing(value: unknown): SessionPairingSave {
   return pairing;
 }
 
+function parseTransportFields(
+  fields: Record<string, unknown>,
+  label: 'transport' | 'live',
+): SessionTransportSave {
+  if (!Array.isArray(fields.unackedMessages)) {
+    throw new Error(`Garbled save: invalid ${label}.unackedMessages`);
+  }
+  return {
+    messageNumber: requireBigint(fields.messageNumber, `${label}.messageNumber`),
+    remoteNumber: requireBigint(fields.remoteNumber, `${label}.remoteNumber`),
+    unackedMessages: fields.unackedMessages.map((message, index) => {
+      const record = requireRecord(message, `${label}.unackedMessages[${index}]`);
+      if (!(record.msg instanceof Uint8Array)) {
+        throw new Error(`Garbled save: invalid ${label}.unackedMessages[${index}].msg`);
+      }
+      return {
+        msgno: requireBigint(record.msgno, `${label}.unackedMessages[${index}].msgno`),
+        msg: record.msg,
+      };
+    }),
+    disposition: parseDiscriminant<SessionTransportSave['disposition']>(
+      fields.disposition,
+      new Set(['active', 'proposal-received', 'outbound-reject', 'inbound-reject']),
+      `${label}.disposition`,
+    ),
+  };
+}
+
+function parseTransport(value: unknown): SessionTransportSave {
+  const fields = requireRecord(value, 'transport');
+  const transport = parseTransportFields(fields, 'transport');
+  validateTransport(transport, 'transport');
+  return transport;
+}
+
 function parseLive(value: unknown): LiveSessionSave['live'] {
   const fields = requireRecord(value, 'live');
-  if (!Array.isArray(fields.unackedMessages)) {
-    throw new Error('Garbled save: invalid live.unackedMessages');
-  }
   const live: LiveSessionSave['live'] = {
+    ...parseTransportFields(fields, 'live'),
     serializedGameSession:
       fields.serializedGameSession instanceof Uint8Array
         ? fields.serializedGameSession
@@ -190,18 +225,6 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
       'live.gameSessionSchemaVersion',
     ),
     rewardPuzzleHash: requireString(fields.rewardPuzzleHash, 'live.rewardPuzzleHash'),
-    messageNumber: requireBigint(fields.messageNumber, 'live.messageNumber'),
-    remoteNumber: requireBigint(fields.remoteNumber, 'live.remoteNumber'),
-    unackedMessages: fields.unackedMessages.map((message, index) => {
-      const record = requireRecord(message, `live.unackedMessages[${index}]`);
-      if (!(record.msg instanceof Uint8Array)) {
-        throw new Error(`Garbled save: invalid live.unackedMessages[${index}].msg`);
-      }
-      return {
-        msgno: requireBigint(record.msgno, `live.unackedMessages[${index}].msgno`),
-        msg: record.msg,
-      };
-    }),
     durabilityWarning: optionalString(fields.durabilityWarning, 'live.durabilityWarning', true),
   };
   validateLive(live);
@@ -446,6 +469,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
     case 'preferences':
       if (
         envelope.pairing !== undefined ||
+        envelope.transport !== undefined ||
         envelope.live !== undefined ||
         envelope.presentation !== undefined ||
         envelope.terminal !== undefined
@@ -466,11 +490,15 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         ...common,
         phase: 'pre-handshake',
         pairing: parsePairing(envelope.pairing),
+        transport: parseTransport(envelope.transport),
       } satisfies PreHandshakeSessionSave;
       break;
     case 'live':
       if (envelope.terminal !== undefined) {
         throw new Error('Garbled save: unexpected live phase payload');
+      }
+      if (envelope.transport !== undefined) {
+        throw new Error('Garbled save: unexpected live transport payload');
       }
       presentation = parsePresentation(envelope.presentation);
       typedEnvelope = {
@@ -483,7 +511,11 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       restoring = true;
       break;
     case 'terminal': {
-      if (envelope.pairing !== undefined || envelope.live !== undefined) {
+      if (
+        envelope.pairing !== undefined ||
+        envelope.transport !== undefined ||
+        envelope.live !== undefined
+      ) {
         throw new Error('Garbled save: unexpected terminal phase payload');
       }
       const terminal = requireRecord(envelope.terminal, 'terminal');

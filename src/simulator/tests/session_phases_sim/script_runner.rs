@@ -312,6 +312,20 @@ pub(in super::super) fn run_script(
                         harness.make_move(allocator, *who, gid, readable.clone(), entropy)?;
                         ()
                     }
+                    SimScriptAction::TerminalMismatchMove(who, gid, readable) => {
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "TerminalMismatchMove", gid, gid);
+                        }
+                        let entropy = rng.random();
+                        harness.sabotage_move_terminal(
+                            allocator,
+                            *who,
+                            gid,
+                            readable.clone(),
+                            entropy,
+                        )?;
+                        ()
+                    }
                     SimScriptAction::Cheat(who, gid, cheat_share) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Cheat", gid, gid);

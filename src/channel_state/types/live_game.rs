@@ -9,7 +9,7 @@ use crate::common::types::{
     Timeout,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveWireData, ParsedRefereeSolution, TheirTurnCoinSpentResult,
+    GameMoveStateInfo, GameMoveWireData, ParsedRefereeSolution, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
 use crate::referee::Referee;
@@ -129,7 +129,8 @@ impl LiveGame {
     pub fn internal_their_move(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_move: &GameMoveDetails,
+        basic: &GameMoveStateInfo,
+        terminal: bool,
         state_number: usize,
     ) -> Result<TheirTurnMoveResult, Error> {
         if self.referee_maker.is_my_turn() {
@@ -139,7 +140,7 @@ impl LiveGame {
         }
         let (new_ref, their_move_result) =
             self.referee_maker
-                .their_turn_move_off_chain(allocator, game_move, state_number)?;
+                .peer_move_off_chain(allocator, basic, terminal, state_number)?;
         if let Some(r) = new_ref {
             if their_move_result.puzzle_hash_for_unroll.is_some() {
                 let new_ph = r.outcome_referee_puzzle_hash(allocator)?;

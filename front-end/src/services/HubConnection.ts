@@ -22,7 +22,6 @@ export interface AdvisoryStartParams {
 export interface HubConnectionCallbacks {
   onAdvisoryStart: (params: AdvisoryStartParams) => void;
   onPeerMessage: (from_id: string, from_alias: string, payload: Uint8Array) => void;
-  onPeerAppMessage: (from_id: string, from_alias: string, data: PeerAppMessage) => void;
   onDeliveryFailure: (to: string) => void;
   onRegistered: (player_id: string) => void;
   onAliasUpdated: (alias: string) => void;
@@ -54,18 +53,6 @@ type HubEnvelope =
   | { type: 'closed' }
   | { type: 'keepalive' };
 
-export type PeerAppMessage =
-  | {
-      type: 'session_proposal';
-      proposer_amount: string;
-      responder_amount: string;
-      channel_timeout?: string;
-      unroll_timeout?: string;
-      game_session_id?: string;
-      network?: string;
-    }
-  | { type: 'session_reject' };
-
 function definedBencodexFields(
   data: Record<string, BencodexValue | undefined>,
 ): Record<string, BencodexValue> {
@@ -74,17 +61,6 @@ function definedBencodexFields(
     if (value !== undefined) out[key] = value;
   }
   return out;
-}
-
-function optionalText(map: Map<BencodexKey, BencodexValue>, key: string): string | undefined {
-  const value = map.get(key);
-  return typeof value === 'string' ? value : undefined;
-}
-
-function requireText(map: Map<BencodexKey, BencodexValue>, key: string): string {
-  const value = optionalText(map, key);
-  if (value === undefined) throw new Error(`missing text field: ${key}`);
-  return value;
 }
 
 const WIRE_ID_BYTES = 16;
@@ -116,6 +92,12 @@ function optionalInteger(map: Map<BencodexKey, BencodexValue>, key: string): big
   if (!map.has(key)) return undefined;
   const value = getInteger(map, key);
   if (value === undefined) throw new Error(`invalid integer field: ${key}`);
+  return value;
+}
+
+function requireText(map: Map<BencodexKey, BencodexValue>, key: string): string {
+  const value = map.get(key);
+  if (typeof value !== 'string') throw new Error(`missing text field: ${key}`);
   return value;
 }
 
@@ -187,29 +169,6 @@ function decodeHubEnvelope(input: ArrayBuffer): HubEnvelope | null {
     case 'hub_attention':
     case 'closed':
     case 'keepalive':
-      return { type };
-    default:
-      return null;
-  }
-}
-
-function decodePeerAppMessage(payload: Uint8Array): PeerAppMessage | null {
-  const decoded = decodeBencodex(payload);
-  if (!isDictionary(decoded)) return null;
-  const type = getText(decoded, 'type');
-  if (!type) return null;
-  switch (type) {
-    case 'session_proposal':
-      return {
-        type,
-        proposer_amount: requireText(decoded, 'proposer_amount'),
-        responder_amount: requireText(decoded, 'responder_amount'),
-        channel_timeout: optionalText(decoded, 'channel_timeout'),
-        unroll_timeout: optionalText(decoded, 'unroll_timeout'),
-        game_session_id: optionalText(decoded, 'game_session_id'),
-        network: optionalText(decoded, 'network'),
-      };
-    case 'session_reject':
       return { type };
     default:
       return null;
@@ -450,17 +409,6 @@ export class HubConnection {
     return true;
   }
 
-  /**
-   * Send a bencodex app message to a specific peer through the hub pipe.
-   */
-  sendPeerAppMessage(targetId: string, data: PeerAppMessage): boolean {
-    log(`[hub] send app type=${data.type} to=${targetId}`);
-    const payload = encodeBencodex(
-      definedBencodexFields(data as Record<string, BencodexValue | undefined>),
-    );
-    return this.sendToPeer(targetId, payload);
-  }
-
   getPlayerId(): string | null {
     return this.myPlayerId;
   }
@@ -506,19 +454,6 @@ export class HubConnection {
   }
 
   private dispatchRelay(fromId: string, fromAlias: string, payload: Uint8Array): void {
-    if (payload.length > 0 && payload[0] === 0x64) {
-      try {
-        const data = decodePeerAppMessage(payload);
-        if (data) {
-          log(`[hub] recv app type=${data.type} from=${fromId}`);
-          this.callbacks.onPeerAppMessage(fromId, fromAlias, data);
-          return;
-        }
-      } catch {
-        // Not a valid app message, fall through to raw peer protocol bytes.
-      }
-    }
-
     log(`[hub] recv from=${fromId} len=${payload.byteLength}`);
     this.callbacks.onPeerMessage(fromId, fromAlias, payload);
   }

@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
-use crate::channel_state::types::{ReadableMove, ValidationInfo};
+use crate::channel_state::types::{ReadableMove, StateUpdateProgram, ValidationInfo};
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, PublicKey,
-    Puzzle, PuzzleHash, Spend, Timeout,
+    Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::referee::my_turn::MyTurnReferee;
 use crate::referee::their_turn::TheirTurnReferee;
@@ -22,6 +22,88 @@ use crate::referee::types::{
     ParsedRefereeSolution, RefereeFixedContext, RefereePuzzleArgs, TheirTurnCoinSpentResult,
     TheirTurnMoveResult, ValidationInfoHash,
 };
+
+pub(crate) fn game_move_details_for_state(
+    allocator: &mut AllocEncoder,
+    basic: GameMoveStateInfo,
+    terminal: bool,
+    validation_program: StateUpdateProgram,
+    pre_move_state: Rc<Program>,
+) -> GameMoveDetails {
+    if terminal {
+        return GameMoveDetails {
+            basic,
+            validation_info_hash: ValidationInfoHash::None,
+            validation_program_hash: None,
+        };
+    }
+
+    let validation_info_hash =
+        ValidationInfo::new_state_update(allocator, validation_program.clone(), pre_move_state)
+            .hash()
+            .clone();
+    let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
+    GameMoveDetails {
+        basic,
+        validation_info_hash: ValidationInfoHash::Hash(validation_info_hash),
+        validation_program_hash: Some(validation_program_hash),
+    }
+}
+
+#[cfg(test)]
+mod peer_move_reconstruction_tests {
+    use super::*;
+
+    fn basic() -> GameMoveStateInfo {
+        GameMoveStateInfo {
+            move_made: b"move".to_vec(),
+            mover_share: Amount::new(7),
+            max_move_size: 12,
+            max_move_size_raw: vec![12],
+        }
+    }
+
+    #[test]
+    fn non_terminal_peer_move_reconstructs_local_commitments() {
+        let mut allocator = AllocEncoder::new();
+        let state = Rc::new(Program::from_bytes(&[0x80]));
+        let validation_program =
+            StateUpdateProgram::new(&mut allocator, "peer move test", state.clone());
+
+        let details = game_move_details_for_state(
+            &mut allocator,
+            basic(),
+            false,
+            validation_program.clone(),
+            state.clone(),
+        );
+        let expected_info =
+            ValidationInfo::new_state_update(&mut allocator, validation_program.clone(), state);
+
+        assert_eq!(
+            details.validation_info_hash,
+            ValidationInfoHash::Hash(expected_info.hash().clone())
+        );
+        assert_eq!(
+            details.validation_program_hash,
+            Some(validation_program.sha256tree(&mut allocator).hash().clone())
+        );
+    }
+
+    #[test]
+    fn terminal_peer_move_reconstructs_nil_commitments() {
+        let mut allocator = AllocEncoder::new();
+        let state = Rc::new(Program::from_bytes(&[0x80]));
+        let validation_program =
+            StateUpdateProgram::new(&mut allocator, "peer move test", state.clone());
+
+        let details =
+            game_move_details_for_state(&mut allocator, basic(), true, validation_program, state);
+
+        assert_eq!(details.validation_info_hash, ValidationInfoHash::None);
+        assert_eq!(details.validation_program_hash, None);
+    }
+}
 
 pub(crate) struct RefereeInitialSetup {
     pub fixed: Rc<RefereeFixedContext>,
@@ -315,6 +397,30 @@ impl Referee {
             )),
             Referee::TheirTurn(t) => t.receive_readable(allocator, message),
         }
+    }
+
+    pub fn peer_move_off_chain(
+        &self,
+        allocator: &mut AllocEncoder,
+        basic: &GameMoveStateInfo,
+        terminal: bool,
+        state_number: usize,
+    ) -> Result<(Option<Rc<Referee>>, TheirTurnMoveResult), Error> {
+        let (new_self, result) = match self {
+            Referee::MyTurn(_) => {
+                return Err(Error::Channel(
+                    "peer_move_off_chain called on MyTurn referee".to_string(),
+                ));
+            }
+            Referee::TheirTurn(t) => {
+                t.peer_move_off_chain(allocator, basic, terminal, state_number)?
+            }
+        };
+
+        Ok((
+            new_self.map(|r| Rc::new(Referee::MyTurn(Rc::new(r)))),
+            result,
+        ))
     }
 
     pub fn their_turn_move_off_chain(

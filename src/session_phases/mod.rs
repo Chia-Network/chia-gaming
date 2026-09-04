@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::channel_state::game;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
-    ChannelCoinSpendInfo, ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
+    ChannelCoinSpendInfo, ChannelEnv, ChannelPrivateKeys, MoveResult, ReadableMove,
+    StateUpdateSignatures,
 };
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
@@ -27,8 +28,8 @@ use crate::utils::proper_list;
 
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::types::{
-    validate_new_move_action, BatchAction, FromLocalUI, GameAction, PeerMessage, PotatoState,
-    WireGameSpec, WireProposalGroup,
+    validate_new_move_action, BatchAction, FromLocalUI, GameAction, PeerMessage, PeerMove,
+    PotatoState, WireGameSpec, WireProposalGroup,
 };
 
 use crate::session_phases::proposal::GameProposal;
@@ -140,16 +141,32 @@ fn format_batch_action(action: &BatchAction) -> String {
         BatchAction::CancelProposalGroup(id) => format!("CancelProposalGroup id={id}"),
         BatchAction::Move(id, details) => {
             format!(
-                "Move id={id} mover_share={} max_move_size={} validation_info_hash={:?}",
-                details.basic.mover_share,
-                details.basic.max_move_size,
-                details.validation_info_hash,
+                "Move id={id} mover_share={} max_move_size={} terminal={}",
+                details.basic.mover_share, details.basic.max_move_size, details.terminal,
             )
         }
         BatchAction::AcceptSettlement(id, amount) => {
             format!("AcceptSettlement id={id} amt={amount}")
         }
     }
+}
+
+fn peer_move_from_result(move_result: MoveResult) -> Result<PeerMove, Error> {
+    let terminal = move_result.is_finished;
+    game_assert_eq!(
+        move_result.game_move.validation_info_hash.is_none(),
+        terminal,
+        "sender terminal flag disagrees with internal validation info hash"
+    );
+    game_assert_eq!(
+        move_result.game_move.validation_program_hash.is_none(),
+        terminal,
+        "sender terminal flag disagrees with internal validation program hash"
+    );
+    Ok(PeerMove {
+        basic: move_result.game_move.basic,
+        terminal,
+    })
 }
 
 fn validate_wire_group_structure(
@@ -774,7 +791,7 @@ impl OffChainPhase {
                 BatchAction::Move(game_id, game_move) => {
                     let move_result = {
                         let ch = self.channel_state_mut()?;
-                        ch.apply_received_move(env, game_id, game_move)?
+                        ch.apply_received_move(env, game_id, &game_move.basic, game_move.terminal)?
                     };
                     let finished = {
                         let ch = self.channel_state()?;
@@ -1058,7 +1075,10 @@ impl OffChainPhase {
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
                     if let Some(true) = game_is_my_turn {
                         let move_result = ch.send_move_no_finalize(env, &game_id, prepared)?;
-                        batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
+                        batch_actions.push(BatchAction::Move(
+                            game_id,
+                            peer_move_from_result(move_result)?,
+                        ));
                         applied_actions.push((game_id, LocalActionKind::MakeMove));
                     } else {
                         game_assert!(
@@ -1076,7 +1096,10 @@ impl OffChainPhase {
                             ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
                         let prepared = ch.prepare_move(env, &game_id, &readable_move, entropy)?;
                         let move_result = ch.send_move_no_finalize(env, &game_id, prepared)?;
-                        batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
+                        batch_actions.push(BatchAction::Move(
+                            game_id,
+                            peer_move_from_result(move_result)?,
+                        ));
                         applied_actions.push((game_id, LocalActionKind::Cheat));
                     } else {
                         deferred.push_back(GameAction::Cheat(game_id, mover_share, entropy));

@@ -6,6 +6,7 @@ import type {
   SessionPairingSave,
   SessionPresentationSave,
   SessionSave,
+  SessionTransportSave,
 } from './saveEnvelope';
 import type {
   BetweenHandModeModel,
@@ -265,7 +266,10 @@ export function validateCommonFields(save: SessionSave): void {
 export function validatePairing(pairing: SessionPairingSave): void {
   requireString(pairing.token, 'pairing.token');
   optionalString(pairing.peerId, 'pairing.peerId');
-  optionalString(pairing.gameSessionId, 'pairing.gameSessionId');
+  requireString(pairing.gameSessionId, 'pairing.gameSessionId');
+  if (!/^[0-9a-f]{32}$/.test(pairing.gameSessionId)) {
+    throw new Error('Garbled save: invalid pairing.gameSessionId');
+  }
   requireBoolean(pairing.iStarted, 'pairing.iStarted');
   optionalString(pairing.myAlias, 'pairing.myAlias', true);
   optionalString(pairing.opponentAlias, 'pairing.opponentAlias', true);
@@ -284,33 +288,57 @@ export function validatePairing(pairing: SessionPairingSave): void {
   }
 }
 
+export function validateTransport(
+  transport: SessionTransportSave,
+  label: 'transport' | 'live',
+): void {
+  const messageNumber = requireBigint(transport.messageNumber, `${label}.messageNumber`);
+  const remoteNumber = requireBigint(transport.remoteNumber, `${label}.remoteNumber`);
+  if (messageNumber < 1n || messageNumber > 0x1_0000_0000n) {
+    throw new Error(`Garbled save: invalid ${label}.messageNumber`);
+  }
+  if (remoteNumber < 0n || remoteNumber > 0xffff_ffffn) {
+    throw new Error(`Garbled save: invalid ${label}.remoteNumber`);
+  }
+  if (
+    transport.disposition !== 'active' &&
+    transport.disposition !== 'proposal-received' &&
+    transport.disposition !== 'outbound-reject' &&
+    transport.disposition !== 'inbound-reject'
+  ) {
+    throw new Error(`Garbled save: invalid ${label}.disposition`);
+  }
+  if (!Array.isArray(transport.unackedMessages)) {
+    throw new Error(`Garbled save: invalid ${label}.unackedMessages`);
+  }
+  const messageIds = new Set<bigint>();
+  transport.unackedMessages.forEach((message, index) => {
+    const record = requireRecord(message, `${label}.unackedMessages[${index}]`);
+    const msgno = requireBigint(record.msgno, `${label}.unackedMessages[${index}].msgno`);
+    if (msgno < 1n || msgno >= messageNumber) {
+      throw new Error(`Garbled save: invalid ${label}.unackedMessages msgno ${msgno}`);
+    }
+    if (messageIds.has(msgno)) {
+      throw new Error(`Garbled save: duplicate ${label}.unackedMessages msgno ${msgno}`);
+    }
+    messageIds.add(msgno);
+    if (!(record.msg instanceof Uint8Array)) {
+      throw new Error(`Garbled save: invalid ${label}.unackedMessages[${index}].msg`);
+    }
+  });
+}
+
 export function validateLive(live: LiveSessionSave['live']): void {
+  validateTransport(live, 'live');
   if (!(live.serializedGameSession instanceof Uint8Array)) {
     throw new Error('Garbled save: invalid live.serializedGameSession');
   }
   requireBigint(live.gameSessionSchemaVersion, 'live.gameSessionSchemaVersion');
-  requireBigint(live.messageNumber, 'live.messageNumber');
-  requireBigint(live.remoteNumber, 'live.remoteNumber');
   requireString(live.rewardPuzzleHash, 'live.rewardPuzzleHash');
   if (!/^[0-9a-fA-F]{64}$/.test(live.rewardPuzzleHash)) {
     throw new Error('Garbled save: invalid live.rewardPuzzleHash');
   }
   optionalString(live.durabilityWarning, 'live.durabilityWarning', true);
-  if (!Array.isArray(live.unackedMessages)) {
-    throw new Error('Garbled save: invalid live.unackedMessages');
-  }
-  const messageIds = new Set<bigint>();
-  live.unackedMessages.forEach((message, index) => {
-    const record = requireRecord(message, `live.unackedMessages[${index}]`);
-    const msgno = requireBigint(record.msgno, `live.unackedMessages[${index}].msgno`);
-    if (messageIds.has(msgno)) {
-      throw new Error(`Garbled save: duplicate live.unackedMessages msgno ${msgno}`);
-    }
-    messageIds.add(msgno);
-    if (!(record.msg instanceof Uint8Array)) {
-      throw new Error(`Garbled save: invalid live.unackedMessages[${index}].msg`);
-    }
-  });
 }
 
 export function validatePresentationScalarFields(save: SessionPresentationSave): void {

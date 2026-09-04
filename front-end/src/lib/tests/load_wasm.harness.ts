@@ -129,6 +129,16 @@ afterEach(async () => {
   }
 });
 
+export function makeTestReliableState(): NonNullable<PeerConnectionResult['reliableState']> {
+  return {
+    sessionId: '00'.repeat(16),
+    messageNumber: 1n,
+    remoteNumber: 0n,
+    unackedMessages: [],
+    disposition: 'active',
+  };
+}
+
 export class SessionControllerAdapter {
   blob: SessionController | undefined;
   waiting_messages: Array<SimpleMessage>;
@@ -137,6 +147,7 @@ export class SessionControllerAdapter {
   constructor() {
     this.waiting_messages = [];
     this.peerConnection = {
+      reliableState: makeTestReliableState(),
       sendMessage: (msgno: number, message: Uint8Array) => {
         this.add_outbound_message(msgno, message);
         return true;
@@ -297,12 +308,18 @@ export async function action_with_messages(
     while (!all_handshaked(cradles)) {
       iterations++;
       let deliveredOutbound = false;
+      const acknowledgements: Array<{ sender: SessionControllerAdapter; msgno: number }> = [];
       for (let c = 0; c < 2; c++) {
         const outbound = cradles[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
           deliveredOutbound = true;
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
+          acknowledgements.push({ sender: cradles[c], msgno: outbound[i].msgno });
         }
+      }
+      await flushWrapperDrain(cradles);
+      for (const acknowledgement of acknowledgements) {
+        acknowledgement.sender.blob?.receiveAck(BigInt(acknowledgement.msgno));
       }
       await flushWrapperDrain(cradles);
       if (!deliveredOutbound && !all_handshaked(cradles)) {
@@ -345,11 +362,17 @@ export async function exchangeUntilIdle(cradles: SessionControllerAdapter[]): Pr
   let idleRounds = 0;
   for (let round = 0; round < 100 && idleRounds < 2; round += 1) {
     let delivered = false;
+    const acknowledgements: Array<{ sender: SessionControllerAdapter; msgno: number }> = [];
     for (let index = 0; index < cradles.length; index += 1) {
       for (const outbound of cradles[index].outbound_messages()) {
         delivered = true;
         cradles[index ^ 1].deliver_message(outbound.msgno, outbound.msg);
+        acknowledgements.push({ sender: cradles[index], msgno: outbound.msgno });
       }
+    }
+    await flushWrapperDrain(cradles);
+    for (const acknowledgement of acknowledgements) {
+      acknowledgement.sender.blob?.receiveAck(BigInt(acknowledgement.msgno));
     }
     await flushWrapperDrain(cradles);
     idleRounds = delivered ? 0 : idleRounds + 1;

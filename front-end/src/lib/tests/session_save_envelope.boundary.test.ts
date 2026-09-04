@@ -153,7 +153,7 @@ describe('save boundary enforcement', () => {
   });
 
   it('catches and deletes malformed raw IndexedDB bytes', async () => {
-    const open = indexedDB.open('chia-gaming-session', 1);
+    const open = indexedDB.open('chia-gaming-session');
     await new Promise<void>((resolve, reject) => {
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {
@@ -180,7 +180,7 @@ describe('save boundary enforcement', () => {
     const raw = activeSave();
     if (raw.phase !== 'live') throw new Error('expected live fixture');
     Reflect.deleteProperty(raw.presentation.gameInstances['game-1'].terminal, 'label');
-    const open = indexedDB.open('chia-gaming-session', 1);
+    const open = indexedDB.open('chia-gaming-session');
     await new Promise<void>((resolve, reject) => {
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {

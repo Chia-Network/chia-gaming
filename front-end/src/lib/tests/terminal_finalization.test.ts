@@ -153,7 +153,7 @@ async function seedLiveSession(): Promise<void> {
     gameSessionSchemaVersion: 3n,
     pairingToken: 'live-token',
     sessionPeerId: 'peer',
-    gameSessionId: 'game-session',
+    gameSessionId: '10'.repeat(16),
     messageNumber: 2n,
     remoteNumber: 1n,
     iStarted: true,
@@ -378,7 +378,7 @@ it('retires a resolved display before accepting a fresh live session', async () 
         baseSave({
           pairingToken,
           sessionPeerId: 'new-peer',
-          gameSessionId: 'new-session',
+          gameSessionId: '20'.repeat(16),
           iStarted: false,
           myContribution: '60',
           theirContribution: '40',
@@ -432,7 +432,7 @@ it('aborts after persist when the start epoch advances during replaceSession', a
         baseSave({
           pairingToken: 'cancelled-token',
           sessionPeerId: 'peer',
-          gameSessionId: 'session',
+          gameSessionId: '30'.repeat(16),
           iStarted: true,
           myContribution: '10',
           theirContribution: '10',
@@ -493,7 +493,7 @@ it('keeps the terminal checkpoint when Cancel aborts before replaceSession', asy
         baseSave({
           pairingToken: 'should-not-write',
           sessionPeerId: 'peer',
-          gameSessionId: 'session',
+          gameSessionId: '40'.repeat(16),
           iStarted: true,
           myContribution: '10',
           theirContribution: '10',

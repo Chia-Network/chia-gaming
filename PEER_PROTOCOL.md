@@ -11,22 +11,22 @@ The protocol is layered:
 
 ```text
 addressed hub relay payload
-├── pre-session peer app message
-│   └── Bencodex dictionary
-└── reliable peer frame
+└── session-scoped reliable peer frame
     ├── data
-    │   └── Bencodex PeerMessage
-    ├── acknowledgement
+    │   └── Bencodex semantic message
+    ├── cumulative acknowledgement
     └── keepalive
 ```
 
 The shared reliable frame supplies replay, deduplication, ordering, and
-durability for all authoritative semantic messages, including handshake
-messages. Pre-session negotiation messages are outside that wrapper.
+durability for every semantic peer message, beginning with session negotiation
+and continuing through handshake, play, and cooperative shutdown. Transport
+acknowledgements and keepalives are not recursively acknowledged, but they are
+bound to the same peer session ID.
 
 This document covers:
 
-- pre-session negotiation;
+- reliable session negotiation;
 - reliable peer framing;
 - Bencodex encoding;
 - the six-message channel handshake;
@@ -38,54 +38,59 @@ Wallet RPC, blockchain polling, chain reorganization, transaction submission,
 and on-chain game resolution are out of scope. Chia objects that cross the peer
 wire are specified as data types even when their later use is out of scope.
 
-## 2. Peer relay-payload classes and reliable frame bytes
+## 2. Reliable peer frame bytes
 
-The first byte of an addressed hub relay payload discriminates the peer payload
-class:
+Every addressed hub relay payload belonging to this protocol is one reliable
+peer frame. Its first byte discriminates the frame type:
 
 ```text
-0x64   pre-session Bencodex dictionary
 0x01   reliable data frame
 0x02   reliable acknowledgement frame
 0x03   reliable keepalive frame
 ```
 
-The `0x64` value is the Bencodex dictionary marker. Pre-session dictionaries are
-placed directly in the addressed relay payload. Reliable frames wrap every
-authoritative semantic message, including every handshake message.
-
 ### 2.1 Reliable frame encoding
 
 ```text
 Data:
-+--------+----------------+---------------------------+
-| 0x01   | msgno: u32 BE | Bencodex PeerMessage      |
-+--------+----------------+---------------------------+
++--------+------------------------+----------------+---------------------------+
+| 0x01   | session_id: Bytes(16) | msgno: u32 BE | Bencodex semantic message |
++--------+------------------------+----------------+---------------------------+
 
 Acknowledgement:
-+--------+----------------+
-| 0x02   | msgno: u32 BE |
-+--------+----------------+
++--------+------------------------+----------------+
+| 0x02   | session_id: Bytes(16) | msgno: u32 BE |
++--------+------------------------+----------------+
 
 Keepalive:
-+--------+
-| 0x03   |
-+--------+
++--------+------------------------+
+| 0x03   | session_id: Bytes(16) |
++--------+------------------------+
 ```
 
-Canonical acknowledgement frames are exactly five bytes. Canonical keepalive
-frames are exactly one byte. The current decoder accepts trailing bytes on
-either frame, but senders must not emit them.
+`session_id` is an opaque random 16-byte value selected by the proposer for a
+new peer session. It is encoded directly as bytes, not as hexadecimal text.
+Every frame for that session carries the same value. A restored endpoint retains
+the value; an endpoint that starts without the saved session selects a new one.
+The identifier is an epoch and routing/deduplication binding, not authentication.
+
+Canonical acknowledgement frames are exactly 21 bytes. Canonical keepalive
+frames are exactly 17 bytes. A data frame is at least 21 bytes plus one complete
+Bencodex value. Receivers reject trailing bytes where a frame type has a fixed
+length.
 
 Message numbering starts at 1 for a new session. Zero is the initial received
 message number. The wire counter is an unsigned 32-bit integer. The current
 protocol does not define rollover; a sender must not wrap the counter within a
-session.
+session. Counters, acknowledgements, ordering, and replay are scoped to
+`session_id` independently in each direction.
 
 ## 3. Bencodex wire encoding
 
-The body of every data frame is exactly one Bencodex `PeerMessage`. There is no
-numeric message tag or magic prefix. The required peer protocol version is
+The body of every data frame is exactly one Bencodex semantic message. There is
+no numeric semantic-message tag or magic prefix inside the body. Session
+negotiation messages are specified in section 4; after acceptance the body is a
+`PeerMessage` specified in section 6. The required peer protocol version is
 advertised in the Handshake A/B capability map described in section 7.1.
 
 ### 3.1 Primitive values
@@ -202,11 +207,14 @@ StateUpdateSignatures {
 state. `unroll_preempt_half_sig` signs the preemption of an older unroll to that
 state. Each is one party's half of a two-party aggregate signature.
 
-## 4. Pre-session message wire dictionaries
+## 4. Session negotiation messages
 
-Pre-session messages are raw Bencodex dictionaries placed directly in an
-addressed hub relay payload. They are not numbered, acknowledged, replayed, or
-deduplicated by the reliable peer layer.
+Session negotiation uses the same reliable data frames as the rest of the peer
+protocol. The proposer selects the frame's random `session_id` and sends
+`session_proposal` as message number 1. The receiver may create a candidate
+transport for that `(peer_id, session_id)` only after validating this first
+frame. Negotiation messages use the Bencodex dictionaries below as data-frame
+bodies.
 
 ### 4.1 `session_proposal`
 
@@ -219,7 +227,6 @@ Requests local consent to start a session:
   "responder_amount":Text,
   "channel_timeout": Text,  // optional
   "unroll_timeout":  Text,  // optional
-  "game_session_id": Text,  // optional in the current decoder
   "network":         Text   // required by intake validation
 }
 ```
@@ -231,10 +238,11 @@ canonical decimal block counts in the range 3 through 30. `network` must be
 The sender's display alias is not self-reported in this message. The outer
 hub-to-player `relay.alias` field supplies untrusted presentation metadata.
 
-The current sender always supplies a randomly generated `game_session_id`.
-The current receiver accepts its absence and generates a local value. This
-identifier is host persistence metadata; it is not carried in reliable frames
-and is not a cryptographic session binding.
+The peer session ID is not duplicated in this dictionary. The enclosing frame
+is authoritative. The receiver durably records an admitted pending proposal and
+the advanced receive counter before acknowledging message 1. If the proposal is
+accepted, Handshake A-F continue on the same session ID and counter sequence;
+acceptance does not create a new reliable transport.
 
 A receiver rejects the proposal without starting the peer protocol if:
 
@@ -245,7 +253,7 @@ A receiver rejects the proposal without starting the peer protocol if:
 
 ### 4.2 `session_reject`
 
-Declines or aborts a pre-session attempt:
+Declines or aborts the proposed session:
 
 ```text
 {
@@ -253,15 +261,32 @@ Declines or aborts a pre-session attempt:
 }
 ```
 
-This message has no acknowledgement. During an active session, the current host
-marks the matching peer route dead but does not pass this message into the peer
-protocol.
+`session_reject` is an ordinary numbered reliable data message under the
+proposed session ID. Receiving it durably cancels the matching pre-active
+attempt before sending the acknowledgement. Sending it cancels the local
+application attempt immediately, but the sender retains the terminal
+unacknowledged transport record until the peer acknowledges the rejection or
+the local bounded-retention policy expires it.
+
+After accepting a rejection, the receiver retains a minimal durable receipt for
+the `(peer_id, session_id)` and last received message number. This lets it
+re-acknowledge a replay if the first acknowledgement was lost, without
+re-entering semantic processing. Rejection records are local denial-of-service
+policy rather than wire fields. The reference browser retains at most eight
+outbound rejection records and inbound receipts in total and expires them after
+seven days.
+
+`session_reject` is not a way to terminate an established channel. Receiving
+one after channel establishment is a peer protocol failure and takes the
+existing obligation on-chain. A different session ID from the selected peer
+during a live channel likewise indicates that the peer has restarted without
+that channel state and causes on-chain resolution.
 
 ## 5. Reliable delivery semantics
 
 ### 5.1 Outbound durability
 
-Before sending a data frame, the host:
+Before sending a data frame, including a proposal or rejection, the host:
 
 1. allocates the next message number;
 2. stores the message in its unacknowledged-message list;
@@ -305,8 +330,8 @@ with `msgno <= N`. The sender removes all such frames from its unacknowledged
 list.
 
 An acknowledgement is a transport fact only. It means the receiver durably
-processed that numbered `PeerMessage`; it does not separately assert that an
-on-chain transaction succeeded.
+processed that numbered semantic message; it does not assert that a proposal
+was accepted or that an on-chain transaction succeeded.
 
 ### 5.4 Replay
 
@@ -322,8 +347,9 @@ The current sender throttles replay bursts to at most once per second.
 
 ### 5.5 Keepalive
 
-Each active peer sends `0x03` every 15 seconds. No reply is required. Data,
-acknowledgement, and keepalive frames all count as peer activity.
+Each active peer sends `0x03 || session_id` every 15 seconds. No reply is
+required. Data, acknowledgement, and keepalive frames all count as peer
+activity only after their peer and session IDs match the selected transport.
 
 This keepalive tests the complete player-to-hub-to-peer path. It is independent
 from the hub control keepalive described in `WEBSOCKET_PROTOCOL.md`.
@@ -333,13 +359,21 @@ from the hub control keepalive described in `WEBSOCKET_PROTOCOL.md`.
 The host ignores:
 
 - empty frames;
-- data or acknowledgement frames shorter than five bytes; and
+- data frames shorter than 21 bytes;
+- acknowledgement frames whose length is not exactly 21 bytes;
+- keepalive frames whose length is not exactly 17 bytes;
+- acknowledgements and keepalives for an unknown session ID; and
 - unknown tags.
 
 They do not count as peer activity.
 
-The reliable layer accepts only frames attributed by the hub to the selected
-peer ID. Other senders are ignored.
+The reliable layer accepts ordinary frames only when both the peer ID attributed
+by the hub and the 16-byte session ID match the selected transport. An unknown
+session can be established only by data message 1 whose body is a valid
+`session_proposal`. A new session ID from the selected peer while a live
+off-chain channel exists means that peer has lost or discarded the old session;
+the old channel must take its on-chain resolution path rather than resetting its
+reliable counters.
 
 ### 5.7 Local receive policy
 
@@ -351,7 +385,7 @@ changing the wire format. The current browser defaults are:
 - at most 1,024 retained inbound messages across pre-handler, pre-ready, and
   out-of-order queues;
 - at most 64 MiB retained across those queues; and
-- at most 10 MiB in one Bencodex `PeerMessage` body (the five-byte reliable
+- at most 10 MiB in one Bencodex semantic-message body (the 21-byte reliable
   header and outer hub relay dictionary are outside this count).
 
 The handshake activation-lag queue applies the same current body, count, and
@@ -643,7 +677,7 @@ CancelProposalGroup:
   d u18:CancelProposalGroup i<game_id>e e
 
 Move:
-  d u4:Move l i<game_id>e <GameMoveDetails struct> e e
+  d u4:Move l i<game_id>e <PeerMove struct> e e
 
 AcceptSettlement:
   d u16:AcceptSettlement l i<game_id>e i<amount>e e e
@@ -746,12 +780,11 @@ An unknown or non-canonical group is a hard batch error.
 ### 11.4 `Move`
 
 ```text
-Move(GameID, GameMoveDetails)
+Move(GameID, PeerMove)
 
-GameMoveDetails {
+PeerMove {
   basic: GameMoveStateInfo,
-  validation_info_hash: ValidationInfoHash,
-  validation_program_hash: Option<Hash>
+  terminal: Bool
 }
 
 GameMoveStateInfo {
@@ -760,31 +793,23 @@ GameMoveStateInfo {
   max_move_size: u32,
   max_move_size_raw: Bytes
 }
-
-ValidationInfoHash =
-    None
-  | Initial
-  | Hash(Hash)
 ```
-
-Its exact enum encoding is:
-
-```text
-None:
-  u4:None
-
-Initial:
-  u7:Initial
-
-Hash(value):
-  d u4:Hash <32-byte byte string> e
-```
-
-`validation_program_hash` is omitted from the encoded struct when it is absent.
 
 The receiver locates the live game, validates turn authority and the move using
-the locally held game handlers, and updates the referee state. A valid move is
-part of the signed final channel state.
+the locally held validation program and game handlers, and updates the referee
+state. Neither the validation info hash nor the bare validation-program hash is
+sent by the peer:
+
+- for a nonterminal move, the receiver computes the validation info hash from
+  its local validation program and pre-move state, and computes the program tree
+  hash locally;
+- for a terminal move, the receiver reconstructs the nil validation-info
+  commitment and no bare program hash.
+
+The `terminal` boolean is untrusted semantic input. After interpreting the move,
+the receiver requires it to agree with whether the local handler transition has
+a successor. A mismatch is a hard batch error. A valid move and the
+locally reconstructed commitments are part of the signed final channel state.
 
 `max_move_size_raw` preserves the exact CLVM atom bytes used when hashing the
 resulting puzzle. It accompanies the decoded numeric `max_move_size`.
@@ -914,7 +939,9 @@ exchanged and verified during this protocol.
 ### 14.2 Lifecycle summary
 
 ```text
-Pre-session negotiation
+Reliable session proposal (message 1 selects session_id)
+    |
+    +-- reliable rejection -> cancel proposed session
     |
     v
 Handshake A-F
@@ -938,7 +965,10 @@ Off-chain potato protocol
 Reliable transport acknowledgements may still be emitted for already received
 frames while protocol processing is stopping, so the remote side can retire
 its durable outbound log. Such acknowledgement does not re-enter the semantic
-protocol.
+protocol. A terminal rejection leaves a bounded outbound replay record until
+acknowledgement and a receiver-side durable receipt for re-acknowledging
+duplicates. These records age out under the local retention policy described in
+section 4.2.
 
 ## 15. Reference implementation
 
@@ -960,6 +990,7 @@ protocol.
 - Reliable peer framing:
   `front-end/src/services/PeerSession.ts`
 - Ordering, persistence, acknowledgement, and replay:
+  the peer reliability owner used by
   `front-end/src/hooks/SessionController.ts`
 - Peer transport tests:
   `front-end/src/lib/tests/message_protocol.transport.test.ts`,

@@ -159,7 +159,6 @@ function makeCallbacks(presence?: {
   return {
     onAdvisoryStart: jest.fn(),
     onPeerMessage: jest.fn(),
-    onPeerAppMessage: jest.fn(),
     onDeliveryFailure: jest.fn(),
     onRegistered: jest.fn(),
     onAliasUpdated: jest.fn(),
@@ -357,7 +356,7 @@ describe('binary message relay', () => {
     expect(cb.onPeerMessage).toHaveBeenCalledWith(SENDER_ID, 'Alice', payload);
   });
 
-  it('dispatches bencodex peer app messages to onPeerAppMessage', async () => {
+  it('keeps bencodex peer payloads opaque', async () => {
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
@@ -369,10 +368,10 @@ describe('binary message relay', () => {
     };
     const payload = encodeBencodex(appMessage);
     MockWebSocket.instance!._fireRelay(SENDER_ID, payload);
-    expect(cb.onPeerAppMessage).toHaveBeenCalledWith(SENDER_ID, 'Alice', appMessage);
+    expect(cb.onPeerMessage).toHaveBeenCalledWith(SENDER_ID, 'Alice', payload);
   });
 
-  it('decodes the network field on a session_proposal', async () => {
+  it('does not decode semantic fields from relay payloads', async () => {
     const cb = makeCallbacks();
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
@@ -385,11 +384,7 @@ describe('binary message relay', () => {
     };
     const payload = encodeBencodex(appMessage);
     MockWebSocket.instance!._fireRelay(SENDER_ID, payload);
-    expect(cb.onPeerAppMessage).toHaveBeenCalledWith(
-      SENDER_ID,
-      'Alice',
-      expect.objectContaining({ type: 'session_proposal', network: 'testnet' }),
-    );
+    expect(cb.onPeerMessage).toHaveBeenCalledWith(SENDER_ID, 'Alice', payload);
   });
 
   it('passes distinct alias from binary frame header', async () => {
@@ -432,18 +427,19 @@ describe('outbound message format', () => {
     expect(ws.sentControl).toEqual([{ type: 'relay', to: playerBytes(TARGET_ID), payload }]);
   });
 
-  it('sendPeerAppMessage encodes bencodex as binary frame', async () => {
+  it('sends already-framed semantic bytes without interpretation', async () => {
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentControl = [];
 
-    conn.sendPeerAppMessage(TARGET_ID, {
+    const payloadBytes = encodeBencodex({
       type: 'session_proposal',
       proposer_amount: '100',
       responder_amount: '100',
     });
+    conn.sendToPeer(TARGET_ID, payloadBytes);
     expect(ws.sentControl).toHaveLength(1);
 
     const relay = ws.sentControl[0] as {
@@ -453,8 +449,8 @@ describe('outbound message format', () => {
     };
     expect(relay.type).toBe('relay');
     expect(relay.to).toEqual(playerBytes(TARGET_ID));
-    const payloadBytes = relay.payload;
-    const parsed = toPlainObject(decodeBencodex(payloadBytes) as BencodexValue);
+    expect(relay.payload).toEqual(payloadBytes);
+    const parsed = toPlainObject(decodeBencodex(relay.payload) as BencodexValue);
     expect(parsed).toEqual({
       type: 'session_proposal',
       proposer_amount: '100',

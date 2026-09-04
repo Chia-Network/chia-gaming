@@ -142,6 +142,13 @@ export function makePeerConn(
   receivePolicy?: ReadonlySessionReceivePolicy,
 ): PeerConnectionResult {
   return {
+    reliableState: {
+      sessionId: '00'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 0n,
+      unackedMessages: [],
+      disposition: 'active',
+    },
     sendMessage: (msgno, msg) => {
       sentMessages.push({ msgno, msg });
       return true;

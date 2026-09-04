@@ -460,6 +460,9 @@ body limit.
 - **Player ID**: a public routing identifier assigned by the hub. Current hubs
   send it as 16 opaque bytes. The reference hub represents the same bytes
   internally as `p_` followed by 32 lowercase hexadecimal characters.
+- **Peer session ID**: a separate random 16-byte epoch carried inside every
+  reliable peer frame. The hub treats it as part of the opaque relay payload;
+  it is specified in `PEER_PROTOCOL.md`.
 - **Peer payload**: bytes addressed to another player ID. The hub does not
   interpret these bytes.
 

@@ -20,7 +20,7 @@ import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
 import { spend_bundle_to_clvm, coerceToBytes } from '../util';
 import { log, diagStack } from '../services/log';
 import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
-import { flushSessionSave } from './save';
+import { clearSession, flushSessionSave } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendRecent,
@@ -36,6 +36,11 @@ import {
   DEFAULT_SESSION_RECEIVE_POLICY,
   type ReadonlySessionReceivePolicy,
 } from '../lib/session/receivePolicy';
+import {
+  decodePeerAppMessage,
+  ReliablePeerTransport,
+  type ReliableMessageConsumer,
+} from '../services/PeerSession';
 
 export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 
@@ -43,6 +48,7 @@ export interface WasmFields {
   serializedGameSession: Uint8Array;
   gameSessionSchemaVersion: bigint;
   pairingToken: string;
+  gameSessionId: string;
   messageNumber: bigint;
   remoteNumber: bigint;
   iStarted: boolean;
@@ -54,6 +60,7 @@ export interface WasmFields {
   wasmNotificationHistory: string[];
   diagnosticLog: string[];
   durabilityWarning: string | undefined;
+  transportDisposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
   activeGameIds: string[];
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
@@ -68,7 +75,6 @@ function clvmToBytes(value: Program | null): Uint8Array {
 const SAVE_DEBOUNCE_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 15_000;
 /** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
-const UNACKED_RESEND_MIN_INTERVAL_MS = 1_000;
 /** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
 const ACTIVE_DRAIN_EVENT_BUDGET = 100;
 
@@ -140,15 +146,21 @@ export class SessionController implements PollingGameSession {
     | null = null;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-  private lastUnackedResendAt = 0;
-  messageNumber: bigint;
-  remoteNumber: bigint;
+  private reliableState: NonNullable<PeerConnectionResult['reliableState']>;
+  private reliableTransport: ReliablePeerTransport;
+  private readonly reliableConsumer: ReliableMessageConsumer;
+  private inboundSessionRejected = false;
+  private inboundSessionRejectCommitted = false;
+  private persistInboundSessionReject:
+    | ((sessionId: string, remoteNumber: bigint) => Promise<void>)
+    | null = null;
+  private inboundSessionRejectHandler: ((sessionId: string, remoteNumber: bigint) => void) | null =
+    null;
   cradle: ChiaGame | undefined;
   uniqueId: string;
   pairingToken: string;
   channelReady: boolean;
   iStarted: boolean;
-  storedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   cleanShutdownCalled: boolean;
   onChain: boolean;
   reloading: boolean;
@@ -173,10 +185,8 @@ export class SessionController implements PollingGameSession {
   private lastSelectCoinsValue: string | null = null;
   private lastLauncherCoinId: string | null = null;
 
-  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }> = [];
   wasmNotificationHistory: string[] = [];
   diagnosticLog: string[] = [];
-  private reorderQueue: Map<bigint, Uint8Array> = new Map();
   private readonly receivePolicy: ReadonlySessionReceivePolicy;
   private pendingPeerFailure: string | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -219,10 +229,46 @@ export class SessionController implements PollingGameSession {
   ) {
     const { sendMessage, sendAck } = peer_conn;
     this.receivePolicy = peer_conn.receivePolicy ?? DEFAULT_SESSION_RECEIVE_POLICY;
+    this.reliableState =
+      peer_conn.reliableState ??
+      ({
+        sessionId: uniqueId,
+        messageNumber: 1n,
+        remoteNumber: 0n,
+        unackedMessages: [],
+        disposition: 'active',
+      } satisfies NonNullable<PeerConnectionResult['reliableState']>);
+    this.reliableTransport =
+      peer_conn.reliableTransport instanceof ReliablePeerTransport
+        ? peer_conn.reliableTransport
+        : new ReliablePeerTransport(
+            this.reliableState,
+            this.receivePolicy,
+            (msgno, body) => sendMessage(Number(msgno), body),
+            (msgno) => sendAck(Number(msgno)),
+          );
+    this.persistInboundSessionReject = peer_conn.persistInboundSessionReject ?? null;
+    this.inboundSessionRejectHandler = peer_conn.onSessionReject ?? null;
+    this.reliableConsumer = {
+      isReady: () =>
+        !!this.wc &&
+        !!this.cradle &&
+        this.qualifyingEvents === 7 &&
+        !this.reloading &&
+        !this.pendingPeerFailure &&
+        !this.inboundSessionRejected &&
+        !this.retired,
+      deliver: (msgno, body) => this.deliverOrderedMessage(msgno, body),
+      persist: () => this.persistReliableBoundary(),
+      failure: (reason) => this.failPeerProcessing(reason),
+      acknowledged: (ack) => this.handleReliableAcknowledgement(ack),
+      sent: (msgno) => this.noteTerminalHandoffSent(msgno),
+      keepalive: () => this.notePeerActivity(),
+      committed: () => this.notifyInboundSessionRejectCommitted(),
+    };
+    this.reliableTransport.attachConsumer(this.reliableConsumer);
     this.uniqueId = uniqueId;
     this.pairingToken = '';
-    this.messageNumber = 1n;
-    this.remoteNumber = 0n;
     this.sendMessage = (msgno, msg) => sendMessage(Number(msgno), msg);
     this.sendAck = (ackMsgno) => sendAck(Number(ackMsgno));
     this.myContribution = myContribution;
@@ -231,7 +277,6 @@ export class SessionController implements PollingGameSession {
     this.rewardPuzzleHash = null;
     this.iStarted = false;
     this.channelReady = false;
-    this.storedMessages = [];
     this.cleanShutdownCalled = false;
     this.onChain = false;
     this.reloading = false;
@@ -250,6 +295,68 @@ export class SessionController implements PollingGameSession {
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
     }
+  }
+
+  attachReliableTransport(transport: ReliablePeerTransport): void {
+    if (this.reliableTransport === transport) return;
+    this.reliableTransport.detachConsumer(this.reliableConsumer);
+    this.reliableTransport = transport;
+    this.reliableState = transport.state;
+    this.reliableTransport.attachConsumer(this.reliableConsumer);
+  }
+
+  setInboundSessionRejectHandler(
+    handler: ((sessionId: string, remoteNumber: bigint) => void) | null,
+  ): void {
+    this.inboundSessionRejectHandler = handler;
+  }
+
+  setInboundSessionRejectPersistence(
+    persist: ((sessionId: string, remoteNumber: bigint) => Promise<void>) | null,
+  ): void {
+    this.persistInboundSessionReject = persist;
+  }
+
+  get messageNumber(): bigint {
+    return this.reliableState.messageNumber;
+  }
+
+  set messageNumber(value: bigint) {
+    this.reliableState.messageNumber = value;
+  }
+
+  get remoteNumber(): bigint {
+    return this.reliableState.remoteNumber;
+  }
+
+  set remoteNumber(value: bigint) {
+    this.reliableState.remoteNumber = value;
+  }
+
+  get unackedMessages(): Array<{ msgno: bigint; msg: Uint8Array }> {
+    return this.reliableState.unackedMessages;
+  }
+
+  set unackedMessages(value: Array<{ msgno: bigint; msg: Uint8Array }>) {
+    this.reliableState.unackedMessages = value;
+  }
+
+  get storedMessages(): Array<{ msgno: bigint; msg: Uint8Array }> {
+    return [...this.reliableTransport.runtime.reorderQueue.entries()].map(([msgno, msg]) => ({
+      msgno,
+      msg,
+    }));
+  }
+
+  set storedMessages(value: Array<{ msgno: bigint; msg: Uint8Array }>) {
+    this.reliableTransport.runtime.reorderQueue.clear();
+    for (const { msgno, msg } of value) {
+      this.reliableTransport.runtime.reorderQueue.set(msgno, msg);
+    }
+  }
+
+  private get reorderQueue(): Map<bigint, Uint8Array> {
+    return this.reliableTransport.runtime.reorderQueue;
   }
 
   setReloading() {
@@ -300,6 +407,7 @@ export class SessionController implements PollingGameSession {
   }
 
   private cleanupInternal(flushDurability: boolean) {
+    const retainRejectedTransport = this.reliableState.disposition === 'outbound-reject';
     this.retired = true;
     this.cleanShutdownCalled = true;
     // Retirement is not a manager terminal disposition: detach this session
@@ -309,17 +417,20 @@ export class SessionController implements PollingGameSession {
     this.terminalHandoff = null;
     this.eventQueue = [];
     this.heldProposalNotifications = [];
-    this.pendingOutboundSends = [];
+    if (!retainRejectedTransport) this.pendingOutboundSends = [];
     this.pendingAcks = [];
-    this.unackedMessages = [];
+    if (!retainRejectedTransport) this.unackedMessages = [];
     this.reorderQueue.clear();
     this.needsImmediateDurability = false;
     this.storedMessages = [];
+    if (!retainRejectedTransport) this.reliableTransport.clearRuntime();
     this.rxjsMessageSingleton.complete();
     this.blockchain?.detachGameSession(this);
     this.blockchainAttached = false;
     this.blockchain = null;
     this.onSaveNeeded = null;
+    this.persistInboundSessionReject = null;
+    this.inboundSessionRejectHandler = null;
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
@@ -391,6 +502,10 @@ export class SessionController implements PollingGameSession {
 
   getWasmConnection(): WasmConnection | undefined {
     return this.wc;
+  }
+
+  getGameSessionId(): string {
+    return this.reliableState.sessionId;
   }
 
   isChannelReady(): boolean {
@@ -492,11 +607,7 @@ export class SessionController implements PollingGameSession {
     if (this.qualifyingEvents != 7 || !this.cradle || this.reloading) {
       return;
     }
-    const storedMessages = this.storedMessages;
-    this.storedMessages = [];
-    for (const { msgno, msg } of storedMessages) {
-      this.deliverMessage(msgno, msg);
-    }
+    this.reliableTransport.drain();
 
     if (this.restoredSession) {
       this.restoredSession = false;
@@ -810,6 +921,16 @@ export class SessionController implements PollingGameSession {
     this.scheduleDrain();
   }
 
+  queueHostMessage(
+    message: Uint8Array,
+    disposition: 'active' | 'outbound-reject' = 'active',
+  ): bigint {
+    if (this.retired || this.protocolStopped) {
+      throw new Error('Cannot queue a host message on a stopped reliable transport');
+    }
+    return this.reliableTransport.allocateOutbound(message, disposition);
+  }
+
   private assertActionSucceeded(result: WasmResult | undefined, action: string): void {
     const required = requireWasmResult(result);
     if (required.actionSucceeded) return;
@@ -973,6 +1094,7 @@ export class SessionController implements PollingGameSession {
       await Promise.allSettled(effects);
       await this.transactionSubmitQueue;
       await this.durabilityFlushPromise;
+      await this.reliableTransport.flushPending();
       this.flushDeferredWork();
       if (
         this.pendingEffects.size === 0 &&
@@ -1003,12 +1125,9 @@ export class SessionController implements PollingGameSession {
         msg.length === command.message.length &&
         msg.every((byte, index) => byte === command.message[index]),
     );
-    const msgno = existing?.msgno ?? this.messageNumber++;
+    const msgno = existing?.msgno ?? this.reliableTransport.allocateOutbound(command.message);
     if (!existing) {
-      this.unackedMessages.push({ msgno, msg: command.message });
-      this.pendingOutboundSends.push({ msgno, msg: command.message });
-      this.markNeedsImmediateDurability();
-      this.scheduleDurabilityFlush();
+      void this.reliableTransport.flushPending();
     }
     this.terminalHandoff = { id: command.id, msgno, sent: false, acknowledged: false };
   }
@@ -1016,10 +1135,7 @@ export class SessionController implements PollingGameSession {
   private dispatchEvent(event: GameSessionEvent): void {
     if ('OutboundMessage' in event) {
       if (this.protocolStopped || this.onChain) return;
-      const msgno = this.messageNumber++;
-      this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
-      this.pendingOutboundSends.push({ msgno, msg: event.OutboundMessage });
-      this.markNeedsImmediateDurability();
+      this.reliableTransport.allocateOutbound(event.OutboundMessage);
     } else if ('Notification' in event) {
       const n = event.Notification;
       let notification = n;
@@ -1123,87 +1239,8 @@ export class SessionController implements PollingGameSession {
   // --- Inbound events ---
 
   deliverMessage(msgno: bigint, msg: Uint8Array) {
-    if (this.retired) return;
-    if (this.pendingPeerFailure) return;
-    // Terminal Rust state must not consume peer protocol messages, but the host
-    // still acknowledges their transport delivery so the peer can retire them.
-    if (this.protocolStopped) {
-      this.sendAck(msgno);
-      return;
-    }
-    if (msg.byteLength > this.receivePolicy.maxPeerBodyBytes) {
-      this.failPeerProcessing(
-        `peer message body ${msg.byteLength} exceeds maximum ${this.receivePolicy.maxPeerBodyBytes}`,
-      );
-      return;
-    }
     this.notePeerActivity();
-    if (this.onChain) {
-      this.sendAck(msgno);
-      return;
-    }
-    if (msgno <= this.remoteNumber) {
-      if (this.needsImmediateDurability) {
-        this.pendingAcks.push(msgno);
-        this.scheduleDurabilityFlush();
-      } else {
-        this.sendAck(msgno);
-      }
-      // Duplicate inbound usually means the peer retransmitted after a reload or
-      // lost our reply. Re-ack alone is not enough — also replay our unacked
-      // outbound (e.g. OfferSent payload) so handshake can finish.
-      this.resendUnacked();
-      return;
-    }
-    const futureGap = msgno - (this.remoteNumber + 1n);
-    if (futureGap > this.receivePolicy.maxFutureReliableMsgnoGap) {
-      this.failPeerProcessing(
-        `peer message ${msgno} is ${futureGap} ahead of next expected ${this.remoteNumber + 1n}; maximum gap is ${this.receivePolicy.maxFutureReliableMsgnoGap}`,
-      );
-      return;
-    }
-    if (this.hasQueuedMessage(msgno)) {
-      return;
-    }
-    if (!this.wc || !this.cradle || this.qualifyingEvents != 7 || this.reloading) {
-      if (!this.admitQueuedMessage(msg.byteLength)) return;
-      this.storedMessages.push({ msgno, msg });
-      return;
-    }
-    if (msgno > this.remoteNumber + 1n) {
-      if (!this.admitQueuedMessage(msg.byteLength)) return;
-      this.reorderQueue.set(msgno, msg);
-      return;
-    }
-
-    this.deliverSingleMessage(msgno, msg);
-    this.flushReorderQueue();
-  }
-
-  private hasQueuedMessage(msgno: bigint): boolean {
-    return (
-      this.reorderQueue.has(msgno) || this.storedMessages.some((stored) => stored.msgno === msgno)
-    );
-  }
-
-  private admitQueuedMessage(messageBytes: number): boolean {
-    const queuedCount = this.reorderQueue.size + this.storedMessages.length;
-    const queuedBytes =
-      [...this.reorderQueue.values()].reduce((total, msg) => total + msg.byteLength, 0) +
-      this.storedMessages.reduce((total, stored) => total + stored.msg.byteLength, 0);
-    if (queuedCount + 1 > this.receivePolicy.maxQueuedMessages) {
-      this.failPeerProcessing(
-        `peer receive queue count ${queuedCount + 1} exceeds maximum ${this.receivePolicy.maxQueuedMessages}`,
-      );
-      return false;
-    }
-    if (queuedBytes + messageBytes > this.receivePolicy.maxQueuedBytes) {
-      this.failPeerProcessing(
-        `peer receive queue bytes ${queuedBytes + messageBytes} exceeds maximum ${this.receivePolicy.maxQueuedBytes}`,
-      );
-      return false;
-    }
-    return true;
+    this.reliableTransport.receiveData(msgno, msg);
   }
 
   failPeerProcessing(reason: string): void {
@@ -1221,46 +1258,44 @@ export class SessionController implements PollingGameSession {
     this.goOnChain();
   }
 
-  private deliverSingleMessage(msgno: bigint, msg: Uint8Array) {
+  private deliverOrderedMessage(_msgno: bigint, msg: Uint8Array): void {
+    if (this.protocolStopped || this.onChain) return;
+    let semantic = null;
     try {
-      const result = this.cradle!.deliver_message(msg);
-      this.remoteNumber = msgno;
-      this.processResult(result);
-    } catch (e) {
-      const errMsg = extractErrorMessage(e);
-      diagStack('deliver_message failed', e);
-      this.rxjsEmitter?.next({ type: 'error', error: errMsg });
-      // Rust owns the outcome of a transport failure: its Go On-Chain path may
-      // begin resolution or convert a zero-payout shutdown into abandonment.
-      this.goOnChain();
+      semantic = decodePeerAppMessage(msg);
+    } catch {}
+    if (semantic?.type === 'session_reject') {
+      if (this.channelReady) {
+        this.failPeerProcessing('session_reject received after channel establishment');
+        return;
+      }
+      this.inboundSessionRejected = true;
+      this.reliableState.disposition = 'inbound-reject';
+      this.reliableTransport.discardOutbound();
       return;
     }
-    this.pendingAcks.push(msgno);
-    this.markNeedsImmediateDurability();
+    const result = this.cradle!.deliver_message(msg);
+    this.processResult(result);
   }
 
-  private flushReorderQueue() {
-    while (!this.onChain && this.reorderQueue.has(this.remoteNumber + 1n)) {
-      const nextMsgno = this.remoteNumber + 1n;
-      const msg = this.reorderQueue.get(nextMsgno)!;
-      this.reorderQueue.delete(nextMsgno);
-      this.deliverSingleMessage(nextMsgno, msg);
-    }
+  private notifyInboundSessionRejectCommitted(): void {
+    if (!this.inboundSessionRejectCommitted) return;
+    this.inboundSessionRejectCommitted = false;
+    const handler = this.inboundSessionRejectHandler;
+    this.inboundSessionRejectHandler = null;
+    handler?.(this.reliableState.sessionId, this.reliableState.remoteNumber);
   }
 
   receiveAck(ackMsgno: bigint) {
     if (this.retired) return;
     this.notePeerActivity();
+    this.reliableTransport.receiveAck(ackMsgno);
+  }
+
+  private handleReliableAcknowledgement(ackMsgno: bigint): void {
     const terminalCommand = this.terminalHandoff;
     const terminalAcknowledged =
       terminalCommand && terminalCommand.sent && ackMsgno >= terminalCommand.msgno;
-    const before = this.unackedMessages.length;
-    this.unackedMessages = this.unackedMessages.filter(
-      (m) => m.msgno > ackMsgno || (terminalCommand?.msgno === m.msgno && !terminalCommand.sent),
-    );
-    if (this.unackedMessages.length !== before) {
-      this.scheduleSave();
-    }
     if (terminalAcknowledged) {
       this.terminalHandoff = { ...terminalCommand, acknowledged: true };
       this.completeOutboundTerminalHandoffAfterAck(terminalCommand.id);
@@ -1269,28 +1304,7 @@ export class SessionController implements PollingGameSession {
 
   resendUnacked(): boolean {
     if (this.protocolStopped) return false;
-    // Hub reconnect / peer keepalive: also retry acks and outbound that failed
-    // while the WS was closed (those sit in pending* with needsImmediateDurability,
-    // not in unackedMessages).
-    if (
-      this.needsImmediateDurability ||
-      this.pendingAcks.length > 0 ||
-      this.pendingOutboundSends.length > 0
-    ) {
-      this.scheduleDurabilityFlush();
-    }
-    if (this.unackedMessages.length === 0) return true;
-    const now = Date.now();
-    if (now - this.lastUnackedResendAt < UNACKED_RESEND_MIN_INTERVAL_MS) return false;
-    this.lastUnackedResendAt = now;
-    for (const { msgno, msg } of this.unackedMessages) {
-      if (!this.sendMessage(msgno, msg)) {
-        log(`[wasm] resendUnacked: hub send failed for msgno=${msgno}`);
-        return false;
-      }
-      this.noteTerminalHandoffSent(msgno);
-    }
-    return true;
+    return this.reliableTransport.replayUnacked();
   }
 
   // --- PollingGameSession: driven by the BlockchainPoller ---
@@ -1370,9 +1384,10 @@ export class SessionController implements PollingGameSession {
         return;
       }
       try {
-        void Promise.resolve(this.onSaveNeeded?.()).catch((error) =>
-          this.reportBackgroundSaveError(error),
-        );
+        const save = this.reliableTransport.hasPendingDurability()
+          ? this.reliableTransport.flushPending()
+          : Promise.resolve(this.onSaveNeeded?.());
+        void save.catch((error) => this.reportBackgroundSaveError(error));
       } catch (error) {
         this.reportBackgroundSaveError(error);
       }
@@ -1391,8 +1406,10 @@ export class SessionController implements PollingGameSession {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
-      saveRequest = Promise.resolve(this.onSaveNeeded?.());
-      void saveRequest.catch(() => {});
+      if (!this.reliableTransport.hasPendingDurability()) {
+        saveRequest = Promise.resolve(this.onSaveNeeded?.());
+        void saveRequest.catch(() => {});
+      }
     }
 
     // Always flush the outer persistence debounce as well: React may have
@@ -1401,7 +1418,8 @@ export class SessionController implements PollingGameSession {
     // its Promise so this flush snapshots the new cradle, not a pre-save state.
     const persistence = flushSessionSave();
     const durability = this.flushDurabilityAndSend();
-    return Promise.all([saveRequest, persistence, durability]).then(() => {});
+    const reliable = this.reliableTransport.flushPending();
+    return Promise.all([saveRequest, persistence, durability, reliable]).then(() => {});
   }
 
   private markNeedsImmediateDurability() {
@@ -1428,12 +1446,53 @@ export class SessionController implements PollingGameSession {
   }
 
   private flushDurabilityAndSend(): Promise<void> {
-    this.durabilityFlushPromise = this.durabilityFlushPromise.then(
-      () => this.performDurabilityFlushAndSend(),
-      () => this.performDurabilityFlushAndSend(),
-    );
+    this.durabilityFlushPromise = this.durabilityFlushPromise
+      .then(
+        () => this.performDurabilityFlushAndSend(),
+        () => this.performDurabilityFlushAndSend(),
+      )
+      .then(() => this.reliableTransport.flushPending());
     void this.durabilityFlushPromise.catch(() => {});
     return this.durabilityFlushPromise;
+  }
+
+  private async persistReliableBoundary(): Promise<void> {
+    this.flushDeferredWork();
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    if (this.inboundSessionRejected) {
+      if (this.persistInboundSessionReject) {
+        await this.persistInboundSessionReject(
+          this.reliableState.sessionId,
+          this.reliableState.remoteNumber,
+        );
+      } else {
+        await clearSession();
+      }
+      this.inboundSessionRejectCommitted = true;
+      return;
+    }
+    if (!this.onSaveNeeded) {
+      throw new Error(
+        'Session persistence callback is unavailable at a protocol delivery boundary',
+      );
+    }
+    try {
+      const saveRequest = Promise.resolve(this.onSaveNeeded());
+      void saveRequest.catch(() => {});
+      await flushSessionSave();
+      await saveRequest;
+    } catch (error) {
+      const detail = extractErrorMessage(error);
+      const warning = `Session storage failed: ${detail}. Protocol messages remain queued until storage succeeds.`;
+      if (this.durabilityWarning !== warning) {
+        this.durabilityWarning = warning;
+        this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
+      }
+      throw error;
+    }
   }
 
   private async performDurabilityFlushAndSend(): Promise<void> {
@@ -1574,6 +1633,7 @@ export class SessionController implements PollingGameSession {
       serializedGameSession,
       gameSessionSchemaVersion: BigInt(this.wc.game_session_serialization_schema()),
       pairingToken: this.pairingToken,
+      gameSessionId: this.reliableState.sessionId,
       messageNumber: this.messageNumber,
       remoteNumber: this.remoteNumber,
       iStarted: this.iStarted,
@@ -1588,6 +1648,7 @@ export class SessionController implements PollingGameSession {
       ),
       diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
       durabilityWarning: this.durabilityWarning,
+      transportDisposition: this.reliableState.disposition ?? 'active',
       activeGameIds: [...this.activeGameIds],
       channelStatus: this.lastChannelStatus,
       myAlias: this.myAlias,

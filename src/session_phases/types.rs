@@ -13,7 +13,7 @@ use crate::common::types::Program;
 use crate::common::types::{
     Aggsig, Amount, CoinSpend, Error, GameID, GameType, Hash, ProgramRef, PuzzleHash, Timeout,
 };
-use crate::referee::types::GameMoveDetails;
+use crate::referee::types::GameMoveStateInfo;
 use crate::session_phases::effects::Effect;
 use crate::session_phases::handshake::{
     HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
@@ -221,11 +221,17 @@ pub trait FromLocalUI {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PeerMove {
+    pub basic: GameMoveStateInfo,
+    pub terminal: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BatchAction {
     ProposeGroup(WireProposalGroup),
     AcceptProposalGroup(GameID),
     CancelProposalGroup(GameID),
-    Move(GameID, GameMoveDetails),
+    Move(GameID, PeerMove),
     #[serde(rename = "AcceptSettlement")]
     AcceptSettlement(GameID, Amount),
 }
@@ -497,19 +503,34 @@ mod peer_wire_shape_tests {
         assert_eq!(
             bencodex::to_vec(&BatchAction::Move(
                 GameID(7),
-                GameMoveDetails {
+                PeerMove {
                     basic: crate::referee::types::GameMoveStateInfo {
                         move_made: vec![],
                         mover_share: Amount::default(),
                         max_move_size: 1,
                         max_move_size_raw: vec![],
                     },
-                    validation_info_hash: ValidationInfoHash::None,
-                    validation_program_hash: None,
+                    terminal: false,
                 },
             ))
             .expect("encode move action"),
-            b"du4:Moveli7edu5:basicdu13:max_move_sizei1eu17:max_move_size_raw0:u9:move_made0:u11:mover_sharei0eeu20:validation_info_hashu4:Noneeee"
+            b"du4:Moveli7edu5:basicdu13:max_move_sizei1eu17:max_move_size_raw0:u9:move_made0:u11:mover_sharei0eeu8:terminalfeee"
+        );
+        assert_eq!(
+            bencodex::to_vec(&BatchAction::Move(
+                GameID(7),
+                PeerMove {
+                    basic: crate::referee::types::GameMoveStateInfo {
+                        move_made: vec![],
+                        mover_share: Amount::default(),
+                        max_move_size: 1,
+                        max_move_size_raw: vec![],
+                    },
+                    terminal: true,
+                },
+            ))
+            .expect("encode terminal move action"),
+            b"du4:Moveli7edu5:basicdu13:max_move_sizei1eu17:max_move_size_raw0:u9:move_made0:u11:mover_sharei0eeu8:terminalteee"
         );
     }
 

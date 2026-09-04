@@ -1,25 +1,48 @@
-import { PeerSession, generateSessionId } from '../../services/PeerSession';
+import {
+  PeerSession as BrowserPeerSession,
+  encodePeerAppMessage,
+  generateSessionId,
+} from '../../services/PeerSession';
 import type { HubConnection } from '../../services/HubConnection';
 import { sessionReceivePolicy } from '../session/receivePolicy';
 
+const SESSION_ID = '000102030405060708090a0b0c0d0e0f';
+class PeerSession extends BrowserPeerSession {
+  constructor(
+    peerId: string,
+    _legacySessionId: string,
+    conn: HubConnection,
+    policy = sessionReceivePolicy(),
+  ) {
+    super(peerId, SESSION_ID, conn, policy);
+  }
+}
+
+function reliableFrame(
+  tag: 0x01 | 0x02 | 0x03,
+  msgno = 0,
+  body?: Uint8Array,
+  sessionBytes = Uint8Array.from({ length: 16 }, (_, index) => index),
+): Uint8Array {
+  const frame = new Uint8Array((tag === 0x03 ? 17 : 21) + (body?.byteLength ?? 0));
+  frame[0] = tag;
+  frame.set(sessionBytes, 1);
+  if (tag !== 0x03) new DataView(frame.buffer).setUint32(17, msgno, false);
+  if (body) frame.set(body, 21);
+  return frame;
+}
+
 function mockHubConnection(): HubConnection & {
   sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>;
-  sentAppMessages: Array<{ targetId: string; data: unknown }>;
 } {
   const conn = {
     sentPeerMessages: [] as Array<{ targetId: string; payload: Uint8Array }>,
-    sentAppMessages: [] as Array<{ targetId: string; data: unknown }>,
     sendToPeer(targetId: string, payload: Uint8Array) {
       conn.sentPeerMessages.push({ targetId, payload });
       return true;
     },
-    sendPeerAppMessage(targetId: string, data: unknown) {
-      conn.sentAppMessages.push({ targetId, data });
-      return true;
-    },
   } as unknown as HubConnection & {
     sentPeerMessages: Array<{ targetId: string; payload: Uint8Array }>;
-    sentAppMessages: Array<{ targetId: string; data: unknown }>;
   };
   return conn;
 }
@@ -31,7 +54,7 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       expect(ps.liveness).toBeNull();
       expect(ps.peerId).toBe('peer1');
-      expect(ps.sessionId).toBe('session1');
+      expect(ps.sessionId).toBe(SESSION_ID);
       expect(ps.isDestroyed()).toBe(false);
     });
 
@@ -147,19 +170,13 @@ describe('PeerSession', () => {
   });
 
   describe('message routing', () => {
-    it('buffers messages until handler is registered', () => {
+    it('buffers ordered data until handler is registered', () => {
       const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const received: Array<{ type: string; msgno: number; data?: Uint8Array }> = [];
 
-      const msgPayload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x05, 0xaa, 0xbb]);
+      const msgPayload = reliableFrame(0x01, 1, new Uint8Array([0xaa, 0xbb]));
       ps.deliverRawPeerMessage('peer1', msgPayload);
-
-      const ackPayload = new Uint8Array([0x02, 0x00, 0x00, 0x00, 0x03]);
-      ps.deliverRawPeerMessage('peer1', ackPayload);
-
-      const keepalivePayload = new Uint8Array([0x03]);
-      ps.deliverRawPeerMessage('peer1', keepalivePayload);
 
       ps.registerMessageHandler({
         handler: (msgno, data) => received.push({ type: 'msg', msgno, data }),
@@ -167,10 +184,7 @@ describe('PeerSession', () => {
         keepaliveHandler: () => received.push({ type: 'keepalive', msgno: 0 }),
       });
 
-      expect(received).toHaveLength(3);
-      expect(received[0]).toEqual({ type: 'msg', msgno: 5, data: new Uint8Array([0xaa, 0xbb]) });
-      expect(received[1]).toEqual({ type: 'ack', msgno: 3 });
-      expect(received[2]).toEqual({ type: 'keepalive', msgno: 0 });
+      expect(received).toEqual([{ type: 'msg', msgno: 1, data: new Uint8Array([0xaa, 0xbb]) }]);
     });
 
     it('routes messages directly when handler is registered', () => {
@@ -184,9 +198,9 @@ describe('PeerSession', () => {
         keepaliveHandler: () => received.push({ type: 'keepalive', msgno: 0 }),
       });
 
-      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x0a, 0xff]);
+      const payload = reliableFrame(0x01, 1, new Uint8Array([0xff]));
       ps.deliverRawPeerMessage('peer1', payload);
-      expect(received).toEqual([{ type: 'msg', msgno: 10 }]);
+      expect(received).toEqual([{ type: 'msg', msgno: 1 }]);
     });
 
     it('rejects messages from wrong peer', () => {
@@ -200,7 +214,7 @@ describe('PeerSession', () => {
         keepaliveHandler: () => {},
       });
 
-      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xaa]);
+      const payload = reliableFrame(0x01, 1, new Uint8Array([0xaa]));
       const result = ps.deliverRawPeerMessage('wrong_peer', payload);
       expect(result).toBe(false);
       expect(received).toHaveLength(0);
@@ -211,7 +225,7 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.markDead();
 
-      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xaa]);
+      const payload = reliableFrame(0x01, 1, new Uint8Array([0xaa]));
       const result = ps.deliverRawPeerMessage('peer1', payload);
       expect(result).toBe(false);
     });
@@ -221,7 +235,7 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       ps.destroy();
 
-      const payload = new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x01, 0xaa]);
+      const payload = reliableFrame(0x01, 1, new Uint8Array([0xaa]));
       const result = ps.deliverRawPeerMessage('peer1', payload);
       expect(result).toBe(false);
     });
@@ -235,6 +249,51 @@ describe('PeerSession', () => {
       expect(result).toBe(false);
       expect(ps.liveness).toBeNull();
       expect(ps.lastActivity).toBe(0);
+    });
+
+    it('ignores mismatched ack and keepalive session ids', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      const handlers = {
+        handler: jest.fn(),
+        ackHandler: jest.fn(),
+        keepaliveHandler: jest.fn(),
+        failureHandler: jest.fn(),
+      };
+      ps.registerMessageHandler(handlers);
+      const otherSession = new Uint8Array(16).fill(0xff);
+
+      expect(
+        ps.deliverRawPeerMessage('peer1', reliableFrame(0x02, 1, undefined, otherSession)),
+      ).toBe(false);
+      expect(
+        ps.deliverRawPeerMessage('peer1', reliableFrame(0x03, 0, undefined, otherSession)),
+      ).toBe(false);
+      expect(handlers.ackHandler).not.toHaveBeenCalled();
+      expect(handlers.keepaliveHandler).not.toHaveBeenCalled();
+      expect(handlers.failureHandler).not.toHaveBeenCalled();
+      expect(ps.liveness).toBeNull();
+    });
+
+    it('escalates mismatched data from the selected peer', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      const failureHandler = jest.fn();
+      ps.registerMessageHandler({
+        handler: jest.fn(),
+        ackHandler: jest.fn(),
+        keepaliveHandler: jest.fn(),
+        failureHandler,
+      });
+
+      expect(
+        ps.deliverRawPeerMessage(
+          'peer1',
+          reliableFrame(0x01, 1, new Uint8Array([0xaa]), new Uint8Array(16).fill(0xff)),
+        ),
+      ).toBe(false);
+      expect(failureHandler).toHaveBeenCalledWith(expect.stringContaining('session mismatch'));
+      expect(ps.liveness).toBe('dead');
     });
 
     it('rejects short msg/ack frames without counting peer activity', () => {
@@ -253,15 +312,16 @@ describe('PeerSession', () => {
         'peer1',
         'session1',
         conn,
-        sessionReceivePolicy({ maxQueuedMessages: 2, maxQueuedBytes: 2 }),
+        sessionReceivePolicy({ maxQueuedMessages: 1, maxQueuedBytes: 10 }),
       );
       const failures: string[] = [];
 
       expect(
-        ps.deliverRawPeerMessage('peer1', new Uint8Array([0x01, 0, 0, 0, 1, 0xaa, 0xbb])),
+        ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0xaa, 0xbb]))),
       ).toBe(true);
-      expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x03]))).toBe(true);
-      expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x03]))).toBe(false);
+      expect(
+        ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 2, new Uint8Array([0xcc]))),
+      ).toBe(false);
       ps.registerMessageHandler({
         handler: () => fail('cleared data must not drain'),
         ackHandler: () => fail('cleared ack must not drain'),
@@ -281,7 +341,7 @@ describe('PeerSession', () => {
         conn,
         sessionReceivePolicy({ maxQueuedMessages: 1, maxQueuedBytes: 1 }),
       );
-      const frame = new Uint8Array([0x01, 0, 0, 0, 7, 0xaa]);
+      const frame = reliableFrame(0x01, 1, new Uint8Array([0xaa]));
       const received: number[] = [];
 
       expect(ps.deliverRawPeerMessage('peer1', frame)).toBe(true);
@@ -292,8 +352,165 @@ describe('PeerSession', () => {
         keepaliveHandler: () => {},
       });
 
-      expect(received).toEqual([7]);
+      expect(received).toEqual([1]);
       expect(ps.liveness).toBe('connected');
+    });
+
+    it('re-acks a duplicate proposal without re-prompting or leaking it to WASM', async () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      const prompt = jest.fn();
+      const wasm = jest.fn();
+      const localReply = new Uint8Array([0xcc]);
+      ps.reliableState.messageNumber = 2n;
+      ps.reliableState.unackedMessages = [{ msgno: 1n, msg: localReply }];
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: (_msgno, body) => {
+          expect(body).toEqual(
+            encodePeerAppMessage({
+              type: 'session_proposal',
+              proposer_amount: '10',
+              responder_amount: '10',
+            }),
+          );
+          prompt();
+        },
+        persist: () => Promise.resolve(),
+        failure: (reason) => fail(reason),
+      });
+      const proposal = reliableFrame(
+        0x01,
+        1,
+        encodePeerAppMessage({
+          type: 'session_proposal',
+          proposer_amount: '10',
+          responder_amount: '10',
+        }),
+      );
+
+      expect(ps.deliverRawPeerMessage('peer1', proposal)).toBe(true);
+      await ps.reliableTransport.flushPending();
+      conn.sentPeerMessages = [];
+      expect(ps.deliverRawPeerMessage('peer1', proposal)).toBe(true);
+
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: wasm,
+        persist: () => Promise.resolve(),
+        failure: (reason) => fail(reason),
+      });
+      expect(prompt).toHaveBeenCalledTimes(1);
+      expect(wasm).not.toHaveBeenCalled();
+      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x02, 0x01]);
+    });
+
+    it('rejects a cumulative ack beyond the allocated range without pruning', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      const failure = jest.fn();
+      ps.reliableState.messageNumber = 2n;
+      ps.reliableState.unackedMessages = [{ msgno: 1n, msg: new Uint8Array([0xaa]) }];
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: jest.fn(),
+        persist: () => Promise.resolve(),
+        failure,
+      });
+
+      expect(ps.deliverRawPeerMessage('peer1', reliableFrame(0x02, 2))).toBe(false);
+      expect(ps.reliableState.unackedMessages).toEqual([
+        { msgno: 1n, msg: new Uint8Array([0xaa]) },
+      ]);
+      expect(failure).toHaveBeenCalledWith(expect.stringContaining('highest allocated'));
+    });
+
+    it('does not create queued candidate state for malformed or unknown controls', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+
+      expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x99]))).toBe(false);
+      expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x02, 0x00]))).toBe(false);
+      expect(ps.reliableState.remoteNumber).toBe(0n);
+      expect(ps.reliableTransport.runtime.reorderQueue.size).toBe(0);
+    });
+
+    it('does not replay outbound data before its persistence completes', async () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      let resolvePersist!: () => void;
+      const persist = new Promise<void>((resolve) => {
+        resolvePersist = resolve;
+      });
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: jest.fn(),
+        persist: () => persist,
+        failure: (reason) => fail(reason),
+      });
+
+      ps.reliableTransport.allocateOutbound(new Uint8Array([0xaa]));
+      const flush = ps.reliableTransport.flushPending();
+      ps.reliableTransport.receiveKeepalive();
+      expect(conn.sentPeerMessages).toEqual([]);
+
+      resolvePersist();
+      await flush;
+      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x01]);
+    });
+
+    it('coalesces a duplicate ack behind the in-flight receive persistence', async () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      let resolvePersist!: () => void;
+      const persist = new Promise<void>((resolve) => {
+        resolvePersist = resolve;
+      });
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: jest.fn(),
+        persist: () => persist,
+        failure: (reason) => fail(reason),
+      });
+      const frame = reliableFrame(0x01, 1, new Uint8Array([0xaa]));
+
+      ps.deliverRawPeerMessage('peer1', frame);
+      const flush = ps.reliableTransport.flushPending();
+      ps.deliverRawPeerMessage('peer1', frame);
+      expect(conn.sentPeerMessages).toEqual([]);
+
+      resolvePersist();
+      await flush;
+      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x02]);
+    });
+
+    it('runs another persistence pass for work queued during an in-flight flush', async () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      let resolveFirstPersist!: () => void;
+      const firstPersist = new Promise<void>((resolve) => {
+        resolveFirstPersist = resolve;
+      });
+      const persist = jest
+        .fn<Promise<void>, []>()
+        .mockReturnValueOnce(firstPersist)
+        .mockResolvedValue(undefined);
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: jest.fn(),
+        persist,
+        failure: (reason) => fail(reason),
+      });
+
+      ps.reliableTransport.allocateOutbound(new Uint8Array([0x01]));
+      const flush = ps.reliableTransport.flushPending();
+      ps.reliableTransport.allocateOutbound(new Uint8Array([0x02]));
+      ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0x03])));
+      resolveFirstPersist();
+      await flush;
+
+      expect(persist).toHaveBeenCalledTimes(2);
+      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x01, 0x01, 0x02]);
     });
 
     it('fails an oversized body before binding', () => {
@@ -307,7 +524,7 @@ describe('PeerSession', () => {
       const failures: string[] = [];
 
       expect(
-        ps.deliverRawPeerMessage('peer1', new Uint8Array([0x01, 0, 0, 0, 1, 0xaa, 0xbb])),
+        ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0xaa, 0xbb]))),
       ).toBe(false);
       ps.registerMessageHandler({
         handler: () => {},
@@ -332,8 +549,9 @@ describe('PeerSession', () => {
       expect(targetId).toBe('peer1');
       expect(payload[0]).toBe(0x01);
       const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-      expect(view.getUint32(1, false)).toBe(42);
-      expect(payload.slice(5)).toEqual(new Uint8Array([0xde, 0xad]));
+      expect(payload.slice(1, 17)).toEqual(Uint8Array.from({ length: 16 }, (_, index) => index));
+      expect(view.getUint32(17, false)).toBe(42);
+      expect(payload.slice(21)).toEqual(new Uint8Array([0xde, 0xad]));
     });
 
     it('sendAck builds correct frame', () => {
@@ -345,16 +563,17 @@ describe('PeerSession', () => {
       const { payload } = conn.sentPeerMessages[0];
       expect(payload[0]).toBe(0x02);
       const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-      expect(view.getUint32(1, false)).toBe(7);
+      expect(payload).toHaveLength(21);
+      expect(view.getUint32(17, false)).toBe(7);
     });
 
-    it('sendKeepalive sends 0x03 byte', () => {
+    it('sendKeepalive sends a session-bound frame', () => {
       const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
 
       ps.sendKeepalive();
       expect(conn.sentPeerMessages).toHaveLength(1);
-      expect(conn.sentPeerMessages[0].payload).toEqual(new Uint8Array([0x03]));
+      expect(conn.sentPeerMessages[0].payload).toEqual(reliableFrame(0x03));
     });
 
     it('send methods are no-ops when destroyed', () => {
@@ -368,16 +587,20 @@ describe('PeerSession', () => {
       expect(conn.sentPeerMessages).toHaveLength(0);
     });
 
-    it('sendAppMessage delegates to hub', () => {
-      const conn = mockHubConnection();
-      const ps = new PeerSession('peer1', 'session1', conn);
+    it('encodes session rejection as a reliable body', () => {
+      expect(new TextDecoder().decode(encodePeerAppMessage({ type: 'session_reject' }))).toContain(
+        'session_reject',
+      );
+    });
 
-      ps.sendAppMessage({ type: 'session_reject' });
-      expect(conn.sentAppMessages).toHaveLength(1);
-      expect(conn.sentAppMessages[0]).toEqual({
-        targetId: 'peer1',
-        data: { type: 'session_reject' },
+    it('does not duplicate the frame session id inside a proposal body', () => {
+      const body = encodePeerAppMessage({
+        type: 'session_proposal',
+        proposer_amount: '100',
+        responder_amount: '100',
+        network: 'testnet',
       });
+      expect(new TextDecoder().decode(body)).not.toContain('game_session_id');
     });
   });
 

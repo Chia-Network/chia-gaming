@@ -10,7 +10,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 22n;
+export const SESSION_SAVE_VERSION = 23n;
 
 export type BlockchainType = 'simulator' | 'walletconnect';
 
@@ -45,7 +45,7 @@ export interface SessionHistorySave {
 export interface SessionPairingSave {
   token: string;
   peerId?: string;
-  gameSessionId?: string;
+  gameSessionId: string;
   iStarted: boolean;
   myContribution: string;
   theirContribution: string;
@@ -56,13 +56,17 @@ export interface SessionPairingSave {
   opponentAlias?: string;
 }
 
-export interface SessionLiveSave {
-  serializedGameSession: Uint8Array;
-  gameSessionSchemaVersion: bigint;
-  rewardPuzzleHash: string;
+export interface SessionTransportSave {
   messageNumber: bigint;
   remoteNumber: bigint;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
+  disposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
+}
+
+export interface SessionLiveSave extends SessionTransportSave {
+  serializedGameSession: Uint8Array;
+  gameSessionSchemaVersion: bigint;
+  rewardPuzzleHash: string;
   durabilityWarning?: string;
 }
 
@@ -148,6 +152,7 @@ export interface PreferencesSessionSave extends SessionSaveBase {
 export interface PreHandshakeSessionSave extends SessionSaveBase {
   phase: 'pre-handshake';
   pairing: SessionPairingSave;
+  transport: SessionTransportSave;
 }
 
 export interface LiveSessionSave extends SessionSaveBase {

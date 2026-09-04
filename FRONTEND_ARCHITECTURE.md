@@ -150,35 +150,36 @@ protocol frames remain opaque bytes in the relay dictionary's `payload`.
    showing another consent prompt, it **ignores** the advisory (no
    `session_reject`).
 6. If the accepter consents, that app becomes the channel initiator. It marks
-   itself busy, generates a random hex `game_session_id`, sends a bencodex
-   `session_proposal` app message (including the `game_session_id` and its
-   selected `network`) to the peer,
-   starts the WASM session as initiator, and then sends the binary handshake
-   frames through the same addressed pipe. Starting persists session state
-   asynchronously; a later `session_reject` (or local cancel) must abort that
-   in-flight start so it cannot resurrect an orphan handshake.
+   itself busy, generates a random 16-byte peer session ID, durably creates the
+   peer reliability state, and sends a bencodex `session_proposal` as reliable
+   data message 1. It starts the WASM session as initiator and sends the
+   handshake through the same peer session and sequence-number stream. Starting
+   persists session state asynchronously; a later `session_reject` (or local
+   cancel) must abort that in-flight start so it cannot resurrect an orphan
+   handshake.
 7. The peer receives the `session_proposal`, checks local availability and
-   validates amounts/timeouts and `network` at the trust boundary, stores the
-   `game_session_id` in its PeerSession, reserves that peer id so early
-   handshake bytes can buffer, and shows its own consent prompt. Invalid
+   validates amounts/timeouts and `network` at the trust boundary, adopts the
+   enclosing frame's peer session ID, durably stores the pending proposal
+   before acknowledging it, and shows its own consent prompt. Invalid
    amounts, out-of-range timeouts, or a `network` that is missing, malformed, or
    not equal to the local network preference are rejected with `session_reject`
    only —
    they must not clear a finished freeze or IndexedDB checkpoint. The hub is
    network-blind, so a cross-network match reaches this check and is rejected
    here before any consent UI (differing genesis challenges would break every
-   signature). If unavailable
-   or declined, it sends `session_reject` and discards any buffered handshake
-   bytes. Receiving `session_reject` or `delivery_failure` during an Accept
+   signature). If unavailable or declined, it sends a reliable
+   `session_reject`. The application attempt is cancelled immediately while the
+   terminal rejection remains replayable until acknowledged. Receiving
+   `session_reject` or `delivery_failure` during an Accept
    transition aborts that attempt with the same freeze-safe disposition as
    dashboard Cancel (peer-only abandon before the checkpoint write lands; full
    teardown after). Outside Accept, `session_reject` during pre-active
    matchmaking cancels the attempt (including any in-flight async start) and
    surfaces cancelled/error — it must not leave an orphan handshake; resolved
    finished sessions without an Accept in flight keep their freeze. If accepted,
-   the peer marks itself
-   busy, starts the WASM session as receiver, and drains the buffered handshake
-   bytes. A start failure or dashboard Cancel before the live checkpoint
+   the peer marks itself busy, starts the WASM session as receiver, and attaches
+   the WASM consumer to the existing ordered stream without resetting either
+   counter. A start failure or dashboard Cancel before the live checkpoint
    write lands ends the peer attempt only (reject + clear provisional relay)
    and must preserve any finished freeze / terminal IndexedDB save; full attempt
    teardown is reserved for failures or Cancel after that persist succeeds. A
@@ -186,9 +187,9 @@ protocol frames remain opaque bytes in the relay dictionary's `payload`.
    While an aborted Accept may still be draining its persist callback, the client
    stays unavailable for new session prompts so a second Accept cannot race
    checkpoint restore/cleanup.
-8. Both players exchange binary game frames through the addressed hub pipe.
-   The reliability layer (msgno/ack/keepalive) is encoded inside the binary
-   payload, peer-to-peer — the hub never interprets it.
+8. Both players exchange session-scoped binary frames through the addressed hub
+   pipe. Every data, acknowledgement, and keepalive frame carries the same
+   16-byte peer session ID; the hub never interprets it.
 
 **What the hub holds per game channel:** the session-to-player mapping,
 WebSocket reference, and a bounded 30-minute graph of recent correspondents.
@@ -358,19 +359,24 @@ shape-only parser. Game-owned `handState` is decoded only as the generic
 `{ gameType, state }` envelope. The owning package does not participate in
 persistence decoding.
 The envelope is a discriminated union. Every variant has `schema`, `version`,
-`phase`, `identity`, `preferences`, and `history`; `pre-handshake` adds
-`pairing`; `live` adds complete `pairing`, `live`, and `presentation` payloads;
-and `terminal` adds `terminal` plus frozen `presentation`. A preferences record
-cannot carry resumable state, a pre-handshake record cannot carry game state,
-and a terminal record cannot carry pairing, cradle, or transport state. The
-live and terminal `presentation` payload is wire-complete: empty collections,
+`phase`, `identity`, `preferences`, and `history`; `pre-handshake` adds pairing
+and peer-transport state; `live` adds complete pairing, the same transport
+state, serialized game state, and presentation; and `terminal` adds terminal
+facts plus frozen presentation. A preferences record cannot carry resumable
+state, a pre-handshake record cannot carry game state, and an ordinary terminal
+record cannot carry a cradle. Rejection reliability records are kept in a
+separate IndexedDB store so rejecting an unrelated proposal cannot replace a
+live or frozen session envelope. The store holds outbound rejection replay
+records and inbound duplicate-ack receipts, capped at eight records in total
+and expired after seven days.
+The live and terminal `presentation` payload is wire-complete: empty collections,
 nullable identities, false flags, zero balances, and timer absence are encoded
 explicitly rather than reconstructed by decoder defaults. The following fields
 are grouped under those phase-owned payloads:
 
 | Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `21`.                                                                                                                                                                                                                                                                          |
+| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `23`.                                                                                                                                                                                                                                                                          |
 | `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                     | `string?`                                                                                                  | Stable token linking the hub iframe and game-channel WebSocket.                                                                                                                                                                                                                                                 |
 | `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -388,9 +394,9 @@ are grouped under those phase-owned payloads:
 | `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
-| `gameSessionId`                 | `string?`                                                                                                  | Per-pairing game session id exchanged in `session_proposal`.                                                                                                                                                                                                                                                    |
-| `messageNumber`                 | `bigint?`                                                                                                  | Next outbound game-message sequence number.                                                                                                                                                                                                                                                                     |
-| `remoteNumber`                  | `bigint?`                                                                                                  | Last delivered inbound game-message sequence number.                                                                                                                                                                                                                                                            |
+| `gameSessionId`                 | `string?`                                                                                                  | Canonical lowercase-hex storage representation of the 16-byte peer session ID carried by every reliable frame. Required whenever pairing/transport state exists.                                                                                                                                                 |
+| `messageNumber`                 | `bigint?`                                                                                                  | Next outbound semantic-message sequence number within the peer session.                                                                                                                                                                                                                                         |
+| `remoteNumber`                  | `bigint?`                                                                                                  | Last durably delivered inbound semantic-message sequence number within the peer session.                                                                                                                                                                                                                        |
 | `iStarted`                      | `boolean?`                                                                                                 | Whether this player was the channel/session initiator.                                                                                                                                                                                                                                                          |
 | `terminalIStarted`              | `boolean?`                                                                                                 | Display-only initiator role retained after terminal protocol fields are cleared.                                                                                                                                                                                                                                |
 | `myContribution`                | `string?`                                                                                                  | This player's channel buy-in contribution as a decimal bigint string.                                                                                                                                                                                                                                           |
@@ -399,7 +405,7 @@ are grouped under those phase-owned payloads:
 | `channelTimeout`                | `string?`                                                                                                  | Channel timeout retained for pre-cradle handshake resume.                                                                                                                                                                                                                                                       |
 | `unrollTimeout`                 | `string?`                                                                                                  | Unroll timeout retained for pre-cradle handshake resume.                                                                                                                                                                                                                                                        |
 | `rewardPuzzleHash`              | `string \| null`                                                                                           | Immutable reward/change address for the active session, or `null` when none is active.                                                                                                                                                                                                                          |
-| `unackedMessages`               | `Array<{ msgno, msg }>?`                                                                                   | Outbound binary game messages, with raw `Uint8Array` payloads, that have not been acknowledged by the peer.                                                                                                                                                                                                     |
+| `unackedMessages`               | `Array<{ msgno, msg }>?`                                                                                   | Outbound Bencodex semantic-message bodies, including negotiation messages, that have not been acknowledged by the peer.                                                                                                                                                                                         |
 | `humanHistory`                  | `string[]?`                                                                                                | Recent user-facing transcript entries (capped at 1,000).                                                                                                                                                                                                                                                        |
 | `wasmNotificationHistory`       | `string[]?`                                                                                                | Recent serialized WASM notifications (capped at 1,000).                                                                                                                                                                                                                                                         |
 | `diagnosticLog`                 | `string[]?`                                                                                                | Recent diagnostic entries (capped at 2,000).                                                                                                                                                                                                                                                                    |
@@ -531,17 +537,19 @@ flicker before its `ProposalMade` arrives and is reduced normally.
 #### Delivery-critical saves
 
 Peer message counters and queues are part of the reliable transport protocol,
-so they are not allowed to wait for the normal debounce. When an outbound WASM
-message is produced, `SessionController` increments `messageNumber`, appends the
-message to `unackedMessages`, and queues the actual WebSocket send. When an
-inbound message is delivered, it advances `remoteNumber` and queues the ack. The
-queued sends/acks are held until the current WASM event drain is empty.
+so they are not allowed to wait for the normal debounce. The shared reliability
+owner exists before the WASM controller: it increments `messageNumber`, appends
+every outbound semantic body to `unackedMessages`, and queues the actual
+WebSocket send. When an inbound body is delivered to negotiation or WASM, it
+advances `remoteNumber` and queues the ack. The queued sends/acks are held until
+the corresponding semantic state is durable.
 
-At that point `SessionController` performs one immediate durability flush:
+At that point the reliability owner performs one immediate durability flush:
 
 1. Cancel any pending debounced save.
-2. Call `onSaveNeeded`, which serializes the cradle and merges the current
-   WASM/JS fields into `SessionSave`.
+2. Call its save boundary, which records pending negotiation directly or
+   serializes the cradle and merges the current WASM/JS fields into
+   `SessionSave`.
 3. Await `flushSessionSave()` to commit the record through an IndexedDB
    read/write transaction.
 4. Send all queued outbound messages and acks.
@@ -822,39 +830,49 @@ This is only a reset broadcast, not a graceful coordination protocol.
 
 ### Peer Message Reliability
 
-Authoritative game messages use a numbered ack protocol to guarantee
-exactly-once ordered delivery across reconnects. The hub relays frames and
-relay-control messages verbatim — it does not understand message numbers or
-acks.
+Every semantic peer message, beginning with `session_proposal`, uses a numbered
+ack protocol to guarantee exactly-once ordered delivery across reconnects. The
+hub relays frames and relay-control messages verbatim — it does not understand
+peer session IDs, message numbers, or acks.
 
 #### Wire format
 
-Authoritative WASM game messages remain raw bytes inside addressed peer-relay
-payloads, not JSON and not bencodex. The player app wraps them in a tiny
-peer-to-peer reliability tag before handing the payload to `HubConnection`:
+Semantic messages are Bencodex bodies inside addressed peer-relay payloads. The
+player app wraps each body in the peer reliability header before handing it to
+`HubConnection`:
 
-- **Data payload:** tag `0x01`, 4-byte big-endian `msgno`, followed by the
-  opaque WASM peer message bytes.
-- **Ack payload:** tag `0x02`, 4-byte big-endian `msgno`.
-- **Keepalive payload:** tag `0x03`.
+- **Data payload:** tag `0x01`, 16-byte `session_id`, 4-byte big-endian
+  `msgno`, then one Bencodex semantic-message body.
+- **Ack payload:** tag `0x02`, the same 16-byte `session_id`, then a 4-byte
+  big-endian cumulative `msgno`.
+- **Keepalive payload:** tag `0x03` followed by the same 16-byte `session_id`.
 
-Peer app messages that are not WASM protocol bytes (`session_proposal`
-and `session_reject`) are bencodex dictionaries inside the same
-addressed peer-relay envelope. The hub does not interpret either form; it
-only forwards the addressed payload.
+The proposer selects the random session ID and sends `session_proposal` as data
+message 1. `session_reject`, Handshake A-F, batches, and shutdown messages
+continue in the same sequence. Acceptance changes the ordered-body consumer
+from Shell negotiation to `SessionController`; it does not replace the
+transport. Host messages such as `session_reject` are recognized only after
+the reliability owner has selected the next contiguous body, so an
+out-of-order rejection cannot bypass an earlier WASM message.
 
 #### Outbound
 
-Every outbound game message (including handshake messages) is assigned a
-monotonically increasing `messageNumber` and stored in `unackedMessages`. The
-binary frame is not sent immediately; it is queued until the current WASM event
-drain is empty and the updated session state has been durably flushed. On
-receiving an ack with number N, all entries with `msgno <= N` are pruned from
-the log and persisted through the normal debounced save path.
+Every outbound semantic message is assigned a monotonically increasing
+`messageNumber` within its peer session and stored in `unackedMessages`. The
+binary frame is not sent until the updated transport and semantic state have
+been durably flushed. On receiving a matching-session ack with number N, all
+entries with `msgno <= N` are pruned from the log and persisted. A rejection
+cancels the application attempt immediately but retains this minimal transport
+log until the rejection is acknowledged or its seven-day retention expires.
+The receiver atomically replaces the cancelled session with a minimal durable
+receipt before acknowledging the rejection. That receipt can re-acknowledge a
+duplicate after reload without repeating cancellation. Outbound records and
+inbound receipts share a global cap of eight.
 
 #### Inbound
 
-`SessionController.deliverMessage` enforces strict ordering:
+The shared peer reliability owner enforces strict ordering before dispatching
+an admitted body to Shell negotiation or `SessionController`:
 
 - `msgno <= remoteNumber`: duplicate, dropped. An ack is re-sent in case the
   original ack was lost. The receiver also calls `resendUnacked()` (throttled)
@@ -865,15 +883,22 @@ the log and persisted through the normal debounced save path.
 - `msgno > remoteNumber + 1`: out-of-order, buffered in a `reorderQueue` map.
 - `msgno == remoteNumber + 1`: delivered to the WASM cradle, `remoteNumber`
   incremented, ack queued, then contiguous messages are flushed from the reorder
-  queue. Acks are sent only after the updated `remoteNumber` and serialized
-  cradle have been written to the session save.
+  queue. Acks are sent only after the updated `remoteNumber` and corresponding
+  negotiation or serialized cradle state have been written to the session save.
+
+Counters and queues are scoped by `(peer_id, session_id)`. Unknown-session acks
+and keepalives are ignored. Only data message 1 containing a valid
+`session_proposal` can establish an unknown epoch. If the selected peer presents
+a new epoch during a live off-chain channel, the client escalates the old
+obligation on-chain instead of resetting its counters. An ordered
+`session_reject` cancels only a pre-active attempt; after channel establishment
+it is a protocol failure and takes the obligation on-chain.
 
 #### Peer Liveness
 
-Both peers independently send periodic `{ keepalive: true }` relay payloads
-through the hub (same `message` channel as data and acks). Keepalives are
-fire-and-forget — no response is needed. Receiving any peer traffic (data, ack,
-or keepalive) counts as proof of life.
+Both peers independently send periodic session-scoped keepalive frames through
+the hub. Keepalives are fire-and-forget — no response is needed. Receiving
+matching-session peer traffic (data, ack, or keepalive) counts as proof of life.
 
 - **Send interval:** 15 seconds (`KEEPALIVE_INTERVAL_MS`)
 
@@ -892,9 +917,10 @@ passed to `GameSession` for in-game display. Separately, Shell has a cascade
 rule: if the peer is marked lost while the session is still off-chain, it calls
 `goOnChain()` on the WASM cradle.
 
-Inbound peer frames are validated before counting as activity: only tags
-`0x01` (msg, len ≥ 5), `0x02` (ack, len ≥ 5), and `0x03` (keepalive) update
-liveness; unknown or short frames return `false` and do not throw into Shell.
+Inbound peer frames are validated before counting as activity: data and ack
+frames have a 21-byte header, keepalives are exactly 17 bytes, and the session
+ID must match. Unknown, short, fixed-length frames with trailing bytes, and
+wrong-session control frames return `false` and do not update liveness.
 Outbound hub sends (`sendToPeer` / presence `sendWs`) return `boolean` — `false`
 when the WebSocket is not OPEN — so SessionController can leave durable outbound
 queued rather than treating a dropped send as success. There is no offline send

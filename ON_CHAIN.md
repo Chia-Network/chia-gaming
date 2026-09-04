@@ -798,6 +798,14 @@ derive for future moves. The their-turn handler still interprets the move and
 may provide slash evidence. Any evidence it provides is checked by running the
 normal state-update program with that evidence.
 
+The peer move message carries only a terminal boolean, not either validation
+hash. For a nonterminal move, the receiver reconstructs the validation info
+hash from its locally held validation program and pre-move state and computes
+the bare program hash locally. For a terminal move it reconstructs the nil
+validation-info commitment. The claimed terminal bit must agree with whether
+the local handler transition has a successor. These reconstructed internal
+values are what enter `RefereePuzzleArgs` and the signed unroll state.
+
 This keeps off-chain and on-chain validation semantics aligned. Some games may
 repeat a small amount of logic between their on-chain validator and off-chain
 handler code, but avoiding a separate off-chain signal keeps the handler
@@ -847,7 +855,8 @@ example when invoking a their-turn handler or constructing a slash), but the
 durable on-chain commitment is the validation info hash. `GameMoveDetails`
 therefore keeps the raw program hash in the optional
 `validation_program_hash` field separately from the required
-`validation_info_hash` commitment.
+`validation_info_hash` commitment. Those are internal referee fields; the
+peer-wire move elides both hashes.
 
 This is an on-chain size/cost optimization. Honest move spends present only the
 compact validation info hash for the next validator/state pair; they do not

@@ -1,7 +1,9 @@
 import {
   deleteSessionRecord,
+  type DurableRejectionTombstone,
   InvalidSessionRecordError,
   readSessionRecord,
+  replaceSessionWithInboundRejectionReceipt,
   writeSessionRecord,
 } from '../lib/session/indexedDb';
 import { isDenseNumericByteObject } from '../lib/reactPropSafe';
@@ -24,6 +26,7 @@ import {
   type SessionPreferencesSave,
   type SessionPresentationSave,
   type SessionSave,
+  type SessionTransportSave,
   type TerminalSessionSave,
 } from '../lib/session/saveEnvelope';
 import {
@@ -625,12 +628,25 @@ export function patchLiveSessionPresentation(
   });
 }
 
+export function patchPreHandshakeTransport(transport: SessionTransportSave): Promise<void> {
+  return mutate((state) => {
+    if (state.phase === 'pre-handshake') {
+      state.transport = structuredClone(transport);
+      return;
+    }
+    if (state.phase === 'live') {
+      Object.assign(state.live, structuredClone(transport));
+      return;
+    }
+    throw new Error(`Cannot patch session transport while session phase is ${state.phase}`);
+  });
+}
+
 /** Clear peer relay identifiers when the current phase owns pairing state. */
 export function clearSessionPairing(): Promise<void> {
   return mutate((state) => {
     if (state.phase === 'live' || state.phase === 'pre-handshake') {
       state.pairing.peerId = undefined;
-      state.pairing.gameSessionId = undefined;
     }
   });
 }
@@ -646,6 +662,7 @@ function freshSessionState(previous: SessionSave): SessionSave {
  */
 export async function replaceSession(checkpoint: {
   pairing: SessionPairingSave;
+  transport: SessionTransportSave;
   identity?: Partial<SessionIdentitySave>;
   history?: Partial<SessionHistorySave>;
 }): Promise<void> {
@@ -660,6 +677,7 @@ export async function replaceSession(checkpoint: {
     phase: 'pre-handshake',
     ...common,
     pairing: structuredClone(checkpoint.pairing),
+    transport: structuredClone(checkpoint.transport),
   };
   capPersistedHistories(replacement);
   await queueWrite(replacement);
@@ -808,6 +826,33 @@ export function clearSession(): Promise<void> {
   return deletePromise;
 }
 
+export function clearSessionWithInboundRejectionReceipt(
+  receipt: Omit<DurableRejectionTombstone, 'kind'>,
+): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  settleScheduledPersist();
+  const prev = loadState();
+  cached = freshSessionState(prev);
+  savePreferences(cached);
+  const replacePromise = (writeChain = writeChain
+    .catch(() => {})
+    .then(async () => {
+      await replaceSessionWithInboundRejectionReceipt({
+        ...receipt,
+        kind: 'inbound-receipt',
+      });
+      if (cached?.preferences.blockchainType || cached?.preferences.hubUrl) {
+        markSavedSession();
+      } else {
+        clearSavedSessionMarker();
+      }
+    }));
+  return replacePromise;
+}
+
 /**
  * Drop durable cradle/game state only after we know a new session can start
  * (e.g. deploy assets loaded). Keeps connection prefs, history/logs, and any
@@ -815,11 +860,26 @@ export function clearSession(): Promise<void> {
  */
 export async function clearGameSessionPreservingHistory(): Promise<void> {
   const prev = loadState();
-  const pairing =
-    prev.phase === 'live' || prev.phase === 'pre-handshake' ? structuredClone(prev.pairing) : null;
+  const checkpoint =
+    prev.phase === 'live'
+      ? {
+          pairing: structuredClone(prev.pairing),
+          transport: {
+            messageNumber: prev.live.messageNumber,
+            remoteNumber: prev.live.remoteNumber,
+            unackedMessages: structuredClone(prev.live.unackedMessages),
+            disposition: prev.live.disposition,
+          },
+        }
+      : prev.phase === 'pre-handshake'
+        ? {
+            pairing: structuredClone(prev.pairing),
+            transport: structuredClone(prev.transport),
+          }
+        : null;
   await clearSession();
-  if (pairing) {
-    await replaceSession({ pairing });
+  if (checkpoint) {
+    await replaceSession(checkpoint);
   }
 }
 

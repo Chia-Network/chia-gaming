@@ -13,7 +13,10 @@ import {
   createReadyBlob,
   createUnreadyBlob,
   enc,
+  makeMockCradle,
+  makePeerConn,
   mockRpc,
+  mockWasmConnection,
   setActiveBlob,
   testSpendBundle,
   wasmResult,
@@ -669,7 +672,7 @@ describe('game action failure events', () => {
 });
 
 describe('duplicate detection', () => {
-  it('delivers once but ACKs twice after pending durability flush', async () => {
+  it('delivers once and coalesces duplicate ACKs behind durability', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     setActiveBlob(blob);
 
@@ -678,13 +681,14 @@ describe('duplicate detection', () => {
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
     await blob.flushPendingWork();
-    expect(sentAcks).toEqual([1, 1]);
+    expect(sentAcks).toEqual([1]);
   });
 
   it('retransmits unacked outbound when a duplicate inbound arrives (post-reload peer)', async () => {
     const { blob, sentMessages, sentAcks } = createReadyBlob();
     setActiveBlob(blob);
     const offer = enc('offer-sent-payload');
+    blob.messageNumber = 3n;
     blob.unackedMessages = [{ msgno: 2n, msg: offer }];
 
     blob.deliverMessage(1n, enc('first'));
@@ -832,6 +836,7 @@ describe('ACK pruning', () => {
       { msgno: 2n, msg: enc('b') },
       { msgno: 3n, msg: enc('c') },
     ];
+    blob.messageNumber = 4n;
     blob.receiveAck(2n);
 
     expect(blob.unackedMessages).toEqual([{ msgno: 3n, msg: enc('c') }]);
@@ -839,6 +844,25 @@ describe('ACK pruning', () => {
 });
 
 describe('outbound message numbering', () => {
+  it('continues numbering from the proposal transport state without reset', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const peer = makePeerConn(sentMessages, []);
+    const proposal = enc('session proposal');
+    peer.reliableState!.messageNumber = 2n;
+    peer.reliableState!.unackedMessages = [{ msgno: 1n, msg: proposal }];
+    const blob = new SessionController(null, 'test', 100n, 100n, peer);
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(makeMockCradle());
+    blob.onSaveNeeded = jest.fn();
+
+    expect(blob.queueHostMessage(enc('handshake A'))).toBe(2n);
+    await blob.flushPendingWork();
+
+    expect(blob.messageNumber).toBe(3n);
+    expect(blob.unackedMessages.map(({ msgno }) => msgno)).toEqual([1n, 2n]);
+    expect(sentMessages.map(({ msgno }) => msgno)).toEqual([2]);
+  });
+
   it('assigns sequential numbers and tracks in unackedMessages', async () => {
     const helloBytes = enc('hello');
     const { blob, sentMessages } = createReadyBlob(() => ({

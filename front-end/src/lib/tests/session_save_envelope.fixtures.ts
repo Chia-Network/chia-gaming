@@ -171,7 +171,7 @@ function pairing(fields: LegacyFields) {
   return {
     token: fields.pairingToken,
     peerId: fields.sessionPeerId,
-    gameSessionId: fields.gameSessionId,
+    gameSessionId: fields.gameSessionId ?? '00'.repeat(16),
     iStarted: fields.iStarted,
     myContribution: fields.myContribution,
     theirContribution: fields.theirContribution,
@@ -210,6 +210,12 @@ export function baseSave(fields: LegacyFields = {}): SessionSave {
       ...shared,
       phase: 'pre-handshake',
       pairing: pairing(fields),
+      transport: {
+        messageNumber: fields.messageNumber ?? 1n,
+        remoteNumber: fields.remoteNumber ?? 0n,
+        unackedMessages: fields.unackedMessages ?? [],
+        disposition: fields.transportDisposition ?? 'active',
+      },
       ...(invalidPresentation ? { presentation: presentation(fields) } : {}),
     } as SessionSave;
   }
@@ -269,6 +275,7 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
       messageNumber: merged.messageNumber,
       remoteNumber: merged.remoteNumber,
       unackedMessages: merged.unackedMessages,
+      disposition: merged.transportDisposition ?? 'active',
       durabilityWarning: merged.durabilityWarning,
     },
     presentation: presentation(merged),
@@ -310,6 +317,7 @@ export function liveSave(fields: LegacyFields = {}): SessionSave {
       messageNumber: merged.messageNumber,
       remoteNumber: merged.remoteNumber,
       unackedMessages: merged.unackedMessages,
+      disposition: merged.transportDisposition ?? 'active',
       durabilityWarning: merged.durabilityWarning,
     },
     presentation: presentation(merged),

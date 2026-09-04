@@ -29,8 +29,22 @@ import {
   PeerLiveness,
   CoinOfInterestEntry,
 } from '../types/ChiaGaming';
-import { HubConnection, AdvisoryStartParams, type PeerAppMessage } from '../services/HubConnection';
-import { PeerSession, generateSessionId } from '../services/PeerSession';
+import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
+import {
+  PeerSession,
+  decodePeerAppMessage,
+  decodeReliableFrame,
+  encodePeerAppMessage,
+  generateSessionId,
+} from '../services/PeerSession';
+import {
+  deleteRejectionTombstone,
+  MAX_DURABLE_REJECTION_TOMBSTONES,
+  readRejectionTombstones,
+  rejectionTombstoneKey,
+  writeRejectionTombstone,
+  type DurableRejectionTombstone,
+} from '../lib/session/indexedDb';
 import { subscribeLog } from '../services/log';
 import { reactPropSafeValue } from '../lib/reactPropSafe';
 import {
@@ -45,8 +59,11 @@ import {
   peekSession,
   saveSession,
   patchLiveSessionPresentation,
+  patchPreHandshakeTransport,
   replaceSession,
+  flushSessionSave,
   clearSession,
+  clearSessionWithInboundRejectionReceipt,
   clearSessionPairing,
   hardReset,
   shouldOfferResumeOrStartOver,
@@ -144,6 +161,7 @@ import {
   parseSessionAmount,
   sessionProposalNetworkMatches,
 } from '../lib/session/peerSessionParams';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../lib/session/receivePolicy';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
 import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
@@ -232,6 +250,7 @@ type SessionStartRequest = {
   channel_timeout?: string;
   unroll_timeout?: string;
   iStarted: boolean;
+  gameSessionId: string;
 };
 
 function SessionBuyIn({
@@ -721,13 +740,17 @@ const Shell = () => {
     shellDispatchRef.current({ type: 'setPendingProposal', value: next });
   }, []);
   const peerSessionRef = useRef<PeerSession | null>(null);
+  const inboundSessionRejectHandlerRef = useRef<(sessionId: string, remoteNumber: bigint) => void>(
+    () => {},
+  );
+  const rejectionPeersRef = useRef(new Map<string, PeerSession>());
   const peerMessageHandlerRef = useRef<import('../services/PeerSession').MessageHandler | null>(
     null,
   );
 
   const bindPeerMessageHandler = useCallback((ps: PeerSession | null) => {
-    if (!ps || !peerMessageHandlerRef.current) return;
-    ps.registerMessageHandler(peerMessageHandlerRef.current);
+    if (!ps || !sessionController) return;
+    sessionController.attachReliableTransport(ps.reliableTransport);
   }, []);
 
   // The dashboard pulls the protocol-state pretty-print on demand (when its
@@ -795,6 +818,28 @@ const Shell = () => {
 
   const stablePeerConn: PeerConnectionResult = useMemo(
     () => ({
+      get reliableState() {
+        return peerSessionRef.current?.reliableState;
+      },
+      get reliableTransport() {
+        return peerSessionRef.current?.reliableTransport;
+      },
+      persistInboundSessionReject: (sessionId, remoteNumber) => {
+        const peer = peerSessionRef.current;
+        if (!peer || peer.sessionId !== sessionId) {
+          throw new Error('Cannot persist inbound rejection receipt without its selected peer');
+        }
+        return clearSessionWithInboundRejectionReceipt({
+          peerId: peer.peerId,
+          sessionId,
+          messageNumber: peer.reliableState.messageNumber,
+          remoteNumber,
+          unackedMessages: [],
+          createdAt: Date.now(),
+        });
+      },
+      onSessionReject: (sessionId, remoteNumber) =>
+        inboundSessionRejectHandlerRef.current(sessionId, remoteNumber),
       sendMessage: (n, m) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendMessage(n, m),
       sendAck: (n) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendAck(n),
       sendKeepalive: () => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendKeepalive(),
@@ -1302,9 +1347,187 @@ const Shell = () => {
     );
   }, [freshStartPersistInFlightRef]);
 
-  const sendSessionReject = useCallback((peerId: string) => {
-    hubConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
+  const replayPeerUnacked = useCallback(() => {
+    const peer = peerSessionRef.current;
+    if (!peer || peer.isDestroyed()) return;
+    peer.reliableTransport.replayUnacked();
   }, []);
+
+  const installInboundRejectionReceipt = useCallback(
+    (
+      conn: HubConnection,
+      peerId: string,
+      sessionId: string,
+      messageNumber: bigint,
+      remoteNumber: bigint,
+    ) => {
+      const peers = rejectionPeersRef.current;
+      const key = rejectionTombstoneKey(peerId, sessionId);
+      peers.get(key)?.destroy();
+      peers.delete(key);
+      if (peers.size >= MAX_DURABLE_REJECTION_TOMBSTONES) {
+        const oldestKey = peers.keys().next().value as string;
+        const oldestPeer = peers.get(oldestKey)!;
+        oldestPeer.destroy();
+        peers.delete(oldestKey);
+        void deleteRejectionTombstone(oldestPeer.peerId, oldestPeer.sessionId);
+      }
+      peers.set(
+        key,
+        new PeerSession(peerId, sessionId, conn, DEFAULT_SESSION_RECEIVE_POLICY, {
+          messageNumber,
+          remoteNumber,
+          unackedMessages: [],
+          disposition: 'inbound-reject',
+        }),
+      );
+    },
+    [],
+  );
+
+  const bindRejectionTombstone = useCallback(
+    (
+      peer: PeerSession,
+      tombstone: Omit<
+        DurableRejectionTombstone,
+        'messageNumber' | 'remoteNumber' | 'unackedMessages'
+      > & { kind: 'outbound-reject' },
+    ) => {
+      peer.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: (msgno, body) => {
+          const semantic = decodePeerAppMessage(body);
+          if (msgno !== 1n || semantic?.type !== 'session_proposal') {
+            throw new Error('rejection tombstone received unexpected semantic message');
+          }
+          if (peer.reliableState.unackedMessages.length === 0) {
+            peer.reliableTransport.allocateOutbound(
+              encodePeerAppMessage({ type: 'session_reject' }),
+              'outbound-reject',
+            );
+          }
+        },
+        persist: () =>
+          writeRejectionTombstone({
+            ...tombstone,
+            messageNumber: peer.reliableState.messageNumber,
+            remoteNumber: peer.reliableState.remoteNumber,
+            unackedMessages: structuredClone(peer.reliableState.unackedMessages),
+          }),
+        acknowledged: () => {
+          if (peer.reliableState.unackedMessages.length > 0) return;
+          void peer.reliableTransport
+            .flushPending()
+            .then(() => deleteRejectionTombstone(peer.peerId, peer.sessionId))
+            .then(() => {
+              rejectionPeersRef.current.delete(rejectionTombstoneKey(peer.peerId, peer.sessionId));
+              peer.destroy();
+            })
+            .catch((error) => {
+              console.error('[Shell] failed to retire rejection tombstone', error);
+            });
+        },
+        failure: (reason) => {
+          console.error('[Shell] invalid rejection-tombstone traffic', reason);
+        },
+      });
+    },
+    [],
+  );
+
+  const rejectUnknownProposal = useCallback(
+    (conn: HubConnection, fromId: string, sessionId: string, payload: Uint8Array): void => {
+      const peers = rejectionPeersRef.current;
+      const key = rejectionTombstoneKey(fromId, sessionId);
+      if (peers.has(key)) {
+        peers.get(key)!.deliverRawPeerMessage(fromId, payload);
+        return;
+      }
+      if (peers.size >= MAX_DURABLE_REJECTION_TOMBSTONES) {
+        const oldestKey = peers.keys().next().value as string;
+        const oldestPeer = peers.get(oldestKey)!;
+        oldestPeer.destroy();
+        peers.delete(oldestKey);
+        void deleteRejectionTombstone(oldestPeer.peerId, oldestPeer.sessionId);
+      }
+      const peer = new PeerSession(fromId, sessionId, conn, DEFAULT_SESSION_RECEIVE_POLICY, {
+        messageNumber: 1n,
+        remoteNumber: 0n,
+        unackedMessages: [],
+        disposition: 'outbound-reject',
+      });
+      peers.set(key, peer);
+      bindRejectionTombstone(peer, {
+        kind: 'outbound-reject',
+        peerId: fromId,
+        sessionId,
+        createdAt: Date.now(),
+      });
+      peer.deliverRawPeerMessage(fromId, payload);
+      void peer.reliableTransport.flushPending().catch((error) => {
+        console.error('[Shell] failed to persist reliable unknown-session rejection', error);
+      });
+    },
+    [bindRejectionTombstone],
+  );
+
+  const bindOutboundRejectRetirement = useCallback(
+    (peer: PeerSession) => {
+      peer.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: () => {},
+        persist: async () => {
+          await patchPreHandshakeTransport(peer.reliableState);
+          await flushSessionSave();
+        },
+        acknowledged: () => {
+          if (peer.reliableState.unackedMessages.length > 0) return;
+          void peer.reliableTransport
+            .flushPending()
+            .then(() => clearSession())
+            .then(() => {
+              if (peerSessionRef.current !== peer) return;
+              peer.destroy();
+              peerSessionRef.current = null;
+              setPeerLiveness(null);
+            })
+            .catch((error) => {
+              console.error('[Shell] failed to retire reliable session rejection', error);
+            });
+        },
+        keepalive: replayPeerUnacked,
+        failure: (reason) => {
+          console.error('[Shell] invalid rejection acknowledgement', reason);
+        },
+      });
+    },
+    [replayPeerUnacked],
+  );
+
+  const sendSessionReject = useCallback(
+    (peerId: string): Promise<void> => {
+      const peer = peerSessionRef.current;
+      if (!peer || peer.peerId !== peerId || peer.isDestroyed()) return Promise.resolve();
+      const body = encodePeerAppMessage({ type: 'session_reject' });
+      if (sessionController) {
+        sessionController.queueHostMessage(body, 'outbound-reject');
+        return sessionController
+          .flushPendingWork()
+          .then(() => {
+            bindOutboundRejectRetirement(peer);
+          })
+          .catch((error) => {
+            console.error('[Shell] failed to persist reliable session rejection', error);
+          });
+      }
+      bindOutboundRejectRetirement(peer);
+      peer.reliableTransport.allocateOutbound(body, 'outbound-reject');
+      return peer.reliableTransport.flushPending().catch((error) => {
+        console.error('[Shell] failed to persist reliable session rejection', error);
+      });
+    },
+    [bindOutboundRejectRetirement],
+  );
 
   const resetPeerRelayState = useCallback((options?: { persistSession?: boolean }) => {
     peerSessionRef.current?.destroy();
@@ -1420,10 +1643,28 @@ const Shell = () => {
     [abortAccept, acceptAbortHandlers],
   );
 
+  inboundSessionRejectHandlerRef.current = (sessionId, remoteNumber) => {
+    const selected = peerSessionRef.current;
+    const peerId = selected?.peerId ?? 'unknown';
+    const conn = hubConnRef.current;
+    if (selected && conn && selected.sessionId === sessionId) {
+      installInboundRejectionReceipt(
+        conn,
+        selected.peerId,
+        sessionId,
+        selected.reliableState.messageNumber,
+        remoteNumber,
+      );
+    }
+    log(`[Shell] session_reject from=${peerId}: durably cancelled`);
+    markPeerDead();
+    if (abortAcceptIfActive({ error: true })) return;
+    cancelAttemptedSession({ error: true });
+  };
+
   const startFreshSessionWithPeer = useCallback(
     async (
       request: SessionStartRequest & {
-        gameSessionId?: string;
         pairingToken: string;
       },
     ) => {
@@ -1438,7 +1679,7 @@ const Shell = () => {
         const minContribution =
           myContribution < theirContribution ? myContribution : theirContribution;
         const perGame = minContribution / 10n || 1n;
-        const sessionId = request.gameSessionId ?? generateSessionId();
+        const sessionId = request.gameSessionId;
         const token = request.pairingToken;
         const hubSessionId = getSessionId();
 
@@ -1455,6 +1696,7 @@ const Shell = () => {
           peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
           bindPeerMessageHandler(peerSessionRef.current);
         }
+        peerSessionRef.current!.reliableState.disposition = 'active';
         const channelTimeout = parseOptionalBigInt(request.channel_timeout);
         const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
         const diagnosticLog = loadState().history.diagnosticLog;
@@ -1519,6 +1761,7 @@ const Shell = () => {
                     ? { unrollTimeout: unrollTimeout.toString() }
                     : {}),
                 },
+                transport: structuredClone(peerSessionRef.current!.reliableState),
                 identity: {
                   sessionId: hubSessionId,
                   ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
@@ -1533,6 +1776,12 @@ const Shell = () => {
               },
               onCommitted: markPersistCommitted,
             });
+            const peer = peerSessionRef.current;
+            if (peer?.sessionId === sessionId) {
+              for (const { msgno, msg } of peer.reliableState.unackedMessages) {
+                peer.sendMessage(Number(msgno), msg);
+              }
+            }
           },
           mountLiveSession: () => {
             try {
@@ -1619,15 +1868,15 @@ const Shell = () => {
           peerSessionRef.current?.destroy();
           peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
           bindPeerMessageHandler(peerSessionRef.current);
-          conn.sendPeerAppMessage(advisory.peer_id, {
+          const proposalBody = encodePeerAppMessage({
             type: 'session_proposal',
             proposer_amount: advisory.my_amount,
             responder_amount: advisory.their_amount,
             channel_timeout: advisory.channel_timeout,
             unroll_timeout: advisory.unroll_timeout,
-            game_session_id: gameSessionId,
             network: getNetwork(),
           });
+          peerSessionRef.current.reliableTransport.allocateOutbound(proposalBody);
           await startFreshSessionWithPeer({
             peerId: advisory.peer_id,
             opponentAlias: advisory.peer_alias,
@@ -1700,10 +1949,9 @@ const Shell = () => {
   const declinePendingProposal = useCallback(
     (proposal: PendingSessionProposal) => {
       setPendingProposalState(null);
-      resetPeerRelayState();
       sendSessionReject(proposal.from_id);
     },
-    [resetPeerRelayState, sendSessionReject, setPendingProposalState],
+    [sendSessionReject, setPendingProposalState],
   );
 
   useEffect(() => {
@@ -1893,78 +2141,139 @@ const Shell = () => {
             setPendingAdvisoryState(params);
             setActiveTab('game');
           },
-          onPeerMessage: (fromId: string, _fromAlias: string, payload: Uint8Array) => {
-            peerSessionRef.current?.deliverRawPeerMessage(fromId, payload);
-            syncPeerLiveness();
-          },
-          onPeerAppMessage: (fromId: string, fromAlias: string, msg: PeerAppMessage) => {
-            const ps = peerSessionRef.current;
-            if (ps && ps.liveness === 'dead') return;
-            if (ps) ps.notePeerActivity();
-            syncPeerLiveness();
-            if (msg.type === 'session_proposal') {
-              const peerAlias = fromAlias || fromId;
-              if (!isAvailableForNewSessionPrompt()) {
-                log(
-                  `[Shell] session_reject to=${fromId}: proposal while unavailable phase=${sessionPhaseRef.current}`,
-                );
-                sendSessionReject(fromId);
+          onPeerMessage: (fromId: string, fromAlias: string, payload: Uint8Array) => {
+            const frame = decodeReliableFrame(payload);
+            if (frame) {
+              const rejectionPeer = rejectionPeersRef.current.get(
+                rejectionTombstoneKey(fromId, frame.sessionId),
+              );
+              if (rejectionPeer) {
+                rejectionPeer.deliverRawPeerMessage(fromId, payload);
                 return;
-              }
-              if (
-                !isValidTimeoutString(msg.channel_timeout) ||
-                !isValidTimeoutString(msg.unroll_timeout)
-              ) {
-                log(`[Shell] session_reject to=${fromId}: proposal invalid timeouts`);
-                sendSessionReject(fromId);
-                return;
-              }
-              if (
-                !isValidSessionAmountString(msg.proposer_amount) ||
-                !isValidSessionAmountString(msg.responder_amount)
-              ) {
-                log(`[Shell] session_reject to=${fromId}: proposal invalid amounts`);
-                sendSessionReject(fromId);
-                return;
-              }
-              if (!sessionProposalNetworkMatches(msg.network, getNetwork())) {
-                log(
-                  `[Shell] session_reject to=${fromId}: proposal network mismatch theirs=${msg.network ?? 'none'} mine=${getNetwork()}`,
-                );
-                sendSessionReject(fromId);
-                return;
-              }
-              const proposalSessionId = msg.game_session_id ?? generateSessionId();
-              peerSessionRef.current?.destroy();
-              peerSessionRef.current = new PeerSession(fromId, proposalSessionId, conn);
-              bindPeerMessageHandler(peerSessionRef.current);
-              setPendingProposalState({
-                from_id: fromId,
-                from_alias: peerAlias,
-                proposer_amount: msg.proposer_amount,
-                responder_amount: msg.responder_amount,
-                channel_timeout: msg.channel_timeout,
-                unroll_timeout: msg.unroll_timeout,
-                game_session_id: proposalSessionId,
-              });
-              setActiveTab('game');
-            } else if (msg.type === 'session_reject') {
-              if (ps?.peerId === fromId) {
-                log(`[Shell] session_reject from=${fromId}: cancelling attempted session`);
-                markPeerDead();
-                if (abortAcceptIfActive({ error: true })) return;
-                const channelState = dashboardSessionModelRef.current?.channel.status.state;
-                if (
-                  shouldCancelOnPeerUnreachable(
-                    sessionPhaseRef.current,
-                    channelState,
-                    abandonPendingRef.current,
-                  )
-                ) {
-                  cancelAttemptedSession({ error: true });
-                }
               }
             }
+            const selected = peerSessionRef.current;
+            if (selected && selected.peerId === fromId) {
+              selected.deliverRawPeerMessage(fromId, payload);
+              syncPeerLiveness();
+              return;
+            }
+            if (
+              frame?.tag !== 0x01 ||
+              frame.msgno !== 1 ||
+              frame.data.byteLength > DEFAULT_SESSION_RECEIVE_POLICY.maxPeerBodyBytes
+            ) {
+              return;
+            }
+            let proposal;
+            try {
+              proposal = decodePeerAppMessage(frame.data);
+            } catch {
+              return;
+            }
+            if (proposal?.type !== 'session_proposal') return;
+            if (
+              !isAvailableForNewSessionPrompt() ||
+              !isValidTimeoutString(proposal.channel_timeout) ||
+              !isValidTimeoutString(proposal.unroll_timeout) ||
+              !isValidSessionAmountString(proposal.proposer_amount) ||
+              !isValidSessionAmountString(proposal.responder_amount) ||
+              !sessionProposalNetworkMatches(proposal.network, getNetwork())
+            ) {
+              rejectUnknownProposal(conn, fromId, frame.sessionId, payload);
+              return;
+            }
+            const peerAlias = fromAlias || fromId;
+            const pairingToken = `peer_${fromId}_${Date.now()}`;
+            const provisional = new PeerSession(fromId, frame.sessionId, conn);
+            provisional.reliableState.disposition = 'proposal-received';
+            peerSessionRef.current = provisional;
+            let negotiationRejected = false;
+            let negotiationRejectPersisted = false;
+            provisional.reliableTransport.attachConsumer({
+              isReady: () => !negotiationRejected,
+              deliver: (msgno, body) => {
+                const semantic = decodePeerAppMessage(body);
+                if (semantic?.type === 'session_reject') {
+                  negotiationRejected = true;
+                  provisional.reliableState.disposition = 'inbound-reject';
+                  provisional.reliableTransport.discardOutbound();
+                  return;
+                }
+                if (msgno !== 1n || semantic?.type !== 'session_proposal') {
+                  throw new Error('initial reliable message is not a session proposal');
+                }
+              },
+              persist: async () => {
+                if (negotiationRejected) {
+                  await clearSessionWithInboundRejectionReceipt({
+                    peerId: fromId,
+                    sessionId: frame.sessionId,
+                    messageNumber: provisional.reliableState.messageNumber,
+                    remoteNumber: provisional.reliableState.remoteNumber,
+                    unackedMessages: [],
+                    createdAt: Date.now(),
+                  });
+                  negotiationRejectPersisted = true;
+                  return;
+                }
+                await replaceSession({
+                  pairing: {
+                    token: pairingToken,
+                    peerId: fromId,
+                    gameSessionId: frame.sessionId,
+                    iStarted: false,
+                    myContribution: proposal.responder_amount,
+                    theirContribution: proposal.proposer_amount,
+                    perGameAmount: (
+                      (BigInt(proposal.responder_amount) < BigInt(proposal.proposer_amount)
+                        ? BigInt(proposal.responder_amount)
+                        : BigInt(proposal.proposer_amount)) / 10n || 1n
+                    ).toString(),
+                    opponentAlias: peerAlias,
+                    channelTimeout: proposal.channel_timeout,
+                    unrollTimeout: proposal.unroll_timeout,
+                  },
+                  transport: structuredClone(provisional.reliableState),
+                });
+                if (peerSessionRef.current !== provisional) return;
+                sessionSaveRef.current = loadState();
+                setPendingProposalState({
+                  from_id: fromId,
+                  from_alias: peerAlias,
+                  proposer_amount: proposal.proposer_amount,
+                  responder_amount: proposal.responder_amount,
+                  channel_timeout: proposal.channel_timeout,
+                  unroll_timeout: proposal.unroll_timeout,
+                  game_session_id: frame.sessionId,
+                });
+                setActiveTab('game');
+                syncPeerLiveness();
+              },
+              committed: () => {
+                if (!negotiationRejectPersisted) return;
+                negotiationRejectPersisted = false;
+                installInboundRejectionReceipt(
+                  conn,
+                  fromId,
+                  frame.sessionId,
+                  provisional.reliableState.messageNumber,
+                  provisional.reliableState.remoteNumber,
+                );
+                log(`[Shell] session_reject from=${fromId}: durably cancelled`);
+                markPeerDead();
+                if (abortAcceptIfActive({ error: true })) return;
+                cancelAttemptedSession({ error: true });
+              },
+              failure: (reason) => {
+                console.error('[Shell] invalid provisional reliable session', reason);
+                if (peerSessionRef.current === provisional) {
+                  provisional.destroy();
+                  peerSessionRef.current = null;
+                }
+              },
+            });
+            provisional.deliverRawPeerMessage(fromId, payload);
           },
           onDeliveryFailure: (to: string) => {
             console.warn('[Shell] delivery_failure to=%s', to);
@@ -1999,7 +2308,8 @@ const Shell = () => {
           onPeerAvailable: (playerId: string) => {
             const peer = peerSessionRef.current;
             if (peer?.peerId === playerId) {
-              sessionController?.resendUnacked();
+              if (sessionController) sessionController.resendUnacked();
+              else replayPeerUnacked();
             }
           },
           onRegistered: (playerId: string) => {
@@ -2099,10 +2409,25 @@ const Shell = () => {
             if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
                 pairing.peerId,
-                pairing.gameSessionId ?? generateSessionId(),
+                pairing.gameSessionId,
                 conn,
+                undefined,
+                save?.phase === 'live'
+                  ? {
+                      messageNumber: save.live.messageNumber,
+                      remoteNumber: save.live.remoteNumber,
+                      unackedMessages: structuredClone(save.live.unackedMessages),
+                      disposition: save.live.disposition,
+                    }
+                  : save?.phase === 'pre-handshake'
+                    ? structuredClone(save.transport)
+                    : undefined,
               );
-              bindPeerMessageHandler(peerSessionRef.current);
+              if (peerSessionRef.current.reliableState.disposition === 'outbound-reject') {
+                bindOutboundRejectRetirement(peerSessionRef.current);
+              } else {
+                bindPeerMessageHandler(peerSessionRef.current);
+              }
               setRestoreHubReconciled(true);
               // Restore never goes through startFreshSessionWithPeer, which is
               // otherwise the only place that marks the hub busy. Use restoreBusy
@@ -2113,12 +2438,9 @@ const Shell = () => {
               setRestoreHubReconciled(true);
               conn.setBusy(restoreBusy);
             }
-            if (
-              peerSessionRef.current &&
-              sessionController &&
-              (!prevMine || prevMine === playerId)
-            ) {
-              sessionController.resendUnacked();
+            if (peerSessionRef.current && (!prevMine || prevMine === playerId)) {
+              if (sessionController) sessionController.resendUnacked();
+              else replayPeerUnacked();
             }
           },
           onHubAttention: () => {
@@ -2140,6 +2462,8 @@ const Shell = () => {
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
             setHubLiveness('connected');
+            if (sessionController) sessionController.resendUnacked();
+            else replayPeerUnacked();
           },
           onHubActivity: () => {
             lastHubActivityRef.current = Date.now();
@@ -2178,6 +2502,40 @@ const Shell = () => {
         return;
       }
       hubConnRef.current = conn;
+      void readRejectionTombstones()
+        .then((tombstones) => {
+          if (hubConnRef.current !== conn) return;
+          for (const tombstone of tombstones) {
+            if (tombstone.kind === 'outbound-reject' && tombstone.unackedMessages.length === 0) {
+              void deleteRejectionTombstone(tombstone.peerId, tombstone.sessionId);
+              continue;
+            }
+            const peer = new PeerSession(
+              tombstone.peerId,
+              tombstone.sessionId,
+              conn,
+              DEFAULT_SESSION_RECEIVE_POLICY,
+              {
+                messageNumber: tombstone.messageNumber,
+                remoteNumber: tombstone.remoteNumber,
+                unackedMessages: tombstone.unackedMessages,
+                disposition:
+                  tombstone.kind === 'outbound-reject' ? 'outbound-reject' : 'inbound-reject',
+              },
+            );
+            rejectionPeersRef.current.set(
+              rejectionTombstoneKey(tombstone.peerId, tombstone.sessionId),
+              peer,
+            );
+            if (tombstone.kind === 'outbound-reject') {
+              bindRejectionTombstone(peer, { ...tombstone, kind: 'outbound-reject' });
+              peer.reliableTransport.replayUnacked();
+            }
+          }
+        })
+        .catch((error) => {
+          console.error('[Shell] failed to restore rejection tombstones', error);
+        });
     },
     [
       uniqueId,
@@ -2189,10 +2547,14 @@ const Shell = () => {
       freshStartPersistInFlightRef,
       isAvailableForNewSessionPrompt,
       presenceBusy,
-      sendSessionReject,
       setPendingAdvisoryState,
       setPendingProposalState,
       bindPeerMessageHandler,
+      installInboundRejectionReceipt,
+      bindRejectionTombstone,
+      bindOutboundRejectRetirement,
+      rejectUnknownProposal,
+      replayPeerUnacked,
       setActiveTab,
       setHubAlert,
       setRestoreHubReconciled,
@@ -2475,30 +2837,43 @@ const Shell = () => {
       // Terminal/clean finish must not send session_reject — that signal means
       // decline/abort. Cooperative close already completed through the protocol;
       // the peer should keep pinging until its own local shutdown finishes.
-      if (peerId && !options?.retainFinishedGuard) sendSessionReject(peerId);
-      resetPeerRelayState();
-      destroySessionController();
-      clearSessionPreservingHistory();
-      sessionSaveRef.current = null;
-      sessionSavePropRef.current = undefined;
-      sessionStartedRef.current = false;
-      sessionFinishedCleanupRef.current = !!options?.retainFinishedGuard;
-      sessionPhaseRef.current = 'none';
-      clearSessionTimers();
-      setSessionPhase('none');
-      setSessionError(false);
-      setSessionConfig(null);
-      setPeerConn(null);
-      dashboardSessionModelRef.current = null;
-      setDashboardSessionModel(null);
-      setTerminalPresentation(null);
-      setRestoreStatus('idle');
-      setRestoreError(null);
-      setRestoreHubReconciled(false);
-      setPendingAdvisoryState(null);
-      setPendingProposalState(null);
-      cancelTransition();
-      hubConnRef.current?.setBusy(presenceBusy('none'));
+      const retainRejectTransport = !!peerId && !options?.retainFinishedGuard;
+      const finishCancellation = () => {
+        if (!retainRejectTransport) {
+          resetPeerRelayState();
+        }
+        destroySessionController();
+        if (!retainRejectTransport) {
+          clearSessionPreservingHistory();
+          sessionSaveRef.current = null;
+        } else {
+          sessionSaveRef.current = loadState();
+        }
+        sessionSavePropRef.current = undefined;
+        sessionStartedRef.current = false;
+        sessionFinishedCleanupRef.current = !!options?.retainFinishedGuard;
+        sessionPhaseRef.current = 'none';
+        clearSessionTimers();
+        setSessionPhase('none');
+        setSessionError(false);
+        setSessionConfig(null);
+        setPeerConn(null);
+        dashboardSessionModelRef.current = null;
+        setDashboardSessionModel(null);
+        setTerminalPresentation(null);
+        setRestoreStatus('idle');
+        setRestoreError(null);
+        setRestoreHubReconciled(false);
+        setPendingAdvisoryState(null);
+        setPendingProposalState(null);
+        cancelTransition();
+        hubConnRef.current?.setBusy(presenceBusy('none'));
+      };
+      if (retainRejectTransport) {
+        void sendSessionReject(peerId).then(finishCancellation);
+      } else {
+        finishCancellation();
+      }
     },
     [
       bumpStartEpoch,
@@ -2859,7 +3234,16 @@ const Shell = () => {
         theirContribution,
         perGameAmount: perGame,
       } = sessionAmountsFromSave(save);
-      if (save.phase === 'live' || save.phase === 'pre-handshake') {
+      const transportDisposition =
+        save.phase === 'live'
+          ? save.live.disposition
+          : save.phase === 'pre-handshake'
+            ? save.transport.disposition
+            : null;
+      if (
+        (save.phase === 'live' || save.phase === 'pre-handshake') &&
+        transportDisposition === 'active'
+      ) {
         const pairing = save.pairing;
         setSessionConfig({
           iStarted: pairing.iStarted,
@@ -2874,6 +3258,25 @@ const Shell = () => {
           unrollTimeout: parseOptionalBigInt(pairing.unrollTimeout),
         });
         setPeerConn(stablePeerConn);
+      } else if (transportDisposition !== null) {
+        setSessionConfig(null);
+        setPeerConn(null);
+        setRestoreStatus('restored');
+        if (
+          save.phase === 'pre-handshake' &&
+          save.transport.disposition === 'proposal-received' &&
+          save.pairing.peerId
+        ) {
+          setPendingProposalState({
+            from_id: save.pairing.peerId,
+            from_alias: save.pairing.opponentAlias ?? save.pairing.peerId,
+            proposer_amount: save.pairing.theirContribution,
+            responder_amount: save.pairing.myContribution,
+            channel_timeout: save.pairing.channelTimeout,
+            unroll_timeout: save.pairing.unrollTimeout,
+            game_session_id: save.pairing.gameSessionId,
+          });
+        }
       }
       const savedHistory = humanHistoryFromSave(save);
       const savedLog = diagnosticLogFromSave(save);
@@ -2979,6 +3382,7 @@ const Shell = () => {
       setRestoreError,
       setRestoreHubReconciled,
       setRestoreStatus,
+      setPendingProposalState,
       setSessionConfig,
       setSessionError,
       setSessionPhase,

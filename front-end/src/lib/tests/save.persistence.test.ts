@@ -8,12 +8,21 @@ import {
   markAutoResumeOnce,
   peekAutoResumeOnce,
   clearAutoResumeOnce,
+  clearSessionWithInboundRejectionReceipt,
   loadState,
   flushSessionSave,
   getPlayerId,
   _resetForTests,
 } from '../../hooks/save';
-import { SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
+import {
+  MAX_DURABLE_REJECTION_TOMBSTONES,
+  readRejectionTombstones,
+  REJECTION_TOMBSTONE_TTL_MS,
+  rejectionTombstoneKey,
+  SESSION_DB_NAME,
+  writeRejectionTombstone,
+  writeSessionRecord,
+} from '../session/indexedDb';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -40,7 +49,7 @@ describe('session persistence', () => {
     await flushSessionSave();
 
     const stored = await new Promise<{ count: number; record: unknown }>((resolve, reject) => {
-      const open = indexedDB.open(SESSION_DB_NAME, 1);
+      const open = indexedDB.open(SESSION_DB_NAME);
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {
         const db = open.result;
@@ -77,6 +86,111 @@ describe('session persistence', () => {
     expect(typeof (loaded?.phase === 'live' && loaded.live.messageNumber)).toBe('bigint');
     expect(loaded?.history.humanHistory).toEqual(['human1']);
     expect(loaded).not.toHaveProperty('log');
+  });
+
+  it('bounds rejection tombstones without replacing the active session record', async () => {
+    saveLiveFields();
+    await flushSessionSave();
+    await Promise.all(
+      Array.from({ length: MAX_DURABLE_REJECTION_TOMBSTONES + 1 }, (_, index) =>
+        writeRejectionTombstone({
+          kind: 'outbound-reject',
+          peerId: `peer-${index}`,
+          sessionId: index.toString(16).padStart(32, '0'),
+          messageNumber: 2n,
+          remoteNumber: 1n,
+          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
+          createdAt: Date.now() + index,
+        }),
+      ),
+    );
+
+    const tombstones = await readRejectionTombstones();
+    expect(tombstones).toHaveLength(MAX_DURABLE_REJECTION_TOMBSTONES);
+    expect(tombstones[0].peerId).toBe('peer-1');
+    _resetForTests();
+    expect(await peekSession()).toMatchObject({ phase: 'live' });
+  });
+
+  it('keeps same-session rejection tombstones distinct across peers', async () => {
+    const sessionId = 'ab'.repeat(16);
+    const routed = new Map([
+      [rejectionTombstoneKey('peer-a', sessionId), 'a'],
+      [rejectionTombstoneKey('peer-b', sessionId), 'b'],
+    ]);
+    expect(routed.size).toBe(2);
+    await Promise.all(
+      ['peer-a', 'peer-b'].map((peerId, index) =>
+        writeRejectionTombstone({
+          kind: 'outbound-reject',
+          peerId,
+          sessionId,
+          messageNumber: 2n,
+          remoteNumber: 1n,
+          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
+          createdAt: Date.now() + index,
+        }),
+      ),
+    );
+
+    expect(await readRejectionTombstones()).toEqual([
+      expect.objectContaining({ peerId: 'peer-a', sessionId }),
+      expect.objectContaining({ peerId: 'peer-b', sessionId }),
+    ]);
+  });
+
+  it('retains empty inbound receipts and expires stale rejection records', async () => {
+    const now = Date.now();
+    await writeRejectionTombstone({
+      kind: 'inbound-receipt',
+      peerId: 'expired-peer',
+      sessionId: 'cd'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 4n,
+      unackedMessages: [],
+      createdAt: now - REJECTION_TOMBSTONE_TTL_MS - 1,
+    });
+    await writeRejectionTombstone({
+      kind: 'inbound-receipt',
+      peerId: 'current-peer',
+      sessionId: 'ef'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 7n,
+      unackedMessages: [],
+      createdAt: now,
+    });
+
+    expect(await readRejectionTombstones()).toEqual([
+      expect.objectContaining({
+        kind: 'inbound-receipt',
+        peerId: 'current-peer',
+        remoteNumber: 7n,
+        unackedMessages: [],
+      }),
+    ]);
+  });
+
+  it('atomically replaces the active session with an inbound rejection receipt', async () => {
+    saveLiveFields();
+    await flushSessionSave();
+    await clearSessionWithInboundRejectionReceipt({
+      peerId: 'rejecting-peer',
+      sessionId: '12'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 6n,
+      unackedMessages: [],
+      createdAt: Date.now(),
+    });
+
+    _resetForTests();
+    expect(await peekSession()).toBeNull();
+    expect(await readRejectionTombstones()).toEqual([
+      expect.objectContaining({
+        kind: 'inbound-receipt',
+        peerId: 'rejecting-peer',
+        remoteNumber: 6n,
+      }),
+    ]);
   });
 
   it('sets the saved-session marker when a resumable record is written', async () => {

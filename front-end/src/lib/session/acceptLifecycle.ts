@@ -12,6 +12,7 @@ import type {
   SessionPairingSave,
   SessionPresentationSave,
   SessionSave,
+  SessionTransportSave,
   TerminalSessionSave,
 } from './saveEnvelope';
 import type { ChannelStatus } from '../../types/ChiaGaming';
@@ -77,6 +78,7 @@ export type TerminalSessionBackup = {
 
 export type FreshStartCheckpoint = {
   pairing: SessionPairingSave;
+  transport: SessionTransportSave;
   identity?: Partial<SessionIdentitySave>;
   history?: Partial<SessionHistorySave>;
 };

@@ -168,7 +168,9 @@ binds a validator program to a particular state. Some existing handler code may
 still name this argument `validation_info_hash`, but the value passed to
 their-turn handlers is the raw validation program hash because the framework has
 the validation program available at that call site. Referee coins commit to the
-validation info hash instead.
+validation info hash instead. Neither hash is accepted from the peer move
+message: the framework computes both from its locally held validation program
+and pre-move state before invoking this handler.
 
 ### Return: Normal Move (2-4 elements)
 
