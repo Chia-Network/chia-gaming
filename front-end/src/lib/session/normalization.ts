@@ -1,6 +1,6 @@
 import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming';
 import { coerceToBytes } from '../../util';
-import { REGISTERED_GAMES } from '../gameRegistry';
+import { DEFAULT_CATALOG_GAME_TYPE } from '../gameRegistry';
 import { emptyComposeDraftState } from './composeDraft';
 import { gameInstanceFromView } from './presentation';
 import type {
@@ -118,9 +118,8 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       currentHandIds: [],
       currentHandOrigin: null,
       lastDisplayedId: null,
-      activeGameType: REGISTERED_GAMES[0].gameType,
+      activeGameType: DEFAULT_CATALOG_GAME_TYPE,
       handState: null,
-      pendingCandidates: {},
       queue: [],
       ...game,
       instances,
@@ -142,7 +141,6 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       ...partial.history,
     },
     myRunningBalance: partial.myRunningBalance ?? 0n,
-    lastOutcomeWin: partial.lastOutcomeWin,
   };
 }
 export function clearDerivedGamePresentation(model: SessionModel): SessionModel {
@@ -157,7 +155,6 @@ export function clearDerivedGamePresentation(model: SessionModel): SessionModel 
       instances: {},
       lastDisplayedId: null,
       handState: null,
-      pendingCandidates: {},
     },
   };
 }

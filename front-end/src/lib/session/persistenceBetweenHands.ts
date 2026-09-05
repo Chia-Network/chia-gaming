@@ -1,11 +1,5 @@
-import {
-  decodePersistedHandProposal,
-  isCatalogGameType,
-  packageFor,
-  REGISTERED_GAMES,
-} from '../gameRegistry';
-import type { ComposeDraftValue } from '@games/host';
-import { composeDraftValue, type ComposeDraftState } from './composeDraft';
+import { isCatalogGameType, isProposalParameterValue, validateHandProposal } from '../gameRegistry';
+import type { ComposeDraftState } from './composeDraft';
 import type { SessionPresentationSave } from './saveEnvelope';
 import type { HandProposal, ProposalGroupModel } from './types';
 import {
@@ -16,41 +10,13 @@ import {
   requireUniqueIds,
 } from './persistencePrimitives';
 
-const TERMS_BASE = new Set(['game_type', 'my_contribution', 'their_contribution', 'game_timeout']);
-
-function encodeDraftValue(value: ComposeDraftValue): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(value).map(([key, field]) => [key, (field as bigint).toString()]),
-  );
-}
-
-function parseDraftValue(
-  raw: unknown,
-  fallback: ComposeDraftValue,
-  label: string,
-): ComposeDraftValue {
-  const saved = requireRecord(raw, label);
-  const next = { ...fallback };
-  for (const key of Object.keys(fallback)) {
-    if (saved[key] !== undefined) {
-      (next as Record<string, bigint>)[key] = parseDecimalString(saved[key], `${label}.${key}`, 0n);
-    }
-  }
-  return next;
-}
-
 export function encodeComposeDraftState(
   compose: ComposeDraftState,
 ): SessionPresentationSave['betweenHandCompose'] {
-  const drafts: Record<string, Record<string, string>> = {};
-  for (const { gameType } of REGISTERED_GAMES) {
-    drafts[gameType] = encodeDraftValue(composeDraftValue(compose, gameType));
-  }
   return {
     selected_game: compose.selectedGame,
     game_timeout: compose.gameTimeout.toString(),
     proposal_sent: compose.proposalSent,
-    drafts,
   };
 }
 
@@ -60,31 +26,11 @@ export function parseComposeDraftState(value: unknown): ComposeDraftState {
   if (!isCatalogGameType(selectedGame)) {
     throw new Error('Garbled save: invalid betweenHandCompose.selected_game');
   }
-  const savedDrafts = requireRecord(saved.drafts, 'betweenHandCompose.drafts');
-  const drafts: Record<string, ComposeDraftValue> = {};
-  for (const { gameType } of REGISTERED_GAMES) {
-    const fallback = packageFor(gameType).draft.default(0n);
-    drafts[gameType] = parseDraftValue(
-      savedDrafts[gameType],
-      fallback,
-      `betweenHandCompose.drafts.${gameType}`,
-    );
-  }
   return {
     selectedGame: selectedGame,
     gameTimeout: parseDecimalString(saved.game_timeout, 'betweenHandCompose.game_timeout', 0n),
     proposalSent: requireBoolean(saved.proposal_sent, 'betweenHandCompose.proposal_sent'),
-    drafts,
   };
-}
-
-function termsExtras(saved: Record<string, unknown>, label: string): Record<string, string> {
-  const extras: Record<string, string> = {};
-  for (const [key, value] of Object.entries(saved)) {
-    if (TERMS_BASE.has(key) || value === undefined) continue;
-    extras[key] = requireString(value, `${label}.${key}`);
-  }
-  return extras;
 }
 
 export function parseHandProposalSnapshot(value: unknown, label: string): HandProposal {
@@ -93,21 +39,28 @@ export function parseHandProposalSnapshot(value: unknown, label: string): HandPr
   if (!isCatalogGameType(gameType)) {
     throw new Error(`Garbled save: unknown ${label}.game_type ${String(gameType)}`);
   }
-  const myContribution = parseDecimalString(saved.my_contribution, `${label}.my_contribution`, 0n);
-  const terms = decodePersistedHandProposal(
+  if (!isProposalParameterValue(saved.parameters)) {
+    throw new Error(`Garbled save: invalid ${label}.parameters`);
+  }
+  const terms: HandProposal = {
     gameType,
-    {
-      myContribution,
-      theirContribution: parseDecimalString(
-        saved.their_contribution,
-        `${label}.their_contribution`,
-        0n,
-      ),
-      gameTimeout: parseDecimalString(saved.game_timeout, `${label}.game_timeout`, 1n),
-    },
-    termsExtras(saved, label),
-  );
-  if (!terms) throw new Error(`Garbled save: invalid ${label} ${gameType} terms`);
+    playerAContribution: parseDecimalString(
+      saved.player_a_contribution,
+      `${label}.player_a_contribution`,
+      1n,
+    ),
+    playerBContribution: parseDecimalString(
+      saved.player_b_contribution,
+      `${label}.player_b_contribution`,
+      1n,
+    ),
+    senderIsPlayerA: requireBoolean(saved.sender_is_player_a, `${label}.sender_is_player_a`),
+    gameTimeout: parseDecimalString(saved.game_timeout, `${label}.game_timeout`, 1n),
+    parameters: saved.parameters,
+  };
+  if (!validateHandProposal(terms)) {
+    throw new Error(`Garbled save: invalid ${label} ${gameType} terms`);
+  }
   return terms;
 }
 
@@ -161,11 +114,6 @@ export function parseProposalGroups(value: unknown, label: string): ProposalGrou
       saved.hand_proposal,
       `${groupLabel}.hand_proposal`,
     );
-    if (!packageFor(handProposal.gameType).validateHandMembership(memberIds, null)) {
-      throw new Error(
-        `Garbled save: ${groupLabel} has ${memberIds.length} members for ${handProposal.gameType}`,
-      );
-    }
     return {
       primaryId,
       memberIds,

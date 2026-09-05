@@ -12,7 +12,6 @@ import {
 import {
   useGameSession,
   useSessionControllerAfterCommit,
-  GameTerminalAttentionInfo,
   QueuedNotification,
 } from '../hooks/useGameSession';
 import { formatMojos } from '../util';
@@ -48,6 +47,7 @@ import {
   wasClientErrorReported,
 } from '../lib/clientError';
 import { ComposeProposalDialog, ReviewProposalDialog } from './GameProposalDialogs';
+import { bindNotificationOverlayDismissKeys } from './notificationOverlayKeyboard';
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -360,46 +360,44 @@ function ChannelStatusContent({ info }: { info: ChannelStatusModel }) {
   );
 }
 
-function GameTerminalContent({ info }: { info: GameTerminalAttentionInfo }) {
-  return (
-    <div className="rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2 select-text cursor-text">
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-canvas-text">My reward:</span>
-        <span className="font-semibold text-canvas-text-contrast">
-          {formatOptionalMojos(info.myReward)}
-        </span>
-      </p>
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-canvas-text">Reward coin ID:</span>
-        {info.rewardCoinHex ? (
-          <CoinId hex={info.rewardCoinHex} />
-        ) : (
-          <span className="font-semibold text-canvas-text-contrast">None</span>
-        )}
-      </p>
-    </div>
-  );
-}
-
 function NotificationOverlay({
   notification,
   onDismiss,
   boundsRef,
   zClass,
   focusBoundaryPriority,
+  ownsKeyboard,
 }: {
   notification: QueuedNotification;
   onDismiss: () => void;
   boundsRef: RefObject<HTMLElement | null>;
   zClass: string;
   focusBoundaryPriority: number;
+  ownsKeyboard: boolean;
 }) {
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, {
     top: 8,
   });
   const dragControls = useDragControls();
+  const dismissButtonRef = useRef<HTMLButtonElement>(null);
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
   const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
   const titleColor = 'text-canvas-text-contrast';
+
+  useEffect(() => {
+    if (!ownsKeyboard) return;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dismissButtonRef.current?.focus();
+    const unbind = bindNotificationOverlayDismissKeys(() => onDismissRef.current());
+    return () => {
+      unbind();
+      if (previouslyFocused?.isConnected && previouslyFocused !== document.body) {
+        previouslyFocused.focus();
+      }
+    };
+  }, [ownsKeyboard, notification.id]);
 
   return (
     <motion.div
@@ -431,25 +429,18 @@ function NotificationOverlay({
             'state' in notification.payload && (
               <ChannelStatusContent info={notification.payload as ChannelStatusModel} />
             )}
-          {notification.kind === 'game-terminal' &&
-            notification.payload &&
-            'label' in notification.payload && (
-              <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
-            )}
           {isError && notification.message && (
             <pre className="text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto">
               {notification.message}
             </pre>
           )}
-          {!isError &&
-            notification.kind !== 'channel-state' &&
-            notification.kind !== 'game-terminal' &&
-            notification.message && (
-              <p className="text-sm text-canvas-text-contrast text-center select-text cursor-text">
-                {notification.message}
-              </p>
-            )}
+          {!isError && notification.kind !== 'channel-state' && notification.message && (
+            <p className="text-sm text-canvas-text-contrast text-center select-text cursor-text">
+              {notification.message}
+            </p>
+          )}
           <Button
+            ref={dismissButtonRef}
             variant="solid"
             size="sm"
             onClick={onDismiss}
@@ -552,6 +543,7 @@ export interface GameSessionProps {
     handler: (msgno: number, msg: Uint8Array) => void,
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
+    failureHandler: (reason: string) => void,
   ) => void;
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionSave;
@@ -594,7 +586,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
     blockchain,
     terminalPresentation,
   );
-  const terminalMode = session.handSource.interactionMode === 'terminal';
+  const terminalMode = session.handSource.frozen;
 
   useEffect(() => {
     onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
@@ -777,6 +769,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           boundsRef={channelOverlayBoundsRef}
           zClass="z-40"
           focusBoundaryPriority={40}
+          ownsKeyboard={!session.channelQueue[0]}
         />
       )}
       {/* Main content area */}
@@ -786,7 +779,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           ref={gameAreaRef}
           tabIndex={-1}
           inert={gameInterfaceIsInertForBetweenHandDialog}
-          data-game-interaction-mode={session.handSource.interactionMode}
+          data-game-interaction-mode={session.handSource.frozen ? 'terminal' : 'live'}
           aria-disabled={gameInterfaceIsInertForBetweenHandDialog || undefined}
           className="relative overflow-hidden z-0 focus:outline-none"
         >
@@ -889,6 +882,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           boundsRef={channelOverlayBoundsRef}
           zClass="z-50"
           focusBoundaryPriority={50}
+          ownsKeyboard
         />
       )}
     </div>

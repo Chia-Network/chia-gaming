@@ -83,6 +83,13 @@ closures are collected and executed in parallel using `std::thread::scope` with
 a shared work queue sized to `available_parallelism()`. To disable a test,
 comment out its `res.push(...)` call in the relevant `test_funs()` function.
 
+For game packages, `rust/tests/mod.rs` is optional. When it exists, it must
+export `test_funs()` and the build automatically includes those closures in the
+internal runner; packages using a non-Rust harness do not appear in that
+aggregation. The `registry.json` `test` list is reserved for internal Rust test
+packages such as `debug`, whose bespoke factory/probe hooks are also used by the
+simulator.
+
 ## Reading Test Output
 
 The output from `./ct.sh` is designed to be read directly. A passing run ends
@@ -168,7 +175,8 @@ against the event state in `LocalTestUIReceiver`:
 - Move actions wait for `game_accepted_ids` or `opponent_moved_in_game` to
   contain the referenced `GameID`.
 - `AcceptProposal` is two-phase: first it waits for the proposal to arrive,
-  then it waits for `ProposalAccepted`, `InsufficientBalance`, or
+  then it waits for membership in `ProposalAcceptedGroup`,
+  `InsufficientBalance`, or
   `ProposalCancelled` after `accept_proposal` has been called.
 - Global actions such as `GoOnChain`, `WaitBlocks`, `AcceptSettlement`, and
   `CleanShutdown` are unconditional once they become the next scripted action.

@@ -279,6 +279,24 @@ impl TheirTurnReferee {
         validator_move_args.run(allocator)
     }
 
+    pub fn peer_move_off_chain(
+        &self,
+        allocator: &mut AllocEncoder,
+        basic: &GameMoveStateInfo,
+        terminal: bool,
+        state_number: usize,
+    ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
+        let (state, validation_program) = self.get_validation_program_for_their_move()?;
+        let details = crate::referee::game_move_details_for_state(
+            allocator,
+            basic.clone(),
+            terminal,
+            validation_program,
+            state,
+        );
+        self.their_turn_move_off_chain(allocator, &details, state_number)
+    }
+
     pub fn their_turn_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
@@ -376,6 +394,14 @@ impl TheirTurnReferee {
             },
         )?;
 
+        if is_terminal != result.next_handler.is_none() {
+            return Err(Error::StrErr(format!(
+                "received move terminal={} disagrees with handler result terminal={}",
+                is_terminal,
+                result.next_handler.is_none(),
+            )));
+        }
+
         let new_self = self.accept_their_move(
             result.next_handler.clone(),
             new_state.clone(),
@@ -464,7 +490,8 @@ impl TheirTurnReferee {
         };
         let max_move_size_raw = mms_raw.clone();
         let max_move_size = if let Some(mms) = u64_from_atom(&max_move_size_raw) {
-            mms as usize
+            u32::try_from(mms)
+                .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?
         } else {
             return Err(Error::StrErr(
                 "max move size wasn't a properly sized atom".to_string(),

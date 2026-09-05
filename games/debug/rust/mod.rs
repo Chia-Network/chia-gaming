@@ -15,7 +15,7 @@ use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
-use crate::common::load_clvm::read_hex_puzzle;
+use crate::common::load_clvm::read_binary_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]
 use crate::common::types::PrivateKey;
@@ -23,7 +23,6 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::session_phases::types::GameFactory;
 use crate::referee::types::{
     canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, ValidationInfoHash,
 };
@@ -48,7 +47,8 @@ impl DebugGameCurry {
         mover_pk: &PublicKey,
         waiter_pk: &PublicKey,
     ) -> Result<DebugGameCurry, Error> {
-        let raw_program = read_hex_puzzle(allocator, "games/debug/clsp/factory.hex")?;
+        let raw_program =
+            read_binary_puzzle(allocator, "games/debug/clsp/factory.clvm.bin")?;
         let prog_hash = raw_program.sha256tree(allocator);
         Ok(DebugGameCurry {
             count: 0,
@@ -73,10 +73,10 @@ where
     }
 }
 
-pub const FACTORY_HEX: &str = "games/debug/clsp/factory.hex";
+pub const FACTORY_BINARY: &str = "games/debug/clsp/factory.clvm.bin";
 
-pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<GameFactory, Error> {
-    let raw_program = read_hex_puzzle(allocator, FACTORY_HEX)?;
+pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<ProgramRef, Error> {
+    let raw_program = read_binary_puzzle(allocator, FACTORY_BINARY)?;
     let node = CurriedProgram {
         program: raw_program,
         args: clvm_curried_args!("factory", ()),
@@ -84,19 +84,17 @@ pub fn prepared_factory(allocator: &mut AllocEncoder) -> Result<GameFactory, Err
     .to_clvm(allocator)
     .into_gen()?;
     let program = Program::from_nodeptr(allocator, node)?;
-    Ok(GameFactory {
-        program: Some(program.into()),
-    })
+    Ok(program.into())
 }
 
-/// Canonical probe: 1-mojo contributions, sender goes first, dummy keys.
+/// Canonical probe: 1-mojo player A/B contributions and dummy-key game parameters.
 pub fn probe_parameters(allocator: &mut AllocEncoder) -> Result<Program, Error> {
     let args = DebugGameCurry::new(
         allocator,
         &PublicKey::default(),
         &PublicKey::default(),
     )?;
-    let node = (1u64, (1u64, (true, (args, ()))))
+    let node = (1u64, (1u64, (args, ())))
         .to_clvm(allocator)
         .into_gen()?;
     Program::from_nodeptr(allocator, node)
@@ -185,7 +183,7 @@ impl BareDebugGameHandler {
         .to_clvm(allocator)
         .into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let args_node = (my_contribution, (their_contribution, (true, (args, ()))))
+        let args_node = (my_contribution, (their_contribution, (args, ())))
             .to_clvm(allocator)
             .into_gen()?;
         let parameters = Program::from_nodeptr(allocator, args_node)?;
@@ -375,7 +373,8 @@ impl BareDebugGameHandler {
                         move_made: move_to_check.to_vec(),
                         mover_share: mover_share.clone(),
                         max_move_size_raw: canonical_atom_from_usize(self.max_move_size),
-                        max_move_size: self.max_move_size,
+                        max_move_size: u32::try_from(self.max_move_size)
+                            .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?,
                     },
                     validation_info_hash: ValidationInfoHash::Hash(
                         ValidationInfo::new_state_update(
@@ -527,7 +526,13 @@ impl BareDebugGameHandler {
                                         max_move_size_raw: canonical_atom_from_usize(
                                             inputs.max_move_size,
                                         ),
-                                        max_move_size: inputs.max_move_size,
+                                        max_move_size: u32::try_from(inputs.max_move_size).map_err(
+                                            |_| {
+                                                Error::StrErr(
+                                                    "max move size exceeds u32".to_string(),
+                                                )
+                                            },
+                                        )?,
                                     },
                                     validation_info_hash: ValidationInfoHash::Hash(
                                         validation_info_hash,
@@ -623,7 +628,8 @@ pub fn make_debug_games_with_contributions(
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.random()).collect();
     let gid = GameID(nonce);
-    let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
+    let referee_coin =
+        read_binary_puzzle(allocator, "clsp/referee/onchain/referee.clvm.bin")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameHandler::new_with_contributions(
         allocator,

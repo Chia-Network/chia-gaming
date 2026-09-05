@@ -14,7 +14,7 @@ import type {
   HandStatus,
 } from './types';
 
-export { EMPTY_GAME_TERMINAL_MODEL as INITIAL_GAME_TERMINAL_MODEL } from '@games/host';
+export { EMPTY_GAME_TERMINAL_MODEL as INITIAL_GAME_TERMINAL_MODEL } from './types';
 export const DEFAULT_GAME_COIN_MODEL: GameCoinModel = { coinHex: null, turnState: 'my-turn' };
 export const ON_CHAIN_CHANNEL_STATES = new Set<ChannelStatus>([
   'GoingOnChain',

@@ -1,6 +1,9 @@
 #Chialisp / CLVM output
 *.hex
 *.sym
+*.clvm.bin
+!games/krunk/clsp/factory_args.clvm.bin
+games/package_manifest.json
 .build-chialisp.state
 .build-chialisp.cache
 

@@ -3,13 +3,14 @@ use std::collections::VecDeque;
 use crate::channel_state::types::ReadableMove;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, Hash, Program, ProgramRef,
-    PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, ProgramRef, PuzzleHash,
+    SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
     CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE,
     HandshakePayloadF,
 };
+use crate::session_phases::proposal::ProposalParameters;
 use crate::session_phases::types::{BatchAction, PeerMessage};
 
 pub fn format_coin(coin: &CoinString) -> String {
@@ -229,6 +230,14 @@ impl CancelReason {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AcceptedGameMember {
+    pub id: GameID,
+    pub player_a_contribution: Amount,
+    pub player_b_contribution: Amount,
+    pub our_turn: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameStatus {
         id: GameID,
@@ -251,21 +260,22 @@ pub enum GameNotification {
         id: GameID,
         /// Full ordered member list; always non-empty (singleton ⇒ `[id]`).
         group_ids: Vec<GameID>,
-        my_contribution: Amount,
-        their_contribution: Amount,
+        player_a_contribution: Amount,
+        player_b_contribution: Amount,
+        sender_is_player_a: bool,
         timeout: Timeout,
-        initial_validation_program_hash: Hash,
-        initial_state: ProgramRef,
         game_type: GameType,
-        parameters: Program,
+        parameters: ProposalParameters,
     },
-    ProposalAccepted {
-        id: GameID,
-        amount: Amount,
-        our_turn: bool,
+    ProposalAcceptedGroup {
+        /// Members in the exact factory/wire order. The first member is canonical.
+        members: Vec<AcceptedGameMember>,
     },
     ProposalCancelled {
+        /// Canonical first member of the cancelled proposal group.
         id: GameID,
+        /// Members in exact factory order (singleton => `[id]`).
+        group_ids: Vec<GameID>,
         reason: CancelReason,
     },
     InsufficientBalance {
@@ -393,7 +403,10 @@ pub enum Effect {
     PeerBatch {
         actions: Vec<BatchAction>,
         signatures: StateUpdateSignatures,
-        clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
+    },
+    PeerCleanShutdown {
+        channel_half_sig: Aggsig,
+        payout_conditions: ProgramRef,
     },
     PeerCleanShutdownComplete(CoinSpend),
     /// A durable host-owned clean-shutdown handoff. This is intercepted by
@@ -474,14 +487,19 @@ pub fn apply_effects(
             Effect::PeerBatch {
                 actions,
                 signatures,
-                clean_shutdown,
             } => {
                 system.send_message(&PeerMessage::Batch {
                     actions,
                     signatures,
-                    clean_shutdown,
                 })?;
             }
+            Effect::PeerCleanShutdown {
+                channel_half_sig,
+                payout_conditions,
+            } => system.send_message(&PeerMessage::CleanShutdown {
+                channel_half_sig,
+                payout_conditions,
+            })?,
             Effect::PeerCleanShutdownComplete(cs) => {
                 system.send_message(&PeerMessage::CleanShutdownComplete(cs))?;
             }

@@ -23,27 +23,38 @@ Games are initiated through a propose/accept flow:
    `BatchAction::ProposeGroup`; both sides record all produced games in
    `proposed_games`. The receiver gets one `ProposalMade` notification for the
    group, with the member IDs in factory order; the proposer does not.
-   `ProposalMade` includes the canonical parameter bytes so the UI can decode
-   terms through the selected package.
-2. **Accept:** The receiver (or proposer on a subsequent potato) sends
-   `BatchAction::AcceptProposal` actions for every member in the same batch.
-   Both sides instantiate every referee and game handler, moving the group into
-   `live_games`. Partial group acceptance is invalid.
-3. **Cancel:** Either side can cancel using any member ID; the higher layer
-   expands the request to every member, and all cancellation actions travel in
-   the same batch. If a channel goes on-chain while a proposal is still
-   pending, the whole unresolved group is cancelled.
+   `ProposalMade` includes the structured Bencodex parameters so the UI can
+   decode terms through the selected package without handling CLVM.
+2. **Accept:** The receiver sends one
+   `BatchAction::AcceptProposalGroup(canonical_group_id)`. Both sides resolve
+   the complete group in factory insertion order and instantiate every referee
+   and game handler, moving the group into `live_games`.
+3. **Cancel:** Either side can cancel locally using any member ID. The local
+   boundary immediately resolves it to the canonical first-member ID and sends
+   one `BatchAction::CancelProposalGroup(canonical_group_id)`. Both sides remove
+   every member. If a channel goes on-chain while a proposal is still pending,
+   the whole unresolved group is cancelled.
 
 ### Receiver-Side Proposal Validation
 
 When an incoming `ProposeGroup` is processed, the receiver first looks up the
-factory by the request's hash `game_type`, runs it with the exact `parameters`,
+factory by the request's hash `game_type`, converts the exact structured
+`parameters` to CLVM, runs the factory,
 and requires that the first returned record's `initial_validation_program_hash`
 equals that `game_type`. The wire member list must be non-empty and have the
-same ordered cardinality as the factory result. Each wire member must match the corresponding canonical factory
-record: sender/receiver contributions, amount, `sender_goes_first`, initial
-commitments, fixed handlers' derived role, and validator commitment. Any
-failure rejects the batch (triggering rollback and go-on-chain).
+same ordered cardinality as the factory result. The peer wire intentionally
+contains and compares only the small protocol-visible initialization/referee
+facts needed to prove both sides instantiated the same game. Each wire member
+must match the corresponding canonical factory record for:
+player-A/player-B contributions, `player_a_goes_first`, initial validator hash,
+initial validation-info hash (the validator/state commitment used by the
+referee), initial move, maximum move size, and initial mover share. Raw initial
+state and the contribution-derived amount are not sent. Validator programs and
+my-turn/their-turn handlers are local implementation details: they are neither
+sent nor peer compatibility material. `GameStartInfo` is built entirely from
+the receiver's local factory result. The proposal-wide `sender_is_player_a`
+maps the sender to the stable A/B orientation; it never changes member order.
+Any failure rejects the batch (triggering rollback and go-on-chain).
 
 The normal per-game checks are then applied while recording each member:
 
@@ -54,9 +65,9 @@ skip due to cancelled proposals, but cannot go backwards).
 - **Nonce gap cap:** The nonce must not jump more than `MAX_NONCE_GAP` (1000)
 ahead of the expected value. Prevents a malicious peer from claiming an
 absurdly high nonce.
-- **Amount consistency:** Each member's `amount` must equal its sender and
-receiver contributions. Prevents the peer from creating games where money
-appears or disappears.
+- **Amount consistency:** Each local factory member's amount is derived from its
+player A plus player B contributions; no independent amount is accepted from
+the peer.
 - **Game timeout:** The proposal's `timeout` must be positive. The UX defaults
   to 15 blocks, but peers can propose different positive game timeouts.
 - **Proposal count limit:** The total number of outstanding proposals must not
@@ -69,12 +80,13 @@ freed by accepted games are available for new proposals.
 
 ### Receiver-Side Acceptance Validation
 
-When `apply_received_accept_proposal` processes an incoming `AcceptProposal`,
-it verifies that the game_id has **our** nonce parity — meaning it was a
-proposal we made that the peer is legitimately accepting. If the game_id has
-the peer's parity, the peer is attempting to accept their own proposal
-(self-accept attack), which is rejected as a protocol violation triggering
-rollback and go-on-chain.
+When an incoming `AcceptProposalGroup` is processed, its ID must identify the
+canonical first member. The receiver resolves every member from locally stored
+proposal facts in factory insertion order, then
+`apply_received_accept_proposal` verifies each member has **our** nonce parity
+— meaning it was a proposal we made that the peer is legitimately accepting.
+A non-primary member ID, unknown ID, or self-accept attempt is a protocol
+violation that triggers whole-batch rollback and go-on-chain.
 
 ### Race Conditions in Proposal Lifecycle
 
@@ -88,7 +100,7 @@ The cancel is silently discarded — `drain_queue_into_batch` checks
 authoritative (they are the only one who can accept, so deciding to cancel
 resolves it). Cancellation by the **proposer** is best-effort: the receiver
 may have already accepted on a previous potato pass, in which case the
-proposer's cancel evaporates and a `ProposalAccepted` arrives instead.
+proposer's cancel evaporates and a `ProposalAcceptedGroup` arrives instead.
 - **Stale accept:** A player queues `AcceptProposal` but the proposal was
 already cancelled by the peer before the accept is sent. The accept silently
 evaporates — the `ProposalCancelled` from the peer's cancel already resolved
@@ -110,9 +122,9 @@ resulting cancellations gracefully so the user's intent is preserved.
 **How collisions manifest:** Both `SupersededByIncoming` and
 `PeerProposalPending` cancel the local proposal and emit
 `ProposalCancelled`. The frontend stashes the cancelled proposal's terms in
-`pendingRetryTermsRef`. When the peer's `ProposalMade` notification arrives
+`pendingRetryHandProposal`. When the peer's `ProposalMade` notification arrives
 (which it will, since the peer successfully proposed), the handler checks
-`pendingRetryTermsRef` and takes one of two paths:
+`pendingRetryHandProposal` and takes one of two paths:
 
 - **Terms match the previous hand** — auto-reject the peer's proposal and
   re-send ours. The user never sees the collision.
@@ -122,6 +134,11 @@ resulting cancellations gracefully so the user's intent is preserved.
 This means a simple "play again at the same stakes" interaction is seamless
 even when both players click "New Hand" at the same moment. Only genuinely
 conflicting terms (different amounts) require user intervention.
+
+When the user rejects an incoming proposal, a successful cancel returns the UI
+to compose immediately. There is no `expectingCounterProposal` state or timer.
+If a legitimate crossed proposal is already in flight, compose may flicker
+briefly before the normal `ProposalMade` path presents it.
 
 See `UX_NOTIFICATIONS.md` for the full `CancelReason` table and frontend
 behavior for each variant.
@@ -142,21 +159,23 @@ all sender contributions and all receiver contributions. Both aggregate totals
 must fit the corresponding out-of-game balances before IDs are allocated or
 any proposal is queued. The group is then represented by one
 `BatchAction::ProposeGroup` containing the shared request and the ordered member
-metadata. Every group (including size 1) sets `group_id` to the first ordered
-member ID.
+metadata. A group's canonical ID is always derived from its first ordered member
+ID; it is not a separate wire field.
 
 **Receiver derivation:** The receiver runs the same factory and compares the
-entire ordered wire group with its local result. It does not parse one member
-at a time to discover peer-specific handlers. The higher layer selects the
-appropriate fixed handler and swaps sender/receiver contributions into its
-local perspective.
+ordered retained commitments with its local result. It does not accept raw
+state, validator programs, or handlers from the peer. The higher layer uses
+`sender_is_player_a` to project stable A/B contributions and constructs each
+`GameStartInfo` from the local factory's raw state, programs, and fixed
+first/waiting handlers.
 
-**Accept/cancel expansion:** Calling `accept_proposal` or `cancel_proposal`
-with any member ID expands to the complete group. Acceptance performs another
-aggregate balance preflight before queuing any member. Accept or cancel actions
-for all members are sent together; a received partial acceptance is a protocol
-violation that rejects the batch. Thus proposal creation, acceptance, and
-cancellation are all-or-none at group scope.
+**Accept/cancel resolution:** Calling `accept_proposal` or `cancel_proposal`
+with any member ID immediately resolves the complete group and its canonical
+first-member ID. Acceptance performs another aggregate balance preflight before
+queuing one group action. The wire carries exactly one accept or cancel action
+per group; the receiver validates the canonical ID and applies every member in
+factory insertion order. Thus proposal creation, acceptance, and cancellation
+are all-or-none at group scope.
 
 **Notification:** The receiver gets exactly one `ProposalMade` for the group.
 Its `id` is the first game ID, and `group_ids` is the full ordered member list
@@ -165,10 +184,10 @@ from the receiver's local perspective.
 
 ### WASM Accept-and-Move Convenience
 
-The WASM layer exposes an `accept_proposal_and_move` function that atomically accepts
-a proposal and makes the first move. Internally this translates into two
-distinct `BatchAction`s (`AcceptProposal` followed by `Move`) in the same
-batch.
+The WASM layer exposes an `accept_proposal_and_move` function that atomically
+accepts a proposal and makes the first move. Internally this translates into
+two distinct `BatchAction`s (`AcceptProposalGroup` followed by `Move`) in the
+same batch.
 
 **Key code:** `src/session_phases/mod.rs` — `propose_games`,
 `accept_proposal`, `cancel_proposal`;
@@ -187,9 +206,11 @@ A single game's lifecycle, independent of other concurrent games:
 1. Propose  (BatchAction::ProposeGroup)
    → all factory-produced games enter proposed_games on both sides
 
-2. Accept   (BatchAction::AcceptProposal)
-   → referee + game handler instantiated, game moves to live_games
-   → both sides receive ProposalAccepted with that side's Rust-owned initial turn
+2. Accept   (one BatchAction::AcceptProposalGroup for the canonical group ID)
+   → all referees + game handlers are instantiated atomically
+   → each side receives exactly one ProposalAcceptedGroup
+     { members: [{ id, player_a_contribution, player_b_contribution, our_turn }, ...] }
+     in factory order
 
 3. Play     (BatchAction::Move, alternating turns)
    → each move updates the referee state and mover_share
@@ -200,10 +221,28 @@ A single game's lifecycle, independent of other concurrent games:
 ```
 
 All of these actions are delivered via the
-[potato batch protocol](OVERVIEW.md#the-potato-protocol): they are queued locally and sent
-when the potato is held, potentially alongside actions for other games. Multiple
-games can be in flight simultaneously, and any potato pass may carry actions
-for several of them.
+[potato batch protocol](OVERVIEW.md#the-potato-protocol): their durable action
+state is queued locally and sent when the potato is held, potentially alongside
+actions for other games. A move directive is validated and prepared before that
+queue boundary: Rust verifies local turn/duplicate authority and immediately
+runs the my-turn handler. A tagged `(tag message)` rejection emits synchronous
+`MoveRejected`, and neither the readable input nor any move is queued.
+
+On success the queue stores only the durable uncurried `PreparedMove` outputs
+from that handler: move bytes, outgoing/incoming validator programs, maximum
+move size, mover share, waiting handler, and optional message parser. It does
+not store the readable, entropy, transaction, curried referee, or derived puzzle
+hash. When the potato arrives, off-chain application consumes the prepared
+output to advance/curry/sign/send without rerunning the handler. The same split
+applies to later on-chain actuation. Post-application `CachedSendMove` redo
+state is separate from this pre-application queue.
+
+Multiple games can be in flight simultaneously, and any potato pass may carry
+actions for several of them.
+
+For every accepted member, the two peers report opposite `our_turn` bits.
+Insufficient aggregate balance emits `InsufficientBalance`, cancels the group,
+and emits no `ProposalAcceptedGroup`; the UI must not synthesize an acceptance.
 
 The `ChannelState` tracks `live_games`, `pending_settlements`,
 player balances (`my_allocated_balance`, `their_allocated_balance`), and the

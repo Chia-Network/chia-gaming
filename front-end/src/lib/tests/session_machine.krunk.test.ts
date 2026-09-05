@@ -1,16 +1,9 @@
 import { Program } from 'clvm-lib';
 import { krunkStateCodec } from '@games/krunk/ui/serialize';
-import {
-  createSessionModel,
-  INITIAL_CHANNEL_STATUS_MODEL,
-  sessionModelFromSave,
-  snapshotFromSessionModel,
-} from '../session/model';
+import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { CALPOKER_TERMS, KRUNK_TERMS, run, send, trackProposal } from './session_machine.harness';
-import { liveSave } from './session_save_envelope.fixtures';
-import { projectRegisteredPendingCandidates } from '../gameRegistry';
 
 describe('session machine behavior sequences', () => {
   it('atomically replaces Krunk authority when the next group arrives after one member settles', () => {
@@ -19,11 +12,10 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '1',
-      amount: '100',
-      iStarted: false,
-      isMyTurn: false,
+      members: [
+        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: false },
+        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: true },
+      ],
     });
 
     state = trackProposal(state, ['7'], CALPOKER_TERMS);
@@ -52,19 +44,11 @@ describe('session machine behavior sequences', () => {
     expect(state.model.game.currentHandIds).toEqual(['1', '2']);
     expect(state.model.game.currentHandOrigin).toBe('peer');
 
-    expect(Object.keys(krunkStateCodec.decode(state.model.game.handState)!.games)).toEqual([
-      '1',
-
-      '2',
-    ]);
+    expect(krunkStateCodec.decode(state.model.game.handState)!.members).toHaveLength(2);
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '20',
-      iStarted: false,
-      isMyTurn: true,
+      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
     });
 
     expect(state.model.game.activeIds).toEqual(['7']);
@@ -86,11 +70,10 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-
-      id: '1',
-      amount: '100',
-      iStarted: false,
-      isMyTurn: true,
+      members: [
+        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+      ],
     });
 
     state = reduceSessionNotification(
@@ -115,7 +98,7 @@ describe('session machine behavior sequences', () => {
 
     const terminalInstance = state.model.game.instances['1'];
 
-    const terminalPayload = krunkStateCodec.decode(state.model.game.handState)!.games['1'];
+    const terminalPayload = krunkStateCodec.decode(state.model.game.handState)!.members[0];
 
     expect(state.model.game.activeIds).toEqual(['2']);
     expect(state.model.game.currentHandIds).toEqual(['1', '2']);
@@ -151,7 +134,7 @@ describe('session machine behavior sequences', () => {
 
     expect(stale.state.model.game.instances['1']).toEqual(terminalInstance);
 
-    expect(krunkStateCodec.decode(stale.state.model.game.handState)!.games['1']).toEqual(
+    expect(krunkStateCodec.decode(stale.state.model.game.handState)!.members[0]).toEqual(
       terminalPayload,
     );
 
@@ -181,14 +164,11 @@ describe('session machine behavior sequences', () => {
       reduceSessionMachine,
     );
 
-    expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.games['2'].handler).toBe(4n);
+    expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.members[1].handler).toBe(4n);
 
     expect(sibling.state.model.game.activeIds).toEqual(['2']);
     expect(sibling.state.model.game.currentHandIds).toEqual(['1', '2']);
-    expect(Object.keys(krunkStateCodec.decode(sibling.state.model.game.handState)!.games)).toEqual([
-      '1',
-      '2',
-    ]);
+    expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.members).toHaveLength(2);
     expect(sibling.state.model.game.instances['1']).toEqual(terminalInstance);
     expect(sibling.state.model.game.instances['2'].presentation).toBe('off-chain-my-turn');
     expect(sibling.effects).toEqual([
@@ -212,16 +192,15 @@ describe('session machine behavior sequences', () => {
 
     state = run(state, {
       type: 'notification-accepted-group',
-
-      id: '7',
-      amount: '100',
-      iStarted: false,
-      isMyTurn: true,
+      members: [
+        { id: '7', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { id: '9', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+      ],
     });
 
     const accepted = state.model.game.handState;
 
-    expect(krunkStateCodec.decode(accepted)?.games['7']).toMatchObject({
+    expect(krunkStateCodec.decode(accepted)?.members[0]).toMatchObject({
       handler: 0n,
 
       myTurn: true,
@@ -285,7 +264,7 @@ describe('session machine behavior sequences', () => {
 
     const decoded = krunkStateCodec.decode(state.model.game.handState);
 
-    expect(decoded?.games['7']).toMatchObject({
+    expect(decoded?.members[0]).toMatchObject({
       handler: 0n,
 
       myTurn: true,
@@ -295,103 +274,99 @@ describe('session machine behavior sequences', () => {
 
     expect(() =>
       reduceSessionMachine(state, {
-        type: 'feature-state',
+        type: 'hand-state-changed',
 
         gameType: 'krunk',
 
-        id: '7',
-
         state: {
-          ...decoded!.games['7'],
-
-          handler: 1n,
-
-          myTurn: false,
-
-          secretWord: 'CRANE',
+          members: [
+            {
+              ...decoded!.members[0],
+              handler: 1n,
+              myTurn: false,
+              secretWord: 'CRANE',
+            },
+            decoded!.members[1],
+          ],
         },
       }),
     ).not.toThrow();
-
-    expect(() =>
-      sessionModelFromSave(
-        liveSave({
-          version: 11n,
-
-          playerId: 'p1',
-
-          serializedGameSession: new Uint8Array([1]),
-
-          gameSessionSchemaVersion: 3n,
-
-          pairingToken: 'pair',
-
-          messageNumber: 1n,
-
-          remoteNumber: 0n,
-
-          iStarted: false,
-
-          myContribution: '100',
-
-          theirContribution: '100',
-
-          perGameAmount: '100',
-
-          rewardPuzzleHash: '11'.repeat(32),
-
-          unackedMessages: [],
-
-          ...snapshotFromSessionModel(state.model),
-        }),
-      ),
-    ).not.toThrow();
   });
 
-  it('projects and promotes independent pending candidates for ordered Krunk IDs', () => {
+  it('commits complete Krunk hands while preserving sibling members', () => {
     let state = createSessionMachineState(createSessionModel());
     state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
-      id: '1',
-      amount: '100',
-      iStarted: true,
-      isMyTurn: true,
+      members: [
+        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
+        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+      ],
     });
-    const canonical = state.model.game.handState;
-    const hand = krunkStateCodec.decode(canonical)!;
+    const hand = krunkStateCodec.decode(state.model.game.handState)!;
 
     state = send(state, {
-      type: 'local-game-action-staged',
+      type: 'local-game-action-committed',
+      gameType: 'krunk',
+      id: '1',
+      state: {
+        ...hand,
+        members: [
+          { ...hand.members[0], handler: 1n, myTurn: false, secretWord: 'CRANE' },
+          hand.members[1],
+        ],
+      },
+    });
+    const afterFirst = krunkStateCodec.decode(state.model.game.handState)!;
+    state = send(state, {
+      type: 'local-game-action-committed',
       gameType: 'krunk',
       id: '2',
-      action: 'make_move',
-      state: { ...hand.games['2'], handler: 4n, myTurn: true },
-    });
-    state = send(state, {
-      type: 'local-game-action-staged',
-      gameType: 'krunk',
-      id: '1',
-      action: 'make_move',
-      state: { ...hand.games['1'], handler: 1n, myTurn: false, secretWord: 'CRANE' },
+      state: {
+        ...afterFirst,
+        members: [afterFirst.members[0], { ...afterFirst.members[1], handler: 4n, myTurn: false }],
+      },
     });
 
-    expect(state.model.game.handState).toBe(canonical);
-    const projected = krunkStateCodec.decode(
-      projectRegisteredPendingCandidates(
-        'krunk',
-        canonical,
-        state.model.game.currentHandIds,
-        state.model.game.pendingCandidates,
-      ),
-    )!;
-    expect(Object.keys(projected.games)).toEqual(['1', '2']);
-    expect(projected.games['1'].secretWord).toBe('CRANE');
-    expect(projected.games['2'].handler).toBe(4n);
+    const canonical = krunkStateCodec.decode(state.model.game.handState)!;
+    expect(canonical.members).toHaveLength(2);
+    expect(canonical.members[0].secretWord).toBe('CRANE');
+    expect(canonical.members[1].handler).toBe(4n);
+  });
 
-    state = send(state, { type: 'local-action-applied', id: '1', action: 'make_move' });
-    expect(krunkStateCodec.decode(state.model.game.handState)!.games['1'].secretWord).toBe('CRANE');
-    expect(krunkStateCodec.decode(state.model.game.handState)!.games['2'].handler).toBe(3n);
-    expect(Object.keys(state.model.game.pendingCandidates)).toEqual(['2']);
+  it('surfaces a dictionary rejection as a game-scoped host notice', () => {
+    const state = createSessionMachineState(createSessionModel());
+    const transition = reduceSessionNotification(
+      state,
+      { MoveRejected: { id: 2n, tag: 'not_in_dictionary', message: 'XXXXX' } },
+      false,
+      reduceSessionMachine,
+    );
+
+    expect(transition.state.model.game.queue).toEqual([
+      {
+        id: 1n,
+        kind: 'move-rejected',
+        title: 'Notice',
+        message: 'XXXXX is not in the dictionary.',
+      },
+    ]);
+    expect(transition.effects).toEqual([{ type: 'persist-session' }]);
+  });
+
+  it('surfaces a tagged rejection message when the tag has no dedicated copy', () => {
+    const state = createSessionMachineState(createSessionModel());
+    const transition = reduceSessionNotification(
+      state,
+      { MoveRejected: { id: 41n, tag: 'illegal_move', message: 'not allowed' } },
+      false,
+      reduceSessionMachine,
+    );
+
+    expect(transition.state.model.game.queue[0]).toMatchObject({
+      kind: 'move-rejected',
+      title: 'Notice',
+      message: 'not allowed',
+    });
   });
 });

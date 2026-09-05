@@ -1,7 +1,7 @@
 import React, { Component, Suspense } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
-import type { FrozenGameMountOptions } from '@games/host';
+import type { FrozenGameMountOptions } from '../lib/gameMountRegistry';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
 import { renderFrozenGameMount } from '../lib/gameMountRegistry';
@@ -10,7 +10,6 @@ export interface FinishedSessionGameViewProps {
   model: SessionModel;
   myName?: string;
   opponentName?: string;
-  iStarted?: boolean;
 }
 
 function FinishedSessionFallback({
@@ -110,12 +109,11 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   model,
   myName,
   opponentName,
-  iStarted = false,
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
 
-  if (!display.canRemountHand || !handState) {
+  if (!display.hasSavedHand || !handState) {
     return <FinishedSessionFallback label={display.terminalLabel} reason="unavailable" />;
   }
 
@@ -139,7 +137,6 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
             options={{
               myName,
               opponentName,
-              iStarted,
             }}
           />
         </Suspense>

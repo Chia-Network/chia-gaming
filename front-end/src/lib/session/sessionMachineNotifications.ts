@@ -7,6 +7,7 @@ import type {
 import { coerceToBytes } from '../../util';
 import { handProposalsEqual } from '../gameRegistry';
 import { parseAmount } from '../wasm/parseAmount';
+import { applyHandProposalToComposeDraft } from './composeDraft';
 import { durableNotificationKind } from './sessionTransition';
 import { proposalGroupFromProposalMade } from './incomingProposal';
 import { parseGameStatusTerminalInfo, terminalInfoFromGameSettled } from './gameSessionEvents';
@@ -21,15 +22,20 @@ import type {
 } from './sessionMachineTypes';
 
 const ERROR_CHANNEL_STATUSES = new Set(['ResolvedStale', 'Failed']);
-const TERMINAL_CHANNEL_STATUSES = new Set([
-  'ResolvedClean',
-  'ResolvedUnrolled',
-  'ResolvedStale',
-  'Failed',
-]);
 const LOCAL_CANCEL_REASONS = new Set(['SupersededByIncoming', 'PeerProposalPending', 'GameActive']);
 
 type Reducer = (state: SessionMachineState, event: SessionMachineEvent) => SessionMachineTransition;
+
+export function moveRejectedMessage(tag: string, message: string): string {
+  if (tag === 'not_in_dictionary') {
+    const word = message.trim();
+    return word ? `${word} is not in the dictionary.` : 'That word is not in the dictionary.';
+  }
+  const detail = message.trim();
+  if (detail) return detail;
+  const label = tag.trim().replace(/_/g, ' ');
+  return label || 'That move was rejected.';
+}
 
 export function reduceSessionNotification(
   state: SessionMachineState,
@@ -68,11 +74,6 @@ export function reduceSessionNotification(
     if (!payload) return { state, effects: [] };
     const status = channelStatusModelFromPayload(payload);
     step({ type: 'channel-status', status });
-    if (TERMINAL_CHANNEL_STATUSES.has(payload.state)) {
-      for (const id of Object.keys(current.model.game.pendingCandidates)) {
-        step({ type: 'discard-pending-candidate', id });
-      }
-    }
     const generation = current.coordination.channelEnrichmentGeneration + 1;
     current = {
       ...current,
@@ -136,9 +137,13 @@ export function reduceSessionNotification(
   }
 
   if ('ProposalMade' in notification) {
-    const incoming = proposalGroupFromProposalMade(notification.ProposalMade, iStarted);
+    const incoming = proposalGroupFromProposalMade(notification.ProposalMade);
     if (!incoming) {
-      effects.push({ type: 'controller-go-on-chain' });
+      step({
+        type: 'enqueue-error',
+        kind: 'action-failed',
+        message: 'The peer sent an invalid game proposal.',
+      });
       return { state: current, effects };
     }
     step({
@@ -156,29 +161,14 @@ export function reduceSessionNotification(
       return { state: current, effects };
     }
     const between = current.model.betweenHand;
-    const matchesLast = handProposalsEqual(incoming.handProposal, between.lastHandProposal);
+    const matchesLast = handProposalsEqual(
+      incoming.handProposal,
+      incoming.origin,
+      between.lastHandProposal,
+      current.model.game.currentHandOrigin,
+    );
     if (between.mode === 'decision') {
-      if (current.coordination.expectingCounterProposal) {
-        effects.push({ type: 'timer-cancel', key: 'rejection-fallback' });
-        current = {
-          ...current,
-          coordination: { ...current.coordination, expectingCounterProposal: false },
-          model: {
-            ...current.model,
-            betweenHand: {
-              ...between,
-              pendingRetryHandProposal: null,
-              newHandRequested: false,
-              proposalGroups: between.proposalGroups.map((group) =>
-                group.primaryId === incoming.primaryId
-                  ? { ...group, disposition: 'incoming-review' as const }
-                  : group,
-              ),
-              mode: 'review-incoming-proposal',
-            },
-          },
-        };
-      } else if (matchesLast && current.coordination.sameTermsRequested) {
+      if (matchesLast && current.coordination.sameTermsRequested) {
         current = {
           ...current,
           coordination: { ...current.coordination, sameTermsRequested: false },
@@ -258,7 +248,14 @@ export function reduceSessionNotification(
           });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         }
-      } else if (handProposalsEqual(incoming.handProposal, between.rejectedOnceHandProposal)) {
+      } else if (
+        handProposalsEqual(
+          incoming.handProposal,
+          incoming.origin,
+          between.rejectedOnceHandProposal,
+          current.model.game.currentHandOrigin,
+        )
+      ) {
         effects.push({ type: 'controller-cancel-proposal', id: incoming.primaryId });
         step({ type: 'set-rejected-terms', handProposal: null });
       } else {
@@ -282,21 +279,32 @@ export function reduceSessionNotification(
 
   const durableKind = durableNotificationKind(notification);
   if (durableKind === 'accepted-group') {
-    const accepted = notification.ProposalAccepted!;
-    const id = String(accepted.id);
-    const amount = parseAmount(accepted.amount);
-    if (amount == null) throw new Error(`ProposalAccepted ${id} missing amount`);
-    if (typeof accepted.our_turn !== 'boolean') {
-      throw new Error(`ProposalAccepted ${id} missing Rust turn authority`);
+    const accepted = notification.ProposalAcceptedGroup!;
+    if (!Array.isArray(accepted.members) || accepted.members.length === 0) {
+      throw new Error('ProposalAcceptedGroup missing members');
     }
+    const members = accepted.members.map((member) => {
+      const id = String(member.id);
+      const playerAContribution = parseAmount(member.player_a_contribution);
+      const playerBContribution = parseAmount(member.player_b_contribution);
+      if (playerAContribution == null || playerBContribution == null) {
+        throw new Error(`ProposalAcceptedGroup ${id} missing approved contributions`);
+      }
+      if (typeof member.our_turn !== 'boolean') {
+        throw new Error(`ProposalAcceptedGroup ${id} missing Rust turn authority`);
+      }
+      return { id, playerAContribution, playerBContribution, ourTurn: member.our_turn };
+    });
+    if (new Set(members.map((member) => member.id)).size !== members.length) {
+      throw new Error('ProposalAcceptedGroup contains duplicate member IDs');
+    }
+    const id = members[0]!.id;
     const previousHandIds = current.model.game.currentHandIds;
     step({
       type: 'notification-accepted-group',
-      id,
-      amount,
-      iStarted,
-      isMyTurn: accepted.our_turn,
+      members,
     });
+    step({ type: 'remove-game-notifications', kind: 'proposal-rejected' });
     const first =
       previousHandIds.length !== current.model.game.currentHandIds.length ||
       previousHandIds.some(
@@ -403,16 +411,19 @@ export function reduceSessionNotification(
   }
 
   if ('ProposalCancelled' in notification) {
-    const id = String(notification.ProposalCancelled?.id ?? '');
-    const reason = String(
-      (notification.ProposalCancelled as Record<string, unknown> | undefined)?.reason ?? '',
-    );
+    const cancelled = notification.ProposalCancelled;
+    const id = String(cancelled?.id ?? '');
+    const groupIds = cancelled?.group_ids.map(String) ?? [];
+    const reason = String(cancelled?.reason ?? '');
     const before = current;
-    const proposal = id ? selectProposalGroupByMemberId(before.model, id) : null;
+    const proposal =
+      groupIds
+        .map((memberId) => selectProposalGroupByMemberId(before.model, memberId))
+        .find(Boolean) ?? null;
     const terms = proposal?.handProposal ?? null;
     const wasOurs = proposal?.origin === 'local';
     if (id) {
-      step({ type: 'clear-proposals', ids: proposal?.memberIds ?? [id] });
+      step({ type: 'clear-proposals', ids: proposal?.memberIds ?? groupIds });
       if (proposal?.disposition === 'incoming-review') {
         step({ type: 'set-between-hand-mode', mode: 'compose-proposal' });
       }
@@ -426,21 +437,20 @@ export function reduceSessionNotification(
       step({ type: 'set-same-terms-requested', requested: false });
       step({ type: 'set-new-hand-requested', requested: false });
       if (sameTerms) {
-        const generation = current.coordination.rejectionTimerGeneration + 1;
         current = {
           ...current,
-          coordination: {
-            ...current.coordination,
-            expectingCounterProposal: true,
-            rejectionTimerGeneration: generation,
+          model: {
+            ...current.model,
+            betweenHand: {
+              ...current.model.betweenHand,
+              compose: applyHandProposalToComposeDraft(
+                current.model.betweenHand.compose,
+                before.model.betweenHand.lastHandProposal,
+              ),
+              mode: 'compose-proposal',
+            },
           },
         };
-        effects.push({
-          type: 'timer-schedule',
-          key: 'rejection-fallback',
-          generation,
-          delayMs: 300,
-        });
       } else {
         step({
           type: 'push-game-notification',
@@ -459,28 +469,29 @@ export function reduceSessionNotification(
     return { state: current, effects };
   }
 
+  if ('MoveRejected' in notification && notification.MoveRejected) {
+    const rejected = notification.MoveRejected;
+    step({
+      type: 'push-game-notification',
+      notification: {
+        id: nextId(),
+        kind: 'move-rejected',
+        title: 'Notice',
+        message: moveRejectedMessage(String(rejected.tag ?? ''), String(rejected.message ?? '')),
+      },
+    });
+    effects.push({ type: 'persist-session' });
+    return { state: current, effects };
+  }
+
   if ('LocalActionApplied' in notification && notification.LocalActionApplied) {
     step({
       type: 'local-action-applied',
       id: String(notification.LocalActionApplied.id),
       action: notification.LocalActionApplied.action,
     });
-  } else if ('MoveRejected' in notification && notification.MoveRejected) {
-    step({
-      type: 'notification-move-rejected',
-      id: String(notification.MoveRejected.id),
-      tag: String(notification.MoveRejected.tag),
-      message: String(notification.MoveRejected.message),
-    });
   } else if ('ActionFailed' in notification && notification.ActionFailed) {
     const failed = notification.ActionFailed as ActionFailedPayload;
-    if (failed.id !== undefined && failed.action !== undefined) {
-      step({
-        type: 'discard-pending-candidate',
-        id: String(failed.id),
-        action: failed.action,
-      });
-    }
     step({ type: 'enqueue-error', kind: 'action-failed', message: String(failed.reason) });
   }
   return { state: current, effects };

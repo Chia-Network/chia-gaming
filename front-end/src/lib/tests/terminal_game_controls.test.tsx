@@ -23,21 +23,15 @@ import CaliforniaPoker from '@games/calpoker/ui/components/CaliforniaPoker';
 import { HandDisplay } from '@games/calpoker/ui/components/components';
 import { GAME_STATES } from '@games/calpoker/ui/components/constants/constants';
 import Krunk from '@games/krunk/ui/Krunk';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import {
+  initialKrunkGameState,
+  krunkStateCodec,
+  restoreKrunkHand,
+} from '@games/krunk/ui/serialize';
 import SpacePoker from '@games/spacepoker/ui/SpacePoker';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
+import { restoreSpacepokerHand, spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { UncaughtClientErrorReporter } from '../../components/GameSession';
 import { markClientErrorReported } from '../clientError';
-import { terminalGameHandSource } from '@games/host';
-import type { GameTerminalModel } from '../session/types';
-
-const NO_TERMINAL: GameTerminalModel = {
-  type: 'none',
-  outcome: null,
-  label: null,
-  myReward: null,
-  rewardCoinHex: null,
-};
 
 describe('terminal game controls', () => {
   let renderer: ReactTestRenderer | null = null;
@@ -91,7 +85,7 @@ describe('terminal game controls', () => {
             outcome: undefined,
             onGameLog: protocolMutation,
             onSnapshotChange: protocolMutation,
-            interactionMode: 'terminal',
+            frozen: true,
           }),
         );
       });
@@ -164,7 +158,7 @@ describe('terminal game controls', () => {
             playerDisplayText: '',
             opponentDisplayText: '',
           },
-          interactionMode: 'terminal',
+          frozen: true,
         }),
       );
     });
@@ -179,21 +173,18 @@ describe('terminal game controls', () => {
 
   it('disables Krunk keyboard and submit controls', () => {
     const handState = krunkStateCodec.encode({
-      games: {
-        alice: initialKrunkGameState('alice'),
-        bob: initialKrunkGameState('bob'),
-      },
+      perPlayerStake: 100n,
+      members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
     });
 
     act(() => {
       renderer = create(
         createElement(Krunk, {
-          handSource: terminalGameHandSource(handState),
-          currentHandGameIds: ['alice', 'bob'],
-          activeGameIds: [],
+          view: {
+            frozen: true,
+            hand: restoreKrunkHand(krunkStateCodec.decode(handState)!),
+          },
           onGameLog: () => {},
-          terminalsById: { alice: NO_TERMINAL, bob: NO_TERMINAL },
-          amountsById: { alice: '100', bob: '100' },
         }),
       );
     });
@@ -206,6 +197,8 @@ describe('terminal game controls', () => {
 
   it('freezes Space Poker protocol controls but keeps display toggles usable', () => {
     const handState = spacepokerStateCodec.encode({
+      gameId: 'space',
+      perPlayerStake: 50n,
       gameState: { handler: 2n, myTurn: true, N: 4n },
       playerHoleCards: [2n, 3n],
       playerBoost: false,
@@ -220,6 +213,7 @@ describe('terminal game controls', () => {
       terminalState: 'none',
       coinTossIOpen: true,
       unitSizeMojos: 10n,
+      settlementOutcome: null,
       displayMode: 'mojos',
       error: null,
     });
@@ -227,12 +221,11 @@ describe('terminal game controls', () => {
     act(() => {
       renderer = create(
         createElement(SpacePoker, {
-          handSource: terminalGameHandSource(handState),
-          gameId: 'space',
-          betSize: '100',
-          unitSizeMojos: '10',
+          view: {
+            frozen: true,
+            hand: restoreSpacepokerHand(spacepokerStateCodec.decode(handState)!),
+          },
           onGameLog: () => {},
-          terminal: NO_TERMINAL,
         }),
       );
     });

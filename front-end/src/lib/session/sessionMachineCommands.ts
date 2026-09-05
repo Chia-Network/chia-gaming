@@ -1,5 +1,6 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
-import { handProposalsEqual, validateHandProposal } from '../gameRegistry';
+import { handProposalsEqual } from '../gameRegistry';
+import { proposalContributionForOrigin } from './proposalOrigin';
 import { selectProposalGroupByDisposition } from './selectors';
 import type {
   SessionMachineEvent,
@@ -15,7 +16,6 @@ type CommandEvent = Extract<
   | { type: 'submit-compose' }
   | { type: 'accept-review' }
   | { type: 'reject-review' }
-  | { type: 'rejection-fallback-fired' }
 >;
 
 function canCover(balance: string | null, amount: bigint): boolean {
@@ -36,7 +36,14 @@ export function reduceSessionCommand(
     case 'choose-same-terms': {
       const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
       if (cached) {
-        if (handProposalsEqual(cached.handProposal, betweenHand.lastHandProposal)) {
+        if (
+          handProposalsEqual(
+            cached.handProposal,
+            cached.origin,
+            betweenHand.lastHandProposal,
+            state.model.game.currentHandOrigin,
+          )
+        ) {
           return {
             state,
             effects: [
@@ -81,8 +88,17 @@ export function reduceSessionCommand(
         };
       }
       const enough =
-        canCover(state.model.channel.status.ourBalance, terms.myContribution) &&
-        canCover(state.model.channel.status.theirBalance, terms.theirContribution);
+        canCover(
+          state.model.channel.status.ourBalance,
+          proposalContributionForOrigin(terms, state.model.game.currentHandOrigin ?? 'local'),
+        ) &&
+        canCover(
+          state.model.channel.status.theirBalance,
+          proposalContributionForOrigin(
+            terms,
+            state.model.game.currentHandOrigin === 'local' ? 'peer' : 'local',
+          ),
+        );
       if (!enough) {
         return {
           state: {
@@ -101,6 +117,10 @@ export function reduceSessionCommand(
           effects: [{ type: 'persist-session' }],
         };
       }
+      const localTerms =
+        state.model.game.currentHandOrigin === 'peer'
+          ? { ...terms, senderIsPlayerA: !terms.senderIsPlayerA }
+          : terms;
       return {
         state: {
           ...state,
@@ -110,12 +130,20 @@ export function reduceSessionCommand(
           },
           coordination: { ...state.coordination, sameTermsRequested: true },
         },
-        effects: [{ type: 'controller-propose-game', handProposal: terms }],
+        effects: [{ type: 'controller-propose-game', handProposal: localTerms }],
       };
     }
     case 'reject-current-proposal': {
       const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
-      if (cached && !handProposalsEqual(cached.handProposal, betweenHand.lastHandProposal)) {
+      if (
+        cached &&
+        !handProposalsEqual(
+          cached.handProposal,
+          cached.origin,
+          betweenHand.lastHandProposal,
+          state.model.game.currentHandOrigin,
+        )
+      ) {
         return {
           state: {
             ...state,
@@ -183,7 +211,6 @@ export function reduceSessionCommand(
         effects: [{ type: 'persist-session' }],
       };
     case 'submit-compose':
-      if (!validateHandProposal(event.handProposal)) return { state, effects: [] };
       return {
         state,
         effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],
@@ -231,30 +258,5 @@ export function reduceSessionCommand(
         ],
       };
     }
-    case 'rejection-fallback-fired':
-      if (
-        event.generation !== state.coordination.rejectionTimerGeneration ||
-        !state.coordination.expectingCounterProposal
-      ) {
-        return { state, effects: [] };
-      }
-      return {
-        state: {
-          ...state,
-          model: {
-            ...state.model,
-            betweenHand: {
-              ...betweenHand,
-              compose: applyHandProposalToComposeDraft(
-                betweenHand.compose,
-                betweenHand.lastHandProposal,
-              ),
-              mode: 'compose-proposal',
-            },
-          },
-          coordination: { ...state.coordination, expectingCounterProposal: false },
-        },
-        effects: [{ type: 'persist-session' }],
-      };
   }
 }

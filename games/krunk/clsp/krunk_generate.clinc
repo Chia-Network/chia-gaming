@@ -20,31 +20,36 @@
 ; The on-chain initial state is (DICT_PUBKEY base_unit); the full tree stays
 ; off-chain.
 
-(import games.krunk.clsp.onchain.commit exposing (program as val_commit) (program_hash as commit_hash))
-(import games.krunk.clsp.onchain.guess exposing (program as val_guess) (program_hash as guess_hash))
-(import games.krunk.clsp.onchain.clue exposing (program as val_clue) (program_hash as clue_hash))
+(import games.krunk.clsp.onchain.commit exposing (program as val_commit))
+(import games.krunk.clsp.onchain.guess exposing (program as val_guess))
+(import games.krunk.clsp.onchain.clue exposing (program as val_clue))
 
 (defconstant MIN_WORD 0x8000000000)
 (defconstant MAX_WORD 0x7fffffffff)
 
-(defun krunk_factory (DICT_PUBKEY DICT_TREE . stake)
+(defun krunk_factory
+    (DICT_PUBKEY DICT_TREE
+     @ _args
+     (player_a_contribution player_b_contribution game_parameters))
     (assert
-        (> stake 0)
-        (= (% stake 100) 0)
+        (> player_a_contribution 0)
+        (= player_a_contribution player_b_contribution)
+        (= (% player_a_contribution 100) 0)
+        (not game_parameters)
         (assign
-            base_unit (/ stake 100)
+            base_unit (/ player_a_contribution 100)
             initial_state (li DICT_PUBKEY base_unit)
             alice_handler (curry krunk_alice_handler_commit DICT_TREE)
             bob_handler (curry krunk_bob_handler_commit DICT_TREE)
             (li
-                ; Slot 0: sender is the picker.
+                ; Slot 0 allocates player A's contribution; player A goes first.
                 (li
-                    stake 0 stake 1 commit_hash 0 32 initial_state 0
+                    player_a_contribution 0 1 0 32 initial_state 0
                     alice_handler bob_handler val_commit
                 )
-                ; Slot 1: sender is the guesser.
+                ; Slot 1 allocates player B's contribution; player B goes first.
                 (li
-                    0 stake stake 0 commit_hash 0 32 initial_state 0
+                    0 player_b_contribution 0 0 32 initial_state 0
                     alice_handler bob_handler val_commit
                 )
             )
@@ -65,9 +70,7 @@
                 "krunk_alice_handler_commit"
                 move
                 val_commit
-                commit_hash
                 val_guess
-                guess_hash
                 32
                 0
                 (curry krunk_alice_handler_guess salt word DICT_TREE)
@@ -108,8 +111,6 @@
                     "krunk_alice_handler_clue reveal"
                     reveal
                     val_clue
-                    clue_hash
-                    0
                     0
                     0
                     payout
@@ -121,9 +122,7 @@
                 "krunk_alice_handler_clue"
                 CLUE
                 val_clue
-                clue_hash
                 val_guess
-                guess_hash
                 5
                 0
                 (curry krunk_alice_handler_guess SALT WORD DICT_TREE)
@@ -153,9 +152,7 @@
                 "krunk_bob_handler_guess"
                 guess
                 val_guess
-                guess_hash
                 val_clue
-                clue_hash
                 21
                 0
                 (curry krunk_bob_handler_clue DICT_TREE)

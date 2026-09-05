@@ -4,7 +4,8 @@ use clvmr::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove};
+use crate::channel_state::game_handler::PreparedMove;
+use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv};
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
@@ -126,10 +127,11 @@ impl ChannelStateBase {
     pub fn emit_failure_cleanup(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
         if let Ok(ch) = self.channel_state_mut() {
-            let cancelled_ids = ch.cancel_all_proposals();
-            for id in cancelled_ids {
+            let cancelled_groups = ch.cancel_all_proposals();
+            for group_ids in cancelled_groups {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id,
+                    id: group_ids[0],
+                    group_ids,
                     reason: CancelReason::ChannelError,
                 }));
             }
@@ -166,9 +168,9 @@ impl ChannelStateBase {
         Ok(vec![])
     }
 
-    pub fn park_move(&mut self, id: &GameID, readable: &ReadableMove, new_entropy: Hash) {
+    pub fn park_move(&mut self, id: &GameID, prepared: PreparedMove) {
         self.game_action_queue
-            .push_back(GameAction::Move(*id, readable.clone(), new_entropy));
+            .push_back(GameAction::Move(*id, prepared));
     }
 
     pub fn park_accept_settlement(&mut self, id: &GameID) {

@@ -1,9 +1,8 @@
 import type { ChannelStatusPayload } from '../../types/ChiaGaming';
-import type { PersistedGameState } from './gameStateCodec';
+import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
   BetweenHandModeModel,
-  LocalActionKind,
   NotificationKind,
   ProposalGroupDisposition,
   ProposalGroupOrigin,
@@ -11,7 +10,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 15n;
+export const SESSION_SAVE_VERSION = 23n;
 
 export type BlockchainType = 'simulator' | 'walletconnect';
 
@@ -46,7 +45,7 @@ export interface SessionHistorySave {
 export interface SessionPairingSave {
   token: string;
   peerId?: string;
-  gameSessionId?: string;
+  gameSessionId: string;
   iStarted: boolean;
   myContribution: string;
   theirContribution: string;
@@ -57,13 +56,17 @@ export interface SessionPairingSave {
   opponentAlias?: string;
 }
 
-export interface SessionLiveSave {
-  serializedGameSession: Uint8Array;
-  gameSessionSchemaVersion: bigint;
-  rewardPuzzleHash: string;
+export interface SessionTransportSave {
   messageNumber: bigint;
   remoteNumber: bigint;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
+  disposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
+}
+
+export interface SessionLiveSave extends SessionTransportSave {
+  serializedGameSession: Uint8Array;
+  gameSessionSchemaVersion: bigint;
+  rewardPuzzleHash: string;
   durabilityWarning?: string;
 }
 
@@ -82,14 +85,16 @@ export interface SavedGameInstance {
 }
 
 interface SavedHandProposalBase {
-  my_contribution: string;
-  their_contribution: string;
+  player_a_contribution: string;
+  player_b_contribution: string;
+  sender_is_player_a: boolean;
   game_timeout: string;
 }
 
 export type SavedHandProposal = SavedHandProposalBase & {
   game_type: RegisteredGameType;
-} & Record<string, string | undefined>;
+  parameters: ProposalParameterValue;
+};
 
 export interface SavedQueuedNotification {
   id: bigint;
@@ -106,14 +111,7 @@ export interface SessionPresentationSave {
   gameInstances: Record<string, SavedGameInstance>;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
-  pendingCandidates: Array<{
-    gameType: RegisteredGameType;
-    id: string;
-    action: LocalActionKind;
-    featureState: unknown;
-  }>;
   channelStatus: ChannelStatusPayload | null;
-  lastOutcomeWin: 'win' | 'lose' | 'tie' | null;
   myRunningBalance: string;
   channelNotifQueue: SavedQueuedNotification[];
   gameNotifQueue: SavedQueuedNotification[];
@@ -124,7 +122,6 @@ export interface SessionPresentationSave {
     selected_game: RegisteredGameType;
     game_timeout: string;
     proposal_sent: boolean;
-    drafts: Record<string, Record<string, string>>;
   };
   betweenHandLastHandProposal: SavedHandProposal | null;
   betweenHandRejectedOnceHandProposal: SavedHandProposal | null;
@@ -155,6 +152,7 @@ export interface PreferencesSessionSave extends SessionSaveBase {
 export interface PreHandshakeSessionSave extends SessionSaveBase {
   phase: 'pre-handshake';
   pairing: SessionPairingSave;
+  transport: SessionTransportSave;
 }
 
 export interface LiveSessionSave extends SessionSaveBase {

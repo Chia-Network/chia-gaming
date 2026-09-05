@@ -46,15 +46,15 @@ describe('deployFreshness', () => {
   it('resolveDeployAssetUrl joins relative assets onto the nonce base', () => {
     expect(
       resolveDeployAssetUrl(
-        'games/calpoker/clsp/factory_calpoker_factory.hex',
+        'games/calpoker/clsp/factory_calpoker_factory.clvm.bin',
         'http://localhost:3002/app/123/',
       ),
-    ).toBe('http://localhost:3002/app/123/games/calpoker/clsp/factory_calpoker_factory.hex');
+    ).toBe('http://localhost:3002/app/123/games/calpoker/clsp/factory_calpoker_factory.clvm.bin');
   });
 
   it('resolveDeployAssetUrl leaves absolute and root-relative URLs alone', () => {
-    expect(resolveDeployAssetUrl('/clsp/x.hex', 'http://localhost:3002/app/123/')).toBe(
-      '/clsp/x.hex',
+    expect(resolveDeployAssetUrl('/clsp/x.clvm.bin', 'http://localhost:3002/app/123/')).toBe(
+      '/clsp/x.clvm.bin',
     );
     expect(resolveDeployAssetUrl('https://cdn.example/x.hex')).toBe('https://cdn.example/x.hex');
   });

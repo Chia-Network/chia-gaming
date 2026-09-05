@@ -47,17 +47,17 @@ cp "$FE_DIR/dist/js/index-rollup.js" "$NONCE_DIR/index.js"
 cp "$FE_DIR/dist/css/index.css" "$NONCE_DIR/index.css"
 cp "$FE_DIR/dist/chia_gaming_wasm.js" "$NONCE_DIR/chia_gaming_wasm.js"
 cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$NONCE_DIR/chia_gaming_wasm_bg.wasm"
-# Match run-local-demo / assemble-bundle: core clsp plus per-game factory hex/dat.
-(cd "$CLSP_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
+# Match run-local-demo / assemble-bundle: binary CLVM runtime artifacts.
+(cd "$CLSP_DIR" && find . -name '*.clvm.bin' | while read -r f; do
     mkdir -p "$NONCE_DIR/clsp/$(dirname "$f")"
     cp "$f" "$NONCE_DIR/clsp/$f"
 done)
-(cd "$GAMES_DIR" && find . \( -name '*.hex' -o -name '*.dat' \) | while read -r f; do
+(cd "$GAMES_DIR" && find . -name '*.clvm.bin' | while read -r f; do
     mkdir -p "$NONCE_DIR/games/$(dirname "$f")"
     cp "$f" "$NONCE_DIR/games/$f"
 done)
-if ! find "$NONCE_DIR/games" -name '*.hex' | grep -q .; then
-    echo "Error: no game factory .hex files copied into $NONCE_DIR/games" >&2
+if ! find "$NONCE_DIR/games" -name '*.clvm.bin' | grep -q .; then
+    echo "Error: no binary game artifacts copied into $NONCE_DIR/games" >&2
     exit 1
 fi
 [ -d "$FE_DIR/public/images" ] && cp -r "$FE_DIR/public/images" "$NONCE_DIR/images"

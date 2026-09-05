@@ -2,6 +2,8 @@ import { log } from './log';
 import {
   decode as decodeBencodex,
   encode as encodeBencodex,
+  getBytes,
+  getInteger,
   getText,
   isDictionary,
   type BencodexKey,
@@ -20,15 +22,16 @@ export interface AdvisoryStartParams {
 export interface HubConnectionCallbacks {
   onAdvisoryStart: (params: AdvisoryStartParams) => void;
   onPeerMessage: (from_id: string, from_alias: string, payload: Uint8Array) => void;
-  onPeerAppMessage: (from_id: string, from_alias: string, data: PeerAppMessage) => void;
   onDeliveryFailure: (to: string) => void;
   onRegistered: (player_id: string) => void;
+  onAliasUpdated: (alias: string) => void;
+  onPeerAvailable: (player_id: string) => void;
   onClosed: () => void;
   onHubAttention: () => void;
   onHubDisconnected: () => void;
   onHubReconnected: () => void;
   onHubActivity: () => void;
-  getPresence: () => { busy: boolean; alias?: string };
+  getPresence: () => { busy: boolean };
 }
 
 type HubEnvelope =
@@ -43,23 +46,12 @@ type HubEnvelope =
     }
   | { type: 'registered'; player_id: string }
   | { type: 'delivery_failure'; to: string }
+  | { type: 'alias_updated'; alias: string }
+  | { type: 'peer_available'; player_id: string }
+  | { type: 'relay'; from: string; alias: string; payload: Uint8Array }
   | { type: 'hub_attention' }
   | { type: 'closed' }
-  | { type: 'keepalive' }
-  | { type: 'error'; error?: string };
-
-export type PeerAppMessage =
-  | {
-      type: 'session_proposal';
-      proposer_amount: string;
-      responder_amount: string;
-      from_alias?: string;
-      channel_timeout?: string;
-      unroll_timeout?: string;
-      game_session_id?: string;
-      network?: string;
-    }
-  | { type: 'session_reject' };
+  | { type: 'keepalive' };
 
 function definedBencodexFields(
   data: Record<string, BencodexValue | undefined>,
@@ -71,15 +63,70 @@ function definedBencodexFields(
   return out;
 }
 
-function optionalText(map: Map<BencodexKey, BencodexValue>, key: string): string | undefined {
-  const value = map.get(key);
-  return typeof value === 'string' ? value : undefined;
+const WIRE_ID_BYTES = 16;
+const MAX_ALIAS_BYTES = 128;
+
+function requireBytes(
+  map: Map<BencodexKey, BencodexValue>,
+  key: string,
+  length?: number,
+): Uint8Array {
+  const value = getBytes(map, key);
+  if (!value || (length !== undefined && value.byteLength !== length)) {
+    throw new Error(
+      length === undefined
+        ? `missing byte string field: ${key}`
+        : `${key} must be exactly ${length} bytes`,
+    );
+  }
+  return value;
+}
+
+function requireInteger(map: Map<BencodexKey, BencodexValue>, key: string): bigint {
+  const value = getInteger(map, key);
+  if (value === undefined) throw new Error(`missing integer field: ${key}`);
+  return value;
+}
+
+function optionalInteger(map: Map<BencodexKey, BencodexValue>, key: string): bigint | undefined {
+  if (!map.has(key)) return undefined;
+  const value = getInteger(map, key);
+  if (value === undefined) throw new Error(`invalid integer field: ${key}`);
+  return value;
 }
 
 function requireText(map: Map<BencodexKey, BencodexValue>, key: string): string {
-  const value = optionalText(map, key);
-  if (value === undefined) throw new Error(`missing text field: ${key}`);
+  const value = map.get(key);
+  if (typeof value !== 'string') throw new Error(`missing text field: ${key}`);
   return value;
+}
+
+function playerIdFromWire(bytes: Uint8Array): string {
+  if (bytes.byteLength !== WIRE_ID_BYTES) throw new Error('invalid player id length');
+  return `p_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function playerIdToWire(playerId: string): Uint8Array {
+  if (!/^p_[0-9a-f]{32}$/.test(playerId)) throw new Error(`invalid player id: ${playerId}`);
+  return Uint8Array.from(
+    playerId
+      .slice(2)
+      .match(/../g)!
+      .map((pair) => Number.parseInt(pair, 16)),
+  );
+}
+
+function sessionIdToWire(sessionId: string): Uint8Array {
+  if (!/^[0-9a-f]{32}$/.test(sessionId)) throw new Error(`invalid hub session id: ${sessionId}`);
+  return Uint8Array.from(sessionId.match(/../g)!.map((pair) => Number.parseInt(pair, 16)));
+}
+
+function requireAlias(map: Map<BencodexKey, BencodexValue>, key: string): string {
+  const alias = requireText(map, key);
+  if (!alias || new TextEncoder().encode(alias).byteLength > MAX_ALIAS_BYTES) {
+    throw new Error(`invalid alias field: ${key}`);
+  }
+  return alias;
 }
 
 function decodeHubEnvelope(input: ArrayBuffer): HubEnvelope | null {
@@ -91,46 +138,37 @@ function decodeHubEnvelope(input: ArrayBuffer): HubEnvelope | null {
     case 'advisory_start':
       return {
         type,
-        peer_id: requireText(decoded, 'peer_id'),
-        peer_alias: requireText(decoded, 'peer_alias'),
-        my_amount: requireText(decoded, 'my_amount'),
-        their_amount: requireText(decoded, 'their_amount'),
-        channel_timeout: optionalText(decoded, 'channel_timeout'),
-        unroll_timeout: optionalText(decoded, 'unroll_timeout'),
+        peer_id: playerIdFromWire(requireBytes(decoded, 'peer_id', WIRE_ID_BYTES)),
+        peer_alias: requireAlias(decoded, 'peer_alias'),
+        my_amount: requireInteger(decoded, 'my_amount').toString(),
+        their_amount: requireInteger(decoded, 'their_amount').toString(),
+        channel_timeout: optionalInteger(decoded, 'channel_timeout')?.toString(),
+        unroll_timeout: optionalInteger(decoded, 'unroll_timeout')?.toString(),
       };
     case 'registered':
-      return { type, player_id: requireText(decoded, 'player_id') };
+      return {
+        type,
+        player_id: playerIdFromWire(requireBytes(decoded, 'player_id', WIRE_ID_BYTES)),
+      };
     case 'delivery_failure':
-      return { type, to: requireText(decoded, 'to') };
+      return { type, to: playerIdFromWire(requireBytes(decoded, 'to', WIRE_ID_BYTES)) };
+    case 'alias_updated':
+      return { type, alias: requireAlias(decoded, 'alias') };
+    case 'peer_available':
+      return {
+        type,
+        player_id: playerIdFromWire(requireBytes(decoded, 'player_id', WIRE_ID_BYTES)),
+      };
+    case 'relay':
+      return {
+        type,
+        from: playerIdFromWire(requireBytes(decoded, 'from', WIRE_ID_BYTES)),
+        alias: requireAlias(decoded, 'alias'),
+        payload: requireBytes(decoded, 'payload'),
+      };
     case 'hub_attention':
     case 'closed':
     case 'keepalive':
-      return { type };
-    case 'error':
-      return { type, error: optionalText(decoded, 'error') };
-    default:
-      return null;
-  }
-}
-
-function decodePeerAppMessage(payload: Uint8Array): PeerAppMessage | null {
-  const decoded = decodeBencodex(payload);
-  if (!isDictionary(decoded)) return null;
-  const type = getText(decoded, 'type');
-  if (!type) return null;
-  switch (type) {
-    case 'session_proposal':
-      return {
-        type,
-        proposer_amount: requireText(decoded, 'proposer_amount'),
-        responder_amount: requireText(decoded, 'responder_amount'),
-        from_alias: optionalText(decoded, 'from_alias'),
-        channel_timeout: optionalText(decoded, 'channel_timeout'),
-        unroll_timeout: optionalText(decoded, 'unroll_timeout'),
-        game_session_id: optionalText(decoded, 'game_session_id'),
-        network: optionalText(decoded, 'network'),
-      };
-    case 'session_reject':
       return { type };
     default:
       return null;
@@ -156,7 +194,6 @@ export class HubConnection {
   private busy = false;
   private closePending = false;
   private myPlayerId: string | null = null;
-  private alias: string | undefined;
 
   constructor(hubUrl: string, sessionId: string, callbacks: HubConnectionCallbacks) {
     this.hubUrl = hubUrl;
@@ -164,7 +201,6 @@ export class HubConnection {
     this.callbacks = callbacks;
     const presence = callbacks.getPresence();
     this.busy = presence.busy;
-    this.alias = presence.alias;
     this.connectWs();
   }
 
@@ -192,9 +228,8 @@ export class HubConnection {
   private presencePayload(type: 'identify' | 'set_busy'): Record<string, unknown> {
     return {
       type,
-      session_id: this.sessionId,
+      ...(type === 'identify' ? { session_id: sessionIdToWire(this.sessionId) } : {}),
       busy: this.busy,
-      ...(this.alias ? { alias: this.alias } : {}),
     };
   }
 
@@ -228,7 +263,6 @@ export class HubConnection {
       this.reconnectAttempt = 0;
       const presence = this.callbacks.getPresence();
       this.busy = presence.busy;
-      this.alias = presence.alias;
       this.sendWs(this.presencePayload('identify'));
       if (this.closePending) {
         this.sendCloseRequest();
@@ -253,12 +287,7 @@ export class HubConnection {
 
       if (evt.data instanceof ArrayBuffer) {
         if (this.closed) return;
-        const bytes = new Uint8Array(evt.data);
-        if (bytes[0] === 0x64) {
-          this.dispatchHubEnvelope(evt.data);
-        } else {
-          this.dispatchBinaryFrame(evt.data);
-        }
+        this.dispatchHubEnvelope(evt.data);
         return;
       }
 
@@ -347,6 +376,15 @@ export class HubConnection {
         log(`[hub] delivery_failure to=${msg.to}`);
         this.callbacks.onDeliveryFailure(msg.to);
         break;
+      case 'alias_updated':
+        this.callbacks.onAliasUpdated(msg.alias);
+        break;
+      case 'peer_available':
+        this.callbacks.onPeerAvailable(msg.player_id);
+        break;
+      case 'relay':
+        this.dispatchRelay(msg.from, msg.alias, msg.payload);
+        break;
       case 'hub_attention':
         this.callbacks.onHubAttention();
         break;
@@ -356,44 +394,19 @@ export class HubConnection {
         break;
       case 'keepalive':
         break;
-      case 'error':
-        log(`[hub] server error: ${msg.error ?? 'unknown'}`);
-        break;
       default:
         break;
     }
   }
 
-  /**
-   * Send a binary payload to a specific peer through the hub pipe.
-   * Wire format: [4-byte target_id_len BE][target_id UTF-8][payload]
-   */
   sendToPeer(targetId: string, payload: Uint8Array): boolean {
-    const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    const sent = this.sendWs({ type: 'relay', to: playerIdToWire(targetId), payload });
+    if (!sent) {
       log(`[hub] sendToPeer dropped (ws not open) to=${targetId} len=${payload.byteLength}`);
       return false;
     }
-    const targetBuf = new TextEncoder().encode(targetId);
-    const frame = new Uint8Array(4 + targetBuf.byteLength + payload.byteLength);
-    const view = new DataView(frame.buffer);
-    view.setUint32(0, targetBuf.byteLength, false);
-    frame.set(targetBuf, 4);
-    frame.set(payload, 4 + targetBuf.byteLength);
-    ws.send(frame);
     log(`[hub] send to=${targetId} len=${payload.byteLength}`);
     return true;
-  }
-
-  /**
-   * Send a bencodex app message to a specific peer through the hub pipe.
-   */
-  sendPeerAppMessage(targetId: string, data: PeerAppMessage): boolean {
-    log(`[hub] send app type=${data.type} to=${targetId}`);
-    const payload = encodeBencodex(
-      definedBencodexFields(data as Record<string, BencodexValue | undefined>),
-    );
-    return this.sendToPeer(targetId, payload);
   }
 
   getPlayerId(): string | null {
@@ -409,11 +422,8 @@ export class HubConnection {
     this.ws = null;
   }
 
-  setBusy(busy: boolean, alias?: string | null) {
+  setBusy(busy: boolean) {
     this.busy = busy;
-    if (alias !== undefined) {
-      this.alias = alias || undefined;
-    }
     this.sendWs(this.presencePayload('set_busy'));
   }
 
@@ -429,7 +439,7 @@ export class HubConnection {
   }
 
   private sendCloseRequest() {
-    this.sendWs({ type: 'close', session_id: this.sessionId });
+    this.sendWs({ type: 'close' });
   }
 
   disconnect() {
@@ -443,44 +453,7 @@ export class HubConnection {
     this.ws = null;
   }
 
-  private dispatchBinaryFrame(buf: ArrayBuffer): void {
-    // Inbound binary: [4B from_id_len BE][from_id][4B from_alias_len BE][from_alias][payload]
-    if (buf.byteLength < 4) {
-      log('[hub] recv binary frame too short');
-      return;
-    }
-    const view = new DataView(buf);
-    const fromIdLen = view.getUint32(0, false);
-    if (buf.byteLength < 4 + fromIdLen + 4) {
-      log('[hub] recv binary frame header incomplete');
-      return;
-    }
-    const fromIdBytes = new Uint8Array(buf, 4, fromIdLen);
-    const fromId = new TextDecoder().decode(fromIdBytes);
-    const aliasOffset = 4 + fromIdLen;
-    const fromAliasLen = view.getUint32(aliasOffset, false);
-    const payloadStart = aliasOffset + 4 + fromAliasLen;
-    if (buf.byteLength < payloadStart) {
-      log('[hub] recv binary frame alias header incomplete');
-      return;
-    }
-    const fromAliasBytes = new Uint8Array(buf, aliasOffset + 4, fromAliasLen);
-    const fromAlias = new TextDecoder().decode(fromAliasBytes);
-    const payload = new Uint8Array(buf, payloadStart);
-
-    if (payload.length > 0 && payload[0] === 0x64) {
-      try {
-        const data = decodePeerAppMessage(payload);
-        if (data) {
-          log(`[hub] recv app type=${data.type} from=${fromId}`);
-          this.callbacks.onPeerAppMessage(fromId, fromAlias, data);
-          return;
-        }
-      } catch {
-        // Not a valid app message, fall through to raw peer protocol bytes.
-      }
-    }
-
+  private dispatchRelay(fromId: string, fromAlias: string, payload: Uint8Array): void {
     log(`[hub] recv from=${fromId} len=${payload.byteLength}`);
     this.callbacks.onPeerMessage(fromId, fromAlias, payload);
   }

@@ -4,8 +4,12 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { SessionController } from '../../hooks/SessionController';
-import { initialKrunkGameState, krunkStateCodec, KrunkHandler } from '@games/krunk/ui/serialize';
-import { reduceKrunkDurableState } from '@games/krunk/ui/handProposal';
+import {
+  initialKrunkGameState,
+  krunkStateCodec,
+  KrunkHandler,
+  restoreKrunkHand,
+} from '@games/krunk/ui/serialize';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
@@ -39,7 +43,6 @@ const testIndexedDb = indexedDB;
 const liveCradle = new Uint8Array([1, 2, 3]);
 const handState = {
   gameType: 'calpoker',
-  version: 3n,
   state: {
     playerHand: [8n, 7n, 6n, 5n],
     opponentHand: [4n, 3n, 2n, 1n],
@@ -126,9 +129,11 @@ const model = createSessionModel({
   betweenHand: {
     lastHandProposal: {
       gameType: 'calpoker',
-      myContribution: 10n,
-      theirContribution: 10n,
+      playerAContribution: 10n,
+      playerBContribution: 10n,
+      senderIsPlayerA: false,
       gameTimeout: 15n,
+      parameters: null,
     },
   },
 });
@@ -148,7 +153,7 @@ async function seedLiveSession(): Promise<void> {
     gameSessionSchemaVersion: 3n,
     pairingToken: 'live-token',
     sessionPeerId: 'peer',
-    gameSessionId: 'game-session',
+    gameSessionId: '10'.repeat(16),
     messageNumber: 2n,
     remoteNumber: 1n,
     iStarted: true,
@@ -373,7 +378,7 @@ it('retires a resolved display before accepting a fresh live session', async () 
         baseSave({
           pairingToken,
           sessionPeerId: 'new-peer',
-          gameSessionId: 'new-session',
+          gameSessionId: '20'.repeat(16),
           iStarted: false,
           myContribution: '60',
           theirContribution: '40',
@@ -427,7 +432,7 @@ it('aborts after persist when the start epoch advances during replaceSession', a
         baseSave({
           pairingToken: 'cancelled-token',
           sessionPeerId: 'peer',
-          gameSessionId: 'session',
+          gameSessionId: '30'.repeat(16),
           iStarted: true,
           myContribution: '10',
           theirContribution: '10',
@@ -488,7 +493,7 @@ it('keeps the terminal checkpoint when Cancel aborts before replaceSession', asy
         baseSave({
           pairingToken: 'should-not-write',
           sessionPeerId: 'peer',
-          gameSessionId: 'session',
+          gameSessionId: '40'.repeat(16),
           iStarted: true,
           myContribution: '10',
           theirContribution: '10',
@@ -643,25 +648,18 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     secretWord: 'CRANE',
   };
   const acceptedHandState = krunkStateCodec.encode({
-    games: {
-      picker: pickerBeforeTimeout,
-      guesser: initialKrunkGameState('bob'),
-    },
+    perPlayerStake: 100n,
+    members: [pickerBeforeTimeout, initialKrunkGameState('bob')],
   });
-  let terminalHand = krunkStateCodec.decode(acceptedHandState)!;
-  for (const settledId of ids) {
-    terminalHand = reduceKrunkDurableState(terminalHand, {
+  const gameHand = restoreKrunkHand(krunkStateCodec.decode(acceptedHandState)!);
+  for (const memberIndex of ids.keys()) {
+    gameHand.receive({
       type: 'hand-ended',
-      gameId: settledId,
-      terminal: {
-        type: 'settled',
-        outcome: 'opponent_timed_out',
-        label: 'Opponent timed out',
-        myReward: '100',
-        rewardCoinHex: null,
-      },
-    })!;
+      memberIndex,
+      outcome: 'opponent_timed_out',
+    });
   }
+  const terminalHand = gameHand.getState();
   const terminalHandState = krunkStateCodec.encode(terminalHand);
   const timeoutModel = createSessionModel({
     channel: {
@@ -710,9 +708,11 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     betweenHand: {
       lastHandProposal: {
         gameType: 'krunk',
-        myContribution: 100n,
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: true,
         gameTimeout: 15n,
+        parameters: null,
       },
     },
   });
@@ -743,48 +743,28 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   );
 
   expect(selectFinishedSessionDisplay(terminal.model)).toEqual({
-    canRemountHand: true,
+    hasSavedHand: true,
     terminalLabel: 'Opponent timed out',
   });
   const frozenHand = krunkStateCodec.decode(terminal.model.game.handState);
   expect(frozenHand).not.toBeNull();
-  expect(Object.keys(frozenHand!.games)).toEqual(ids);
-  expect(
-    Object.values(frozenHand!.games).every((state) => state.handler === KrunkHandler.Terminal),
-  ).toBe(true);
-  expect(
-    krunkBoardNotice(
-      frozenHand!.games.picker,
-      'Bob',
-      timeoutModel.game.instances.picker.terminal,
-      '100',
-    ),
-  ).toEqual({
+  expect(frozenHand!.members).toHaveLength(ids.length);
+  expect(frozenHand!.members.every((state) => state.handler === KrunkHandler.Terminal)).toBe(true);
+  expect(krunkBoardNotice(frozenHand!.members[0], 'Bob', frozenHand!.perPlayerStake)).toEqual({
     text: 'Bob got nothing due to timeout.',
     kind: 'info',
   });
-  expect(
-    krunkBoardNotice(
-      frozenHand!.games.guesser,
-      'Bob',
-      timeoutModel.game.instances.guesser.terminal,
-      '100',
-    ),
-  ).toEqual({
+  expect(krunkBoardNotice(frozenHand!.members[1], 'Bob', frozenHand!.perPlayerStake)).toEqual({
     text: 'You got 100 mojo due to timeout.',
     kind: 'info',
   });
-  const frozen = renderFrozenGameMount(terminal.model, {
-    iStarted: false,
-  });
+  const frozen = renderFrozenGameMount(terminal.model, {});
   expect(frozen.props).toMatchObject({
-    currentHandGameIds: ids,
-    activeGameIds: [],
-    handSource: {
-      interactionMode: 'terminal',
-      handState: terminal.model.game.handState,
+    view: {
+      frozen: true,
     },
   });
+  expect(frozen.props.view.hand.getState()).toEqual(terminal.model.game.handState?.state);
   expect(frozen.props).not.toHaveProperty('gameObject');
   const markup = renderToStaticMarkup(
     React.createElement(FinishedSessionGameView, {

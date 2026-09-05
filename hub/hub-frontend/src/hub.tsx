@@ -38,12 +38,6 @@ function formatAmount(mojoStr: string): string {
   return `${whole.toLocaleString()}.${fracStr} XCH`;
 }
 
-/** Keep the parent Shell prefs alias in sync with the hub display name. */
-function notifyParentAlias(alias: string): void {
-  if (window.parent === window) return;
-  window.parent.postMessage({ type: 'hub-alias', alias }, '*');
-}
-
 const HubScreen = () => {
   const params = getSearchParams();
   const uniqueId = params.uniqueId || '';
@@ -81,7 +75,6 @@ const HubScreen = () => {
       autoJoinedRef.current = true;
       setMyAlias(savedAlias);
       setAliasConfirmed(true);
-      notifyParentAlias(savedAlias);
       joinHub(savedAlias);
     }
   }, [aliasLoaded, savedAlias, joinHub]);
@@ -92,7 +85,6 @@ const HubScreen = () => {
     setAlias(trimmed);
     setMyAlias(trimmed);
     setAliasConfirmed(true);
-    notifyParentAlias(trimmed);
     joinHub(trimmed);
   }
 
@@ -101,7 +93,6 @@ const HubScreen = () => {
     if (!trimmed) return;
     setEditingAlias(false);
     setMyAlias(trimmed);
-    notifyParentAlias(trimmed);
     setHubAlias(publicId ?? '', trimmed);
   }
 

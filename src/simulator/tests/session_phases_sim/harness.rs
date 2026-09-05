@@ -137,11 +137,13 @@ impl SimulationHarness {
                 {
                     self.local_uis[player].game_accepted_ids.contains(&game_id)
                         || self.local_uis[player].notifications.iter().any(|n| {
-                            matches!(n,
-                                GameNotification::InsufficientBalance { id, .. }
-                                | GameNotification::ProposalCancelled { id, .. }
-                                    if id == &game_id
-                            ) || is_terminal_for_id(n, &game_id)
+                            matches!(n, GameNotification::InsufficientBalance { id, .. } if id == &game_id)
+                                || matches!(
+                                    n,
+                                    GameNotification::ProposalCancelled { group_ids, .. }
+                                        if group_ids.contains(&game_id)
+                                )
+                                || is_terminal_for_id(n, &game_id)
                         })
                 } else {
                     self.local_uis[player]
@@ -371,6 +373,46 @@ impl SimulationHarness {
         Ok(true)
     }
 
+    pub(super) fn malformed_accept_proposal_group(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        player: usize,
+        local_member_id: &GameID,
+        wire_group_id: &GameID,
+    ) -> Result<bool, Error> {
+        if !self.accept_proposal(allocator, player, local_member_id)? {
+            return Ok(false);
+        }
+        self.cradles[player].flush_pending(allocator)?;
+        self.cradles[player].replace_last_message(|message| {
+            let PeerMessage::Batch {
+                actions,
+                signatures,
+            } = message
+            else {
+                return Err(Error::StrErr(format!(
+                    "malformed accept expected Batch, got {message:?}"
+                )));
+            };
+            let mut actions = actions.clone();
+            let group_id = actions.iter_mut().find_map(|action| match action {
+                BatchAction::AcceptProposalGroup(group_id) => Some(group_id),
+                _ => None,
+            });
+            let Some(group_id) = group_id else {
+                return Err(Error::StrErr(
+                    "malformed accept found no AcceptProposalGroup".to_string(),
+                ));
+            };
+            *group_id = *wire_group_id;
+            Ok(PeerMessage::Batch {
+                actions,
+                signatures: signatures.clone(),
+            })
+        })?;
+        Ok(true)
+    }
+
     pub(super) fn cancel_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -417,7 +459,6 @@ impl SimulationHarness {
             let PeerMessage::Batch {
                 actions,
                 signatures,
-                clean_shutdown,
             } = message
             else {
                 return Err(Error::StrErr(format!(
@@ -436,7 +477,44 @@ impl SimulationHarness {
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
-                clean_shutdown: clean_shutdown.clone(),
+            })
+        })
+    }
+
+    pub(super) fn sabotage_move_terminal(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        player: usize,
+        game_id: &GameID,
+        readable: ReadableMove,
+        entropy: Hash,
+    ) -> Result<(), Error> {
+        self.make_move(allocator, player, game_id, readable, entropy)?;
+        self.cradles[player].flush_pending(allocator)?;
+        self.cradles[player].replace_last_message(|message| {
+            let PeerMessage::Batch {
+                actions,
+                signatures,
+            } = message
+            else {
+                return Err(Error::StrErr(format!(
+                    "TerminalMismatchMove expected Batch, got {message:?}"
+                )));
+            };
+            let mut actions = actions.clone();
+            let move_action = actions.iter_mut().find_map(|action| match action {
+                BatchAction::Move(_, data) => Some(data),
+                _ => None,
+            });
+            let Some(move_action) = move_action else {
+                return Err(Error::StrErr(
+                    "TerminalMismatchMove found no Move action".to_string(),
+                ));
+            };
+            move_action.terminal = !move_action.terminal;
+            Ok(PeerMessage::Batch {
+                actions,
+                signatures: signatures.clone(),
             })
         })
     }
@@ -611,7 +689,6 @@ impl SimulationHarness {
             let PeerMessage::Batch {
                 actions,
                 signatures,
-                clean_shutdown,
             } = message
             else {
                 return Err(Error::StrErr(format!(
@@ -632,7 +709,6 @@ impl SimulationHarness {
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
-                clean_shutdown: clean_shutdown.clone(),
             })
         })
     }
@@ -739,7 +815,6 @@ impl SimulationHarness {
                             if let PeerMessage::Batch {
                                 actions,
                                 mut signatures,
-                                clean_shutdown,
                             } = peer_message
                             {
                                 signatures.channel_half_sig = Default::default();
@@ -747,7 +822,6 @@ impl SimulationHarness {
                                 bencodex::to_vec(&PeerMessage::Batch {
                                     actions,
                                     signatures,
-                                    clean_shutdown,
                                 })
                                 .into_gen()?
                             } else {

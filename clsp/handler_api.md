@@ -8,29 +8,54 @@ game-specific — calpoker is one implementation.
 
 
 ## Game Factory
-Both peers run the same deterministic factory with only the canonical
-parameters program. There is no proposal parser. A factory returns a proper,
-nonempty list of game records. Every record is a proper list with exactly 12
-fields:
+Both peers run the same deterministic factory once with the uniform proper-list
+wrapper:
 
 ```
-(sender_contribution receiver_contribution amount sender_goes_first
- initial_validator_hash initial_move initial_max_move_size initial_state
- initial_mover_share my_turn_handler their_turn_handler initial_validator)
+(player_a_contribution player_b_contribution game_parameters)
 ```
 
-`sender_goes_first` is canonical nil or `1`. Handler order is always
-my-turn followed by their-turn. Because both peers execute the identical
-factory output, sender/receiver and my/their are interpreted relative to the
-proposal sender when the records are installed.
+`game_parameters` is the game's opaque CLVM value converted from Bencodex by
+Rust. Bencodex text and byte strings are distinct on the wire even though both
+become CLVM atoms; integers are limited to signed `i128` and use canonical
+signed CLVM integer encoding, booleans map to nil/`1`, null maps to nil, and
+lists remain proper lists.
+Timeout, channel identity, local identity, and `sender_is_player_a` are not
+factory inputs. A factory returns a proper, nonempty list of game records.
+Every record is a proper list with exactly 10 fields:
 
-Canonical parameters, also exposed by each game's `factoryParameters` codec:
+```
+(player_a_contribution player_b_contribution player_a_goes_first initial_move
+ initial_max_move_size initial_state initial_mover_share my_turn_handler
+ their_turn_handler initial_validator)
+```
 
-- Calpoker: proper list `(per_player_stake sender_goes_first)`.
-- Space Poker: proper list
-  `(per_player_stake bet_unit sender_goes_first)`.
-- Krunk: the stake atom. Its factory is curried with the dictionary public key
-  and tree and returns the fixed two-game atomic hand.
+`player_a_goes_first` is canonical nil or `1`. Handler order is always the
+handler for the player whose turn is first, followed by the handler for the
+waiting player. Both peers execute and compare the complete ordered factory
+shape locally; the wire retains only the ordered setup commitments, and the
+receiver rebuilds raw state, handlers, and validator programs from its own
+factory run. Rust maps player A/B to sender/receiver and local/opponent globally
+using the proposal's one `sender_is_player_a` bit; member order never changes.
+The first member's derived initial-validator hash is the registered protocol
+identity.
+
+The host derives `amount` by adding the player A and B contributions. It
+also calculates the initial validator's tree hash, which is the protocol game
+ID for the first record. Factories do not return either redundant value.
+
+Canonical CLVM parameters, produced only inside the Rust host by converting the
+game's structured Bencodex proposal parameters:
+
+- Calpoker: nil.
+- Space Poker: one positive bet-unit integer atom.
+- Krunk: nil. Its factory is curried with the dictionary public key and tree
+  and returns the fixed two-game atomic hand.
+
+A factory probe returns the complete representative invocation list, not only
+`game_parameters`: Calpoker currently probes with `(1 1 ())`, Space Poker with
+representative contributions plus a positive bet unit, and Krunk with
+`(100 100 ())`.
 
 
 ## Handler parameters
@@ -65,14 +90,12 @@ There are two kinds of handlers:
 
 ## Return values
 
-My-turn return (success, 9-10 elements):
+My-turn return (success, 7-8 elements):
   (
     label                          ; string, for UI/debug
     move                           ; bytes, the move to send on-chain
     outgoing_validator             ; program, validates THIS move
-    outgoing_validator_hash        ; hash of outgoing_validator
     incoming_validator             ; program, validates opponent's NEXT move
-    incoming_validator_hash        ; hash of incoming_validator
     max_move_size                  ; int, max bytes the opponent may send
     mover_share                    ; int, our share if opponent times out
     their_turn_handler             ; program, handler for opponent's turn
@@ -163,8 +186,9 @@ A handler returns two validators per move:
   - outgoing_validator: validates the move we just made
   - incoming_validator: validates the opponent's reply
 
-The outgoing_validator_hash must match what the previous incoming_validator
-specified, creating a chain of validated state transitions.
+The host hashes both returned validators. The outgoing validator's derived hash
+must match what the previous incoming validator committed to, creating a chain
+of validated state transitions.
 
 Validator return values are untagged: a non-nil payload list for valid moves
 `(next_validation_program_hash new_state max_move_size ...)`, or nil for slash.

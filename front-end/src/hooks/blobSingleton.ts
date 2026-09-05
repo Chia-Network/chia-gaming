@@ -13,6 +13,7 @@ import {
 import { coerceToBytes } from '../util';
 import { getGenesisChallenge } from '../constants/wallet-connect';
 import { log } from '../services/log';
+import { ReliablePeerTransport } from '../services/PeerSession';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   recentEntries,
@@ -159,6 +160,9 @@ export async function restoreSession(
         })();
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
+  if (sc.getGameSessionId() !== save.pairing.gameSessionId) {
+    throw new Error('restoreSession: reliable session id does not match persisted pairing');
+  }
   sc.messageNumber = requireBigIntCounter(save.live.messageNumber, 'messageNumber');
   sc.remoteNumber = requireBigIntCounter(save.live.remoteNumber, 'remoteNumber');
   sc.iStarted = requireBoolean(save.pairing.iStarted, 'iStarted');
@@ -170,6 +174,9 @@ export async function restoreSession(
     msgno: requireBigIntCounter(m.msgno, 'unackedMessages.msgno'),
     msg: m.msg,
   }));
+  if (save.live.disposition !== 'active') {
+    throw new Error('restoreSession: live reliable transport is not active');
+  }
   sc.wasmNotificationHistory = recentEntries(
     save.history.wasmNotificationHistory ?? [],
     WASM_NOTIFICATION_HISTORY_LIMIT,
@@ -190,7 +197,6 @@ export async function restoreSession(
   );
   sc.myAlias = save.pairing.myAlias;
   sc.opponentAlias = save.pairing.opponentAlias;
-  sc.lastOutcomeWin = save.presentation.lastOutcomeWin ?? undefined;
   if (!save.live.rewardPuzzleHash) {
     throw new Error('restoreSession: missing rewardPuzzleHash in persisted session');
   }
@@ -208,6 +214,7 @@ export function getOrCreateSessionController(
     handler: (msgno: number, msg: Uint8Array) => void,
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
+    failureHandler: (reason: string) => void,
   ) => void,
   uniqueId: string,
   myContribution: bigint,
@@ -244,17 +251,22 @@ export function getOrCreateSessionController(
   if (getFee) sessionController.getFee = getFee;
   sessionController.setPeerKeepalive(() => peerConn.sendKeepalive());
 
-  registerMessageHandler(
-    (msgno: number, msg: Uint8Array) => {
-      sessionController?.deliverMessage(BigInt(msgno), msg);
-    },
-    (ack: number) => {
-      sessionController?.receiveAck(BigInt(ack));
-    },
-    () => {
-      sessionController?.receiveKeepalive();
-    },
-  );
+  if (!(peerConn.reliableTransport instanceof ReliablePeerTransport)) {
+    registerMessageHandler(
+      (msgno: number, msg: Uint8Array) => {
+        sessionController?.deliverMessage(BigInt(msgno), msg);
+      },
+      (ack: number) => {
+        sessionController?.receiveAck(BigInt(ack));
+      },
+      () => {
+        sessionController?.receiveKeepalive();
+      },
+      (reason: string) => {
+        sessionController?.failPeerProcessing(reason);
+      },
+    );
+  }
 
   sessionController.kickSystem(2);
 

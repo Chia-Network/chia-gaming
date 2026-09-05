@@ -1,7 +1,7 @@
 import { reduceBetweenHandEvent } from './sessionMachineBetweenHands';
 import { reduceChannelEvent } from './sessionMachineChannel';
 import { reduceSessionCommand } from './sessionMachineCommands';
-import { reduceDurableGameEvent } from './sessionMachineGame';
+import { reduceDurableGameEvent, type ActiveGameHandContext } from './sessionMachineGame';
 import { reduceSessionNotification } from './sessionMachineNotifications';
 import { reduceProposalEvent } from './sessionMachineProposals';
 import type {
@@ -19,12 +19,10 @@ function initialCoordination(
   return {
     firstGameAccepted,
     sameTermsRequested: false,
-    expectingCounterProposal: false,
     nextNotificationId: [...model.channel.queue, ...model.game.queue].reduce(
       (maximum, notification) => (notification.id > maximum ? notification.id : maximum),
       0n,
     ),
-    rejectionTimerGeneration: 0,
     channelEnrichmentGeneration: 0,
     gameEnrichmentGeneration: {},
     hostOnChain: false,
@@ -51,6 +49,7 @@ function assertNever(event: never): never {
 export function reduceSessionMachine(
   state: SessionMachineState,
   event: SessionMachineEvent,
+  activeHand?: ActiveGameHandContext,
 ): SessionMachineTransition {
   switch (event.type) {
     case 'choose-same-terms':
@@ -59,7 +58,6 @@ export function reduceSessionMachine(
     case 'submit-compose':
     case 'accept-review':
     case 'reject-review':
-    case 'rejection-fallback-fired':
       return reduceSessionCommand(state, event);
 
     case 'wasm-notification':
@@ -67,7 +65,7 @@ export function reduceSessionMachine(
         state,
         event.notification,
         event.iStarted,
-        reduceSessionMachine,
+        (nextState, nextEvent) => reduceSessionMachine(nextState, nextEvent, activeHand),
       );
 
     case 'channel-status':
@@ -96,15 +94,11 @@ export function reduceSessionMachine(
     case 'set-last-terms':
     case 'set-pending-retry-terms':
     case 'set-new-hand-requested':
-    case 'set-compose-draft':
     case 'select-compose-game':
     case 'set-compose-timeout':
-    case 'update-selected-compose-draft':
     case 'set-compose-proposal-sent':
     case 'set-same-terms-requested':
-    case 'set-expecting-counter-proposal':
     case 'set-first-game-accepted':
-    case 'set-last-outcome':
       return reduceBetweenHandEvent(state, event);
 
     case 'upsert-proposal-group':
@@ -121,15 +115,12 @@ export function reduceSessionMachine(
     case 'notification-accepted-group':
     case 'notification-game-status':
     case 'notification-game-terminal':
-    case 'notification-move-rejected':
     case 'notification-insufficient-balance':
     case 'notification-abandoned':
-    case 'feature-state':
-    case 'local-game-action-staged':
-    case 'local-game-action-applied':
+    case 'hand-state-changed':
+    case 'local-game-action-committed':
     case 'local-action-applied':
-    case 'discard-pending-candidate':
-      return reduceDurableGameEvent(state, event);
+      return reduceDurableGameEvent(state, event, activeHand);
 
     default:
       return assertNever(event);

@@ -1,7 +1,5 @@
 import type { GameCommandDisposition, SessionController } from '../../hooks/SessionController';
 import { protocolIdForCatalog } from '../gameIdentities';
-import { encodeGameProposalParameters } from '../gameProposalCodec';
-import { validateHandProposal } from '../gameRegistry';
 import { coinIdHex } from './gameSessionEvents';
 import type {
   SessionMachineEffect,
@@ -20,14 +18,10 @@ export interface SessionMachineInterpreterDependencies {
   dispatch(event: SessionMachineEvent): void;
   persist(): Promise<void>;
   onError(error: unknown): void;
-  setTimer?: typeof setTimeout;
-  clearTimer?: typeof clearTimeout;
   enrichCoin?: typeof coinIdHex;
 }
 
 export class SessionMachineInterpreter {
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
-
   constructor(private readonly dependencies: SessionMachineInterpreterDependencies) {}
 
   runLocalGameCommand(command: LocalGameCommand, id: string): GameCommandDisposition {
@@ -75,10 +69,6 @@ export class SessionMachineInterpreter {
           this.commandFailed('propose-game', new Error('channel is not active off-chain'));
           return;
         }
-        if (!validateHandProposal(effect.handProposal)) {
-          this.commandFailed('propose-game', new Error('proposal terms are invalid'));
-          return;
-        }
         if (dependencies.getState().model.game.activeIds.length > 0) {
           this.commandFailed('propose-game', new Error('a game is already active'));
           return;
@@ -89,7 +79,10 @@ export class SessionMachineInterpreter {
             dependencies.controller.proposeGame({
               game_type: protocolIdForCatalog(effect.handProposal.gameType),
               timeout: effect.handProposal.gameTimeout,
-              parameters: encodeGameProposalParameters(effect.handProposal, dependencies.iStarted),
+              player_a_contribution: effect.handProposal.playerAContribution,
+              player_b_contribution: effect.handProposal.playerBContribution,
+              sender_is_player_a: effect.handProposal.senderIsPlayerA,
+              parameters: effect.handProposal.parameters,
             }),
           (ids) =>
             dependencies.dispatch({
@@ -121,25 +114,6 @@ export class SessionMachineInterpreter {
         );
         return;
       }
-      case 'controller-set-last-outcome':
-        dependencies.controller.lastOutcomeWin = effect.outcomeWin;
-        return;
-      case 'timer-schedule': {
-        this.cancelTimer(effect.key);
-        const timer = (dependencies.setTimer ?? setTimeout)(() => {
-          this.timers.delete(effect.key);
-          dependencies.dispatch({
-            type: 'rejection-fallback-fired',
-            generation: effect.generation,
-          });
-        }, effect.delayMs);
-        if (typeof timer === 'object' && 'unref' in timer) timer.unref();
-        this.timers.set(effect.key, timer);
-        return;
-      }
-      case 'timer-cancel':
-        this.cancelTimer(effect.key);
-        return;
       case 'persist-session':
         void dependencies.persist().catch(dependencies.onError);
         return;
@@ -158,10 +132,6 @@ export class SessionMachineInterpreter {
           .catch(dependencies.onError);
         return;
     }
-  }
-
-  dispose(): void {
-    for (const key of this.timers.keys()) this.cancelTimer(key);
   }
 
   private runControllerCommand<T>(
@@ -185,13 +155,5 @@ export class SessionMachineInterpreter {
       command,
       message: error instanceof Error ? error.message : String(error),
     });
-  }
-
-  private cancelTimer(key: string): void {
-    const timer = this.timers.get(key);
-    if (timer !== undefined) {
-      (this.dependencies.clearTimer ?? clearTimeout)(timer);
-      this.timers.delete(key);
-    }
   }
 }

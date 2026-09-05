@@ -26,7 +26,7 @@ import {
 } from './message_protocol.harness';
 
 describe('terminal protocol cleanup', () => {
-  it('completes a restored cooperative terminal handoff', () => {
+  it('completes a restored cooperative terminal handoff', async () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const blob = new SessionController(
@@ -64,6 +64,7 @@ describe('terminal protocol cleanup', () => {
     blob.markRestored();
     blob.setGameSession(cradle);
     blob.kickSystem(2);
+    await blob.flushPendingWork();
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     blob.receiveAck(1n);

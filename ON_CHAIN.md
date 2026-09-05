@@ -210,28 +210,30 @@ mechanism entirely.
 ### Preconditions
 
 Clean shutdown requires that **no games are active** (`has_active_games()` is
-false). The initiator's `drain_queue_into_batch` enforces this — attempting
+false). The initiator's queue drain enforces this — attempting
 `CleanShutdown` with active games is an error. Any pending proposals are
 cancelled automatically before the shutdown signature is produced.
 
-On the receiver side, if the batch carries `clean_shutdown` but the receiver
-still has active games (e.g., due to a misbehaving peer), the receiver
+On the receiver side, if `PeerMessage::CleanShutdown` arrives while active games
+remain (e.g., due to a misbehaving peer), the receiver
 immediately goes on-chain instead of cooperating.
 
 ### Protocol Exchange
 
-1. The initiator includes `clean_shutdown: Some((half_sig, conditions))` in
-  their next `Batch` message. The half-signature signs the channel coin spend
-   to reward conditions (each player's balance goes directly to their reward
-   puzzle hash, with no game coins). The `clean_shutdown` field is separate
-   from the `actions` list, so it is structurally processed after all actions
-   on the receive side. The initiator remains in `OffChainPhase` after sending
-   this batch — it does **not** transition to `SpendChannelCoinPhase` yet.
+1. The potato holder sends `PeerMessage::CleanShutdown {
+   channel_half_sig, payout_conditions }`. The half-signature signs the channel
+   coin spend to reward conditions (each player's balance goes directly to
+   their reward puzzle hash, with no game coins). This is a dedicated struct
+   variant, not a `Batch` field. If actions precede shutdown in the local queue,
+   those actions are first flushed in an ordinary Batch with always-verified
+   state-update signatures, and the sender requests the potato back before
+   attempting shutdown. The initiator remains in `OffChainPhase` after sending
+   `CleanShutdown` — it does **not** transition to `SpendChannelCoinPhase` yet.
    While waiting for the response, `OffChainPhase` rejects any peer message
    other than `CleanShutdownComplete` as a protocol violation (triggering
    go-on-chain).
-2. The responder receives the batch, processes any actions, then combines the
-  initiator's half-signature with their own to produce a complete `CoinSpend`.
+2. The responder receives `CleanShutdown` and combines the initiator's
+  half-signature with their own to produce a complete `CoinSpend`.
    They reply with `PeerMessage::CleanShutdownComplete(coin_spend)` — a
    standalone message outside the normal potato flow. Normally the responder
    transitions to `SpendChannelCoinPhase` immediately (it already has the
@@ -251,31 +253,6 @@ long-lived chain watching or wait for the peer's transaction. A zero-payout
 initiator abandons when it receives `CleanShutdownComplete`, because that
 response proves the peer already has all required close material. The
 non-zero-payout peer is responsible for any on-chain publication.
-
-### Assumes Single-Handing
-
-The current implementation assumes **single-handing** (at most one outstanding
-proposal at a time). Under this assumption, when the user requests a clean
-shutdown, there is never a pending proposal that could interfere — the shutdown
-batch is the only thing queued. This allows the front-end to immediately report
-`ShuttingDown` status, and allows `OffChainPhase` to reject any unexpected
-peer messages while waiting for `CleanShutdownComplete`.
-
-In a future **multi-handing** model, the initiator might have outstanding
-proposals when the user requests a shutdown. Those proposals would need to
-resolve (accepted, rejected, or cancelled) before the shutdown batch can be
-sent. This means:
-
-- The `ShuttingDown` status could not be emitted immediately — the system
-  would still be processing proposals.
-- The message-rejection guard in `OffChainPhase` (which currently rejects
-  everything except `CleanShutdownComplete`) would need to also accept
-  proposal-resolution messages during the wind-down phase.
-- The precondition check (`has_active_games()`) would need to account for
-  proposals that are still in flight.
-
-This is noted here as a future design consideration — the current code is
-correct for single-handing.
 
 ### Why "Advisory" — Race Handling
 
@@ -430,8 +407,9 @@ by puzzle hash **and** amount:
 - Games not found in the unroll outputs receive one of two notifications
 depending on whether the game was fully established or still in-flight:
   - `**EndedCancelled`** — the game was a recently accepted proposal whose
-  potato round-trip hadn't completed (tracked as a `ProposalAccepted`
-  entry in `cached_redo_actions`). The opponent hadn't acknowledged the
+  potato round-trip hadn't completed (tracked per protocol ID as a
+  `CachedRedoActions::ProposalAccepted` entry). This internal replay marker is
+  not the atomic UI `ProposalAcceptedGroup` notification. The opponent hadn't acknowledged the
   accept when they published the stale unroll, so the game coin never
   existed in that state. The accept was simply rolled back.
   - `**GameError`** — the game was an established live game (its accept
@@ -820,6 +798,14 @@ derive for future moves. The their-turn handler still interprets the move and
 may provide slash evidence. Any evidence it provides is checked by running the
 normal state-update program with that evidence.
 
+The peer move message carries only a terminal boolean, not either validation
+hash. For a nonterminal move, the receiver reconstructs the validation info
+hash from its locally held validation program and pre-move state and computes
+the bare program hash locally. For a terminal move it reconstructs the nil
+validation-info commitment. The claimed terminal bit must agree with whether
+the local handler transition has a successor. These reconstructed internal
+values are what enter `RefereePuzzleArgs` and the signed unroll state.
+
 This keeps off-chain and on-chain validation semantics aligned. Some games may
 repeat a small amount of logic between their on-chain validator and off-chain
 handler code, but avoiding a separate off-chain signal keeps the handler
@@ -869,7 +855,8 @@ example when invoking a their-turn handler or constructing a slash), but the
 durable on-chain commitment is the validation info hash. `GameMoveDetails`
 therefore keeps the raw program hash in the optional
 `validation_program_hash` field separately from the required
-`validation_info_hash` commitment.
+`validation_info_hash` commitment. Those are internal referee fields; the
+peer-wire move elides both hashes.
 
 This is an on-chain size/cost optimization. Honest move spends present only the
 compact validation info hash for the next validator/state pair; they do not

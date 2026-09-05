@@ -133,22 +133,34 @@ export interface GameSettledPayload {
   coin_id: unknown | null;
 }
 
+export type ProposalParameterValue =
+  | null
+  | boolean
+  | bigint
+  | string
+  | Uint8Array
+  | ProposalParameterValue[];
+
 export interface ProposalMadePayload {
   id: bigint;
   group_ids: bigint[];
-  my_contribution: unknown;
-  their_contribution: unknown;
+  player_a_contribution: unknown;
+  player_b_contribution: unknown;
+  sender_is_player_a: unknown;
   timeout: unknown;
-  initial_validation_program_hash: unknown;
-  initial_state: unknown;
   game_type: unknown;
-  parameters: unknown;
+  parameters: ProposalParameterValue;
 }
 
-export interface ProposalAcceptedPayload {
+export interface AcceptedGameMember {
   id: bigint;
-  amount: unknown;
+  player_a_contribution: unknown;
+  player_b_contribution: unknown;
   our_turn: boolean;
+}
+
+export interface ProposalAcceptedGroupPayload {
+  members: AcceptedGameMember[];
 }
 
 export type CancelReason =
@@ -163,6 +175,7 @@ export type CancelReason =
 
 export interface ProposalCancelledPayload {
   id: bigint;
+  group_ids: bigint[];
   reason: CancelReason;
 }
 
@@ -194,7 +207,7 @@ export interface WasmNotificationMap {
   GameStatus: GameStatusPayload;
   GameSettled: GameSettledPayload;
   ProposalMade: ProposalMadePayload;
-  ProposalAccepted: ProposalAcceptedPayload;
+  ProposalAcceptedGroup: ProposalAcceptedGroupPayload;
   ProposalCancelled: ProposalCancelledPayload;
   InsufficientBalance: InsufficientBalancePayload;
   MoveRejected: MoveRejectedPayload;

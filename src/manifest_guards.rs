@@ -4,7 +4,7 @@
 //! wired into the hand-maintained manifest that makes it build or run. They
 //! exist to prevent the "orphaned file" class of bug -- e.g. a test module
 //! that was never added to `src/tests/mod.rs`, or a `.clsp` whose compiled
-//! `.hex` a test loads but that was never registered in `chialisp.toml`.
+//! artifact a test loads but that was never registered in `chialisp.toml`.
 //! Both of those are silent: nothing fails to compile, the file is simply
 //! ignored, so the coverage or behavior it was meant to add never happens.
 
@@ -29,18 +29,20 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Extract `clsp/.../*.hex` and `games/.../*.hex` paths that appear inside
+/// Extract compiled CLVM paths under `clsp/` and `games/` that appear inside
 /// double-quoted string literals. Dynamic paths containing a `{}` format
 /// placeholder are returned as-is; the caller skips them since they can't be
 /// checked statically.
-fn hex_literals(text: &str) -> Vec<String> {
+fn clvm_artifact_literals(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(pos) = rest.find('"') {
         let after_quote = &rest[pos + 1..];
         if let Some(end) = after_quote.find('"') {
             let lit = &after_quote[..end];
-            if lit.ends_with(".hex") && (lit.starts_with("clsp/") || lit.starts_with("games/")) {
+            if (lit.ends_with(".hex") || lit.ends_with(".clvm.bin"))
+                && (lit.starts_with("clsp/") || lit.starts_with("games/"))
+            {
                 out.push(lit.to_string());
             }
             rest = &after_quote[end + 1..];
@@ -99,12 +101,12 @@ fn every_test_module_is_registered_and_run() {
     );
 }
 
-/// Every static `clsp/.../*.hex` path referenced from Rust source must exist on
+/// Every static compiled CLVM path referenced from Rust source must exist on
 /// disk. The chialisp build (`tools/build-chialisp.sh`) runs before the test
 /// suite, so a missing file means the source `.clsp` was never registered in
 /// `chialisp.toml`'s `[compile]` table (or was renamed/removed).
 #[test]
-fn every_referenced_hex_is_built() {
+fn every_referenced_clvm_artifact_is_built() {
     let mut files = Vec::new();
     rs_files(Path::new("src"), &mut files);
     rs_files(Path::new("games"), &mut files);
@@ -117,7 +119,7 @@ fn every_referenced_hex_is_built() {
             continue;
         }
         let text = read(file.to_str().unwrap());
-        for lit in hex_literals(&text) {
+        for lit in clvm_artifact_literals(&text) {
             if lit.contains('{') {
                 continue; // dynamic path, not statically checkable
             }
@@ -129,7 +131,7 @@ fn every_referenced_hex_is_built() {
 
     assert!(
         missing.is_empty(),
-        "referenced .hex files are missing after build -- is the source .clsp registered \
+        "referenced CLVM artifacts are missing after build -- is the source .clsp registered \
          in chialisp.toml [compile]?\n  {}",
         missing.join("\n  ")
     );
@@ -153,10 +155,21 @@ fn registry_keys() -> (Vec<String>, Vec<String>) {
     (strings("production"), strings("test"))
 }
 
+#[test]
+fn game_package_keys_are_valid_identifiers() {
+    let (production, test) = registry_keys();
+    for key in production.iter().chain(test.iter()) {
+        crate::game_package_key::validate_game_package_key(key)
+            .unwrap_or_else(|reason| panic!("invalid game package key {key:?}: {reason}"));
+    }
+}
+
 /// Every directory under `games/` except the JSON catalog and `games/host`
 /// (the portable host contract, not a factory game) must be a registered
 /// package, and every registered key must exist with conventional files.
-/// Production packages must export the UI modules stitched by the generator.
+/// Production packages must export the UI modules stitched by the generator;
+/// their Rust module and Rust tests are optional. Internal test packages retain
+/// the Rust hooks used by the simulator's package registration.
 #[test]
 fn every_game_package_is_registered() {
     let (production, test) = registry_keys();
@@ -199,17 +212,27 @@ fn every_game_package_is_registered() {
     let mut missing_files = Vec::new();
     for key in &registered {
         let root = PathBuf::from("games").join(key);
-        for rel in ["rust/mod.rs", "rust/tests/mod.rs", "clsp/factory.clsp"] {
-            if !root.join(rel).is_file() {
-                missing_files.push(format!("games/{key}/{rel}"));
-            }
+        if !root.join("clsp/factory.clsp").is_file() {
+            missing_files.push(format!("games/{key}/clsp/factory.clsp"));
         }
         if production.iter().any(|k| k == key) {
             for rel in [
+                "clsp/factory_probe.clsp",
                 "ui/handProposal.ts",
                 "ui/handProposalForm.tsx",
                 "ui/play.tsx",
             ] {
+                if !root.join(rel).is_file() {
+                    missing_files.push(format!("games/{key}/{rel}"));
+                }
+            }
+            if root.join("rust/tests/mod.rs").is_file() && !root.join("rust/mod.rs").is_file() {
+                missing_files.push(format!(
+                    "games/{key}/rust/mod.rs (required when rust/tests/mod.rs exists)"
+                ));
+            }
+        } else {
+            for rel in ["rust/mod.rs", "rust/tests/mod.rs"] {
                 if !root.join(rel).is_file() {
                     missing_files.push(format!("games/{key}/{rel}"));
                 }
@@ -222,14 +245,18 @@ fn every_game_package_is_registered() {
     );
 }
 
-/// Game-owned `test_funs` collectors must exist and be pulled in through the
-/// generated full-suite aggregator rather than a handwritten list.
+/// Game-owned Rust test modules, when present, must expose `test_funs` and be
+/// pulled in through the generated full-suite aggregator rather than a
+/// handwritten package list.
 #[test]
 fn every_game_package_test_module_is_aggregated() {
     let (production, test) = registry_keys();
     let mut missing = Vec::new();
     for key in production.iter().chain(test.iter()) {
         let tests = PathBuf::from(format!("games/{key}/rust/tests/mod.rs"));
+        if !tests.is_file() {
+            continue;
+        }
         let src = read(tests.to_str().unwrap());
         if !src.contains("pub fn test_funs") {
             missing.push(key.clone());
@@ -247,25 +274,16 @@ fn every_game_package_test_module_is_aggregated() {
     );
 }
 
-/// Production factory hex (and extra `.dat` presets) must exist after the
-/// chialisp build so the frontend generator's preset list is not hollow.
+/// Prepared production factories must exist after the Chialisp build so the
+/// frontend generator's preset list is not hollow.
 #[test]
 fn every_production_package_preset_exists() {
     let (production, _) = registry_keys();
     let mut missing = Vec::new();
     for key in production {
-        let factory = PathBuf::from(format!("games/{key}/clsp/factory_{key}_factory.hex"));
+        let factory = PathBuf::from(format!("games/{key}/clsp/factory_prepared.clvm.bin"));
         if !factory.is_file() {
             missing.push(factory.display().to_string());
-        }
-        let clsp = PathBuf::from(format!("games/{key}/clsp"));
-        if let Ok(entries) = fs::read_dir(&clsp) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("dat") && !path.is_file() {
-                    missing.push(path.display().to_string());
-                }
-            }
         }
     }
     assert!(

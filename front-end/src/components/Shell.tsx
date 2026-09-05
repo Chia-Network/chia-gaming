@@ -29,8 +29,25 @@ import {
   PeerLiveness,
   CoinOfInterestEntry,
 } from '../types/ChiaGaming';
-import { HubConnection, AdvisoryStartParams, type PeerAppMessage } from '../services/HubConnection';
-import { PeerSession, generateSessionId } from '../services/PeerSession';
+import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
+import {
+  PeerSession,
+  decodePeerAppMessage,
+  decodeReliableFrame,
+  encodePeerAppMessage,
+  generateSessionId,
+} from '../services/PeerSession';
+import {
+  deleteRejectionTombstone,
+  readRejectionTombstones,
+  rejectionTombstoneKey,
+  writeRejectionTombstone,
+} from '../lib/session/indexedDb';
+import {
+  bindOutboundRejectionPeer,
+  retainRejectionPeer,
+  transferOutboundRejection,
+} from '../services/RejectionTransport';
 import { subscribeLog } from '../services/log';
 import { reactPropSafeValue } from '../lib/reactPropSafe';
 import {
@@ -45,8 +62,12 @@ import {
   peekSession,
   saveSession,
   patchLiveSessionPresentation,
+  patchPreHandshakeTransport,
   replaceSession,
+  flushSessionSave,
   clearSession,
+  clearSessionWithInboundRejectionReceipt,
+  clearSessionWithRejectionTombstone,
   clearSessionPairing,
   hardReset,
   shouldOfferResumeOrStartOver,
@@ -103,7 +124,9 @@ import {
 import { RestoreStatus } from '../hooks/SessionController';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
+  deferredHubRemapEscalationAction,
   isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt,
+  hubPlayerIdRemapAction,
   isRestoreBlocked,
   restoreGateAfterTerminalFinalization,
   sessionLocksNetwork,
@@ -112,6 +135,7 @@ import {
   shouldMountGameSession,
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
+  shouldDeferHubRemapEscalation,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
   shouldWarnOnSessionUnload,
@@ -141,6 +165,7 @@ import {
   parseSessionAmount,
   sessionProposalNetworkMatches,
 } from '../lib/session/peerSessionParams';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../lib/session/receivePolicy';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
 import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
@@ -229,6 +254,7 @@ type SessionStartRequest = {
   channel_timeout?: string;
   unroll_timeout?: string;
   iStarted: boolean;
+  gameSessionId: string;
 };
 
 function SessionBuyIn({
@@ -718,13 +744,17 @@ const Shell = () => {
     shellDispatchRef.current({ type: 'setPendingProposal', value: next });
   }, []);
   const peerSessionRef = useRef<PeerSession | null>(null);
+  const inboundSessionRejectHandlerRef = useRef<(sessionId: string, remoteNumber: bigint) => void>(
+    () => {},
+  );
+  const rejectionPeersRef = useRef(new Map<string, PeerSession>());
   const peerMessageHandlerRef = useRef<import('../services/PeerSession').MessageHandler | null>(
     null,
   );
 
   const bindPeerMessageHandler = useCallback((ps: PeerSession | null) => {
-    if (!ps || !peerMessageHandlerRef.current) return;
-    ps.registerMessageHandler(peerMessageHandlerRef.current);
+    if (!ps || !sessionController) return;
+    sessionController.attachReliableTransport(ps.reliableTransport);
   }, []);
 
   // The dashboard pulls the protocol-state pretty-print on demand (when its
@@ -792,6 +822,28 @@ const Shell = () => {
 
   const stablePeerConn: PeerConnectionResult = useMemo(
     () => ({
+      get reliableState() {
+        return peerSessionRef.current?.reliableState;
+      },
+      get reliableTransport() {
+        return peerSessionRef.current?.reliableTransport;
+      },
+      persistInboundSessionReject: (sessionId, remoteNumber) => {
+        const peer = peerSessionRef.current;
+        if (!peer || peer.sessionId !== sessionId) {
+          throw new Error('Cannot persist inbound rejection receipt without its selected peer');
+        }
+        return clearSessionWithInboundRejectionReceipt({
+          peerId: peer.peerId,
+          sessionId,
+          messageNumber: peer.reliableState.messageNumber,
+          remoteNumber,
+          unackedMessages: [],
+          createdAt: Date.now(),
+        });
+      },
+      onSessionReject: (sessionId, remoteNumber) =>
+        inboundSessionRejectHandlerRef.current(sessionId, remoteNumber),
       sendMessage: (n, m) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendMessage(n, m),
       sendAck: (n) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendAck(n),
       sendKeepalive: () => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).sendKeepalive(),
@@ -847,6 +899,10 @@ const Shell = () => {
   }, []);
   const hubWsUpRef = useRef(false);
   const lastHubActivityRef = useRef(0);
+  const pendingHubRemapEscalationRef = useRef<{
+    pairingToken: string;
+    registeredPlayerId: string;
+  } | null>(null);
   // --- Boot state machine ---
   //
   // The boot initializer NEVER claims the lease. Claiming the lease writes
@@ -1267,8 +1323,9 @@ const Shell = () => {
       handler: (msgno: number, msg: Uint8Array) => void,
       ackHandler: (ack: number) => void,
       keepaliveHandler: () => void,
+      failureHandler: (reason: string) => void,
     ) => {
-      peerMessageHandlerRef.current = { handler, ackHandler, keepaliveHandler };
+      peerMessageHandlerRef.current = { handler, ackHandler, keepaliveHandler, failureHandler };
       bindPeerMessageHandler(peerSessionRef.current);
     },
     [bindPeerMessageHandler],
@@ -1294,8 +1351,143 @@ const Shell = () => {
     );
   }, [freshStartPersistInFlightRef]);
 
-  const sendSessionReject = useCallback((peerId: string) => {
-    hubConnRef.current?.sendPeerAppMessage(peerId, { type: 'session_reject' });
+  const replayPeerUnacked = useCallback(() => {
+    const peer = peerSessionRef.current;
+    if (!peer || peer.isDestroyed()) return;
+    peer.reliableTransport.replayUnacked();
+  }, []);
+
+  const replayRejectionPeers = useCallback((peerId?: string) => {
+    for (const peer of rejectionPeersRef.current.values()) {
+      if (peer.isDestroyed() || (peerId !== undefined && peer.peerId !== peerId)) continue;
+      if (peer.reliableTransport.hasPendingDurability()) {
+        void peer.reliableTransport.flushPending().catch((error) => {
+          console.error('[Shell] failed to persist reliable session rejection', error);
+        });
+      } else {
+        peer.reliableTransport.replayUnacked();
+      }
+    }
+  }, []);
+
+  const installInboundRejectionReceipt = useCallback(
+    (
+      conn: HubConnection,
+      peerId: string,
+      sessionId: string,
+      messageNumber: bigint,
+      remoteNumber: bigint,
+    ) => {
+      retainRejectionPeer(
+        rejectionPeersRef.current,
+        new PeerSession(peerId, sessionId, conn, DEFAULT_SESSION_RECEIVE_POLICY, {
+          messageNumber,
+          remoteNumber,
+          unackedMessages: [],
+          disposition: 'inbound-reject',
+        }),
+      );
+    },
+    [],
+  );
+
+  const bindRejectionTombstone = useCallback(
+    (peer: PeerSession, tombstone: { createdAt: number }) =>
+      bindOutboundRejectionPeer(peer, rejectionPeersRef.current, tombstone.createdAt),
+    [],
+  );
+
+  const rejectUnknownProposal = useCallback(
+    (conn: HubConnection, fromId: string, sessionId: string, payload: Uint8Array): void => {
+      const peers = rejectionPeersRef.current;
+      const key = rejectionTombstoneKey(fromId, sessionId);
+      if (peers.has(key)) {
+        peers.get(key)!.deliverRawPeerMessage(fromId, payload);
+        return;
+      }
+      const peer = new PeerSession(fromId, sessionId, conn, DEFAULT_SESSION_RECEIVE_POLICY, {
+        messageNumber: 1n,
+        remoteNumber: 0n,
+        unackedMessages: [],
+        disposition: 'outbound-reject',
+      });
+      retainRejectionPeer(rejectionPeersRef.current, peer);
+      bindRejectionTombstone(peer, {
+        createdAt: Date.now(),
+      });
+      peer.deliverRawPeerMessage(fromId, payload);
+      void peer.reliableTransport.flushPending().catch((error) => {
+        console.error('[Shell] failed to persist reliable unknown-session rejection', error);
+      });
+    },
+    [bindRejectionTombstone],
+  );
+
+  const bindOutboundRejectRetirement = useCallback(
+    (peer: PeerSession) => {
+      peer.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: () => {},
+        persist: async () => {
+          await patchPreHandshakeTransport(peer.reliableState);
+          await flushSessionSave();
+        },
+        acknowledged: () => {
+          if (peer.reliableState.unackedMessages.length > 0) return;
+          void peer.reliableTransport
+            .flushPending()
+            .then(() => clearSession())
+            .then(() => {
+              if (peerSessionRef.current !== peer) return;
+              peer.destroy();
+              peerSessionRef.current = null;
+              setPeerLiveness(null);
+            })
+            .catch((error) => {
+              console.error('[Shell] failed to retire reliable session rejection', error);
+            });
+        },
+        keepalive: replayPeerUnacked,
+        failure: (reason) => {
+          console.error('[Shell] invalid rejection acknowledgement', reason);
+        },
+      });
+    },
+    [replayPeerUnacked],
+  );
+
+  const sendSessionReject = useCallback((peerId: string): Promise<void> => {
+    const peer = peerSessionRef.current;
+    if (!peer || peer.peerId !== peerId || peer.isDestroyed()) return Promise.resolve();
+    const saved = loadState();
+    const ownsResumableSave =
+      (saved.phase === 'live' || saved.phase === 'pre-handshake') &&
+      saved.pairing.peerId === peer.peerId &&
+      saved.pairing.gameSessionId === peer.sessionId;
+    let replacedResumableSave = false;
+    return transferOutboundRejection(
+      peer,
+      rejectionPeersRef.current,
+      () => {
+        if (peerSessionRef.current === peer) peerSessionRef.current = null;
+        setPeerLiveness(null);
+      },
+      ownsResumableSave
+        ? {
+            write: async (tombstone) => {
+              if (!replacedResumableSave) {
+                await clearSessionWithRejectionTombstone(tombstone);
+                replacedResumableSave = true;
+                return;
+              }
+              await writeRejectionTombstone(tombstone);
+            },
+            delete: deleteRejectionTombstone,
+          }
+        : undefined,
+    ).catch((error) => {
+      console.error('[Shell] failed to persist reliable session rejection', error);
+    });
   }, []);
 
   const resetPeerRelayState = useCallback((options?: { persistSession?: boolean }) => {
@@ -1311,6 +1503,7 @@ const Shell = () => {
   const cancelAttemptedSession = useCallback(
     (options?: { error?: boolean }) => {
       bumpStartEpoch();
+      pendingHubRemapEscalationRef.current = null;
       abandonPendingRef.current = false;
       pendingAdvisoryRef.current = null;
       pendingProposalRef.current = null;
@@ -1384,7 +1577,6 @@ const Shell = () => {
       // restore — otherwise a new Accept can race checkpoint cleanup.
       hubConnRef.current?.setBusy(
         freshStartPersistInFlightRef.current || presenceBusy(sessionPhaseRef.current),
-        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
       );
     },
     [bumpStartEpoch, freshStartPersistInFlightRef, presenceBusy, resetPeerRelayState],
@@ -1412,10 +1604,28 @@ const Shell = () => {
     [abortAccept, acceptAbortHandlers],
   );
 
+  inboundSessionRejectHandlerRef.current = (sessionId, remoteNumber) => {
+    const selected = peerSessionRef.current;
+    const peerId = selected?.peerId ?? 'unknown';
+    const conn = hubConnRef.current;
+    if (selected && conn && selected.sessionId === sessionId) {
+      installInboundRejectionReceipt(
+        conn,
+        selected.peerId,
+        sessionId,
+        selected.reliableState.messageNumber,
+        remoteNumber,
+      );
+    }
+    log(`[Shell] session_reject from=${peerId}: durably cancelled`);
+    markPeerDead();
+    if (abortAcceptIfActive({ error: true })) return;
+    cancelAttemptedSession({ error: true });
+  };
+
   const startFreshSessionWithPeer = useCallback(
     async (
       request: SessionStartRequest & {
-        gameSessionId?: string;
         pairingToken: string;
       },
     ) => {
@@ -1430,7 +1640,7 @@ const Shell = () => {
         const minContribution =
           myContribution < theirContribution ? myContribution : theirContribution;
         const perGame = minContribution / 10n || 1n;
-        const sessionId = request.gameSessionId ?? generateSessionId();
+        const sessionId = request.gameSessionId;
         const token = request.pairingToken;
         const hubSessionId = getSessionId();
 
@@ -1447,6 +1657,7 @@ const Shell = () => {
           peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
           bindPeerMessageHandler(peerSessionRef.current);
         }
+        peerSessionRef.current!.reliableState.disposition = 'active';
         const channelTimeout = parseOptionalBigInt(request.channel_timeout);
         const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
         const diagnosticLog = loadState().history.diagnosticLog;
@@ -1511,6 +1722,7 @@ const Shell = () => {
                     ? { unrollTimeout: unrollTimeout.toString() }
                     : {}),
                 },
+                transport: structuredClone(peerSessionRef.current!.reliableState),
                 identity: {
                   sessionId: hubSessionId,
                   ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
@@ -1525,6 +1737,12 @@ const Shell = () => {
               },
               onCommitted: markPersistCommitted,
             });
+            const peer = peerSessionRef.current;
+            if (peer?.sessionId === sessionId) {
+              for (const { msgno, msg } of peer.reliableState.unackedMessages) {
+                peer.sendMessage(Number(msgno), msg);
+              }
+            }
           },
           mountLiveSession: () => {
             try {
@@ -1570,12 +1788,7 @@ const Shell = () => {
         endPersistFlight();
         // Abandon kept the hub busy while this callback drained; release now.
         if (epoch !== sessionStartEpochRef.current) {
-          hubConnRef.current?.setBusy(
-            presenceBusy(sessionPhaseRef.current),
-            sessionConfigRef.current?.myAlias ??
-              savedMyAlias(sessionSaveRef.current) ??
-              peekAlias(),
-          );
+          hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current));
         }
       }
     },
@@ -1616,17 +1829,15 @@ const Shell = () => {
           peerSessionRef.current?.destroy();
           peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
           bindPeerMessageHandler(peerSessionRef.current);
-          conn.sendPeerAppMessage(advisory.peer_id, {
+          const proposalBody = encodePeerAppMessage({
             type: 'session_proposal',
             proposer_amount: advisory.my_amount,
             responder_amount: advisory.their_amount,
-            // Hub-synced alias only — never getAlias(), which invents Player_*.
-            from_alias: peekAlias(),
             channel_timeout: advisory.channel_timeout,
             unroll_timeout: advisory.unroll_timeout,
-            game_session_id: gameSessionId,
             network: getNetwork(),
           });
+          peerSessionRef.current.reliableTransport.allocateOutbound(proposalBody);
           await startFreshSessionWithPeer({
             peerId: advisory.peer_id,
             opponentAlias: advisory.peer_alias,
@@ -1699,10 +1910,10 @@ const Shell = () => {
   const declinePendingProposal = useCallback(
     (proposal: PendingSessionProposal) => {
       setPendingProposalState(null);
-      resetPeerRelayState();
-      sendSessionReject(proposal.from_id);
+      void sendSessionReject(proposal.from_id);
+      cancelAttemptedSession();
     },
-    [resetPeerRelayState, sendSessionReject, setPendingProposalState],
+    [cancelAttemptedSession, sendSessionReject, setPendingProposalState],
   );
 
   useEffect(() => {
@@ -1814,7 +2025,6 @@ const Shell = () => {
               blockchainReady: blockchainReadyRef.current,
             },
           ),
-          sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
         );
         const poller = activeBlockchainPoller;
         if (poller && sessionController) {
@@ -1828,10 +2038,7 @@ const Shell = () => {
         walletConnectedRef.current = false;
         // Wallet dropped mid-session (not a user disconnect): stay on the hub
         // but advertise busy so the lobby will not offer new matches.
-        hubConnRef.current?.setBusy(
-          shouldReportHubBusy(sessionPhaseRef.current, false),
-          sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
-        );
+        hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
       }
     });
   }, [
@@ -1896,78 +2103,148 @@ const Shell = () => {
             setPendingAdvisoryState(params);
             setActiveTab('game');
           },
-          onPeerMessage: (fromId: string, _fromAlias: string, payload: Uint8Array) => {
-            peerSessionRef.current?.deliverRawPeerMessage(fromId, payload);
-            syncPeerLiveness();
-          },
-          onPeerAppMessage: (fromId: string, fromAlias: string, msg: PeerAppMessage) => {
-            const ps = peerSessionRef.current;
-            if (ps && ps.liveness === 'dead') return;
-            if (ps) ps.notePeerActivity();
-            syncPeerLiveness();
-            if (msg.type === 'session_proposal') {
-              const peerAlias = fromAlias || msg.from_alias || fromId;
-              if (!isAvailableForNewSessionPrompt()) {
-                log(
-                  `[Shell] session_reject to=${fromId}: proposal while unavailable phase=${sessionPhaseRef.current}`,
-                );
-                sendSessionReject(fromId);
+          onPeerMessage: (fromId: string, fromAlias: string, payload: Uint8Array) => {
+            const frame = decodeReliableFrame(payload);
+            if (frame) {
+              const rejectionPeer = rejectionPeersRef.current.get(
+                rejectionTombstoneKey(fromId, frame.sessionId),
+              );
+              if (rejectionPeer) {
+                rejectionPeer.deliverRawPeerMessage(fromId, payload);
                 return;
-              }
-              if (
-                !isValidTimeoutString(msg.channel_timeout) ||
-                !isValidTimeoutString(msg.unroll_timeout)
-              ) {
-                log(`[Shell] session_reject to=${fromId}: proposal invalid timeouts`);
-                sendSessionReject(fromId);
-                return;
-              }
-              if (
-                !isValidSessionAmountString(msg.proposer_amount) ||
-                !isValidSessionAmountString(msg.responder_amount)
-              ) {
-                log(`[Shell] session_reject to=${fromId}: proposal invalid amounts`);
-                sendSessionReject(fromId);
-                return;
-              }
-              if (!sessionProposalNetworkMatches(msg.network, getNetwork())) {
-                log(
-                  `[Shell] session_reject to=${fromId}: proposal network mismatch theirs=${msg.network ?? 'none'} mine=${getNetwork()}`,
-                );
-                sendSessionReject(fromId);
-                return;
-              }
-              const proposalSessionId = msg.game_session_id ?? generateSessionId();
-              peerSessionRef.current?.destroy();
-              peerSessionRef.current = new PeerSession(fromId, proposalSessionId, conn);
-              bindPeerMessageHandler(peerSessionRef.current);
-              setPendingProposalState({
-                from_id: fromId,
-                from_alias: peerAlias,
-                proposer_amount: msg.proposer_amount,
-                responder_amount: msg.responder_amount,
-                channel_timeout: msg.channel_timeout,
-                unroll_timeout: msg.unroll_timeout,
-                game_session_id: proposalSessionId,
-              });
-              setActiveTab('game');
-            } else if (msg.type === 'session_reject') {
-              if (ps?.peerId === fromId) {
-                log(`[Shell] session_reject from=${fromId}: cancelling attempted session`);
-                markPeerDead();
-                if (abortAcceptIfActive({ error: true })) return;
-                const channelState = dashboardSessionModelRef.current?.channel.status.state;
-                if (
-                  shouldCancelOnPeerUnreachable(
-                    sessionPhaseRef.current,
-                    channelState,
-                    abandonPendingRef.current,
-                  )
-                ) {
-                  cancelAttemptedSession({ error: true });
-                }
               }
             }
+            const selected = peerSessionRef.current;
+            if (selected && selected.peerId === fromId) {
+              selected.deliverRawPeerMessage(fromId, payload);
+              syncPeerLiveness();
+              return;
+            }
+            if (
+              frame?.tag !== 0x01 ||
+              frame.msgno !== 1 ||
+              frame.data.byteLength > DEFAULT_SESSION_RECEIVE_POLICY.maxPeerBodyBytes
+            ) {
+              return;
+            }
+            let proposal;
+            try {
+              proposal = decodePeerAppMessage(frame.data);
+            } catch {
+              return;
+            }
+            if (proposal?.type !== 'session_proposal') return;
+            if (
+              !isAvailableForNewSessionPrompt() ||
+              !isValidTimeoutString(proposal.channel_timeout) ||
+              !isValidTimeoutString(proposal.unroll_timeout) ||
+              !isValidSessionAmountString(proposal.proposer_amount) ||
+              !isValidSessionAmountString(proposal.responder_amount) ||
+              !sessionProposalNetworkMatches(proposal.network, getNetwork())
+            ) {
+              rejectUnknownProposal(conn, fromId, frame.sessionId, payload);
+              return;
+            }
+            const peerAlias = fromAlias || fromId;
+            const pairingToken = `peer_${fromId}_${Date.now()}`;
+            const provisional = new PeerSession(fromId, frame.sessionId, conn);
+            provisional.reliableState.disposition = 'proposal-received';
+            peerSessionRef.current = provisional;
+            let negotiationRejected = false;
+            let negotiationRejectPersisted = false;
+            const isSessionReject = (body: Uint8Array): boolean => {
+              try {
+                return decodePeerAppMessage(body)?.type === 'session_reject';
+              } catch {
+                return false;
+              }
+            };
+            provisional.reliableTransport.attachConsumer({
+              isReady: () => !negotiationRejected,
+              canDeliver: (msgno, body) => msgno === 1n || isSessionReject(body),
+              canTerminateAt: (_msgno, body) => isSessionReject(body),
+              deliver: (msgno, body) => {
+                const semantic = decodePeerAppMessage(body);
+                if (semantic?.type === 'session_reject') {
+                  negotiationRejected = true;
+                  provisional.reliableState.disposition = 'inbound-reject';
+                  provisional.reliableTransport.discardOutbound();
+                  return;
+                }
+                if (msgno !== 1n || semantic?.type !== 'session_proposal') {
+                  throw new Error('initial reliable message is not a session proposal');
+                }
+              },
+              persist: async () => {
+                if (negotiationRejected) {
+                  await clearSessionWithInboundRejectionReceipt({
+                    peerId: fromId,
+                    sessionId: frame.sessionId,
+                    messageNumber: provisional.reliableState.messageNumber,
+                    remoteNumber: provisional.reliableState.remoteNumber,
+                    unackedMessages: [],
+                    createdAt: Date.now(),
+                  });
+                  negotiationRejectPersisted = true;
+                  return;
+                }
+                await replaceSession({
+                  pairing: {
+                    token: pairingToken,
+                    peerId: fromId,
+                    gameSessionId: frame.sessionId,
+                    iStarted: false,
+                    myContribution: proposal.responder_amount,
+                    theirContribution: proposal.proposer_amount,
+                    perGameAmount: (
+                      (BigInt(proposal.responder_amount) < BigInt(proposal.proposer_amount)
+                        ? BigInt(proposal.responder_amount)
+                        : BigInt(proposal.proposer_amount)) / 10n || 1n
+                    ).toString(),
+                    opponentAlias: peerAlias,
+                    channelTimeout: proposal.channel_timeout,
+                    unrollTimeout: proposal.unroll_timeout,
+                  },
+                  transport: structuredClone(provisional.reliableState),
+                });
+                if (peerSessionRef.current !== provisional) return;
+                sessionSaveRef.current = loadState();
+                setPendingProposalState({
+                  from_id: fromId,
+                  from_alias: peerAlias,
+                  proposer_amount: proposal.proposer_amount,
+                  responder_amount: proposal.responder_amount,
+                  channel_timeout: proposal.channel_timeout,
+                  unroll_timeout: proposal.unroll_timeout,
+                  game_session_id: frame.sessionId,
+                });
+                setActiveTab('game');
+                syncPeerLiveness();
+              },
+              committed: () => {
+                if (!negotiationRejectPersisted) return;
+                negotiationRejectPersisted = false;
+                installInboundRejectionReceipt(
+                  conn,
+                  fromId,
+                  frame.sessionId,
+                  provisional.reliableState.messageNumber,
+                  provisional.reliableState.remoteNumber,
+                );
+                log(`[Shell] session_reject from=${fromId}: durably cancelled`);
+                markPeerDead();
+                if (abortAcceptIfActive({ error: true })) return;
+                cancelAttemptedSession({ error: true });
+              },
+              failure: (reason) => {
+                console.error('[Shell] invalid provisional reliable session', reason);
+                if (peerSessionRef.current === provisional) {
+                  provisional.destroy();
+                  peerSessionRef.current = null;
+                }
+              },
+            });
+            provisional.deliverRawPeerMessage(fromId, payload);
           },
           onDeliveryFailure: (to: string) => {
             console.warn('[Shell] delivery_failure to=%s', to);
@@ -1996,6 +2273,17 @@ const Shell = () => {
             ps.markDegraded();
             syncPeerLiveness();
           },
+          onAliasUpdated: (alias: string) => {
+            if (peekAlias() !== alias) setAlias(alias);
+          },
+          onPeerAvailable: (playerId: string) => {
+            const peer = peerSessionRef.current;
+            if (peer?.peerId === playerId) {
+              if (sessionController) sessionController.resendUnacked();
+              else replayPeerUnacked();
+            }
+            replayRejectionPeers(playerId);
+          },
           onRegistered: (playerId: string) => {
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
@@ -2004,12 +2292,18 @@ const Shell = () => {
             const pairing =
               save?.phase === 'live' || save?.phase === 'pre-handshake' ? save.pairing : undefined;
             const prevMine = save?.identity.myHubPlayerId ?? loadState().identity.myHubPlayerId;
-            // Pre-cradle routing is by peer player_id. If *we* remapped (hub
-            // restart or session_id churn), abort rather than handshaking at a
-            // stale sessionPeerId. First-ever register (no prior id) is fine.
-            // Cold Accept may not have pairing/sessionConfig tokens yet — still
-            // abort an in-flight Accept transition (same as session_reject).
-            if (prevMine && prevMine !== playerId && save?.phase !== 'live') {
+            const channelState = dashboardSessionModelRef.current?.channel.status.state;
+            const pairingToken = pairing?.token ?? sessionConfigRef.current?.pairingToken;
+            const remapAction = hubPlayerIdRemapAction(
+              prevMine,
+              playerId,
+              save?.phase,
+              sessionPhaseRef.current,
+              channelState,
+              !!pairingToken,
+              abandonPendingRef.current,
+            );
+            if (prevMine && prevMine !== playerId) {
               if (abortAcceptIfActive()) {
                 console.warn(
                   '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
@@ -2022,14 +2316,7 @@ const Shell = () => {
                 saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
                 return;
               }
-              if (
-                (pairing?.token || sessionConfigRef.current?.pairingToken) &&
-                shouldCancelOnPeerUnreachable(
-                  sessionPhaseRef.current,
-                  dashboardSessionModelRef.current?.channel.status.state,
-                  abandonPendingRef.current,
-                )
-              ) {
+              if (remapAction === 'cancel-attempt') {
                 console.warn(
                   '[Shell] hub player_id remapped during pre-cradle handshake (%s → %s); rematch required',
                   prevMine,
@@ -2042,6 +2329,44 @@ const Shell = () => {
                 cancelAttemptedSession();
                 return;
               }
+              if (remapAction === 'go-on-chain') {
+                console.warn(
+                  '[Shell] hub player_id remapped during live session (%s → %s); resolving on-chain',
+                  prevMine,
+                  playerId,
+                );
+                const controllerRestoreStatus = sessionController?.getRestoreStatus();
+                if (
+                  shouldDeferHubRemapEscalation(
+                    !!sessionConfigRef.current?.restoring,
+                    controllerRestoreStatus,
+                  )
+                ) {
+                  if (!pairingToken) {
+                    throw new Error('Live hub player_id remap is missing its pairing token');
+                  }
+                  pendingHubRemapEscalationRef.current = {
+                    pairingToken,
+                    registeredPlayerId: playerId,
+                  };
+                } else if (controllerRestoreStatus === 'failed') {
+                  pendingHubRemapEscalationRef.current = null;
+                  setSessionError(true);
+                } else if (sessionController?.goOnChain()) {
+                  pendingHubRemapEscalationRef.current = null;
+                  saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
+                  if (save) save.identity.myHubPlayerId = playerId;
+                  sessionPhaseRef.current = 'on-chain';
+                  setSessionPhase('on-chain');
+                  conn.setBusy(presenceBusy('on-chain'));
+                } else {
+                  pendingHubRemapEscalationRef.current = null;
+                  setSessionError(true);
+                }
+                markPeerDead();
+                return;
+              }
+              if (remapAction === 'ignore') markPeerDead();
             }
             saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
             if (save) save.identity.myHubPlayerId = playerId;
@@ -2056,22 +2381,38 @@ const Shell = () => {
             if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
                 pairing.peerId,
-                pairing.gameSessionId ?? generateSessionId(),
+                pairing.gameSessionId,
                 conn,
+                undefined,
+                save?.phase === 'live'
+                  ? {
+                      messageNumber: save.live.messageNumber,
+                      remoteNumber: save.live.remoteNumber,
+                      unackedMessages: structuredClone(save.live.unackedMessages),
+                      disposition: save.live.disposition,
+                    }
+                  : save?.phase === 'pre-handshake'
+                    ? structuredClone(save.transport)
+                    : undefined,
               );
-              bindPeerMessageHandler(peerSessionRef.current);
+              if (peerSessionRef.current.reliableState.disposition === 'outbound-reject') {
+                bindOutboundRejectRetirement(peerSessionRef.current);
+              } else {
+                bindPeerMessageHandler(peerSessionRef.current);
+              }
               setRestoreHubReconciled(true);
               // Restore never goes through startFreshSessionWithPeer, which is
               // otherwise the only place that marks the hub busy. Use restoreBusy
               // (session/wallet/peer-wait); terminal saves stay available unless
               // walletless or the full-node-peer wait still requires busy.
-              conn.setBusy(restoreBusy, pairing.myAlias ?? peekAlias());
+              conn.setBusy(restoreBusy);
             } else if (save?.phase === 'live' || save?.phase === 'pre-handshake') {
               setRestoreHubReconciled(true);
-              conn.setBusy(restoreBusy, pairing?.myAlias ?? peekAlias());
+              conn.setBusy(restoreBusy);
             }
-            if (peerSessionRef.current && sessionController) {
-              sessionController.resendUnacked();
+            if (peerSessionRef.current && (!prevMine || prevMine === playerId)) {
+              if (sessionController) sessionController.resendUnacked();
+              else replayPeerUnacked();
             }
           },
           onHubAttention: () => {
@@ -2093,8 +2434,9 @@ const Shell = () => {
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
             setHubLiveness('connected');
-            // Retry outbound/acks that failed while the hub WS was down.
-            sessionController?.resendUnacked();
+            if (sessionController) sessionController.resendUnacked();
+            else replayPeerUnacked();
+            replayRejectionPeers();
           },
           onHubActivity: () => {
             lastHubActivityRef.current = Date.now();
@@ -2118,9 +2460,6 @@ const Shell = () => {
                   blockchainReady: blockchainReadyRef.current,
                 },
               ),
-              // Prefer session aliases, then the hub-synced prefs alias. Never call
-              // getAlias() here — inventing Player_* would pollute identify/set_busy.
-              alias: sessionConfigRef.current?.myAlias ?? savedMyAlias(save) ?? peekAlias(),
             };
           },
         });
@@ -2136,6 +2475,40 @@ const Shell = () => {
         return;
       }
       hubConnRef.current = conn;
+      void readRejectionTombstones()
+        .then((tombstones) => {
+          if (hubConnRef.current !== conn) return;
+          for (const tombstone of tombstones) {
+            if (tombstone.kind === 'outbound-reject' && tombstone.unackedMessages.length === 0) {
+              void deleteRejectionTombstone(tombstone.peerId, tombstone.sessionId);
+              continue;
+            }
+            const peer = new PeerSession(
+              tombstone.peerId,
+              tombstone.sessionId,
+              conn,
+              DEFAULT_SESSION_RECEIVE_POLICY,
+              {
+                messageNumber: tombstone.messageNumber,
+                remoteNumber: tombstone.remoteNumber,
+                unackedMessages: tombstone.unackedMessages,
+                disposition:
+                  tombstone.kind === 'outbound-reject' ? 'outbound-reject' : 'inbound-reject',
+              },
+            );
+            rejectionPeersRef.current.set(
+              rejectionTombstoneKey(tombstone.peerId, tombstone.sessionId),
+              peer,
+            );
+            if (tombstone.kind === 'outbound-reject') {
+              bindRejectionTombstone(peer, { createdAt: tombstone.createdAt });
+              peer.reliableTransport.replayUnacked();
+            }
+          }
+        })
+        .catch((error) => {
+          console.error('[Shell] failed to restore rejection tombstones', error);
+        });
     },
     [
       uniqueId,
@@ -2147,13 +2520,20 @@ const Shell = () => {
       freshStartPersistInFlightRef,
       isAvailableForNewSessionPrompt,
       presenceBusy,
-      sendSessionReject,
       setPendingAdvisoryState,
       setPendingProposalState,
       bindPeerMessageHandler,
+      installInboundRejectionReceipt,
+      bindRejectionTombstone,
+      bindOutboundRejectRetirement,
+      rejectUnknownProposal,
+      replayPeerUnacked,
+      replayRejectionPeers,
       setActiveTab,
       setHubAlert,
       setRestoreHubReconciled,
+      setSessionError,
+      setSessionPhase,
     ],
   );
 
@@ -2278,7 +2658,6 @@ const Shell = () => {
             blockchainReady: blockchainReadyRef.current,
           },
         ),
-        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
       );
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
@@ -2423,8 +2802,6 @@ const Shell = () => {
     (options?: { retainFinishedGuard?: boolean }) => {
       bumpStartEpoch();
       abandonPendingRef.current = false;
-      const alias =
-        sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
       const saved = sessionSaveRef.current;
       const peerId =
         peerSessionRef.current?.peerId ??
@@ -2434,30 +2811,52 @@ const Shell = () => {
       // Terminal/clean finish must not send session_reject — that signal means
       // decline/abort. Cooperative close already completed through the protocol;
       // the peer should keep pinging until its own local shutdown finishes.
-      if (peerId && !options?.retainFinishedGuard) sendSessionReject(peerId);
-      resetPeerRelayState();
-      destroySessionController();
-      clearSessionPreservingHistory();
-      sessionSaveRef.current = null;
-      sessionSavePropRef.current = undefined;
-      sessionStartedRef.current = false;
-      sessionFinishedCleanupRef.current = !!options?.retainFinishedGuard;
-      sessionPhaseRef.current = 'none';
-      clearSessionTimers();
-      setSessionPhase('none');
-      setSessionError(false);
-      setSessionConfig(null);
-      setPeerConn(null);
-      dashboardSessionModelRef.current = null;
-      setDashboardSessionModel(null);
-      setTerminalPresentation(null);
-      setRestoreStatus('idle');
-      setRestoreError(null);
-      setRestoreHubReconciled(false);
-      setPendingAdvisoryState(null);
-      setPendingProposalState(null);
-      cancelTransition();
-      hubConnRef.current?.setBusy(presenceBusy('none'), alias);
+      const retainRejectTransport = !!peerId && !options?.retainFinishedGuard;
+      const rejectingSavedSession =
+        retainRejectTransport &&
+        !!peerSessionRef.current &&
+        (saved?.phase === 'live' || saved?.phase === 'pre-handshake') &&
+        saved.pairing.peerId === peerSessionRef.current.peerId &&
+        saved.pairing.gameSessionId === peerSessionRef.current.sessionId;
+      const finishCancellation = () => {
+        if (!retainRejectTransport) {
+          resetPeerRelayState();
+        }
+        destroySessionController();
+        if (!retainRejectTransport) {
+          clearSessionPreservingHistory();
+          sessionSaveRef.current = null;
+        } else if (rejectingSavedSession) {
+          sessionSaveRef.current = null;
+        } else {
+          sessionSaveRef.current = loadState();
+        }
+        sessionSavePropRef.current = undefined;
+        sessionStartedRef.current = false;
+        sessionFinishedCleanupRef.current = !!options?.retainFinishedGuard;
+        sessionPhaseRef.current = 'none';
+        clearSessionTimers();
+        setSessionPhase('none');
+        setSessionError(false);
+        setSessionConfig(null);
+        setPeerConn(null);
+        dashboardSessionModelRef.current = null;
+        setDashboardSessionModel(null);
+        setTerminalPresentation(null);
+        setRestoreStatus('idle');
+        setRestoreError(null);
+        setRestoreHubReconciled(false);
+        setPendingAdvisoryState(null);
+        setPendingProposalState(null);
+        cancelTransition();
+        hubConnRef.current?.setBusy(presenceBusy('none'));
+      };
+      if (retainRejectTransport) {
+        void sendSessionReject(peerId);
+        finishCancellation();
+      } else {
+        finishCancellation();
+      }
     },
     [
       bumpStartEpoch,
@@ -2552,7 +2951,7 @@ const Shell = () => {
       sessionPhaseRef.current = 'resolved';
       setSessionPhase('resolved');
       setSessionError(hasError);
-      hubConnRef.current?.setBusy(presenceBusy('resolved'), alias);
+      hubConnRef.current?.setBusy(presenceBusy('resolved'));
 
       // Stop the live peer route and cradle; do not send session_reject and do
       // not wipe the dashboard model (that would flash "No Session").
@@ -2630,8 +3029,50 @@ const Shell = () => {
         markSavedSession();
         setSessionError(true);
       }
+      const currentSave = sessionSaveRef.current;
+      const currentPairingToken =
+        sessionConfigRef.current?.pairingToken ??
+        (currentSave?.phase === 'live' || currentSave?.phase === 'pre-handshake'
+          ? currentSave.pairing.token
+          : undefined);
+      const pendingAction = deferredHubRemapEscalationAction(
+        pendingHubRemapEscalationRef.current?.pairingToken ?? null,
+        currentPairingToken,
+        status,
+      );
+      if (pendingAction === 'discard') {
+        pendingHubRemapEscalationRef.current = null;
+      } else if (pendingAction === 'escalate') {
+        const pending = pendingHubRemapEscalationRef.current;
+        pendingHubRemapEscalationRef.current = null;
+        if (!pending) {
+          throw new Error('Deferred hub remap escalation is missing its pending identity');
+        }
+        if (!sessionController?.goOnChain()) {
+          setSessionError(true);
+          markPeerDead();
+          return;
+        }
+        saveSession({
+          scope: 'common',
+          identity: { myHubPlayerId: pending.registeredPlayerId },
+        });
+        if (currentSave) currentSave.identity.myHubPlayerId = pending.registeredPlayerId;
+        sessionPhaseRef.current = 'on-chain';
+        setSessionPhase('on-chain');
+        hubConnRef.current?.setBusy(presenceBusy('on-chain'));
+        markPeerDead();
+      }
     },
-    [setDashboardSessionModel, setRestoreError, setRestoreStatus, setSessionError],
+    [
+      markPeerDead,
+      presenceBusy,
+      setDashboardSessionModel,
+      setRestoreError,
+      setRestoreStatus,
+      setSessionError,
+      setSessionPhase,
+    ],
   );
 
   const handleSessionModelChange = useCallback(
@@ -2666,8 +3107,6 @@ const Shell = () => {
       blockchainReadyRef.current = false;
       return;
     }
-    const alias = () =>
-      sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
     const applyReady = (ready: boolean) => {
       blockchainReadyRef.current = ready;
       hubConnRef.current?.setBusy(
@@ -2682,7 +3121,6 @@ const Shell = () => {
             blockchainReady: ready,
           },
         ),
-        alias(),
       );
     };
     applyReady(activeBlockchainPoller.rpc.isReadyForPlay());
@@ -2701,25 +3139,6 @@ const Shell = () => {
   );
 
   useThemeSyncToIframe({ iframeId: 'hub-iframe', frameOrigin: hubOrigin, frameUrl: iframeUrl });
-
-  // Hub owns the display name; keep local prefs aligned so presence and
-  // session_proposal do not invent a Player_* fallback that later overwrites
-  // the hub.
-  useEffect(() => {
-    const onMessage = (ev: MessageEvent) => {
-      if (hubOrigin === null || ev.origin !== hubOrigin) return;
-      const frame = document.getElementById('hub-iframe') as HTMLIFrameElement | null;
-      if (frame === null || ev.source !== frame.contentWindow) return;
-      const data = ev.data;
-      if (!data || data.type !== 'hub-alias' || typeof data.alias !== 'string') return;
-      const trimmed = data.alias.trim();
-      if (!trimmed) return;
-      if (peekAlias() === trimmed) return;
-      setAlias(trimmed);
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [hubOrigin]);
 
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
@@ -2755,7 +3174,7 @@ const Shell = () => {
       setRestoreStatus('idle');
       setRestoreError(null);
       setRestoreHubReconciled(true);
-      hubConnRef.current?.setBusy(presenceBusy('resolved'), save.terminal.myAlias ?? peekAlias());
+      hubConnRef.current?.setBusy(presenceBusy('resolved'));
       setResuming(false);
     },
     [
@@ -2798,7 +3217,16 @@ const Shell = () => {
         theirContribution,
         perGameAmount: perGame,
       } = sessionAmountsFromSave(save);
-      if (save.phase === 'live' || save.phase === 'pre-handshake') {
+      const transportDisposition =
+        save.phase === 'live'
+          ? save.live.disposition
+          : save.phase === 'pre-handshake'
+            ? save.transport.disposition
+            : null;
+      if (
+        (save.phase === 'live' || save.phase === 'pre-handshake') &&
+        transportDisposition === 'active'
+      ) {
         const pairing = save.pairing;
         setSessionConfig({
           iStarted: pairing.iStarted,
@@ -2813,6 +3241,25 @@ const Shell = () => {
           unrollTimeout: parseOptionalBigInt(pairing.unrollTimeout),
         });
         setPeerConn(stablePeerConn);
+      } else if (transportDisposition !== null) {
+        setSessionConfig(null);
+        setPeerConn(null);
+        setRestoreStatus('restored');
+        if (
+          save.phase === 'pre-handshake' &&
+          save.transport.disposition === 'proposal-received' &&
+          save.pairing.peerId
+        ) {
+          setPendingProposalState({
+            from_id: save.pairing.peerId,
+            from_alias: save.pairing.opponentAlias ?? save.pairing.peerId,
+            proposer_amount: save.pairing.theirContribution,
+            responder_amount: save.pairing.myContribution,
+            channel_timeout: save.pairing.channelTimeout,
+            unroll_timeout: save.pairing.unrollTimeout,
+            game_session_id: save.pairing.gameSessionId,
+          });
+        }
       }
       const savedHistory = humanHistoryFromSave(save);
       const savedLog = diagnosticLogFromSave(save);
@@ -2918,6 +3365,7 @@ const Shell = () => {
       setRestoreError,
       setRestoreHubReconciled,
       setRestoreStatus,
+      setPendingProposalState,
       setSessionConfig,
       setSessionError,
       setSessionPhase,
@@ -3227,10 +3675,7 @@ const Shell = () => {
     // matchmaking (no hub teardown). Then advertise busy — without a wallet we
     // cannot fund or resolve a channel, so the lobby must not offer matches.
     cancelPendingMatchmaking({ preserveHub: true });
-    hubConnRef.current?.setBusy(
-      shouldReportHubBusy(sessionPhaseRef.current, false),
-      sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias(),
-    );
+    hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
   }, [stopBalancePolling, cancelPendingMatchmaking]);
 
   const handleDisconnectWallet = useCallback(() => {
@@ -4196,7 +4641,6 @@ const Shell = () => {
                           model={sessionModelForReactProps(dashboardSessionModel!)}
                           myName={finishedSessionIdentity?.myName ?? peekAlias()}
                           opponentName={finishedSessionIdentity?.opponentName}
-                          iStarted={finishedSessionIdentity?.iStarted ?? false}
                         />
                         {sessionConsentOverlay}
                       </div>

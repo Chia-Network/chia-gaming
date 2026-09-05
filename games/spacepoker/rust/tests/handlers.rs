@@ -140,26 +140,38 @@ fn call_my_turn_handler(
         .expect("my_turn handler should return a list");
 
     assert!(
-        items.len() >= 8,
-        "my_turn handler returned {} items, expected >= 8",
+        items.len() >= 7,
+        "my_turn handler returned {} items, expected >= 7",
         items.len()
     );
+    let validator_for_my_move_hash_bytes =
+        clvm_utils::tree_hash(allocator.allocator(), items[2]).to_bytes();
+    let validator_for_my_move_hash = allocator
+        .allocator()
+        .new_atom(&validator_for_my_move_hash_bytes)
+        .unwrap();
+    let validator_for_their_move_hash_bytes =
+        clvm_utils::tree_hash(allocator.allocator(), items[3]).to_bytes();
+    let validator_for_their_move_hash = allocator
+        .allocator()
+        .new_atom(&validator_for_their_move_hash_bytes)
+        .unwrap();
 
     MyTurnResult {
         move_bytes_node: items[1],
         validator_for_my_move: items[2],
-        validator_for_my_move_hash: items[3],
-        validator_for_their_next_move: items[4],
-        validator_for_their_move_hash: items[5],
-        max_move_size: int_from_node(allocator, items[6]),
-        new_mover_share: int_from_node(allocator, items[7]),
-        their_turn_handler: if items.len() > 8 {
-            items[8]
+        validator_for_my_move_hash,
+        validator_for_their_next_move: items[3],
+        validator_for_their_move_hash,
+        max_move_size: int_from_node(allocator, items[4]),
+        new_mover_share: int_from_node(allocator, items[5]),
+        their_turn_handler: if items.len() > 6 {
+            items[6]
         } else {
             NodePtr::NIL
         },
-        message_parser: if items.len() > 9 {
-            items[9]
+        message_parser: if items.len() > 7 {
+            items[7]
         } else {
             NodePtr::NIL
         },
@@ -262,7 +274,7 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
-    let parameters = (BET_SIZE, (BET_UNIT, (1i64, ())))
+    let parameters = (BET_SIZE, (BET_SIZE, (BET_UNIT, ())))
         .to_clvm(allocator)
         .unwrap();
     let result = run_clvm(allocator, factory_clvm, parameters);
@@ -273,21 +285,30 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
         "Space Poker factory must return one record"
     );
     let record = proper_list(allocator.allocator(), records[0], true).unwrap();
-    assert_eq!(record.len(), 12, "factory record must have 12 fields");
+    assert_eq!(record.len(), 10, "factory record must have 10 fields");
     assert_eq!(int_from_node(allocator, record[0]), BET_SIZE);
     assert_eq!(int_from_node(allocator, record[1]), BET_SIZE);
-    assert_eq!(int_from_node(allocator, record[2]), AMOUNT);
-    assert_eq!(int_from_node(allocator, record[3]), 1);
+    assert_eq!(
+        int_from_node(allocator, record[0]) + int_from_node(allocator, record[1]),
+        AMOUNT
+    );
+    assert_eq!(int_from_node(allocator, record[2]), 1);
+    let initial_validator_hash_bytes =
+        clvm_utils::tree_hash(allocator.allocator(), record[9]).to_bytes();
+    let initial_validator_hash = allocator
+        .allocator()
+        .new_atom(&initial_validator_hash_bytes)
+        .unwrap();
 
     GameSetup {
-        alice_handler: record[9],
-        alice_validator: record[11],
-        bob_handler: record[10],
-        bob_validator: record[11],
-        initial_validator_hash: record[4],
-        initial_state: record[7],
-        initial_max_move_size: int_from_node(allocator, record[6]),
-        initial_mover_share: int_from_node(allocator, record[8]),
+        alice_handler: record[7],
+        alice_validator: record[9],
+        bob_handler: record[8],
+        bob_validator: record[9],
+        initial_validator_hash,
+        initial_state: record[5],
+        initial_max_move_size: int_from_node(allocator, record[4]),
+        initial_mover_share: int_from_node(allocator, record[6]),
     }
 }
 
@@ -676,19 +697,12 @@ fn factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
 fn test_spacepoker_factory_requires_canonical_parameters() {
     let mut allocator = AllocEncoder::new();
 
-    let valid_args = (BET_SIZE, (BET_UNIT, (1i64, ())))
+    let valid_args = (BET_SIZE, (BET_SIZE, (BET_UNIT, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
         factory_succeeds(&mut allocator, valid_args),
-        "valid canonical parameters should be accepted"
-    );
-    let valid_nil_bool = (BET_SIZE, (BET_UNIT, (0i64, ())))
-        .to_clvm(&mut allocator)
-        .unwrap();
-    assert!(
-        factory_succeeds(&mut allocator, valid_nil_bool),
-        "nil sender_goes_first should be accepted"
+        "valid uniform arguments should be accepted"
     );
 
     let missing_bet_unit = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
@@ -697,7 +711,7 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
         "bet_unit is required; no per_player_stake / 10 fallback should exist"
     );
 
-    let zero_bet_unit = (BET_SIZE, (0i64, (1i64, ())))
+    let zero_bet_unit = (BET_SIZE, (BET_SIZE, (0i64, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
@@ -705,7 +719,7 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
         "bet_unit must be positive"
     );
 
-    let non_dividing_bet_unit = (BET_SIZE, (6i64, (1i64, ())))
+    let non_dividing_bet_unit = (BET_SIZE, (BET_SIZE, (6i64, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
@@ -713,15 +727,15 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
         "per_player_stake must divide evenly into bet_unit-sized stack units"
     );
 
-    let noncanonical_bool = (BET_SIZE, (BET_UNIT, (2i64, ())))
+    let unequal_contributions = (BET_SIZE, (BET_SIZE + 1, (BET_UNIT, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
-        !factory_succeeds(&mut allocator, noncanonical_bool),
-        "sender_goes_first must be nil or 1"
+        !factory_succeeds(&mut allocator, unequal_contributions),
+        "player contributions must be equal"
     );
 
-    let extra_parameter = (BET_SIZE, (BET_UNIT, (1i64, (7i64, ()))))
+    let extra_parameter = (BET_SIZE, (BET_SIZE, (BET_UNIT, (7i64, ()))))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(

@@ -12,7 +12,7 @@ import {
   sessionModelFromSave,
   type HandProposal,
 } from '../lib/session/model';
-import type { ComposeDraftValue, GameIntent } from '@games/host';
+import type { GameIntent } from '@games/host';
 import { dispatchWasmNotification } from '../lib/session/gameSessionEvents';
 import { createSessionMachineState } from '../lib/session/sessionMachine';
 import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
@@ -27,9 +27,9 @@ import type {
   SessionMachineEvent,
 } from '../lib/session/sessionMachineTypes';
 import type { RegisteredGameType } from '../lib/session/types';
-import { projectRegisteredPendingCandidates, REGISTERED_GAMES } from '../lib/gameRegistry';
+import { DEFAULT_CATALOG_GAME_TYPE } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
-import { liveGameHandOrigin, type GameHandSource } from '@games/host';
+import type { GameHandSource } from '../lib/gameHandSource';
 import { log } from '../services/log';
 import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
@@ -38,32 +38,19 @@ import type { SessionController } from './SessionController';
 import type { SessionSave } from './save';
 import { getDefaultFee, getPlayerId } from './save';
 
-export type {
-  GameTerminalAttentionInfo,
-  GameTerminalInfo,
-  QueuedNotification,
-} from '../lib/session/gameSessionEvents';
+export type { GameTerminalInfo, QueuedNotification } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
 
-export function runLocalGameActionWithReporting(
-  request: LocalGameActionRequest,
+export function runWithRuntimeErrorReporting(
   run: () => void,
-  report: (failure: {
-    gameId: string;
-    action: LocalGameActionRequest['command']['type'];
-    message: string;
-  }) => void,
+  report: (message: string) => void,
 ): void {
   try {
     run();
   } catch (error) {
     if (!wasClientErrorReported(error)) {
       markClientErrorReported(error);
-      report({
-        gameId: request.id,
-        action: request.command.type,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      report(error instanceof Error ? error.message : String(error));
     }
     throw error;
   }
@@ -76,6 +63,7 @@ export function useSessionControllerAfterCommit(
     handler: (msgno: number, msg: Uint8Array) => void,
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
+    failureHandler: (reason: string) => void,
   ) => void,
   sessionSave?: SessionSave,
   blockchain: BlockchainPoller | null = null,
@@ -137,13 +125,14 @@ export function useGameSession(
     () => (sessionSave ? sessionModelFromSave(sessionSave) : null),
     [sessionSave],
   );
-  const restoredHandKeyRef = useRef<number | null>(null);
   const initialState = useMemo(() => {
     const handProposal: HandProposal = {
-      gameType: REGISTERED_GAMES[0].gameType,
-      myContribution: perGameAmount,
-      theirContribution: perGameAmount,
+      gameType: DEFAULT_CATALOG_GAME_TYPE,
+      playerAContribution: perGameAmount,
+      playerBContribution: perGameAmount,
+      senderIsPlayerA: !iStarted,
       gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
+      parameters: null,
     };
     return createSessionMachineState(
       restoredModel ??
@@ -151,7 +140,7 @@ export function useGameSession(
           channel: { cleanShutdownStarted: controller.cleanShutdownCalled },
           betweenHand: {
             lastHandProposal: null,
-            compose: createComposeDraftState(perGameAmount, handProposal),
+            compose: createComposeDraftState(handProposal),
           },
         }),
       {
@@ -160,10 +149,9 @@ export function useGameSession(
           sessionSave.presentation.channelStatus?.state === 'Active',
       },
     );
-  }, [controller, perGameAmount, restoredModel, sessionSave]);
+  }, [controller, iStarted, perGameAmount, restoredModel, sessionSave]);
   const runtimeRef = useRef<SessionMachineRuntime | null>(null);
   if (!runtimeRef.current) {
-    restoredHandKeyRef.current = restoredModel?.game.handState ? restoredModel.game.handKey : null;
     runtimeRef.current = new SessionMachineRuntime(initialState, {
       controller,
       iStarted,
@@ -179,20 +167,27 @@ export function useGameSession(
   const liveGamePort = useMemo(
     () => ({
       isChannelReady: () => controller.isChannelReady(),
-      dispatch: (intent: GameIntent<unknown>) => {
+      dispatch: (intent: GameIntent) => {
         const game = runtime.getState().model.game;
         const gameType = game.activeGameType as RegisteredGameType;
-        if (intent.type === 'update-local-state') {
-          if (game.currentHandIds.length !== 1) {
-            throw new Error('Local hand-state updates require a single-game hand');
-          }
-          runtime.transitionFeatureState(gameType, game.currentHandIds[0], intent.state);
+        if (intent.type === 'state-changed') {
+          runtime.commitHandStateChanged(gameType);
           return;
+        }
+        if (!Number.isInteger(intent.memberIndex) || intent.memberIndex < 0) {
+          throw new Error(
+            `Internal game action member index must be a nonnegative integer: ${intent.memberIndex}`,
+          );
+        }
+        const id = game.currentHandIds[intent.memberIndex];
+        if (id === undefined) {
+          throw new Error(
+            `Internal game action member index ${intent.memberIndex} is outside the current hand`,
+          );
         }
         const request: LocalGameActionRequest = {
           gameType,
-          id: intent.gameId,
-          state: intent.state,
+          id,
           command:
             intent.type === 'make-move'
               ? { type: 'make-move', readable: intent.readable }
@@ -200,38 +195,19 @@ export function useGameSession(
                 ? { type: 'accept-settlement' }
                 : { type: 'cheat', moverShare: intent.moverShare },
         };
-        runLocalGameActionWithReporting(
-          request,
+        runWithRuntimeErrorReporting(
           () => runtime.commitLocalGameAction(request),
-          ({ action, message }) => {
-            if (action === 'cheat') {
-              dispatch({ type: 'enqueue-error', kind: 'infra-error', message });
-              return;
-            }
-            dispatch({ type: 'enqueue-error', kind: 'action-failed', message });
-          },
+          (message) => dispatch({ type: 'enqueue-error', kind: 'infra-error', message }),
         );
       },
     }),
     [controller, dispatch, runtime],
   );
-  const projectedHandState = useMemo(() => {
-    const game = machineState.model.game;
-    return projectRegisteredPendingCandidates(
-      game.activeGameType,
-      game.handState,
-      game.currentHandIds,
-      game.pendingCandidates,
-    );
-  }, [machineState.model.game]);
-  const liveHandSource = useMemo<GameHandSource>(
-    () => ({
-      interactionMode: 'live',
-      handState: projectedHandState,
-      port: liveGamePort,
-    }),
-    [liveGamePort, projectedHandState],
-  );
+  const liveHandSource: GameHandSource = {
+    frozen: false,
+    hand: runtime.getGameHand(),
+    port: liveGamePort,
+  };
   useEffect(() => {
     runtime.setRender(setMachineState);
     return () => runtime.setRender(() => {});
@@ -248,7 +224,6 @@ export function useGameSession(
       },
       wasmNotificationHistory: controller.wasmNotificationHistory,
       diagnosticLog: controller.diagnosticLog,
-      lastOutcomeWin: controller.lastOutcomeWin,
     });
   }, [controller, dispatch, params.restoring]);
 
@@ -309,16 +284,6 @@ export function useGameSession(
     return () => controller.detachBlockchain(blockchain);
   }, [blockchain, controller, terminalMode]);
 
-  useEffect(
-    () => () => {
-      runtime.dispose();
-    },
-    [runtime],
-  );
-  useEffect(() => {
-    if (terminalMode) runtime.dispose();
-  }, [runtime, terminalMode]);
-
   const setComposeGameTimeout = useCallback(
     (timeout: bigint) => dispatch({ type: 'set-compose-timeout', timeout }),
     [dispatch],
@@ -327,12 +292,6 @@ export function useGameSession(
     (gameType: HandProposal['gameType']) => dispatch({ type: 'select-compose-game', gameType }),
     [dispatch],
   );
-  const updateSelectedComposeDraft = useCallback(
-    (draft: Partial<ComposeDraftValue>) =>
-      dispatch({ type: 'update-selected-compose-draft', draft }),
-    [dispatch],
-  );
-
   const { model, coordination } = machineState;
   const view = selectGameSessionView(model);
   const gameSpecificView = selectGameSpecificView(model);
@@ -351,7 +310,6 @@ export function useGameSession(
     gameCoin: view.gameCoin,
     gameTerminal: view.gameTerminal,
     handKey: model.game.handKey,
-    handOrigin: liveGameHandOrigin(restoredHandKeyRef.current, model.game.handKey),
     activeGameId: view.activeGameId,
     activeGameIds: view.activeGameIds,
     currentHandGameIds: model.game.currentHandIds,
@@ -369,7 +327,6 @@ export function useGameSession(
     openComposeProposal: () => dispatch({ type: 'open-compose' }),
     setComposeGameTimeout,
     setComposeGameType,
-    updateSelectedComposeDraft,
     composeProposalSent: compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: (handProposal) => dispatch({ type: 'submit-compose', handProposal }),
@@ -379,11 +336,6 @@ export function useGameSession(
     cleanShutdownStarted: model.channel.cleanShutdownStarted,
     goOnChain: () => dispatch({ type: 'go-on-chain' }),
     betweenHands: view.betweenHands,
-    lastOutcomeWin: coordination.lastOutcomeWin,
-    restoredOutcomeWin:
-      sessionSave?.phase === 'live' || sessionSave?.phase === 'terminal'
-        ? (sessionSave.presentation.lastOutcomeWin ?? undefined)
-        : undefined,
     restoreStatus: model.restore.status,
     restoreError: model.restore.error,
     sessionPhase,

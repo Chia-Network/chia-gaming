@@ -39,23 +39,14 @@ pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzl
     Puzzle::from_nodeptr(allocator, hex_sexp)
 }
 
-/// Load a binary CLVM-serialized file (not hex-encoded) into the allocator.
-pub fn read_binary_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<NodePtr, Error> {
+/// Load one binary-serialized CLVM object (not hex-encoded) into the allocator.
+pub fn read_binary_clvm(allocator: &mut AllocEncoder, name: &str) -> Result<NodePtr, Error> {
     let raw = read_preset_or_file(name)?;
     node_from_bytes(allocator.allocator(), &raw).into_gen()
 }
 
-/// Load the krunk dict .dat file: 48-byte BLS pubkey + CLVM-serialized tree.
-/// Returns (pubkey_node, tree_node).
-pub fn read_krunk_dict_dat(
-    allocator: &mut AllocEncoder,
-    name: &str,
-) -> Result<(NodePtr, NodePtr), Error> {
-    let raw = read_preset_or_file(name)?;
-    if raw.len() < 48 {
-        return Err(Error::StrErr(format!("{name}: too short for pubkey")));
-    }
-    let pubkey_node = allocator.allocator().new_atom(&raw[..48]).into_gen()?;
-    let tree_node = node_from_bytes(allocator.allocator(), &raw[48..]).into_gen()?;
-    Ok((pubkey_node, tree_node))
+/// Load one binary-serialized CLVM program.
+pub fn read_binary_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, Error> {
+    let node = read_binary_clvm(allocator, name)?;
+    Puzzle::from_nodeptr(allocator, node)
 }

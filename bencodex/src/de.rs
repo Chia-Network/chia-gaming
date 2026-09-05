@@ -64,11 +64,12 @@ impl<'de> Deserializer<'de> {
         let len: usize = len_str.parse()
             .map_err(|_| Error::InvalidData(format!("bad bytestring length: {len_str}")))?;
         let start = colon + 1;
-        if self.input.len() < start + len {
+        let end = start.checked_add(len).ok_or(Error::Eof)?;
+        if self.input.len() < end {
             return Err(Error::Eof);
         }
-        let data = &self.input[start..start + len];
-        self.advance(start + len);
+        let data = &self.input[start..end];
+        self.advance(end);
         Ok(data)
     }
 

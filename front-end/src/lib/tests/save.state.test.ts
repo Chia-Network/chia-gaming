@@ -217,7 +217,7 @@ describe('flat state', () => {
       baseSave({
         pairingToken: 'pending-token',
         sessionPeerId: 'pending-peer',
-        gameSessionId: 'pending-game',
+        gameSessionId: '11'.repeat(16),
         iStarted: true,
         myContribution: '100',
         theirContribution: '100',
@@ -227,17 +227,17 @@ describe('flat state', () => {
     await clearSessionPairing();
     const pending = requirePreHandshake(loadState());
     expect(pending.pairing.peerId).toBeUndefined();
-    expect(pending.pairing.gameSessionId).toBeUndefined();
+    expect(pending.pairing.gameSessionId).toBe('11'.repeat(16));
 
     await saveLiveFields({
       ...sampleSession,
       sessionPeerId: 'live-peer',
-      gameSessionId: 'live-game',
+      gameSessionId: '22'.repeat(16),
     });
     await clearSessionPairing();
     const live = requireLive(loadState());
     expect(live.pairing.peerId).toBeUndefined();
-    expect(live.pairing.gameSessionId).toBeUndefined();
+    expect(live.pairing.gameSessionId).toBe('22'.repeat(16));
   });
 
   it('ignores late live-presentation cleanup after terminal replacement', async () => {
@@ -318,7 +318,7 @@ describe('flat state', () => {
       humanHistory: ['keep-me'],
       diagnosticLog: ['diag-keep'],
       sessionPeerId: 'peer-abc',
-      gameSessionId: 'gs-1',
+      gameSessionId: '33'.repeat(16),
       channelTimeout: '100',
       unrollTimeout: '50',
       opponentAlias: 'Opponent',
@@ -337,7 +337,7 @@ describe('flat state', () => {
     // Handshake checkpoint survives so a reload mid-hex-load can Resume.
     expect(remaining.pairing.token).toBe('tok-123');
     expect(remaining.pairing.peerId).toBe('peer-abc');
-    expect(remaining.pairing.gameSessionId).toBe('gs-1');
+    expect(remaining.pairing.gameSessionId).toBe('33'.repeat(16));
     expect(remaining.pairing.iStarted).toBe(true);
     expect(remaining.pairing.myContribution).toBe('60');
     expect(remaining.pairing.theirContribution).toBe('40');
@@ -354,7 +354,7 @@ describe('flat state', () => {
         hubUrl: 'http://localhost:3003',
         pairingToken: 'peer_x_1',
         sessionPeerId: 'peer-x',
-        gameSessionId: 'gs-pending',
+        gameSessionId: '44'.repeat(16),
         iStarted: false,
         myContribution: '100',
         theirContribution: '100',
@@ -448,7 +448,6 @@ describe('flat state', () => {
       },
       handState: {
         gameType: 'spacepoker',
-        version: 4n,
         state: {
           gameState: { handler: 2n, myTurn: true, N: 4n },
           playerHoleCards: [1n, 2n],
@@ -470,11 +469,12 @@ describe('flat state', () => {
       },
       activeGameType: 'spacepoker',
       betweenHandLastHandProposal: {
-        my_contribution: '10',
-        their_contribution: '10',
+        player_a_contribution: '10',
+        player_b_contribution: '10',
+        sender_is_player_a: false,
         game_timeout: '15',
         game_type: 'spacepoker',
-        spacepoker_unit_size: '10',
+        parameters: 10n,
       },
     });
     await flushSessionSave();
@@ -513,7 +513,6 @@ describe('flat state', () => {
       },
       handState: {
         gameType: 'calpoker',
-        version: 3n,
         state: {
           playerHand: [8n, 7n, 6n, 5n],
           opponentHand: [4n, 3n, 2n, 1n],

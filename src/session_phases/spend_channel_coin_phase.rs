@@ -280,7 +280,11 @@ impl SpendChannelCoinPhase {
             &self.base.game_action_queue,
             false,
         )?;
-        self.base.park_move(id, readable, new_entropy);
+        let prepared = self
+            .base
+            .channel_state()?
+            .prepare_move(_env, id, readable, new_entropy)?;
+        self.base.park_move(id, prepared);
         Ok(vec![])
     }
 
@@ -656,10 +660,11 @@ impl SpendChannelCoinPhase {
 
         {
             let ch = self.base.channel_state_mut()?;
-            let cancelled_ids = ch.cancel_all_proposals();
-            for id in cancelled_ids {
+            let cancelled_groups = ch.cancel_all_proposals();
+            for group_ids in cancelled_groups {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id,
+                    id: group_ids[0],
+                    group_ids,
                     reason: CancelReason::WentOnChain,
                 }));
             }

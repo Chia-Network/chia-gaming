@@ -1,11 +1,10 @@
-import {
-  reduceSpacepokerDurableState,
-  type SpacepokerHandState,
-} from '@games/spacepoker/ui/handProposal';
+import { restoreSpacepokerHand, type SpacepokerHandState } from '@games/spacepoker/ui/serialize';
 import { SpHandler } from '@games/spacepoker/ui/useSpacepokerHand';
 
 function handState(overrides: Partial<SpacepokerHandState>): SpacepokerHandState {
   return {
+    gameId: '7',
+    perPlayerStake: 100n,
     gameState: { handler: SpHandler.MidRound, myTurn: false, N: 3n },
     playerHoleCards: [1n, 2n],
     playerBoost: false,
@@ -20,23 +19,20 @@ function handState(overrides: Partial<SpacepokerHandState>): SpacepokerHandState
     terminalState: 'none',
     coinTossIOpen: true,
     unitSizeMojos: 10n,
+    settlementOutcome: null,
     displayMode: 'units',
     ...overrides,
   };
 }
 
 function opponentAccepted(current: SpacepokerHandState): SpacepokerHandState {
-  return reduceSpacepokerDurableState(current, {
+  const hand = restoreSpacepokerHand(current);
+  hand.receive({
     type: 'hand-ended',
-    gameId: '7',
-    terminal: {
-      type: 'settled',
-      outcome: 'accept_settlement',
-      label: 'Opponent accepted',
-      myReward: null,
-      rewardCoinHex: null,
-    },
-  })!;
+    memberIndex: 0,
+    outcome: 'accept_settlement',
+  });
+  return hand.getState();
 }
 
 describe('Space Poker received accept settlement', () => {

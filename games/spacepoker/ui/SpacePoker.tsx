@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { gameHandState, type GameHandSource } from '../../host';
-import type { GameTerminalModel } from '../../host';
-import { useCheatKeys, useGameHost } from '../../host/ui';
+import type { GameMountView } from '../../host';
 import { describeSpacePokerHand, formatSpacepokerHandLog } from './handPresentation';
+import { formatSpacepokerAmount } from './formatting';
 import { SpacePokerActionControls } from './SpacePokerActionControls';
 import { SpacePokerHandHistory, SpacePokerTable } from './SpacePokerTable';
 import {
@@ -12,48 +11,59 @@ import {
   spacePokerTerminalIndicators,
   spacePokerTurnLine,
 } from './statusPresentation';
-import {
-  SpHandler,
-  type SpacepokerDisplayMode,
-  type SpacepokerHandState,
-  useSpacepokerHand,
-} from './useSpacepokerHand';
+import { SpHandler, type SpacepokerDisplayMode, useSpacepokerHand } from './useSpacepokerHand';
+import type { SpacepokerHand } from './serialize';
 
 export interface SpacePokerProps {
-  handSource: GameHandSource;
-  gameId: string;
-  betSize: string;
-  unitSizeMojos: string;
+  view: GameMountView<SpacepokerHand>;
   onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
-  terminal: GameTerminalModel;
+}
+
+export function advanceSpacepokerCheatSequence(
+  current: string,
+  key: string,
+): { buffer: string; triggered: boolean } {
+  const sequence = 'cheat^';
+  const next = current + key;
+  if (next === sequence) return { buffer: '', triggered: true };
+  if (sequence.startsWith(next)) return { buffer: next, triggered: false };
+  return { buffer: sequence.startsWith(key) ? key : '', triggered: false };
+}
+
+function useSpacepokerCheatKeys(handleCheat: () => void, enabled: boolean): void {
+  const buffer = useRef('');
+  useEffect(() => {
+    if (!enabled) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
+        return;
+      if (event.key.length !== 1) return;
+      const next = advanceSpacepokerCheatSequence(buffer.current, event.key);
+      buffer.current = next.buffer;
+      if (next.triggered) handleCheat();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [enabled, handleCheat]);
 }
 
 export default function SpacePoker({
-  handSource,
-  gameId,
-  betSize,
-  unitSizeMojos,
+  view,
   onGameLog,
-  myName,
-  opponentName,
-  terminal,
 }: SpacePokerProps) {
-  const interactive = handSource.interactionMode === 'live';
-  const betSizeValue = BigInt(betSize);
-  const unitSizeMojosValue = BigInt(unitSizeMojos);
-  const sp = useSpacepokerHand(handSource, gameId, betSizeValue, unitSizeMojosValue, terminal);
+  const interactive = !view.frozen;
+  const state = view.hand.getState();
+  const betSizeValue = state.perPlayerStake * 2n;
+  const sp = useSpacepokerHand(view);
   const { handler, myTurn, N } = sp.gameState;
-  const { currencyLabels: spCurrency, formatAmount } = useGameHost();
-
-  useCheatKeys(sp.handleCheat, interactive);
+  useSpacepokerCheatKeys(sp.handleCheat, interactive);
 
   const [alreadyTerminalAtMount] = useState(() => {
-    const handState = gameHandState(handSource);
-    if (!handState || handState.gameType !== 'spacepoker') return false;
-    const state = handState.state as SpacepokerHandState | undefined;
-    return state?.terminalState != null && state.terminalState !== 'none';
+    const state = view.hand.getState();
+    return state.terminalState !== 'none';
   });
   const gameLogFiredRef = useRef(alreadyTerminalAtMount);
   useEffect(() => {
@@ -73,7 +83,7 @@ export default function SpacePoker({
         sp.coinTossIOpen,
         sp.betUnit,
         stackSize,
-        formatAmount,
+        formatSpacepokerAmount,
       ),
     );
   }, [
@@ -89,7 +99,6 @@ export default function SpacePoker({
     sp.betUnit,
     betSizeValue,
     onGameLog,
-    formatAmount,
   ]);
 
   const inBetting = handler === SpHandler.BeginRound || handler === SpHandler.MidRound;
@@ -141,14 +150,14 @@ export default function SpacePoker({
             className={`rounded px-2 py-0.5 ${sp.displayMode === mode ? 'bg-canvas-solid text-canvas-bg' : 'border border-canvas-line text-canvas-text-contrast'}`}
             onClick={() => sp.setDisplayMode(mode)}
           >
-            {mode === 'xch' ? spCurrency.xch : mode === 'mojos' ? spCurrency.mojos : mode}
+            {mode === 'xch' ? 'XCH' : mode}
           </button>
         ))}
       </div>
 
       <SpacePokerTable
-        opponentName={opponentName ?? 'Opponent'}
-        playerName={myName ?? 'You'}
+        opponentName={view.opponentName ?? 'Opponent'}
+        playerName={view.myName ?? 'You'}
         opponentIndicator={indicators.opponent}
         playerIndicator={indicators.player}
         opponentStack={sp.opponentStack}
@@ -187,11 +196,6 @@ export default function SpacePoker({
         <p className="text-sm text-canvas-text-contrast font-medium text-center min-h-5">
           {footerStatus}
         </p>
-        {sp.error && (
-          <p role="alert" className="text-center text-sm font-semibold text-red-600">
-            {sp.error.message}
-          </p>
-        )}
       </div>
 
       <SpacePokerHandHistory history={sp.handHistory} formatBet={sp.formatBet} />

@@ -38,9 +38,11 @@ describe('session model proposal and normalization contracts', () => {
       'Calpoker singleton',
       {
         gameType: 'calpoker' as const,
-        myContribution: 10n,
-        theirContribution: 10n,
+        playerAContribution: 10n,
+        playerBContribution: 10n,
+        senderIsPlayerA: false,
         gameTimeout: 15n,
+        parameters: null,
       },
       ['cal-1'],
     ],
@@ -48,10 +50,11 @@ describe('session model proposal and normalization contracts', () => {
       'Space Poker singleton',
       {
         gameType: 'spacepoker' as const,
-        myContribution: 20n,
-        theirContribution: 20n,
+        playerAContribution: 20n,
+        playerBContribution: 20n,
+        senderIsPlayerA: false,
         gameTimeout: 16n,
-        unitSizeMojos: 2n,
+        parameters: 2n,
       },
       ['space-1'],
     ],
@@ -59,9 +62,11 @@ describe('session model proposal and normalization contracts', () => {
       'Krunk ordered pair',
       {
         gameType: 'krunk' as const,
-        myContribution: 100n,
-        theirContribution: 100n,
+        playerAContribution: 100n,
+        playerBContribution: 100n,
+        senderIsPlayerA: true,
         gameTimeout: 17n,
+        parameters: null,
       },
       ['krunk-picker', 'krunk-guesser'],
     ],
@@ -120,9 +125,11 @@ describe('session model proposal and normalization contracts', () => {
   it('retains generic group membership through acceptance until insufficient balance clears every member', () => {
     const terms = {
       gameType: 'krunk',
-      myContribution: 100n,
-      theirContribution: 100n,
+      playerAContribution: 100n,
+      playerBContribution: 100n,
+      senderIsPlayerA: true,
       gameTimeout: 15n,
+      parameters: null,
     } as const;
     const groupIds = ['11', '13'];
     const model = createSessionModel({
@@ -174,9 +181,11 @@ describe('session model proposal and normalization contracts', () => {
       betweenHand: {
         lastHandProposal: {
           gameType: 'krunk',
-          myContribution: 100n,
-          theirContribution: 100n,
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          senderIsPlayerA: true,
           gameTimeout: 15n,
+          parameters: null,
         },
         proposalGroups: [
           {
@@ -184,9 +193,11 @@ describe('session model proposal and normalization contracts', () => {
             memberIds: ['11', '13'],
             handProposal: {
               gameType: 'krunk',
-              myContribution: 100n,
-              theirContribution: 100n,
+              playerAContribution: 100n,
+              playerBContribution: 100n,
+              senderIsPlayerA: true,
               gameTimeout: 15n,
+              parameters: null,
             },
             origin: 'local',
             disposition: 'accepted',
@@ -205,10 +216,8 @@ describe('session model proposal and normalization contracts', () => {
         proposalGroups: snapshot.proposalGroups,
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: krunkStateCodec.encode({
-          games: {
-            '11': initialKrunkGameState('alice'),
-            '13': initialKrunkGameState('bob'),
-          },
+          perPlayerStake: 100n,
+          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       }),
     );
@@ -222,15 +231,19 @@ describe('session model proposal and normalization contracts', () => {
   it('round-trips one outgoing group alongside an incoming collision', () => {
     const firstTerms = {
       gameType: 'calpoker',
-      myContribution: 10n,
-      theirContribution: 10n,
+      playerAContribution: 10n,
+      playerBContribution: 10n,
+      senderIsPlayerA: false,
       gameTimeout: 15n,
+      parameters: null,
     } as const;
     const inboundTerms = {
       gameType: 'calpoker',
-      myContribution: 30n,
-      theirContribution: 30n,
+      playerAContribution: 30n,
+      playerBContribution: 30n,
+      senderIsPlayerA: false,
       gameTimeout: 25n,
+      parameters: null,
     } as const;
     const restored = sessionModelFromSave(
       liveEnvelope({
@@ -242,10 +255,12 @@ describe('session model proposal and normalization contracts', () => {
             origin: 'local',
             disposition: 'outgoing',
             hand_proposal: {
-              my_contribution: '10',
-              their_contribution: '10',
+              player_a_contribution: '10',
+              player_b_contribution: '10',
+              sender_is_player_a: false,
               game_timeout: '15',
               game_type: 'calpoker',
+              parameters: null,
             },
           },
           {
@@ -254,10 +269,12 @@ describe('session model proposal and normalization contracts', () => {
             origin: 'peer',
             disposition: 'incoming-review',
             hand_proposal: {
-              my_contribution: '30',
-              their_contribution: '30',
+              player_a_contribution: '30',
+              player_b_contribution: '30',
+              sender_is_player_a: false,
               game_timeout: '25',
               game_type: 'calpoker',
+              parameters: null,
             },
           },
         ],
@@ -296,16 +313,18 @@ describe('session model proposal and normalization contracts', () => {
       betweenHand: {
         lastHandProposal: {
           gameType: 'krunk',
-          myContribution: 100n,
-          theirContribution: 100n,
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          senderIsPlayerA: true,
           gameTimeout: 15n,
+          parameters: null,
         },
       },
     });
     const snapshot = snapshotFromSessionModel(model);
     const restored = sessionModelFromSave(
       baseSave({
-        version: 11n,
+        version: 22n,
         playerId: 'p1',
         activeGameIds: [],
         currentHandGameIds: snapshot.currentHandGameIds,
@@ -351,7 +370,7 @@ describe('session model proposal and normalization contracts', () => {
           },
         },
         lastDisplayedId: '7',
-        handState: { gameType: 'calpoker', version: 1n, state: { cards: [1n] } },
+        handState: { gameType: 'calpoker', state: { cards: [1n] } },
       },
     });
 
@@ -446,9 +465,11 @@ describe('session model proposal and normalization contracts', () => {
         betweenHand: {
           lastHandProposal: {
             gameType: 'calpoker',
-            myContribution: 40n,
-            theirContribution: 40n,
+            playerAContribution: 40n,
+            playerBContribution: 40n,
+            senderIsPlayerA: false,
             gameTimeout: 15n,
+            parameters: null,
           },
         },
       }),
@@ -460,16 +481,18 @@ describe('session model proposal and normalization contracts', () => {
         betweenHand: {
           lastHandProposal: {
             gameType: 'calpoker',
-            myContribution: 40n,
-            theirContribution: 40n,
+            playerAContribution: 40n,
+            playerBContribution: 40n,
+            senderIsPlayerA: false,
             gameTimeout: 15n,
+            parameters: null,
           },
         },
       }),
     );
     const restored = sessionModelFromSave(
       baseSave({
-        version: 11n,
+        version: 22n,
         playerId: 'p1',
         activeGameIds: staleSnapshot.activeGameIds,
         currentHandGameIds: staleSnapshot.currentHandGameIds,
@@ -500,7 +523,7 @@ describe('session model proposal and normalization contracts', () => {
   it('restores a finished session without legacy active game ids', () => {
     const restored = sessionModelFromSave(
       baseSave({
-        version: 11n,
+        version: 22n,
         playerId: 'p1',
         channelStatus: {
           state: 'ResolvedClean',

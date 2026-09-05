@@ -1,4 +1,4 @@
-import { selectComposeGame, updateSelectedComposeDraft } from './composeDraft';
+import { selectComposeGame } from './composeDraft';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -12,13 +12,10 @@ export type BetweenHandEvent = Extract<
   | { type: 'set-last-terms' }
   | { type: 'set-pending-retry-terms' }
   | { type: 'set-new-hand-requested' }
-  | { type: 'set-compose-draft' }
   | { type: 'select-compose-game' }
   | { type: 'set-compose-timeout' }
-  | { type: 'update-selected-compose-draft' }
   | { type: 'set-compose-proposal-sent' }
   | { type: 'set-same-terms-requested' }
-  | { type: 'set-expecting-counter-proposal' }
   | { type: 'set-first-game-accepted' }
   | { type: 'set-last-outcome' }
 >;
@@ -75,15 +72,6 @@ export function reduceBetweenHandEvent(
         },
       };
       break;
-    case 'set-compose-draft':
-      next = {
-        ...state,
-        model: {
-          ...state.model,
-          betweenHand: { ...state.model.betweenHand, compose: event.compose },
-        },
-      };
-      break;
     case 'select-compose-game':
       next = {
         ...state,
@@ -108,18 +96,6 @@ export function reduceBetweenHandEvent(
         },
       };
       break;
-    case 'update-selected-compose-draft':
-      next = {
-        ...state,
-        model: {
-          ...state.model,
-          betweenHand: {
-            ...state.model.betweenHand,
-            compose: updateSelectedComposeDraft(state.model.betweenHand.compose, event.draft),
-          },
-        },
-      };
-      break;
     case 'set-compose-proposal-sent':
       next = {
         ...state,
@@ -138,22 +114,10 @@ export function reduceBetweenHandEvent(
         coordination: { ...state.coordination, sameTermsRequested: event.requested },
       };
       break;
-    case 'set-expecting-counter-proposal':
-      next = {
-        ...state,
-        coordination: { ...state.coordination, expectingCounterProposal: event.expecting },
-      };
-      break;
     case 'set-first-game-accepted':
       next = {
         ...state,
         coordination: { ...state.coordination, firstGameAccepted: event.accepted },
-      };
-      break;
-    case 'set-last-outcome':
-      next = {
-        ...state,
-        coordination: { ...state.coordination, lastOutcomeWin: event.outcomeWin },
       };
       break;
     default:
@@ -161,11 +125,7 @@ export function reduceBetweenHandEvent(
   }
 
   const shouldPersist =
-    event.type === 'select-compose-game' ||
-    event.type === 'set-compose-timeout' ||
-    event.type === 'update-selected-compose-draft' ||
-    event.type === 'set-compose-draft' ||
-    event.type === 'set-last-outcome';
+    event.type === 'select-compose-game' || event.type === 'set-compose-timeout';
   return {
     state: next,
     effects: shouldPersist && next !== state ? [{ type: 'persist-session' }] : [],

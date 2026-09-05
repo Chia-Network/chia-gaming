@@ -248,13 +248,13 @@ time, there's no ambiguity about move ordering.
 
 ### Batch Protocol
 
-Every potato pass is a single `PeerMessage::Batch` containing:
+Every ordinary potato pass is a single `PeerMessage::Batch` containing:
 
-1. `**actions: Vec<BatchAction>`** — one or more game operations to apply
+1. `**actions: Vec<BatchAction>`** — zero or more game operations to apply
   sequentially:
   - `ProposeGroup` — propose one factory-derived atomic game group
-  - `AcceptProposal` — accept a pending game proposal
-  - `CancelProposal` — cancel a pending proposal
+  - `AcceptProposalGroup` — accept one complete pending proposal group
+  - `CancelProposalGroup` — cancel one complete pending proposal group
   - `Move` — make a game move
   - `AcceptSettlement` — accept a game result (end game)
 2. `**signatures: StateUpdateSignatures`** — two half-signatures covering the final
@@ -267,13 +267,13 @@ Every potato pass is a single `PeerMessage::Batch` containing:
    Both are half-signatures because the channel coin and unroll coin are 2-of-2
    constructions — each potato pass carries the sender's half, and the receiver
    combines it with their own to form the full aggregate signature.
-3. `**clean_shutdown: Option<(Aggsig, ProgramRef)>`** — optional clean shutdown
-  initiation, always positioned logically after all other actions. Contains the
-   initiator's half-signature of the channel coin spend directly to reward coins
-   (bypassing unroll and game coins entirely), plus the conditions program. The
-   responder replies with a separate `PeerMessage::CleanShutdownComplete(CoinSpend)`
-   message — not another batch — carrying their half-signature combined into a
-   complete `CoinSpend` ready for on-chain submission.
+The signatures are always verified. Clean shutdown is not a Batch field: the
+potato holder sends a dedicated `PeerMessage::CleanShutdown {
+channel_half_sig, payout_conditions }`. If actions are queued before shutdown,
+they are first flushed in an ordinary Batch and the sender requests the potato
+back. The responder replies with
+`PeerMessage::CleanShutdownComplete(CoinSpend)`, unchanged, carrying the complete
+mutually signed spend.
 
 The receiver processes actions sequentially and rejects the entire batch if any
 action fails validation. Rejection uses a **rollback mechanism**: before peer
@@ -302,9 +302,10 @@ The `current_state_number` increments once per batch, not per action.
 
 Before batch processing begins, two checks protect the receiver:
 
-- **Message size limit:** Messages larger than 10 MiB are rejected immediately
-in `received_message`, before deserialization. This prevents a
-malicious peer from consuming unbounded memory.
+- **Local receive policy:** The browser defaults reject message bodies larger
+than 10 MiB and bound future-number distance, queued message count, and queued
+bytes. These configurable denial-of-service limits are local policy, not
+negotiated protocol constants.
 - **Double-potato detection:** If a `Batch` arrives while we already hold the
 potato (`PotatoState::Present`), it is rejected as a protocol violation.
 Only one player can hold the potato at a time; receiving a second batch
@@ -315,13 +316,32 @@ means the peer is misbehaving.
 When a local action is requested (move, proposal, accept, etc.), it follows a
 unified pattern:
 
-1. The action is placed on an internal queue
-2. `flush_or_request_potato` is called:
+1. The action is placed on an internal queue.
+2. The session requests or uses the potato:
   - If we hold the potato: drain all queued actions into a single batch and send
   - If we don't hold the potato: send a `RequestPotato` message
 
 This ensures that multiple user actions between potato receives are
 automatically batched together.
+
+Moves have a stricter preparation boundary than the other queue entries. The
+local move directive first validates that this game currently grants us the
+turn and has no queued or pending move, then immediately runs the my-turn
+handler. A tagged two-value rejection is returned synchronously as
+`MoveRejected`; the invalid readable is never queued. Success queues only the
+durable, uncurried `PreparedMove` handler outputs: move bytes, outgoing and
+incoming validator programs, maximum move size, mover share, waiting handler,
+and optional message parser. The readable UI input and entropy are not retained,
+nor are later-derived transaction data, a curried referee, or a referee puzzle
+hash.
+
+When the potato is available—or when an already prepared move is actuated
+on-chain—the engine consumes that `PreparedMove` to apply the referee
+transition, curry and hash the resulting puzzle, sign as required, and send the
+batch or spend. It does not run the my-turn handler again. Only after application
+does the separate `cached_redo_actions` state record the post-application facts
+needed to replay a move after an unroll; the prepared queue is not the redo
+cache.
 
 The `game_action_queue` is populated only by local API calls (user/UI actions),
 never directly by received peer messages. Received batches can still make queued
@@ -353,7 +373,9 @@ Each side runs its own handler: `HandshakeInitiatorPhase` (the player who
 starts the channel) and `HandshakeReceiverPhase`. The A-F labels are the
 wire/message protocol labels. Internally, the split handlers use semantic
 state names (`SentA`, `WaitingForLauncher`, `SentC`, etc.) while still speaking
-the same A-F wire messages. Handshake messages are not sent via `Batch`:
+the same A-F wire messages. A and B include a text-to-`u32` capabilities map;
+`peer_protocol = 1` is required and unknown capability keys are ignored.
+Handshake messages are not sent via `Batch`:
 
 | Step | Sender | Message | Payload type |
 |------|--------|---------|--------------|
@@ -414,10 +436,13 @@ WaitingForA → SentB → SentD → WaitingForCompletion → Finished
 Handshake-specific wallet callback plumbing now lives in the split handshake
 handlers, not in `OffChainPhase` monolithic handshake state.
 
-The transition to `OffChainPhase` is driven by `coin_created` — the channel
-coin appearing on-chain. Since the coin cannot exist before E is sent, this
-is the ground truth for "the channel is live." A late-arriving `HandshakeF`
-after the transition is silently ignored by `OffChainPhase`. Internally, the
+The transition to `OffChainPhase` requires completed role-specific handshake
+work and `coin_created` — the channel coin appearing on-chain. F and the local
+coin observation may arrive in either order. Before E, every wrong message is
+rejected even during wallet waits. After E, only non-handshake activation-lag
+messages are retained and transferred FIFO into the off-chain phase. A
+late-arriving `HandshakeF` after the transition is silently ignored, and
+duplicate F messages cause at most one funding submission. Internally, the
 split handshake handlers move from `Finished` to `Done` during this handoff:
 `Finished` means the handshake's own protocol work is complete, while `Done`
 means the replacement `OffChainPhase` has been created and the old handshake
@@ -507,6 +532,11 @@ The repository includes three production reference games:
 - **Space Poker** — Texas Hold'em-style with messages and a terminal.
 - **Krunk** — Wordle-style atomic pair; illegal input surfaces as `MoveRejected`.
 
+Reference games share protocol/package contracts, not frontend presentation
+utilities. Each owns its amount controls, mojo formatting, settlement copy, and
+keyboard behavior. Space Poker is the only reference game that currently
+exposes the diagnostic cheat action.
+
 Each game lives in one top-level package under `games/<key>/`, registered only
 in [`games/registry.json`](games/registry.json) (`production` vs `test`). Package
 keys are build/bootstrap identifiers. The protocol identity is the first
@@ -515,9 +545,11 @@ generated member's initial validation puzzle hash
 human-readable key. Registration discovers it by running the factory with
 representative valid parameters. Adding a game means creating that conventional
 package and appending the key to the registry; Chialisp compile, Rust/WASM
-wiring, frontend imports, and the full-suite test aggregator are generated from
-that file. See [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md). Handler and
-validator walkthroughs for the reference games are in
+registration, frontend imports, and factory presets are generated from that
+file. Rust package modules and full-suite test aggregation are generated only
+when their optional Rust source files exist. See
+[`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md). Handler and validator
+walkthroughs for the reference games are in
 [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md#worked-examples-reference-games).
 
 The Rust game collection also registers `debug` (test list) for simulator tests
@@ -590,8 +622,30 @@ observations, and projects Rust facts into UI. It may enforce explicit product
 capability policy—for example, this client currently starts at most one
 concurrent proposal group—but proposal groups are atomic only at formation and
 acceptance: Krunk's paired games still progress and settle independently.
-It does not replay game moves. Each semantic move is submitted once; post-unroll
-redo is reconstructed from Rust-owned channel and on-chain state.
+It does not maintain a game-move replay journal. Post-unroll redo is
+reconstructed from Rust-owned channel and on-chain state; after browser restore,
+a game's normal state-driven effect may resubmit an automatic action only when
+the restored canonical state still precedes that action.
+
+Each game package owns its concrete mutable hand. Fresh hands are created from
+accepted initialization terms; restored hands are constructed directly from
+only their saved state. The shared hand boundary exposes `getState()` plus
+host-delivered updates. For a protocol action the game mutates its own hand
+first; the browser keeps the previous canonical hand only as a temporary
+synchronous rollback checkpoint. If Rust rejects the command, the browser
+restores that checkpoint. If Rust accepts the command as queued or already
+applied, the mutated complete hand becomes canonical immediately and is
+persisted atomically with Rust's serialized prepared-action queue. There is no
+durable `pendingCandidates` layer. `LocalActionApplied` is host-only
+protocol-presentation bookkeeping: it may advance the host's turn display, but
+does not promote game-owned state or grant the game permission to act.
+
+Proposal persistence stores the exact opaque Bencodex parameter value together
+with the generic player-A/player-B terms and sender orientation. Each package
+decodes that value only for its own form, display, and hand initialization;
+there are no game-specific proposal save keys. Proposal-group integrity remains
+a generic host concern, while each game asserts its factory topology when
+creating a fresh hand.
 
 | Concern | Owner |
 | --- | --- |
@@ -605,9 +659,11 @@ terminal snapshot are flushed, at which point the real controller and transport
 attachments are destroyed. Visual lifetime can continue: the same React hand
 component and `handKey` remain mounted, but receive the finalized model through
 the `frozen: true` branch of the same mount contract, which structurally has no
-intent port. Cold restoration is separate again:
-`FinishedSessionGameView` remounts a validated persisted Cal Poker, Space Poker,
-or Krunk hand only when no live tree survived (for example, after reload).
+intent port. The retained hand is restored from that finalized terminal model;
+`frozen` means terminal, read-only, and no port, not stale pre-finalization game
+state. Cold restoration is separate again:
+`FinishedSessionGameView` always attempts a package's frozen mount from valid
+persisted hand state when no live tree survived (for example, after reload).
 
 ### Handlers
 
@@ -659,7 +715,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `games/spacepoker/clsp/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
 | `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
 | `games/krunk/clsp/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
-| `games/krunk/clsp/krunk_signed_dict_tree.dat`| Generated: pubkey + signed dict tree, binary |
+| `games/krunk/clsp/factory_args.clvm.bin`| Generated factory curry arguments: `(pubkey signed_dict_tree)` |
 | `games/debug/clsp/factory.clsp`             | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
@@ -700,9 +756,9 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `UnrollCoin`                    | `channel_state/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
-| `CachedRedoActions` | `channel_state/types/potato.rs`              | Enum for `cached_redo_actions` entries: `CachedSendMove`, `CachedAcceptSettlement`, `ProposalAccepted`     |
-| `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, per-ID `AcceptProposal` / `CancelProposal` expanded atomically by the higher layer, `Move`, `AcceptSettlement` |
-| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposal`, `QueuedCancelProposal`, `QueuedCancelProposalSilently`, `Cheat` |
+| `CachedRedoActions` | `channel_state/types/potato.rs`              | Internal protocol replay entries: `CachedSendMove`, `CachedAcceptSettlement`, and per-ID `ProposalAccepted` (not the UI `ProposalAcceptedGroup`) |
+| `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, `AcceptProposalGroup`, `CancelProposalGroup`, plus per-game `Move` and `AcceptSettlement` |
+| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move(GameID, PreparedMove)`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposalGroup`, `QueuedCancelProposalGroup`, `QueuedCancelProposalGroupSilently`, `Cheat` |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
 | `OnChainGameState`              | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout` |
 | `SettlementOutcome`             | `session_phases/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |
@@ -730,6 +786,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) | Off-chain handler API, on-chain validator conventions |
 | [`clsp/handler_api.md`](clsp/handler_api.md) | CLVM calling conventions for handler functions |
 | [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md) | Debugging, testing, `./cb.sh` / `./ct.sh` usage |
+| [`WEBSOCKET_PROTOCOL.md`](WEBSOCKET_PROTOCOL.md) | Player-to-hub game relay carrier, messages, routing, and reconnect semantics |
+| [`PEER_PROTOCOL.md`](PEER_PROTOCOL.md) | Reliable peer framing and authoritative peer message semantics |
 | [`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md) | React frontend, WASM bridge, hub relay, session persistence |
 | [`CLVM_DOS.md`](CLVM_DOS.md) | CLVM denial-of-service vectors: ladder bombs, execution cost, trust categories per call site, solution constraints |
 

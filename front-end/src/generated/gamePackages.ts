@@ -1,5 +1,5 @@
 // Generated from games/registry.json. Do not edit.
-import { defineGamePackage } from '../../../games/host';
+import { defineGamePackage } from '../lib/gamePackage';
 import handProposal0 from '../../../games/calpoker/ui/handProposal';
 import { HandProposalForm as HandProposalForm0 } from '../../../games/calpoker/ui/handProposalForm';
 import { play as play0 } from '../../../games/calpoker/ui/play';

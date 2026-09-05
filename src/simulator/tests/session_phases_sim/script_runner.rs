@@ -220,31 +220,24 @@ pub(in super::super) fn run_script(
                             SimScriptAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
                             _ => 15,
                         };
-                        let parameters = if package_key == "calpoker" {
-                            let node = (Amount::new(100), (my_turn, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                        let parameters = if package_key == "calpoker" || package_key == "krunk" {
+                            Program::from_bytes(&[0x80])
                         } else if package_key == "spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (my_turn, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else if package_key == "debug" {
-                            let node = (
-                                Amount::new(100),
-                                (Amount::new(100), (my_turn, (extras.clone(), ()))),
-                            )
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else {
                             extras.clone()
                         };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
                         harness.propose_games(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: my_turn,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(timeout),
                                 parameters,
@@ -257,9 +250,12 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: krunk_type.clone(),
                                 timeout: Timeout::new(15),
-                                parameters: Program::from_hex("64")?,
+                                parameters: ProposalParameters::Null,
                             }],
                         )?;
                         ()
@@ -269,6 +265,12 @@ pub(in super::super) fn run_script(
                             gid_diag(&test_name, action_idx, "AcceptProposal", gid, gid);
                         }
                         if harness.accept_proposal(allocator, *who, gid)? {
+                            advance_script = false;
+                        }
+                        ()
+                    }
+                    SimScriptAction::MalformedAcceptProposalGroup(who, local, wire) => {
+                        if !harness.malformed_accept_proposal_group(allocator, *who, local, wire)? {
                             advance_script = false;
                         }
                         ()
@@ -308,6 +310,20 @@ pub(in super::super) fn run_script(
                         harness.tamper_next_batch_signature(*who);
                         let entropy = rng.random();
                         harness.make_move(allocator, *who, gid, readable.clone(), entropy)?;
+                        ()
+                    }
+                    SimScriptAction::TerminalMismatchMove(who, gid, readable) => {
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "TerminalMismatchMove", gid, gid);
+                        }
+                        let entropy = rng.random();
+                        harness.sabotage_move_terminal(
+                            allocator,
+                            *who,
+                            gid,
+                            readable.clone(),
+                            entropy,
+                        )?;
                         ()
                     }
                     SimScriptAction::Cheat(who, gid, cheat_share) => {
@@ -400,22 +416,21 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::WrongParityProposal(who) => {
                         let parameters = if package_key == "calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            Program::from_bytes(&[0x80])
                         } else if package_key == "spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else {
                             extras.clone()
                         };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
                         harness.propose_games(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,
@@ -429,51 +444,107 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::InvalidProposalParameters(who) => {
                         let parameters = if package_key == "calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            Program::from_bytes(&[0x80])
                         } else if package_key == "spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else {
                             extras.clone()
                         };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
                         harness.propose_games(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
                         )?;
                         harness.mutate_last_proposal(allocator, *who, |wire| {
-                            wire.start.parameters = Program::from_hex("80")?;
+                            wire.start.parameters = if package_key == "calpoker" {
+                                ProposalParameters::Integer(1)
+                            } else {
+                                ProposalParameters::Null
+                            };
+                            Ok(())
+                        })?;
+                        ()
+                    }
+                    SimScriptAction::InvalidProposalArguments(who) => {
+                        let parameters = if package_key == "calpoker" {
+                            ProposalParameters::Null
+                        } else if package_key == "spacepoker" {
+                            ProposalParameters::from_program_for_testing(allocator, extras)?
+                        } else {
+                            ProposalParameters::from_program_for_testing(allocator, extras)?
+                        };
+                        harness.propose_games(
+                            allocator,
+                            *who,
+                            &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
+                                game_type: proposal_type.clone(),
+                                timeout: Timeout::new(15),
+                                parameters,
+                            }],
+                        )?;
+                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                            wire.members[0].player_a_contribution =
+                                wire.members[0].player_a_contribution.clone() + Amount::new(1);
+                            Ok(())
+                        })?;
+                        ()
+                    }
+                    SimScriptAction::InvalidProposalValidationInfoHash(who) => {
+                        let parameters = if package_key == "calpoker" {
+                            Program::from_bytes(&[0x80])
+                        } else {
+                            extras.clone()
+                        };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
+                        harness.propose_games(
+                            allocator,
+                            *who,
+                            &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
+                                game_type: proposal_type.clone(),
+                                timeout: Timeout::new(15),
+                                parameters,
+                            }],
+                        )?;
+                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                            wire.members[0].initial_validation_info_hash =
+                                Hash::from_bytes([0x5a; 32]);
                             Ok(())
                         })?;
                         ()
                     }
                     SimScriptAction::InvalidProposalTimeout(who) => {
                         let parameters = if package_key == "calpoker" {
-                            let node = (Amount::new(100), (true, ()))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            Program::from_bytes(&[0x80])
                         } else if package_key == "spacepoker" {
-                            let node = (Amount::new(100), (extras.clone(), (true, ())))
-                                .to_clvm(allocator)
-                                .into_gen()?;
-                            Program::from_nodeptr(allocator, node)?
+                            extras.clone()
                         } else {
                             extras.clone()
                         };
+                        let parameters =
+                            ProposalParameters::from_program_for_testing(allocator, &parameters)?;
                         harness.propose_games(
                             allocator,
                             *who,
                             &[GameProposal {
+                                player_a_contribution: Amount::new(100),
+                                player_b_contribution: Amount::new(100),
+                                sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
                                 parameters,

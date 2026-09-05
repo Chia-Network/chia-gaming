@@ -1,5 +1,5 @@
 import { CoinRecord } from './rpc/CoinRecord';
-import { Program } from 'clvm-lib';
+import type { ProposalParameterValue } from '@games/host';
 import { jsonStringify } from '../util/jsonSafe';
 import type * as WasmContract from '../../../wasm/contract';
 
@@ -36,7 +36,7 @@ const WASM_NOTIFICATION_TAGS = new Set([
   'GameStatus',
   'GameSettled',
   'ProposalMade',
-  'ProposalAccepted',
+  'ProposalAcceptedGroup',
   'ProposalCancelled',
   'InsufficientBalance',
   'MoveRejected',
@@ -142,7 +142,10 @@ export interface ProposeGameParams {
   /** First generated member's initial validation puzzle hash (32-byte hex). */
   game_type: ProtocolGameId;
   timeout: bigint;
-  parameters: Program | null;
+  player_a_contribution: bigint;
+  player_b_contribution: bigint;
+  sender_is_player_a: boolean;
+  parameters: ProposalParameterValue;
 }
 
 type IChiaIdentity = WasmContract.IChiaIdentity;
@@ -185,7 +188,7 @@ export const CHANNEL_SEMANTIC_PHASES = [
 ] as const;
 
 export type ChannelSemanticPhase = WasmContract.ChannelSemanticPhase;
-export type ProposalAcceptedPayload = WasmContract.ProposalAcceptedPayload;
+export type ProposalAcceptedGroupPayload = WasmContract.ProposalAcceptedGroupPayload;
 export type ProposalMadePayload = WasmContract.ProposalMadePayload;
 export type MoveRejectedPayload = WasmContract.MoveRejectedPayload;
 export type ActionFailedPayload = WasmContract.ActionFailedPayload;
@@ -197,7 +200,7 @@ export type WasmEvent =
   | {
       type: 'game-action-error';
       gameId: string;
-      action: 'make-move' | 'accept-settlement' | 'feature-state';
+      action: 'make-move' | 'accept-settlement';
       error: string;
     }
   | { type: 'durability-error'; error: string }
@@ -221,7 +224,6 @@ export interface WasmConnection {
   game_session_serialization_schema: () => number;
   cache_file: (name: string, data: Uint8Array) => void;
   registered_game_packages: () => Array<{ key: string; id: string }>;
-  warm_game_package: (key: string) => { key: string; id: string };
 
   // Blockchain
   set_funding_coin: (cid: number, coinstring: string) => WasmResult;
@@ -246,11 +248,7 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  propose_games: (
-    cid: number,
-    games: Omit<ProposeGameParams, 'parameters'>[],
-    parameters_list: Uint8Array[],
-  ) => WasmResult;
+  propose_games: (cid: number, games: ProposeGameParams[]) => WasmResult;
   accept_proposal: (cid: number, game_id: string) => WasmResult;
   accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
   cancel_proposal: (cid: number, game_id: string) => WasmResult;
@@ -296,11 +294,8 @@ export class ChiaGame {
     this.session = sessionId;
   }
 
-  propose_games(
-    games: Omit<ProposeGameParams, 'parameters'>[],
-    parameters_list: Uint8Array[],
-  ): WasmResult {
-    return this.wasm.propose_games(this.session, games, parameters_list);
+  propose_games(games: ProposeGameParams[]): WasmResult {
+    return this.wasm.propose_games(this.session, games);
   }
 
   accept_proposal(game_id: string): WasmResult {
@@ -454,6 +449,21 @@ export interface WatchReport {
 }
 
 export interface PeerConnectionResult {
+  /**
+   * Shared durable reliability state. Real browser peer sessions expose this
+   * object before negotiation and SessionController continues using the same
+   * object after acceptance.
+   */
+  reliableState?: {
+    sessionId: string;
+    messageNumber: bigint;
+    remoteNumber: bigint;
+    unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
+    disposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
+  };
+  reliableTransport?: unknown;
+  persistInboundSessionReject?: (sessionId: string, remoteNumber: bigint) => Promise<void>;
+  onSessionReject?: (sessionId: string, remoteNumber: bigint) => void;
   /** Returns false when the hub WS is not OPEN (frame was not sent). */
   sendMessage: (msgno: number, input: Uint8Array) => boolean;
   /** Returns false when the hub WS is not OPEN (frame was not sent). */
@@ -462,6 +472,7 @@ export interface PeerConnectionResult {
   sendKeepalive: () => boolean;
   hostLog: (msg: string) => void;
   close: () => void;
+  receivePolicy?: import('../lib/session/receivePolicy').ReadonlySessionReceivePolicy;
 }
 
 export interface BlockchainReport {

@@ -37,7 +37,7 @@ src/
   common/           — Shared types, CLVM utilities, standard coin logic
   shutdown.rs       — Clean shutdown conditions
 
-games/              — Game packages (`<key>/{clsp,rust,ui}`) and `host/`
+games/              — Game packages (`<key>/{clsp,ui}` with optional `rust/`) and `host/`
   registry.json     — Only catalog (`production` vs `test`)
 clsp/
   referee/onchain/  — Referee puzzle (on-chain arbitration)

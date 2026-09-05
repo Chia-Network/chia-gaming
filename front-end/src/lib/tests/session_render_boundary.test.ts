@@ -5,8 +5,9 @@ import { destroySessionController } from '../../hooks/blobSingleton';
 import { useSessionControllerAfterCommit } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
 import type { PeerConnectionResult } from '../../types/ChiaGaming';
-import { requireLiveGameHandSource, type LiveGamePort } from '@games/host';
+import type { LiveGamePort } from '@games/host';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
+import { createRegisteredGameHand } from '../gameRegistry';
 import {
   projectTerminalSessionResult,
   useTerminalSessionPresentation,
@@ -119,7 +120,7 @@ describe('GameSession render boundary', () => {
     const liveDismissGame = jest.fn();
     const live = {
       handSource: {
-        interactionMode: 'live',
+        frozen: false,
         handState: model.game.handState,
         port: { nerf: liveNerf } as unknown as LiveGamePort,
       },
@@ -145,10 +146,47 @@ describe('GameSession render boundary', () => {
     act(() => renderer!.root.findByType('button').props.onClick());
     expect(observed!.gameQueue).toHaveLength(0);
 
-    expect(() => requireLiveGameHandSource(observed!.handSource).nerf()).toThrow(
-      'Protocol commands require a live game hand source',
-    );
+    expect(observed!.handSource.frozen).toBe(true);
+    expect(observed!.handSource).not.toHaveProperty('port');
     expect(liveNerf).not.toHaveBeenCalled();
     expect(liveDismissGame).not.toHaveBeenCalled();
+  });
+
+  it('projects the finalized model hand instead of a surviving live hand', () => {
+    const finalizedHand = createRegisteredGameHand('calpoker', {
+      parameters: null,
+      members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: false }],
+    });
+    const survivingLiveHand = createRegisteredGameHand('calpoker', {
+      parameters: null,
+      members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: true }],
+    });
+    const model = createSessionModel({
+      channel: {
+        status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
+      },
+      game: {
+        activeGameType: 'calpoker',
+        currentHandIds: ['7'],
+        currentHandOrigin: 'local',
+        handState: { gameType: 'calpoker', state: finalizedHand.getState() },
+      },
+    });
+    const live = {
+      handSource: {
+        frozen: false,
+        hand: survivingLiveHand,
+        port: {} as LiveGamePort,
+      },
+    } as unknown as UseGameSessionResult;
+
+    expect(survivingLiveHand.getState()).not.toEqual(finalizedHand.getState());
+
+    const projected = projectTerminalSessionResult(live, { model, iStarted: true });
+
+    expect(projected.handSource.frozen).toBe(true);
+    expect(projected.handSource).not.toHaveProperty('port');
+    expect(projected.handSource.hand).not.toBe(survivingLiveHand);
+    expect(projected.handSource.hand?.getState()).toEqual(model.game.handState?.state);
   });
 });

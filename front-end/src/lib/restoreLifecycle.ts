@@ -210,6 +210,60 @@ export function shouldCancelOnPeerUnreachable(
   return isPreActiveChannelStatus(channelState);
 }
 
+export type HubPlayerIdRemapAction = 'none' | 'cancel-attempt' | 'go-on-chain' | 'ignore';
+
+export function hubPlayerIdRemapAction(
+  previousPlayerId: string | undefined,
+  registeredPlayerId: string,
+  savedPhase: SessionSave['phase'] | undefined,
+  sessionPhase: SessionPhase,
+  channelState: string | null | undefined,
+  hasPairingToken = false,
+  abandoning = false,
+): HubPlayerIdRemapAction {
+  if (!previousPlayerId || previousPlayerId === registeredPlayerId) return 'none';
+  if (savedPhase === 'pre-handshake') return 'cancel-attempt';
+  if (savedPhase === 'live') {
+    if (
+      sessionPhase === 'on-chain' ||
+      sessionPhase === 'resolved' ||
+      channelState === 'ShutdownTransactionPending' ||
+      channelState === 'GoingOnChain' ||
+      channelState === 'Unrolling' ||
+      channelState === 'ResolvedClean' ||
+      channelState === 'ResolvedUnrolled' ||
+      channelState === 'ResolvedStale' ||
+      channelState === 'Failed'
+    ) {
+      return 'ignore';
+    }
+    return 'go-on-chain';
+  }
+  return hasPairingToken && shouldCancelOnPeerUnreachable(sessionPhase, channelState, abandoning)
+    ? 'cancel-attempt'
+    : 'none';
+}
+
+export type DeferredHubRemapEscalationAction = 'wait' | 'discard' | 'escalate';
+
+export function shouldDeferHubRemapEscalation(
+  restoring: boolean,
+  restoreStatus: RestoreStatus | undefined,
+): boolean {
+  return restoring && restoreStatus !== 'restored' && restoreStatus !== 'failed';
+}
+
+export function deferredHubRemapEscalationAction(
+  pendingPairingToken: string | null,
+  currentPairingToken: string | undefined,
+  restoreStatus: RestoreStatus,
+): DeferredHubRemapEscalationAction {
+  if (pendingPairingToken === null) return 'wait';
+  if (restoreStatus === 'failed') return 'discard';
+  if (restoreStatus !== 'restored') return 'wait';
+  return pendingPairingToken === currentPairingToken ? 'escalate' : 'discard';
+}
+
 /**
  * Wallet or hub disconnect should hard-cancel only a real pre-active
  * matchmaking attempt. A pending advisory/proposal alone is not enough — after

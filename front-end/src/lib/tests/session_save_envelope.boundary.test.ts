@@ -21,7 +21,7 @@ describe('save boundary enforcement', () => {
   it('deletes an obsolete v11 envelope without migration and keeps the marker', async () => {
     markSavedSession();
     await writeSessionRecord({
-      version: 11n,
+      version: 22n,
       playerId: 'old-player',
       serializedGameSession: new Uint8Array([1, 2, 3]),
     } as unknown as Parameters<typeof writeSessionRecord>[0]);
@@ -90,6 +90,7 @@ describe('save boundary enforcement', () => {
           their_contribution: '20',
           game_timeout: '15',
           game_type: 'calpoker',
+          parameters: null,
         },
       }),
     );
@@ -127,7 +128,7 @@ describe('save boundary enforcement', () => {
     errorSpy.mockRestore();
   });
 
-  it('deletes a malformed current-v15 metadata envelope read from IndexedDB', async () => {
+  it('deletes a malformed current-v16 metadata envelope read from IndexedDB', async () => {
     markSavedSession();
     await writeSessionRecord(
       baseSave({
@@ -152,7 +153,7 @@ describe('save boundary enforcement', () => {
   });
 
   it('catches and deletes malformed raw IndexedDB bytes', async () => {
-    const open = indexedDB.open('chia-gaming-session', 1);
+    const open = indexedDB.open('chia-gaming-session');
     await new Promise<void>((resolve, reject) => {
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {
@@ -179,7 +180,7 @@ describe('save boundary enforcement', () => {
     const raw = activeSave();
     if (raw.phase !== 'live') throw new Error('expected live fixture');
     Reflect.deleteProperty(raw.presentation.gameInstances['game-1'].terminal, 'label');
-    const open = indexedDB.open('chia-gaming-session', 1);
+    const open = indexedDB.open('chia-gaming-session');
     await new Promise<void>((resolve, reject) => {
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {

@@ -23,7 +23,7 @@ mod gaming_wasm {
     use chia_gaming::common::types::{
         convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend,
         CoinString, CoinsetCoin, CoinsetSpendBundle,
-        CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, PublicKey,
+        CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, ProgramRef, PublicKey,
         Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
@@ -39,8 +39,7 @@ mod gaming_wasm {
     };
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
-    use chia_gaming::session_phases::proposal::GameProposal;
-    use chia_gaming::session_phases::types::GameFactory;
+    use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -69,7 +68,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 6;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 7;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -139,7 +138,7 @@ mod gaming_wasm {
     }
 
     struct GameConfigPartial {
-        game_types: BTreeMap<GameType, GameFactory>,
+        game_types: BTreeMap<GameType, ProgramRef>,
         have_potato: bool,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
@@ -729,6 +728,10 @@ mod gaming_wasm {
         // First generated member's initial validation puzzle hash, as 32-byte hex.
         game_type: String,
         timeout: u64,
+        player_a_contribution: u64,
+        player_b_contribution: u64,
+        sender_is_player_a: bool,
+        parameters: ProposalParameters,
     }
 
     fn game_id_to_string(id: &GameID) -> String {
@@ -759,7 +762,7 @@ mod gaming_wasm {
     }
 
     /// Bootstrap metadata: catalog `key` plus first-member validation puzzle hash `id`.
-    /// Registration discovers `id` by running the factory with representative parameters.
+    /// Package build discovers `id` by running the factory with representative parameters.
     /// Peer/WASM wire uses `id` (the hash). The JS session model and saves use catalog keys.
     #[wasm_bindgen]
     pub fn registered_game_packages() -> Result<JsValue, JsValue> {
@@ -775,38 +778,22 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&list).map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
-    /// Probe one production factory into the process-wide cache. Idempotent.
-    /// The host yields between calls so the browser event loop can stay responsive.
     #[wasm_bindgen]
-    pub fn warm_game_package(key: String) -> Result<JsValue, JsValue> {
-        let mut allocator = AllocEncoder::new();
-        let id = game_collection::warm_production_package(&mut allocator, &key)
-            .map_err(|e| JsValue::from_str(&e))?;
-        serde_wasm_bindgen::to_value(&JsPackageIdentity {
-            key,
-            id: id.to_string(),
-        })
-        .map_err(|e| JsValue::from_str(&format!("{e}")))
-    }
-
-    #[wasm_bindgen]
-    pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
+    pub fn propose_games(cid: i32, games: JsValue) -> Result<JsValue, JsValue> {
         let js_games: Vec<JsGameProposal> =
             serde_wasm_bindgen::from_value(games).into_js()?;
-        let params_arr: Vec<Vec<u8>> =
-            serde_wasm_bindgen::from_value(parameters_list).into_js()?;
-        if js_games.len() != params_arr.len() {
-            return Err(JsValue::from_str("games and parameters_list must have the same length"));
-        }
         with_game(cid, move |cradle: &mut JsGameSession| {
             let mut game_starts = Vec::with_capacity(js_games.len());
-            for (g, p) in js_games.iter().zip(params_arr.iter()) {
+            for g in &js_games {
                 let game_type = parse_game_type_hex(&g.game_type)
                     .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
                 game_starts.push(GameProposal {
+                    player_a_contribution: Amount::new(g.player_a_contribution),
+                    player_b_contribution: Amount::new(g.player_b_contribution),
+                    sender_is_player_a: g.sender_is_player_a,
                     game_type,
                     timeout: Timeout::new(g.timeout),
-                    parameters: Program::from_bytes(p),
+                    parameters: g.parameters.clone(),
                 });
             }
             let ids = cradle.cradle.propose_games(

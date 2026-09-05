@@ -1,86 +1,45 @@
 import { lazy, useCallback } from 'react';
 import {
-  EMPTY_GAME_TERMINAL_MODEL,
-  gameHandState,
-  gameHandSourceFromMountView,
-  type GameHandSource,
   type GameMountRegistration,
-  type GameTerminalModel,
+  type GameMountView,
 } from '../../host';
-import { useGameHost } from '../../host/ui';
-import { spacepokerStateCodec } from './serialize';
+import type { SpacepokerHand } from './serialize';
+import { formatSpacepokerAmount } from './formatting';
 
 const SpacePoker = lazy(() => import('./SpacePoker'));
 
 export interface SpacepokerLiveMountProps {
-  handSource: GameHandSource;
-  gameId: string;
-  betSize: bigint;
-  appendGameLog?: (line: string) => void;
-  myName?: string;
-  opponentName?: string;
-  terminal: GameTerminalModel;
+  view: GameMountView<SpacepokerHand>;
 }
 
 export function SpacepokerLiveMount(props: SpacepokerLiveMountProps) {
-  const {
-    handSource,
-    gameId,
-    betSize,
-    appendGameLog,
-    myName,
-    opponentName,
-    terminal,
-  } = props;
-  const { formatAmount } = useGameHost();
-  const handState = spacepokerStateCodec.decode(gameHandState(handSource));
-  if (!handState) {
-    throw new Error('Space Poker mount requires initialized durable game state');
-  }
+  const { view } = props;
+  const handState = view.hand.getState();
+  const betSize = handState.perPlayerStake * 2n;
   const unitSizeMojosValue = handState.unitSizeMojos;
   const stackSize = betSize / 2n / unitSizeMojosValue;
   const handleGameLog = useCallback(
     (lines: string[]) => {
-      if (!appendGameLog) return;
-      appendGameLog(`Space Poker ${stackSize} (${formatAmount(unitSizeMojosValue)})`);
-      lines.forEach(appendGameLog);
-      appendGameLog('');
+      if (view.frozen) return;
+      view.appendGameLog(
+        `Space Poker ${stackSize} (${formatSpacepokerAmount(unitSizeMojosValue)})`,
+      );
+      lines.forEach(view.appendGameLog);
+      view.appendGameLog('');
     },
-    [appendGameLog, formatAmount, stackSize, unitSizeMojosValue],
+    [view, stackSize, unitSizeMojosValue],
   );
 
   return (
     <SpacePoker
-      handSource={handSource}
-      gameId={gameId}
-      betSize={betSize.toString()}
-      unitSizeMojos={unitSizeMojosValue.toString()}
+      view={view}
       onGameLog={handleGameLog}
-      myName={myName}
-      opponentName={opponentName}
-      terminal={terminal}
     />
   );
 }
 
-export const play: GameMountRegistration = {
+export const play: GameMountRegistration<SpacepokerHand> = {
   render(view) {
-    const gameId =
-      view.activeIds[0] ?? view.lastDisplayedId ?? view.currentHandIds[0] ?? 'finished';
-    const amount = view.instances[gameId]?.amount;
-    if (amount === undefined) {
-      throw new Error(`Space Poker is missing the accepted amount for game ${gameId}`);
-    }
-    return (
-      <SpacepokerLiveMount
-        handSource={gameHandSourceFromMountView(view)}
-        gameId={gameId}
-        betSize={BigInt(amount)}
-        appendGameLog={view.frozen ? undefined : view.appendGameLog}
-        terminal={view.instances[gameId]?.terminal ?? EMPTY_GAME_TERMINAL_MODEL}
-        myName={view.myName}
-        opponentName={view.opponentName}
-      />
-    );
+    return <SpacepokerLiveMount view={view} />;
   },
 };

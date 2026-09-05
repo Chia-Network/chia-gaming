@@ -20,8 +20,7 @@ import { HandDisplay, MovingCard } from './components';
 import { SuitName } from '../types/CardValueSuit';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from '../types/CaliforniapokerProps';
 import GameBottomBar from './components/GameBottomBar';
-import { settlementByUs } from '../../../host';
-import { calpokerSettlementVerb, calpokerTimeoutBadge } from '../settlement';
+import { calpokerSettlementVerb, calpokerTimeoutBadge, settlementByUs } from '../settlement';
 import { shouldRestoreCalpokerSelection } from '../useCalpokerHand';
 import { projectCalpokerFinalDisplay } from '../outcome';
 
@@ -57,10 +56,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   myName,
   opponentName,
   terminalOutcome,
-  interactionMode = 'live',
+  frozen = false,
   error,
 }) => {
-  const interactive = interactionMode === 'live';
+  const interactive = !frozen;
   const settlementByUsFlag = terminalOutcome == null ? null : settlementByUs(terminalOutcome);
   const settlementVerb = terminalOutcome ? calpokerSettlementVerb(terminalOutcome) : 'timed out';
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
@@ -590,7 +589,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     <div
       ref={wrapperRef}
       data-calpoker-game-state={gameState}
-      data-calpoker-interaction-mode={interactionMode}
+      data-calpoker-interaction-mode={frozen ? 'terminal' : 'live'}
       className="relative flex flex-col w-full text-canvas-text"
     >
       {error && (

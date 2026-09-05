@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Generates front-end/src/generated/gamePackages.ts from games/registry.json.
-import { mkdirSync, readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,19 +12,12 @@ if (!Array.isArray(production) || production.length === 0) {
   throw new Error('games/registry.json production list is empty');
 }
 
-function factoryHex(key) {
-  return `games/${key}/clsp/factory_${key}_factory.hex`;
-}
-
-function extraPresets(key) {
-  const clsp = join(ROOT, 'games', key, 'clsp');
-  try {
-    return readdirSync(clsp)
-      .filter((name) => name.endsWith('.dat'))
-      .map((name) => `games/${key}/clsp/${name}`);
-  } catch {
-    return [];
+function factoryBinary(key) {
+  const factory = `games/${key}/clsp/factory_prepared.clvm.bin`;
+  if (!existsSync(join(ROOT, factory))) {
+    throw new Error(`Missing ${factory}; run ./cb.sh to build game factories`);
   }
+  return factory;
 }
 
 function tsString(value) {
@@ -40,7 +33,7 @@ function tsArray(values, multiline = false) {
   return `[\n${values.map((value) => `  ${value},`).join('\n')}\n]`;
 }
 
-const presetFiles = production.flatMap((key) => [factoryHex(key), ...extraPresets(key)]);
+const presetFiles = production.map(factoryBinary);
 function relTo(key, file) {
   const rel = relative(join(FE, '../src/generated'), join(ROOT, 'games', key, 'ui', file))
     .replace(/\\/g, '/')
@@ -70,8 +63,8 @@ writeFileSync(
 export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;
 export type CatalogGameType = (typeof PRODUCTION_PACKAGE_KEYS)[number];
 export const CORE_PRESET_FILES = [
-  'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
-  'clsp/referee/onchain/referee.hex',
+  'clsp/unroll/unroll_puzzle_state_channel_unrolling.clvm.bin',
+  'clsp/referee/onchain/referee.clvm.bin',
 ] as const;
 export const GAME_PRESET_FILES = ${presetList} as const;
 export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
@@ -81,7 +74,7 @@ export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
 writeFileSync(
   join(destDir, 'gamePackages.ts'),
   `// Generated from games/registry.json. Do not edit.
-import { defineGamePackage } from '../../../games/host';
+import { defineGamePackage } from '../lib/gamePackage';
 ${imports}
 
 export const PRODUCTION_PACKAGE_KEYS = ${productionList} as const;

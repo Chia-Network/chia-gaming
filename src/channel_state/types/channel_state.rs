@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{StateUpdateSignatures, UnrollCoin};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::load_clvm::read_hex_puzzle;
+use crate::common::load_clvm::read_binary_puzzle;
 use crate::common::standard_coin::get_standard_coin_puzzle;
 use crate::common::types::{
     Aggsig, AllocEncoder, Error, Hash, PrivateKey, ProgramRef, Puzzle, PuzzleHash, Sha256tree,
@@ -86,10 +86,11 @@ impl<'a> ChannelEnv<'a> {
         allocator: &'a mut AllocEncoder,
         agg_sig_me_additional_data: &Hash,
     ) -> Result<ChannelEnv<'a>, Error> {
-        let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
-        let unroll_puzzle = read_hex_puzzle(
+        let referee_coin_puzzle =
+            read_binary_puzzle(allocator, "clsp/referee/onchain/referee.clvm.bin")?;
+        let unroll_puzzle = read_binary_puzzle(
             allocator,
-            "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
+            "clsp/unroll/unroll_puzzle_state_channel_unrolling.clvm.bin",
         )?;
         let standard_puzzle = get_standard_coin_puzzle(allocator)?;
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);

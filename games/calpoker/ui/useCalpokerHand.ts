@@ -1,20 +1,17 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
 import type { CalpokerOutcomeShape } from './outcome';
-import type { GameHandOrigin, GameHandSource, GameTerminalModel } from '../../host';
-import { gameHandState, requireLiveGameHandSource } from '../../host';
+import type { GameMountView, SettlementOutcome } from '../../host';
+import { requireLiveGameMount } from '../../host';
 import {
-  calpokerStateCodec,
   type CalpokerDisplaySnapshot,
+  type CalpokerHand,
   type CalpokerHandState,
 } from './serialize';
 
 export type { CalpokerDisplaySnapshot, CalpokerHandState } from './serialize';
 
-type LocalGameCommand =
-  | { type: 'make-move'; readable: Program | null }
-  | { type: 'accept-settlement' }
-  | { type: 'cheat'; moverShare: bigint };
+type LocalGameCommand = { type: 'make-move'; readable: Program | null };
 
 export interface UseCalpokerHandResult {
   playerHand: bigint[];
@@ -24,10 +21,8 @@ export interface UseCalpokerHandResult {
   setHandOrder: (playerHand: bigint[], opponentHand?: bigint[]) => void;
   moveNumber: bigint;
   outcome: CalpokerOutcomeShape<bigint> | undefined;
-  error: CalpokerHandState['error'];
-  terminalOutcome: GameTerminalModel['outcome'];
+  terminalOutcome: SettlementOutcome | null;
   handleMakeMove: () => void;
-  handleCheat: () => void;
   saveDisplaySnapshot: (snapshot: CalpokerDisplaySnapshot) => void;
   initialDisplaySnapshot: CalpokerDisplaySnapshot | undefined;
 }
@@ -60,45 +55,31 @@ export function calpokerResponderFinishesAtReveal(iStarted: boolean): boolean {
 }
 
 export function useCalpokerHand(
-  handSource: GameHandSource,
-  gameId: string,
-  iStarted: boolean,
-  terminal: GameTerminalModel,
-  handOrigin: GameHandOrigin = 'fresh',
+  view: GameMountView<CalpokerHand>,
 ): UseCalpokerHandResult {
-  const interactive = handSource.interactionMode === 'live';
-  const handState = calpokerStateCodec.decode(gameHandState(handSource));
-  if (!handState) {
-    throw new Error('California Poker mount requires initialized durable game state');
-  }
-  const handSourceRef = useRef(handSource);
-  const gameIdRef = useRef(gameId);
+  const interactive = !view.frozen;
+  const handState = view.hand.getState();
+  const viewRef = useRef(view);
   const pendingPlayRef = useRef(false);
-  const restoredRef = useRef(handOrigin === 'restored');
   const autoSubmissionRef = useRef<string | null>(null);
   const suppressInitialOutcomeRef = useRef(
-    handOrigin !== 'fresh' &&
-      handState.outcome !== undefined &&
+    handState.outcome !== undefined &&
       handState.displaySnapshot?.gameState === 'final',
   );
 
-  handSourceRef.current = handSource;
-  gameIdRef.current = gameId;
+  viewRef.current = view;
 
   const currentState = useCallback((): CalpokerHandState => {
-    const current = calpokerStateCodec.decode(gameHandState(handSourceRef.current));
-    if (!current) {
-      throw new Error('California Poker action requires initialized durable game state');
-    }
-    return current;
+    return viewRef.current.hand.getState();
   }, []);
 
   const commitState = useCallback(
     (update: (current: CalpokerHandState) => CalpokerHandState): void => {
-      const controller = requireLiveGameHandSource(handSourceRef.current);
-      controller.dispatch({ type: 'update-local-state', state: update(currentState()) });
+      const live = requireLiveGameMount(viewRef.current);
+      live.hand.update(update);
+      live.port.dispatch({ type: 'state-changed' });
     },
-    [currentState],
+    [],
   );
 
   const commitLocalAction = useCallback(
@@ -106,34 +87,20 @@ export function useCalpokerHand(
       update: (current: CalpokerHandState) => CalpokerHandState,
       command: LocalGameCommand,
     ): void => {
-      const controller = requireLiveGameHandSource(handSourceRef.current);
-      const next = { ...update(currentState()), error: null };
-      controller.dispatch(
-        command.type === 'make-move'
-          ? {
-              type: 'make-move',
-              gameId: gameIdRef.current,
-              readable: command.readable,
-              state: next,
-            }
-          : command.type === 'accept-settlement'
-            ? { type: 'accept-settlement', gameId: gameIdRef.current, state: next }
-            : {
-                type: 'cheat',
-                gameId: gameIdRef.current,
-                moverShare: command.moverShare,
-                state: next,
-              },
-      );
+      const live = requireLiveGameMount(viewRef.current);
+      live.hand.update(update);
+      live.port.dispatch({
+        type: 'make-move',
+        memberIndex: 0,
+        readable: command.readable,
+      });
     },
-    [currentState],
+    [],
   );
 
   const submitMove1 = useCallback(() => {
-    const controller = requireLiveGameHandSource(handSourceRef.current);
-    if (!controller.isChannelReady()) return;
-    const gid = gameIdRef.current;
-    if (!gid) return;
+    const live = requireLiveGameMount(viewRef.current);
+    if (!live.port.isChannelReady()) return;
     const current = currentState();
     if ((current.cardSelections ?? []).length !== 4) return;
     const cards = current.cardSelections ?? [];
@@ -145,15 +112,12 @@ export function useCalpokerHand(
   }, [commitLocalAction, currentState]);
 
   const handleMakeMove = useCallback(() => {
-    const controller = requireLiveGameHandSource(handSourceRef.current);
-    if (!controller.isChannelReady()) return;
-    const gid = gameIdRef.current;
-    if (!gid) return;
-
+    const live = requireLiveGameMount(viewRef.current);
+    if (!live.port.isChannelReady()) return;
     const current = currentState();
     const handFinished =
-      terminal.outcome !== null ||
-      (current.outcome !== undefined && calpokerResponderFinishesAtReveal(iStarted));
+      current.settlementOutcome !== null ||
+      (current.outcome !== undefined && calpokerResponderFinishesAtReveal(current.iStarted));
     if (handFinished) return;
     const currentMove = current.moveNumber;
 
@@ -175,23 +139,19 @@ export function useCalpokerHand(
         readable: null,
       });
     }
-  }, [commitLocalAction, currentState, iStarted, submitMove1, terminal.outcome]);
+  }, [commitLocalAction, currentState, submitMove1]);
 
   // Autofire moves 0 and 2; auto-submit queued move 1
   useEffect(() => {
     if (!interactive) return;
-    if (restoredRef.current) {
-      restoredRef.current = false;
-      return;
-    }
     const handFinished =
-      terminal.outcome !== null ||
-      (handState.outcome !== undefined && calpokerResponderFinishesAtReveal(iStarted));
+      handState.settlementOutcome !== null ||
+      (handState.outcome !== undefined && calpokerResponderFinishesAtReveal(handState.iStarted));
     if (handFinished || !handState.isPlayerTurn) return;
-    const controller = requireLiveGameHandSource(handSourceRef.current);
-    if (!controller.isChannelReady() || !gameId) return;
+    const live = requireLiveGameMount(viewRef.current);
+    if (!live.port.isChannelReady()) return;
     const m = handState.moveNumber;
-    const submissionKey = `${gameId}:${m}`;
+    const submissionKey = `0:${m}`;
     if (autoSubmissionRef.current === submissionKey) return;
     if (shouldAutoFireCalpokerMove(handFinished, handState.isPlayerTurn, m)) {
       autoSubmissionRef.current = submissionKey;
@@ -201,29 +161,16 @@ export function useCalpokerHand(
       submitMove1();
     }
   }, [
-    gameId,
-    handSource,
+    view,
     handState.isPlayerTurn,
     handState.moveNumber,
     handState.outcome,
-    iStarted,
     interactive,
     handleMakeMove,
     submitMove1,
-    terminal.outcome,
+    handState.iStarted,
+    handState.settlementOutcome,
   ]);
-
-  const handleCheat = useCallback(() => {
-    requireLiveGameHandSource(handSourceRef.current);
-    const gid = gameIdRef.current;
-    if (!gid) return;
-    // A cheat is still a local move candidate, so it uses the same game-state
-    // transition as a normal move while the host handles protocol execution.
-    commitLocalAction((current) => ({ ...current, isPlayerTurn: false }), {
-      type: 'cheat',
-      moverShare: 0n,
-    });
-  }, [commitLocalAction]);
 
   const setCardSelections = useCallback(
     (selectionsOrFn: bigint[] | ((prev: bigint[]) => bigint[])) => {
@@ -255,7 +202,7 @@ export function useCalpokerHand(
 
   const saveDisplaySnapshot = useCallback(
     (snapshot: CalpokerDisplaySnapshot) => {
-      requireLiveGameHandSource(handSourceRef.current);
+      requireLiveGameMount(viewRef.current);
       commitState((current) => ({ ...current, displaySnapshot: snapshot }));
     },
     [commitState],
@@ -269,10 +216,8 @@ export function useCalpokerHand(
     setHandOrder,
     moveNumber: handState.moveNumber,
     outcome: suppressInitialOutcomeRef.current ? undefined : handState.outcome,
-    error: handState.error,
-    terminalOutcome: terminal.outcome,
+    terminalOutcome: handState.settlementOutcome,
     handleMakeMove,
-    handleCheat,
     saveDisplaySnapshot,
     initialDisplaySnapshot: handState.displaySnapshot,
   };

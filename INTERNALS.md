@@ -342,33 +342,35 @@ they are only advanced after the received batch is valid.
 Proposal construction starts from exactly one group request:
 `game_type`, game-specific `parameters`, and one timeout shared by all games in
 the result. Both peers run the same registered deterministic factory. Its output
-is a non-empty ordered list of canonical 12-field records containing
-sender/receiver contributions, amount, `sender_goes_first`, the initial
-commitments, fixed my-turn and their-turn handlers, and the initial validator.
-The validator hash is checked against the validator program locally.
+is a non-empty ordered list of canonical 10-field records containing
+player-A/player-B contributions, `player_a_goes_first`, the initial state
+fields, fixed my-turn and their-turn handlers, and the initial validator. The
+host derives the amount from the contributions and hashes the validator locally.
 
-The result remains sender-oriented until the higher layer constructs local game
-state. At that point it selects the fixed handler matching the local initial
-turn and swaps sender/receiver contributions into the receiver's
-`my_contribution` / `their_contribution` perspective. This avoids peer-specific
-factory runs or proposal parsers while ensuring both peers commit to the same
-game records. Calpoker and Space Poker factories return one record; Krunk
-returns two.
+The result remains in stable A/B orientation. The proposal-wide
+`sender_is_player_a` maps sender/receiver and local/opponent perspectives onto
+that orientation. The higher layer selects the fixed handler matching the local
+initial turn and projects A/B contributions into local contribution fields.
+This avoids peer-specific factory runs or proposal parsers while ensuring both
+peers commit to the same ordered records. Calpoker and Space Poker factories
+return one record; Krunk returns two.
 
 Atomicity is enforced at three boundaries:
 
 1. **Propose:** Derive cardinality, IDs, economics, roles, and wire commitments
    from one factory run. Proposals may exceed current balances; funding is
    checked when the receiver chooses to accept.
-2. **Receive:** Re-run the factory and require the group-level wire action's
-   ordered members and cardinality to match exactly.
+2. **Receive:** Re-run the factory and require `ProposeGroup`'s ordered retained
+   member commitments and cardinality to match exactly; raw state, handlers,
+   validation program, derived amount, and a separate group ID are not sent.
 3. **Accept/cancel:** Expand any member ID to the complete group. Acceptance
-   repeats the aggregate balance preflight before queueing any member, and the
-   receiver rejects a batch that accepts only part of a group. Cancellation
-   also queues every member together.
+   repeats the aggregate balance preflight before queueing one
+   `AcceptProposalGroup` with the canonical first-member ID. The receiver
+   validates that ID and applies every member in factory insertion order.
+   Cancellation similarly queues one `CancelProposalGroup`.
 
 These checks compose with batch rollback: if group hydration, member validation,
-or partial-acceptance validation fails, none of the received batch's proposal
+or canonical group validation fails, none of the received batch's proposal
 mutations survive.
 
 ---
@@ -405,10 +407,13 @@ and the post-move puzzle hash (`saved_post_move_last_ph`).
 hash, live game state, and reward amounts. When the potato returns
 (acknowledgment), `drain_cached_accept_settlements` emits `GameSettled` with
 `outcome: accept_settlement` for each cached accept.
-- `**ProposalAccepted**` — a proposal acceptance we sent. Stores the game ID.
-Used during stale unroll handling to distinguish in-flight proposal accepts
-(which get `EndedCancelled`) from fully established games (which get
-`GameError`).
+- `**ProposalAccepted**` — an internal per-ID protocol replay marker for a
+proposal acceptance we sent. Stores one game ID and is repeated for members of
+an atomic group. This exact `CachedRedoActions::ProposalAccepted` Rust name is
+not the UI notification; UI acceptance is one ordered
+`GameNotification::ProposalAcceptedGroup`. The marker is used during stale
+unroll handling to distinguish in-flight proposal accepts (which get
+`EndedCancelled`) from fully established games (which get `GameError`).
 
 **Set** in `send_move_no_finalize` (moves) and
 `send_accept_settlement_no_finalize` (accept settlements).
@@ -449,7 +454,7 @@ different games. Redo transactions are emitted in parallel during
 `finish_on_chain_transition`, with a `PendingMoveSavedState` entry inserted into
 the handler's `pending_moves` map for each one.
 
-**In-flight proposal acceptances** (`ProposalAccepted` entries in
+**In-flight proposal acceptances** (`CachedRedoActions::ProposalAccepted` entries in
 `cached_redo_actions`) don't trigger a redo — if the game coin never
 materialized on-chain, the game is cancelled (`EndedCancelled`).
 

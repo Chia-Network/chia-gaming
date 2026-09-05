@@ -60,6 +60,10 @@ assert_count() {
 
 run_build
 assert_count 1
+[ -f "$REPO/clsp/example.clvm.bin" ] || {
+    echo "build did not produce binary CLVM output" >&2
+    exit 1
+}
 
 run_build
 assert_count 1
@@ -75,12 +79,16 @@ rm "$REPO/clsp/example.hex"
 run_build
 assert_count 4
 
-printf '%s\n' corrupted > "$REPO/clsp/example.hex"
+rm "$REPO/clsp/example.clvm.bin"
 run_build
 assert_count 5
 
-printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
+printf '%s\n' corrupted > "$REPO/clsp/example.hex"
 run_build
 assert_count 6
+
+printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
+run_build
+assert_count 7
 
 echo "build-chialisp regression tests passed"
