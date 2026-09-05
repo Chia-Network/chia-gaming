@@ -268,6 +268,13 @@ application attempt immediately, but the sender retains the terminal
 unacknowledged transport record until the peer acknowledges the rejection or
 the local bounded-retention policy expires it.
 
+For a pre-active attempt, rejection is terminal and may supersede lower-numbered
+handshake bodies that arrived while local consent was pending. The receiver
+discards those buffered bodies, records the rejection's message number as the
+cumulative receive point, persists the rejection receipt, and then acknowledges
+that number. This exception prevents an obsolete handshake body from blocking
+the cancellation it belongs to.
+
 After accepting a rejection, the receiver retains a minimal durable receipt for
 the `(peer_id, session_id)` and last received message number. This lets it
 re-acknowledge a replay if the first acknowledgement was lost, without
@@ -302,16 +309,17 @@ covering that frame.
 
 ### 5.2 Inbound ordering and deduplication
 
-Let `remoteNumber` be the highest contiguous message number already delivered
-to the peer protocol.
+Let `remoteNumber` be the highest cumulative message number already delivered
+or terminally discarded by the peer protocol.
 
 - `msgno <= remoteNumber`: the frame is a duplicate. Do not deliver it again.
   Re-send an acknowledgement for `msgno` and replay locally unacknowledged
   outbound messages.
 - `msgno == remoteNumber + 1`: deliver it once, then advance
   `remoteNumber`.
-- `msgno > remoteNumber + 1`: retain it in the runtime reorder buffer until all
-  preceding messages arrive. Do not acknowledge it yet.
+- `msgno > remoteNumber + 1`: normally retain it in the runtime reorder buffer
+  until all preceding messages arrive. Do not acknowledge it yet. The sole
+  exception is the pre-active `session_reject` rule above.
 
 After delivering one message, the host delivers every newly contiguous frame
 from the reorder buffer in ascending order.

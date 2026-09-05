@@ -9,6 +9,7 @@ import {
   peekAutoResumeOnce,
   clearAutoResumeOnce,
   clearSessionWithInboundRejectionReceipt,
+  clearSessionWithRejectionTombstone,
   loadState,
   flushSessionSave,
   getPlayerId,
@@ -189,6 +190,30 @@ describe('session persistence', () => {
         kind: 'inbound-receipt',
         peerId: 'rejecting-peer',
         remoteNumber: 6n,
+      }),
+    ]);
+  });
+
+  it('atomically replaces the active session with an outbound rejection tombstone', async () => {
+    saveLiveFields();
+    await flushSessionSave();
+    await clearSessionWithRejectionTombstone({
+      kind: 'outbound-reject',
+      peerId: 'rejected-peer',
+      sessionId: '34'.repeat(16),
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      unackedMessages: [{ msgno: 1n, msg: new Uint8Array([0xaa]) }],
+      createdAt: Date.now(),
+    });
+
+    _resetForTests();
+    expect(await peekSession()).toBeNull();
+    expect(await readRejectionTombstones()).toEqual([
+      expect.objectContaining({
+        kind: 'outbound-reject',
+        peerId: 'rejected-peer',
+        messageNumber: 2n,
       }),
     ]);
   });

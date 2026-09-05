@@ -51,6 +51,7 @@ export type MessageHandler = {
 export interface ReliableMessageConsumer {
   isReady: () => boolean;
   canDeliver?: (msgno: bigint, body: Uint8Array) => boolean;
+  canTerminateAt?: (msgno: bigint, body: Uint8Array) => boolean;
   deliver: (msgno: bigint, body: Uint8Array) => void;
   persist: () => Promise<void>;
   failure: (reason: string) => void;
@@ -149,6 +150,18 @@ export class ReliablePeerTransport {
         `peer message ${msgno} is ${futureGap} ahead of next expected ${this.state.remoteNumber + 1n}; maximum gap is ${this.receivePolicy.maxFutureReliableMsgnoGap}`,
       );
       return false;
+    }
+    if (
+      futureGap > 0n &&
+      this.consumer?.isReady() &&
+      this.canTerminateAt(this.consumer, msgno, body)
+    ) {
+      for (const queuedMsgno of this.runtime.reorderQueue.keys()) {
+        if (queuedMsgno <= msgno) this.runtime.reorderQueue.delete(queuedMsgno);
+      }
+      if (!this.deliverOne(msgno, body)) return false;
+      this.drainContiguous();
+      return true;
     }
     if (
       msgno === this.state.remoteNumber + 1n &&
@@ -277,6 +290,20 @@ export class ReliablePeerTransport {
     if (!consumer.canDeliver) return true;
     try {
       return consumer.canDeliver(msgno, body);
+    } catch (error) {
+      this.fail(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }
+
+  private canTerminateAt(
+    consumer: ReliableMessageConsumer,
+    msgno: bigint,
+    body: Uint8Array,
+  ): boolean {
+    if (!consumer.canTerminateAt) return false;
+    try {
+      return consumer.canTerminateAt(msgno, body);
     } catch (error) {
       this.fail(error instanceof Error ? error.message : String(error));
       return false;

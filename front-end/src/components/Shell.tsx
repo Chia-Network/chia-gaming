@@ -41,6 +41,7 @@ import {
   deleteRejectionTombstone,
   readRejectionTombstones,
   rejectionTombstoneKey,
+  writeRejectionTombstone,
 } from '../lib/session/indexedDb';
 import {
   bindOutboundRejectionPeer,
@@ -66,6 +67,7 @@ import {
   flushSessionSave,
   clearSession,
   clearSessionWithInboundRejectionReceipt,
+  clearSessionWithRejectionTombstone,
   clearSessionPairing,
   hardReset,
   shouldOfferResumeOrStartOver,
@@ -1457,10 +1459,33 @@ const Shell = () => {
   const sendSessionReject = useCallback((peerId: string): Promise<void> => {
     const peer = peerSessionRef.current;
     if (!peer || peer.peerId !== peerId || peer.isDestroyed()) return Promise.resolve();
-    return transferOutboundRejection(peer, rejectionPeersRef.current, () => {
-      if (peerSessionRef.current === peer) peerSessionRef.current = null;
-      setPeerLiveness(null);
-    }).catch((error) => {
+    const saved = loadState();
+    const ownsResumableSave =
+      (saved.phase === 'live' || saved.phase === 'pre-handshake') &&
+      saved.pairing.peerId === peer.peerId &&
+      saved.pairing.gameSessionId === peer.sessionId;
+    let replacedResumableSave = false;
+    return transferOutboundRejection(
+      peer,
+      rejectionPeersRef.current,
+      () => {
+        if (peerSessionRef.current === peer) peerSessionRef.current = null;
+        setPeerLiveness(null);
+      },
+      ownsResumableSave
+        ? {
+            write: async (tombstone) => {
+              if (!replacedResumableSave) {
+                await clearSessionWithRejectionTombstone(tombstone);
+                replacedResumableSave = true;
+                return;
+              }
+              await writeRejectionTombstone(tombstone);
+            },
+            delete: deleteRejectionTombstone,
+          }
+        : undefined,
+    ).catch((error) => {
       console.error('[Shell] failed to persist reliable session rejection', error);
     });
   }, []);
@@ -2127,16 +2152,17 @@ const Shell = () => {
             peerSessionRef.current = provisional;
             let negotiationRejected = false;
             let negotiationRejectPersisted = false;
+            const isSessionReject = (body: Uint8Array): boolean => {
+              try {
+                return decodePeerAppMessage(body)?.type === 'session_reject';
+              } catch {
+                return false;
+              }
+            };
             provisional.reliableTransport.attachConsumer({
               isReady: () => !negotiationRejected,
-              canDeliver: (msgno, body) => {
-                if (msgno === 1n) return true;
-                try {
-                  return decodePeerAppMessage(body)?.type === 'session_reject';
-                } catch {
-                  return false;
-                }
-              },
+              canDeliver: (msgno, body) => msgno === 1n || isSessionReject(body),
+              canTerminateAt: (_msgno, body) => isSessionReject(body),
               deliver: (msgno, body) => {
                 const semantic = decodePeerAppMessage(body);
                 if (semantic?.type === 'session_reject') {
@@ -2786,6 +2812,12 @@ const Shell = () => {
       // decline/abort. Cooperative close already completed through the protocol;
       // the peer should keep pinging until its own local shutdown finishes.
       const retainRejectTransport = !!peerId && !options?.retainFinishedGuard;
+      const rejectingSavedSession =
+        retainRejectTransport &&
+        !!peerSessionRef.current &&
+        (saved?.phase === 'live' || saved?.phase === 'pre-handshake') &&
+        saved.pairing.peerId === peerSessionRef.current.peerId &&
+        saved.pairing.gameSessionId === peerSessionRef.current.sessionId;
       const finishCancellation = () => {
         if (!retainRejectTransport) {
           resetPeerRelayState();
@@ -2793,6 +2825,8 @@ const Shell = () => {
         destroySessionController();
         if (!retainRejectTransport) {
           clearSessionPreservingHistory();
+          sessionSaveRef.current = null;
+        } else if (rejectingSavedSession) {
           sessionSaveRef.current = null;
         } else {
           sessionSaveRef.current = loadState();

@@ -3,7 +3,7 @@ import {
   type DurableRejectionTombstone,
   InvalidSessionRecordError,
   readSessionRecord,
-  replaceSessionWithInboundRejectionReceipt,
+  replaceSessionWithRejectionTombstone,
   writeSessionRecord,
 } from '../lib/session/indexedDb';
 import { isDenseNumericByteObject } from '../lib/reactPropSafe';
@@ -829,6 +829,15 @@ export function clearSession(): Promise<void> {
 export function clearSessionWithInboundRejectionReceipt(
   receipt: Omit<DurableRejectionTombstone, 'kind'>,
 ): Promise<void> {
+  return clearSessionWithRejectionTombstone({
+    ...receipt,
+    kind: 'inbound-receipt',
+  });
+}
+
+export function clearSessionWithRejectionTombstone(
+  tombstone: DurableRejectionTombstone,
+): Promise<void> {
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
@@ -840,10 +849,7 @@ export function clearSessionWithInboundRejectionReceipt(
   const replacePromise = (writeChain = writeChain
     .catch(() => {})
     .then(async () => {
-      await replaceSessionWithInboundRejectionReceipt({
-        ...receipt,
-        kind: 'inbound-receipt',
-      });
+      await replaceSessionWithRejectionTombstone(tombstone);
       if (cached?.preferences.blockchainType || cached?.preferences.hubUrl) {
         markSavedSession();
       } else {

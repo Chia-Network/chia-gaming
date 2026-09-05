@@ -343,11 +343,11 @@ resumable-session marker, and tab/reset coordination keys, inside the same-origi
 trust model described above.
 
 The current and only legal envelope schema is `chia-gaming-session` version
-`21`. Because the project is
+`23`. Because the project is
 still alpha, every other version is deleted wholesale without decoding or
-migration. A decoded v21 record must also satisfy the complete phase-owned
+migration. A decoded v23 record must also satisfy the complete phase-owned
 envelope contract (keyed game membership, generic game-state envelope agreement,
-terminal data, and frozen terminal coin list); malformed v21 records are
+terminal data, and frozen terminal coin list); malformed v23 records are
 deleted rather than partially restored. The boot marker is retained after an
 incompatible or malformed resumable record is discarded so the failure remains
 visible at the Resume / Start Over boundary. The `version` field is kept as a

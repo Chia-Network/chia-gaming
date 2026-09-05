@@ -460,6 +460,43 @@ describe('PeerSession', () => {
       expect(ps.reliableState.remoteNumber).toBe(2n);
     });
 
+    it('lets a terminal rejection discard buffered pre-consent handshake traffic', async () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      const delivered = jest.fn();
+      const rejectBody = encodePeerAppMessage({ type: 'session_reject' });
+      ps.reliableState.remoteNumber = 1n;
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        canDeliver: (_msgno, body) => {
+          try {
+            return decodePeerAppMessage(body)?.type === 'session_reject';
+          } catch {
+            return false;
+          }
+        },
+        canTerminateAt: (_msgno, body) => {
+          try {
+            return decodePeerAppMessage(body)?.type === 'session_reject';
+          } catch {
+            return false;
+          }
+        },
+        deliver: delivered,
+        persist: () => Promise.resolve(),
+        failure: (reason) => fail(reason),
+      });
+
+      expect(ps.reliableTransport.receiveData(2n, new Uint8Array([0xaa]))).toBe(true);
+      expect(ps.reliableTransport.receiveData(3n, rejectBody)).toBe(true);
+      await ps.reliableTransport.flushPending();
+
+      expect(delivered).toHaveBeenCalledTimes(1);
+      expect(delivered).toHaveBeenCalledWith(3n, rejectBody);
+      expect(ps.reliableState.remoteNumber).toBe(3n);
+      expect(ps.reliableTransport.runtime.reorderQueue.size).toBe(0);
+    });
+
     it('rejects a cumulative ack beyond the allocated range without pruning', () => {
       const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);

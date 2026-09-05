@@ -361,8 +361,8 @@ export function writeRejectionTombstone(tombstone: DurableRejectionTombstone): P
   return write;
 }
 
-export function replaceSessionWithInboundRejectionReceipt(
-  tombstone: DurableRejectionTombstone & { kind: 'inbound-receipt' },
+export function replaceSessionWithRejectionTombstone(
+  tombstone: DurableRejectionTombstone,
 ): Promise<void> {
   const write = rejectionWriteQueue.then(() => performWriteRejectionTombstone(tombstone, true));
   rejectionWriteQueue = write.catch(() => {});
