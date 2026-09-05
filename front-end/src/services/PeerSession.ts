@@ -50,6 +50,7 @@ export type MessageHandler = {
 
 export interface ReliableMessageConsumer {
   isReady: () => boolean;
+  canDeliver?: (msgno: bigint, body: Uint8Array) => boolean;
   deliver: (msgno: bigint, body: Uint8Array) => void;
   persist: () => Promise<void>;
   failure: (reason: string) => void;
@@ -149,7 +150,11 @@ export class ReliablePeerTransport {
       );
       return false;
     }
-    if (msgno === this.state.remoteNumber + 1n && this.consumer?.isReady()) {
+    if (
+      msgno === this.state.remoteNumber + 1n &&
+      this.consumer?.isReady() &&
+      this.canDeliver(this.consumer, msgno, body)
+    ) {
       if (!this.deliverOne(msgno, body)) return false;
       this.drainContiguous();
       return true;
@@ -262,8 +267,19 @@ export class ReliablePeerTransport {
       const next = this.state.remoteNumber + 1n;
       const body = this.runtime.reorderQueue.get(next);
       if (!body) break;
+      if (!this.canDeliver(consumer, next, body)) break;
       this.runtime.reorderQueue.delete(next);
       if (!this.deliverOne(next, body)) return;
+    }
+  }
+
+  private canDeliver(consumer: ReliableMessageConsumer, msgno: bigint, body: Uint8Array): boolean {
+    if (!consumer.canDeliver) return true;
+    try {
+      return consumer.canDeliver(msgno, body);
+    } catch (error) {
+      this.fail(error instanceof Error ? error.message : String(error));
+      return false;
     }
   }
 

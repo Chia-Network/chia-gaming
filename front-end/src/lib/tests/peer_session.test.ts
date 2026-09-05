@@ -1,5 +1,6 @@
 import {
   PeerSession as BrowserPeerSession,
+  decodePeerAppMessage,
   encodePeerAppMessage,
   generateSessionId,
 } from '../../services/PeerSession';
@@ -403,6 +404,60 @@ describe('PeerSession', () => {
       expect(prompt).toHaveBeenCalledTimes(1);
       expect(wasm).not.toHaveBeenCalled();
       expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x02, 0x01]);
+    });
+
+    it('buffers early WASM until consumer handoff while duplicate proposal re-ACKs', async () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      const prompt = jest.fn();
+      const wasm = jest.fn();
+      const proposalBody = encodePeerAppMessage({
+        type: 'session_proposal',
+        proposer_amount: '10',
+        responder_amount: '10',
+      });
+      const handshakeA = new Uint8Array([0xaa, 0xbb]);
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        canDeliver: (msgno, body) => {
+          if (msgno === 1n) return true;
+          try {
+            return decodePeerAppMessage(body)?.type === 'session_reject';
+          } catch {
+            return false;
+          }
+        },
+        deliver: (msgno) => {
+          expect(msgno).toBe(1n);
+          prompt();
+        },
+        persist: () => Promise.resolve(),
+        failure: (reason) => fail(reason),
+      });
+
+      expect(ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, proposalBody))).toBe(true);
+      await ps.reliableTransport.flushPending();
+      conn.sentPeerMessages = [];
+      expect(ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 2, handshakeA))).toBe(true);
+      expect(ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, proposalBody))).toBe(true);
+
+      expect(prompt).toHaveBeenCalledTimes(1);
+      expect(wasm).not.toHaveBeenCalled();
+      expect(ps.reliableState.remoteNumber).toBe(1n);
+      expect(ps.reliableTransport.runtime.reorderQueue.get(2n)).toEqual(handshakeA);
+      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x02]);
+
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: wasm,
+        persist: () => Promise.resolve(),
+        failure: (reason) => fail(reason),
+      });
+      await ps.reliableTransport.flushPending();
+
+      expect(wasm).toHaveBeenCalledTimes(1);
+      expect(wasm).toHaveBeenCalledWith(2n, handshakeA);
+      expect(ps.reliableState.remoteNumber).toBe(2n);
     });
 
     it('rejects a cumulative ack beyond the allocated range without pruning', () => {
