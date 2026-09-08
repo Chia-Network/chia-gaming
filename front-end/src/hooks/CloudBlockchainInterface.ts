@@ -124,22 +124,22 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   private async resolveWalletId(): Promise<string> {
     const stored = this.auth?.walletId;
     if (stored) {
-      try {
-        const data = await this.gql<{ wallet: { id: string } | null }>(
-          `query($id: ID!) { wallet(id: $id) { id } }`,
-          { id: stored },
-        );
-        if (data.wallet?.id) return data.wallet.id;
-      } catch (e) {
-        // A dead grant cannot be repaired by asking it for its wallets.
-        if (e instanceof CloudWalletAuthError) throw e;
-        log(`[cloud-blockchain] stored walletId not readable: ${String(e)}`);
-      }
+      // A failed read is not an answer about this wallet, so it propagates
+      // rather than falling through: substituting the grant's first wallet on a
+      // blip would persist it over the selected one and send later funding
+      // spends to a wallet the user never chose.
+      const data = await this.gql<{ wallet: { id: string } | null }>(
+        `query($id: ID!) { wallet(id: $id) { id } }`,
+        { id: stored },
+      );
+      if (data.wallet?.id) return data.wallet.id;
+      log(`[cloud-blockchain] stored walletId ${stored} is not in this grant`);
     }
 
-    // The stored id resolved to nothing, or the read failed. Ask the grant which
-    // wallets it covers, exactly as the initial OAuth login does. A transient
-    // failure here propagates as itself rather than as a verdict on the grant.
+    // There was no stored id, or the grant read back no such wallet. Ask the
+    // grant which wallets it covers, exactly as the initial OAuth login does. A
+    // transient failure here propagates as itself rather than as a verdict on
+    // the grant.
     const resolved = await fetchFirstConsentedWalletId(this.tokenProvider);
     if (resolved) return resolved;
 

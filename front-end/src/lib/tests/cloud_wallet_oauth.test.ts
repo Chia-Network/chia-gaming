@@ -427,6 +427,34 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
     expect(iface.isConnected()).toBe(true);
     expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_other');
   });
+
+  it('keeps the stored walletId when the probe read fails transiently', async () => {
+    mockEndpoints((_url, query) => {
+      if (query.includes('oauthConsentedWallets')) {
+        return {
+          status: 200,
+          body: { data: { oauthConsentedWallets: [{ id: 'Wallet_other' }] } },
+        };
+      }
+      if (query.includes('address')) {
+        return {
+          status: 200,
+          body: {
+            data: {
+              wallet: { id: 'Wallet_stored', address: { puzzleHash: 'ab'.repeat(32) } },
+            },
+          },
+        };
+      }
+      // The stored-id probe blips. It never says this wallet is gone.
+      return { status: 502, body: { errors: [{ message: 'bad gateway' }] } };
+    });
+
+    await expect(finalizeStoredSession()).rejects.toThrow(/bad gateway/);
+    // Substituting the grant's first wallet here would send later funding
+    // spends to a wallet the user never selected.
+    expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_stored');
+  });
 });
 
 describe('waitForGamingConsentWalletId grace period', () => {
