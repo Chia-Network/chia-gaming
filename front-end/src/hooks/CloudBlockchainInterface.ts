@@ -10,7 +10,9 @@ import { normalizeHexString, toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
 import {
   beginOAuthPopupLogin,
+  CloudWalletAuthError,
   createAuthTokenProvider,
+  fetchFirstConsentedWalletId,
   graphqlRequest,
   normalizeHex,
   signatureRequestApproveUrl,
@@ -129,9 +131,17 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         );
         if (data.wallet?.id) return data.wallet.id;
       } catch (e) {
+        // A dead grant cannot be repaired by asking it for its wallets.
+        if (e instanceof CloudWalletAuthError) throw e;
         log(`[cloud-blockchain] stored walletId not readable: ${String(e)}`);
       }
     }
+
+    // The stored id resolved to nothing, or the read failed. Ask the grant which
+    // wallets it covers, exactly as the initial OAuth login does. A transient
+    // failure here propagates as itself rather than as a verdict on the grant.
+    const resolved = await fetchFirstConsentedWalletId(this.tokenProvider);
+    if (resolved) return resolved;
 
     throw new Error(
       'No Cloud Wallet walletId available. Reconnect and ensure OAuth consent selects a wallet resource.',
@@ -612,8 +622,13 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
             this.persistAuth({ ...this.auth!, walletId });
             await this.startMonitoring();
           } catch (e) {
-            clearCloudWalletAuth();
-            this.auth = null;
+            // Only a dead grant costs the durable refresh token. A network blip
+            // or GraphQL failure during silent resume must stay retryable, or a
+            // momentary outage forces the user back through a popup login.
+            if (e instanceof CloudWalletAuthError) {
+              clearCloudWalletAuth();
+              this.auth = null;
+            }
             this.monitoringReady = false;
             this.fireConnectionChange(false);
             throw e;
@@ -661,8 +676,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           expiresAt: tokens.expiresAt,
           walletId: tokens.walletId,
         };
-        await this.resolveWalletId();
-        this.persistAuth(tokens);
+        // Persist the id that actually resolved: the consent screen's choice can
+        // differ from what the grant will read back, and monitoring uses this id.
+        const walletId = await this.resolveWalletId();
+        this.persistAuth({ ...tokens, walletId });
         await this.startMonitoring();
       },
     };

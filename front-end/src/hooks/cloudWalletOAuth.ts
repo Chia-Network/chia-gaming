@@ -11,6 +11,22 @@ export const OAUTH_MESSAGE_TYPE = 'chia-gaming/oauth';
 export const SIGNATURE_REQUEST_MESSAGE_TYPE = 'chia-cloud-wallet/signature-request';
 export const GAMING_CONSENT_MESSAGE_TYPE = 'chia-cloud-wallet/consent';
 
+/**
+ * The stored OAuth grant is definitively unusable — refresh token revoked or
+ * expired, client no longer authorized. Callers may discard durable tokens on
+ * this error only; every other failure (network, 5xx, GraphQL field errors) is
+ * transient and must leave the grant intact so a retry can succeed.
+ */
+export class CloudWalletAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CloudWalletAuthError';
+  }
+}
+
+/** OAuth error codes that mean re-presenting the same grant will never work. */
+const FATAL_OAUTH_ERROR_CODES = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client']);
+
 /** BLS G2 infinity / NIL aggregate signature (96 bytes). */
 export const BLS_NIL_SIGNATURE =
   '0xc00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
@@ -103,6 +119,10 @@ async function postToken(body: Record<string, string>): Promise<TokenResponse> {
       json.error ||
       json.message ||
       `token exchange failed (${res.status})`;
+    const code = typeof json.error === 'string' ? json.error : '';
+    if (res.status === 401 || FATAL_OAUTH_ERROR_CODES.has(code)) {
+      throw new CloudWalletAuthError(String(msg));
+    }
     throw new Error(String(msg));
   }
   return json as TokenResponse;
@@ -517,6 +537,10 @@ export async function graphqlRequest<T>(
   if (res.status === 401) {
     accessToken = await tokenProvider.getAccessToken({ forceRefresh: true });
     res = await run(accessToken);
+    if (res.status === 401) {
+      // A freshly refreshed token was still rejected: the grant itself is dead.
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (401)');
+    }
   }
 
   const text = await res.text();

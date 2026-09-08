@@ -65,7 +65,11 @@ import {
   GAMING_CONSENT_MESSAGE_TYPE,
   OAUTH_MESSAGE_TYPE,
 } from '../../hooks/cloudWalletOAuth';
-import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
+import {
+  clearCloudWalletAuth,
+  loadCloudWalletAuth,
+  saveCloudWalletAuth,
+} from '../../hooks/cloudWalletAuth';
 import {
   clearCloudWalletConfig,
   getCloudWalletApiUrl,
@@ -302,6 +306,124 @@ describe('CloudBlockchainInterface beginConnect', () => {
     await expect(setup.finalize({ clientId: '', apiUrl: '', uiUrl: '' })).rejects.toThrow(
       /client id/i,
     );
+  });
+});
+
+describe('CloudBlockchainInterface stored-session finalize', () => {
+  beforeEach(() => {
+    setTestGlobal('localStorage', makeStorage());
+    setTestGlobal('sessionStorage', makeStorage());
+    clearCloudWalletConfig();
+    clearCloudWalletAuth();
+    // Refreshing a token requires a client id; without one the provider fails
+    // before it ever reaches the endpoints these tests are exercising.
+    saveCloudWalletConfig({
+      clientId: 'client-test',
+      apiUrl: 'http://api.local',
+      uiUrl: 'http://ui.local',
+    });
+    saveCloudWalletAuth({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      expiresAt: Date.now() + 10 * 60_000,
+      walletId: 'Wallet_stored',
+    });
+  });
+
+  afterEach(() => {
+    setTestGlobal('fetch', undefined);
+  });
+
+  /** Route by endpoint (`/token` vs `/graphql`) and, for GraphQL, by query text. */
+  function mockEndpoints(handler: (url: string, query: string) => { status: number; body: unknown }) {
+    const fetchMock = jest.fn(async (url: string, init?: { body?: string }) => {
+      let query = '';
+      try {
+        query = String((JSON.parse(String(init?.body ?? '{}')) as { query?: string }).query ?? '');
+      } catch {
+        // The token endpoint posts form-encoded bodies, not JSON.
+      }
+      const { status, body } = handler(String(url), query);
+      return {
+        status,
+        ok: status >= 200 && status < 300,
+        text: async () => JSON.stringify(body),
+      };
+    });
+    setTestGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  function finalizeStoredSession() {
+    const iface = new CloudBlockchainInterface();
+    return iface.beginConnect('uid').then((setup) => setup.finalize());
+  }
+
+  it('keeps durable tokens when a transient server error interrupts resume', async () => {
+    mockEndpoints(() => ({
+      status: 503,
+      body: { errors: [{ message: 'upstream unavailable' }] },
+    }));
+    await expect(finalizeStoredSession()).rejects.toThrow(/upstream unavailable/);
+    // A momentary outage must not cost the refresh token and force a popup login.
+    expect(loadCloudWalletAuth()?.refreshToken).toBe('refresh-token');
+  });
+
+  it('discards the grant when the refresh token has been revoked', async () => {
+    saveCloudWalletAuth({
+      accessToken: 'expired',
+      refreshToken: 'revoked',
+      expiresAt: Date.now() - 1000,
+      walletId: 'Wallet_stored',
+    });
+    mockEndpoints(() => ({ status: 400, body: { error: 'invalid_grant' } }));
+    await expect(finalizeStoredSession()).rejects.toThrow(/invalid_grant/);
+    expect(loadCloudWalletAuth()).toBeNull();
+  });
+
+  it('discards the grant when a freshly refreshed token is still rejected', async () => {
+    let tokenCalls = 0;
+    mockEndpoints((url) => {
+      if (url.includes('/token')) {
+        tokenCalls += 1;
+        return {
+          status: 200,
+          body: { access_token: 'fresh', refresh_token: 'rt2', expires_in: 3600 },
+        };
+      }
+      return { status: 401, body: { errors: [{ message: 'unauthorized' }] } };
+    });
+    await expect(finalizeStoredSession()).rejects.toThrow(/rejected the OAuth grant/);
+    expect(tokenCalls).toBe(1);
+    expect(loadCloudWalletAuth()).toBeNull();
+  });
+
+  it('re-resolves the walletId from the grant when the stored id no longer reads', async () => {
+    mockEndpoints((_url, query) => {
+      if (query.includes('oauthConsentedWallets')) {
+        return {
+          status: 200,
+          body: { data: { oauthConsentedWallets: [{ id: 'Wallet_other' }] } },
+        };
+      }
+      if (query.includes('address')) {
+        return {
+          status: 200,
+          body: {
+            data: {
+              wallet: { id: 'Wallet_other', address: { puzzleHash: 'ab'.repeat(32) } },
+            },
+          },
+        };
+      }
+      return { status: 200, body: { data: { wallet: null } } };
+    });
+
+    const iface = new CloudBlockchainInterface();
+    const setup = await iface.beginConnect('uid');
+    await setup.finalize();
+    expect(iface.isConnected()).toBe(true);
+    expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_other');
   });
 });
 

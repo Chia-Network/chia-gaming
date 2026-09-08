@@ -1158,7 +1158,13 @@ and poll interval; the rest of the flow is generic.
    calls `setup.finalize(values)`. This path is used by both the simulator and
    Cloud Wallet (the latter is `skipQr` yet still collects OAuth config first).
 4. If `setup.skipQr` is set with no fields (a restored WC/Cloud session), Shell
-   awaits `setup.finalize()` without showing a QR panel or modal.
+   awaits `setup.finalize()` without showing a QR panel or modal. A failed
+   restore discards the stored Cloud Wallet tokens only for
+   `CloudWalletAuthError` — a revoked or expired grant, signalled by an
+   `invalid_grant`/`invalid_client` token response or a 401 that survives a
+   forced refresh. Network and server errors leave the refresh token in place so
+   a retry can resume, rather than demoting a momentary outage into a full popup
+   login.
 5. If `setup.skipQr` is set *with* fields (Cloud Wallet, no stored auth), Shell
    shows `ConnectionSetupModal` and does **not** call `finalize()` from silent
    `handleConnect` or `performResume`. Auto-finalize would open an OAuth popup
