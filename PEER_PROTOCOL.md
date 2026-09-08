@@ -432,10 +432,11 @@ Batch {
   signatures: StateUpdateSignatures
 }
 CleanShutdown {
-  channel_half_sig: Aggsig,
-  payout_conditions: ProgramRef
+  channel_half_sig: Aggsig
 }
-CleanShutdownComplete(CoinSpend)
+CleanShutdownComplete {
+  channel_half_sig: Aggsig
+}
 RequestPotato(())
 Message(GameID, Bytes)
 ```
@@ -453,7 +454,7 @@ HandshakeE: d u10:HandshakeE <HandshakePayloadE struct> e
 HandshakeF: d u10:HandshakeF <HandshakePayloadF struct> e
 Batch: d u5:Batch <Batch fields struct> e
 CleanShutdown: d u13:CleanShutdown <CleanShutdown fields struct> e
-CleanShutdownComplete: d u21:CleanShutdownComplete <CoinSpend struct> e
+CleanShutdownComplete: d u21:CleanShutdownComplete <CleanShutdownComplete fields struct> e
 RequestPotato: d u13:RequestPotato n e
 Message: d u7:Message l i<game_id>e <byte string> e e
 ```
@@ -900,8 +901,7 @@ The potato holder initiates shutdown by sending the dedicated struct variant:
 
 ```text
 CleanShutdown {
-  channel_half_sig: Aggsig,
-  payout_conditions: ProgramRef
+  channel_half_sig: Aggsig
 }
 ```
 
@@ -912,10 +912,16 @@ after regaining it. The receiver:
 
 1. requires there to be no active games;
 2. cancels all unaccepted proposals;
-3. computes the expected direct channel payout conditions;
-4. compares the received and expected condition multisets;
-5. verifies the initiator's channel half-signature over those conditions; and
-6. combines it with its own signature to form a complete channel `CoinSpend`.
+3. independently computes the canonical direct channel payout conditions;
+4. verifies the initiator's channel half-signature over those conditions;
+5. combines it with its own signature to form a complete channel `CoinSpend`;
+   and
+6. runs consensus validation over that locally assembled spend.
+
+The canonical conditions contain one direct `CREATE_COIN` for each nonzero
+agreed balance, paying the corresponding handshake reward puzzle hash. Outputs
+are sorted by puzzle hash and amount, so both role-relative views produce the
+same signed program. No payout conditions are accepted from the peer.
 
 The direct `channel_half_sig` authorizes this payout spend; ordinary
 channel/unroll state-update signatures belong only to `Batch`.
@@ -925,11 +931,15 @@ channel/unroll state-update signatures belong only to `Batch`.
 For a normal non-zero payout, the responder sends:
 
 ```text
-CleanShutdownComplete(CoinSpend)
+CleanShutdownComplete {
+  channel_half_sig: Aggsig
+}
 ```
 
-This is a separate reliable `PeerMessage`, not another batch. It carries the
-complete mutually signed direct channel spend.
+This is a separate reliable `PeerMessage`, not another batch. It carries only
+the responder's half-signature. The initiator independently reconstructs the
+canonical spend, combines and verifies both halves, and runs consensus
+validation before submission. Neither side trusts a peer-assembled transaction.
 
 After initiating shutdown, the initiator accepts only:
 
@@ -938,9 +948,9 @@ After initiating shutdown, the initiator accepts only:
 
 Any other `PeerMessage` is a protocol error.
 
-For the special zero-local-payout path, the host durably hands the completed
-message to the peer and waits for its reliable acknowledgement before retiring
-the local session.
+For the special zero-local-payout path, the host durably hands the responder's
+signature half to the peer and waits for its reliable acknowledgement before
+retiring the local session.
 
 Further transaction publication and chain resolution are outside this
 specification.

@@ -267,13 +267,14 @@ Every ordinary potato pass is a single `PeerMessage::Batch` containing:
    Both are half-signatures because the channel coin and unroll coin are 2-of-2
    constructions — each potato pass carries the sender's half, and the receiver
    combines it with their own to form the full aggregate signature.
-The signatures are always verified. Clean shutdown is not a Batch field: the
-potato holder sends a dedicated `PeerMessage::CleanShutdown {
-channel_half_sig, payout_conditions }`. If actions are queued before shutdown,
-they are first flushed in an ordinary Batch and the sender requests the potato
-back. The responder replies with
-`PeerMessage::CleanShutdownComplete(CoinSpend)`, unchanged, carrying the complete
-mutually signed spend.
+   The signatures are always verified. Clean shutdown is not a Batch field: the
+potato holder sends `PeerMessage::CleanShutdown { channel_half_sig }`. Both
+peers derive the same canonically ordered direct payouts from the agreed
+balances and handshake reward puzzle hashes. The responder returns only its
+half in `PeerMessage::CleanShutdownComplete { channel_half_sig }`; each peer
+locally combines and consensus-validates the finished spend before submission.
+If actions are queued before shutdown, they are first flushed in an ordinary
+Batch and the sender requests the potato back.
 
 The receiver processes actions sequentially and rejects the entire batch if any
 action fails validation. Rejection uses a **rollback mechanism**: before peer

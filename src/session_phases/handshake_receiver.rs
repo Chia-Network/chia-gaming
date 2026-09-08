@@ -267,6 +267,7 @@ impl HandshakeReceiverPhase {
                 self.reward_puzzle_hash.clone(),
                 queued_messages,
                 self.last_channel_coin_spend_info.take(),
+                self.last_height,
             );
             self.replacement = Some(Box::new(ph));
             self.state = ReceiverState::Done;

@@ -3,8 +3,7 @@ use std::collections::VecDeque;
 use crate::channel_state::types::ReadableMove;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, ProgramRef, PuzzleHash,
-    SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinString, GameID, GameType, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
     CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE,
@@ -406,12 +405,13 @@ pub enum Effect {
     },
     PeerCleanShutdown {
         channel_half_sig: Aggsig,
-        payout_conditions: ProgramRef,
     },
-    PeerCleanShutdownComplete(CoinSpend),
+    PeerCleanShutdownComplete {
+        channel_half_sig: Aggsig,
+    },
     /// A durable host-owned clean-shutdown handoff. This is intercepted by
     /// `GameSession`; it must never flow through ordinary packet delivery.
-    QueueTerminalHandoff(CoinSpend),
+    QueueTerminalHandoff(Aggsig),
     /// This zero-payout local session has no remaining claim to pursue, so it
     /// can terminate without submitting a channel or unroll spend.
     CompleteZeroPayoutShutdown,
@@ -493,15 +493,11 @@ pub fn apply_effects(
                     signatures,
                 })?;
             }
-            Effect::PeerCleanShutdown {
-                channel_half_sig,
-                payout_conditions,
-            } => system.send_message(&PeerMessage::CleanShutdown {
-                channel_half_sig,
-                payout_conditions,
-            })?,
-            Effect::PeerCleanShutdownComplete(cs) => {
-                system.send_message(&PeerMessage::CleanShutdownComplete(cs))?;
+            Effect::PeerCleanShutdown { channel_half_sig } => {
+                system.send_message(&PeerMessage::CleanShutdown { channel_half_sig })?;
+            }
+            Effect::PeerCleanShutdownComplete { channel_half_sig } => {
+                system.send_message(&PeerMessage::CleanShutdownComplete { channel_half_sig })?;
             }
             Effect::QueueTerminalHandoff(_) => {
                 return Err(crate::common::types::Error::StrErr(

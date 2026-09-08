@@ -975,9 +975,10 @@ impl GameSession {
             .any(|effect| matches!(effect, Effect::GoOnChainAfterPeerError));
         let mut passthrough = Vec::new();
         for effect in effects {
-            if let Effect::QueueTerminalHandoff(coin_spend) = effect {
-                let message = bencodex::to_vec(&PeerMessage::CleanShutdownComplete(coin_spend))
-                    .map_err(|e| Error::StrErr(format!("{e:?}")))?;
+            if let Effect::QueueTerminalHandoff(channel_half_sig) = effect {
+                let message =
+                    bencodex::to_vec(&PeerMessage::CleanShutdownComplete { channel_half_sig })
+                        .map_err(|e| Error::StrErr(format!("{e:?}")))?;
                 assert!(
                     self.state.pending_outbound_terminal.is_none(),
                     "only one terminal outbound handoff may be pending"

@@ -13,18 +13,16 @@ use crate::channel_state::types::{
     StateUpdateSignatures,
 };
 use crate::channel_state::ChannelState;
-use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
-    Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
+    ProgramRef, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::session_phases::effects::{
     format_coin, AcceptedGameMember, CancelReason, ChannelStatus, ChannelStatusSnapshot,
     CoinOfInterest, Effect, FailedGameAction, GameNotification, GameStatusKind,
     GameStatusOtherParams, LocalActionKind, SettlementOutcome, TimeoutClaimSemantic,
 };
-use crate::shutdown::get_conditions_with_channel_state;
-use crate::utils::proper_list;
+use crate::shutdown::{complete_shutdown_spend, get_conditions_with_channel_state};
 
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::types::{
@@ -112,6 +110,8 @@ pub struct OffChainPhase {
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     pending_clean_shutdown: Option<(CoinString, ProgramRef)>,
+
+    last_height: u64,
 
     #[serde(skip)]
     channel_spend_next_phase:
@@ -333,6 +333,7 @@ impl OffChainPhase {
         reward_puzzle_hash: PuzzleHash,
         incoming_messages: VecDeque<Rc<PeerMessage>>,
         last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
+        last_height: u64,
     ) -> OffChainPhase {
         let game_types = if game_types.is_empty() {
             let mut allocator = AllocEncoder::new();
@@ -357,6 +358,7 @@ impl OffChainPhase {
             peer_wants_potato: false,
             last_channel_coin_spend_info,
             pending_clean_shutdown: None,
+            last_height,
             channel_spend_next_phase: None,
         }
     }
@@ -574,14 +576,10 @@ impl OffChainPhase {
                     }
                 }
             }
-            PeerMessage::CleanShutdown {
-                channel_half_sig,
-                payout_conditions,
-            } => {
+            PeerMessage::CleanShutdown { channel_half_sig } => {
                 let ch_snapshot = self.channel_state.clone();
                 let queue_snapshot = self.game_action_queue.clone();
-                match self.process_received_clean_shutdown(env, channel_half_sig, payout_conditions)
-                {
+                match self.process_received_clean_shutdown(env, channel_half_sig) {
                     Ok(shutdown_effects) => effects.extend(shutdown_effects),
                     Err(error) => {
                         self.channel_state = ch_snapshot;
@@ -625,20 +623,41 @@ impl OffChainPhase {
                     }),
                 }));
             }
-            PeerMessage::CleanShutdownComplete(coin_spend) => {
+            PeerMessage::CleanShutdownComplete { channel_half_sig } => {
+                let (expected_coin, expected_solution) = self
+                    .pending_clean_shutdown
+                    .as_ref()
+                    .ok_or_else(|| {
+                        Error::StrErr(
+                            "received clean shutdown completion without a pending shutdown"
+                                .to_string(),
+                        )
+                    })?
+                    .clone();
+                let coin_spend = {
+                    let ch = self.channel_state()?;
+                    complete_shutdown_spend(env, ch, channel_half_sig)?.0
+                };
+                if coin_spend.coin != expected_coin
+                    || coin_spend.bundle.solution != expected_solution
+                {
+                    return Err(Error::StrErr(
+                        "completed clean shutdown does not match pending canonical spend"
+                            .to_string(),
+                    ));
+                }
+                let bundle = SpendBundle {
+                    name: Some("Clean shutdown".to_string()),
+                    spends: vec![coin_spend],
+                };
+                bundle.validate_consensus(&env.agg_sig_me_additional_data, self.last_height)?;
                 let zero_payout = self
                     .channel_state()
                     .is_ok_and(|channel| channel.has_zero_payout());
                 if zero_payout {
                     effects.push(Effect::CompleteZeroPayoutShutdown);
                 } else {
-                    effects.push(Effect::SpendTransaction(
-                        SpendBundle {
-                            name: Some("Create unroll".to_string()),
-                            spends: vec![coin_spend.clone()],
-                        },
-                        None,
-                    ));
+                    effects.push(Effect::SpendTransaction(bundle, None));
                 }
                 if let Some((coin, shutdown_solution)) = self.pending_clean_shutdown.take() {
                     let handler = crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase::new_for_clean_shutdown(
@@ -900,7 +919,6 @@ impl OffChainPhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
         channel_half_sig: &Aggsig,
-        payout_conditions: &ProgramRef,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         if self.channel_state()?.has_active_games() {
@@ -920,66 +938,19 @@ impl OffChainPhase {
             }
         }
 
-        let (coin, full_spend, channel_puzzle_public_key, zero_payout) = {
-            let ch = self.channel_state_mut()?;
+        let (coin_spend, local_half_sig, zero_payout) = {
+            let ch = self.channel_state()?;
             let coin = ch.channel_coin().clone();
-            let clvm_conditions = payout_conditions.to_nodeptr(env.allocator)?;
-            let expected_conditions = get_conditions_with_channel_state(env, ch)?;
-
-            let peer_conds = proper_list(env.allocator.allocator_ref(), clvm_conditions, true)
-                .ok_or_else(|| {
-                    Error::StrErr(
-                        "clean shutdown conditions: peer conditions are not a proper list"
-                            .to_string(),
-                    )
-                })?;
-            let expected_conds =
-                proper_list(env.allocator.allocator_ref(), expected_conditions, true).ok_or_else(
-                    || {
-                        Error::StrErr(
-                            "clean shutdown conditions: expected conditions are not a proper list"
-                                .to_string(),
-                        )
-                    },
-                )?;
-            if peer_conds.len() != expected_conds.len() {
-                return Err(Error::StrErr(
-                    "clean shutdown conditions: wrong number of conditions".to_string(),
-                ));
-            }
-
-            let mut peer_serialized: Vec<Vec<u8>> = peer_conds
-                .iter()
-                .map(|node| Program::from_nodeptr(env.allocator, *node))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(|program| program.bytes().to_vec())
-                .collect();
-            let mut expected_serialized: Vec<Vec<u8>> = expected_conds
-                .iter()
-                .map(|node| Program::from_nodeptr(env.allocator, *node))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(|program| program.bytes().to_vec())
-                .collect();
-            peer_serialized.sort();
-            expected_serialized.sort();
-            if peer_serialized != expected_serialized {
-                return Err(Error::StrErr(
-                    "clean shutdown conditions don't match expected payout".to_string(),
-                ));
-            }
-
             let zero_payout = ch.has_zero_payout();
-            let full_spend =
-                ch.received_potato_clean_shutdown(env, channel_half_sig, clvm_conditions)?;
-            (
-                coin,
-                full_spend,
-                ch.get_aggregate_channel_public_key(),
-                zero_payout,
-            )
+            let (coin_spend, local_half_sig) = complete_shutdown_spend(env, ch, channel_half_sig)?;
+            debug_assert_eq!(coin_spend.coin, coin);
+            (coin_spend, local_half_sig, zero_payout)
         };
+        let bundle = SpendBundle {
+            name: Some("Clean shutdown".to_string()),
+            spends: vec![coin_spend.clone()],
+        };
+        bundle.validate_consensus(&env.agg_sig_me_additional_data, self.last_height)?;
 
         {
             let ch = self.channel_state_mut()?;
@@ -993,37 +964,20 @@ impl OffChainPhase {
             }
         }
 
-        let spend = Spend {
-            solution: full_spend.solution.clone(),
-            puzzle: puzzle_for_synthetic_public_key(
-                env.allocator,
-                &env.standard_puzzle,
-                &channel_puzzle_public_key,
-            )?,
-            signature: full_spend.signature.clone(),
-        };
-        let coin_spend = CoinSpend {
-            coin: coin.clone(),
-            bundle: spend,
-        };
         if zero_payout {
-            effects.push(Effect::QueueTerminalHandoff(coin_spend));
+            effects.push(Effect::QueueTerminalHandoff(local_half_sig));
         } else {
-            effects.push(Effect::SpendTransaction(
-                SpendBundle {
-                    name: Some("Create unroll".to_string()),
-                    spends: vec![coin_spend.clone()],
-                },
-                None,
-            ));
-            effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
+            effects.push(Effect::SpendTransaction(bundle, None));
+            effects.push(Effect::PeerCleanShutdownComplete {
+                channel_half_sig: local_half_sig,
+            });
         }
 
         self.have_potato = PotatoState::Present;
         let handler = crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase::new_for_clean_shutdown(
             self.channel_state.take(),
-            coin,
-            full_spend.solution,
+            coin_spend.coin,
+            coin_spend.bundle.solution,
             std::mem::take(&mut self.game_action_queue),
             PotatoState::Present,
             self.channel_timeout.clone(),
@@ -1260,9 +1214,6 @@ impl OffChainPhase {
                         (ch.channel_coin().clone(), spend)
                     };
 
-                    let shutdown_condition_program =
-                        Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
-                    let payout_conditions = shutdown_condition_program.into();
                     self.pending_clean_shutdown =
                         Some((channel_coin.clone(), spend.solution.clone()));
                     self.game_action_queue = deferred;
@@ -1273,7 +1224,6 @@ impl OffChainPhase {
                     }
                     effects.push(Effect::PeerCleanShutdown {
                         channel_half_sig: spend.signature,
-                        payout_conditions,
                     });
                     self.last_failed_queued_action = None;
                     return Ok((true, effects));
@@ -1371,7 +1321,7 @@ impl OffChainPhase {
 
         if self.pending_clean_shutdown.is_some() {
             match msg_envelope.borrow() {
-                PeerMessage::CleanShutdownComplete(_) => {
+                PeerMessage::CleanShutdownComplete { .. } => {
                     effects.extend(self.pass_on_channel_state_message(env, msg_envelope)?);
                     return Ok(effects);
                 }
@@ -1889,7 +1839,8 @@ impl PeerLifecyclePhase for OffChainPhase {
         self.take_channel_spend_next_phase()
             .map(|h| h as Box<dyn PeerLifecyclePhase>)
     }
-    fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
+    fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
+        self.last_height = height;
         Ok(vec![])
     }
     fn handshake_finished(&self) -> bool {

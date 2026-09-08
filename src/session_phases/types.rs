@@ -11,7 +11,7 @@ use crate::channel_state::types::{
 #[cfg(test)]
 use crate::common::types::Program;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, Error, GameID, GameType, Hash, ProgramRef, PuzzleHash, Timeout,
+    Aggsig, Amount, Error, GameID, GameType, Hash, ProgramRef, PuzzleHash, Timeout,
 };
 use crate::referee::types::GameMoveStateInfo;
 use crate::session_phases::effects::Effect;
@@ -251,9 +251,10 @@ pub enum PeerMessage {
     },
     CleanShutdown {
         channel_half_sig: Aggsig,
-        payout_conditions: ProgramRef,
     },
-    CleanShutdownComplete(CoinSpend),
+    CleanShutdownComplete {
+        channel_half_sig: Aggsig,
+    },
     RequestPotato(()),
     Message(GameID, #[serde(with = "peer_wire_bytes")] Vec<u8>),
 }
@@ -487,10 +488,16 @@ mod peer_wire_shape_tests {
         assert_eq!(
             bencodex::to_vec(&PeerMessage::CleanShutdown {
                 channel_half_sig: Aggsig::default(),
-                payout_conditions: Rc::new(Program::from_bytes(&[0x80])).into(),
             })
             .expect("encode clean shutdown"),
-            b"du13:CleanShutdowndu16:channel_half_sig0:u17:payout_conditions1:\x80ee"
+            b"du13:CleanShutdowndu16:channel_half_sig0:ee"
+        );
+        assert_eq!(
+            bencodex::to_vec(&PeerMessage::CleanShutdownComplete {
+                channel_half_sig: Aggsig::default(),
+            })
+            .expect("encode clean shutdown complete"),
+            b"du21:CleanShutdownCompletedu16:channel_half_sig0:ee"
         );
     }
 

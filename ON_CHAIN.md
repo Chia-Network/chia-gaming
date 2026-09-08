@@ -220,38 +220,40 @@ immediately goes on-chain instead of cooperating.
 
 ### Protocol Exchange
 
-1. The potato holder sends `PeerMessage::CleanShutdown {
-   channel_half_sig, payout_conditions }`. The half-signature signs the channel
-   coin spend to reward conditions (each player's balance goes directly to
-   their reward puzzle hash, with no game coins). This is a dedicated struct
-   variant, not a `Batch` field. If actions precede shutdown in the local queue,
-   those actions are first flushed in an ordinary Batch with always-verified
-   state-update signatures, and the sender requests the potato back before
-   attempting shutdown. The initiator remains in `OffChainPhase` after sending
-   `CleanShutdown` — it does **not** transition to `SpendChannelCoinPhase` yet.
-   While waiting for the response, `OffChainPhase` rejects any peer message
-   other than `CleanShutdownComplete` as a protocol violation (triggering
-   go-on-chain).
-2. The responder receives `CleanShutdown` and combines the initiator's
-  half-signature with their own to produce a complete `CoinSpend`.
-   They reply with `PeerMessage::CleanShutdownComplete(coin_spend)` — a
-   standalone message outside the normal potato flow. Normally the responder
-   transitions to `SpendChannelCoinPhase` immediately (it already has the
-   complete spend).
-3. The initiator receives `CleanShutdownComplete`, submits the transaction,
-   and transitions to `SpendChannelCoinPhase`. Either side can submit the
-   completed spend on-chain; duplicate submissions are harmless.
+1. Both peers independently derive the same canonical condition list from
+   their agreed balances and handshake reward puzzle hashes. Each nonzero
+   balance produces one direct `CREATE_COIN`; the outputs are sorted by puzzle
+   hash and amount so role-relative ordering cannot change the signed message.
+2. The potato holder sends
+   `PeerMessage::CleanShutdown { channel_half_sig }`. The half-signature signs
+   the canonical channel-coin spend. This is a dedicated struct variant, not a
+   `Batch` field. If actions precede shutdown in the local queue, those actions
+   are first flushed in an ordinary Batch with always-verified state-update
+   signatures, and the sender requests the potato back before attempting
+   shutdown. The initiator remains in `OffChainPhase` after sending
+   `CleanShutdown`.
+3. The responder derives the canonical spend locally, combines the
+   initiator's half-signature with its own, verifies and consensus-validates the
+   resulting spend, and replies with
+   `PeerMessage::CleanShutdownComplete { channel_half_sig }`, carrying only the
+   responder's signature half.
+4. The initiator independently derives the canonical spend, combines and
+   verifies the two signature halves, consensus-validates the result, submits
+   it, and transitions to `SpendChannelCoinPhase`. Neither peer accepts a
+   condition list or completed spend constructed by the other. Either side can
+   submit the locally assembled transaction; duplicate submissions are
+   harmless.
 
 **Zero-payout exception.** When Rust's shutdown snapshot reports
 `zero_payout: true`, that player still completes every cooperative protocol
 step, but does not submit the clean-close transaction itself. A zero-payout
-responder sends the completed spend through the host's durable outbound path,
+responder sends its signature half through the host's durable outbound path,
 then receives a persisted terminal-handoff command. After the peer acknowledges
 that handoff, Rust records `session_disposition: Abandoned` while retaining the
 real shutdown channel status; it does not enter
 long-lived chain watching or wait for the peer's transaction. A zero-payout
-initiator abandons when it receives `CleanShutdownComplete`, because that
-response proves the peer already has all required close material. The
+initiator abandons when it receives and validates `CleanShutdownComplete`,
+because that response proves the peer already has all required close material. The
 non-zero-payout peer is responsible for any on-chain publication.
 
 ### Why "Advisory" — Race Handling
@@ -280,32 +282,13 @@ handler compares the on-chain solution directly against the stored one:
    transitions to `OnChainPhase`. The outcome is the same correct
    balances, just with more on-chain transactions.
 
-### Griefing Bound
+### Canonical Payout Authority
 
-A malicious peer could craft a clean shutdown conditions list that includes
-unrecognized opcodes (timelocks, announcements, etc.) alongside the valid
-`CREATE_COIN` outputs. The victim's condition parser only checks that the
-expected payout exists; it does not reject unknown opcodes.
-
-This is a **griefing vector bounded to time and transaction fees**, not a
-fund-safety issue, for two reasons:
-
-1. **CLVM conditions are additive.** In Chialisp, conditions are a flat list
-  of outputs and assertions. A `CREATE_COIN` output cannot be cancelled,
-   reduced, or redirected by any other condition in the same spend. The only
-   effect of additional conditions is to make the *entire spend fail* (e.g. an
-   unsatisfied timelock prevents the transaction from being mined). No
-   condition can selectively remove or modify another condition's output.
-2. **The unroll fallback always exists.** If the clean shutdown spend fails to
-  land (because the attacker's extra conditions prevent mining), both sides
-   fall back to the unroll path. The unroll path produces the same correct
-   balance split — it just costs more time (unroll timeout + game timeouts)
-   and more transaction fees. The attacker pays the same cost.
-
-Reward payout destinations are separately protected by `AGG_SIG_UNSAFE`
-signatures exchanged during the handshake (see
-[Reward Payout Signatures](#reward-payout-signatures)), so the attacker
-cannot redirect the victim's share to a different address.
+Clean-shutdown messages contain no payout conditions. Both peers construct the
+same direct payouts from authenticated handshake reward puzzle hashes and the
+latest agreed balances, then validate the completed spend locally. A peer
+therefore cannot add a timelock, announcement, extra output, or alternate
+destination to the transaction the other side signs.
 
 ### Key Code
 

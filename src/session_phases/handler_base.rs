@@ -150,21 +150,11 @@ impl ChannelStateBase {
         effects
     }
 
-    /// Deserialize a peer message and handle `CleanShutdownComplete`;
-    /// ignore everything else.
+    /// Deserialize a peer message to reject malformed input; passive phases
+    /// ignore all valid peer messages.
     pub fn received_message_passive(&self, msg: Vec<u8>) -> Result<Vec<Effect>, Error> {
-        let msg_envelope: PeerMessage = bencodex::from_slice(&msg)
+        let _msg_envelope: PeerMessage = bencodex::from_slice(&msg)
             .map_err(|e| Error::StrErr(format!("bencodex deserialize error: {e:?}")))?;
-
-        if let PeerMessage::CleanShutdownComplete(coin_spend) = &msg_envelope {
-            return Ok(vec![Effect::SpendTransaction(
-                SpendBundle {
-                    name: Some("Create unroll".to_string()),
-                    spends: vec![coin_spend.clone()],
-                },
-                None,
-            )]);
-        }
         Ok(vec![])
     }
 
