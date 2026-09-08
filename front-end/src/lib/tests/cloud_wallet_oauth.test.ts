@@ -65,12 +65,7 @@ import {
   GAMING_CONSENT_MESSAGE_TYPE,
   OAUTH_MESSAGE_TYPE,
 } from '../../hooks/cloudWalletOAuth';
-import {
-  saveOAuthPending,
-  clearOAuthPending,
-  clearCloudWalletAuth,
-  saveCloudWalletAuth,
-} from '../../hooks/cloudWalletAuth';
+import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
 import {
   clearCloudWalletConfig,
   getCloudWalletApiUrl,
@@ -91,7 +86,6 @@ describe('cloudWalletOAuth helpers', () => {
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
-    clearOAuthPending();
     clearCloudWalletAuth();
   });
 
@@ -151,11 +145,6 @@ describe('cloudWalletOAuth helpers', () => {
   });
 
   it('handleOAuthCallbackPage posts code to opener on success', () => {
-    saveOAuthPending({
-      state: 'st1',
-      codeVerifier: 'v',
-      createdAtMs: Date.now(),
-    });
     const posted: any[] = [];
     const opener = {
       postMessage: (msg: unknown, origin: string) => posted.push({ msg, origin }),
@@ -180,12 +169,10 @@ describe('cloudWalletOAuth helpers', () => {
     });
   });
 
-  it('handleOAuthCallbackPage rejects state mismatch', () => {
-    saveOAuthPending({
-      state: 'expected',
-      codeVerifier: 'v',
-      createdAtMs: Date.now(),
-    });
+  // The popup's sessionStorage is a clone taken when its browsing context was
+  // created, so a popup reused by name from an earlier attempt holds a stale
+  // record. State validation belongs to the opener; the callback only relays.
+  it('handleOAuthCallbackPage relays the code without validating state itself', () => {
     const posted: any[] = [];
     (globalThis as any).window = globalThis;
     (globalThis as any).opener = {
@@ -195,14 +182,38 @@ describe('cloudWalletOAuth helpers', () => {
       configurable: true,
       value: {
         origin: 'http://127.0.0.1',
-        search: '?code=x&state=wrong',
-        href: 'http://127.0.0.1/oauth/callback?code=x&state=wrong',
+        search: '?code=authcode&state=st-second-attempt',
+        href: 'http://127.0.0.1/oauth/callback?code=authcode&state=st-second-attempt',
+      },
+    });
+
+    const result = handleOAuthCallbackPage();
+    expect(result.status).toBe('ok');
+    expect(posted[0]).toEqual({
+      type: OAUTH_MESSAGE_TYPE,
+      code: 'authcode',
+      state: 'st-second-attempt',
+    });
+  });
+
+  it('handleOAuthCallbackPage reports a missing code as an error', () => {
+    const posted: any[] = [];
+    (globalThis as any).window = globalThis;
+    (globalThis as any).opener = {
+      postMessage: (msg: unknown) => posted.push(msg),
+    };
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: {
+        origin: 'http://127.0.0.1',
+        search: '?state=st1',
+        href: 'http://127.0.0.1/oauth/callback?state=st1',
       },
     });
 
     const result = handleOAuthCallbackPage();
     expect(result.status).toBe('error');
-    expect(String((posted[0] as any)?.error)).toMatch(/state mismatch/i);
+    expect(String((posted[0] as any)?.error)).toMatch(/authorization code/i);
   });
 });
 
@@ -393,6 +404,14 @@ describe('waitForOAuthCode grace period', () => {
     const promise = waitForOAuthCode('st1', popup, 60_000, 500);
     fakeWindow.emit('message', codeEvent('authcode'));
     await expect(promise).resolves.toBe('authcode');
+  });
+
+  it('ignores a code whose state belongs to an earlier attempt', async () => {
+    const popup = { closed: false } as unknown as Window;
+    const promise = waitForOAuthCode('st-second-attempt', popup, 60_000, 500);
+    fakeWindow.emit('message', codeEvent('stale-code', 'st-first-attempt'));
+    fakeWindow.emit('message', codeEvent('current-code', 'st-second-attempt'));
+    await expect(promise).resolves.toBe('current-code');
   });
 
   it('resolves a late code posted during the popup-close grace period', async () => {

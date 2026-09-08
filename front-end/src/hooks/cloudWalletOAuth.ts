@@ -4,12 +4,7 @@ import {
   getCloudWalletClientId,
   getCloudWalletUiUrl,
 } from './cloudWalletConfig';
-import {
-  clearOAuthPending,
-  loadOAuthPending,
-  saveOAuthPending,
-  type CloudWalletAuthState,
-} from './cloudWalletAuth';
+import { type CloudWalletAuthState } from './cloudWalletAuth';
 import { log } from '../services/log';
 
 export const OAUTH_MESSAGE_TYPE = 'chia-gaming/oauth';
@@ -343,7 +338,6 @@ export async function beginOAuthPopupLogin(): Promise<{
   const codeVerifier = randomUrlSafe(32);
   const codeChallenge = await createPkceChallenge(codeVerifier);
   const redirectUri = oauthRedirectUri();
-  saveOAuthPending({ state, codeVerifier, createdAtMs: Date.now() });
 
   const authorizeUrl = buildAuthorizeUrl({
     clientId,
@@ -355,53 +349,57 @@ export async function beginOAuthPopupLogin(): Promise<{
 
   const popup = openOAuthPopup(authorizeUrl);
   if (!popup) {
-    clearOAuthPending();
     throw new Error('Popup blocked — allow popups for Cloud Wallet login');
   }
 
-  try {
-    const consent = waitForGamingConsentWalletId(popup);
-    const code = await waitForOAuthCode(state, popup);
-    // Code is in hand; give any in-flight consent message a short grace period
-    // rather than blocking on the full consent timeout.
-    consent.notifyCodeReceived();
-    const consentWalletId = await consent.promise;
+  const consent = waitForGamingConsentWalletId(popup);
+  const code = await waitForOAuthCode(state, popup);
+  // Code is in hand; give any in-flight consent message a short grace period
+  // rather than blocking on the full consent timeout.
+  consent.notifyCodeReceived();
+  const consentWalletId = await consent.promise;
 
-    const tokens = await exchangeAuthorizationCode({
-      code,
-      codeVerifier,
-      redirectUri,
-    });
+  const tokens = await exchangeAuthorizationCode({
+    code,
+    codeVerifier,
+    redirectUri,
+  });
 
-    let walletId: string;
-    if (consentWalletId && consentWalletId !== '*') {
-      // Concrete walletId from the consent screen (encode passes Wallet_* through).
-      walletId = encodeRelayGlobalId('Wallet', consentWalletId);
-    } else {
-      // The consent screen was skipped (already consented) or granted a wildcard.
-      // Resolve a concrete wallet from the grant; ids are already Wallet_<id>.
-      const provider: TokenProvider = { getAccessToken: async () => tokens.accessToken };
-      const resolved = await fetchFirstConsentedWalletId(provider);
-      if (!resolved) {
-        throw new Error(
-          'Cloud Wallet returned no consented wallets. Grant access to a specific wallet during consent.',
-        );
-      }
-      walletId = resolved;
+  let walletId: string;
+  if (consentWalletId && consentWalletId !== '*') {
+    // Concrete walletId from the consent screen (encode passes Wallet_* through).
+    walletId = encodeRelayGlobalId('Wallet', consentWalletId);
+  } else {
+    // The consent screen was skipped (already consented) or granted a wildcard.
+    // Resolve a concrete wallet from the grant; ids are already Wallet_<id>.
+    const provider: TokenProvider = { getAccessToken: async () => tokens.accessToken };
+    const resolved = await fetchFirstConsentedWalletId(provider);
+    if (!resolved) {
+      throw new Error(
+        'Cloud Wallet returned no consented wallets. Grant access to a specific wallet during consent.',
+      );
     }
-
-    try {
-      popup.close();
-    } catch {
-      // ignore
-    }
-    return { ...tokens, walletId };
-  } finally {
-    clearOAuthPending();
+    walletId = resolved;
   }
+
+  try {
+    popup.close();
+  } catch {
+    // ignore
+  }
+  return { ...tokens, walletId };
 }
 
-/** Handle /oauth/callback page: validate state and postMessage to opener. */
+/**
+ * Handle /oauth/callback page: relay the authorization code to the opener.
+ *
+ * The popup cannot validate `state` itself. Its `sessionStorage` is a clone
+ * taken when the popup's browsing context was created, so when `window.open`
+ * reuses a popup left over from an earlier attempt the clone still holds that
+ * attempt's record. `beginOAuthPopupLogin` keeps the authoritative `state` and
+ * `codeVerifier` in the opener, and `waitForOAuthCode` drops any message whose
+ * state does not match.
+ */
 export function handleOAuthCallbackPage(): {
   status: 'ok' | 'error';
   message: string;
@@ -411,7 +409,6 @@ export function handleOAuthCallbackPage(): {
   const state = params.get('state');
   const error = params.get('error');
   const errorDescription = params.get('error_description');
-  const pending = loadOAuthPending();
 
   if (error) {
     const message = errorDescription || error;
@@ -426,17 +423,6 @@ export function handleOAuthCallbackPage(): {
 
   if (!code || !state) {
     const message = 'Missing authorization code or state';
-    if (window.opener) {
-      window.opener.postMessage(
-        { type: OAUTH_MESSAGE_TYPE, error: message, state },
-        window.location.origin,
-      );
-    }
-    return { status: 'error', message };
-  }
-
-  if (!pending || pending.state !== state) {
-    const message = 'OAuth state mismatch — restart Cloud Wallet connect';
     if (window.opener) {
       window.opener.postMessage(
         { type: OAUTH_MESSAGE_TYPE, error: message, state },
