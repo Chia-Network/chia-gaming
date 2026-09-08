@@ -729,7 +729,15 @@ export class SessionController implements PollingGameSession {
           );
           appliedFee = fee;
         } else {
-          log('[wasm] submitTransaction: fee spend unavailable; submitting with zero fee');
+          // The wallet couldn't produce a signed fee spend (most commonly
+          // insufficient funds, but also an unsynced wallet or RPC failure).
+          // Submitting without a fee keeps the game progressing, but the user
+          // must know their configured fee was dropped for this transaction.
+          const warning =
+            'Configured fee was not applied: the wallet could not fund it ' +
+            '(most likely insufficient balance). The transaction was submitted without a fee.';
+          log(`[wasm] submitTransaction: fee spend unavailable; ${warning}`);
+          this.rxjsEmitter?.next({ type: 'error', error: warning });
         }
       }
 

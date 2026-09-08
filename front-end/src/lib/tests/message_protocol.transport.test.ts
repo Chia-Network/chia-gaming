@@ -914,7 +914,7 @@ describe('wallet fee attachment on submission', () => {
     );
   });
 
-  it('submits with zero fee when the wallet cannot build a fee spend', async () => {
+  it('submits with zero fee and warns the user when the wallet cannot build a fee spend', async () => {
     const createFeeSpend = jest.fn().mockResolvedValue(null);
     const spend = jest.fn().mockResolvedValue('ok');
     const aggregate = jest.fn();
@@ -925,8 +925,14 @@ describe('wallet fee attachment on submission', () => {
     blob.getFee = () => 10n;
     attachWc(blob, aggregate);
 
+    const errors: string[] = [];
+    const subscription = blob.getObservable().subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+
     submitTransaction(blob, testSpendBundle('coin'));
     await transactionSubmitQueue(blob);
+    subscription.unsubscribe();
 
     expect(createFeeSpend).toHaveBeenCalled();
     expect(aggregate).not.toHaveBeenCalled();
@@ -937,5 +943,8 @@ describe('wallet fee attachment on submission', () => {
       'submitTransaction',
       undefined,
     );
+    // The user is warned that their configured fee was dropped for this tx.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/fee was not applied/i);
   });
 });
