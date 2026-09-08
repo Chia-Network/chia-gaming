@@ -7,7 +7,7 @@ use crate::common::types::{
 };
 use serde::{Deserialize, Serialize};
 
-const PEER_PROTOCOL_CAPABILITY: &str = "peer_protocol";
+const PEER_PROTOCOL_CAPABILITY: &str = "p";
 const PEER_PROTOCOL_VERSION: u32 = 1;
 pub(crate) const MAX_PEER_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_QUEUED_PEER_MESSAGES: usize = 1024;
@@ -15,15 +15,25 @@ pub(crate) const MAX_QUEUED_PEER_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakePayloadB {
+    #[serde(rename = "v")]
     pub capabilities: BTreeMap<String, u32>,
+    #[serde(rename = "ck")]
     pub channel_public_key: PublicKey,
+    #[serde(rename = "uk")]
     pub unroll_public_key: PublicKey,
+    #[serde(rename = "rh")]
     pub reward_puzzle_hash: PuzzleHash,
+    #[serde(rename = "rk")]
     pub referee_pubkey: PublicKey,
+    #[serde(rename = "rs")]
     pub reward_payout_signature: Aggsig,
+    #[serde(rename = "cp")]
     pub channel_key_pop: Aggsig,
+    #[serde(rename = "up")]
     pub unroll_key_pop: Aggsig,
+    #[serde(rename = "mc")]
     pub my_contribution: Amount,
+    #[serde(rename = "tc")]
     pub their_contribution: Amount,
 }
 
@@ -45,23 +55,28 @@ pub fn validate_peer_capabilities(capabilities: &BTreeMap<String, u32>) -> Resul
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakePayloadC {
+    #[serde(rename = "lc")]
     pub launcher_coin: CoinString,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakePayloadD {
+    #[serde(rename = "s")]
     pub signatures: StateUpdateSignatures,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakePayloadE {
+    #[serde(rename = "b")]
     pub bundle: SpendBundle,
+    #[serde(rename = "s")]
     pub signatures: StateUpdateSignatures,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakePayloadF {
     /// Receiver wallet acceptance only. It must not repeat spends from E.
+    #[serde(rename = "b")]
     pub bundle: SpendBundle,
 }
 

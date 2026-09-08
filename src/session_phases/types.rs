@@ -170,6 +170,10 @@ mod wire_proposal_tests {
         assert!(!fields.iter().any(|(key, _)| {
             matches!(key, crate::protocol_pretty::BencodexValue::Text(key) if key == "group_id")
         }));
+
+        let encoded_action =
+            bencodex::to_vec(&BatchAction::ProposeGroup(wire)).expect("serialize proposal action");
+        assert!(encoded_action.starts_with(b"du1:P"));
     }
 }
 
@@ -228,34 +232,45 @@ pub struct PeerMove {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BatchAction {
+    #[serde(rename = "P")]
     ProposeGroup(WireProposalGroup),
+    #[serde(rename = "AP")]
     AcceptProposalGroup(GameID),
+    #[serde(rename = "CP")]
     CancelProposalGroup(GameID),
+    #[serde(rename = "M")]
     Move(GameID, PeerMove),
-    #[serde(rename = "AcceptSettlement")]
+    #[serde(rename = "AS")]
     AcceptSettlement(GameID, Amount),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PeerMessage {
+    #[serde(rename = "HA")]
     HandshakeA(HandshakePayloadB),
+    #[serde(rename = "HB")]
     HandshakeB(HandshakePayloadB),
+    #[serde(rename = "HC")]
     HandshakeC(HandshakePayloadC),
+    #[serde(rename = "HD")]
     HandshakeD(HandshakePayloadD),
+    #[serde(rename = "HE")]
     HandshakeE(HandshakePayloadE),
+    #[serde(rename = "HF")]
     HandshakeF(HandshakePayloadF),
 
+    #[serde(rename = "B")]
     Batch {
         actions: Vec<BatchAction>,
         signatures: StateUpdateSignatures,
     },
-    CleanShutdown {
-        channel_half_sig: Aggsig,
-    },
-    CleanShutdownComplete {
-        channel_half_sig: Aggsig,
-    },
+    #[serde(rename = "S")]
+    CleanShutdown { channel_half_sig: Aggsig },
+    #[serde(rename = "SF")]
+    CleanShutdownComplete { channel_half_sig: Aggsig },
+    #[serde(rename = "R")]
     RequestPotato(()),
+    #[serde(rename = "M")]
     Message(GameID, #[serde(with = "peer_wire_bytes")] Vec<u8>),
 }
 
@@ -451,8 +466,34 @@ pub struct OffChainPhaseInit {
 #[cfg(test)]
 mod peer_wire_shape_tests {
     use super::*;
-    use crate::common::types::SpendBundle;
+    use crate::common::types::{CoinSpend, CoinString, Spend, SpendBundle};
     use crate::referee::types::ValidationInfoHash;
+    use crate::session_phases::handshake::local_capabilities;
+
+    fn assert_short_map_keys(value: &crate::protocol_pretty::BencodexValue) {
+        use crate::protocol_pretty::BencodexValue;
+
+        match value {
+            BencodexValue::List(values) => {
+                for value in values {
+                    assert_short_map_keys(value);
+                }
+            }
+            BencodexValue::Map(entries) => {
+                for (key, value) in entries {
+                    let BencodexValue::Text(key) = key else {
+                        panic!("wire map key is not text: {key:?}");
+                    };
+                    assert!(
+                        key.len() <= 2,
+                        "fixed handshake wire key is longer than two characters: {key}"
+                    );
+                    assert_short_map_keys(value);
+                }
+            }
+            _ => {}
+        }
+    }
 
     #[test]
     fn externally_tagged_peer_message_has_byte_exact_shape() {
@@ -464,15 +505,15 @@ mod peer_wire_shape_tests {
                 },
             }))
             .expect("encode handshake"),
-            b"du10:HandshakeFdu6:bundledu4:namenu6:spendsleeee"
+            b"du2:HFdu1:bdu1:nnu1:sleeee"
         );
         assert_eq!(
             bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("encode request"),
-            b"du13:RequestPotatone"
+            b"du1:Rne"
         );
         assert_eq!(
             bencodex::to_vec(&PeerMessage::Message(GameID(7), vec![])).expect("encode message"),
-            b"du7:Messageli7e0:ee"
+            b"du1:Mli7e0:ee"
         );
         assert_eq!(
             bencodex::to_vec(&PeerMessage::Batch {
@@ -483,29 +524,83 @@ mod peer_wire_shape_tests {
                 },
             })
             .expect("encode batch"),
-            b"du5:Batchdu7:actionsleu10:signaturesdu16:channel_half_sig0:u23:unroll_preempt_half_sig0:eee"
+            b"du1:Bdu7:actionsleu10:signaturesdu1:c0:u1:u0:eee"
         );
         assert_eq!(
             bencodex::to_vec(&PeerMessage::CleanShutdown {
                 channel_half_sig: Aggsig::default(),
             })
             .expect("encode clean shutdown"),
-            b"du13:CleanShutdowndu16:channel_half_sig0:ee"
+            b"du1:Sdu16:channel_half_sig0:ee"
         );
         assert_eq!(
             bencodex::to_vec(&PeerMessage::CleanShutdownComplete {
                 channel_half_sig: Aggsig::default(),
             })
             .expect("encode clean shutdown complete"),
-            b"du21:CleanShutdownCompletedu16:channel_half_sig0:ee"
+            b"du2:SFdu16:channel_half_sig0:ee"
         );
+    }
+
+    #[test]
+    fn every_fixed_handshake_wire_key_is_at_most_two_characters() {
+        let identity = HandshakePayloadB {
+            capabilities: local_capabilities(),
+            channel_public_key: Default::default(),
+            unroll_public_key: Default::default(),
+            reward_puzzle_hash: Default::default(),
+            referee_pubkey: Default::default(),
+            reward_payout_signature: Default::default(),
+            channel_key_pop: Default::default(),
+            unroll_key_pop: Default::default(),
+            my_contribution: Amount::new(1),
+            their_contribution: Amount::new(2),
+        };
+        let signatures = StateUpdateSignatures::default();
+        let bundle = SpendBundle {
+            name: Some("test".to_string()),
+            spends: vec![CoinSpend {
+                coin: CoinString::from_bytes(&[]),
+                bundle: Spend::default(),
+            }],
+        };
+        let messages = [
+            PeerMessage::HandshakeA(identity.clone()),
+            PeerMessage::HandshakeB(identity),
+            PeerMessage::HandshakeC(HandshakePayloadC {
+                launcher_coin: CoinString::from_bytes(&[]),
+            }),
+            PeerMessage::HandshakeD(HandshakePayloadD {
+                signatures: signatures.clone(),
+            }),
+            PeerMessage::HandshakeE(HandshakePayloadE {
+                bundle: bundle.clone(),
+                signatures,
+            }),
+            PeerMessage::HandshakeF(HandshakePayloadF { bundle }),
+        ];
+
+        for message in messages {
+            let encoded = bencodex::to_vec(&message).expect("encode handshake message");
+            let value = bencodex::from_slice(&encoded).expect("decode handshake message");
+            assert_short_map_keys(&value);
+        }
     }
 
     #[test]
     fn externally_tagged_batch_action_has_byte_exact_shape() {
         assert_eq!(
             bencodex::to_vec(&BatchAction::AcceptProposalGroup(GameID(7))).expect("encode action"),
-            b"du19:AcceptProposalGroupi7ee"
+            b"du2:APi7ee"
+        );
+        assert_eq!(
+            bencodex::to_vec(&BatchAction::CancelProposalGroup(GameID(7))).expect("encode action"),
+            b"du2:CPi7ee"
+        );
+        assert_eq!(
+            bencodex::to_vec(&BatchAction::AcceptSettlement(GameID(7), Amount::new(5),))
+                .expect("encode action"),
+            b"du2:ASli7ei5eee"
         );
         assert_eq!(
             bencodex::to_vec(&BatchAction::Move(
@@ -521,7 +616,7 @@ mod peer_wire_shape_tests {
                 },
             ))
             .expect("encode move action"),
-            b"du4:Moveli7edu5:basicdu13:max_move_sizei1eu17:max_move_size_raw0:u9:move_made0:u11:mover_sharei0eeu8:terminalfeee"
+            b"du1:Mli7edu5:basicdu13:max_move_sizei1eu17:max_move_size_raw0:u9:move_made0:u11:mover_sharei0eeu8:terminalfeee"
         );
         assert_eq!(
             bencodex::to_vec(&BatchAction::Move(
@@ -537,7 +632,7 @@ mod peer_wire_shape_tests {
                 },
             ))
             .expect("encode terminal move action"),
-            b"du4:Moveli7edu5:basicdu13:max_move_sizei1eu17:max_move_size_raw0:u9:move_made0:u11:mover_sharei0eeu8:terminalteee"
+            b"du1:Mli7edu5:basicdu13:max_move_sizei1eu17:max_move_size_raw0:u9:move_made0:u11:mover_sharei0eeu8:terminalteee"
         );
     }
 

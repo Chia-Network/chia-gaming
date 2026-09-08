@@ -205,6 +205,15 @@ StateUpdateSignatures {
 }
 ```
 
+The compound types use compact field keys on the wire:
+
+- `Spend`: `p` means `puzzle`, `s` means `solution`, and `g` means
+  `signature`.
+- `CoinSpend`: `c` means `coin` and `b` means `bundle`.
+- `SpendBundle`: `n` means `name` and `s` means `spends`.
+- `StateUpdateSignatures`: `c` means `channel_half_sig` and `u` means
+  `unroll_preempt_half_sig`.
+
 `channel_half_sig` signs the channel-coin spend committing to the new unroll
 state. `unroll_preempt_half_sig` signs the preemption of an older unroll to that
 state. Each is one party's half of a two-party aggregate signature.
@@ -441,25 +450,26 @@ RequestPotato(())
 Message(GameID, Bytes)
 ```
 
-The top-level discriminant is the exact case-sensitive variant name.
+Rust uses descriptive variant names internally, but the wire discriminants are
+the compact, case-sensitive tags below.
 
 The intentional externally tagged outer shapes are:
 
 ```text
-HandshakeA: d u10:HandshakeA <HandshakePayloadB struct> e
-HandshakeB: d u10:HandshakeB <HandshakePayloadB struct> e
-HandshakeC: d u10:HandshakeC <HandshakePayloadC struct> e
-HandshakeD: d u10:HandshakeD <HandshakePayloadD struct> e
-HandshakeE: d u10:HandshakeE <HandshakePayloadE struct> e
-HandshakeF: d u10:HandshakeF <HandshakePayloadF struct> e
-Batch: d u5:Batch <Batch fields struct> e
-CleanShutdown: d u13:CleanShutdown <CleanShutdown fields struct> e
-CleanShutdownComplete: d u21:CleanShutdownComplete <CleanShutdownComplete fields struct> e
-RequestPotato: d u13:RequestPotato n e
-Message: d u7:Message l i<game_id>e <byte string> e e
+HandshakeA (`HA`): d u2:HA <HandshakePayloadB struct> e
+HandshakeB (`HB`): d u2:HB <HandshakePayloadB struct> e
+HandshakeC (`HC`): d u2:HC <HandshakePayloadC struct> e
+HandshakeD (`HD`): d u2:HD <HandshakePayloadD struct> e
+HandshakeE (`HE`): d u2:HE <HandshakePayloadE struct> e
+HandshakeF (`HF`): d u2:HF <HandshakePayloadF struct> e
+Batch (`B`): d u1:B <Batch fields struct> e
+CleanShutdown (`S`): d u1:S <CleanShutdown fields struct> e
+CleanShutdownComplete (`SF`): d u2:SF <CleanShutdownComplete fields struct> e
+RequestPotato (`R`): d u1:R n e
+Message (`M`): d u1:M l i<game_id>e <byte string> e e
 ```
 
-Thus `RequestPotato(())` is byte-exact `du13:RequestPotatone`; it is not a unit
+Thus `RequestPotato(())` is byte-exact `du1:Rne`; it is not a unit
 variant or an empty list.
 
 ## 7. Handshake messages
@@ -483,10 +493,26 @@ HandshakePayloadB {
 }
 ```
 
+Handshake payload field keys are:
+
+- `v` means `capabilities`.
+- `ck` means `channel_public_key`.
+- `uk` means `unroll_public_key`.
+- `rh` means `reward_puzzle_hash`.
+- `rk` means `referee_pubkey`.
+- `rs` means `reward_payout_signature`.
+- `cp` means `channel_key_pop`.
+- `up` means `unroll_key_pop`.
+- `mc` means `my_contribution`.
+- `tc` means `their_contribution`.
+- `lc` means `launcher_coin` in Handshake C.
+- `s` means `signatures` in Handshakes D and E.
+- `b` means `bundle` in Handshakes E and F.
+
 `capabilities` is a text-keyed version map. Both A and B must contain
-`"peer_protocol": 1`. Any missing or different value is rejected. Unknown keys
-are ignored so independently introduced capabilities do not change protocol-1
-behavior.
+`"p": 1`, where `p` means `peer_protocol`. Any missing or different value is
+rejected. Unknown keys are ignored so independently introduced capabilities do
+not change protocol-1 behavior.
 
 Contribution names are from the sender's perspective. A receiver requires:
 
@@ -694,24 +720,25 @@ potato without another operation.
 
 ## 11. `BatchAction` messages
 
-Each action uses the compound variant rules in section 3.2. Its exact outer wire
-shape is:
+Each action uses the compound variant rules in section 3.2. Rust retains the
+descriptive names while the wire uses the following compact tags and exact
+outer shapes:
 
 ```text
-ProposeGroup:
-  d u11:ProposeGroup <WireProposalGroup struct> e
+ProposeGroup (`P`):
+  d u1:P <WireProposalGroup struct> e
 
-AcceptProposalGroup:
-  d u19:AcceptProposalGroup i<game_id>e e
+AcceptProposalGroup (`AP`):
+  d u2:AP i<game_id>e e
 
-CancelProposalGroup:
-  d u18:CancelProposalGroup i<game_id>e e
+CancelProposalGroup (`CP`):
+  d u2:CP i<game_id>e e
 
-Move:
-  d u4:Move l i<game_id>e <PeerMove struct> e e
+Move (`M`):
+  d u1:M l i<game_id>e <PeerMove struct> e e
 
-AcceptSettlement:
-  d u16:AcceptSettlement l i<game_id>e i<amount>e e e
+AcceptSettlement (`AS`):
+  d u2:AS l i<game_id>e i<amount>e e e
 ```
 
 ### 11.1 `ProposeGroup`

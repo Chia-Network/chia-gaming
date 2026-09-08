@@ -18,8 +18,11 @@ use crate::utils::proper_list;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Spend {
+    #[serde(rename = "p")]
     pub puzzle: Puzzle,
+    #[serde(rename = "s")]
     pub solution: ProgramRef,
+    #[serde(rename = "g")]
     pub signature: Aggsig,
 }
 
@@ -64,7 +67,9 @@ impl Spend {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CoinSpend {
+    #[serde(rename = "c")]
     pub coin: CoinString,
+    #[serde(rename = "b")]
     pub bundle: Spend,
 }
 
@@ -113,7 +118,9 @@ impl Default for Spend {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendBundle {
+    #[serde(rename = "n")]
     pub name: Option<String>,
+    #[serde(rename = "s")]
     pub spends: Vec<CoinSpend>,
 }
 
