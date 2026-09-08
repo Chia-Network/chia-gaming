@@ -483,19 +483,38 @@ function pruneRecentCorrespondents(now: number): void {
   }
 }
 
-function notifyRecentCorrespondents(reconnectedSessionId: string, playerId: string): void {
-  const peers = recentCorrespondents.get(reconnectedSessionId);
+function notifyRecentCorrespondents(
+  sessionId: string,
+  playerId: string,
+  type: 'peer_available' | 'peer_unavailable',
+): void {
+  const peers = recentCorrespondents.get(sessionId);
   if (!peers) return;
   const now = Date.now();
   for (const [peerSessionId, lastRelayedAt] of [...peers]) {
     if (now - lastRelayedAt > RECENT_CORRESPONDENT_TTL_MS) {
-      removeCorrespondentEdge(reconnectedSessionId, peerSessionId);
+      removeCorrespondentEdge(sessionId, peerSessionId);
       continue;
     }
     const peerWs = gameConnections.get(peerSessionId);
     if (peerWs?.readyState === WebSocket.OPEN) {
-      sendGameWs(peerWs, 'peer_available', { player_id: playerIdToWire(playerId) });
+      sendGameWs(peerWs, type, { player_id: playerIdToWire(playerId) });
     }
+  }
+}
+
+function unbindGameConnection(ws: WebSocket, notifyUnavailable: boolean): void {
+  const meta = wsGameMeta.get(ws);
+  if (!meta) return;
+  if (gameConnections.get(meta.sessionId) !== ws) return;
+  gameConnections.delete(meta.sessionId);
+  logHub('game_connection_removed', {
+    ws_id: wsId(ws),
+    session_id: meta.sessionId,
+    notify_unavailable: notifyUnavailable,
+  });
+  if (notifyUnavailable) {
+    notifyRecentCorrespondents(meta.sessionId, meta.playerId, 'peer_unavailable');
   }
 }
 
@@ -1021,7 +1040,7 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   if (alias) {
     sendGameWs(ws, 'alias_updated', { alias });
   }
-  notifyRecentCorrespondents(msg.session_id, playerId);
+  notifyRecentCorrespondents(msg.session_id, playerId, 'peer_available');
   logHub('identify_registered', {
     ws_id: wsId(ws),
     session_id: msg.session_id,
@@ -1309,14 +1328,7 @@ gameWsServer.on('connection', (ws) => {
   ws.on('close', (code, reason) => {
     clearKeepalive(ws);
     logHub('game_ws_closed', { ws_id: currentWsId, code, reason: reason.toString() });
-    const gameMeta = wsGameMeta.get(ws);
-    if (gameMeta) {
-      const { sessionId } = gameMeta;
-      if (gameConnections.get(sessionId) === ws) {
-        gameConnections.delete(sessionId);
-        logHub('game_connection_removed_on_close', { ws_id: currentWsId, session_id: sessionId });
-      }
-    }
+    unbindGameConnection(ws, code !== 4001);
   });
 });
 
@@ -1367,11 +1379,13 @@ function sweepGameConnections(now: number): void {
       ws_id: ws ? wsId(ws) : null,
     });
     if (ws) {
+      unbindGameConnection(ws, true);
       try {
         ws.close(4002, 'idle_timeout');
       } catch {}
+    } else {
+      gameConnections.delete(sessionId);
     }
-    gameConnections.delete(sessionId);
   }
 }
 

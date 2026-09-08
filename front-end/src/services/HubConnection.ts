@@ -26,6 +26,7 @@ export interface HubConnectionCallbacks {
   onRegistered: (player_id: string) => void;
   onAliasUpdated: (alias: string) => void;
   onPeerAvailable: (player_id: string) => void;
+  onPeerUnavailable: (player_id: string) => void;
   onClosed: () => void;
   onHubAttention: () => void;
   onHubDisconnected: () => void;
@@ -48,6 +49,7 @@ type HubEnvelope =
   | { type: 'delivery_failure'; to: string }
   | { type: 'alias_updated'; alias: string }
   | { type: 'peer_available'; player_id: string }
+  | { type: 'peer_unavailable'; player_id: string }
   | { type: 'relay'; from: string; alias: string; payload: Uint8Array }
   | { type: 'hub_attention' }
   | { type: 'closed' }
@@ -155,6 +157,7 @@ function decodeHubEnvelope(input: ArrayBuffer): HubEnvelope | null {
     case 'alias_updated':
       return { type, alias: requireAlias(decoded, 'alias') };
     case 'peer_available':
+    case 'peer_unavailable':
       return {
         type,
         player_id: playerIdFromWire(requireBytes(decoded, 'player_id', WIRE_ID_BYTES)),
@@ -381,6 +384,9 @@ export class HubConnection {
         break;
       case 'peer_available':
         this.callbacks.onPeerAvailable(msg.player_id);
+        break;
+      case 'peer_unavailable':
+        this.callbacks.onPeerUnavailable(msg.player_id);
         break;
       case 'relay':
         this.dispatchRelay(msg.from, msg.alias, msg.payload);

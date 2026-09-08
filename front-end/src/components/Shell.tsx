@@ -1318,6 +1318,28 @@ const Shell = () => {
     syncPeerLiveness();
   }, [syncPeerLiveness]);
 
+  const applyHubPeerDisconnected = useCallback(
+    (playerId: string) => {
+      const ps = peerSessionRef.current;
+      if (!ps || playerId !== ps.peerId) return;
+      if (ps.liveness === 'dead') return;
+      ps.markDegraded();
+      syncPeerLiveness();
+    },
+    [syncPeerLiveness],
+  );
+
+  const restoreHubPeerConnected = useCallback(
+    (playerId: string) => {
+      const peer = peerSessionRef.current;
+      if (!peer || peer.peerId !== playerId) return false;
+      peer.notePeerActivity();
+      syncPeerLiveness();
+      return true;
+    },
+    [syncPeerLiveness],
+  );
+
   const registerMessageHandler = useCallback(
     (
       handler: (msgno: number, msg: Uint8Array) => void,
@@ -1423,38 +1445,35 @@ const Shell = () => {
     [bindRejectionTombstone],
   );
 
-  const bindOutboundRejectRetirement = useCallback(
-    (peer: PeerSession) => {
-      peer.reliableTransport.attachConsumer({
-        isReady: () => true,
-        deliver: () => {},
-        persist: async () => {
-          await patchPreHandshakeTransport(peer.reliableState);
-          await flushSessionSave();
-        },
-        acknowledged: () => {
-          if (peer.reliableState.unackedMessages.length > 0) return;
-          void peer.reliableTransport
-            .flushPending()
-            .then(() => clearSession())
-            .then(() => {
-              if (peerSessionRef.current !== peer) return;
-              peer.destroy();
-              peerSessionRef.current = null;
-              setPeerLiveness(null);
-            })
-            .catch((error) => {
-              console.error('[Shell] failed to retire reliable session rejection', error);
-            });
-        },
-        keepalive: replayPeerUnacked,
-        failure: (reason) => {
-          console.error('[Shell] invalid rejection acknowledgement', reason);
-        },
-      });
-    },
-    [replayPeerUnacked],
-  );
+  const bindOutboundRejectRetirement = useCallback((peer: PeerSession) => {
+    peer.reliableTransport.attachConsumer({
+      isReady: () => true,
+      deliver: () => {},
+      persist: async () => {
+        await patchPreHandshakeTransport(peer.reliableState);
+        await flushSessionSave();
+      },
+      acknowledged: () => {
+        if (peer.reliableState.unackedMessages.length > 0) return;
+        void peer.reliableTransport
+          .flushPending()
+          .then(() => clearSession())
+          .then(() => {
+            if (peerSessionRef.current !== peer) return;
+            peer.destroy();
+            peerSessionRef.current = null;
+            setPeerLiveness(null);
+          })
+          .catch((error) => {
+            console.error('[Shell] failed to retire reliable session rejection', error);
+          });
+      },
+      keepalive: () => {},
+      failure: (reason) => {
+        console.error('[Shell] invalid rejection acknowledgement', reason);
+      },
+    });
+  }, []);
 
   const sendSessionReject = useCallback((peerId: string): Promise<void> => {
     const peer = peerSessionRef.current;
@@ -2277,12 +2296,14 @@ const Shell = () => {
             if (peekAlias() !== alias) setAlias(alias);
           },
           onPeerAvailable: (playerId: string) => {
-            const peer = peerSessionRef.current;
-            if (peer?.peerId === playerId) {
+            if (restoreHubPeerConnected(playerId)) {
               if (sessionController) sessionController.resendUnacked();
               else replayPeerUnacked();
             }
             replayRejectionPeers(playerId);
+          },
+          onPeerUnavailable: (playerId: string) => {
+            applyHubPeerDisconnected(playerId);
           },
           onRegistered: (playerId: string) => {
             hubWsUpRef.current = true;
@@ -2414,6 +2435,7 @@ const Shell = () => {
               if (sessionController) sessionController.resendUnacked();
               else replayPeerUnacked();
             }
+            replayRejectionPeers();
           },
           onHubAttention: () => {
             if (activeTabRef.current !== 'hub') {
@@ -2434,9 +2456,6 @@ const Shell = () => {
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
             setHubLiveness('connected');
-            if (sessionController) sessionController.resendUnacked();
-            else replayPeerUnacked();
-            replayRejectionPeers();
           },
           onHubActivity: () => {
             lastHubActivityRef.current = Date.now();
@@ -2515,6 +2534,8 @@ const Shell = () => {
       syncPeerLiveness,
       markPeerInactive,
       markPeerDead,
+      applyHubPeerDisconnected,
+      restoreHubPeerConnected,
       cancelAttemptedSession,
       abortAcceptIfActive,
       freshStartPersistInFlightRef,

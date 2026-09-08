@@ -25,8 +25,9 @@ use crate::session_phases::effects::{
     GameNotification, TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake::{
-    local_capabilities, validate_peer_capabilities, CoinSpendRequest, HandshakePayloadB,
-    HandshakePayloadC, HandshakePayloadE, HandshakePayloadF, HandshakeStepInfo,
+    combine_channel_funding_bundles, local_capabilities,
+    receiver_acceptance_asserts_funding_announcement, validate_peer_capabilities, CoinSpendRequest,
+    HandshakePayloadB, HandshakePayloadC, HandshakePayloadE, HandshakePayloadF, HandshakeStepInfo,
     HandshakeStepWithSpend, RawCoinCondition, MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES,
     MAX_QUEUED_PEER_MESSAGES,
 };
@@ -71,6 +72,7 @@ pub struct HandshakeInitiatorPhase {
 
     waiting_to_start: bool,
     transaction_pushed: bool,
+    funding_announcement: Option<Hash>,
     incoming_messages: VecDeque<(Rc<PeerMessage>, usize)>,
 
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
@@ -103,6 +105,7 @@ impl HandshakeInitiatorPhase {
             pending_coin_spend: false,
             waiting_to_start: true,
             transaction_pushed: false,
+            funding_announcement: None,
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
             failed: false,
@@ -307,7 +310,7 @@ impl HandshakeInitiatorPhase {
         .hash())
     }
 
-    fn build_alice_coin_spend_request(&self) -> Result<CoinSpendRequest, Error> {
+    fn build_alice_coin_spend_request(&mut self) -> Result<CoinSpendRequest, Error> {
         let ch = self.channel_state()?;
         let channel_coin = ch.channel_coin();
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
@@ -320,6 +323,7 @@ impl HandshakeInitiatorPhase {
             &channel_puzzle_hash,
             &total_amount,
         )?;
+        self.funding_announcement = Some(ann_hash.clone());
         let per_player = self.my_contribution.clone();
 
         let launcher_ph_bytes = crate::common::constants::SINGLETON_LAUNCHER_HASH.to_vec();
@@ -514,10 +518,26 @@ impl HandshakeInitiatorPhase {
                 if let PeerMessage::HandshakeF(HandshakePayloadF { bundle }) = msg_envelope.borrow()
                 {
                     if !self.transaction_pushed {
-                        effects.push(Effect::SpendTransaction(
-                            bundle.clone(),
-                            self.channel_deadline,
-                        ));
+                        let initiator_bundle = match &self.state {
+                            InitiatorState::Finished(step) => step.spend.clone(),
+                            _ => unreachable!(),
+                        };
+                        let announcement = self.funding_announcement.as_ref().ok_or_else(|| {
+                            Error::StrErr(
+                                "handshake F arrived without a funding announcement".to_string(),
+                            )
+                        })?;
+                        receiver_acceptance_asserts_funding_announcement(
+                            env.allocator,
+                            bundle,
+                            announcement,
+                        )?;
+                        let combined = combine_channel_funding_bundles(&initiator_bundle, bundle)?;
+                        combined.validate_consensus(
+                            &env.agg_sig_me_additional_data,
+                            self.last_height,
+                        )?;
+                        effects.push(Effect::SpendTransaction(combined, self.channel_deadline));
                         self.transaction_pushed = true;
                     }
                 } else {
@@ -1075,10 +1095,66 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
 #[cfg(test)]
 mod finished_message_tests {
     use super::*;
+    use crate::common::constants::{ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT};
+    use crate::common::types::{Sha256Input, Sha256tree, ToQuotedProgram};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
-    fn finished_phase() -> HandshakeInitiatorPhase {
+    fn spend_for_conditions(
+        allocator: &mut crate::common::types::AllocEncoder,
+        tag: u8,
+        conditions: clvmr::NodePtr,
+    ) -> CoinSpend {
+        let puzzle: Puzzle = conditions
+            .to_quoted_program(allocator)
+            .expect("quoted conditions")
+            .into();
+        let coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([tag; 32])),
+            &puzzle.sha256tree(allocator),
+            &Amount::new(1),
+        );
+        CoinSpend {
+            coin,
+            bundle: Spend {
+                puzzle,
+                solution: Program::from_bytes(&[0x80]).into(),
+                signature: Aggsig::default(),
+            },
+        }
+    }
+
+    fn announcement_bound_bundles(
+        allocator: &mut crate::common::types::AllocEncoder,
+    ) -> (SpendBundle, SpendBundle, Hash) {
+        let message = Hash::from_bytes([0xab; 32]);
+        let create_conditions = ((CREATE_COIN_ANNOUNCEMENT, (message.clone(), ())), ())
+            .to_clvm(allocator)
+            .expect("create announcement conditions");
+        let initiator_spend = spend_for_conditions(allocator, 1, create_conditions);
+        let announcement = Sha256Input::Array(vec![
+            Sha256Input::Bytes(initiator_spend.coin.to_coin_id().bytes()),
+            Sha256Input::Bytes(message.bytes()),
+        ])
+        .hash();
+        let assert_conditions = ((ASSERT_COIN_ANNOUNCEMENT, (announcement.clone(), ())), ())
+            .to_clvm(allocator)
+            .expect("assert announcement conditions");
+        let receiver_spend = spend_for_conditions(allocator, 2, assert_conditions);
+        (
+            SpendBundle {
+                name: None,
+                spends: vec![initiator_spend],
+            },
+            SpendBundle {
+                name: None,
+                spends: vec![receiver_spend],
+            },
+            announcement,
+        )
+    }
+
+    fn finished_phase(e_bundle: SpendBundle, announcement: Hash) -> HandshakeInitiatorPhase {
         let mut rng = ChaCha8Rng::from_seed([20; 32]);
         let mut phase = HandshakeInitiatorPhase::new(OffChainPhaseInit {
             have_potato: true,
@@ -1102,45 +1178,80 @@ mod finished_message_tests {
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
         };
+        phase.funding_announcement = Some(announcement);
         phase.state = InitiatorState::Finished(Box::new(HandshakeStepWithSpend {
             info: HandshakeStepInfo {
                 first_player_hs_info: payload.clone(),
                 second_player_hs_info: payload,
             },
-            spend: SpendBundle {
-                name: None,
-                spends: vec![],
-            },
+            spend: e_bundle,
         }));
         phase
     }
 
+    fn encode_f(bundle: SpendBundle) -> Vec<u8> {
+        bencodex::to_vec(&PeerMessage::HandshakeF(HandshakePayloadF { bundle })).expect("encode F")
+    }
+
     #[test]
     fn finished_submits_only_the_first_independently_delivered_handshake_f() {
-        let mut phase = finished_phase();
         let mut allocator = crate::common::types::AllocEncoder::new();
+        let (e_bundle, f_bundle, announcement) = announcement_bound_bundles(&mut allocator);
+        let e_coin = e_bundle.spends[0].coin.clone();
+        let f_coin = f_bundle.spends[0].coin.clone();
+        let mut phase = finished_phase(e_bundle, announcement);
         let mut env = ChannelEnv::new(&mut allocator).expect("env");
-        let encoded = bencodex::to_vec(&PeerMessage::HandshakeF(HandshakePayloadF {
-            bundle: SpendBundle {
-                name: None,
-                spends: vec![],
-            },
-        }))
-        .expect("encode F");
+        let encoded = encode_f(f_bundle);
 
         let first = phase
             .received_message(&mut env, encoded.clone())
             .expect("first F");
         let second = phase.received_message(&mut env, encoded).expect("second F");
 
-        assert_eq!(
-            first
-                .iter()
-                .filter(|effect| matches!(effect, Effect::SpendTransaction(_, _)))
-                .count(),
-            1
-        );
+        let submitted: Vec<_> = first
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::SpendTransaction(bundle, _) => Some(bundle),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(submitted.len(), 1);
+        assert_eq!(submitted[0].spends.len(), 2);
+        assert_eq!(submitted[0].spends[0].coin, e_coin);
+        assert_eq!(submitted[0].spends[1].coin, f_coin);
         assert!(second.is_empty());
         assert!(phase.transaction_pushed);
+    }
+
+    #[test]
+    fn finished_rejects_handshake_f_that_echoes_initiator_coins() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let (e_bundle, mut f_bundle, announcement) = announcement_bound_bundles(&mut allocator);
+        f_bundle.spends.push(e_bundle.spends[0].clone());
+        let mut phase = finished_phase(e_bundle, announcement);
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        let err = phase
+            .received_message(&mut env, encode_f(f_bundle))
+            .expect_err("echoed F");
+        assert!(format!("{err:?}").contains("DoubleSpend"));
+        assert!(!phase.transaction_pushed);
+    }
+
+    #[test]
+    fn finished_rejects_handshake_f_without_launcher_announcement() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let (e_bundle, _, announcement) = announcement_bound_bundles(&mut allocator);
+        let empty_conditions = ().to_clvm(&mut allocator).expect("empty conditions");
+        let f_bundle = SpendBundle {
+            name: None,
+            spends: vec![spend_for_conditions(&mut allocator, 2, empty_conditions)],
+        };
+        let mut phase = finished_phase(e_bundle, announcement);
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        let err = phase
+            .received_message(&mut env, encode_f(f_bundle))
+            .expect_err("silent F");
+        assert!(format!("{err:?}").contains("does not assert the launcher announcement"));
+        assert!(!phase.transaction_pushed);
     }
 }

@@ -95,14 +95,11 @@ export class ReliablePeerTransport {
   }
 
   drain(): void {
-    let sawRestoredDuplicate = false;
     for (const msgno of this.runtime.reorderQueue.keys()) {
       if (msgno > this.state.remoteNumber) continue;
       this.runtime.reorderQueue.delete(msgno);
       this.sendAck(msgno);
-      sawRestoredDuplicate = true;
     }
-    if (sawRestoredDuplicate) this.replayUnacked(true);
     this.drainContiguous();
   }
 
@@ -137,7 +134,6 @@ export class ReliablePeerTransport {
     if (msgno <= this.state.remoteNumber) {
       if (msgno <= this.durableRemoteNumber) {
         this.sendAck(msgno);
-        this.replayUnacked(true);
       } else if (!this.pendingAcks.includes(msgno)) {
         this.pendingAcks.push(msgno);
         this.scheduleFlush();
@@ -221,7 +217,6 @@ export class ReliablePeerTransport {
   receiveKeepalive(): void {
     this.consumer?.keepalive?.();
     this.retryDurableAcks();
-    this.replayUnacked();
   }
 
   replayUnacked(force = false): boolean {

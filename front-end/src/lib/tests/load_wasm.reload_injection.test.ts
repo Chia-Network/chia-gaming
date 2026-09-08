@@ -179,9 +179,15 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       proposalReload.save.live.unackedMessages.length > 0,
       'proposal checkpoint must durably retain unacknowledged transport bytes',
     );
+    assert.equal(
+      adapters[0].waiting_messages.length,
+      0,
+      'restore alone must wait for reconnect or peer availability before replay',
+    );
+    lanes[0].controller.resendUnacked();
     assert.ok(
       adapters[0].waiting_messages.length > 0,
-      'restored transport must replay its unacknowledged proposal',
+      'reconnected transport must replay its unacknowledged proposal',
     );
     await exchange();
     const review = lanes[1].runtime

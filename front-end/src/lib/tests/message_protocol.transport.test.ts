@@ -684,7 +684,7 @@ describe('duplicate detection', () => {
     expect(sentAcks).toEqual([1]);
   });
 
-  it('retransmits unacked outbound when a duplicate inbound arrives (post-reload peer)', async () => {
+  it('acknowledges a duplicate inbound without retransmitting unacked outbound', async () => {
     const { blob, sentMessages, sentAcks } = createReadyBlob();
     setActiveBlob(blob);
     const offer = enc('offer-sent-payload');
@@ -696,17 +696,16 @@ describe('duplicate detection', () => {
     sentMessages.length = 0;
     sentAcks.length = 0;
 
-    // Peer reloaded and resent msgno 1; we must replay our still-unacked offer.
     blob.deliverMessage(1n, enc('first-again'));
     await blob.flushPendingWork();
 
     expect(sentAcks).toEqual([1]);
-    expect(sentMessages).toEqual([{ msgno: 2, msg: offer }]);
+    expect(sentMessages).toEqual([]);
   });
 });
 
-describe('keepalive retransmission', () => {
-  it('retransmits unacked outbound when a peer keepalive arrives', () => {
+describe('keepalive activity', () => {
+  it('does not retransmit unacked outbound when a peer keepalive arrives', () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
     const pending = enc('pending-offer');
@@ -714,7 +713,7 @@ describe('keepalive retransmission', () => {
 
     blob.receiveKeepalive();
 
-    expect(sentMessages).toEqual([{ msgno: 3, msg: pending }]);
+    expect(sentMessages).toEqual([]);
   });
 
   it('does not send when there is nothing unacked', () => {

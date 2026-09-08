@@ -77,7 +77,8 @@ by the initiator. Every data, acknowledgement, and keepalive frame carries that
 same ID, so delayed traffic or a peer that restarted without its saved session
 cannot be mistaken for the current sequence-number epoch. The hub acts as a
 dumb pipe — it delivers messages to the target peer if connected and reports
-`delivery_failure` if not.
+`delivery_failure` if not. It also tells recent correspondents when one of them
+connects (`peer_available`) or actually disconnects (`peer_unavailable`).
 
 Per-session peer state is encapsulated in the peer transport
 (`front-end/src/services/PeerSession.ts`). Shell holds the selected transport
@@ -88,9 +89,11 @@ attaches the WASM consumer without resetting transport counters. Destroying the
 transport makes it inert — all further method calls are no-ops.
 
 Transient loss does not create a new peer session. The hub remembers a bounded,
-expiring relationship between recent correspondents and emits
-`peer_available` when one reconnects with the same routing ID. The peer layer
-then replays its own unacknowledged messages. A changed routing ID is different:
+expiring relationship between recent correspondents and emits `peer_available`
+or `peer_unavailable` when one connects or disconnects with the same routing ID.
+The peer layer replays its own unacknowledged messages only after this endpoint
+receives `registered` from the hub (including reload) or a matching
+`peer_available` for the selected peer. A changed routing ID is different:
 it cannot be rebound safely without peer authentication.
 
 ### Session
@@ -172,8 +175,10 @@ Specific rules:
   the pipe is back.
 - **Hub goes down permanently** → peer is gone (rides the same socket) →
   liveness degrades to yellow. User must manually go on-chain to resolve.
-- **Peer silent 30+ seconds or delivery failure** → liveness degrades to
-  yellow. No automatic escalation — silence alone is not terminal.
+- **Peer silent 30+ seconds, `delivery_failure`, or `peer_unavailable`** →
+  liveness degrades to yellow. No automatic escalation — silence or a hub
+  disconnect hint alone is not terminal. A later inbound peer frame or
+  `peer_available` restores connected.
 - **Own hub player ID changes on registration** → the old peer route is
   definitively invalid. Cancel pre-active setup; automatically resolve an
   established off-chain channel on-chain; do nothing extra if shutdown was
@@ -211,7 +216,7 @@ Specific rules:
 | Action | Allowed? | Warning | Consequence |
 |--------|----------|---------|-------------|
 | End session | Always | None currently. | Player marks available (`setBusy(false)`). Off-chain session transitions to on-chain via the peer-loss cascade. |
-| Reconnect | Not a user action | — | Player resends un-acked messages after its own `registered` and on a matching `peer_available` hint for the remote endpoint. |
+| Reconnect | Not a user action | — | Player resends un-acked messages after its own `registered` and on a matching `peer_available` hint for the remote endpoint. Keepalives and duplicate frames do not resend. |
 
 ### Session
 
@@ -421,8 +426,12 @@ The hub does not create a session. It can only advise and relay:
   WASM consumer to that same transport after consent without resetting its
   counters.
 - **Peer liveness**: 30-second degradation threshold (no dead-from-timeout)
-  with 5-second polling interval managed by `PeerSession`. Dead state only from
-  explicit go-on-chain or FOAD signals. Hub liveness with 45-second timeout.
+  with 5-second polling interval managed by `PeerSession`. Yellow when the hub
+  reports the peer disconnected (`delivery_failure` / `peer_unavailable`) or
+  no matching peer frame has arrived for 30 seconds. Either is reversible on
+  inbound traffic or `peer_available`. Dead state only from explicit go-on-chain
+  or FOAD signals. On-chain / unroll banner tone beats yellow. Hub liveness
+  with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
 - **Session persistence**: one salt-prefixed, masked Bencodex `SessionSave`
@@ -502,11 +511,13 @@ The hub does not create a session. It can only advise and relay:
   off-chain until the user explicitly goes on-chain.
 
 - **Peer degradation (no auto-cascade)**: When the peer becomes unreachable
-  (delivery failures, 30-second silence, or hub disconnect) while the
-  session is off-chain, `peerLiveness` moves to `'degraded'` (yellow banner
-  rail; tab stays a link). There is no automatic go-on-chain — the user must
-  decide to escalate. Only explicit terminal signals (user clicks "Go
-  On-Chain" or receives a FOAD) mark the peer as dead.
+  (`delivery_failure`, `peer_unavailable`, 30-second silence, or hub disconnect)
+  while the session is off-chain, `peerLiveness` moves to `'degraded'` (yellow
+  banner rail; tab stays a link). There is no automatic go-on-chain — the user
+  must decide to escalate. Only explicit terminal signals (user clicks "Go
+  On-Chain" or receives a FOAD) mark the peer as dead. An inbound peer frame or
+  `peer_available` restores `'connected'`. Unroll / on-chain presentation uses
+  the red banner rail even if pings are still degraded.
 
 - **Cascade warning dialogs**: Confirmation dialogs currently warn before
   disconnecting or switching hubs when a peer/session would be affected.
@@ -544,13 +555,14 @@ The session dashboard has a full-height left-edge color rail:
 |------|-------|------|
 | `idle` | Gray | No session / never set up |
 | `playing` | Green | Setup, handshake, off-chain play, cooperative shutdown |
-| `pings-bad` | Yellow | Same as playing, but `peerLiveness === 'degraded'` |
+| `pings-bad` | Yellow | Same as playing, but `peerLiveness === 'degraded'` (hub says the peer is disconnected, or no peer frame for 30 seconds) |
 | `on-chain` | Red | Going on-chain, unrolling, or a resolved unroll that still has games |
 | `ended` | Blue | Terminal dashboard still showing (clean resolve, failed, abandoned) |
 
 On-chain beats yellow. Failed/stale outcomes that are actually over stay
 `ended`; the Channel label still names the outcome. Yellow also shows
-“Peer pings look stuck.”
+“Peer pings look stuck.” That copy covers both silence and a hub disconnect
+hint.
 
 ### Game tab connectedness
 

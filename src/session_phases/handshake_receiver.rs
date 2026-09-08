@@ -21,10 +21,10 @@ use crate::session_phases::effects::{
     GameNotification, TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake::{
-    local_capabilities, validate_peer_capabilities, CoinSpendRequest, HandshakePayloadB,
-    HandshakePayloadD, HandshakePayloadE, HandshakePayloadF, HandshakeStepInfo,
-    HandshakeStepWithSpend, RawCoinCondition, MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES,
-    MAX_QUEUED_PEER_MESSAGES,
+    combine_channel_funding_bundles, local_capabilities, validate_peer_capabilities,
+    CoinSpendRequest, HandshakePayloadB, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
+    HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition, MAX_PEER_MESSAGE_SIZE,
+    MAX_QUEUED_PEER_BYTES, MAX_QUEUED_PEER_MESSAGES,
 };
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
@@ -822,16 +822,13 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error> {
         if let ReceiverState::WaitingForCompletion(_, alice_bundle) = &self.state {
-            let mut spends = alice_bundle.spends.clone();
-            spends.extend(bundle.spends.clone());
-            let final_bundle = SpendBundle { name: None, spends };
-            let completion_effect = self.channel_transaction_completion(env, &final_bundle)?;
+            let alice_bundle = alice_bundle.clone();
+            let combined = combine_channel_funding_bundles(&alice_bundle, &bundle)?;
+            combined.validate_consensus(&env.agg_sig_me_additional_data, self.last_height)?;
+            let completion_effect = self.channel_transaction_completion(env, &bundle)?;
             let mut effects = Vec::new();
             effects.extend(completion_effect);
-            effects.push(Effect::SpendTransaction(
-                final_bundle,
-                self.channel_deadline,
-            ));
+            effects.push(Effect::SpendTransaction(combined, self.channel_deadline));
             return Ok(effects);
         }
 

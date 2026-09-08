@@ -190,7 +190,6 @@ export class SessionController implements PollingGameSession {
   private readonly receivePolicy: ReadonlySessionReceivePolicy;
   private pendingPeerFailure: string | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
-  private restoredSession = false;
   private restoreStatus: RestoreStatus = 'idle';
   private restoreError: string | null = null;
   private restorePromise: Promise<void> | null = null;
@@ -473,9 +472,6 @@ export class SessionController implements PollingGameSession {
 
   receiveKeepalive() {
     this.notePeerActivity();
-    // Peer is alive but may have missed our outbound frames (e.g. they reloaded
-    // mid-handshake). Retransmit anything still awaiting ack.
-    this.resendUnacked();
   }
 
   startKeepaliveTimer() {
@@ -608,11 +604,6 @@ export class SessionController implements PollingGameSession {
       return;
     }
     this.reliableTransport.drain();
-
-    if (this.restoredSession) {
-      this.restoredSession = false;
-      this.resendUnacked();
-    }
   }
 
   setGameSession(cradle: ChiaGame) {
@@ -1690,9 +1681,12 @@ export class SessionController implements PollingGameSession {
     this.scheduleSave();
   }
 
-  markRestored() {
-    this.restoredSession = true;
-  }
+  /**
+   * Restore no longer resends from this hook. Unacknowledged frames are
+   * replayed when this endpoint reconnects to the hub (`registered`) or when
+   * the hub reports the session peer available.
+   */
+  markRestored() {}
 
   // --- Game actions (called by higher layer) ---
 

@@ -163,6 +163,7 @@ function makeCallbacks(presence?: {
     onRegistered: jest.fn(),
     onAliasUpdated: jest.fn(),
     onPeerAvailable: jest.fn(),
+    onPeerUnavailable: jest.fn(),
     onHubAttention: jest.fn(),
     onHubDisconnected: jest.fn(() => {
       hubDisconnectCount++;
@@ -300,6 +301,11 @@ describe('event routing', () => {
     });
     expect(cb.onAliasUpdated).toHaveBeenCalledWith('Alice');
     expect(cb.onPeerAvailable).toHaveBeenCalledWith(TARGET_ID);
+    MockWebSocket.instance!._fire({
+      type: 'peer_unavailable',
+      player_id: playerBytes(TARGET_ID),
+    });
+    expect(cb.onPeerUnavailable).toHaveBeenCalledWith(TARGET_ID);
   });
 
   it('rejects malformed fixed-width ids and non-integer advisory amounts', async () => {

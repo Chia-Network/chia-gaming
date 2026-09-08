@@ -666,12 +666,22 @@ test('game relay dictionaries are limited by their encoded byte budget', async (
   }
 });
 
-test('delivery failure stays route-level and reconnect notifies recent correspondents', async () => {
+test('delivery failure stays route-level and connect or disconnect notifies recent correspondents', async () => {
   const hub = await startHub();
   try {
     const sender = await identifyGameRegistered(hub.origin, 'recent-sender');
     const receiver = await identifyGameRegistered(hub.origin, 'recent-receiver');
+    const relayed = nextGame(receiver.game, (msg) => msg.type === 'relay');
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(receiver.playerId),
+      payload: Buffer.from('hello'),
+    });
+    await relayed;
+
+    const unavailable = nextGame(sender.game, (msg) => msg.type === 'peer_unavailable');
     await closeWs(receiver.game);
+    assert.deepEqual((await unavailable).player_id, playerBytes(receiver.playerId));
 
     const failed = nextGame(sender.game, (msg) => msg.type === 'delivery_failure');
     sendGame(sender.game, {
@@ -690,6 +700,34 @@ test('delivery failure stays route-level and reconnect notifies recent correspon
 
     await closeWs(sender.game);
     await closeWs(reconnected.game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('replacing a game connection does not tell correspondents the player left', async () => {
+  const hub = await startHub();
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'replace-sender');
+    const receiver = await identifyGameRegistered(hub.origin, 'replace-receiver');
+    const relayed = nextGame(receiver.game, (msg) => msg.type === 'relay');
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(receiver.playerId),
+      payload: Buffer.from('hello'),
+    });
+    await relayed;
+
+    const unavailable = nextGame(sender.game, (msg) => msg.type === 'peer_unavailable', 100);
+    const available = nextGame(sender.game, (msg) => msg.type === 'peer_available');
+    const replaced = await identifyGameRegistered(hub.origin, 'replace-receiver');
+    assert.equal(replaced.playerId, receiver.playerId);
+    assert.deepEqual((await available).player_id, playerBytes(receiver.playerId));
+    await assert.rejects(unavailable, /timed out/);
+
+    await closeWs(sender.game);
+    await closeWs(receiver.game);
+    await closeWs(replaced.game);
   } finally {
     await hub.stop();
   }

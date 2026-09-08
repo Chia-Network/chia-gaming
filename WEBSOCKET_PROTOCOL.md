@@ -265,9 +265,31 @@ Hints that a recent correspondent has re-established its game connection:
 ```
 
 This is neither delivery confirmation nor peer authentication. A player uses
-it only to trigger peer-owned retransmission for an already selected peer.
+it only to restore local peer-liveness guesswork for an already selected peer
+and to trigger peer-owned retransmission for that peer.
 
-### 7.6 `hub_attention`
+### 7.6 `peer_unavailable`
+
+Hints that a recent correspondent no longer has an open game connection:
+
+```text
+{
+  "type":      Text("peer_unavailable"),
+  "player_id": PlayerID
+}
+```
+
+This is the disconnect counterpart of `peer_available`. It is not a protocol
+failure and does not by itself take a channel on-chain. A player uses it only
+to mark an already selected peer as likely unreachable until a later
+`peer_available` or inbound peer frame.
+
+Replacing a game connection for the same hub session (`4001
+replaced_by_new_connection`) does not emit `peer_unavailable`. The replacement
+identify still emits `peer_available` to currently connected recent
+correspondents.
+
+### 7.7 `hub_attention`
 
 Requests that the player draw attention to the hub UI.
 
@@ -279,7 +301,7 @@ Requests that the player draw attention to the hub UI.
 
 It has no peer-protocol semantics.
 
-### 7.7 `closed`
+### 7.8 `closed`
 
 Acknowledges the application-level `close` request.
 
@@ -289,7 +311,7 @@ Acknowledges the application-level `close` request.
 }
 ```
 
-### 7.8 `keepalive`
+### 7.9 `keepalive`
 
 Sent by the hub every 15 seconds:
 
@@ -354,9 +376,10 @@ client uses:
 The attempt counter resets after a successful open. Every successful open is a
 new registration and therefore sends a new `identify`.
 
-After receiving `registered`, the peer protocol may retransmit unacknowledged
-peer messages. It may also retransmit when a matching `peer_available` arrives.
-The hub itself stores no messages and performs no replay.
+After receiving `registered`, the peer protocol retransmits unacknowledged peer
+messages if this endpoint has a selected session. It also retransmits when a
+matching `peer_available` arrives for that session peer. Those are the only two
+replay triggers. The hub itself stores no messages and performs no replay.
 
 The player persists its last registered player ID to detect a routing-epoch
 change. If a later registration returns a different ID:
@@ -395,9 +418,14 @@ session for 30 minutes since the latest relay attempt, evicting the oldest
 relationship and pruning expired relationships.
 
 When a session identifies, each currently connected recent correspondent gets
-one `peer_available` naming the reconnected player ID. Unknown targets cannot
+one `peer_available` naming the reconnected player ID. When a session's game
+connection actually goes away, each currently connected recent correspondent
+gets one `peer_unavailable` naming that player ID. Replacing a connection for
+the same hub session does not emit `peer_unavailable`. Unknown targets cannot
 form a relationship. This state is advisory, local to one hub process, and may
 be lost at any time.
+
+Peer keepalive frames are ordinary relays, so they also refresh this graph.
 
 The hub provides no:
 

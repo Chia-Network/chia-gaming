@@ -2,10 +2,17 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::NodePtr;
 use serde::{Deserialize, Serialize};
 
+use chia_consensus::allocator::make_allocator;
+use chia_consensus::consensus_constants::ConsensusConstants;
+use chia_consensus::flags::{ConsensusFlags, MEMPOOL_MODE};
+use chia_consensus::spendbundle_conditions::run_spendbundle;
+use chia_consensus::spendbundle_validation::get_flags_for_height_and_constants;
+use chia_protocol::{Bytes, Bytes32};
+
 use crate::common::types::atom_from_clvm;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, Hash, IntoErr, Node, Program,
-    ProgramRef, Puzzle, PuzzleHash,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GetCoinStringParts, Hash, IntoErr,
+    Node, Program, ProgramRef, Puzzle, PuzzleHash, Sha256Input,
 };
 use crate::utils::proper_list;
 
@@ -131,6 +138,194 @@ impl SpendBundle {
         }
 
         Ok(SpendBundle { name: None, spends })
+    }
+
+    /// Run Chia's intrinsic mempool validation over this exact bundle.
+    ///
+    /// This validates all spends together, including aggregate signatures,
+    /// duplicate removals, and announcement creation/assertion relationships.
+    /// Coin-store state and current-height time-lock checks remain the host
+    /// node's responsibility.
+    pub fn validate_consensus(
+        &self,
+        agg_sig_me_additional_data: &Hash,
+        height: u64,
+    ) -> Result<(), Error> {
+        if self.spends.is_empty() {
+            return Err(Error::StrErr("empty spend bundle".to_string()));
+        }
+
+        let mut coin_spends = Vec::with_capacity(self.spends.len());
+        let mut aggregated_signature = Aggsig::default();
+        for spend in &self.spends {
+            let (parent, puzzle_hash, amount) = spend.coin.get_coin_string_parts()?;
+            let parent: [u8; 32] = parent
+                .bytes()
+                .try_into()
+                .map_err(|_| Error::StrErr("invalid coin parent length".to_string()))?;
+            let puzzle_hash: [u8; 32] = puzzle_hash
+                .bytes()
+                .try_into()
+                .map_err(|_| Error::StrErr("invalid coin puzzle hash length".to_string()))?;
+            coin_spends.push(chia_protocol::CoinSpend {
+                coin: chia_protocol::Coin {
+                    parent_coin_info: Bytes32::from(parent),
+                    puzzle_hash: Bytes32::from(puzzle_hash),
+                    amount: amount.to_u64(),
+                },
+                puzzle_reveal: Bytes::from(spend.bundle.puzzle.to_program().bytes().to_vec())
+                    .into(),
+                solution: Bytes::from(spend.bundle.solution.pref().bytes().to_vec()).into(),
+            });
+            aggregated_signature += spend.bundle.signature.clone();
+        }
+
+        let protocol_bundle = chia_protocol::SpendBundle {
+            coin_spends,
+            aggregated_signature: aggregated_signature.to_bls(),
+        };
+        let constants = validation_consensus_constants(agg_sig_me_additional_data);
+        let height = u32::try_from(height)
+            .map_err(|_| Error::StrErr(format!("validation height {height} exceeds u32")))?;
+        let flags = get_flags_for_height_and_constants(height, &constants) | MEMPOOL_MODE;
+        let mut allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
+        let (conditions, signature_pairs) = run_spendbundle(
+            &mut allocator,
+            &protocol_bundle,
+            constants.max_block_cost_clvm,
+            flags,
+            &constants,
+        )
+        .map_err(|err| {
+            Error::StrErr(format!(
+                "spend bundle consensus validation failed: {:?}",
+                err.1
+            ))
+        })?;
+        if !conditions.agg_sig_unsafe.is_empty() {
+            return Err(Error::StrErr(
+                "channel funding bundle uses unsupported AGG_SIG_UNSAFE".to_string(),
+            ));
+        }
+        let mut signature_pairs = signature_pairs.iter();
+        for (index, spend_conditions) in conditions.spends.iter().enumerate() {
+            let unsupported_count = spend_conditions.agg_sig_parent.len()
+                + spend_conditions.agg_sig_puzzle.len()
+                + spend_conditions.agg_sig_amount.len()
+                + spend_conditions.agg_sig_puzzle_amount.len()
+                + spend_conditions.agg_sig_parent_amount.len()
+                + spend_conditions.agg_sig_parent_puzzle.len();
+            if unsupported_count != 0 || spend_conditions.agg_sig_me.len() > 1 {
+                return Err(Error::StrErr(format!(
+                    "channel funding spend {index} uses unsupported aggregate signature conditions"
+                )));
+            }
+
+            if spend_conditions.agg_sig_me.is_empty() {
+                if !self.spends[index]
+                    .bundle
+                    .signature
+                    .is_twos_complement_zero()
+                {
+                    return Err(Error::StrErr(format!(
+                        "channel funding spend {index} has a signature without AGG_SIG_ME"
+                    )));
+                }
+                continue;
+            }
+
+            let (public_key, message) = signature_pairs.next().ok_or_else(|| {
+                Error::StrErr(format!(
+                    "channel funding spend {index} is missing its signature message"
+                ))
+            })?;
+            if !chia_bls::verify(
+                &self.spends[index].bundle.signature.to_bls(),
+                public_key,
+                message.as_ref(),
+            ) {
+                return Err(Error::StrErr(format!(
+                    "channel funding spend {index} has an invalid AGG_SIG_ME signature"
+                )));
+            }
+        }
+        if signature_pairs.next().is_some() {
+            return Err(Error::StrErr(
+                "channel funding bundle has unmatched signature messages".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validation_consensus_constants(agg_sig_me_additional_data: &Hash) -> ConsensusConstants {
+    let agg_sig_data = Bytes32::from(*agg_sig_me_additional_data.bytes());
+    let derived_agg_sig_data = |opcode: u8| {
+        Bytes32::from(
+            *Sha256Input::Array(vec![
+                Sha256Input::Bytes(agg_sig_me_additional_data.bytes()),
+                Sha256Input::Bytes(&[opcode]),
+            ])
+            .hash()
+            .bytes(),
+        )
+    };
+    let zero32 = Bytes32::from([0u8; 32]);
+    ConsensusConstants {
+        slot_blocks_target: 32,
+        min_blocks_per_challenge_block: 16,
+        max_sub_slot_blocks: 128,
+        num_sps_sub_slot: 64,
+        sub_slot_iters_starting: 1 << 27,
+        difficulty_constant_factor: 1 << 67,
+        difficulty_starting: 7,
+        difficulty_change_max_factor: 3,
+        sub_epoch_blocks: 384,
+        epoch_blocks: 4608,
+        significant_bits: 8,
+        discriminant_size_bits: 1024,
+        number_zero_bits_plot_filter_v1: 9,
+        number_zero_bits_plot_filter_v2: 9,
+        min_plot_size_v1: 32,
+        max_plot_size_v1: 59,
+        plot_size_v2: 30,
+        sub_slot_time_target: 600,
+        num_sp_intervals_extra: 3,
+        max_future_time2: 120,
+        number_of_timestamps: 11,
+        genesis_challenge: agg_sig_data,
+        agg_sig_me_additional_data: agg_sig_data,
+        agg_sig_parent_additional_data: derived_agg_sig_data(43),
+        agg_sig_puzzle_additional_data: derived_agg_sig_data(44),
+        agg_sig_amount_additional_data: derived_agg_sig_data(45),
+        agg_sig_puzzle_amount_additional_data: derived_agg_sig_data(46),
+        agg_sig_parent_amount_additional_data: derived_agg_sig_data(47),
+        agg_sig_parent_puzzle_additional_data: derived_agg_sig_data(48),
+        genesis_pre_farm_pool_puzzle_hash: zero32,
+        genesis_pre_farm_farmer_puzzle_hash: zero32,
+        max_vdf_witness_size: 8,
+        mempool_block_buffer: 10,
+        max_coin_amount: u64::MAX,
+        max_block_cost_clvm: crate::common::types::MAX_BLOCK_COST_CLVM,
+        cost_per_byte: 12000,
+        weight_proof_threshold: 2,
+        weight_proof_recent_blocks: 1000,
+        max_block_count_per_requests: 32,
+        blocks_cache_size: 4608 + 128 * 4,
+        max_generator_ref_list_size: 512,
+        pool_sub_slot_iters: 37_600_000_000,
+        hard_fork_height: 0,
+        hard_fork2_height: 0,
+        soft_fork8_height: 0,
+        plot_v1_phase_out_epoch_bits: 0,
+        plot_filter_128_height: u32::MAX,
+        plot_filter_64_height: u32::MAX,
+        plot_filter_32_height: u32::MAX,
+        min_plot_strength: 0,
+        max_plot_strength: 0,
+        plot_filter_v2_first_adjustment_height: 0,
+        plot_filter_v2_second_adjustment_height: 0,
+        plot_filter_v2_third_adjustment_height: 0,
     }
 }
 

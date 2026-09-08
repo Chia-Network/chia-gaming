@@ -331,7 +331,7 @@ class SpacepokerReloadDriver {
 }
 
 async function runSpacepokerReloadCompletion(poller: BlockchainPoller): Promise<void> {
-  const adapters = await createActivePair(poller, 11);
+  const adapters = await createActivePair(poller, 12);
   const handProposal: HandProposal = {
     gameType: 'spacepoker',
     playerAContribution: 20n,
@@ -404,7 +404,7 @@ it(
   'completes and reloads every reachable real-WASM Space Poker state',
   async () => {
     try {
-      const poller = await startSimulator(['cafe00011', 'dead00011']);
+      const poller = await startSimulator(['cafe00012', 'dead00012']);
       if (!poller) return;
       await runSpacepokerReloadCompletion(poller);
     } catch (error) {

@@ -132,7 +132,8 @@ protocol frames remain opaque bytes in the relay dictionary's `payload`.
 | `relay`            | `{ from: Bytes(16), alias, payload: Bytes }`                                          | A peer payload with the hub-bound sender ID and hub-owned display alias.                                                                                                                                                                                  |
 | `delivery_failure` | `{ to }`                                                                              | The target peer is not connected; the message could not be delivered.                                                                                                                                                                                     |
 | `alias_updated`    | `{ alias }`                                                                           | Updates the player's own display alias independently of registration.                                                                                                                                                                                      |
-| `peer_available`   | `{ player_id: Bytes(16) }`                                                            | Advises that a recent correspondent reconnected; matching active peer state replays its own unacknowledged messages.                                                                                                                                      |
+| `peer_available`   | `{ player_id: Bytes(16) }`                                                            | Advises that a recent correspondent connected; matching active peer state restores liveness and replays its own unacknowledged messages.                                                                                                                  |
+| `peer_unavailable` | `{ player_id: Bytes(16) }`                                                            | Advises that a recent correspondent disconnected; matching active peer state degrades liveness. Does not replay.                                                                                                                                          |
 | `hub_attention`    | `{}`                                                                                  | Signals that something happened in the hub that the user should look at.                                                                                                                                                                                  |
 
 **Connection lifecycle:**
@@ -194,7 +195,8 @@ protocol frames remain opaque bytes in the relay dictionary's `payload`.
 **What the hub holds per game channel:** the session-to-player mapping,
 WebSocket reference, and a bounded 30-minute graph of recent correspondents.
 The graph contains no payloads or message numbers and exists only to emit
-`peer_available` when a known route reconnects. The hub has no authoritative
+`peer_available` or `peer_unavailable` when a known route connects or
+disconnects. The hub has no authoritative
 session pairing, message log, delivery receipts, or game state. Failed sends
 produce route-level `delivery_failure`; peer-owned ACK state decides what to
 replay. Hub channel disconnects do NOT
@@ -212,8 +214,10 @@ keepalives at two separate layers:
    sent in both directions over `/ws/game` every 15 seconds. These prove the
    WebSocket connection itself is alive.
 2. **Peer-level keepalives** — relay payloads with the peer reliability
-   keepalive tag, relayed through the hub to the paired peer. These prove
-   the peer is alive end-to-end (see [Peer Liveness](#peer-liveness)).
+   keepalive tag, relayed through the hub to the paired peer. These refresh the
+   hub's recent-correspondent graph and are an advisory hint that the peer
+   recently had a working path (see [Peer Liveness](#peer-liveness)). They do
+   not trigger retransmission.
 
 **Game channel client (`HubConnection`):**
 
@@ -229,7 +233,8 @@ keepalives at two separate layers:
 On game-channel reconnect, `HubConnection` re-sends `identify` and waits for
 `registered` before replaying unacknowledged peer messages. A matching
 `peer_available` triggers the same peer-owned replay when the other endpoint
-returns. A changed own `player_id` is not a reconnect: it invalidates the route,
+returns. Keepalives, duplicate frames, and the WebSocket reopen callback do
+not replay. A changed own `player_id` is not a reconnect: it invalidates the route,
 cancelling pre-active setup or automatically entering on-chain resolution for
 an established off-chain channel.
 
@@ -799,9 +804,9 @@ When the user chooses to resume a full save, `performResume` fires:
    via `WasmStateInit.deserializeGame()`, restores WASM/transport counters and
    logs, and calls `markRestored()`. `sessionModelFromSave` initializes the
    machine's game-owned `handState` directly from the decoded save.
-5. When `qualifyingEvents` reaches 7 (bitmask: wasm loaded + cradle set +
-   auto-flush), re-send all un-acked messages and re-submit all pending
-   transactions.
+5. Hub `registered` (and a later matching `peer_available`) are what re-send
+   un-acked peer messages. Pending chain transactions are re-submitted when
+   the restored transaction manager attaches.
 
 #### Cleanup
 
@@ -875,11 +880,10 @@ The shared peer reliability owner enforces strict ordering before dispatching
 an admitted body to Shell negotiation or `SessionController`:
 
 - `msgno <= remoteNumber`: duplicate, dropped. An ack is re-sent in case the
-  original ack was lost. The receiver also calls `resendUnacked()` (throttled)
-  so a peer that retransmitted after reload still receives any unacked outbound
-  we hold (for example an OfferSent handshake payload). If another message
+  original ack was lost. If another message
   boundary is already waiting for a durability flush, the duplicate ack is
-  queued behind that flush too.
+  queued behind that flush too. Duplicate inbound frames do not replay outbound
+  data.
 - `msgno > remoteNumber + 1`: out-of-order, buffered in a `reorderQueue` map.
 - `msgno == remoteNumber + 1`: delivered to the WASM cradle, `remoteNumber`
   incremented, ack queued, then contiguous messages are flushed from the reorder
@@ -898,7 +902,9 @@ it is a protocol failure and takes the obligation on-chain.
 
 Both peers independently send periodic session-scoped keepalive frames through
 the hub. Keepalives are fire-and-forget — no response is needed. Receiving
-matching-session peer traffic (data, ack, or keepalive) counts as proof of life.
+matching-session peer traffic (data, ack, or keepalive) counts as proof of life
+for the yellow/green liveness guess. Keepalives do not replay unacknowledged
+data.
 
 - **Send interval:** 15 seconds (`KEEPALIVE_INTERVAL_MS`)
 
@@ -908,14 +914,18 @@ canonical `channelStatus`; readiness is not a separate save field.
 `SessionController.notePeerActivity()` is called on every inbound message
 delivery, ack reception, and keepalive reception.
 
-Peer liveness is measured passively from relay traffic. The `PeerSession` object
-derives liveness indicators using a 5-second polling interval. These feed into
-the **tab pipe marks** — uncolored link / broken-chain emojis to the left of
-Wallet, Hub, and Game tab labels — and into the game dashboard **banner rail**
-(session mode: idle / playing / pings-bad / on-chain / ended). They are also
-passed to `GameSession` for in-game display. Separately, Shell has a cascade
-rule: if the peer is marked lost while the session is still off-chain, it calls
-`goOnChain()` on the WASM cradle.
+Peer liveness is measured passively from relay traffic and hub route hints. The
+`PeerSession` object derives liveness indicators using a 5-second polling
+interval. These feed into the **tab pipe marks** — uncolored link / broken-chain
+emojis to the left of Wallet, Hub, and Game tab labels — and into the game
+dashboard **banner rail** (session mode: idle / playing / pings-bad / on-chain /
+ended). They are also passed to `GameSession` for in-game display. Yellow
+(`degraded` / `pings-bad`) is advisory: the hub reported the peer disconnected,
+or no matching peer frame arrived for 30 seconds. An inbound frame or
+`peer_available` restores connected. Unroll / on-chain presentation uses the red
+rail even while pings are degraded. Silence and hub disconnect hints never
+auto-escalate on-chain; only local go-on-chain or a received FOAD marks the peer
+dead.
 
 Inbound peer frames are validated before counting as activity: data and ack
 frames have a 21-byte header, keepalives are exactly 17 bytes, and the session
@@ -943,8 +953,8 @@ Connected, keepalive timeout while WS is up → Inactive.
 
 | State       | Meaning                                                                             | Tab mark |
 | ----------- | ----------------------------------------------------------------------------------- | -------- |
-| `connected` | Peer traffic received within the last 30 seconds                                    | Link     |
-| `degraded`  | Delivery failure reported by hub, or no peer traffic for 30+ seconds                | Link (banner rail yellow) |
+| `connected` | Peer traffic received within the last 30 seconds, or the hub just reported `peer_available` | Link     |
+| `degraded`  | Hub `delivery_failure` / `peer_unavailable`, or no peer traffic for 30+ seconds             | Link (banner rail yellow) |
 | `dead`      | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship | Broken chain |
 | `null`      | No keepalive yet, or no active peer session                                         | Link if a session is live (handshake); broken chain if none/resolved |
 
@@ -960,8 +970,10 @@ Disruptive hub actions are gated by cascade confirmation dialogs. See
 
 When a player reconnects (receives `registered` from the hub), and has an
 active session peer, it calls `resendUnacked()` to replay un-acked messages.
+A matching `peer_available` does the same when the other endpoint returns.
 The ordering and deduplication logic on the receiving side handles any
-duplicates caused by the replay.
+duplicates caused by the replay. Keepalives and duplicate inbound frames do
+not replay.
 
 ### Reconnect Reconciliation
 

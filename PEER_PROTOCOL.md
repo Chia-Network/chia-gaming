@@ -68,11 +68,13 @@ Keepalive:
 +--------+------------------------+
 ```
 
-`session_id` is an opaque random 16-byte value selected by the proposer for a
-new peer session. It is encoded directly as bytes, not as hexadecimal text.
-Every frame for that session carries the same value. A restored endpoint retains
-the value; an endpoint that starts without the saved session selects a new one.
-The identifier is an epoch and routing/deduplication binding, not authentication.
+`session_id` is an opaque random 16-byte value selected by the session initiator
+(the proposer) when they send `session_proposal` as data message 1. The
+responder adopts that value; they do not mint a second identifier. It is
+encoded directly as bytes, not as hexadecimal text. Every frame for that session
+carries the same value. A restored endpoint retains the value; an endpoint that
+starts without the saved session selects a new one. The identifier is an epoch
+and routing/deduplication binding, not authentication.
 
 Canonical acknowledgement frames are exactly 21 bytes. Canonical keepalive
 frames are exactly 17 bytes. A data frame is at least 21 bytes plus one complete
@@ -313,8 +315,7 @@ Let `remoteNumber` be the highest cumulative message number already delivered
 or terminally discarded by the peer protocol.
 
 - `msgno <= remoteNumber`: the frame is a duplicate. Do not deliver it again.
-  Re-send an acknowledgement for `msgno` and replay locally unacknowledged
-  outbound messages.
+  Re-send an acknowledgement for `msgno`.
 - `msgno == remoteNumber + 1`: deliver it once, then advance
   `remoteNumber`.
 - `msgno > remoteNumber + 1`: normally retain it in the runtime reorder buffer
@@ -343,24 +344,35 @@ was accepted or that an on-chain transaction succeeded.
 
 ### 5.4 Replay
 
-The host replays all unacknowledged data frames:
+The host replays all unacknowledged data frames only in these two cases:
 
-- after restoring a saved session;
-- when the hub game WebSocket reconnect callback fires;
-- after the hub sends `registered` on a reconnected game socket;
-- when it receives a peer keepalive; and
-- when it receives a duplicate data frame.
+- after this endpoint reconnects to the hub and receives `registered`, including
+  a reload that restores a saved session and then re-identifies; and
+- when the hub reports `peer_available` for the player ID of an already selected
+  session peer.
 
-The current sender throttles replay bursts to at most once per second.
+Duplicate inbound data frames and peer keepalives do not trigger replay. They
+re-acknowledge or refresh liveness as specified below. The current sender
+throttles replay bursts to at most once per second.
+
+Hub connect/disconnect hints and `delivery_failure` are specified in
+`WEBSOCKET_PROTOCOL.md`. They are untrusted routing facts. A matching
+`peer_available` is the remote-reconnect half of replay above. `peer_unavailable`
+and `delivery_failure` do not replay; they only affect local peer-liveness
+display as described in `CONNECTIVITY.md`.
 
 ### 5.5 Keepalive
 
 Each active peer sends `0x03 || session_id` every 15 seconds. No reply is
-required. Data, acknowledgement, and keepalive frames all count as peer
-activity only after their peer and session IDs match the selected transport.
+required. The frame is an ordinary addressed hub relay, so it refreshes the
+hub's recent-correspondent graph for this pair. Receivers treat a matching
+keepalive as advisory proof that the peer recently had a working
+player-to-hub-to-peer path. Data, acknowledgement, and keepalive frames all
+count as peer activity only after their peer and session IDs match the selected
+transport.
 
-This keepalive tests the complete player-to-hub-to-peer path. It is independent
-from the hub control keepalive described in `WEBSOCKET_PROTOCOL.md`.
+This keepalive is independent from the hub control keepalive described in
+`WEBSOCKET_PROTOCOL.md`. It is not a retransmission signal.
 
 ### 5.6 Invalid reliable frames
 
@@ -546,9 +558,11 @@ HandshakePayloadE {
 Initiator -> Receiver: HandshakeE(HandshakePayloadE)
 ```
 
-`bundle` is the partially assembled channel-funding transaction.
-`signatures` contains the initiator's state-zero half-signatures. The receiver
-verifies and stores the signatures before completing its local funding work.
+`bundle` is the initiator's partial channel-funding transaction: the initiator
+wallet spend(s) plus the launcher spend. `signatures` contains the initiator's
+state-zero half-signatures. The receiver verifies and stores the signatures
+before completing its local funding work. The receiver must not treat this
+bundle as a finished funding transaction.
 
 ### 7.7 Handshake F
 
@@ -560,8 +574,16 @@ HandshakePayloadF {
 Receiver -> Initiator: HandshakeF(HandshakePayloadF)
 ```
 
-This is the completed funding bundle. Both applications may submit the same
-bundle using their local transaction interface.
+`bundle` is the receiver's acceptance only: the receiver wallet spend(s) that
+bind to the launcher announcement. It must not repeat spends from E. The
+initiator combines its local E bundle with this acceptance and runs Chia
+consensus validation over that exact combined bundle before submission. This
+validates all spends together, including aggregate signatures, duplicate coin
+spends, and the receiver's announcement assertion against the announcement
+created by E. The protocol also requires F itself to assert the expected
+launcher announcement. The receiver performs the same whole-bundle validation
+and local combination before submitting independently. Neither side treats the
+peer's payload as an already-combined transaction.
 
 Channel activation is driven by a local channel-coin observation outside this
 wire protocol. F and activation may be observed in either order, but transition

@@ -298,7 +298,7 @@ describe('restore ordering', () => {
     expect(cradle.report_coin_states).toHaveBeenNthCalledWith(2, 11n, secondSnapshot);
   });
 
-  it('restores counters before spilling buffered messages and replaying unacked', async () => {
+  it('restores counters before spilling buffered messages without replaying unacked', async () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const blob = new SessionController(
@@ -350,7 +350,7 @@ describe('restore ordering', () => {
 
     expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(sentAcks).toEqual([1]);
-    expect(sentMessages).toEqual([{ msgno: 4, msg: enc('outbound') }]);
+    expect(sentMessages).toEqual([]);
     expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
     expect(blob.messageNumber).toBe(5n);
     expect(blob.remoteNumber).toBe(1n);

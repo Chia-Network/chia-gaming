@@ -8,12 +8,15 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, ReadableMove};
-use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, SINGLETON_LAUNCHER_HASH};
+use crate::common::constants::{
+    AGG_SIG_ME_ADDITIONAL_DATA, ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT,
+    CREATE_COIN, CREATE_COIN_ANNOUNCEMENT, SINGLETON_LAUNCHER_HASH,
+};
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
-    PrivateKey, Program, PuzzleHash, Spend, SpendBundle, Timeout,
+    Node, PrivateKey, Program, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::{GameSession, GameSessionConfig, MessagePeerQueue, MessagePipe};
 use crate::session_phases::effects::{
@@ -139,11 +142,43 @@ fn build_wallet_bundle_for_request(
     }
 
     let env = ChannelEnv::new(allocator)?;
-    let clvm_conditions: Vec<(u32, (PuzzleHash, (Amount, ())))> = create_targets
+    let mut condition_nodes: Vec<Node> = create_targets
         .iter()
-        .map(|(ph, amt)| (CREATE_COIN, (ph.clone(), (amt.clone(), ()))))
-        .collect();
-    let conditions_clvm = clvm_conditions.to_clvm(env.allocator).into_gen()?;
+        .map(|(ph, amt)| {
+            (CREATE_COIN, (ph.clone(), (amt.clone(), ())))
+                .to_clvm(env.allocator)
+                .map(Node)
+                .map_err(|e| Error::StrErr(format!("{e:?}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for cond in &request.conditions {
+        match cond.opcode {
+            CREATE_COIN => {}
+            ASSERT_COIN_ANNOUNCEMENT | CREATE_COIN_ANNOUNCEMENT | ASSERT_BEFORE_HEIGHT_ABSOLUTE => {
+                let arg = cond.args.first().ok_or_else(|| {
+                    Error::StrErr(format!(
+                        "extra condition opcode {} missing arg",
+                        cond.opcode
+                    ))
+                })?;
+                let arg_node = Node(
+                    env.allocator
+                        .encode_atom(clvm_traits::Atom::Borrowed(arg.as_slice()))
+                        .into_gen()?,
+                );
+                let cond_node = (cond.opcode, (arg_node, ()))
+                    .to_clvm(env.allocator)
+                    .into_gen()?;
+                condition_nodes.push(Node(cond_node));
+            }
+            other => {
+                return Err(Error::StrErr(format!(
+                    "unsupported extra condition opcode {other} in simulator wallet spend"
+                )));
+            }
+        }
+    }
+    let conditions_clvm = condition_nodes.to_clvm(env.allocator).into_gen()?;
     let spend = standard_solution_partial(
         env.allocator,
         &identity.synthetic_private_key,

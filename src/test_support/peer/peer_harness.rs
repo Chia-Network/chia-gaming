@@ -11,7 +11,9 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
 #[cfg(test)]
-use crate::common::types::{GameID, PrivateKey, Program, Timeout};
+use crate::common::types::{
+    GameID, Hash, PrivateKey, Program, Puzzle, Sha256tree, Timeout, ToQuotedProgram,
+};
 #[cfg(test)]
 use crate::game_session::{MessagePeerQueue, MessagePipe, PeerLifecyclePhase};
 #[cfg(test)]
@@ -38,6 +40,8 @@ use rand::SeedableRng;
 #[cfg(test)]
 use rand_chacha::ChaCha8Rng;
 
+#[cfg(test)]
+use crate::common::constants::ASSERT_COIN_ANNOUNCEMENT;
 use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
 #[cfg(test)]
 use crate::common::standard_coin::puzzle_hash_for_pk;
@@ -277,21 +281,42 @@ where
 
 #[cfg(test)]
 fn build_dummy_wallet_bundle_for_request(
+    allocator: &mut AllocEncoder,
     request: &crate::session_phases::handshake::CoinSpendRequest,
 ) -> SpendBundle {
-    let coin = CoinString::from_parts(
-        &request.coin_id.clone().unwrap_or_default(),
-        &PuzzleHash::default(),
-        &request.amount,
-    );
-    let nil = Program::from_hex("80").expect("nil program hex should parse");
+    let parent = request
+        .coin_id
+        .clone()
+        .unwrap_or_else(|| CoinID::new(Hash::from_bytes([1; 32])));
+    let announcement = request.conditions.iter().find_map(|condition| {
+        if condition.opcode == ASSERT_COIN_ANNOUNCEMENT {
+            condition
+                .args
+                .first()
+                .and_then(|arg| Hash::from_slice(arg).ok())
+        } else {
+            None
+        }
+    });
+    let puzzle = if let Some(announcement) = announcement {
+        let conditions = ((ASSERT_COIN_ANNOUNCEMENT, (announcement, ())), ());
+        let node = conditions
+            .to_clvm(allocator)
+            .expect("dummy announcement conditions");
+        node.to_quoted_program(allocator)
+            .expect("quote dummy announcement")
+            .into()
+    } else {
+        Puzzle::from_bytes(&[0x80])
+    };
+    let coin = CoinString::from_parts(&parent, &puzzle.sha256tree(allocator), &request.amount);
     SpendBundle {
         name: Some("dummy wallet coin spend request".to_string()),
         spends: vec![CoinSpend {
             coin,
             bundle: Spend {
-                puzzle: nil.clone().into(),
-                solution: nil.into(),
+                puzzle,
+                solution: Program::from_bytes(&[0x80]).into(),
                 signature: Default::default(),
             },
         }],
@@ -324,7 +349,7 @@ where
                 pending.extend(follow_up);
             }
             Effect::NeedCoinSpend(req) => {
-                let bundle = build_dummy_wallet_bundle_for_request(&req);
+                let bundle = build_dummy_wallet_bundle_for_request(allocator, &req);
                 let mut env = ChannelEnv::new(allocator)?;
                 let follow_up = handlers[who].provide_coin_spend_bundle(&mut env, bundle)?;
                 pending.extend(follow_up);

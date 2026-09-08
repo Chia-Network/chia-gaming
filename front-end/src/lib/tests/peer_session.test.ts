@@ -403,7 +403,7 @@ describe('PeerSession', () => {
       });
       expect(prompt).toHaveBeenCalledTimes(1);
       expect(wasm).not.toHaveBeenCalled();
-      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x02, 0x01]);
+      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x02]);
     });
 
     it('buffers early WASM until consumer handoff while duplicate proposal re-ACKs', async () => {

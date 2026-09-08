@@ -384,7 +384,7 @@ Handshake messages are not sent via `Batch`:
 | C | Initiator | `HandshakeC` | `HandshakePayloadC`: launcher `CoinString` |
 | D | Receiver | `HandshakeD` | `HandshakePayloadD`: state-0 `StateUpdateSignatures` |
 | E | Initiator | `HandshakeE` | `HandshakePayloadE`: partial `SpendBundle` + state-0 sigs |
-| F | Receiver | `HandshakeF` | `HandshakePayloadF`: final combined `SpendBundle` |
+| F | Receiver | `HandshakeF` | `HandshakePayloadF`: receiver acceptance `SpendBundle` |
 
 #### Between-message wallet interactions
 
@@ -411,9 +411,15 @@ library appends the launcher `CoinSpend` and sends the combined bundle in E.
 Between E and F, the receiver must similarly obtain a wallet `SpendBundle`
 contributing their share. The library emits `Effect::NeedCoinSpend` with the
 receiver's conditions and amount. After receiving the wallet bundle, the
-library combines it with the initiator's bundle from E and sends the final
-transaction in F. Both players publish the same final `SpendBundle` to the
-network.
+library sends that acceptance in F. It also combines the acceptance with the
+initiator's bundle from E, validates the exact combined bundle with Chia
+consensus rules, and submits the result locally. The initiator does the same:
+it combines its local E bundle with F and validates all spends together before
+submission. Whole-bundle validation checks aggregate signatures, duplicate
+coin spends, and cross-spend announcements; the protocol additionally requires
+F itself to assert the expected launcher announcement. Both players may
+publish the same assembled funding transaction; neither trusts the other
+side's combined bundle.
 
 #### State machine
 
@@ -470,6 +476,12 @@ handler no longer reports channel status.
    message includes a PoP for both the channel key and the unroll key:
    `Sign(sk, pk.bytes())`. The receiver verifies these before proceeding.
    (The referee key already has an implicit PoP via `reward_payout_signature`.)
+5. **Initiator-assembled funding transaction:** Handshake F is the receiver's
+   acceptance only. The initiator combines it with the local E bundle and runs
+   Chia consensus validation over the exact result. Duplicate spends,
+   signatures, and E-to-F announcement dependencies are therefore checked as
+   one transaction. F must itself assert the expected launcher announcement.
+   The initiator does not submit an untrusted combined bundle from the peer.
 
 #### Wallet API interaction
 
@@ -497,8 +509,9 @@ they map to WalletConnect RPCs:
   conditions and amount. The `extraConditions` parameter carries the
   channel-specific assertions; `coinIds` optionally pins the spend to a
   specific coin.
-- `chia_pushTransactions` — broadcast the final combined `SpendBundle` to the
-  network, wrapped in a `TransactionRecord` (both players submit it).
+- `chia_pushTransactions` — broadcast the assembled funding `SpendBundle` to the
+  network, wrapped in a `TransactionRecord` (both players submit the transaction
+  they assembled locally).
 
 #### Channel coin funding
 
