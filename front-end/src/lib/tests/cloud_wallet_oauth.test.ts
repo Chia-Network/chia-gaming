@@ -335,7 +335,9 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
   });
 
   /** Route by endpoint (`/token` vs `/graphql`) and, for GraphQL, by query text. */
-  function mockEndpoints(handler: (url: string, query: string) => { status: number; body: unknown }) {
+  function mockEndpoints(
+    handler: (url: string, query: string) => { status: number; body: unknown },
+  ) {
     const fetchMock = jest.fn(async (url: string, init?: { body?: string }) => {
       let query = '';
       try {
