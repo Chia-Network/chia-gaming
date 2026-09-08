@@ -237,6 +237,7 @@ export interface WasmConnection {
   drain_submissions: (cid: number) => SpendBundle[];
   resubmit_submitted: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
+  aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
@@ -496,7 +497,12 @@ export interface InternalBlockchainInterface {
     source?: string,
     fee?: bigint,
   ): Promise<string>;
-  rememberLocalRemovals?(spendBundle: unknown): void | Promise<void>;
+  // Build a standalone, wallet-signed fee-paying spend bundle bound to the
+  // given coin via ASSERT_CONCURRENT_SPEND. Returns null when the wallet cannot
+  // produce it (unsynced, insufficient funds, RPC unavailable) so the caller can
+  // fall back to a zero-fee submission. Undefined on backends (e.g. the
+  // simulator) that do not support wallet fees.
+  createFeeSpend?(fee: bigint, concurrentSpendCoinId: string): Promise<unknown | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

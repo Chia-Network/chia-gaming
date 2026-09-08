@@ -123,11 +123,11 @@ export class BlockchainPoller {
           () => adapter.spend(blob, spendBundle, changePuzzleHash, source, fee),
           true,
         ),
-      rememberLocalRemovals: adapter.rememberLocalRemovals
-        ? (spendBundle) =>
+      createFeeSpend: adapter.createFeeSpend
+        ? (fee, concurrentSpendCoinId) =>
             this.enqueueRpc(
-              'rememberLocalRemovals',
-              () => adapter.rememberLocalRemovals!(spendBundle),
+              'createFeeSpend',
+              () => adapter.createFeeSpend!(fee, concurrentSpendCoinId),
               true,
             )
         : undefined,
