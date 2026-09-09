@@ -98,12 +98,25 @@ jobs:
           # A missing simulator must be a hard failure here, never a silent skip.
           export LOAD_WASM_REQUIRE_SIM=1
           rm -f "${SIM_LOG}"
+          SIM_PID=""
+          WATCH_PID=""
 
           dump_logs() {
               echo "==================== sim.log ===================="
               cat "${SIM_LOG}" 2>/dev/null || echo "(no sim.log produced)"
               echo "================================================="
           }
+
+          cleanup() {
+              if [ -n "${WATCH_PID}" ]; then
+                  kill "${WATCH_PID}" 2>/dev/null || true
+              fi
+              if [ -n "${SIM_PID}" ]; then
+                  kill "${SIM_PID}" 2>/dev/null || true
+              fi
+              dump_logs
+          }
+          trap cleanup EXIT
 
           SIM_BIN="./target/debug/chia-gaming-sim"
           RUST_LOG=error "$SIM_BIN" > "${SIM_LOG}" 2>&1 &
@@ -116,7 +129,6 @@ jobs:
               fi
               if ! kill -0 "$SIM_PID" 2>/dev/null; then
                   echo "Simulator process died during startup"
-                  dump_logs
                   exit 1
               fi
               sleep 1
@@ -124,19 +136,31 @@ jobs:
 
           if ! curl -s http://localhost:5800/health >/dev/null 2>&1; then
               echo "Simulator failed to start within 30 seconds"
-              dump_logs
               exit 1
           fi
 
-          # Do not let a non-zero test exit abort the step before we dump logs.
-          pnpm --filter chia-gaming-fe run test
-          rc=$?
+          (
+              while sleep 15; do
+                  echo "=== watchdog $(date -u +%H:%M:%SZ) ==="
+                  tail -n 6 "${SIM_LOG}" 2>/dev/null || true
+              done
+          ) &
+          WATCH_PID=$!
 
-          kill "$SIM_PID" 2>/dev/null || true
+          echo "=== $(date -u +%H:%M:%SZ) generate:games + tsc ==="
+          pnpm --filter chia-gaming-fe run generate:games
+          pnpm --filter chia-gaming-fe exec tsc -p tsconfig.json --noEmit
 
-          dump_logs
+          echo "=== $(date -u +%H:%M:%SZ) unit jest ==="
+          stdbuf -oL -eL pnpm --filter chia-gaming-fe exec jest --testPathIgnorePatterns=load_wasm --silent=false --verbose --useStderr --ci --forceExit
 
-          exit "$rc"
+          # One file per process so a WASM tight-loop names the suite and
+          # cannot pin the rest of the step. timeout(1) kills even if Jest
+          # never returns to the event loop.
+          for spec in front-end/src/lib/tests/load_wasm.*.test.ts; do
+              echo "=== $(date -u +%H:%M:%SZ) ${spec} ==="
+              timeout --kill-after=10s 120s stdbuf -oL -eL pnpm --filter chia-gaming-fe exec jest --runInBand --silent=false --verbose --useStderr --ci --forceExit -- "${spec#front-end/}"
+          done
 
       # ── Headless browser test ───────────────────────────────────────
 

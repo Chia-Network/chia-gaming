@@ -217,5 +217,5 @@ it(
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
   },
-  300 * 1000,
+  120 * 1000,
 );

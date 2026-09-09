@@ -613,7 +613,7 @@ it(
       throw new Error(`[load_wasm reload injection failed]\n${String(error)}`, { cause: error });
     }
   },
-  300 * 1000,
+  120 * 1000,
 );
 
 it(
@@ -629,7 +629,7 @@ it(
       });
     }
   },
-  300 * 1000,
+  120 * 1000,
 );
 
 it.each([
@@ -650,5 +650,5 @@ it.each([
       });
     }
   },
-  300 * 1000,
+  120 * 1000,
 );

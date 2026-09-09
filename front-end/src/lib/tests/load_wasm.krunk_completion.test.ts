@@ -404,7 +404,7 @@ it(
       throw new Error(`[load_wasm Krunk completion failed]\n${String(e)}`, { cause: e });
     }
   },
-  300 * 1000,
+  120 * 1000,
 );
 
 it(
@@ -420,5 +420,5 @@ it(
       });
     }
   },
-  300 * 1000,
+  120 * 1000,
 );
