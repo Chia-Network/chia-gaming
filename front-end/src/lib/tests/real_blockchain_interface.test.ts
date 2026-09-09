@@ -546,7 +546,9 @@ describe('RealBlockchainInterface', () => {
       address: encodePuzzleHashToBech32m(puzzleHash, 'txch'),
     };
     mockSendTransaction.mockRejectedValue(new Error('wallet not synced'));
-    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).rejects.toThrow('wallet not synced');
+    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).rejects.toThrow(
+      'wallet not synced',
+    );
   });
 
   it('returns null when the change address is not resolved yet', async () => {
