@@ -645,7 +645,10 @@ impl TheirTurnReferee {
         evidence: Evidence,
         cheating_move_mover_share: Amount,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        let signature = self.fixed.my_reward_payout_signature.clone();
+        let signature = evidence
+            .signature()
+            .map(|proof| self.fixed.my_reward_payout_signature.aggregate(proof))
+            .unwrap_or_else(|| self.fixed.my_reward_payout_signature.clone());
 
         let solution = OnChainRefereeSolution::Slash(Rc::new(OnChainRefereeSlash {
             validation_program,

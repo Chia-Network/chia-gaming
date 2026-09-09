@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use crate::channel_state::game_handler::{GameHandler, MyTurnInputs};
-use crate::channel_state::types::ReadableMove;
+use crate::channel_state::types::{Evidence, ReadableMove};
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, Error, Hash, Program, Puzzle, Sha256Input,
@@ -589,6 +589,140 @@ fn test_krunk_happy_path_correct_guess() {
     assert_eq!(alice_reveal.new_mover_share, AMOUNT);
 }
 
+fn test_krunk_premature_reveal_has_correct_guess_readable() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator, test_dictionary());
+    let entropy = make_entropy(&mut allocator, "concession_salt");
+    let alice_word = atom(&mut allocator, b"world");
+    let alice_commit = call_my_turn_handler(
+        &mut allocator,
+        setup.alice_handler,
+        alice_word,
+        AMOUNT,
+        setup.initial_state,
+        0,
+        entropy,
+    );
+    let (_, after_commit) = run_validator(
+        &mut allocator,
+        alice_commit.validator_for_my_move_hash,
+        alice_commit.move_bytes_node,
+        0,
+        alice_commit.max_move_size,
+        setup.initial_state,
+        alice_commit.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let state_after_commit = proper_list(allocator.allocator(), after_commit, true).unwrap()[1];
+    let bob_receive = call_their_turn_handler(
+        &mut allocator,
+        setup.bob_handler,
+        AMOUNT,
+        setup.initial_state,
+        state_after_commit,
+        alice_commit.move_bytes_node,
+        alice_commit.validator_for_my_move_hash,
+        0,
+    );
+
+    let correct_word = atom(&mut allocator, b"world");
+    let correct_entropy = make_entropy(&mut allocator, "correct_guess");
+    let correct_guess = call_my_turn_handler(
+        &mut allocator,
+        bob_receive.my_turn_handler,
+        correct_word,
+        AMOUNT,
+        state_after_commit,
+        0,
+        correct_entropy,
+    );
+    let (_, after_correct_guess) = run_validator(
+        &mut allocator,
+        correct_guess.validator_for_my_move_hash,
+        correct_guess.move_bytes_node,
+        0,
+        correct_guess.max_move_size,
+        state_after_commit,
+        correct_guess.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let correct_guess_state =
+        proper_list(allocator.allocator(), after_correct_guess, true).unwrap()[1];
+    let alice_receive = call_their_turn_handler(
+        &mut allocator,
+        alice_commit.their_turn_handler,
+        AMOUNT,
+        state_after_commit,
+        correct_guess_state,
+        correct_guess.move_bytes_node,
+        correct_guess.validator_for_my_move_hash,
+        0,
+    );
+    let reveal_entropy = make_entropy(&mut allocator, "correct_reveal");
+    let reveal = call_my_turn_handler(
+        &mut allocator,
+        alice_receive.my_turn_handler,
+        NodePtr::NIL,
+        AMOUNT,
+        correct_guess_state,
+        0,
+        reveal_entropy,
+    );
+    let normal_readable = call_their_turn_handler(
+        &mut allocator,
+        correct_guess.their_turn_handler,
+        AMOUNT,
+        correct_guess_state,
+        NodePtr::NIL,
+        reveal.move_bytes_node,
+        reveal.validator_for_my_move_hash,
+        reveal.new_mover_share,
+    )
+    .readable_move;
+
+    let wrong_word = atom(&mut allocator, b"crane");
+    let wrong_entropy = make_entropy(&mut allocator, "wrong_guess");
+    let wrong_guess = call_my_turn_handler(
+        &mut allocator,
+        bob_receive.my_turn_handler,
+        wrong_word,
+        AMOUNT,
+        state_after_commit,
+        0,
+        wrong_entropy,
+    );
+    let (_, after_wrong_guess) = run_validator(
+        &mut allocator,
+        wrong_guess.validator_for_my_move_hash,
+        wrong_guess.move_bytes_node,
+        0,
+        wrong_guess.max_move_size,
+        state_after_commit,
+        wrong_guess.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let wrong_guess_state =
+        proper_list(allocator.allocator(), after_wrong_guess, true).unwrap()[1];
+    let concession_readable = call_their_turn_handler(
+        &mut allocator,
+        wrong_guess.their_turn_handler,
+        AMOUNT,
+        wrong_guess_state,
+        NodePtr::NIL,
+        reveal.move_bytes_node,
+        reveal.validator_for_my_move_hash,
+        reveal.new_mover_share,
+    )
+    .readable_move;
+
+    assert_clvm_eq(
+        &mut allocator,
+        normal_readable,
+        concession_readable,
+        "a funded premature reveal must look exactly like a correct guess",
+    );
+}
+
 fn test_krunk_bob_invalid_guess_slash() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator, test_dictionary());
@@ -640,6 +774,12 @@ fn test_krunk_bob_invalid_guess_slash() {
         !evidence_items.is_empty(),
         "handler should produce evidence for invalid guess"
     );
+    let signed_evidence = Evidence::from_nodeptr(&mut allocator, evidence_items[0]).unwrap();
+    assert!(
+        signed_evidence.signature().is_some(),
+        "dictionary evidence must retain its aggregate signature"
+    );
+    let evidence = signed_evidence.to_nodeptr(&mut allocator).unwrap();
 
     let guess_clvm = guess_validator.to_clvm(&mut allocator).unwrap();
 
@@ -652,7 +792,7 @@ fn test_krunk_bob_invalid_guess_slash() {
         5,
         state,
         guess_clvm,
-        evidence_items[0],
+        evidence,
     );
     assert_eq!(
         code,
@@ -1309,6 +1449,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_krunk_happy_path_correct_guess",
             &test_krunk_happy_path_correct_guess,
+        ),
+        (
+            "test_krunk_premature_reveal_has_correct_guess_readable",
+            &test_krunk_premature_reveal_has_correct_guess_readable,
         ),
         (
             "test_krunk_bob_invalid_guess_slash",

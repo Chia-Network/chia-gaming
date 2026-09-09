@@ -408,8 +408,8 @@ used in two places:
   determine the next game state without duplicating that logic.
 
 Note: `mover_share` is **not** in the validator's return value. It is part
-of the referee's curried arguments and is checked separately by the
-`if_any_fail` / `assert` logic within each validator.
+of the referee's curried arguments and is checked separately by each
+validator.
 
 ### Validator Return: Valid Move with Conditions (Conditional Slash)
 
@@ -450,6 +450,62 @@ A slash also succeeds when the validator returns non-nil values that
 This covers cases where the validator deliberately returns mismatched
 values to signal fraud provable from game state alone (no external
 conditions needed).
+
+### Validators Must Be Total on Peer-Controlled Data
+
+An exception is not an invalid-move result. If a validator raises while
+checking a peer's move or supplied evidence, the referee spend aborts and the
+opponent cannot slash. Consequently, every attacker-controlled malformed case
+must terminate normally:
+
+- Return nil when the committed move is unconditionally slashable.
+- Return the aligned three-element terminal result when supplied evidence does
+  not prove fraud. This rejects that slash attempt without aborting inside the
+  game validator.
+- Return the aligned result plus conditions when external authorization, such
+  as a signed dictionary range, is required.
+
+Assertions remain appropriate for compiler- or construction-time invariants,
+but not as the rejection mechanism for a move or evidence value selected by an
+opponent.
+
+### Krunk Reveal and Evidence Semantics
+
+Krunk's `clue.clsp` reveal validator treats an early reveal as a concession.
+The scheduled guesser shares, in `base_unit` multiples, are
+`100, 100, 20, 5, 1` for correct guesses one through five. A fifth incorrect
+guess pays zero. If Alice reveals after an incorrect guess one through four,
+the reveal is valid only when it pays the same scheduled share as a correct
+guess at that depth. An underfunded concession, malformed reveal, or reveal
+that does not open Alice's commitment returns nil and is unconditionally
+slashable.
+
+Evidence has two proof-specific forms:
+
+- A one-byte index selects a prior clue. If recomputing that clue from the
+  revealed word proves Alice's clue wrong, the validator returns nil. A correct
+  clue or irrelevant index returns the ordinary aligned terminal result and
+  does not authorize a slash.
+- A ten-byte `lower_bound || upper_bound` dictionary-gap proof conditionally
+  slashes when the revealed word lies inside that range. The validator appends
+  `(AGG_SIG_UNSAFE dict_pubkey evidence)`, so the referee slash succeeds only
+  when the blockchain verifies the range signature. A range that does not
+  contain the word authorizes nothing.
+
+The dictionary handler obtains both the range and its precomputed aggregate
+signature from the signed dictionary tree. In a handler `evidence_list`, signed
+evidence is represented as `("s" evidence signature)`. Rust unwraps this
+envelope before calling the validator and aggregates `signature` with the
+ordinary reward-payout signature when constructing the slash spend. Plain
+evidence entries remain unchanged. Keeping the signature beside its evidence
+prevents a conditional validator result that emits an `AGG_SIG_UNSAFE`
+condition but can never satisfy it.
+
+For presentation, Bob's terminal handler maps any nonzero, validator-approved
+reveal payout—including a premature concession—to the same
+`(revealed_word, all-green clue)` readable as an actual correct guess. The
+frontend therefore follows one normal correct-guess path and does not duplicate
+the payout rules.
 
 ### How the On-Chain Referee Uses Validators
 

@@ -23,6 +23,7 @@ use crate::referee::types::GameMoveDetails;
 //
 // Their turn handler takes (amount pre_state state move validation_program_hash mover_share) and returns
 //       (readable_move evidence_list next_handler message_optional)
+// A signed evidence entry is ("s" validator_evidence aggregate_signature).
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameHandler {
