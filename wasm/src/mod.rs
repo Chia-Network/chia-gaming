@@ -3,7 +3,7 @@ mod gaming_wasm {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
     use std::convert::TryFrom;
-    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
     use hex::FromHexError;
 
@@ -98,11 +98,19 @@ mod gaming_wasm {
         fn __wasm_call_ctors();
     }
 
+    static WASM_CTORS_RAN: AtomicBool = AtomicBool::new(false);
+
+    /// Hosts may call this more than once; constructors must run at most once.
     #[wasm_bindgen]
     pub fn init() {
         #[cfg(target_family = "wasm")]
-        unsafe {
-            __wasm_call_ctors();
+        {
+            if WASM_CTORS_RAN.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            unsafe {
+                __wasm_call_ctors();
+            }
         }
     }
 
