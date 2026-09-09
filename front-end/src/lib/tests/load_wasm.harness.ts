@@ -518,7 +518,10 @@ export async function isSimulatorAvailable(): Promise<boolean> {
       await sleepMs(delayMs);
     }
     try {
-      await fetch(`${BLOCKCHAIN_SERVICE_URL}/health`, { method: 'POST' });
+      await fetch(`${BLOCKCHAIN_SERVICE_URL}/health`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(2000),
+      });
       return true;
     } catch {
       // Retry; simulator may still be starting up.

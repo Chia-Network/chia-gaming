@@ -90,6 +90,7 @@ jobs:
       # ── WASM/Jest tests (mirrors tools/local-wasm-tests.sh) ────────
 
       - name: Run WASM/Jest tests
+        timeout-minutes: 20
         run: |
           set -u
           GW="${{ github.workspace }}"

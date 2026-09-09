@@ -58,9 +58,17 @@ beforeEach(() => {
   unexpectedConsoleErrors = [];
   expectedConsoleErrors = [];
   console.error = strictConsoleError;
+  const { testPath, currentTestName } = expect.getState();
+  if (typeof testPath === 'string' && testPath.includes('load_wasm')) {
+    process.stderr.write(`[jest] START ${testPath} :: ${currentTestName ?? '?'}\n`);
+  }
 });
 
 afterEach(() => {
+  const { testPath, currentTestName } = expect.getState();
+  if (typeof testPath === 'string' && testPath.includes('load_wasm')) {
+    process.stderr.write(`[jest] DONE ${testPath} :: ${currentTestName ?? '?'}\n`);
+  }
   if (jest.isMockFunction(console.error)) {
     (console.error as jest.Mock).mockRestore();
   }
