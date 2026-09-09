@@ -159,7 +159,8 @@ jobs:
           # files get 120s per test plus process overhead.
           for spec in front-end/src/lib/tests/load_wasm.*.test.ts; do
               case "${spec}" in
-                  *reload_injection*) file_timeout_secs=750 ;;
+                  *reload_injection*) file_timeout_secs=630 ;;
+                  *unroll_reload*) file_timeout_secs=180 ;;
                   *krunk_completion*) file_timeout_secs=270 ;;
                   *) file_timeout_secs=150 ;;
               esac

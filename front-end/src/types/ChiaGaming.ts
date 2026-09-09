@@ -262,6 +262,7 @@ export interface WasmConnection {
   cheat: (cid: number, id: string, mover_share: string) => WasmResult;
   accept_settlement: (cid: number, id: string) => WasmResult;
   shut_down: (cid: number) => WasmResult;
+  drop_game_session: (cid: number) => void;
   abandon: (cid: number) => WasmResult;
   complete_outbound_terminal_handoff: (cid: number) => WasmResult;
   pending_terminal_handoff: (cid: number) => { id: string; message: Uint8Array } | null;
@@ -333,6 +334,10 @@ export class ChiaGame {
 
   shut_down(): WasmResult {
     return this.wasm.shut_down(this.session);
+  }
+
+  dropGameSession(): void {
+    this.wasm.drop_game_session?.(this.session);
   }
 
   abandon(): WasmResult {

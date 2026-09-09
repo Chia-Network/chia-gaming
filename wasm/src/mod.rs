@@ -130,6 +130,15 @@ mod gaming_wasm {
         });
     }
 
+    /// Release a session the host is done with. `shut_down` is an on-chain
+    /// protocol action and does not drop the WASM object.
+    #[wasm_bindgen]
+    pub fn drop_game_session(cid: i32) {
+        CRADLES.with(|cell| {
+            cell.borrow_mut().remove(&cid);
+        });
+    }
+
     fn insert_rng(id: i32, rng: ChaCha8Rng) {
         RNGS.with(|cell| {
             let mut mut_ref = cell.borrow_mut();

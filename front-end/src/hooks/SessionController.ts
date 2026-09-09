@@ -451,6 +451,9 @@ export class SessionController implements PollingGameSession {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
       this.beforeUnloadHandler = null;
     }
+    const cradle = this.cradle;
+    this.cradle = undefined;
+    cradle?.dropGameSession?.();
   }
 
   reportDurabilityError(error: unknown): void {

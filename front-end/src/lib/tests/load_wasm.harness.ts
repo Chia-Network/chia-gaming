@@ -307,6 +307,9 @@ export async function action_with_messages(
     const startedAt = Date.now();
     while (!all_handshaked(cradles)) {
       iterations++;
+      process.stderr.write(
+        `[DBG_UNROLL] handshake iter=${iterations} ready=${cradles.map((c) => c.handshaked()).join(',')} outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}\n`,
+      );
       let deliveredOutbound = false;
       const acknowledgements: Array<{ sender: SessionControllerAdapter; msgno: number }> = [];
       for (let c = 0; c < 2; c++) {
@@ -484,7 +487,11 @@ export async function initSessionController(
   myContribution = 100n,
   theirContribution = 100n,
 ) {
+  process.stderr.write(
+    `[DBG_UNROLL] initSession register start uniqueId=${uniqueId} iStarted=${iStarted} my=${myContribution} their=${theirContribution}\n`,
+  );
   const rewardPuzzleHash = await fakeBlockchainInfo.registerUser(uniqueId);
+  process.stderr.write(`[DBG_UNROLL] initSession register done uniqueId=${uniqueId}\n`);
   const gameObject = new SessionController(
     blockchain,
     uniqueId,
@@ -493,6 +500,7 @@ export async function initSessionController(
     peer_conn,
   );
 
+  process.stderr.write(`[DBG_UNROLL] initSession config start uniqueId=${uniqueId}\n`);
   await configSessionController(
     gameObject,
     iStarted,
@@ -503,6 +511,7 @@ export async function initSessionController(
     undefined,
     rewardPuzzleHash,
   );
+  process.stderr.write(`[DBG_UNROLL] initSession config done uniqueId=${uniqueId}\n`);
 
   return gameObject;
 }
