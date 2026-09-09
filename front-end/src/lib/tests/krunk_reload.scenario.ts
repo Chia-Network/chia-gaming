@@ -158,6 +158,7 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
   }) as [ReloadableSessionLane, ReloadableSessionLane];
 
   const reload = async (index: 0 | 1, label: string): Promise<Uint8Array> => {
+    process.stderr.write(`[krunk-reload] ${label}\n`);
     const beforeHand = structuredClone(lanes[index].runtime.getState().model.game.handState);
     const beforeIds = [...lanes[index].runtime.getState().model.game.currentHandIds];
     adapters[index].outbound_messages();

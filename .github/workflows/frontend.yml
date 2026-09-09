@@ -90,7 +90,7 @@ jobs:
       # ── WASM/Jest tests (mirrors tools/local-wasm-tests.sh) ────────
 
       - name: Run WASM/Jest tests
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           set -u
           GW="${{ github.workspace }}"
@@ -154,12 +154,17 @@ jobs:
           echo "=== $(date -u +%H:%M:%SZ) unit jest ==="
           stdbuf -oL -eL pnpm --filter chia-gaming-fe exec jest --testPathIgnorePatterns=load_wasm --silent=false --verbose --useStderr --ci --forceExit
 
-          # One file per process so a WASM tight-loop names the suite and
-          # cannot pin the rest of the step. timeout(1) kills even if Jest
-          # never returns to the event loop.
+          # One file per process so a WASM tight-loop names the suite.
+          # timeout(1) is a file budget (Jest's 120s is per test), so multi-test
+          # files get 120s per test plus process overhead.
           for spec in front-end/src/lib/tests/load_wasm.*.test.ts; do
-              echo "=== $(date -u +%H:%M:%SZ) ${spec} ==="
-              timeout --kill-after=10s 120s stdbuf -oL -eL pnpm --filter chia-gaming-fe exec jest --runInBand --silent=false --verbose --useStderr --ci --forceExit -- "${spec#front-end/}"
+              case "${spec}" in
+                  *reload_injection*) file_timeout_secs=750 ;;
+                  *krunk_completion*) file_timeout_secs=270 ;;
+                  *) file_timeout_secs=150 ;;
+              esac
+              echo "=== $(date -u +%H:%M:%SZ) ${spec} (${file_timeout_secs}s) ==="
+              timeout --kill-after=10s "${file_timeout_secs}s" stdbuf -oL -eL pnpm --filter chia-gaming-fe exec jest --runInBand --silent=false --verbose --useStderr --ci --forceExit -- "${spec#front-end/}"
           done
 
       # ── Headless browser test ───────────────────────────────────────
