@@ -237,6 +237,7 @@ export interface WasmConnection {
   drain_submissions: (cid: number) => SpendBundle[];
   resubmit_submitted: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
+  aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
@@ -472,6 +473,11 @@ export interface BlockchainReport {
 
 export interface BlockchainInboundAddressResult {
   puzzleHash: string;
+  // The wallet-provided bech32m address string carrying the correct network HRP
+  // (e.g. txch on testnet). Used verbatim as the fee-spend destination so the
+  // wallet's send_transaction address validation matches its configured network.
+  // Optional: backends that only surface a puzzle hash may omit it.
+  address?: string;
 }
 
 export interface ConnectionField {
@@ -496,7 +502,13 @@ export interface InternalBlockchainInterface {
     source?: string,
     fee?: bigint,
   ): Promise<string>;
-  rememberLocalRemovals?(spendBundle: unknown): void | Promise<void>;
+  // Build a standalone, wallet-signed fee-paying spend bundle bound to the
+  // given coin via ASSERT_CONCURRENT_SPEND. Returns null when no fee spend is
+  // needed or the wallet address is not resolved yet. Throws when the wallet
+  // fails to produce the spend (unsynced, insufficient funds, RPC error) so the
+  // caller can surface the real reason instead of silently dropping the fee.
+  // Undefined on backends (e.g. the simulator) that do not support wallet fees.
+  createFeeSpend?(fee: bigint, concurrentSpendCoinId: string): Promise<unknown | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

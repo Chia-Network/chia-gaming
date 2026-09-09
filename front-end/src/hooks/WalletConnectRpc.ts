@@ -23,6 +23,7 @@ import {
   GetPuzzleAndSolutionResponse,
 } from '../types/rpc/GetPuzzleAndSolution';
 import { PushTransactionsRequest, PushTransactionsResponse } from '../types/rpc/PushTransactions';
+import { SendTransactionRequest, SendTransactionResponse } from '../types/rpc/SendTransaction';
 import { SelectCoinsRequest, SelectCoinsResponse } from '../types/rpc/SelectCoins';
 import {
   GetFullNodePeerCountRequest,
@@ -293,6 +294,10 @@ async function pushTransactions(data: PushTransactionsRequest) {
   return await request<PushTransactionsResponse>(ChiaMethod.PushTransactions, data);
 }
 
+async function sendTransaction(data: SendTransactionRequest) {
+  return await request<SendTransactionResponse>(ChiaMethod.SendTransaction, data);
+}
+
 async function createNewRemoteWallet(data: CreateNewRemoteWalletRequest) {
   return await request<CreateNewRemoteWalletResponse>(ChiaMethod.CreateNewRemoteWallet, data);
 }
@@ -321,6 +326,7 @@ export const rpc = {
   getHeightInfo,
   createOfferForIds,
   pushTransactions,
+  sendTransaction,
   createNewRemoteWallet,
   registerRemoteCoins,
   getCoinRecordsByNames,

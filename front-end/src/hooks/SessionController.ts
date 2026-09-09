@@ -17,7 +17,14 @@ import {
   requireWasmResult,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
-import { spend_bundle_to_clvm, coerceToBytes } from '../util';
+import {
+  spend_bundle_to_clvm,
+  coerceToBytes,
+  coinIdFromBytes,
+  toUint8,
+  normalizeHexString,
+  encodeU64AsClvmHex,
+} from '../util';
 import { log, diagStack } from '../services/log';
 import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
@@ -621,15 +628,12 @@ export class SessionController implements PollingGameSession {
         console.warn(
           '[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path',
         );
-        const localSpendBundle = this.wc?.convert_offer_to_coinset_org(bundle);
-        await blockchain.rpc.rememberLocalRemovals?.(localSpendBundle);
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
           return;
         }
         this.processResult(this.cradle.provide_offer_bech32(bundle));
       } else {
-        await blockchain.rpc.rememberLocalRemovals?.(bundle);
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
           return;
@@ -678,6 +682,23 @@ export class SessionController implements PollingGameSession {
     this.kickSystem(1);
   }
 
+  // Coin id of the first coin the protocol bundle spends, used to bind a wallet
+  // fee spend via ASSERT_CONCURRENT_SPEND. Mirrors RealBlockchainInterface's
+  // coin-string construction so the two agree on coin ids.
+  private async computeBindCoinId(protocolBundle: unknown): Promise<string | undefined> {
+    const coinSpends = (protocolBundle as { coin_spends?: Array<{ coin?: unknown }> })?.coin_spends;
+    const coin = Array.isArray(coinSpends) ? (coinSpends[0]?.coin as any) : undefined;
+    if (!coin || coin.parent_coin_info === undefined || coin.puzzle_hash === undefined) {
+      return undefined;
+    }
+    const amount = typeof coin.amount === 'bigint' ? coin.amount : BigInt(coin.amount ?? 0);
+    const coinStringHex =
+      `${normalizeHexString(coin.parent_coin_info)}` +
+      `${normalizeHexString(coin.puzzle_hash)}` +
+      `${encodeU64AsClvmHex(amount)}`;
+    return coinIdFromBytes(toUint8(coinStringHex));
+  }
+
   private async submitTransactionNow(tx: SpendBundle) {
     const blockchain = this.blockchain;
     if (!blockchain) return;
@@ -686,18 +707,55 @@ export class SessionController implements PollingGameSession {
       // here (e.g. from the wasm connection) rejected the submit queue
       // unhandled.  Keep it inside the try so every failure path is captured.
       const blob = spend_bundle_to_clvm(tx);
-      const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
+      const protocolBundle = this.wc?.convert_spend_to_coinset_org(blob);
       const fee = this.getFee();
       log(`[wasm] submitTransaction blobLen=${blob.length}`);
       if (!this.rewardPuzzleHash) {
         throw new Error('submitTransactionNow: rewardPuzzleHash is not set');
       }
+
+      // Build the fee spend per attempt (never baked into the Rust-retained
+      // bundle) and aggregate it into the protocol bundle so a single pushed
+      // bundle carries a signature covering both. Any failure to obtain the fee
+      // spend falls back to a zero-fee submission rather than blocking the spend.
+      let bundleToSubmit: unknown = protocolBundle;
+      let appliedFee = 0n;
+      if (fee > 0n && protocolBundle && this.wc && blockchain.rpc.createFeeSpend) {
+        const bindCoinId = await this.computeBindCoinId(protocolBundle);
+        let feeSpend: unknown = null;
+        let feeSpendError: string | undefined;
+        if (bindCoinId) {
+          try {
+            feeSpend = await blockchain.rpc.createFeeSpend(fee, bindCoinId);
+          } catch (e) {
+            feeSpendError = extractErrorMessage(e);
+          }
+        }
+        if (feeSpend) {
+          bundleToSubmit = this.wc.aggregate_coinset_spend_bundles(
+            jsonStringify([protocolBundle, feeSpend]),
+          );
+          appliedFee = fee;
+        } else {
+          // The wallet couldn't produce a signed fee spend. Submitting without a
+          // fee keeps the game progressing, but the user must know their
+          // configured fee was dropped, and why (the real reason from the wallet
+          // when available, rather than a blanket "insufficient balance" guess).
+          const reason = feeSpendError ?? 'the wallet could not build a signed fee spend';
+          const warning =
+            `Configured fee was not applied: ${reason}. ` +
+            'The transaction was submitted without a fee.';
+          log(`[wasm] submitTransaction: fee spend unavailable; ${warning}`);
+          this.rxjsEmitter?.next({ type: 'error', error: warning });
+        }
+      }
+
       await blockchain.rpc.spend(
         blob,
-        spendBundle,
+        bundleToSubmit,
         this.rewardPuzzleHash,
         'submitTransaction',
-        fee || undefined,
+        appliedFee || undefined,
       );
     } catch (e) {
       const message = extractErrorMessage(e);

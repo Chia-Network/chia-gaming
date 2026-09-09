@@ -6,6 +6,7 @@ jest.mock('../../hooks/WalletConnectRpc', () => ({
     getCoinRecordsByNames: jest.fn(),
     getWallets: jest.fn(),
     pushTransactions: jest.fn(),
+    sendTransaction: jest.fn(),
     registerRemoteCoins: jest.fn(),
     selectCoins: jest.fn(),
     getFullNodePeerCount: jest.fn(async () => 1n),
@@ -53,6 +54,7 @@ const mockGetNextAddress = rpc.getNextAddress as jest.Mock;
 const mockGetCoinRecordsByNames = rpc.getCoinRecordsByNames as jest.Mock;
 const mockGetWallets = rpc.getWallets as jest.Mock;
 const mockPushTransactions = rpc.pushTransactions as jest.Mock;
+const mockSendTransaction = rpc.sendTransaction as jest.Mock;
 const mockRegisterRemoteCoins = rpc.registerRemoteCoins as jest.Mock;
 const mockSelectCoins = rpc.selectCoins as jest.Mock;
 const mockGetFullNodePeerCount = rpc.getFullNodePeerCount as jest.Mock;
@@ -99,6 +101,7 @@ describe('RealBlockchainInterface', () => {
     mockGetCoinRecordsByNames.mockReset();
     mockGetWallets.mockReset();
     mockPushTransactions.mockReset();
+    mockSendTransaction.mockReset();
     mockRegisterRemoteCoins.mockReset();
     mockSelectCoins.mockReset();
     mockGetFullNodePeerCount.mockReset();
@@ -409,11 +412,13 @@ describe('RealBlockchainInterface', () => {
     ).resolves.toEqual([record]);
   });
 
-  it('uses only local non-ephemeral coins as pushTransactions removal metadata', async () => {
+  it('records non-ephemeral root removals and never asks the wallet to add a fee', async () => {
     const parentCoinInfo = '11'.repeat(32);
     const puzzleHash = '22'.repeat(32);
     const amount = 100n;
-    const rootCoinId = await coinIdFromBytes(toUint8(`${parentCoinInfo}${puzzleHash}64`));
+    // Coin id of the first (root) coin below; the second coin's parent equals
+    // this, making it ephemeral and therefore excluded from removals.
+    const coinAId = await coinIdFromBytes(toUint8(`${parentCoinInfo}${puzzleHash}64`));
     const peerParentCoinInfo = '44'.repeat(32);
     const peerPuzzleHash = '55'.repeat(32);
     const peerAmount = 80n;
@@ -421,30 +426,8 @@ describe('RealBlockchainInterface', () => {
     blockchain.blockchainAddressData = { puzzleHash };
     mockPushTransactions.mockResolvedValue({ success: true });
 
-    await blockchain.rememberLocalRemovals({
-      coin_spends: [
-        {
-          coin: {
-            parent_coin_info: `0x${parentCoinInfo}`,
-            puzzle_hash: `0x${puzzleHash}`,
-            amount,
-          },
-          puzzle_reveal: '0x80',
-          solution: '0x80',
-        },
-        {
-          coin: {
-            parent_coin_info: `0x${rootCoinId}`,
-            puzzle_hash: `0x${'33'.repeat(32)}`,
-            amount: 50n,
-          },
-          puzzle_reveal: '0x80',
-          solution: '0x80',
-        },
-      ],
-      aggregated_signature: '0x00',
-    });
-
+    // The bundle handed to spend is now the (possibly fee-aggregated) bundle
+    // itself; removals are derived from its own non-ephemeral coin spends.
     const submittedBundle = {
       coin_spends: [
         {
@@ -457,8 +440,9 @@ describe('RealBlockchainInterface', () => {
           solution: '0x80',
         },
         {
+          // Ephemeral: parent is the coin spent above.
           coin: {
-            parent_coin_info: `0x${rootCoinId}`,
+            parent_coin_info: `0x${coinAId}`,
             puzzle_hash: `0x${'33'.repeat(32)}`,
             amount: 50n,
           },
@@ -481,22 +465,104 @@ describe('RealBlockchainInterface', () => {
       blockchain.spend('80', submittedBundle, puzzleHash, 'submitTransaction', 10n),
     ).resolves.toEqual({ success: true });
 
-    expect(mockPushTransactions).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fee: 10n,
-        transactions: [
-          expect.objectContaining({
-            removals: [
-              {
-                parent_coin_info: `0x${parentCoinInfo}`,
-                puzzle_hash: `0x${puzzleHash}`,
-                amount,
-              },
-            ],
-          }),
-        ],
-      }),
+    const call = mockPushTransactions.mock.calls[0][0];
+    // The fee-paying spend is aggregated in by the caller; chia_pushTransactions
+    // must not add its own fee. `fee` is surfaced only as fee_amount for display.
+    expect(call.fee).toBeUndefined();
+    expect(call.transactions[0].fee_amount).toBe(10n);
+    expect(call.transactions[0].removals).toEqual([
+      {
+        parent_coin_info: `0x${parentCoinInfo}`,
+        puzzle_hash: `0x${puzzleHash}`,
+        amount,
+      },
+      {
+        parent_coin_info: `0x${peerParentCoinInfo}`,
+        puzzle_hash: `0x${peerPuzzleHash}`,
+        amount: peerAmount,
+      },
+    ]);
+  });
+
+  it('builds a wallet-signed fee spend bound with ASSERT_CONCURRENT_SPEND', async () => {
+    const puzzleHash = '11'.repeat(32);
+    // The wallet's address carries the network HRP (txch on testnet); createFeeSpend
+    // must forward it verbatim so send_transaction's address validation passes.
+    const address = encodePuzzleHashToBech32m(puzzleHash, 'txch');
+    const blockchain = new RealBlockchainInterface();
+    blockchain.blockchainAddressData = { puzzleHash, address };
+    // The wallet returns the signed bundle over WalletConnect in camelCase,
+    // including nested coin fields. createFeeSpend must normalize this into the
+    // canonical snake_case coinset shape the aggregator/removal code consume.
+    const walletFeeBundle = {
+      coinSpends: [
+        {
+          coin: {
+            parentCoinInfo: `0x${'99'.repeat(32)}`,
+            puzzleHash: `0x${'88'.repeat(32)}`,
+            amount: 1000n,
+          },
+          puzzleReveal: '0x80',
+          solution: '0x80',
+        },
+      ],
+      aggregatedSignature: '0xfee',
+    };
+    mockSendTransaction.mockResolvedValue({ transactions: [{ spendBundle: walletFeeBundle }] });
+
+    const bindCoinId = 'ab'.repeat(32);
+    const result = await blockchain.createFeeSpend(10n, bindCoinId);
+
+    expect(result).toEqual({
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: `0x${'99'.repeat(32)}`,
+            puzzle_hash: `0x${'88'.repeat(32)}`,
+            amount: 1000n,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
+        },
+      ],
+      aggregated_signature: '0xfee',
+    });
+    expect(mockSendTransaction).toHaveBeenCalledWith({
+      walletId: 1n,
+      amount: 1n,
+      address,
+      fee: 10n,
+      push: false,
+      allowUnsynced: true,
+      extraConditions: [{ opcode: 64n, args: { coin_id: `0x${bindCoinId}` } }],
+    });
+  });
+
+  it('propagates the wallet error when it cannot build a fee spend', async () => {
+    const puzzleHash = '11'.repeat(32);
+    const blockchain = new RealBlockchainInterface();
+    blockchain.blockchainAddressData = {
+      puzzleHash,
+      address: encodePuzzleHashToBech32m(puzzleHash, 'txch'),
+    };
+    mockSendTransaction.mockRejectedValue(new Error('wallet not synced'));
+    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).rejects.toThrow(
+      'wallet not synced',
     );
+  });
+
+  it('returns null when the change address is not resolved yet', async () => {
+    const blockchain = new RealBlockchainInterface();
+    blockchain.blockchainAddressData = { puzzleHash: '' };
+    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toBeNull();
+    expect(mockSendTransaction).not.toHaveBeenCalled();
+  });
+
+  it('does not contact the wallet for a zero fee', async () => {
+    const blockchain = new RealBlockchainInterface();
+    blockchain.blockchainAddressData = { puzzleHash: '11'.repeat(32) };
+    await expect(blockchain.createFeeSpend(0n, 'cd'.repeat(32))).resolves.toBeNull();
+    expect(mockSendTransaction).not.toHaveBeenCalled();
   });
 
   it('uses the provided change puzzle hash in the transaction record', async () => {

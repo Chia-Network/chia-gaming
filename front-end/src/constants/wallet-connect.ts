@@ -19,6 +19,7 @@ export enum ChiaMethod {
   GetHeightInfo = 'chia_getHeightInfo',
   SelectCoins = 'chia_selectCoins',
   CreateOfferForIds = 'chia_createOfferForIds',
+  SendTransaction = 'chia_sendTransaction',
   PushTransactions = 'chia_pushTransactions',
   CreateNewRemoteWallet = 'chia_createNewRemoteWallet',
   RegisterRemoteCoins = 'chia_registerRemoteCoins',
