@@ -507,6 +507,21 @@ reveal payout—including a premature concession—to the same
 frontend therefore follows one normal correct-guess path and does not duplicate
 the payout rules.
 
+### Space Poker Showdown Bitfields
+
+Space Poker showdown masks select five cards from a seven-card list, so only
+bits 0 through 6 are meaningful. `popcount == 5` is not sufficient validation:
+a mask such as `0x8f` has five set bits but selects only four cards because bit
+7 has no corresponding card. Passing that shortened list to the hand evaluator
+can raise and make the illegal terminal move unslashable.
+
+The terminal validator therefore rejects a mover mask when bit 7 is set before
+selecting or evaluating cards, then separately requires exactly five set bits.
+The waiter's evidence mask follows the same range and popcount rules. Invalid
+evidence returns the ordinary aligned terminal result, denying that slash
+attempt without aborting the validator; an invalid committed mover mask returns
+nil and is unconditionally slashable.
+
 ### How the On-Chain Referee Uses Validators
 
 The referee has three spend types: **move**, **slash**, and **timeout**.
