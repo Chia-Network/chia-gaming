@@ -108,6 +108,48 @@ fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
     })
 }
 
+fn sha256_concat_bytes(parts: &[&[u8]]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    hasher.finalize().into()
+}
+
+fn commitments_from_validator_result(
+    allocator: &mut AllocEncoder,
+    result: NodePtr,
+) -> (NodePtr, i64) {
+    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    if items.is_empty() {
+        return (NodePtr::NIL, 0);
+    }
+    let max_move_size = if items.len() > 2 {
+        int_from_atom(allocator, items[2])
+    } else {
+        0
+    };
+    let vh_bytes = match allocator.allocator().sexp(items[0]) {
+        SExp::Atom => allocator.allocator().atom(items[0]).to_vec(),
+        _ => Vec::new(),
+    };
+    if vh_bytes.is_empty() {
+        return (NodePtr::NIL, max_move_size);
+    }
+    let state = if items.len() > 1 {
+        items[1]
+    } else {
+        NodePtr::NIL
+    };
+    let state_hash = clvm_utils::tree_hash(allocator.allocator(), state);
+    let infohash_b = sha256_concat_bytes(&[&vh_bytes, &state_hash.to_bytes()]);
+    (
+        allocator.allocator().new_atom(&infohash_b).unwrap(),
+        max_move_size,
+    )
+}
+
 fn run_referee_slash(
     allocator: &mut AllocEncoder,
     validator: &Puzzle,
@@ -115,6 +157,8 @@ fn run_referee_slash(
     mover_share: i64,
     previous_state: NodePtr,
     evidence: NodePtr,
+    max_move_size: i64,
+    infohash_b: NodePtr,
 ) -> Result<NodePtr, String> {
     let referee =
         read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex").map_err(|e| e.to_string())?;
@@ -122,13 +166,10 @@ fn run_referee_slash(
     let validator_clvm = validator.to_clvm(allocator).unwrap();
     let validator_hash = validator.sha256tree(allocator);
     let previous_state_hash = clvm_utils::tree_hash(allocator.allocator(), previous_state);
-    let infohash_a = {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(validator_hash.hash().bytes());
-        hasher.update(previous_state_hash.to_bytes());
-        hasher.finalize()
-    };
+    let infohash_a = sha256_concat_bytes(&[
+        validator_hash.hash().bytes().as_slice(),
+        &previous_state_hash.to_bytes(),
+    ]);
 
     let mover_pubkey = allocator.allocator().new_atom(&[0x11; 48]).unwrap();
     let waiter_pubkey = allocator.allocator().new_atom(&[0x22; 48]).unwrap();
@@ -141,7 +182,7 @@ fn run_referee_slash(
         .unwrap();
     let nonce = 1_i64.to_clvm(allocator).unwrap();
     let move_node = allocator.allocator().new_atom(move_bytes).unwrap();
-    let terminal_max_move_size = 0_i64.to_clvm(allocator).unwrap();
+    let max_move_size = max_move_size.to_clvm(allocator).unwrap();
     let mover_share = mover_share.to_clvm(allocator).unwrap();
     let infohash_a = allocator.allocator().new_atom(&infohash_a).unwrap();
     let payout_ph = allocator.allocator().new_atom(&[0x33; 32]).unwrap();
@@ -156,8 +197,8 @@ fn run_referee_slash(
             mod_hash,
             nonce,
             move_node,
-            terminal_max_move_size,
-            NodePtr::NIL,
+            max_move_size,
+            infohash_b,
             mover_share,
             infohash_a,
         ],
@@ -191,6 +232,20 @@ fn assert_successful_referee_slash(
     evidence: NodePtr,
     expected_condition_count: usize,
 ) {
+    let (infohash_b, max_move_size) = match run_validator_step(
+        allocator,
+        validator,
+        move_bytes,
+        21,
+        mover_share,
+        previous_state,
+        evidence,
+    ) {
+        Ok((MoveCode::MakeMove, result)) => {
+            commitments_from_validator_result(allocator, result)
+        }
+        _ => (NodePtr::NIL, 0),
+    };
     let output = run_referee_slash(
         allocator,
         validator,
@@ -198,6 +253,8 @@ fn assert_successful_referee_slash(
         mover_share,
         previous_state,
         evidence,
+        max_move_size,
+        infohash_b,
     )
     .expect("referee slash should execute successfully");
     assert_eq!(
@@ -207,6 +264,74 @@ fn assert_successful_referee_slash(
         expected_condition_count,
         "referee must return the expected proof and payout conditions"
     );
+}
+
+fn assert_referee_slash_rejected(
+    allocator: &mut AllocEncoder,
+    validator: &Puzzle,
+    move_bytes: &[u8],
+    mover_share: i64,
+    previous_state: NodePtr,
+    evidence: NodePtr,
+) {
+    let (infohash_b, max_move_size) = match run_validator_step(
+        allocator,
+        validator,
+        move_bytes,
+        21,
+        mover_share,
+        previous_state,
+        evidence,
+    ) {
+        Ok((MoveCode::Slash, _)) => {
+            panic!("validator returned nil: this is a true slash, not a false-slash case")
+        }
+        Ok((MoveCode::MakeMove, result)) => {
+            commitments_from_validator_result(allocator, result)
+        }
+        Err(_) => (NodePtr::NIL, 0),
+    };
+    assert!(
+        run_referee_slash(
+            allocator,
+            validator,
+            move_bytes,
+            mover_share,
+            previous_state,
+            evidence,
+            max_move_size,
+            infohash_b,
+        )
+        .is_err(),
+        "valid move or irrelevant evidence must not authorize a referee slash"
+    );
+}
+
+fn assert_false_slash_with_common_evidence(
+    allocator: &mut AllocEncoder,
+    validator: &Puzzle,
+    move_bytes: &[u8],
+    mover_share: i64,
+    previous_state: NodePtr,
+) {
+    let nil = NodePtr::NIL;
+    let junk_atom = allocator.allocator().new_atom(b"xx").unwrap();
+    let high_bit = allocator.allocator().new_atom(&[0x80]).unwrap();
+    let pair = {
+        let a = allocator.allocator().new_atom(&[0x01]).unwrap();
+        let b = allocator.allocator().new_atom(&[0x02]).unwrap();
+        allocator.allocator().new_pair(a, b).unwrap()
+    };
+    for evidence in [nil, junk_atom, high_bit, pair] {
+        assert_referee_slash_rejected(
+            allocator,
+            validator,
+            move_bytes,
+            mover_share,
+            previous_state,
+            evidence,
+        );
+    }
 }
 
 /// Build state: (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
@@ -286,6 +411,13 @@ fn test_krunk_commit_happy() {
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(int_from_atom(&mut allocator, items[2]), 5);
+    assert_false_slash_with_common_evidence(
+        &mut allocator,
+        &commit,
+        &move_bytes,
+        0,
+        initial_state,
+    );
 }
 
 fn test_krunk_commit_slash_bad_move_size() {
@@ -327,6 +459,7 @@ fn test_krunk_guess_happy() {
         "valid guess returns 3 elements (no conditions)"
     );
     assert_eq!(int_from_atom(&mut allocator, items[2]), 21);
+    assert_false_slash_with_common_evidence(&mut allocator, &guess, b"crane", 0, state);
 }
 
 fn test_krunk_guess_slash_bob_out_of_dict() {
@@ -378,9 +511,19 @@ fn test_krunk_guess_bad_range_doesnt_bracket() {
 
     let result = run_validator_step(&mut allocator, &guess, b"crane", 5, 0, state, evidence);
     assert!(
-        result.is_err(),
-        "should fail when evidence range doesn't bracket the move"
+        result.is_err()
+            || result
+                .as_ref()
+                .map(|(code, node)| {
+                    *code == MoveCode::MakeMove
+                        && proper_list(allocator.allocator(), *node, true)
+                            .map(|items| items.len() == 3)
+                            .unwrap_or(false)
+                })
+                .unwrap_or(false),
+        "non-bracketing range must not authorize a slash"
     );
+    assert_referee_slash_rejected(&mut allocator, &guess, b"crane", 0, state, evidence);
 }
 
 // --- clue.clsp tests ---
@@ -410,6 +553,7 @@ fn test_krunk_clue_nonterminal_happy() {
         5,
         "next max_move_size = 5 (guess)"
     );
+    assert_false_slash_with_common_evidence(&mut allocator, &clue, &[0x42], 0, state);
 }
 
 fn test_krunk_clue_blocks_5th_clue() {
@@ -559,6 +703,14 @@ fn test_krunk_reveal_bad_range_doesnt_bracket() {
         3,
         "irrelevant range evidence should not authorize a slash"
     );
+    assert_referee_slash_rejected(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        BASE_UNIT * 100,
+        state,
+        evidence,
+    );
 }
 
 fn test_krunk_reveal_valid() {
@@ -610,6 +762,22 @@ fn test_krunk_reveal_valid() {
     assert_eq!(int_from_atom(&mut allocator, items[0]), 0);
     assert_eq!(int_from_atom(&mut allocator, items[1]), 0);
     assert_eq!(int_from_atom(&mut allocator, items[2]), 0);
+    assert_false_slash_with_common_evidence(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        mover_share,
+        state,
+    );
+    let oob_index = allocator.allocator().new_atom(&[0x05]).unwrap();
+    assert_referee_slash_rejected(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        mover_share,
+        state,
+        oob_index,
+    );
 }
 
 // --- New clue path tests ---
@@ -884,6 +1052,14 @@ fn test_krunk_premature_reveal_concedes_scheduled_payout() {
         3,
         "a correctly funded premature reveal should be accepted as terminal"
     );
+    assert_referee_slash_rejected(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        BASE_UNIT * 100,
+        state,
+        NodePtr::NIL,
+    );
 }
 
 fn test_krunk_reveal_wrong_mover_share_amount() {
@@ -1104,6 +1280,14 @@ fn test_krunk_reveal_correct_clue_no_slash() {
         3,
         "correct-clue evidence should not authorize a slash"
     );
+    assert_referee_slash_rejected(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        BASE_UNIT * 20,
+        state,
+        evidence,
+    );
 }
 
 // --- Reveal path: mover_share at various depths ---
@@ -1164,6 +1348,13 @@ fn test_reveal_payout_at_depth(depth: usize, expected_mover_share: i64) {
         items.len(),
         3,
         "depth {depth} should return terminal (0 0 0)"
+    );
+    assert_false_slash_with_common_evidence(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        expected_mover_share,
+        state,
     );
 }
 

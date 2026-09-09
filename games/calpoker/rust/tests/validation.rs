@@ -444,6 +444,138 @@ struct StepSpec {
     validator_name: &'static str,
 }
 
+fn infohash_b_node(allocator: &mut AllocEncoder, next_validator_hash: Option<[u8; 32]>, state: NodePtr) -> NodePtr {
+    match next_validator_hash {
+        None => NodePtr::NIL,
+        Some(hash) => {
+            let state_hash: [u8; 32] = *Program::from_nodeptr(allocator, state)
+                .expect("state program")
+                .sha256tree(allocator)
+                .hash()
+                .bytes();
+            hash_to_node(allocator, &sha256_concat(&[&hash, &state_hash]))
+        }
+    }
+}
+
+fn run_game_referee_slash(
+    allocator: &mut AllocEncoder,
+    validator: &Puzzle,
+    move_bytes: &[u8],
+    mover_share: i64,
+    previous_state: NodePtr,
+    evidence: Option<&[u8]>,
+    max_move_size: i64,
+    infohash_b: NodePtr,
+) -> Result<NodePtr, String> {
+    let referee = load_referee_puzzle(allocator);
+    let referee_clvm = referee.to_clvm(allocator).expect("referee to clvm");
+    let referee_hash: [u8; 32] = *referee.sha256tree(allocator).hash().bytes();
+    let validator_clvm = validator.to_clvm(allocator).expect("validator to clvm");
+    let validator_hash: [u8; 32] = *validator.sha256tree(allocator).hash().bytes();
+    let previous_state_hash: [u8; 32] = *Program::from_nodeptr(allocator, previous_state)
+        .expect("state program")
+        .sha256tree(allocator)
+        .hash()
+        .bytes();
+    let infohash_a = sha256_concat(&[&validator_hash, &previous_state_hash]);
+
+    let mover_pk = allocator
+        .allocator()
+        .new_atom(&[0x11; 48])
+        .expect("mover pk atom");
+    let waiter_pk = allocator
+        .allocator()
+        .new_atom(&[0x22; 48])
+        .expect("waiter pk atom");
+    let timeout = 10i64.to_clvm(allocator).expect("timeout");
+    let amount = AMOUNT.to_clvm(allocator).expect("amount");
+    let mod_hash = hash_to_node(allocator, &referee_hash);
+    let nonce = 1i64.to_clvm(allocator).expect("nonce");
+    let move_node = allocator
+        .allocator()
+        .new_atom(move_bytes)
+        .expect("move atom");
+    let max_move_size = max_move_size.to_clvm(allocator).expect("max_move_size");
+    let mover_share = mover_share.to_clvm(allocator).expect("mover_share");
+    let infohash_a_node = hash_to_node(allocator, &infohash_a);
+    let evidence = evidence
+        .map(|bytes| allocator.allocator().new_atom(bytes).expect("evidence atom"))
+        .unwrap_or(NodePtr::NIL);
+    let payout_ph = allocator
+        .allocator()
+        .new_atom(&[0x33; 32])
+        .expect("payout ph atom");
+
+    let curried_args = list_from_nodes(
+        allocator,
+        &[
+            mover_pk,
+            waiter_pk,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            move_node,
+            max_move_size,
+            infohash_b,
+            mover_share,
+            infohash_a_node,
+        ],
+    );
+    let slash_args = list_from_nodes(
+        allocator,
+        &[previous_state, validator_clvm, evidence, payout_ph],
+    );
+    let args = allocator
+        .allocator()
+        .new_pair(curried_args, slash_args)
+        .expect("should build referee args");
+
+    match run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        referee_clvm,
+        args,
+        0,
+    ) {
+        Ok(reduction) => Ok(reduction.1),
+        Err(e) => Err(format!("CLVM error: {e:?}")),
+    }
+}
+
+fn assert_false_slash(
+    allocator: &mut AllocEncoder,
+    validator: &Puzzle,
+    move_bytes: &[u8],
+    mover_share: i64,
+    previous_state: NodePtr,
+    evidence: Option<&[u8]>,
+    result: Option<&MoveResult>,
+) {
+    let (infohash_b, max_move_size) = match result {
+        Some(r) => (
+            infohash_b_node(allocator, r.next_validator_hash, r.state),
+            r.next_max_move_size,
+        ),
+        None => (NodePtr::NIL, 0),
+    };
+    assert!(
+        run_game_referee_slash(
+            allocator,
+            validator,
+            move_bytes,
+            mover_share,
+            previous_state,
+            evidence,
+            max_move_size,
+            infohash_b,
+        )
+        .is_err(),
+        "slash of a valid move must fail"
+    );
+}
+
 fn run_step_and_check(
     allocator: &mut AllocEncoder,
     lib: &ValidatorLibrary,
@@ -468,6 +600,7 @@ fn run_step_and_check(
         "expected validator {}, got {}",
         spec.validator_name, info.name
     );
+    let puzzle = info.puzzle.clone();
 
     let result = run_validator_step(
         allocator,
@@ -484,6 +617,15 @@ fn run_step_and_check(
     match spec.expected {
         MoveCode::ClvmException => {
             assert!(result.is_err(), "expected CLVM exception but got Ok");
+            assert_false_slash(
+                allocator,
+                &puzzle,
+                &spec.move_bytes,
+                spec.mover_share,
+                last.state,
+                spec.evidence.as_deref(),
+                None,
+            );
             None
         }
         expected => {
@@ -496,6 +638,15 @@ fn run_step_and_check(
             if r.move_code == MoveCode::Slash {
                 None
             } else {
+                assert_false_slash(
+                    allocator,
+                    &puzzle,
+                    &spec.move_bytes,
+                    spec.mover_share,
+                    last.state,
+                    spec.evidence.as_deref(),
+                    Some(&r),
+                );
                 Some(r)
             }
         }
@@ -867,6 +1018,56 @@ fn test_calpoker_d_slash_too_few_bits() {
         &lib,
         &after,
         &make_step(&[0b00000111], 0, None, MoveCode::Slash, false, "d"),
+    );
+}
+
+#[test]
+fn test_calpoker_d_high_bit_invalid_mask_is_slashable() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let td = build_test_data();
+    let init = initial_move_result(&lib);
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+            make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
+        ],
+    )
+    .unwrap();
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&[0x80], 0, None, MoveCode::Slash, false, "d"),
+    );
+}
+
+#[test]
+fn test_calpoker_d_high_bit_valid_mask_is_not_slashable() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let td = build_test_data();
+    let init = initial_move_result(&lib);
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+            make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
+        ],
+    )
+    .unwrap();
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&[0x87], 0, None, MoveCode::MakeMove, false, "d"),
     );
 }
 
@@ -1359,6 +1560,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_calpoker_d_slash_too_few_bits",
             &test_calpoker_d_slash_too_few_bits,
+        ),
+        (
+            "test_calpoker_d_high_bit_invalid_mask_is_slashable",
+            &test_calpoker_d_high_bit_invalid_mask_is_slashable,
+        ),
+        (
+            "test_calpoker_d_high_bit_valid_mask_is_not_slashable",
+            &test_calpoker_d_high_bit_valid_mask_is_not_slashable,
         ),
         (
             "test_calpoker_d_slash_too_many_bits",

@@ -41,6 +41,16 @@ pub struct TheirTurnRefereeGameState {
     pub move_spend: Option<Rc<OnChainRefereeMoveData>>,
 }
 
+// Unsigned evidence must make the validator return nil. Signed evidence comes
+// only from a trusted local handler's certified conditional proof; its non-nil
+// result carries the condition that the referee enforces on-chain.
+fn validator_result_authorizes_slash(
+    validation_result: &StateUpdateResult,
+    evidence: &Evidence,
+) -> bool {
+    validation_result.is_none() || evidence.signature().is_some()
+}
+
 impl TheirTurnRefereeGameState {
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.create_this_coin.clone()
@@ -48,6 +58,28 @@ impl TheirTurnRefereeGameState {
 
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.spend_this_coin.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validator_result_authorizes_slash;
+    use crate::channel_state::types::Evidence;
+    use crate::common::types::{Aggsig, Program};
+    use std::rc::Rc;
+
+    #[test]
+    fn unsigned_evidence_requires_nil_but_signed_evidence_is_conditional() {
+        let program = Rc::new(Program::from_bytes(&[0x80]));
+        let valid_result = Some(program.clone());
+        let slash_result = None;
+        let unsigned = Evidence::new(program.clone());
+        let signed = Evidence::with_signature(program, Aggsig::default());
+
+        assert!(!validator_result_authorizes_slash(&valid_result, &unsigned));
+        assert!(validator_result_authorizes_slash(&slash_result, &unsigned));
+        assert!(validator_result_authorizes_slash(&valid_result, &signed));
+        assert!(validator_result_authorizes_slash(&slash_result, &signed));
     }
 }
 
@@ -412,15 +444,18 @@ impl TheirTurnReferee {
         )?;
 
         for evidence in result.slash_evidence.iter() {
-            if matches!(
-                self.run_state_update(
-                    allocator,
-                    offchain_puzzle_args.clone(),
-                    state.clone(),
-                    evidence.clone(),
-                ),
-                Ok(None)
+            let slash_authorized = match self.run_state_update(
+                allocator,
+                offchain_puzzle_args.clone(),
+                state.clone(),
+                evidence.clone(),
             ) {
+                Ok(validation_result) => {
+                    validator_result_authorizes_slash(&validation_result, evidence)
+                }
+                Err(_) => false,
+            };
+            if slash_authorized {
                 return Ok((
                     None,
                     TheirTurnMoveResult {

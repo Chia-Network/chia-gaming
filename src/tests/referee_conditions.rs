@@ -1,5 +1,6 @@
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Program, Puzzle, Sha256Input, Sha256tree};
+use crate::referee::types::parse_validator_result;
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -245,6 +246,44 @@ fn test_slash_fails_aligned_no_conditions() {
     );
 }
 
+#[test]
+fn test_valid_validator_results_are_not_slash_candidates() {
+    let mut allocator = AllocEncoder::new();
+    let terminal = list_from_nodes(&mut allocator, &[NodePtr::NIL]);
+    assert!(
+        parse_validator_result(&mut allocator, terminal)
+            .unwrap()
+            .is_some(),
+        "an ordinary terminal result must not initiate a slash"
+    );
+
+    let next_hash = allocator.allocator().new_atom(&[0x44; 32]).unwrap();
+    let state = allocator.allocator().new_atom(b"next state").unwrap();
+    let max_move_size = 5_i64.to_clvm(&mut allocator).unwrap();
+    let nonterminal = list_from_nodes(&mut allocator, &[next_hash, state, max_move_size]);
+    assert!(
+        parse_validator_result(&mut allocator, nonterminal)
+            .unwrap()
+            .is_some(),
+        "an ordinary three-element transition must not initiate a slash"
+    );
+
+    // Debug-game validators attach a diagnostic tail. Extra elements are not
+    // themselves a local slash signal; only nil (or signed handler evidence)
+    // initiates a slash attempt.
+    let diagnostic = allocator.allocator().new_atom(b"debug game: move").unwrap();
+    let with_tail = list_from_nodes(
+        &mut allocator,
+        &[next_hash, state, max_move_size, diagnostic],
+    );
+    assert!(
+        parse_validator_result(&mut allocator, with_tail)
+            .unwrap()
+            .is_some(),
+        "a valid result with extra diagnostic fields must not initiate a slash"
+    );
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_slash_succeeds_nil", &test_slash_succeeds_nil),
@@ -259,6 +298,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_slash_fails_aligned_no_conditions",
             &test_slash_fails_aligned_no_conditions,
+        ),
+        (
+            "test_valid_validator_results_are_not_slash_candidates",
+            &test_valid_validator_results_are_not_slash_candidates,
         ),
     ]
 }

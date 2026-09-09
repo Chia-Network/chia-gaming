@@ -426,6 +426,10 @@ The referee prepends these conditions to its standard payout conditions.
 Example: a Krunk dictionary range slash returns
 `(AGG_SIG_UNSAFE dict_pubkey evidence)` as the 4th element, which the
 referee emits so the blockchain verifies the BLS signature on the range.
+The local referee treats a handler-provided signed evidence entry as a
+conditional slash candidate even though this validator result is non-nil; the
+signature is aggregated into the slash spend and the blockchain enforces the
+returned condition.
 
 If values align with commitments but no conditions are present (list ends
 at element 3), the move is valid and the slash attempt fails (assert
@@ -451,23 +455,19 @@ This covers cases where the validator deliberately returns mismatched
 values to signal fraud provable from game state alone (no external
 conditions needed).
 
-### Validators Must Be Total on Peer-Controlled Data
+### Slash Success Versus Slash Rejection
 
-An exception is not an invalid-move result. If a validator raises while
-checking a peer's move or supplied evidence, the referee spend aborts and the
-opponent cannot slash. Consequently, every attacker-controlled malformed case
-must terminate normally:
+A CLVM hard fail aborts the referee spend: the transaction never enters the
+mempool or a block. That is a legitimate way to **reject** a slash. It is a
+bug only when the committed move is illegal and the supplied evidence is the
+intended proof — then the cheat is unslashable.
 
-- Return nil when the committed move is unconditionally slashable.
-- Return the aligned three-element terminal result when supplied evidence does
-  not prove fraud. This rejects that slash attempt without aborting inside the
-  game validator.
-- Return the aligned result plus conditions when external authorization, such
-  as a signed dictionary range, is required.
-
-Assertions remain appropriate for compiler- or construction-time invariants,
-but not as the rejection mechanism for a move or evidence value selected by an
-opponent.
+- Illegal moves must return nil, a misaligned payload, or extra slash
+  conditions, without hard-failing on the intended evidence.
+- A slash of a valid move may hard-fail, or return an aligned payload with no
+  extra conditions.
+- Extra conditions on an aligned payload are a conditional slash; they must
+  not appear unless the evidence actually proves fraud.
 
 ### Krunk Reveal and Evidence Semantics
 
@@ -548,8 +548,8 @@ in three cases:
 
 If the validator returns aligned values with no extra conditions (list ends
 at element 3), the move was valid and the slash attempt fails (the spend
-aborts). If the validator raises (CLVM exception), the slash transaction
-fails to mine.
+aborts). If the validator hard-fails, the slash transaction never exists;
+that is also a valid way to reject a slash of an honest move.
 
 Validators have a two-sided security contract:
 

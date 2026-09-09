@@ -18,6 +18,14 @@ impl Evidence {
             signature: None,
         }
     }
+
+    pub fn with_signature(program: Rc<Program>, signature: Aggsig) -> Self {
+        Evidence {
+            program,
+            signature: Some(signature),
+        }
+    }
+
     pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Evidence, Error> {
         if let Some(items) = proper_list(allocator.allocator(), n, true) {
             if items.len() == 3
