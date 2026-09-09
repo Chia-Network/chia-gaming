@@ -514,16 +514,16 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const conditions = conditionsForGraphql(extraConditions, maxHeight);
 
     log(
-      `[cloud-blockchain] createGamingFundingSpend amount=${amount} conditions=${conditions.length}`,
+      `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} conditions=${conditions.length}`,
     );
 
     const created = await this.gql<{
-      createGamingFundingSpend: {
+      createSpendWithExtraConditions: {
         signatureRequest: { id: string; status: string };
       };
     }>(
-      `mutation($input: CreateGamingFundingSpendInput!) {
-        createGamingFundingSpend(input: $input) {
+      `mutation($input: CreateSpendWithExtraConditionsInput!) {
+        createSpendWithExtraConditions(input: $input) {
           signatureRequest { id status }
         }
       }`,
@@ -538,9 +538,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       },
     );
 
-    const srId = created.createGamingFundingSpend?.signatureRequest?.id;
+    const srId = created.createSpendWithExtraConditions?.signatureRequest?.id;
     if (!srId) {
-      throw new Error('createGamingFundingSpend did not return a signatureRequest');
+      throw new Error('createSpendWithExtraConditions did not return a signatureRequest');
     }
 
     const popup = this.openApprovePopup(srId);
