@@ -722,20 +722,29 @@ export class SessionController implements PollingGameSession {
       let appliedFee = 0n;
       if (fee > 0n && protocolBundle && this.wc && blockchain.rpc.createFeeSpend) {
         const bindCoinId = await this.computeBindCoinId(protocolBundle);
-        const feeSpend = bindCoinId ? await blockchain.rpc.createFeeSpend(fee, bindCoinId) : null;
+        let feeSpend: unknown = null;
+        let feeSpendError: string | undefined;
+        if (bindCoinId) {
+          try {
+            feeSpend = await blockchain.rpc.createFeeSpend(fee, bindCoinId);
+          } catch (e) {
+            feeSpendError = extractErrorMessage(e);
+          }
+        }
         if (feeSpend) {
           bundleToSubmit = this.wc.aggregate_coinset_spend_bundles(
             jsonStringify([protocolBundle, feeSpend]),
           );
           appliedFee = fee;
         } else {
-          // The wallet couldn't produce a signed fee spend (most commonly
-          // insufficient funds, but also an unsynced wallet or RPC failure).
-          // Submitting without a fee keeps the game progressing, but the user
-          // must know their configured fee was dropped for this transaction.
+          // The wallet couldn't produce a signed fee spend. Submitting without a
+          // fee keeps the game progressing, but the user must know their
+          // configured fee was dropped, and why (the real reason from the wallet
+          // when available, rather than a blanket "insufficient balance" guess).
+          const reason = feeSpendError ?? 'the wallet could not build a signed fee spend';
           const warning =
-            'Configured fee was not applied: the wallet could not fund it ' +
-            '(most likely insufficient balance). The transaction was submitted without a fee.';
+            `Configured fee was not applied: ${reason}. ` +
+            'The transaction was submitted without a fee.';
           log(`[wasm] submitTransaction: fee spend unavailable; ${warning}`);
           this.rxjsEmitter?.next({ type: 'error', error: warning });
         }

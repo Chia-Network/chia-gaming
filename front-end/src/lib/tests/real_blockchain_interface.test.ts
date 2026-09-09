@@ -486,8 +486,11 @@ describe('RealBlockchainInterface', () => {
 
   it('builds a wallet-signed fee spend bound with ASSERT_CONCURRENT_SPEND', async () => {
     const puzzleHash = '11'.repeat(32);
+    // The wallet's address carries the network HRP (txch on testnet); createFeeSpend
+    // must forward it verbatim so send_transaction's address validation passes.
+    const address = encodePuzzleHashToBech32m(puzzleHash, 'txch');
     const blockchain = new RealBlockchainInterface();
-    blockchain.blockchainAddressData = { puzzleHash };
+    blockchain.blockchainAddressData = { puzzleHash, address };
     // The wallet returns the signed bundle over WalletConnect in camelCase,
     // including nested coin fields. createFeeSpend must normalize this into the
     // canonical snake_case coinset shape the aggregator/removal code consume.
@@ -527,7 +530,7 @@ describe('RealBlockchainInterface', () => {
     expect(mockSendTransaction).toHaveBeenCalledWith({
       walletId: 1n,
       amount: 1n,
-      address: encodePuzzleHashToBech32m(puzzleHash),
+      address,
       fee: 10n,
       push: false,
       allowUnsynced: true,
@@ -535,11 +538,22 @@ describe('RealBlockchainInterface', () => {
     });
   });
 
-  it('returns null when the wallet cannot build a fee spend', async () => {
+  it('propagates the wallet error when it cannot build a fee spend', async () => {
+    const puzzleHash = '11'.repeat(32);
     const blockchain = new RealBlockchainInterface();
-    blockchain.blockchainAddressData = { puzzleHash: '11'.repeat(32) };
+    blockchain.blockchainAddressData = {
+      puzzleHash,
+      address: encodePuzzleHashToBech32m(puzzleHash, 'txch'),
+    };
     mockSendTransaction.mockRejectedValue(new Error('wallet not synced'));
+    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).rejects.toThrow('wallet not synced');
+  });
+
+  it('returns null when the change address is not resolved yet', async () => {
+    const blockchain = new RealBlockchainInterface();
+    blockchain.blockchainAddressData = { puzzleHash: '' };
     await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toBeNull();
+    expect(mockSendTransaction).not.toHaveBeenCalled();
   });
 
   it('does not contact the wallet for a zero fee', async () => {

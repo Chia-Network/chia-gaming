@@ -44,16 +44,19 @@ function remoteWalletStorageKey(fingerprint: string): string {
 
 function loadCachedChangeAddress(fingerprint: string): string | null {
   try {
-    const puzzleHash = localStorage.getItem(changeAddressStorageKey(fingerprint));
-    return puzzleHash && /^[0-9a-f]{64}$/i.test(puzzleHash) ? puzzleHash.toLowerCase() : null;
+    const address = localStorage.getItem(changeAddressStorageKey(fingerprint));
+    // Keep the full bech32m address (with its network HRP), not just the puzzle
+    // hash: the fee spend re-uses it verbatim. Validate it still decodes to a
+    // 32-byte puzzle hash so stale/foreign values are treated as a cache miss.
+    return address && decodeBech32mPuzzleHash(address) ? address : null;
   } catch {
     return null;
   }
 }
 
-function saveCachedChangeAddress(fingerprint: string, puzzleHash: string): void {
+function saveCachedChangeAddress(fingerprint: string, address: string): void {
   try {
-    localStorage.setItem(changeAddressStorageKey(fingerprint), puzzleHash.toLowerCase());
+    localStorage.setItem(changeAddressStorageKey(fingerprint), address);
   } catch {
     // Best-effort cache; a miss only means we ask the wallet again.
   }
@@ -317,19 +320,19 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('no fingerprint set in walletconnect');
       }
 
-      let puzzleHash = loadCachedChangeAddress(fingerprint);
-      if (!puzzleHash) {
-        const addr = await rpc.getNextAddress({ walletId: 1n, newAddress: true });
-        puzzleHash = decodeBech32mPuzzleHash(addr);
-        if (!puzzleHash) {
-          throw new Error(`failed to decode change address: ${addr}`);
-        }
-        saveCachedChangeAddress(fingerprint, puzzleHash);
-        log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
+      let address = loadCachedChangeAddress(fingerprint);
+      if (address) {
+        log(`[wc-blockchain] address restored from cache → ${address}`);
       } else {
-        log(`[wc-blockchain] address restored from cache → ${puzzleHash}`);
+        address = await rpc.getNextAddress({ walletId: 1n, newAddress: true });
+        saveCachedChangeAddress(fingerprint, address);
+        log(`[wc-blockchain] address resolved: ${address}`);
       }
-      this.blockchainAddressData = { puzzleHash };
+      const puzzleHash = decodeBech32mPuzzleHash(address);
+      if (!puzzleHash) {
+        throw new Error(`failed to decode change address: ${address}`);
+      }
+      this.blockchainAddressData = { puzzleHash, address };
       this.ensureRemoteWallet(fingerprint);
       await this.waitForRemoteWallet(epoch);
       if (epoch !== this.monitoringEpoch || !walletConnectState.getSession()) {
@@ -451,9 +454,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     concurrentSpendCoinId: string,
   ): Promise<WalletSpendBundle | null> {
     if (fee <= 0n) return null;
-    const changePuzzleHash = this.blockchainAddressData.puzzleHash;
-    if (!changePuzzleHash) {
-      log('[wc-blockchain] createFeeSpend skipped: no change puzzle hash yet');
+    const { puzzleHash: changePuzzleHash, address: changeAddress } = this.blockchainAddressData;
+    if (!changePuzzleHash || !changeAddress) {
+      log('[wc-blockchain] createFeeSpend skipped: no change address yet');
       return null;
     }
     const coinId = concurrentSpendCoinId.startsWith('0x')
@@ -464,10 +467,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       // not broadcast it. We aggregate it into the protocol bundle ourselves and
       // push the combined bundle. ASSERT_CONCURRENT_SPEND binds this fee spend to
       // a coin our protocol bundle spends, so it can never be mined on its own.
+      // Use the wallet's own address string verbatim: send_transaction validates
+      // the address HRP against its network, so a re-encoded mainnet (xch) prefix
+      // would be rejected on testnet (txch), unlike the inert to_address on push.
       const response = await rpc.sendTransaction({
         walletId: 1n,
         amount: 1n,
-        address: encodePuzzleHashToBech32m(changePuzzleHash),
+        address: changeAddress,
         fee,
         push: false,
         allowUnsynced: true,
@@ -480,16 +486,19 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const rawBundle = record?.spendBundle ?? record?.spend_bundle;
       const spendBundle = normalizeWalletSpendBundle(rawBundle);
       if (!spendBundle) {
-        log('[wc-blockchain] createFeeSpend: response had no signed spend bundle');
-        return null;
+        throw new Error('wallet returned no signed spend bundle for the fee');
       }
       log(
         `[wc-blockchain] createFeeSpend ok fee=${fee} bind=${coinId} coinSpends=${spendBundle.coin_spends.length}`,
       );
       return spendBundle;
     } catch (e) {
-      log(`[wc-blockchain] createFeeSpend failed: ${collectErrorText(e)}`);
-      return null;
+      // Propagate the real reason (RPC error, missing signed bundle) so the
+      // caller's user-facing warning is accurate rather than always blaming
+      // insufficient balance.
+      const text = collectErrorText(e);
+      log(`[wc-blockchain] createFeeSpend failed: ${text}`);
+      throw e instanceof Error ? e : new Error(text);
     }
   }
 

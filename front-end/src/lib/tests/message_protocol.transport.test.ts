@@ -947,4 +947,40 @@ describe('wallet fee attachment on submission', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/fee was not applied/i);
   });
+
+  it('surfaces the real wallet error in the warning when the fee spend fails', async () => {
+    const createFeeSpend = jest.fn().mockRejectedValue(new Error('Internal error (code=-32603)'));
+    const spend = jest.fn().mockResolvedValue('ok');
+    const aggregate = jest.fn();
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+    blob.getFee = () => 10n;
+    attachWc(blob, aggregate);
+
+    const errors: string[] = [];
+    const subscription = blob.getObservable().subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+
+    submitTransaction(blob, testSpendBundle('coin'));
+    await transactionSubmitQueue(blob);
+    subscription.unsubscribe();
+
+    expect(createFeeSpend).toHaveBeenCalled();
+    expect(aggregate).not.toHaveBeenCalled();
+    // Zero-fee fallback still submits the protocol bundle.
+    expect(spend).toHaveBeenCalledWith(
+      expect.any(String),
+      protocolBundle,
+      '11'.repeat(32),
+      'submitTransaction',
+      undefined,
+    );
+    // The warning carries the actual wallet reason, not a blanket balance guess.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/fee was not applied/i);
+    expect(errors[0]).toContain('Internal error (code=-32603)');
+  });
 });
