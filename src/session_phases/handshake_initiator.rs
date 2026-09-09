@@ -12,7 +12,6 @@ use crate::channel_state::types::{
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, sign_reward_payout,
-    verify_reward_payout_signature,
 };
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, GetCoinStringParts,
@@ -25,8 +24,7 @@ use crate::session_phases::effects::{
     GameNotification, TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake::{
-    combine_channel_funding_bundles, local_capabilities,
-    receiver_acceptance_asserts_funding_announcement, validate_peer_capabilities, CoinSpendRequest,
+    local_capabilities, validate_ab_payload, validate_assembled_channel_funding, CoinSpendRequest,
     HandshakePayloadB, HandshakePayloadC, HandshakePayloadE, HandshakePayloadF, HandshakeStepInfo,
     HandshakeStepWithSpend, RawCoinCondition, MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES,
     MAX_QUEUED_PEER_MESSAGES,
@@ -145,31 +143,6 @@ impl HandshakeInitiatorPhase {
         msg: &HandshakePayloadB,
         env: &mut ChannelEnv<'_>,
     ) -> Result<(ChannelState, ChannelInitiationResult), Error> {
-        if !verify_reward_payout_signature(
-            &msg.referee_pubkey,
-            &msg.reward_puzzle_hash,
-            &msg.reward_payout_signature,
-        ) {
-            return Err(Error::Channel(
-                "Invalid reward payout signature in handshake".to_string(),
-            ));
-        }
-        if !msg
-            .channel_key_pop
-            .verify(&msg.channel_public_key, &msg.channel_public_key.bytes())
-        {
-            return Err(Error::Channel(
-                "Invalid proof-of-possession for channel key".to_string(),
-            ));
-        }
-        if !msg
-            .unroll_key_pop
-            .verify(&msg.unroll_public_key, &msg.unroll_public_key.bytes())
-        {
-            return Err(Error::Channel(
-                "Invalid proof-of-possession for unroll key".to_string(),
-            ));
-        }
         ChannelState::new(
             env,
             self.private_keys.clone(),
@@ -410,45 +383,13 @@ impl HandshakeInitiatorPhase {
                     )));
                 };
 
-                validate_peer_capabilities(&msg.capabilities).map_err(Error::Channel)?;
-                if !verify_reward_payout_signature(
-                    &msg.referee_pubkey,
-                    &msg.reward_puzzle_hash,
-                    &msg.reward_payout_signature,
-                ) {
-                    return Err(Error::Channel(
-                        "Invalid reward payout signature in HandshakeB".to_string(),
-                    ));
-                }
-                if !msg
-                    .channel_key_pop
-                    .verify(&msg.channel_public_key, &msg.channel_public_key.bytes())
-                {
-                    return Err(Error::Channel(
-                        "Invalid proof-of-possession for channel key in HandshakeB".to_string(),
-                    ));
-                }
-                if !msg
-                    .unroll_key_pop
-                    .verify(&msg.unroll_public_key, &msg.unroll_public_key.bytes())
-                {
-                    return Err(Error::Channel(
-                        "Invalid proof-of-possession for unroll key in HandshakeB".to_string(),
-                    ));
-                }
-
-                if msg.my_contribution != self.their_contribution {
-                    return Err(Error::Channel(format!(
-                        "HandshakeB contribution mismatch: peer claims my_contribution={:?} but we expect their_contribution={:?}",
-                        msg.my_contribution, self.their_contribution
-                    )));
-                }
-                if msg.their_contribution != self.my_contribution {
-                    return Err(Error::Channel(format!(
-                        "HandshakeB contribution mismatch: peer claims their_contribution={:?} but we expect my_contribution={:?}",
-                        msg.their_contribution, self.my_contribution
-                    )));
-                }
+                validate_ab_payload(
+                    msg,
+                    &self.private_keys,
+                    &self.reward_puzzle_hash,
+                    &self.my_contribution,
+                    &self.their_contribution,
+                )?;
 
                 let our_channel_pk =
                     private_to_public_key(&self.private_keys.my_channel_coin_private_key);
@@ -528,13 +469,11 @@ impl HandshakeInitiatorPhase {
                                 "handshake F arrived without a funding announcement".to_string(),
                             )
                         })?;
-                        receiver_acceptance_asserts_funding_announcement(
+                        let combined = validate_assembled_channel_funding(
                             env.allocator,
+                            &initiator_bundle,
                             bundle,
                             announcement,
-                        )?;
-                        let combined = combine_channel_funding_bundles(&initiator_bundle, bundle)?;
-                        combined.validate_consensus(
                             &env.agg_sig_me_additional_data,
                             self.last_height,
                         )?;
@@ -578,7 +517,7 @@ impl HandshakeInitiatorPhase {
             )));
         }
         let raw_len = msg.len();
-        let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
+        let msg_envelope = crate::session_phases::peer_wire::decode_peer_message(&msg)?;
         if matches!(self.state, InitiatorState::Finished(_)) {
             match &msg_envelope {
                 PeerMessage::HandshakeF(_) => {}
@@ -1097,7 +1036,9 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
 mod finished_message_tests {
     use super::*;
     use crate::common::constants::{ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT};
+    use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
     use crate::common::types::{Sha256Input, Sha256tree, ToQuotedProgram};
+    use clvm_traits::ClvmEncoder;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
@@ -1106,6 +1047,29 @@ mod finished_message_tests {
         tag: u8,
         conditions: clvmr::NodePtr,
     ) -> CoinSpend {
+        let private_key =
+            crate::common::types::PrivateKey::from_bytes(&[tag; 32]).expect("funding test key");
+        let public_key = private_to_public_key(&private_key);
+        let raw_message = b"funding test message";
+        let message = crate::common::types::Node(
+            allocator
+                .encode_atom(clvm_traits::Atom::Borrowed(raw_message))
+                .expect("signature message"),
+        );
+        let mut condition_nodes: Vec<_> =
+            crate::utils::proper_list(allocator.allocator_ref(), conditions, true)
+                .expect("condition list")
+                .into_iter()
+                .map(crate::common::types::Node)
+                .collect();
+        condition_nodes.push(crate::common::types::Node(
+            (50_u8, (public_key, (message, ())))
+                .to_clvm(allocator)
+                .expect("AGG_SIG_ME condition"),
+        ));
+        let conditions = condition_nodes
+            .to_clvm(allocator)
+            .expect("combined conditions");
         let puzzle: Puzzle = conditions
             .to_quoted_program(allocator)
             .expect("quoted conditions")
@@ -1115,12 +1079,18 @@ mod finished_message_tests {
             &puzzle.sha256tree(allocator),
             &Amount::new(1),
         );
+        let signature = sign_agg_sig_me(
+            &private_key,
+            raw_message,
+            &coin.to_coin_id(),
+            &Hash::from_bytes(crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA),
+        );
         CoinSpend {
             coin,
             bundle: Spend {
                 puzzle,
                 solution: Program::from_bytes(&[0x80]).into(),
-                signature: Aggsig::default(),
+                signature,
             },
         }
     }
@@ -1191,7 +1161,56 @@ mod finished_message_tests {
     }
 
     fn encode_f(bundle: SpendBundle) -> Vec<u8> {
-        bencodex::to_vec(&PeerMessage::HandshakeF(HandshakePayloadF { bundle })).expect("encode F")
+        crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::HandshakeF(
+            HandshakePayloadF { bundle },
+        ))
+        .expect("encode F")
+    }
+
+    fn payload_colliding_with_local_channel_key(
+        phase: &HandshakeInitiatorPhase,
+    ) -> HandshakePayloadB {
+        let channel_key =
+            crate::common::types::PrivateKey::from_bytes(&[41; 32]).expect("channel key");
+        let unroll_key =
+            crate::common::types::PrivateKey::from_bytes(&[42; 32]).expect("unroll key");
+        let referee_key = phase.private_keys.my_channel_coin_private_key.clone();
+        let channel_public_key = private_to_public_key(&channel_key);
+        let unroll_public_key = private_to_public_key(&unroll_key);
+        let referee_pubkey = private_to_public_key(&referee_key);
+        let reward_puzzle_hash = PuzzleHash::from_bytes([43; 32]);
+        HandshakePayloadB {
+            capabilities: local_capabilities(),
+            channel_key_pop: channel_key.sign(channel_public_key.bytes()),
+            unroll_key_pop: unroll_key.sign(unroll_public_key.bytes()),
+            reward_payout_signature: sign_reward_payout(&referee_key, &reward_puzzle_hash),
+            channel_public_key,
+            unroll_public_key,
+            reward_puzzle_hash,
+            referee_pubkey,
+            my_contribution: phase.their_contribution.clone(),
+            their_contribution: phase.my_contribution.clone(),
+        }
+    }
+
+    #[test]
+    fn handshake_b_is_routed_through_shared_ab_validator() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        let mut phase = finished_phase(
+            SpendBundle {
+                name: None,
+                spends: vec![],
+            },
+            Hash::default(),
+        );
+        phase.state = InitiatorState::WaitingForStart;
+        phase.start(&mut env).expect("start initiator");
+        let payload = payload_colliding_with_local_channel_key(&phase);
+        let error = phase
+            .process_message(&mut env, Rc::new(PeerMessage::HandshakeB(payload)))
+            .expect_err("HandshakeB collision");
+        assert!(format!("{error:?}").contains("public key collision"));
     }
 
     #[test]
@@ -1228,7 +1247,9 @@ mod finished_message_tests {
     fn finished_rejects_handshake_f_that_echoes_initiator_coins() {
         let mut allocator = crate::common::types::AllocEncoder::new();
         let (e_bundle, mut f_bundle, announcement) = announcement_bound_bundles(&mut allocator);
-        f_bundle.spends.push(e_bundle.spends[0].clone());
+        let mut echoed_spend = e_bundle.spends[0].clone();
+        echoed_spend.bundle.signature = Aggsig::default();
+        f_bundle.spends.push(echoed_spend);
         let mut phase = finished_phase(e_bundle, announcement);
         let mut env = ChannelEnv::new(&mut allocator).expect("env");
         let err = phase

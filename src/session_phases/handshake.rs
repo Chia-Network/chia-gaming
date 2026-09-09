@@ -1,9 +1,16 @@
 use std::collections::BTreeMap;
 
-use crate::channel_state::types::StateUpdateSignatures;
+use clvm_traits::{ClvmEncoder, ToClvm};
+
+use crate::channel_state::types::{ChannelPrivateKeys, StateUpdateSignatures};
+use crate::channel_state::ChannelState;
+use crate::common::constants::{
+    ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
+};
+use crate::common::standard_coin::verify_reward_payout_signature;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, Hash, PublicKey,
-    PuzzleHash, SpendBundle,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, Hash, IntoErr, Node,
+    PublicKey, PuzzleHash, SpendBundle,
 };
 use serde::{Deserialize, Serialize};
 
@@ -13,27 +20,17 @@ pub(crate) const MAX_PEER_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_QUEUED_PEER_MESSAGES: usize = 1024;
 pub(crate) const MAX_QUEUED_PEER_BYTES: usize = 64 * 1024 * 1024;
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct HandshakePayloadB {
-    #[serde(rename = "v")]
     pub capabilities: BTreeMap<String, u32>,
-    #[serde(rename = "ck")]
     pub channel_public_key: PublicKey,
-    #[serde(rename = "uk")]
     pub unroll_public_key: PublicKey,
-    #[serde(rename = "rh")]
     pub reward_puzzle_hash: PuzzleHash,
-    #[serde(rename = "rk")]
     pub referee_pubkey: PublicKey,
-    #[serde(rename = "rs")]
     pub reward_payout_signature: Aggsig,
-    #[serde(rename = "cp")]
     pub channel_key_pop: Aggsig,
-    #[serde(rename = "up")]
     pub unroll_key_pop: Aggsig,
-    #[serde(rename = "mc")]
     pub my_contribution: Amount,
-    #[serde(rename = "tc")]
     pub their_contribution: Amount,
 }
 
@@ -53,30 +50,84 @@ pub fn validate_peer_capabilities(capabilities: &BTreeMap<String, u32>) -> Resul
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+pub fn validate_ab_payload(
+    payload: &HandshakePayloadB,
+    private_keys: &ChannelPrivateKeys,
+    reward_puzzle_hash: &PuzzleHash,
+    my_contribution: &Amount,
+    their_contribution: &Amount,
+) -> Result<(), Error> {
+    validate_peer_capabilities(&payload.capabilities).map_err(Error::Channel)?;
+
+    if payload.my_contribution != *their_contribution {
+        return Err(Error::Channel(format!(
+            "Handshake contribution mismatch: peer claims my_contribution={:?} but we expect their_contribution={:?}",
+            payload.my_contribution, their_contribution
+        )));
+    }
+    if payload.their_contribution != *my_contribution {
+        return Err(Error::Channel(format!(
+            "Handshake contribution mismatch: peer claims their_contribution={:?} but we expect my_contribution={:?}",
+            payload.their_contribution, my_contribution
+        )));
+    }
+
+    if !verify_reward_payout_signature(
+        &payload.referee_pubkey,
+        &payload.reward_puzzle_hash,
+        &payload.reward_payout_signature,
+    ) {
+        return Err(Error::Channel(
+            "Invalid reward payout signature in handshake".to_string(),
+        ));
+    }
+
+    if !payload.channel_key_pop.verify(
+        &payload.channel_public_key,
+        &payload.channel_public_key.bytes(),
+    ) {
+        return Err(Error::Channel(
+            "Invalid proof-of-possession for channel key".to_string(),
+        ));
+    }
+    if !payload.unroll_key_pop.verify(
+        &payload.unroll_public_key,
+        &payload.unroll_public_key.bytes(),
+    ) {
+        return Err(Error::Channel(
+            "Invalid proof-of-possession for unroll key".to_string(),
+        ));
+    }
+
+    ChannelState::validate_peer_identity_separation(
+        private_keys,
+        reward_puzzle_hash,
+        &payload.channel_public_key,
+        &payload.unroll_public_key,
+        &payload.referee_pubkey,
+        &payload.reward_puzzle_hash,
+    )
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct HandshakePayloadC {
-    #[serde(rename = "lc")]
     pub launcher_coin: CoinString,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct HandshakePayloadD {
-    #[serde(rename = "s")]
     pub signatures: StateUpdateSignatures,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct HandshakePayloadE {
-    #[serde(rename = "b")]
     pub bundle: SpendBundle,
-    #[serde(rename = "s")]
     pub signatures: StateUpdateSignatures,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct HandshakePayloadF {
     /// Receiver wallet acceptance only. It must not repeat spends from E.
-    #[serde(rename = "b")]
     pub bundle: SpendBundle,
 }
 
@@ -131,6 +182,49 @@ pub fn receiver_acceptance_asserts_funding_announcement(
     ))
 }
 
+/// Validate and combine the independently assembled halves of channel funding.
+pub fn validate_assembled_channel_funding(
+    allocator: &mut AllocEncoder,
+    initiator_bundle: &SpendBundle,
+    receiver_acceptance: &SpendBundle,
+    expected_announcement: &Hash,
+    agg_sig_me_additional_data: &Hash,
+    height: u64,
+) -> Result<SpendBundle, Error> {
+    require_concentrated_funding_signature(initiator_bundle, "handshake E")?;
+    require_concentrated_funding_signature(receiver_acceptance, "handshake F")?;
+    let combined = combine_channel_funding_bundles(initiator_bundle, receiver_acceptance)?;
+    combined.validate_consensus(agg_sig_me_additional_data, height)?;
+    receiver_acceptance_asserts_funding_announcement(
+        allocator,
+        receiver_acceptance,
+        expected_announcement,
+    )?;
+    Ok(combined)
+}
+
+fn require_concentrated_funding_signature(
+    bundle: &SpendBundle,
+    bundle_name: &str,
+) -> Result<(), Error> {
+    if bundle.spends.is_empty() {
+        return Err(Error::StrErr(format!(
+            "{bundle_name} funding bundle has no spends"
+        )));
+    }
+    let signature_count = bundle
+        .spends
+        .iter()
+        .filter(|spend| !spend.bundle.signature.is_twos_complement_zero())
+        .count();
+    if signature_count != 1 {
+        return Err(Error::StrErr(format!(
+            "{bundle_name} must contain exactly one aggregate signature field, found {signature_count}"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeStepInfo {
     pub first_player_hs_info: HandshakePayloadB,
@@ -152,6 +246,53 @@ pub struct RawCoinCondition {
     pub args: Vec<Vec<u8>>,
 }
 
+pub fn raw_coin_conditions_to_clvm(
+    allocator: &mut AllocEncoder,
+    conditions: &[RawCoinCondition],
+    max_height: Option<u64>,
+) -> Result<Vec<Node>, Error> {
+    let mut nodes = Vec::with_capacity(conditions.len() + usize::from(max_height.is_some()));
+    for condition in conditions {
+        let expected_args = match condition.opcode {
+            CREATE_COIN => 2,
+            ASSERT_COIN_ANNOUNCEMENT | CREATE_COIN_ANNOUNCEMENT | ASSERT_BEFORE_HEIGHT_ABSOLUTE => {
+                1
+            }
+            opcode => {
+                return Err(Error::StrErr(format!(
+                    "unsupported wallet condition opcode {opcode}"
+                )));
+            }
+        };
+        if condition.args.len() != expected_args {
+            return Err(Error::StrErr(format!(
+                "wallet condition opcode {} requires {expected_args} args, got {}",
+                condition.opcode,
+                condition.args.len()
+            )));
+        }
+
+        let mut parts = Vec::with_capacity(condition.args.len() + 1);
+        parts.push(Node(condition.opcode.to_clvm(allocator).into_gen()?));
+        for arg in &condition.args {
+            parts.push(Node(
+                allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(arg))
+                    .into_gen()?,
+            ));
+        }
+        nodes.push(Node(parts.to_clvm(allocator).into_gen()?));
+    }
+    if let Some(max_height) = max_height {
+        nodes.push(Node(
+            (ASSERT_BEFORE_HEIGHT_ABSOLUTE, (max_height, ()))
+                .to_clvm(allocator)
+                .into_gen()?,
+        ));
+    }
+    Ok(nodes)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeStepWithSpend {
     pub info: HandshakeStepInfo,
@@ -166,16 +307,115 @@ mod tests {
     use crate::common::constants::{
         AGG_SIG_ME_ADDITIONAL_DATA, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT,
     };
+    use crate::common::standard_coin::{private_to_public_key, sign_reward_payout};
     use crate::common::types::{
-        AllocEncoder, CoinSpend, Hash, Program, Puzzle, Sha256Input, Sha256tree, Spend,
+        AllocEncoder, CoinSpend, Hash, PrivateKey, Program, Puzzle, Sha256Input, Sha256tree, Spend,
         ToQuotedProgram,
     };
+    use crate::utils::proper_list;
+
+    fn private_key(tag: u8) -> PrivateKey {
+        PrivateKey::from_bytes(&[tag; 32]).expect("test private key")
+    }
+
+    fn private_keys(tags: [u8; 3]) -> ChannelPrivateKeys {
+        ChannelPrivateKeys {
+            my_channel_coin_private_key: private_key(tags[0]),
+            my_unroll_coin_private_key: private_key(tags[1]),
+            my_referee_private_key: private_key(tags[2]),
+        }
+    }
+
+    fn payload_for(keys: &ChannelPrivateKeys, reward_tag: u8) -> HandshakePayloadB {
+        let channel_public_key = private_to_public_key(&keys.my_channel_coin_private_key);
+        let unroll_public_key = private_to_public_key(&keys.my_unroll_coin_private_key);
+        let referee_pubkey = private_to_public_key(&keys.my_referee_private_key);
+        let reward_puzzle_hash = PuzzleHash::from_bytes([reward_tag; 32]);
+        HandshakePayloadB {
+            capabilities: local_capabilities(),
+            channel_key_pop: keys
+                .my_channel_coin_private_key
+                .sign(channel_public_key.bytes()),
+            unroll_key_pop: keys
+                .my_unroll_coin_private_key
+                .sign(unroll_public_key.bytes()),
+            reward_payout_signature: sign_reward_payout(
+                &keys.my_referee_private_key,
+                &reward_puzzle_hash,
+            ),
+            channel_public_key,
+            unroll_public_key,
+            reward_puzzle_hash,
+            referee_pubkey,
+            my_contribution: Amount::new(200),
+            their_contribution: Amount::new(100),
+        }
+    }
 
     #[test]
     fn local_capabilities_advertise_peer_protocol_one() {
         assert_eq!(
             local_capabilities().get(PEER_PROTOCOL_CAPABILITY),
             Some(&PEER_PROTOCOL_VERSION)
+        );
+    }
+
+    #[test]
+    fn wallet_adapters_share_raw_conditions_and_append_max_height() {
+        fn atoms(allocator: &AllocEncoder, nodes: Vec<Node>) -> Vec<Vec<Vec<u8>>> {
+            nodes
+                .into_iter()
+                .map(|node| {
+                    proper_list(allocator.allocator_ref(), node.0, true)
+                        .expect("condition list")
+                        .into_iter()
+                        .map(|part| allocator.allocator_ref().atom(part).to_vec())
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        }
+
+        let request_conditions = vec![
+            RawCoinCondition {
+                opcode: CREATE_COIN,
+                args: vec![vec![7; 32], vec![42]],
+            },
+            RawCoinCondition {
+                opcode: ASSERT_COIN_ANNOUNCEMENT,
+                args: vec![vec![8; 32]],
+            },
+            RawCoinCondition {
+                opcode: CREATE_COIN_ANNOUNCEMENT,
+                args: vec![b"created".to_vec()],
+            },
+            RawCoinCondition {
+                opcode: ASSERT_BEFORE_HEIGHT_ABSOLUTE,
+                args: vec![vec![99]],
+            },
+        ];
+        let mut allocator = AllocEncoder::new();
+        let simulator_nodes =
+            raw_coin_conditions_to_clvm(&mut allocator, &request_conditions, Some(100))
+                .expect("simulator wallet conditions");
+        let peer_harness_nodes =
+            raw_coin_conditions_to_clvm(&mut allocator, &request_conditions, Some(100))
+                .expect("peer harness wallet conditions");
+
+        assert_eq!(
+            atoms(&allocator, simulator_nodes),
+            atoms(&allocator, peer_harness_nodes)
+        );
+        let all_nodes = raw_coin_conditions_to_clvm(&mut allocator, &request_conditions, Some(100))
+            .expect("wallet conditions");
+        assert_eq!(
+            atoms(&allocator, all_nodes),
+            vec![
+                vec![vec![CREATE_COIN as u8], vec![7; 32], vec![42]],
+                vec![vec![ASSERT_COIN_ANNOUNCEMENT as u8], vec![8; 32]],
+                vec![vec![CREATE_COIN_ANNOUNCEMENT as u8], b"created".to_vec()],
+                vec![vec![ASSERT_BEFORE_HEIGHT_ABSOLUTE as u8], vec![99]],
+                vec![vec![ASSERT_BEFORE_HEIGHT_ABSOLUTE as u8], vec![100]],
+            ]
         );
     }
 
@@ -190,6 +430,121 @@ mod tests {
 
         capabilities.insert(PEER_PROTOCOL_CAPABILITY.to_string(), 2);
         assert!(validate_peer_capabilities(&capabilities).is_err());
+    }
+
+    #[test]
+    fn ab_payload_rejects_all_nine_cross_peer_key_collisions() {
+        let local = private_keys([1, 2, 3]);
+        let local_keys = [
+            local.my_channel_coin_private_key.clone(),
+            local.my_unroll_coin_private_key.clone(),
+            local.my_referee_private_key.clone(),
+        ];
+
+        for local_key in &local_keys {
+            for peer_role in 0..3 {
+                let mut peer_keys = private_keys([4, 5, 6]);
+                match peer_role {
+                    0 => peer_keys.my_channel_coin_private_key = local_key.clone(),
+                    1 => peer_keys.my_unroll_coin_private_key = local_key.clone(),
+                    2 => peer_keys.my_referee_private_key = local_key.clone(),
+                    _ => unreachable!(),
+                }
+                let payload = payload_for(&peer_keys, 8);
+                let error = validate_ab_payload(
+                    &payload,
+                    &local,
+                    &PuzzleHash::from_bytes([7; 32]),
+                    &Amount::new(100),
+                    &Amount::new(200),
+                )
+                .expect_err("cross-peer key collision");
+                assert!(
+                    format!("{error:?}").contains("public key collision"),
+                    "local key against peer role {peer_role}: {error:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ab_payload_validates_all_non_identity_fields_and_reward_hash_separation() {
+        let local = private_keys([1, 2, 3]);
+        let local_reward = PuzzleHash::from_bytes([7; 32]);
+        let valid = payload_for(&private_keys([4, 5, 6]), 8);
+        validate_ab_payload(
+            &valid,
+            &local,
+            &local_reward,
+            &Amount::new(100),
+            &Amount::new(200),
+        )
+        .expect("valid payload");
+
+        let mut invalid = valid.clone();
+        invalid.capabilities.clear();
+        assert!(validate_ab_payload(
+            &invalid,
+            &local,
+            &local_reward,
+            &Amount::new(100),
+            &Amount::new(200)
+        )
+        .is_err());
+
+        let mut invalid = valid.clone();
+        invalid.my_contribution = Amount::new(201);
+        assert!(validate_ab_payload(
+            &invalid,
+            &local,
+            &local_reward,
+            &Amount::new(100),
+            &Amount::new(200)
+        )
+        .is_err());
+
+        let mut invalid = valid.clone();
+        invalid.reward_payout_signature = Aggsig::default();
+        assert!(validate_ab_payload(
+            &invalid,
+            &local,
+            &local_reward,
+            &Amount::new(100),
+            &Amount::new(200)
+        )
+        .is_err());
+
+        let mut invalid = valid.clone();
+        invalid.channel_key_pop = Aggsig::default();
+        assert!(validate_ab_payload(
+            &invalid,
+            &local,
+            &local_reward,
+            &Amount::new(100),
+            &Amount::new(200)
+        )
+        .is_err());
+
+        let mut invalid = valid.clone();
+        invalid.unroll_key_pop = Aggsig::default();
+        assert!(validate_ab_payload(
+            &invalid,
+            &local,
+            &local_reward,
+            &Amount::new(100),
+            &Amount::new(200)
+        )
+        .is_err());
+
+        let same_reward_peer = payload_for(&private_keys([4, 5, 6]), 7);
+        assert!(validate_ab_payload(
+            &same_reward_peer,
+            &local,
+            &local_reward,
+            &Amount::new(100),
+            &Amount::new(200)
+        )
+        .is_err());
     }
 
     #[test]
@@ -294,5 +649,24 @@ mod tests {
             .validate_consensus(&Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA), 1)
             .expect_err("same coin spent twice");
         assert!(format!("{error:?}").contains("DoubleSpend"));
+    }
+
+    #[test]
+    fn funding_halves_require_one_concentrated_signature_field() {
+        let mut allocator = AllocEncoder::new();
+        let (mut initiator, _) = announcement_bound_bundles(&mut allocator);
+        let error = require_concentrated_funding_signature(&initiator, "handshake E")
+            .expect_err("unsigned half");
+        assert!(format!("{error:?}").contains("found 0"));
+
+        let key = crate::common::types::PrivateKey::from_bytes(&[7; 32]).expect("test key");
+        initiator.spends[0].bundle.signature = key.sign(b"aggregate");
+        require_concentrated_funding_signature(&initiator, "handshake E")
+            .expect("one aggregate field");
+
+        initiator.spends.push(initiator.spends[0].clone());
+        let error = require_concentrated_funding_signature(&initiator, "handshake E")
+            .expect_err("per-input signature fields");
+        assert!(format!("{error:?}").contains("found 2"));
     }
 }

@@ -484,7 +484,7 @@ export async function initSessionController(
   myContribution = 100n,
   theirContribution = 100n,
 ) {
-  await fakeBlockchainInfo.registerUser(uniqueId);
+  const rewardPuzzleHash = await fakeBlockchainInfo.registerUser(uniqueId);
   const gameObject = new SessionController(
     blockchain,
     uniqueId,
@@ -493,7 +493,16 @@ export async function initSessionController(
     peer_conn,
   );
 
-  await configSessionController(gameObject, iStarted, wasmStateInit, blockchain, uniqueId);
+  await configSessionController(
+    gameObject,
+    iStarted,
+    wasmStateInit,
+    blockchain,
+    uniqueId,
+    undefined,
+    undefined,
+    rewardPuzzleHash,
+  );
 
   return gameObject;
 }

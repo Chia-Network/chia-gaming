@@ -4,13 +4,11 @@ use crate::referee::Referee;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Eq, PartialEq)]
 pub struct StateUpdateSignatures {
     // Half signed thing signing to the new state.
-    #[serde(rename = "c")]
     pub channel_half_sig: Aggsig,
     // Half signed thing allowing you to supercede an earlier state to this one.
-    #[serde(rename = "u")]
     pub unroll_preempt_half_sig: Aggsig,
 }
 

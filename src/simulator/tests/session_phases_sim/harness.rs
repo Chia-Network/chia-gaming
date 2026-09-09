@@ -811,7 +811,8 @@ impl SimulationHarness {
                             continue;
                         }
                         let delivered_msg = if self.tamper_next_batch_signature[player_index] {
-                            let peer_message: PeerMessage = bencodex::from_slice(msg).into_gen()?;
+                            let peer_message =
+                                crate::session_phases::peer_wire::decode_peer_message(msg)?;
                             if let PeerMessage::Batch {
                                 actions,
                                 mut signatures,
@@ -819,11 +820,12 @@ impl SimulationHarness {
                             {
                                 signatures.channel_half_sig = Default::default();
                                 self.tamper_next_batch_signature[player_index] = false;
-                                bencodex::to_vec(&PeerMessage::Batch {
-                                    actions,
-                                    signatures,
-                                })
-                                .into_gen()?
+                                crate::session_phases::peer_wire::encode_peer_message(
+                                    &PeerMessage::Batch {
+                                        actions,
+                                        signatures,
+                                    },
+                                )?
                             } else {
                                 msg.clone()
                             }

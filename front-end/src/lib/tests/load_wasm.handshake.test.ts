@@ -41,14 +41,7 @@ it(
   'persists and reloads real handshake and post-move game cradles',
   async () => {
     try {
-      const poller = await startSimulator([
-        'cafe0000',
-        'dead0000',
-        'cafe0001',
-        'dead0001',
-        'cafe0002',
-        'dead0002',
-      ]);
+      const poller = await startSimulator(['a11ce000', 'b0b77777']);
       if (!poller) return;
 
       const cradle1 = addActiveCradle(new SessionControllerAdapter());

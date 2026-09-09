@@ -187,7 +187,10 @@ fn struct_field_sorting() {
 #[test]
 fn unit_variant() {
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
-    enum Color { Red, Green }
+    enum Color {
+        Red,
+        Green,
+    }
     assert_eq!(to_vec(&Color::Red).unwrap(), b"u3:Red");
     assert_eq!(from_slice::<Color>(b"u3:Red").unwrap(), Color::Red);
     assert_eq!(from_slice::<Color>(b"u5:Green").unwrap(), Color::Green);
@@ -227,11 +230,19 @@ fn struct_variant() {
 #[test]
 fn nested_struct() {
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
-    struct Inner { val: u32 }
+    struct Inner {
+        val: u32,
+    }
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
-    struct Outer { inner: Inner, name: String }
+    struct Outer {
+        inner: Inner,
+        name: String,
+    }
 
-    let val = Outer { inner: Inner { val: 7 }, name: "test".into() };
+    let val = Outer {
+        inner: Inner { val: 7 },
+        name: "test".into(),
+    };
     let encoded = to_vec(&val).unwrap();
     let decoded: Outer = from_slice(&encoded).unwrap();
     assert_eq!(decoded, val);

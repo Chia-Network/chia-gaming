@@ -417,8 +417,10 @@ initiator's bundle from E, validates the exact combined bundle with Chia
 consensus rules, and submits the result locally. The initiator does the same:
 it combines its local E bundle with F and validates all spends together before
 submission. Whole-bundle validation checks aggregate signatures, duplicate
-coin spends, and cross-spend announcements; the protocol additionally requires
-F itself to assert the expected launcher announcement. Both players may
+coin spends, and cross-spend announcements. Each nonempty wallet half
+concentrates its bundle-level aggregate signature on exactly one internal
+spend; per-input signature fields are rejected. The protocol additionally
+requires F itself to assert the expected launcher announcement. Both players may
 publish the same assembled funding transaction; neither trusts the other
 side's combined bundle.
 
@@ -477,12 +479,12 @@ handler no longer reports channel status.
    message includes a PoP for both the channel key and the unroll key:
    `Sign(sk, pk.bytes())`. The receiver verifies these before proceeding.
    (The referee key already has an implicit PoP via `reward_payout_signature`.)
-5. **Initiator-assembled funding transaction:** Handshake F is the receiver's
-   acceptance only. The initiator combines it with the local E bundle and runs
-   Chia consensus validation over the exact result. Duplicate spends,
-   signatures, and E-to-F announcement dependencies are therefore checked as
-   one transaction. F must itself assert the expected launcher announcement.
-   The initiator does not submit an untrusted combined bundle from the peer.
+5. **Locally assembled funding transaction:** Handshake F is the receiver's
+   acceptance only. Both endpoints combine their exact E and F halves and run
+   Chia consensus validation over the result. Duplicate spends, signatures,
+   and E-to-F announcement dependencies are therefore checked as one
+   transaction. F must itself assert the expected launcher announcement.
+   Neither endpoint submits an untrusted combined bundle from the peer.
 
 #### Wallet API interaction
 

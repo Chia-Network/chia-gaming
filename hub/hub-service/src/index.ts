@@ -503,7 +503,7 @@ function notifyRecentCorrespondents(
   }
 }
 
-function unbindGameConnection(ws: WebSocket, notifyUnavailable: boolean): void {
+function unbindGameConnection(ws: WebSocket): void {
   const meta = wsGameMeta.get(ws);
   if (!meta) return;
   if (gameConnections.get(meta.sessionId) !== ws) return;
@@ -511,11 +511,8 @@ function unbindGameConnection(ws: WebSocket, notifyUnavailable: boolean): void {
   logHub('game_connection_removed', {
     ws_id: wsId(ws),
     session_id: meta.sessionId,
-    notify_unavailable: notifyUnavailable,
   });
-  if (notifyUnavailable) {
-    notifyRecentCorrespondents(meta.sessionId, meta.playerId, 'peer_unavailable');
-  }
+  notifyRecentCorrespondents(meta.sessionId, meta.playerId, 'peer_unavailable');
 }
 
 function replayPendingChallengesToPlayer(playerId: string): void {
@@ -1328,7 +1325,7 @@ gameWsServer.on('connection', (ws) => {
   ws.on('close', (code, reason) => {
     clearKeepalive(ws);
     logHub('game_ws_closed', { ws_id: currentWsId, code, reason: reason.toString() });
-    unbindGameConnection(ws, code !== 4001);
+    unbindGameConnection(ws);
   });
 });
 
@@ -1379,7 +1376,7 @@ function sweepGameConnections(now: number): void {
       ws_id: ws ? wsId(ws) : null,
     });
     if (ws) {
-      unbindGameConnection(ws, true);
+      unbindGameConnection(ws);
       try {
         ws.close(4002, 'idle_timeout');
       } catch {}

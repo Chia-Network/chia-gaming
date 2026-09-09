@@ -1,18 +1,18 @@
 #[cfg(test)]
 use std::collections::{HashMap, VecDeque};
 
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::channel_state::types::ChannelEnv;
 #[cfg(test)]
 use crate::channel_state::types::{ChannelPrivateKeys, ReadableMove};
-use crate::common::standard_coin::private_to_public_key;
+use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
 #[cfg(test)]
 use crate::common::types::{
-    GameID, Hash, PrivateKey, Program, Puzzle, Sha256tree, Timeout, ToQuotedProgram,
+    GameID, Hash, Node, PrivateKey, Program, Puzzle, Sha256tree, Timeout, ToQuotedProgram,
 };
 #[cfg(test)]
 use crate::game_session::{MessagePeerQueue, MessagePipe, PeerLifecyclePhase};
@@ -22,6 +22,8 @@ use crate::session_phases::effects::{
 };
 #[cfg(test)]
 use crate::session_phases::game_collection;
+#[cfg(test)]
+use crate::session_phases::handshake::raw_coin_conditions_to_clvm;
 #[cfg(test)]
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 #[cfg(test)]
@@ -40,8 +42,6 @@ use rand::SeedableRng;
 #[cfg(test)]
 use rand_chacha::ChaCha8Rng;
 
-#[cfg(test)]
-use crate::common::constants::ASSERT_COIN_ANNOUNCEMENT;
 use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
 #[cfg(test)]
 use crate::common::standard_coin::puzzle_hash_for_pk;
@@ -93,7 +93,7 @@ impl MessagePeerQueue for Pipe {
 
 impl PacketSender for MessagePipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
-        let msg_data = bencodex::to_vec(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
+        let msg_data = crate::session_phases::peer_wire::encode_peer_message(msg)?;
         self.queue.push_back(msg_data);
         Ok(())
     }
@@ -288,28 +288,37 @@ fn build_dummy_wallet_bundle_for_request(
         .coin_id
         .clone()
         .unwrap_or_else(|| CoinID::new(Hash::from_bytes([1; 32])));
-    let announcement = request.conditions.iter().find_map(|condition| {
-        if condition.opcode == ASSERT_COIN_ANNOUNCEMENT {
-            condition
-                .args
-                .first()
-                .and_then(|arg| Hash::from_slice(arg).ok())
-        } else {
-            None
-        }
-    });
-    let puzzle = if let Some(announcement) = announcement {
-        let conditions = ((ASSERT_COIN_ANNOUNCEMENT, (announcement, ())), ());
-        let node = conditions
+    let private_key = PrivateKey::from_bytes(&[3; 32]).expect("dummy wallet key");
+    let public_key = private_to_public_key(&private_key);
+    let raw_message = b"dummy wallet funding";
+    let message_node = Node(
+        allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(raw_message))
+            .expect("dummy signature message"),
+    );
+    let mut conditions = vec![Node(
+        (50_u8, (public_key, (message_node, ())))
             .to_clvm(allocator)
-            .expect("dummy announcement conditions");
-        node.to_quoted_program(allocator)
-            .expect("quote dummy announcement")
-            .into()
-    } else {
-        Puzzle::from_bytes(&[0x80])
-    };
+            .expect("dummy AGG_SIG_ME condition"),
+    )];
+    conditions.extend(
+        raw_coin_conditions_to_clvm(allocator, &request.conditions, request.max_height)
+            .expect("dummy wallet request conditions"),
+    );
+    let conditions = conditions
+        .to_clvm(allocator)
+        .expect("dummy wallet conditions");
+    let puzzle: Puzzle = conditions
+        .to_quoted_program(allocator)
+        .expect("quote dummy wallet conditions")
+        .into();
     let coin = CoinString::from_parts(&parent, &puzzle.sha256tree(allocator), &request.amount);
+    let signature = sign_agg_sig_me(
+        &private_key,
+        raw_message,
+        &coin.to_coin_id(),
+        &Hash::from_bytes(crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA),
+    );
     SpendBundle {
         name: Some("dummy wallet coin spend request".to_string()),
         spends: vec![CoinSpend {
@@ -317,7 +326,7 @@ fn build_dummy_wallet_bundle_for_request(
             bundle: Spend {
                 puzzle,
                 solution: Program::from_bytes(&[0x80]).into(),
-                signature: Default::default(),
+                signature,
             },
         }],
     }

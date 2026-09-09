@@ -8,12 +8,10 @@ use crate::channel_state::types::{
     ChannelCoinSpendInfo, ChannelEnv, ChannelInitiationResult, ChannelPrivateKeys, ReadableMove,
 };
 use crate::channel_state::ChannelState;
-use crate::common::standard_coin::{
-    private_to_public_key, sign_reward_payout, verify_reward_payout_signature,
-};
+use crate::common::standard_coin::{private_to_public_key, sign_reward_payout};
 use crate::common::types::{
-    Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash, IntoErr,
-    Program, ProgramRef, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
+    Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash, Program,
+    ProgramRef, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
@@ -21,10 +19,10 @@ use crate::session_phases::effects::{
     GameNotification, TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake::{
-    combine_channel_funding_bundles, local_capabilities, validate_peer_capabilities,
-    CoinSpendRequest, HandshakePayloadB, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
-    HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition, MAX_PEER_MESSAGE_SIZE,
-    MAX_QUEUED_PEER_BYTES, MAX_QUEUED_PEER_MESSAGES,
+    local_capabilities, validate_ab_payload, validate_assembled_channel_funding, CoinSpendRequest,
+    HandshakePayloadB, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF, HandshakeStepInfo,
+    HandshakeStepWithSpend, RawCoinCondition, MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES,
+    MAX_QUEUED_PEER_MESSAGES,
 };
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
@@ -63,6 +61,7 @@ pub struct HandshakeReceiverPhase {
     last_height: u64,
     channel_deadline: Option<u64>,
     pending_coin_spend: bool,
+    funding_announcement: Option<Hash>,
 
     waiting_to_start: bool,
     incoming_messages: VecDeque<(Rc<PeerMessage>, usize)>,
@@ -95,6 +94,7 @@ impl HandshakeReceiverPhase {
             last_height: 0,
             channel_deadline: None,
             pending_coin_spend: false,
+            funding_announcement: None,
             waiting_to_start: true,
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
@@ -123,31 +123,6 @@ impl HandshakeReceiverPhase {
         msg: &HandshakePayloadB,
         env: &mut ChannelEnv<'_>,
     ) -> Result<(ChannelState, ChannelInitiationResult), Error> {
-        if !verify_reward_payout_signature(
-            &msg.referee_pubkey,
-            &msg.reward_puzzle_hash,
-            &msg.reward_payout_signature,
-        ) {
-            return Err(Error::Channel(
-                "Invalid reward payout signature in handshake".to_string(),
-            ));
-        }
-        if !msg
-            .channel_key_pop
-            .verify(&msg.channel_public_key, &msg.channel_public_key.bytes())
-        {
-            return Err(Error::Channel(
-                "Invalid proof-of-possession for channel key".to_string(),
-            ));
-        }
-        if !msg
-            .unroll_key_pop
-            .verify(&msg.unroll_public_key, &msg.unroll_public_key.bytes())
-        {
-            return Err(Error::Channel(
-                "Invalid proof-of-possession for unroll key".to_string(),
-            ));
-        }
         ChannelState::new(
             env,
             self.private_keys.clone(),
@@ -291,45 +266,13 @@ impl HandshakeReceiverPhase {
                     )));
                 };
 
-                validate_peer_capabilities(&msg.capabilities).map_err(Error::Channel)?;
-                if !verify_reward_payout_signature(
-                    &msg.referee_pubkey,
-                    &msg.reward_puzzle_hash,
-                    &msg.reward_payout_signature,
-                ) {
-                    return Err(Error::Channel(
-                        "Invalid reward payout signature in HandshakeA".to_string(),
-                    ));
-                }
-                if !msg
-                    .channel_key_pop
-                    .verify(&msg.channel_public_key, &msg.channel_public_key.bytes())
-                {
-                    return Err(Error::Channel(
-                        "Invalid proof-of-possession for channel key in HandshakeA".to_string(),
-                    ));
-                }
-                if !msg
-                    .unroll_key_pop
-                    .verify(&msg.unroll_public_key, &msg.unroll_public_key.bytes())
-                {
-                    return Err(Error::Channel(
-                        "Invalid proof-of-possession for unroll key in HandshakeA".to_string(),
-                    ));
-                }
-
-                if msg.my_contribution != self.their_contribution {
-                    return Err(Error::Channel(format!(
-                        "HandshakeA contribution mismatch: peer claims my_contribution={:?} but we expect their_contribution={:?}",
-                        msg.my_contribution, self.their_contribution
-                    )));
-                }
-                if msg.their_contribution != self.my_contribution {
-                    return Err(Error::Channel(format!(
-                        "HandshakeA contribution mismatch: peer claims their_contribution={:?} but we expect my_contribution={:?}",
-                        msg.their_contribution, self.my_contribution
-                    )));
-                }
+                validate_ab_payload(
+                    msg,
+                    &self.private_keys,
+                    &self.reward_puzzle_hash,
+                    &self.my_contribution,
+                    &self.their_contribution,
+                )?;
 
                 let my_hs_info = {
                     let channel_public_key =
@@ -405,6 +348,14 @@ impl HandshakeReceiverPhase {
                 self.launcher_coin = Some(msg.launcher_coin.clone());
                 self.channel_state = Some(channel_state);
                 self.last_channel_coin_spend_info = None;
+                let channel_coin = self.channel_state()?.channel_coin();
+                let (_, channel_puzzle_hash, total_amount) =
+                    channel_coin.get_coin_string_parts()?;
+                self.funding_announcement = Some(self.compute_coin_announcement_hash(
+                    &msg.launcher_coin.to_coin_id(),
+                    &channel_puzzle_hash,
+                    &total_amount,
+                )?);
 
                 {
                     let ch = self.channel_state()?;
@@ -534,7 +485,7 @@ impl HandshakeReceiverPhase {
             )));
         }
         let raw_len = msg.len();
-        let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
+        let msg_envelope = crate::session_phases::peer_wire::decode_peer_message(&msg)?;
         if matches!(
             self.state,
             ReceiverState::WaitingForCompletion(_, _) | ReceiverState::Finished(_)
@@ -824,8 +775,19 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
     ) -> Result<Vec<Effect>, Error> {
         if let ReceiverState::WaitingForCompletion(_, alice_bundle) = &self.state {
             let alice_bundle = alice_bundle.clone();
-            let combined = combine_channel_funding_bundles(&alice_bundle, &bundle)?;
-            combined.validate_consensus(&env.agg_sig_me_additional_data, self.last_height)?;
+            let announcement = self.funding_announcement.as_ref().ok_or_else(|| {
+                Error::StrErr(
+                    "receiver funding completion has no expected launcher announcement".to_string(),
+                )
+            })?;
+            let combined = validate_assembled_channel_funding(
+                env.allocator,
+                &alice_bundle,
+                &bundle,
+                announcement,
+                &env.agg_sig_me_additional_data,
+                self.last_height,
+            )?;
             let completion_effect = self.channel_transaction_completion(env, &bundle)?;
             let mut effects = Vec::new();
             effects.extend(completion_effect);
@@ -1017,6 +979,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
 #[cfg(test)]
 mod queued_message_tests {
     use super::*;
+    use crate::common::standard_coin::{private_to_public_key, sign_reward_payout};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
@@ -1057,6 +1020,45 @@ mod queued_message_tests {
         phase
     }
 
+    fn payload_colliding_with_local_channel_key(
+        phase: &HandshakeReceiverPhase,
+    ) -> HandshakePayloadB {
+        let channel_key =
+            crate::common::types::PrivateKey::from_bytes(&[44; 32]).expect("channel key");
+        let unroll_key =
+            crate::common::types::PrivateKey::from_bytes(&[45; 32]).expect("unroll key");
+        let referee_key = phase.private_keys.my_channel_coin_private_key.clone();
+        let channel_public_key = private_to_public_key(&channel_key);
+        let unroll_public_key = private_to_public_key(&unroll_key);
+        let referee_pubkey = private_to_public_key(&referee_key);
+        let reward_puzzle_hash = PuzzleHash::from_bytes([46; 32]);
+        HandshakePayloadB {
+            capabilities: local_capabilities(),
+            channel_key_pop: channel_key.sign(channel_public_key.bytes()),
+            unroll_key_pop: unroll_key.sign(unroll_public_key.bytes()),
+            reward_payout_signature: sign_reward_payout(&referee_key, &reward_puzzle_hash),
+            channel_public_key,
+            unroll_public_key,
+            reward_puzzle_hash,
+            referee_pubkey,
+            my_contribution: phase.their_contribution.clone(),
+            their_contribution: phase.my_contribution.clone(),
+        }
+    }
+
+    #[test]
+    fn handshake_a_is_routed_through_shared_ab_validator() {
+        let mut phase = waiting_for_completion_phase();
+        phase.state = ReceiverState::WaitingForA;
+        let payload = payload_colliding_with_local_channel_key(&phase);
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        let error = phase
+            .process_message(&mut env, Rc::new(PeerMessage::HandshakeA(payload)))
+            .expect_err("HandshakeA collision");
+        assert!(format!("{error:?}").contains("public key collision"));
+    }
+
     #[test]
     fn activation_lag_messages_remain_fifo_while_wallet_completion_waits() {
         let mut phase = waiting_for_completion_phase();
@@ -1067,7 +1069,8 @@ mod queued_message_tests {
             PeerMessage::RequestPotato(()),
             PeerMessage::Message(GameID(2), vec![2]),
         ] {
-            let encoded = bencodex::to_vec(&message).expect("encode");
+            let encoded =
+                crate::session_phases::peer_wire::encode_peer_message(&message).expect("encode");
             phase
                 .received_message(&mut env, encoded)
                 .expect("queue activation-lag message");
@@ -1088,7 +1091,9 @@ mod queued_message_tests {
         let mut phase = waiting_for_completion_phase();
         let mut allocator = crate::common::types::AllocEncoder::new();
         let mut env = ChannelEnv::new(&mut allocator).expect("env");
-        let encoded = bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("encode request");
+        let encoded =
+            crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::RequestPotato(()))
+                .expect("encode request");
         for _ in 0..MAX_QUEUED_PEER_MESSAGES {
             phase
                 .received_message(&mut env, encoded.clone())

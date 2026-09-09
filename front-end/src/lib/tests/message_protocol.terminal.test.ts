@@ -61,7 +61,6 @@ describe('terminal protocol cleanup', () => {
     } as unknown as ChiaGame;
     blob.loadWasm(mockWasmConnection);
     blob.onSaveNeeded = jest.fn();
-    blob.markRestored();
     blob.setGameSession(cradle);
     blob.kickSystem(2);
     await blob.flushPendingWork();
@@ -105,7 +104,6 @@ describe('terminal protocol cleanup', () => {
     } as unknown as ChiaGame;
     blob.unackedMessages = [{ msgno: 1n, msg: enc('complete clean close') }];
     blob.loadWasm(mockWasmConnection);
-    blob.markRestored();
     blob.setGameSession(cradle);
     blob.kickSystem(2);
 

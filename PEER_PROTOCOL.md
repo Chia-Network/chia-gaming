@@ -94,6 +94,9 @@ no numeric semantic-message tag or magic prefix inside the body. Session
 negotiation messages are specified in section 4; after acceptance the body is a
 `PeerMessage` specified in section 6. The required peer protocol version is
 advertised in the Handshake A/B capability map described in section 7.1.
+`PeerMessage` uses an explicit manual encoder and decoder. Rust Serde derives on
+the in-memory types are not part of this wire contract and do not select field
+names, variant tags, or compound shapes.
 
 ### 3.1 Primitive values
 
@@ -170,9 +173,7 @@ generic Bencodex list wherever the schema requires semantic bytes.
   public key.
 - `Aggsig` is a byte string containing one valid compressed 96-byte BLS
   signature. The BLS default signature canonically encodes as `0:`.
-- `GameType` is text containing the lowercase 64-character hexadecimal encoding
-  of a 32-byte hash. Senders use lowercase; the current decoder also accepts
-  mixed-case hexadecimal.
+- `GameType` is a byte string containing its 32-byte hash.
 - `Program` and `ProgramRef` are byte strings containing serialized CLVM.
 - `Puzzle` has the same wire representation as `ProgramRef`.
 - `CoinString` is a byte string containing:
@@ -213,6 +214,31 @@ The compound types use compact field keys on the wire:
 - `SpendBundle`: `n` means `name` and `s` means `spends`.
 - `StateUpdateSignatures`: `c` means `channel_half_sig` and `u` means
   `unroll_preempt_half_sig`.
+
+Handshake E/F funding bundles deliberately use a bundle-level signature wire
+shape instead of serializing each internal `Spend.signature`:
+
+```text
+FundingSpendBundle {
+  n: Option<Text>,
+  s: List<FundingCoinSpend>,
+  g: Aggsig
+}
+
+FundingCoinSpend {
+  c: CoinString,
+  b: {
+    p: Puzzle,
+    s: ProgramRef
+  }
+}
+```
+
+`g` is the aggregate funding signature for the half-bundle. The encoder rejects
+more than one nonzero internal signature field, omits all per-spend signature
+fields, and places the aggregate in `g`. The decoder places a nonzero `g` on
+the first decoded spend for internal consensus validation. Funding validation
+requires each nonempty E and F half to have exactly one such signature.
 
 `channel_half_sig` signs the channel-coin spend committing to the new unroll
 state. `unroll_preempt_half_sig` signs the preemption of an older unroll to that
@@ -523,7 +549,11 @@ message.their_contribution == locally expected own contribution
 
 `channel_key_pop` is a signature by `channel_public_key` over that public key's
 48 serialized bytes. `unroll_key_pop` is defined analogously. The reward payout
-signature binds `referee_pubkey` to `reward_puzzle_hash`.
+signature binds `referee_pubkey` to `reward_puzzle_hash`. A/B validation also
+requires identity separation: none of the peer's channel, unroll, or referee
+public keys may equal any of the local endpoint's three corresponding keys, and
+the two reward puzzle hashes must differ. Any of these nine cross-peer key
+collisions, or equal reward puzzle hashes, rejects the handshake.
 
 ### 7.2 Handshake A
 
@@ -602,15 +632,17 @@ Receiver -> Initiator: HandshakeF(HandshakePayloadF)
 ```
 
 `bundle` is the receiver's acceptance only: the receiver wallet spend(s) that
-bind to the launcher announcement. It must not repeat spends from E. The
-initiator combines its local E bundle with this acceptance and runs Chia
-consensus validation over that exact combined bundle before submission. This
-validates all spends together, including aggregate signatures, duplicate coin
-spends, and the receiver's announcement assertion against the announcement
-created by E. The protocol also requires F itself to assert the expected
-launcher announcement. The receiver performs the same whole-bundle validation
-and local combination before submitting independently. Neither side treats the
-peer's payload as an already-combined transaction.
+bind to the launcher announcement. It must not repeat spends from E. Both
+endpoints combine the exact E and F halves they hold and run Chia consensus
+validation over that whole assembled bundle before submission. This shared
+validation checks all spends together, including aggregate signatures,
+duplicate coin spends, and the receiver's announcement assertion against the
+announcement created by E. The protocol also requires F itself to assert the
+expected launcher announcement. Each nonempty E or F wallet half carries its
+bundle-level aggregate signature in exactly one internal spend field; per-input
+signature fields are invalid. Both endpoints submit only their independently
+assembled and validated result; neither treats a peer payload as an
+already-combined transaction.
 
 Channel activation is driven by a local channel-coin observation outside this
 wire protocol. F and activation may be observed in either order, but transition
@@ -1050,8 +1082,10 @@ section 4.2.
   `src/session_phases/mod.rs`
 - Channel-state verification:
   `src/channel_state/mod.rs`
-- Bencodex codec:
-  `bencodex/src/ser.rs`, `bencodex/src/de.rs`
+- Manual Serde-independent peer-message codec:
+  `src/session_phases/peer_wire.rs`
+- Bencodex value and primitive codec:
+  `bencodex/src/value.rs`, `bencodex/src/ser.rs`, `bencodex/src/de.rs`
 - JavaScript Bencodex codec:
   `shared/bencodex/index.js`
 - Reliable peer framing:

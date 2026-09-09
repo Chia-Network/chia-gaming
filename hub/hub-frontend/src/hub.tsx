@@ -440,9 +440,7 @@ const HubScreen = () => {
 
                 {isUnavailable ? (
                   <span className="text-sm text-canvas-text italic">
-                    {player.status === 'playing'
-                      ? `Playing vs ${player.opponent_alias}`
-                      : 'In Session'}
+                    {player.status === 'playing' ? `Playing vs ${player.opponent_alias}` : 'Busy'}
                   </span>
                 ) : (
                   !isMe && (

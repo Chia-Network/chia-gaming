@@ -251,6 +251,7 @@ name = "chia_gaming"
 version = "0.1.0"
 dependencies = [
  "bencodex",
+ "blst",
  "chia-bls",
  "chia-consensus",
  "chia-protocol",

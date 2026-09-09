@@ -408,8 +408,10 @@ mod sim_tests {
             &|| {
                 let mut allocator = AllocEncoder::new();
                 let valid_word = word_program(&mut allocator, b"CRANE");
-                let request_potato =
-                    bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("serialize request");
+                let request_potato = crate::session_phases::peer_wire::encode_peer_message(
+                    &PeerMessage::RequestPotato(()),
+                )
+                .expect("serialize request");
                 let moves = vec![
                     SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
                     SimScriptAction::AcceptProposal(1, GameID(1)),
@@ -459,8 +461,10 @@ mod sim_tests {
         res.push(("test_krunk_rejection_is_immediate_before_potato", &|| {
             let mut allocator = AllocEncoder::new();
             let invalid_word = word_program(&mut allocator, b"XXXXX");
-            let request_potato =
-                bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("serialize request");
+            let request_potato = crate::session_phases::peer_wire::encode_peer_message(
+                &PeerMessage::RequestPotato(()),
+            )
+            .expect("serialize request");
             let moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
                 SimScriptAction::AcceptProposal(1, GameID(1)),

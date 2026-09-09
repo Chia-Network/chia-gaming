@@ -247,14 +247,13 @@ All three WebSocket clients — `FakeBlockchainInterface` (simulator),
 `HubConnection` (game channel), and `useHubSocket` (hub iframe) —
 follow the same connection discipline:
 
-1. **Exponential backoff with jitter on reconnect.** `HubConnection` and
-   `useHubSocket` use `[1s, 2s, 4s, 8s, 15s, 30s]`; the simulator blockchain
-   client extends the same shape to 60s. Each attempt picks a random jitter
-   factor (0.75-1.25x the base delay). The attempt counter resets to zero on a
-   successful `onopen`.
+1. **Backoff with jitter on reconnect.** The authoritative policy is
+   [WebSocket Protocol §8.3](WEBSOCKET_PROTOCOL.md#83-reconnection):
+   5, 10, 20, 30, and then 60 seconds, with a random 0.75-1.25x jitter factor.
+   The attempt counter resets to zero on a successful `onopen`.
 
-2. **Connection timeout.** Each `new WebSocket()` is given 10 seconds to reach
-   `OPEN`. If `readyState` is still `CONNECTING` after 10 seconds, the socket
+2. **Connection timeout.** Each `new WebSocket()` is given 30 seconds to reach
+   `OPEN`. If `readyState` is still `CONNECTING` after 30 seconds, the socket
    is closed, which triggers `onclose` and feeds into the backoff reconnect.
 
 3. **Avoid using unopened sockets as the active connection.** The hub and game
@@ -802,10 +801,10 @@ When the user chooses to resume a full save, `performResume` fires:
    [Reconnect Reconciliation](#reconnect-reconciliation)).
 4. `sessionController.restoreSession` loads WASM and deserializes the cradle
    via `WasmStateInit.deserializeGame()`, restores WASM/transport counters and
-   logs, and calls `markRestored()`. `sessionModelFromSave` initializes the
-   machine's game-owned `handState` directly from the decoded save.
-5. Hub `registered` (and a later matching `peer_available`) are what re-send
-   un-acked peer messages. Pending chain transactions are re-submitted when
+   logs. `sessionModelFromSave` initializes the machine's game-owned `handState`
+   directly from the decoded save.
+5. Hub `registered` and a matching `peer_available` are the only boundaries
+   that re-send un-acked peer messages. Pending chain transactions are re-submitted when
    the restored transaction manager attaches.
 
 #### Cleanup
@@ -973,7 +972,7 @@ active session peer, it calls `resendUnacked()` to replay un-acked messages.
 A matching `peer_available` does the same when the other endpoint returns.
 The ordering and deduplication logic on the receiving side handles any
 duplicates caused by the replay. Keepalives and duplicate inbound frames do
-not replay.
+not replay. These are the only replay boundaries.
 
 ### Reconnect Reconciliation
 

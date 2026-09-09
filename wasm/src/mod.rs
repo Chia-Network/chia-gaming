@@ -16,7 +16,9 @@ mod gaming_wasm {
     use wasm_bindgen::prelude::*;
 
     use chia_gaming::common::load_clvm::wasm_cache_file;
-    use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
+    use chia_gaming::common::standard_coin::{
+        private_to_public_key, puzzle_hash_for_pk, sign_agg_sig_me, ChiaIdentity,
+    };
 
     use chia_gaming::channel_state::types::ReadableMove;
     use chia_gaming::common::types;
@@ -24,8 +26,10 @@ mod gaming_wasm {
         convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend,
         CoinString, CoinsetCoin, CoinsetSpendBundle,
         CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, ProgramRef, PublicKey,
-        Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+        Node, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
+        ToQuotedProgram,
     };
+    use clvm_traits::{ClvmEncoder, ToClvm};
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
     use flate2::Decompress;
@@ -1460,5 +1464,68 @@ mod gaming_wasm {
     pub fn sha256bytes(bytes_str: &str) -> Result<JsValue, JsValue> {
         let hashed = hex::encode(Sha256Input::Bytes(bytes_str.as_bytes()).hash().bytes());
         serde_wasm_bindgen::to_value(&hashed).into_js()
+    }
+
+    #[wasm_bindgen]
+    pub fn test_two_spend_aggregate_signature_validation() -> Result<(), JsValue> {
+        fn make_spend(
+            allocator: &mut AllocEncoder,
+            tag: u8,
+            private_key: &PrivateKey,
+            raw_message: &[u8],
+        ) -> Result<(CoinSpend, Aggsig), types::Error> {
+            let public_key = private_to_public_key(private_key);
+            let message = Node(
+                allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(raw_message))
+                    .map_err(|err| types::Error::StrErr(format!("{err:?}")))?,
+            );
+            let conditions = ((50_u8, (public_key, (message, ()))), ())
+                .to_clvm(allocator)
+                .map_err(|err| types::Error::StrErr(format!("{err:?}")))?;
+            let puzzle: Puzzle = conditions.to_quoted_program(allocator)?.into();
+            let coin = CoinString::from_parts(
+                &CoinID::new(Hash::from_bytes([tag; 32])),
+                &puzzle.sha256tree(allocator),
+                &Amount::new(1),
+            );
+            let additional_data =
+                Hash::from_bytes(chia_gaming::common::constants::AGG_SIG_ME_ADDITIONAL_DATA);
+            let signature = sign_agg_sig_me(
+                private_key,
+                raw_message,
+                &coin.to_coin_id(),
+                &additional_data,
+            );
+            Ok((
+                CoinSpend {
+                    coin,
+                    bundle: Spend {
+                        puzzle,
+                        solution: Program::from_bytes(&[0x80]).into(),
+                        signature: Aggsig::default(),
+                    },
+                },
+                signature,
+            ))
+        }
+
+        let mut allocator = AllocEncoder::new();
+        let key_a = PrivateKey::from_bytes(&[1; 32]).into_js()?;
+        let key_b = PrivateKey::from_bytes(&[2; 32]).into_js()?;
+        let (mut spend_a, signature_a) =
+            make_spend(&mut allocator, 1, &key_a, b"message A").into_js()?;
+        let (spend_b, signature_b) =
+            make_spend(&mut allocator, 2, &key_b, b"message B").into_js()?;
+        spend_a.bundle.signature = signature_a.aggregate(&signature_b);
+        SpendBundle {
+            name: None,
+            spends: vec![spend_a, spend_b],
+        }
+        .validate_consensus(
+            &Hash::from_bytes(chia_gaming::common::constants::AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .into_js()
     }
 }

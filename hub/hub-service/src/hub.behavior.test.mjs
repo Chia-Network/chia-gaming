@@ -705,7 +705,7 @@ test('delivery failure stays route-level and connect or disconnect notifies rece
   }
 });
 
-test('replacing a game connection does not tell correspondents the player left', async () => {
+test('closing a stale replaced game socket does not notify correspondents', async () => {
   const hub = await startHub();
   try {
     const sender = await identifyGameRegistered(hub.origin, 'replace-sender');
@@ -718,16 +718,59 @@ test('replacing a game connection does not tell correspondents the player left',
     });
     await relayed;
 
-    const unavailable = nextGame(sender.game, (msg) => msg.type === 'peer_unavailable', 100);
+    const unavailablePlayers = [];
+    const recordUnavailable = (raw) => {
+      const msg = plainBencodex(decodeBencodex(raw));
+      if (msg.type === 'peer_unavailable') unavailablePlayers.push(msg.player_id);
+    };
+    sender.game.on('message', recordUnavailable);
+
+    const receiverClosed = nextClose(receiver.game);
     const available = nextGame(sender.game, (msg) => msg.type === 'peer_available');
     const replaced = await identifyGameRegistered(hub.origin, 'replace-receiver');
     assert.equal(replaced.playerId, receiver.playerId);
     assert.deepEqual((await available).player_id, playerBytes(receiver.playerId));
-    await assert.rejects(unavailable, /timed out/);
+    assert.deepEqual(await receiverClosed, {
+      code: 4001,
+      reason: 'replaced_by_new_connection',
+    });
+
+    const barrier = nextGame(sender.game, (msg) => msg.type === 'registered');
+    sendGame(sender.game, {
+      type: 'identify',
+      session_id: sessionBytes('replace-sender'),
+      busy: false,
+    });
+    await barrier;
+    assert.deepEqual(unavailablePlayers, []);
+    sender.game.off('message', recordUnavailable);
+
+    await closeWs(sender.game);
+    await closeWs(replaced.game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('closing the current game socket with client-supplied code 4001 notifies correspondents', async () => {
+  const hub = await startHub();
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'close-code-sender');
+    const receiver = await identifyGameRegistered(hub.origin, 'close-code-receiver');
+    const relayed = nextGame(receiver.game, (msg) => msg.type === 'relay');
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(receiver.playerId),
+      payload: Buffer.from('hello'),
+    });
+    await relayed;
+
+    const unavailable = nextGame(sender.game, (msg) => msg.type === 'peer_unavailable');
+    receiver.game.close(4001, 'client_requested');
+    assert.deepEqual((await unavailable).player_id, playerBytes(receiver.playerId));
 
     await closeWs(sender.game);
     await closeWs(receiver.game);
-    await closeWs(replaced.game);
   } finally {
     await hub.stop();
   }

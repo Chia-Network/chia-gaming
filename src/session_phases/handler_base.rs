@@ -13,7 +13,7 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::GameStatusKind;
 use crate::session_phases::effects::{CancelReason, Effect, GameNotification};
-use crate::session_phases::types::{GameAction, PeerMessage, PotatoState};
+use crate::session_phases::types::{GameAction, PotatoState};
 
 pub enum UnrollOutcome {
     Preempted(SpendBundle),
@@ -153,8 +153,7 @@ impl ChannelStateBase {
     /// Deserialize a peer message to reject malformed input; passive phases
     /// ignore all valid peer messages.
     pub fn received_message_passive(&self, msg: Vec<u8>) -> Result<Vec<Effect>, Error> {
-        let _msg_envelope: PeerMessage = bencodex::from_slice(&msg)
-            .map_err(|e| Error::StrErr(format!("bencodex deserialize error: {e:?}")))?;
+        let _msg_envelope = crate::session_phases::peer_wire::decode_peer_message(&msg)?;
         Ok(vec![])
     }
 

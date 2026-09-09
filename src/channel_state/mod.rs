@@ -28,7 +28,8 @@ use crate::channel_state::types::{
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key,
-    puzzle_hash_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
+    puzzle_hash_for_synthetic_public_key, standard_solution_partial,
+    verify_reward_payout_signature, ChiaIdentity,
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
@@ -140,6 +141,81 @@ pub struct ChannelState {
 }
 
 impl ChannelState {
+    fn validate_peer_identity(
+        private_keys: &ChannelPrivateKeys,
+        reward_puzzle_hash: &PuzzleHash,
+        their_channel_pubkey: &PublicKey,
+        their_unroll_pubkey: &PublicKey,
+        their_referee_pubkey: &PublicKey,
+        their_reward_puzzle_hash: &PuzzleHash,
+        their_reward_payout_signature: &Aggsig,
+    ) -> Result<(), Error> {
+        if !verify_reward_payout_signature(
+            their_referee_pubkey,
+            their_reward_puzzle_hash,
+            their_reward_payout_signature,
+        ) {
+            return Err(Error::Channel(
+                "Invalid reward payout signature in handshake".to_string(),
+            ));
+        }
+
+        Self::validate_peer_identity_separation(
+            private_keys,
+            reward_puzzle_hash,
+            their_channel_pubkey,
+            their_unroll_pubkey,
+            their_referee_pubkey,
+            their_reward_puzzle_hash,
+        )
+    }
+
+    pub(crate) fn validate_peer_identity_separation(
+        private_keys: &ChannelPrivateKeys,
+        reward_puzzle_hash: &PuzzleHash,
+        their_channel_pubkey: &PublicKey,
+        their_unroll_pubkey: &PublicKey,
+        their_referee_pubkey: &PublicKey,
+        their_reward_puzzle_hash: &PuzzleHash,
+    ) -> Result<(), Error> {
+        let local_keys = [
+            (
+                "channel",
+                private_to_public_key(&private_keys.my_channel_coin_private_key),
+            ),
+            (
+                "unroll",
+                private_to_public_key(&private_keys.my_unroll_coin_private_key),
+            ),
+            (
+                "referee",
+                private_to_public_key(&private_keys.my_referee_private_key),
+            ),
+        ];
+        let peer_keys = [
+            ("channel", their_channel_pubkey),
+            ("unroll", their_unroll_pubkey),
+            ("referee", their_referee_pubkey),
+        ];
+        for (local_name, local_key) in &local_keys {
+            for (peer_name, peer_key) in &peer_keys {
+                if local_key == *peer_key {
+                    return Err(Error::Channel(format!(
+                        "Handshake public key collision: local {local_name} key equals peer {peer_name} key"
+                    )));
+                }
+            }
+        }
+
+        if reward_puzzle_hash == their_reward_puzzle_hash {
+            return Err(Error::Channel(
+                "Handshake reward puzzle hashes must be distinct".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn is_initial_potato(&self) -> bool {
         self.latest_sent_unroll.coin.started_with_potato
     }
@@ -490,19 +566,15 @@ impl ChannelState {
         unroll_advance_timeout: Timeout,
         reward_puzzle_hash: PuzzleHash,
     ) -> Result<(Self, ChannelInitiationResult), Error> {
-        let our_channel_pubkey = private_to_public_key(&private_keys.my_channel_coin_private_key);
-        let our_unroll_pubkey = private_to_public_key(&private_keys.my_unroll_coin_private_key);
-        if their_channel_pubkey == our_channel_pubkey {
-            return Err(Error::Channel(
-                "Duplicated channel coin public key".to_string(),
-            ));
-        }
-
-        if their_unroll_pubkey == our_unroll_pubkey {
-            return Err(Error::Channel(
-                "Duplicated unroll coin public key".to_string(),
-            ));
-        }
+        Self::validate_peer_identity(
+            &private_keys,
+            &reward_puzzle_hash,
+            &their_channel_pubkey,
+            &their_unroll_pubkey,
+            &their_referee_pubkey,
+            &their_reward_puzzle_hash,
+            &their_reward_payout_signature,
+        )?;
 
         if unroll_advance_timeout.to_u64() == 0 {
             return Err(Error::Channel(
@@ -510,6 +582,7 @@ impl ChannelState {
             ));
         }
 
+        let our_channel_pubkey = private_to_public_key(&private_keys.my_channel_coin_private_key);
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
 
         let channel_coin_puzzle_hash =

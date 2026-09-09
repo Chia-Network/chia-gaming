@@ -416,7 +416,7 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
     gameType: 'calpoker',
     playerAContribution: 20n,
     playerBContribution: 20n,
-    senderIsPlayerA: true,
+    senderIsPlayerA: false,
     gameTimeout: 15n,
     parameters: null,
   };

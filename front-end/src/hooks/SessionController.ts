@@ -1681,13 +1681,6 @@ export class SessionController implements PollingGameSession {
     this.scheduleSave();
   }
 
-  /**
-   * Restore no longer resends from this hook. Unacknowledged frames are
-   * replayed when this endpoint reconnects to the hub (`registered`) or when
-   * the hub reports the session peer available.
-   */
-  markRestored() {}
-
   // --- Game actions (called by higher layer) ---
 
   proposeGame(params: ProposeGameParams): string[] {

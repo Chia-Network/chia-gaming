@@ -329,7 +329,7 @@ impl PacketSender for GameSessionState {
         if self.peer_disconnected {
             return Ok(());
         }
-        let msg_data = bencodex::to_vec(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
+        let msg_data = crate::session_phases::peer_wire::encode_peer_message(msg)?;
         self.events
             .push_back(GameSessionEvent::OutboundMessage(msg_data));
         Ok(())
@@ -976,9 +976,9 @@ impl GameSession {
         let mut passthrough = Vec::new();
         for effect in effects {
             if let Effect::QueueTerminalHandoff(channel_half_sig) = effect {
-                let message =
-                    bencodex::to_vec(&PeerMessage::CleanShutdownComplete { channel_half_sig })
-                        .map_err(|e| Error::StrErr(format!("{e:?}")))?;
+                let message = crate::session_phases::peer_wire::encode_peer_message(
+                    &PeerMessage::CleanShutdownComplete { channel_half_sig },
+                )?;
                 assert!(
                     self.state.pending_outbound_terminal.is_none(),
                     "only one terminal outbound handoff may be pending"
@@ -1256,7 +1256,7 @@ impl GameSession {
             _ => unreachable!(),
         };
 
-        let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
+        let msg_envelope = crate::session_phases::peer_wire::decode_peer_message(&msg)?;
         let fake_move = f(&msg_envelope)?;
 
         self.state.send_message(&fake_move)
@@ -1831,7 +1831,7 @@ mod genesis_challenge_tests {
             their_contribution: Amount::new(their),
             channel_timeout: Timeout::new(5),
             unroll_timeout: Timeout::new(15),
-            reward_puzzle_hash: PuzzleHash::from_bytes([2; 32]),
+            reward_puzzle_hash: PuzzleHash::from_bytes([if have_potato { 2 } else { 3 }; 32]),
             agg_sig_me_additional_data: genesis.clone(),
         };
         let initiator_identity =
@@ -1973,7 +1973,9 @@ mod genesis_challenge_tests {
     #[test]
     fn initiator_rejects_peer_messages_while_waiting_for_launcher_wallet() {
         let (mut initiator, _receiver, mut allocator) = handshake_pair_waiting_for_launcher();
-        let request = bencodex::to_vec(&PeerMessage::RequestPotato(())).expect("encode request");
+        let request =
+            crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::RequestPotato(()))
+                .expect("encode request");
 
         initiator.deliver_message(&request).expect("queue request");
         let result = initiator
@@ -1992,14 +1994,14 @@ mod genesis_challenge_tests {
     #[test]
     fn initiator_rejects_handshake_f_before_handshake_e() {
         let (mut initiator, _receiver, mut allocator) = handshake_pair_waiting_for_launcher();
-        let early_f = bencodex::to_vec(&PeerMessage::HandshakeF(
-            crate::session_phases::handshake::HandshakePayloadF {
+        let early_f = crate::session_phases::peer_wire::encode_peer_message(
+            &PeerMessage::HandshakeF(crate::session_phases::handshake::HandshakePayloadF {
                 bundle: SpendBundle {
                     name: None,
                     spends: vec![],
                 },
-            },
-        ))
+            }),
+        )
         .expect("encode F");
 
         initiator.deliver_message(&early_f).expect("queue F");

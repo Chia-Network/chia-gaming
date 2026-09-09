@@ -105,6 +105,7 @@ export async function configSessionController(
   _uniqueId: string,
   channelTimeout?: number,
   unrollTimeout?: number,
+  rewardPuzzleHashOverride?: string,
 ): Promise<SessionController> {
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
@@ -112,7 +113,9 @@ export async function configSessionController(
   crypto.getRandomValues(entropy);
   const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
   const rngId = wasmConnection.create_rng(seedHex);
-  const address = await blockchain.rpc.getAddress();
+  const address = rewardPuzzleHashOverride
+    ? { puzzleHash: rewardPuzzleHashOverride }
+    : await blockchain.rpc.getAddress();
   sc.rewardPuzzleHash = address.puzzleHash;
   sc.emitRewardAddress();
   const theirContribution = sc.theirContribution;
@@ -201,7 +204,6 @@ export async function restoreSession(
     throw new Error('restoreSession: missing rewardPuzzleHash in persisted session');
   }
   sc.rewardPuzzleHash = save.live.rewardPuzzleHash;
-  sc.markRestored();
   sc.setGameSession(cradle);
 
   log('[restore] session restored');

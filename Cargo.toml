@@ -25,6 +25,7 @@ used_linker = []
 
 [dependencies]
 bencodex = { path = "bencodex" }
+blst = { version = "=0.3.16", features = ["portable"] }
 chia-bls = "=0.38.2"
 chia-consensus = "=0.38.2"
 chia-protocol = "=0.38.2"

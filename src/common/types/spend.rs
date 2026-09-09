@@ -1,6 +1,7 @@
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::NodePtr;
 use serde::{Deserialize, Serialize};
+use std::mem::MaybeUninit;
 
 use chia_consensus::allocator::make_allocator;
 use chia_consensus::consensus_constants::ConsensusConstants;
@@ -18,11 +19,8 @@ use crate::utils::proper_list;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Spend {
-    #[serde(rename = "p")]
     pub puzzle: Puzzle,
-    #[serde(rename = "s")]
     pub solution: ProgramRef,
-    #[serde(rename = "g")]
     pub signature: Aggsig,
 }
 
@@ -65,11 +63,9 @@ impl Spend {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct CoinSpend {
-    #[serde(rename = "c")]
     pub coin: CoinString,
-    #[serde(rename = "b")]
     pub bundle: Spend,
 }
 
@@ -116,11 +112,9 @@ impl Default for Spend {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct SpendBundle {
-    #[serde(rename = "n")]
     pub name: Option<String>,
-    #[serde(rename = "s")]
     pub spends: Vec<CoinSpend>,
 }
 
@@ -214,54 +208,91 @@ impl SpendBundle {
                 "channel funding bundle uses unsupported AGG_SIG_UNSAFE".to_string(),
             ));
         }
-        let mut signature_pairs = signature_pairs.iter();
-        for (index, spend_conditions) in conditions.spends.iter().enumerate() {
-            let unsupported_count = spend_conditions.agg_sig_parent.len()
-                + spend_conditions.agg_sig_puzzle.len()
-                + spend_conditions.agg_sig_amount.len()
-                + spend_conditions.agg_sig_puzzle_amount.len()
-                + spend_conditions.agg_sig_parent_amount.len()
-                + spend_conditions.agg_sig_parent_puzzle.len();
-            if unsupported_count != 0 || spend_conditions.agg_sig_me.len() > 1 {
-                return Err(Error::StrErr(format!(
-                    "channel funding spend {index} uses unsupported aggregate signature conditions"
-                )));
-            }
-
-            if spend_conditions.agg_sig_me.is_empty() {
-                if !self.spends[index]
-                    .bundle
-                    .signature
-                    .is_twos_complement_zero()
-                {
-                    return Err(Error::StrErr(format!(
-                        "channel funding spend {index} has a signature without AGG_SIG_ME"
-                    )));
-                }
-                continue;
-            }
-
-            let (public_key, message) = signature_pairs.next().ok_or_else(|| {
-                Error::StrErr(format!(
-                    "channel funding spend {index} is missing its signature message"
-                ))
-            })?;
-            if !chia_bls::verify(
-                &self.spends[index].bundle.signature.to_bls(),
-                public_key,
-                message.as_ref(),
-            ) {
-                return Err(Error::StrErr(format!(
-                    "channel funding spend {index} has an invalid AGG_SIG_ME signature"
-                )));
-            }
-        }
-        if signature_pairs.next().is_some() {
+        if !aggregate_verify_aligned(
+            &protocol_bundle.aggregated_signature,
+            signature_pairs
+                .iter()
+                .map(|(public_key, message)| (public_key, message.as_ref())),
+        ) {
             return Err(Error::StrErr(
-                "channel funding bundle has unmatched signature messages".to_string(),
+                "spend bundle has an invalid aggregate signature".to_string(),
             ));
         }
         Ok(())
+    }
+}
+
+fn aggregate_verify_aligned<'a, I>(signature: &chia_bls::Signature, pairs: I) -> bool
+where
+    I: IntoIterator<Item = (&'a chia_bls::PublicKey, &'a [u8])>,
+{
+    const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_";
+
+    let mut pairs = pairs.into_iter().peekable();
+    if pairs.peek().is_none() {
+        return *signature == chia_bls::Signature::default();
+    }
+    if !signature.is_valid() {
+        return false;
+    }
+
+    let signature_bytes = signature.to_bytes();
+    let mut signature_affine = MaybeUninit::<blst::blst_p2_affine>::uninit();
+    let signature_gt = unsafe {
+        if blst::blst_p2_uncompress(signature_affine.as_mut_ptr(), signature_bytes.as_ptr())
+            != blst::BLST_ERROR::BLST_SUCCESS
+        {
+            return false;
+        }
+        let mut signature_gt = MaybeUninit::<blst::blst_fp12>::uninit();
+        blst::blst_aggregated_in_g2(signature_gt.as_mut_ptr(), signature_affine.as_ptr());
+        signature_gt.assume_init()
+    };
+
+    let context_size = unsafe { blst::blst_pairing_sizeof() };
+    const CONTEXT_ALIGNMENT: usize = 64;
+    let mut context_storage = vec![0_u8; context_size + CONTEXT_ALIGNMENT - 1];
+    let storage_address = context_storage.as_mut_ptr() as usize;
+    let aligned_address = (storage_address + CONTEXT_ALIGNMENT - 1) & !(CONTEXT_ALIGNMENT - 1);
+    let context = aligned_address as *mut blst::blst_pairing;
+    unsafe {
+        blst::blst_pairing_init(context, true, DST.as_ptr(), DST.len());
+    }
+
+    let mut augmented_message = Vec::new();
+    for (public_key, message) in pairs {
+        if !public_key.is_valid() {
+            return false;
+        }
+        let public_key_bytes = public_key.to_bytes();
+        let mut public_key_affine = MaybeUninit::<blst::blst_p1_affine>::uninit();
+        let result = unsafe {
+            if blst::blst_p1_uncompress(public_key_affine.as_mut_ptr(), public_key_bytes.as_ptr())
+                != blst::BLST_ERROR::BLST_SUCCESS
+            {
+                return false;
+            }
+            augmented_message.clear();
+            augmented_message.extend_from_slice(&public_key_bytes);
+            augmented_message.extend_from_slice(message);
+            blst::blst_pairing_aggregate_pk_in_g1(
+                context,
+                public_key_affine.as_ptr(),
+                std::ptr::null(),
+                augmented_message.as_ptr(),
+                augmented_message.len(),
+                std::ptr::null(),
+                0,
+            )
+        };
+        if result != blst::BLST_ERROR::BLST_SUCCESS {
+            return false;
+        }
+    }
+
+    unsafe {
+        blst::blst_pairing_commit(context);
+        blst::blst_pairing_finalverify(context, &raw const signature_gt)
     }
 }
 
@@ -398,4 +429,75 @@ pub fn convert_coinset_org_spend_to_spend(
             signature: Aggsig::default(),
         },
     })
+}
+
+#[cfg(test)]
+mod consensus_validation_tests {
+    use super::*;
+    use clvm_traits::ToClvm;
+
+    use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+    use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
+    use crate::common::types::{PrivateKey, Sha256tree, ToQuotedProgram};
+
+    fn agg_sig_me_spend(
+        allocator: &mut AllocEncoder,
+        tag: u8,
+        private_key: &PrivateKey,
+        raw_message: &[u8],
+    ) -> (CoinSpend, Aggsig) {
+        let public_key = private_to_public_key(private_key);
+        let message = Node(
+            allocator
+                .encode_atom(clvm_traits::Atom::Borrowed(raw_message))
+                .expect("message atom"),
+        );
+        let conditions = ((50_u8, (public_key, (message, ()))), ())
+            .to_clvm(allocator)
+            .expect("AGG_SIG_ME conditions");
+        let puzzle: Puzzle = conditions
+            .to_quoted_program(allocator)
+            .expect("quoted conditions")
+            .into();
+        let coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([tag; 32])),
+            &puzzle.sha256tree(allocator),
+            &Amount::new(1),
+        );
+        let signature = sign_agg_sig_me(
+            private_key,
+            raw_message,
+            &coin.to_coin_id(),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        );
+        (
+            CoinSpend {
+                coin,
+                bundle: Spend {
+                    puzzle,
+                    solution: Program::from_bytes(&[0x80]).into(),
+                    signature: Aggsig::default(),
+                },
+            },
+            signature,
+        )
+    }
+
+    #[test]
+    fn validates_two_agg_sig_me_spends_with_aggregate_on_first_spend() {
+        let mut allocator = AllocEncoder::new();
+        let key_a = PrivateKey::from_bytes(&[1; 32]).expect("key A");
+        let key_b = PrivateKey::from_bytes(&[2; 32]).expect("key B");
+        let (mut spend_a, signature_a) = agg_sig_me_spend(&mut allocator, 1, &key_a, b"message A");
+        let (spend_b, signature_b) = agg_sig_me_spend(&mut allocator, 2, &key_b, b"message B");
+        spend_a.bundle.signature = signature_a.aggregate(&signature_b);
+        let bundle = SpendBundle {
+            name: None,
+            spends: vec![spend_a, spend_b],
+        };
+
+        bundle
+            .validate_consensus(&Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA), 1)
+            .expect("bundle-level aggregate signature");
+    }
 }

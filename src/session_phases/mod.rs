@@ -41,6 +41,7 @@ pub mod handshake;
 pub mod handshake_initiator;
 pub mod handshake_receiver;
 pub mod on_chain;
+pub mod peer_wire;
 pub mod proposal;
 pub mod spend_channel_coin_phase;
 pub mod types;
@@ -1293,7 +1294,7 @@ impl OffChainPhase {
                 Self::MAX_MESSAGE_SIZE,
             )))
         } else {
-            let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
+            let msg_envelope = peer_wire::decode_peer_message(&msg)?;
             self.incoming_messages.push_back(Rc::new(msg_envelope));
             self.process_queued_message(env)
         };
