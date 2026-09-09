@@ -71,6 +71,11 @@
       "src"
     ],
     "moduleNameMapper": {
+      "^react$": "<rootDir>/node_modules/react",
+      "^react-dom$": "<rootDir>/node_modules/react-dom",
+      "^react/jsx-runtime$": "<rootDir>/node_modules/react/jsx-runtime",
+      "^react/jsx-dev-runtime$": "<rootDir>/node_modules/react/jsx-dev-runtime",
+      "^react-test-renderer$": "<rootDir>/node_modules/react-test-renderer",
       "^@/(.*)$": "<rootDir>/src/$1",
       "^@games/(.*)$": "<rootDir>/../games/$1",
       "\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm|wav|mp3|m4a|aac|oga)$": "<rootDir>/scripts/testMock.js",

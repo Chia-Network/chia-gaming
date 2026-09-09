@@ -172,19 +172,19 @@ importers:
     dependencies:
       '@radix-ui/react-slot':
         specifier: 1.3.3
-        version: 1.3.3(@types/react@19.2.0)(react@19.2.0)
+        version: 1.3.3(@types/react@19.2.0)(react@19.2.8)
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
       lucide-react:
         specifier: 0.554.0
-        version: 0.554.0(react@19.2.0)
+        version: 0.554.0(react@19.2.8)
       react:
-        specifier: 19.2.0
-        version: 19.2.0
+        specifier: 19.2.8
+        version: 19.2.8
       react-dom:
-        specifier: 19.2.0
-        version: 19.2.0(react@19.2.0)
+        specifier: 19.2.8
+        version: 19.2.8(patch_hash=8a2f2252d945a4b8ac2bc50f5aeca0fb01bf16dbff6724c24781703cc3fed29c)(react@19.2.8)
     devDependencies:
       '@tailwindcss/cli':
         specifier: 4.3.3
@@ -3674,11 +3674,6 @@ packages:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
 
-  react-dom@19.2.0:
-    resolution: {integrity: sha512-UlbRu4cAiGaIewkPyiRGJk0imDN2T3JjieT6spoL2UeSf5od4n5LB/mQ4ejmxhCFT1tYe8IvaFulzynWovsEFQ==}
-    peerDependencies:
-      react: ^19.2.0
-
   react-dom@19.2.8:
     resolution: {integrity: sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==}
     peerDependencies:
@@ -3724,10 +3719,6 @@ packages:
     resolution: {integrity: sha512-GHKPaDRaNYU24PHTLG8Bx8VMY9t+qNfxQbt/Yjp7aMWBkKU6766SR0n6TnYu7P5I1MfEuAMUadqiyDHyI4Yy9Q==}
     peerDependencies:
       react: ^19.2.8
-
-  react@19.2.0:
-    resolution: {integrity: sha512-tmbWg6W31tQLeB5cdIBOicJDJRR2KzXsV7uSK9iNfLWQ5bIZfxuPEHp7M8wiHyHnn0DD1i7w3Zmin0FtkrwoCQ==}
-    engines: {node: '>=0.10.0'}
 
   react@19.2.8:
     resolution: {integrity: sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==}
@@ -5292,12 +5283,6 @@ snapshots:
       '@types/react': 19.2.0
       '@types/react-dom': 19.2.0(@types/react@19.2.0)
 
-  '@radix-ui/react-compose-refs@1.1.5(@types/react@19.2.0)(react@19.2.0)':
-    dependencies:
-      react: 19.2.0
-    optionalDependencies:
-      '@types/react': 19.2.0
-
   '@radix-ui/react-compose-refs@1.1.5(@types/react@19.2.0)(react@19.2.8)':
     dependencies:
       react: 19.2.8
@@ -5447,13 +5432,6 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.0
       '@types/react-dom': 19.2.0(@types/react@19.2.0)
-
-  '@radix-ui/react-slot@1.3.3(@types/react@19.2.0)(react@19.2.0)':
-    dependencies:
-      '@radix-ui/react-compose-refs': 1.1.5(@types/react@19.2.0)(react@19.2.0)
-      react: 19.2.0
-    optionalDependencies:
-      '@types/react': 19.2.0
 
   '@radix-ui/react-slot@1.3.3(@types/react@19.2.0)(react@19.2.8)':
     dependencies:
@@ -7900,9 +7878,9 @@ snapshots:
     dependencies:
       yallist: 4.0.0
 
-  lucide-react@0.554.0(react@19.2.0):
+  lucide-react@0.554.0(react@19.2.8):
     dependencies:
-      react: 19.2.0
+      react: 19.2.8
 
   magic-string@0.30.21:
     dependencies:
@@ -8276,11 +8254,6 @@ snapshots:
       iconv-lite: 0.7.3
       unpipe: 1.0.0
 
-  react-dom@19.2.0(react@19.2.0):
-    dependencies:
-      react: 19.2.0
-      scheduler: 0.27.0
-
   react-dom@19.2.8(patch_hash=8a2f2252d945a4b8ac2bc50f5aeca0fb01bf16dbff6724c24781703cc3fed29c)(react@19.2.8):
     dependencies:
       react: 19.2.8
@@ -8322,8 +8295,6 @@ snapshots:
       react: 19.2.8
       react-is: 19.2.8
       scheduler: 0.27.0
-
-  react@19.2.0: {}
 
   react@19.2.8: {}
 
