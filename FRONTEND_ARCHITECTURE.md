@@ -72,7 +72,9 @@ binary `/ws/game` message, including addressed relays. It supplies the 16-byte
 secret hub session nonce in `identify`; the hub assigns a separate 16-byte
 public player ID for peer routing. Hexadecimal strings are only the reference
 implementation's local/URL representation. The hub HTML's internal protocol is
-not part of this architecture contract.
+not part of this architecture contract. Names in this section are descriptive
+domain names; the game-channel boundary translates them to the compact `t` tags
+and field keys specified in [`WEBSOCKET_PROTOCOL.md`](WEBSOCKET_PROTOCOL.md).
 
 An `advisory_start` is not authority to begin a session by itself. Local
 availability is authoritative:
@@ -210,7 +212,7 @@ TCP closes are not always reliable (half-open connections, NAT timeouts, proxy
 buffering). The hub and clients maintain bidirectional application-level
 keepalives at two separate layers:
 
-1. **Game-relay keepalives** — bencodex `{ type: 'keepalive' }` dictionaries
+1. **Game-relay keepalives** — Bencodex `{ t: 'K' }` dictionaries
    sent in both directions over `/ws/game` every 15 seconds. These prove the
    WebSocket connection itself is alive.
 2. **Peer-level keepalives** — relay payloads with the peer reliability
@@ -223,7 +225,7 @@ keepalives at two separate layers:
 
 - Uses a WebSocket connection to `/ws/game` and re-sends `identify` on reconnect.
 - Starts a 15-second keepalive interval on `ws.onopen` that sends
-  a bencodex `{ type: 'keepalive' }` dictionary to the hub. Cleared on
+  a Bencodex `{ t: 'K' }` dictionary to the hub. Cleared on
   close/error/disconnect.
 - Fires `onHubActivity()` on every incoming `ws.onmessage` (any message
   type proves the hub is alive).

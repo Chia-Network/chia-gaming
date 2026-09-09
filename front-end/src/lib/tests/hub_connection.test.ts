@@ -38,6 +38,59 @@ function playerBytes(playerId: string): Uint8Array {
   );
 }
 
+function compactHubMessage(message: Record<string, any>): Record<string, BencodexValue> {
+  switch (message.type) {
+    case 'relay':
+      return { t: 'R', f: message.from, a: message.alias, p: message.payload };
+    case 'keepalive':
+      return { t: 'K' };
+    case 'registered':
+      return { t: 'RG', pi: message.player_id };
+    case 'advisory_start':
+      return Object.fromEntries(
+        Object.entries({
+          t: 'AS',
+          pi: message.peer_id,
+          pa: message.peer_alias,
+          ma: message.my_amount,
+          ta: message.their_amount,
+          ct: message.channel_timeout,
+          ut: message.unroll_timeout,
+        }).filter(([, value]) => value !== undefined),
+      ) as Record<string, BencodexValue>;
+    case 'delivery_failure':
+      return { t: 'DF', to: message.to };
+    case 'alias_updated':
+      return { t: 'AU', a: message.alias };
+    case 'peer_available':
+      return { t: 'PA', pi: message.player_id };
+    case 'peer_unavailable':
+      return { t: 'PU', pi: message.player_id };
+    case 'hub_attention':
+      return { t: 'HA' };
+    case 'closed':
+      return { t: 'CD' };
+    default:
+      throw new Error(`unsupported test hub message: ${String(message.type)}`);
+  }
+}
+
+function expectCompactFixedWireText(value: unknown): void {
+  if (value instanceof Uint8Array || value === null || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    value.forEach(expectCompactFixedWireText);
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    expect(new TextEncoder().encode(key).byteLength).toBeLessThanOrEqual(2);
+    if (key === 't') {
+      expect(typeof item).toBe('string');
+      expect(new TextEncoder().encode(item as string).byteLength).toBeLessThanOrEqual(2);
+    }
+    expectCompactFixedWireText(item);
+  }
+}
+
 function toPlainObject(value: BencodexValue): unknown {
   if (value instanceof Uint8Array) return value;
   if (Array.isArray(value)) return value.map(toPlainObject);
@@ -101,7 +154,12 @@ class MockWebSocket {
   }
 
   _fire(data: unknown) {
-    const bytes = encodeBencodex(data as BencodexValue);
+    const bytes = encodeBencodex(compactHubMessage(data as Record<string, any>));
+    this.onmessage?.({ data: arrayBufferOf(bytes) });
+  }
+
+  _fireWire(data: BencodexValue) {
+    const bytes = encodeBencodex(data);
     this.onmessage?.({ data: arrayBufferOf(bytes) });
   }
 
@@ -213,17 +271,17 @@ describe('connection setup', () => {
     expect(ws.url).toBe('ws://t/ws/game');
     expect(ws.sentControl).toEqual([
       {
-        type: 'identify',
-        session_id: Uint8Array.from({ length: 16 }, (_, index) => index),
-        busy: false,
+        t: 'I',
+        si: Uint8Array.from({ length: 16 }, (_, index) => index),
+        b: false,
       },
     ]);
     const ascii = new TextEncoder();
     expect(ws.sentFrames[0]).toEqual(
       concatBytes(
-        ascii.encode('du4:busyfu10:session_id16:'),
+        ascii.encode('du1:bfu2:si16:'),
         Uint8Array.from({ length: 16 }, (_, index) => index),
-        ascii.encode('u4:typeu8:identifye'),
+        ascii.encode('u1:tu1:Ie'),
       ),
     );
   });
@@ -236,9 +294,9 @@ describe('connection setup', () => {
     const ws = MockWebSocket.instance!;
     expect(ws.sentControl).toEqual([
       {
-        type: 'identify',
-        session_id: Uint8Array.from({ length: 16 }, (_, index) => index),
-        busy: true,
+        t: 'I',
+        si: Uint8Array.from({ length: 16 }, (_, index) => index),
+        b: true,
       },
     ]);
   });
@@ -306,6 +364,32 @@ describe('event routing', () => {
       player_id: playerBytes(TARGET_ID),
     });
     expect(cb.onPeerUnavailable).toHaveBeenCalledWith(TARGET_ID);
+  });
+
+  it('routes hub_attention and closed while accepting keepalive', async () => {
+    const cb = makeCallbacks();
+    makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+
+    MockWebSocket.instance!._fire({ type: 'hub_attention' });
+    MockWebSocket.instance!._fire({ type: 'closed' });
+    MockWebSocket.instance!._fire({ type: 'keepalive' });
+    expect(cb.onHubAttention).toHaveBeenCalledTimes(1);
+    expect(cb.onClosed).toHaveBeenCalledTimes(1);
+    expect(cb.onHubActivity).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects old verbose discriminator and tags', async () => {
+    const cb = makeCallbacks();
+    makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+
+    MockWebSocket.instance!._fireWire({
+      type: 'registered',
+      player_id: playerBytes(SENDER_ID),
+    });
+    MockWebSocket.instance!._fireWire({ t: 'registered', pi: playerBytes(SENDER_ID) });
+    expect(cb.onRegistered).not.toHaveBeenCalled();
   });
 
   it('rejects malformed fixed-width ids and non-integer advisory amounts', async () => {
@@ -402,6 +486,23 @@ describe('binary message relay', () => {
     MockWebSocket.instance!._fireRelay(SENDER_ID, payload, 'Bob');
     expect(cb.onPeerMessage).toHaveBeenCalledWith(SENDER_ID, 'Bob', payload);
   });
+
+  it('accepts the byte-exact compact hub-to-player relay vector', async () => {
+    const cb = makeCallbacks();
+    makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+
+    const ascii = new TextEncoder();
+    const payload = ascii.encode('hello');
+    const frame = concatBytes(
+      ascii.encode('du1:au3:Bobu1:f16:'),
+      playerBytes(SENDER_ID),
+      ascii.encode('u1:p5:hellou1:tu1:Re'),
+    );
+    MockWebSocket.instance!._fireWire(decodeBencodex(frame));
+    expect(cb.onPeerMessage).toHaveBeenCalledWith(SENDER_ID, 'Bob', payload);
+    expect(encodeBencodex(decodeBencodex(frame))).toEqual(frame);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -430,7 +531,7 @@ describe('outbound message format', () => {
 
     const payload = new TextEncoder().encode('payload');
     expect(conn.sendToPeer(TARGET_ID, payload)).toBe(true);
-    expect(ws.sentControl).toEqual([{ type: 'relay', to: playerBytes(TARGET_ID), payload }]);
+    expect(ws.sentControl).toEqual([{ t: 'R', to: playerBytes(TARGET_ID), p: payload }]);
   });
 
   it('sends already-framed semantic bytes without interpretation', async () => {
@@ -449,14 +550,14 @@ describe('outbound message format', () => {
     expect(ws.sentControl).toHaveLength(1);
 
     const relay = ws.sentControl[0] as {
-      type: string;
+      t: string;
       to: Uint8Array;
-      payload: Uint8Array;
+      p: Uint8Array;
     };
-    expect(relay.type).toBe('relay');
+    expect(relay.t).toBe('R');
     expect(relay.to).toEqual(playerBytes(TARGET_ID));
-    expect(relay.payload).toEqual(payloadBytes);
-    const parsed = toPlainObject(decodeBencodex(relay.payload) as BencodexValue);
+    expect(relay.p).toEqual(payloadBytes);
+    const parsed = toPlainObject(decodeBencodex(relay.p) as BencodexValue);
     expect(parsed).toEqual({
       type: 'session_proposal',
       proposer_amount: '100',
@@ -491,7 +592,7 @@ describe('setBusy', () => {
     const ws = MockWebSocket.instance!;
     ws.sentControl = [];
     conn.setBusy(false);
-    expect(ws.sentControl).toEqual([{ type: 'set_busy', busy: false }]);
+    expect(ws.sentControl).toEqual([{ t: 'SB', b: false }]);
   });
 
   it('sends set_busy with busy=true', async () => {
@@ -501,7 +602,20 @@ describe('setBusy', () => {
     const ws = MockWebSocket.instance!;
     ws.sentControl = [];
     conn.setBusy(true);
-    expect(ws.sentControl).toEqual([{ type: 'set_busy', busy: true }]);
+    expect(ws.sentControl).toEqual([{ t: 'SB', b: true }]);
+  });
+
+  it('sends compact keepalive on the interval', async () => {
+    jest.useFakeTimers();
+    const cb = makeCallbacks();
+    makeConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    const ws = MockWebSocket.instance!;
+    ws.sentControl = [];
+
+    jest.advanceTimersByTime(15_000);
+    expect(ws.sentControl.slice(-1)).toEqual([{ t: 'K' }]);
+    jest.useRealTimers();
   });
 
   it('uses getPresence for identify on reconnect', async () => {
@@ -520,9 +634,9 @@ describe('setBusy', () => {
 
     const ws2 = MockWebSocket.instance!;
     expect(ws2).not.toBe(ws1);
-    const identifyMsg = ws2.sentControl.find((m: any) => m.type === 'identify') as any;
+    const identifyMsg = ws2.sentControl.find((m: any) => m.t === 'I') as any;
     expect(identifyMsg).toBeDefined();
-    expect(identifyMsg.busy).toBe(true);
+    expect(identifyMsg.b).toBe(true);
     jest.useRealTimers();
   });
 
@@ -541,13 +655,13 @@ describe('setBusy', () => {
 
     const ws2 = MockWebSocket.instance!;
     expect(ws2).not.toBe(ws1);
-    const identifyMsg = ws2.sentControl.find((m: any) => m.type === 'identify') as any;
+    const identifyMsg = ws2.sentControl.find((m: any) => m.t === 'I') as any;
     expect(identifyMsg).toMatchObject({
-      type: 'identify',
-      session_id: Uint8Array.from({ length: 16 }, (_, index) => index),
-      busy: true,
+      t: 'I',
+      si: Uint8Array.from({ length: 16 }, (_, index) => index),
+      b: true,
     });
-    expect(identifyMsg).not.toHaveProperty('alias');
+    expect(identifyMsg).not.toHaveProperty('a');
     jest.useRealTimers();
   });
 });
@@ -566,7 +680,7 @@ describe('close', () => {
 
     conn.close();
 
-    expect(ws.sentControl).toEqual([{ type: 'close' }]);
+    expect(ws.sentControl).toEqual([{ t: 'C' }]);
   });
 });
 
@@ -577,5 +691,37 @@ describe('close', () => {
 describe('retry budget', () => {
   it('MAX_RECONNECT_ATTEMPTS is a positive number', () => {
     expect(HubConnection.MAX_RECONNECT_ATTEMPTS).toBeGreaterThan(0);
+  });
+});
+
+describe('compact wire invariant', () => {
+  it('keeps every fixed game-wire key and tag within two UTF-8 bytes', () => {
+    const id = playerBytes(SENDER_ID);
+    const frames = [
+      { t: 'I', si: new Uint8Array(16), b: false },
+      { t: 'SB', b: true },
+      { t: 'R', to: id, p: new Uint8Array([1]) },
+      { t: 'C' },
+      { t: 'K' },
+      compactHubMessage({ type: 'relay', from: id, alias: 'Alias', payload: new Uint8Array([1]) }),
+      compactHubMessage({ type: 'registered', player_id: id }),
+      compactHubMessage({
+        type: 'advisory_start',
+        peer_id: id,
+        peer_alias: 'Alias',
+        my_amount: 1n,
+        their_amount: 2n,
+        channel_timeout: 3n,
+        unroll_timeout: 4n,
+      }),
+      compactHubMessage({ type: 'delivery_failure', to: id }),
+      compactHubMessage({ type: 'alias_updated', alias: 'Alias' }),
+      compactHubMessage({ type: 'peer_available', player_id: id }),
+      compactHubMessage({ type: 'peer_unavailable', player_id: id }),
+      compactHubMessage({ type: 'hub_attention' }),
+      compactHubMessage({ type: 'closed' }),
+      compactHubMessage({ type: 'keepalive' }),
+    ];
+    frames.forEach(expectCompactFixedWireText);
   });
 });

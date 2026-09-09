@@ -55,15 +55,12 @@ type HubEnvelope =
   | { type: 'closed' }
   | { type: 'keepalive' };
 
-function definedBencodexFields(
-  data: Record<string, BencodexValue | undefined>,
-): Record<string, BencodexValue> {
-  const out: Record<string, BencodexValue> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
+type HubOutboundEnvelope =
+  | { type: 'identify'; session_id: Uint8Array; busy: boolean }
+  | { type: 'set_busy'; busy: boolean }
+  | { type: 'relay'; to: Uint8Array; payload: Uint8Array }
+  | { type: 'close' }
+  | { type: 'keepalive' };
 
 const WIRE_ID_BYTES = 16;
 const MAX_ALIAS_BYTES = 128;
@@ -131,48 +128,72 @@ function requireAlias(map: Map<BencodexKey, BencodexValue>, key: string): string
   return alias;
 }
 
-function decodeHubEnvelope(input: ArrayBuffer): HubEnvelope | null {
+function encodeGameEnvelope(message: HubOutboundEnvelope): Uint8Array {
+  switch (message.type) {
+    case 'identify':
+      return encodeBencodex({ t: 'I', si: message.session_id, b: message.busy });
+    case 'set_busy':
+      return encodeBencodex({ t: 'SB', b: message.busy });
+    case 'relay':
+      return encodeBencodex({ t: 'R', to: message.to, p: message.payload });
+    case 'close':
+      return encodeBencodex({ t: 'C' });
+    case 'keepalive':
+      return encodeBencodex({ t: 'K' });
+  }
+}
+
+function decodeGameEnvelope(input: ArrayBuffer): HubEnvelope | null {
   const decoded = decodeBencodex(input);
   if (!isDictionary(decoded)) return null;
-  const type = getText(decoded, 'type');
-  if (!type) return null;
-  switch (type) {
-    case 'advisory_start':
+  const tag = getText(decoded, 't');
+  if (!tag) return null;
+  switch (tag) {
+    case 'AS':
       return {
-        type,
-        peer_id: playerIdFromWire(requireBytes(decoded, 'peer_id', WIRE_ID_BYTES)),
-        peer_alias: requireAlias(decoded, 'peer_alias'),
-        my_amount: requireInteger(decoded, 'my_amount').toString(),
-        their_amount: requireInteger(decoded, 'their_amount').toString(),
-        channel_timeout: optionalInteger(decoded, 'channel_timeout')?.toString(),
-        unroll_timeout: optionalInteger(decoded, 'unroll_timeout')?.toString(),
+        type: 'advisory_start',
+        peer_id: playerIdFromWire(requireBytes(decoded, 'pi', WIRE_ID_BYTES)),
+        peer_alias: requireAlias(decoded, 'pa'),
+        my_amount: requireInteger(decoded, 'ma').toString(),
+        their_amount: requireInteger(decoded, 'ta').toString(),
+        channel_timeout: optionalInteger(decoded, 'ct')?.toString(),
+        unroll_timeout: optionalInteger(decoded, 'ut')?.toString(),
       };
-    case 'registered':
+    case 'RG':
       return {
-        type,
-        player_id: playerIdFromWire(requireBytes(decoded, 'player_id', WIRE_ID_BYTES)),
+        type: 'registered',
+        player_id: playerIdFromWire(requireBytes(decoded, 'pi', WIRE_ID_BYTES)),
       };
-    case 'delivery_failure':
-      return { type, to: playerIdFromWire(requireBytes(decoded, 'to', WIRE_ID_BYTES)) };
-    case 'alias_updated':
-      return { type, alias: requireAlias(decoded, 'alias') };
-    case 'peer_available':
-    case 'peer_unavailable':
+    case 'DF':
       return {
-        type,
-        player_id: playerIdFromWire(requireBytes(decoded, 'player_id', WIRE_ID_BYTES)),
+        type: 'delivery_failure',
+        to: playerIdFromWire(requireBytes(decoded, 'to', WIRE_ID_BYTES)),
       };
-    case 'relay':
+    case 'AU':
+      return { type: 'alias_updated', alias: requireAlias(decoded, 'a') };
+    case 'PA':
       return {
-        type,
-        from: playerIdFromWire(requireBytes(decoded, 'from', WIRE_ID_BYTES)),
-        alias: requireAlias(decoded, 'alias'),
-        payload: requireBytes(decoded, 'payload'),
+        type: 'peer_available',
+        player_id: playerIdFromWire(requireBytes(decoded, 'pi', WIRE_ID_BYTES)),
       };
-    case 'hub_attention':
-    case 'closed':
-    case 'keepalive':
-      return { type };
+    case 'PU':
+      return {
+        type: 'peer_unavailable',
+        player_id: playerIdFromWire(requireBytes(decoded, 'pi', WIRE_ID_BYTES)),
+      };
+    case 'R':
+      return {
+        type: 'relay',
+        from: playerIdFromWire(requireBytes(decoded, 'f', WIRE_ID_BYTES)),
+        alias: requireAlias(decoded, 'a'),
+        payload: requireBytes(decoded, 'p'),
+      };
+    case 'HA':
+      return { type: 'hub_attention' };
+    case 'CD':
+      return { type: 'closed' };
+    case 'K':
+      return { type: 'keepalive' };
     default:
       return null;
   }
@@ -216,24 +237,25 @@ export class HubConnection {
     return url.toString();
   }
 
-  private sendWs(payload: Record<string, unknown>): boolean {
+  private sendWs(payload: HubOutboundEnvelope): boolean {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       log(`[hub] sendWs dropped (ws not open) type=${String(payload.type ?? '?')}`);
       return false;
     }
-    ws.send(
-      encodeBencodex(definedBencodexFields(payload as Record<string, BencodexValue | undefined>)),
-    );
+    ws.send(encodeGameEnvelope(payload));
     return true;
   }
 
-  private presencePayload(type: 'identify' | 'set_busy'): Record<string, unknown> {
-    return {
-      type,
-      ...(type === 'identify' ? { session_id: sessionIdToWire(this.sessionId) } : {}),
-      busy: this.busy,
-    };
+  private presencePayload(type: 'identify' | 'set_busy'): HubOutboundEnvelope {
+    if (type === 'identify') {
+      return {
+        type,
+        session_id: sessionIdToWire(this.sessionId),
+        busy: this.busy,
+      };
+    }
+    return { type, busy: this.busy };
   }
 
   private connectWs(): void {
@@ -344,7 +366,7 @@ export class HubConnection {
   private dispatchHubEnvelope(buf: ArrayBuffer): void {
     let msg: HubEnvelope | null;
     try {
-      msg = decodeHubEnvelope(buf);
+      msg = decodeGameEnvelope(buf);
     } catch {
       log('[hub] recv malformed bencodex envelope');
       return;

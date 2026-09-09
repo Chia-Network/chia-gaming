@@ -63,6 +63,18 @@ type GameInboundMessage =
   | { type: 'relay'; to: string; payload: Uint8Array }
   | { type: 'keepalive' };
 
+type GameOutboundType =
+  | 'relay'
+  | 'keepalive'
+  | 'registered'
+  | 'advisory_start'
+  | 'delivery_failure'
+  | 'alias_updated'
+  | 'peer_available'
+  | 'peer_unavailable'
+  | 'hub_attention'
+  | 'closed';
+
 interface HubConnMeta {
   playerId: string;
   sessionId: string;
@@ -391,12 +403,50 @@ function definedBencodexFields(payload: unknown): Record<string, BencodexValue> 
   return out;
 }
 
-function sendGameWs(ws: WebSocket, type: string, payload: unknown): void {
+function encodeGameOutbound(type: GameOutboundType, payload: unknown): Uint8Array {
+  const fields = definedBencodexFields(payload);
+  switch (type) {
+    case 'relay':
+      return encodeBencodex(
+        definedBencodexFields({ t: 'R', f: fields.from, a: fields.alias, p: fields.payload }),
+      );
+    case 'keepalive':
+      return encodeBencodex({ t: 'K' });
+    case 'registered':
+      return encodeBencodex(definedBencodexFields({ t: 'RG', pi: fields.player_id }));
+    case 'advisory_start':
+      return encodeBencodex(
+        definedBencodexFields({
+          t: 'AS',
+          pi: fields.peer_id,
+          pa: fields.peer_alias,
+          ma: fields.my_amount,
+          ta: fields.their_amount,
+          ct: fields.channel_timeout,
+          ut: fields.unroll_timeout,
+        }),
+      );
+    case 'delivery_failure':
+      return encodeBencodex(definedBencodexFields({ t: 'DF', to: fields.to }));
+    case 'alias_updated':
+      return encodeBencodex(definedBencodexFields({ t: 'AU', a: fields.alias }));
+    case 'peer_available':
+      return encodeBencodex(definedBencodexFields({ t: 'PA', pi: fields.player_id }));
+    case 'peer_unavailable':
+      return encodeBencodex(definedBencodexFields({ t: 'PU', pi: fields.player_id }));
+    case 'hub_attention':
+      return encodeBencodex({ t: 'HA' });
+    case 'closed':
+      return encodeBencodex({ t: 'CD' });
+  }
+}
+
+function sendGameWs(ws: WebSocket, type: GameOutboundType, payload: unknown): void {
   if (ws.readyState !== WebSocket.OPEN) {
     logHub('send_game_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
     return;
   }
-  ws.send(encodeBencodex({ type, ...definedBencodexFields(payload) }));
+  ws.send(encodeGameOutbound(type, payload));
   logHubVerbose('send_game_ws_ok', { ws_id: wsId(ws), type });
 }
 
@@ -531,7 +581,7 @@ function replayPendingChallengesToPlayer(playerId: string): void {
   }
 }
 
-function sendGameEvent(playerId: string, type: string, payload: unknown): void {
+function sendGameEvent(playerId: string, type: GameOutboundType, payload: unknown): void {
   const sessionId = playerToSession.get(playerId);
   if (!sessionId) {
     logHub('send_game_event_drop_missing_session', { player_id: playerId, type });
@@ -1127,33 +1177,33 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
   try {
     const decoded = decodeBencodex(raw);
     if (!isDictionary(decoded)) return null;
-    const type = getText(decoded, 'type');
-    if (!type) return null;
-    switch (type) {
-      case 'identify':
+    const tag = getText(decoded, 't');
+    if (!tag) return null;
+    switch (tag) {
+      case 'I':
         return {
-          type,
-          session_id: sessionIdFromWire(requireFixedBytes(decoded, 'session_id', SESSION_ID_BYTES)),
-          busy: getBoolean(decoded, 'busy'),
+          type: 'identify',
+          session_id: sessionIdFromWire(requireFixedBytes(decoded, 'si', SESSION_ID_BYTES)),
+          busy: getBoolean(decoded, 'b'),
         };
-      case 'set_busy': {
-        const busy = getBoolean(decoded, 'busy');
+      case 'SB': {
+        const busy = getBoolean(decoded, 'b');
         if (busy === undefined) return null;
         return {
-          type,
+          type: 'set_busy',
           busy,
         };
       }
-      case 'relay':
+      case 'R':
         return {
-          type,
+          type: 'relay',
           to: playerIdFromWire(requireFixedBytes(decoded, 'to', PLAYER_ID_BYTES)),
-          payload: requireByteString(decoded, 'payload'),
+          payload: requireByteString(decoded, 'p'),
         };
-      case 'close':
-        return { type };
-      case 'keepalive':
-        return { type };
+      case 'C':
+        return { type: 'close' };
+      case 'K':
+        return { type: 'keepalive' };
       default:
         return null;
     }

@@ -58,15 +58,58 @@ the same kind sort by unsigned bytewise lexical order of their unprefixed
 contents. This protocol uses text keys. A decoder rejects invalid value
 encodings and trailing bytes after the top-level value.
 
-## 4. Common message envelope
+## 4. Common message envelope and abbreviations
 
 Every `/ws/game` WebSocket message is a Bencodex dictionary with a required
-text field named `type`. That field is the sole top-level message
-discriminator. There is no alternate relay framing and no first-byte
-multiplexer.
+text field named `t`. That field is the sole top-level message discriminator.
+There is no alternate relay framing and no first-byte multiplexer.
 
-Fields not defined for a known type have no protocol meaning and are ignored.
-Unknown types and malformed dictionaries are ignored.
+This document uses descriptive semantic names in prose and headings. On the
+wire, only the compact spellings in the following glossary are valid. A
+descriptive name such as `advisory_start` is not a permitted wire tag.
+
+Message tags:
+
+| Semantic name | Wire tag | Stands for |
+| --- | --- | --- |
+| `relay` | `R` | relay |
+| `identify` | `I` | identify |
+| `set_busy` | `SB` | set busy |
+| `close` | `C` | close |
+| `keepalive` | `K` | keepalive |
+| `registered` | `RG` | registered |
+| `advisory_start` | `AS` | advisory start |
+| `delivery_failure` | `DF` | delivery failure |
+| `alias_updated` | `AU` | alias updated |
+| `peer_available` | `PA` | peer available |
+| `peer_unavailable` | `PU` | peer unavailable |
+| `hub_attention` | `HA` | hub attention |
+| `closed` | `CD` | closed |
+
+Field keys:
+
+| Semantic name | Wire key | Stands for |
+| --- | --- | --- |
+| `type` | `t` | type |
+| `to` | `to` | to |
+| `payload` | `p` | payload |
+| `from` | `f` | from |
+| `alias` | `a` | alias |
+| `session_id` | `si` | session ID |
+| `busy` | `b` | busy |
+| `player_id` | `pi` | player ID |
+| `peer_id` | `pi` | peer ID |
+| `peer_alias` | `pa` | peer alias |
+| `my_amount` | `ma` | my amount |
+| `their_amount` | `ta` | their amount |
+| `channel_timeout` | `ct` | channel timeout |
+| `unroll_timeout` | `ut` | unroll timeout |
+
+Every fixed text key and tag is at most two UTF-8 bytes. Aliases are variable
+user text and are not fixed protocol text. Fields not defined for a known tag
+have no protocol meaning and are ignored. Unknown tags and malformed
+dictionaries are ignored. Implementations do not accept the old descriptive
+`type` discriminator or descriptive message values.
 
 The following named wire types are used below:
 
@@ -80,9 +123,9 @@ The following named wire types are used below:
 
 ```text
 {
-  "type":    Text("relay"),
+  "t":  Text("R"),
   "to":      PlayerID,
-  "payload": Bytes
+  "p":       Bytes
 }
 ```
 
@@ -94,10 +137,10 @@ is discarded.
 
 ```text
 {
-  "type":    Text("relay"),
-  "from":    PlayerID,
-  "alias":   Alias,
-  "payload": Bytes
+  "t": Text("R"),
+  "f": PlayerID,
+  "a": Alias,
+  "p": Bytes
 }
 ```
 
@@ -118,9 +161,9 @@ Sent once whenever a game WebSocket opens.
 
 ```text
 {
-  "type":       Text("identify"),
-  "session_id": SessionID,
-  "busy":       Bool       // optional in the decoder; always sent by the current client
+  "t":  Text("I"),
+  "si": SessionID,
+  "b":  Bool       // optional in the decoder; always sent by the current client
 }
 ```
 
@@ -136,8 +179,8 @@ Updates player-reported matchmaking availability.
 
 ```text
 {
-  "type": Text("set_busy"),
-  "busy": Bool
+  "t": Text("SB"),
+  "b": Bool
 }
 ```
 
@@ -154,7 +197,7 @@ Requests application-level closure.
 
 ```text
 {
-  "type": Text("close")
+  "t": Text("C")
 }
 ```
 
@@ -169,7 +212,7 @@ Sent every 15 seconds while the WebSocket is open.
 
 ```text
 {
-  "type": Text("keepalive")
+  "t": Text("K")
 }
 ```
 
@@ -183,8 +226,8 @@ Confirms registration or re-registration.
 
 ```text
 {
-  "type":      Text("registered"),
-  "player_id": PlayerID
+  "t":  Text("RG"),
+  "pi": PlayerID
 }
 ```
 
@@ -196,13 +239,13 @@ Suggests that the player application initiate a peer session.
 
 ```text
 {
-  "type":            Text("advisory_start"),
-  "peer_id":         PlayerID,
-  "peer_alias":      Alias,
-  "my_amount":       Integer,
-  "their_amount":    Integer,
-  "channel_timeout": Integer,  // optional
-  "unroll_timeout":  Integer   // optional
+  "t":  Text("AS"),
+  "pi": PlayerID,
+  "pa": Alias,
+  "ma": Integer,
+  "ta": Integer,
+  "ct": Integer,  // optional
+  "ut": Integer   // optional
 }
 ```
 
@@ -224,8 +267,8 @@ without an open game connection.
 
 ```text
 {
-  "type": Text("delivery_failure"),
-  "to":   PlayerID
+  "t":  Text("DF"),
+  "to": PlayerID
 }
 ```
 
@@ -243,8 +286,8 @@ Reports the player's current hub-owned display alias:
 
 ```text
 {
-  "type":  Text("alias_updated"),
-  "alias": Alias
+  "t": Text("AU"),
+  "a": Alias
 }
 ```
 
@@ -259,8 +302,8 @@ Hints that a recent correspondent has re-established its game connection:
 
 ```text
 {
-  "type":      Text("peer_available"),
-  "player_id": PlayerID
+  "t":  Text("PA"),
+  "pi": PlayerID
 }
 ```
 
@@ -274,8 +317,8 @@ Hints that a recent correspondent no longer has an open game connection:
 
 ```text
 {
-  "type":      Text("peer_unavailable"),
-  "player_id": PlayerID
+  "t":  Text("PU"),
+  "pi": PlayerID
 }
 ```
 
@@ -295,7 +338,7 @@ Requests that the player draw attention to the hub UI.
 
 ```text
 {
-  "type": Text("hub_attention")
+  "t": Text("HA")
 }
 ```
 
@@ -307,7 +350,7 @@ Acknowledges the application-level `close` request.
 
 ```text
 {
-  "type": Text("closed")
+  "t": Text("CD")
 }
 ```
 
@@ -317,7 +360,7 @@ Sent by the hub every 15 seconds:
 
 ```text
 {
-  "type": Text("keepalive")
+  "t": Text("K")
 }
 ```
 

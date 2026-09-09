@@ -117,7 +117,28 @@ function sendJson(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
+function compactGameInbound(payload) {
+  switch (payload.type) {
+    case 'identify':
+      return { t: 'I', si: payload.session_id, b: payload.busy };
+    case 'set_busy':
+      return { t: 'SB', b: payload.busy };
+    case 'relay':
+      return { t: 'R', to: payload.to, p: payload.payload };
+    case 'close':
+      return { t: 'C' };
+    case 'keepalive':
+      return { t: 'K' };
+    default:
+      throw new Error(`unsupported test game message: ${String(payload.type)}`);
+  }
+}
+
 function sendGame(ws, payload) {
+  ws.send(encodeBencodex(compactGameInbound(payload)));
+}
+
+function sendRawGame(ws, payload) {
   ws.send(encodeBencodex(payload));
 }
 
@@ -132,6 +153,58 @@ function plainBencodex(value) {
     return out;
   }
   return value;
+}
+
+function descriptiveGameOutbound(raw) {
+  const wire = plainBencodex(decodeBencodex(raw));
+  switch (wire.t) {
+    case 'R':
+      return { type: 'relay', from: wire.f, alias: wire.a, payload: wire.p };
+    case 'K':
+      return { type: 'keepalive' };
+    case 'RG':
+      return { type: 'registered', player_id: wire.pi };
+    case 'AS':
+      return {
+        type: 'advisory_start',
+        peer_id: wire.pi,
+        peer_alias: wire.pa,
+        my_amount: wire.ma,
+        their_amount: wire.ta,
+        channel_timeout: wire.ct,
+        unroll_timeout: wire.ut,
+      };
+    case 'DF':
+      return { type: 'delivery_failure', to: wire.to };
+    case 'AU':
+      return { type: 'alias_updated', alias: wire.a };
+    case 'PA':
+      return { type: 'peer_available', player_id: wire.pi };
+    case 'PU':
+      return { type: 'peer_unavailable', player_id: wire.pi };
+    case 'HA':
+      return { type: 'hub_attention' };
+    case 'CD':
+      return { type: 'closed' };
+    default:
+      return null;
+  }
+}
+
+function assertCompactFixedWireText(value) {
+  if (value instanceof Uint8Array || value === null || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    value.forEach(assertCompactFixedWireText);
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    assert.ok(Buffer.byteLength(key, 'utf8') <= 2, `wire key ${key} exceeds two bytes`);
+    if (key === 't') {
+      assert.equal(typeof item, 'string');
+      assert.ok(Buffer.byteLength(item, 'utf8') <= 2, `wire tag ${item} exceeds two bytes`);
+    }
+    assertCompactFixedWireText(item);
+  }
 }
 
 async function nextJson(ws, predicate = () => true, timeoutMs = 2_000) {
@@ -159,11 +232,27 @@ async function nextGame(ws, predicate = () => true, timeoutMs = 2_000) {
       reject(new Error('timed out waiting for websocket message'));
     }, timeoutMs);
     function onMessage(raw) {
-      const msg = plainBencodex(decodeBencodex(raw));
+      const msg = descriptiveGameOutbound(raw);
+      if (!msg) return;
       if (!predicate(msg)) return;
       clearTimeout(timer);
       ws.off('message', onMessage);
       resolve(msg);
+    }
+    ws.on('message', onMessage);
+  });
+}
+
+async function nextRawMessage(ws, timeoutMs = 2_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      ws.off('message', onMessage);
+      reject(new Error('timed out waiting for websocket message'));
+    }, timeoutMs);
+    function onMessage(raw) {
+      clearTimeout(timer);
+      ws.off('message', onMessage);
+      resolve(Buffer.from(raw));
     }
     ws.on('message', onMessage);
   });
@@ -247,10 +336,94 @@ test('post-identification game controls use the bound socket session', async () 
     const game = await identifyGame(hub.origin, 'secret-bound-controls');
     const closed = nextGame(game, (msg) => msg.type === 'closed');
 
+    sendGame(game, { type: 'keepalive' });
     sendGame(game, { type: 'set_busy', busy: true });
     sendGame(game, { type: 'close' });
 
     assert.equal((await closed).type, 'closed');
+    await closeWs(game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('game boundary accepts and emits byte-exact compact golden vectors', async () => {
+  const hub = await startHub();
+  try {
+    const game = await openWs(hub.origin, '/ws/game');
+    const session = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex');
+    const identify = Buffer.concat([
+      Buffer.from('du1:bfu2:si16:'),
+      session,
+      Buffer.from('u1:tu1:Ie'),
+    ]);
+    game.send(identify);
+    await nextGame(game, (msg) => msg.type === 'registered');
+
+    const closedRaw = nextRawMessage(game);
+    sendGame(game, { type: 'close' });
+    assert.deepEqual(await closedRaw, Buffer.from('du1:tu2:CDe'));
+    await closeWs(game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('game boundary rejects old verbose discriminator and tags', async () => {
+  const hub = await startHub();
+  try {
+    const game = await openWs(hub.origin, '/ws/game');
+    const noVerboseRegistration = nextGame(game, (msg) => msg.type === 'registered', 100);
+    sendRawGame(game, {
+      type: 'identify',
+      session_id: sessionBytes('old-discriminator'),
+      busy: false,
+    });
+    sendRawGame(game, { t: 'identify', si: sessionBytes('old-tag'), b: false });
+    await assert.rejects(noVerboseRegistration, /timed out/);
+
+    sendGame(game, {
+      type: 'identify',
+      session_id: sessionBytes('compact-after-old'),
+      busy: false,
+    });
+    await nextGame(game, (msg) => msg.type === 'registered');
+    await closeWs(game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('every fixed game-wire key and tag is at most two UTF-8 bytes', () => {
+  const id = Buffer.alloc(16);
+  const frames = [
+    compactGameInbound({ type: 'identify', session_id: id, busy: false }),
+    compactGameInbound({ type: 'set_busy', busy: true }),
+    compactGameInbound({ type: 'relay', to: id, payload: Buffer.from('x') }),
+    compactGameInbound({ type: 'close' }),
+    compactGameInbound({ type: 'keepalive' }),
+    { t: 'R', f: id, a: 'Alias', p: Buffer.from('x') },
+    { t: 'K' },
+    { t: 'RG', pi: id },
+    { t: 'AS', pi: id, pa: 'Alias', ma: 1n, ta: 2n, ct: 3n, ut: 4n },
+    { t: 'DF', to: id },
+    { t: 'AU', a: 'Alias' },
+    { t: 'PA', pi: id },
+    { t: 'PU', pi: id },
+    { t: 'HA' },
+    { t: 'CD' },
+  ];
+  frames.forEach(assertCompactFixedWireText);
+});
+
+test('hub emits the compact game keepalive semantically', async () => {
+  const hub = await startHub();
+  try {
+    const game = await openWs(hub.origin, '/ws/game');
+    assert.equal(
+      (await nextGame(game, (msg) => msg.type === 'keepalive', 16_000)).type,
+      'keepalive',
+    );
     await closeWs(game);
   } finally {
     await hub.stop();
@@ -652,9 +825,9 @@ test('game relay dictionaries are limited by their encoded byte budget', async (
     const ws = await openWs(hub.origin, '/ws/game');
     const closed = nextClose(ws);
     const frame = encodeBencodex({
-      type: 'relay',
+      t: 'R',
       to: Buffer.alloc(16),
-      payload: Buffer.alloc(40),
+      p: Buffer.alloc(40),
     });
 
     ws.send(frame);
@@ -720,7 +893,7 @@ test('closing a stale replaced game socket does not notify correspondents', asyn
 
     const unavailablePlayers = [];
     const recordUnavailable = (raw) => {
-      const msg = plainBencodex(decodeBencodex(raw));
+      const msg = descriptiveGameOutbound(raw);
       if (msg.type === 'peer_unavailable') unavailablePlayers.push(msg.player_id);
     };
     sender.game.on('message', recordUnavailable);
@@ -866,7 +1039,7 @@ test('default game byte budget relays a maximum-size protocol message', async ()
       payload,
     });
 
-    const received = plainBencodex(decodeBencodex(await relayed));
+    const received = descriptiveGameOutbound(await relayed);
     assert.equal(received.type, 'relay');
     assert.deepEqual(received.from, playerBytes(sender.playerId));
     assert.equal(received.payload.byteLength, payload.byteLength);
