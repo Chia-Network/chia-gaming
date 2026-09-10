@@ -38,7 +38,6 @@ import {
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
-  assertVaultMessagesPaired,
 } from './cloudWalletHelpers';
 
 export {
@@ -47,7 +46,6 @@ export {
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
-  assertVaultMessagesPaired,
 } from './cloudWalletHelpers';
 
 const APPROVE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -592,7 +590,6 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         'Cloud Wallet signature request is signed but returned no coinSpends. Vault-less wallets may need a Cloud Wallet API fix.',
       );
     }
-    assertVaultMessagesPaired(coinSpends);
 
     // Use the vault's real aggregated signature from the signed request. Without it the wasm cradle
     // rejects the bundle (StrErr("bad aggsig length")) and the funding spend would be invalid; the

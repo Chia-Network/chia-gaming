@@ -80,7 +80,6 @@ import {
 } from '../../hooks/cloudWalletConfig';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import {
-  assertVaultMessagesPaired,
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
@@ -659,30 +658,6 @@ describe('CloudBlockchainInterface helpers', () => {
       opcode: '87',
       args: ['4671865'],
     });
-  });
-
-  it('assertVaultMessagesPaired rejects SEND_MESSAGE without RECEIVE_MESSAGE', () => {
-    expect(() =>
-      assertVaultMessagesPaired([
-        { solution: 'ffff01ffff3dffa0' + '11'.repeat(32) + '80' },
-        { solution: 'ffff42ff17ffa0' + '22'.repeat(32) + '80' },
-      ]),
-    ).toThrow(/SEND_MESSAGE without RECEIVE_MESSAGE/);
-  });
-
-  it('assertVaultMessagesPaired allows a paired vault spend', () => {
-    expect(() =>
-      assertVaultMessagesPaired([
-        { solution: 'ffff43ff17ffa0' + '11'.repeat(32) + '80' },
-        { solution: 'ffff42ff17ffa0' + '22'.repeat(32) + '80' },
-      ]),
-    ).not.toThrow();
-  });
-
-  it('assertVaultMessagesPaired allows a non-vault spend', () => {
-    expect(() =>
-      assertVaultMessagesPaired([{ solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' }]),
-    ).not.toThrow();
   });
 
   it('jsonSafeVariables converts bigint recursively', () => {

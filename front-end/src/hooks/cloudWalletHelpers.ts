@@ -69,27 +69,6 @@ export function conditionsForGraphql(
   return out;
 }
 
-const SEND_MESSAGE_IN_SOLUTION = /ff42ff/i;
-const RECEIVE_MESSAGE_IN_SOLUTION = /ff43ff/i;
-
-/**
- * Vault spends emit SEND_MESSAGE (66) on the custody singleton and must pair it
- * with RECEIVE_MESSAGE (67) on the inner p2. Extra conditions that *replace*
- * the inner list drop that receive, and the full node rejects the bundle with
- * MESSAGE_NOT_SENT_OR_RECEIVED. Scan solutions only: puzzle reveals quote the
- * opcodes in program code even when the spend is unpaired.
- */
-export function assertVaultMessagesPaired(coinSpends: Array<{ solution?: unknown }>): void {
-  const solutions = coinSpends.map((cs) => normalizeHex(cs.solution));
-  const hasSend = solutions.some((s) => SEND_MESSAGE_IN_SOLUTION.test(s));
-  const hasReceive = solutions.some((s) => RECEIVE_MESSAGE_IN_SOLUTION.test(s));
-  if (hasSend && !hasReceive) {
-    throw new Error(
-      'Cloud Wallet signed bundle has SEND_MESSAGE without RECEIVE_MESSAGE. Extra conditions likely replaced vault message pairing; the full node would reject this spend (MESSAGE_NOT_SENT_OR_RECEIVED).',
-    );
-  }
-}
-
 export function selectCoinStringForAmount(
   coins: Array<{
     name?: string;
