@@ -32,6 +32,7 @@ import {
   saveCloudWalletAuth,
   type CloudWalletAuthState,
 } from './cloudWalletAuth';
+import { getDefaultFee, setDefaultFee } from './save';
 import {
   absAmountFromOffer,
   coinSpendsToWalletBundle,
@@ -79,6 +80,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       throw new Error('Cloud Wallet walletId is not set');
     }
     return this.auth.walletId;
+  }
+
+  /**
+   * Fee applied to the Cloud Wallet funding spend, in mojos. Read from the
+   * global preference at call time: this interface is a module-level singleton,
+   * so caching would miss later edits from the Wallet tab or connect modal.
+   */
+  private getFee(): bigint {
+    return getDefaultFee();
   }
 
   private async gql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
@@ -196,6 +206,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
     const walletId = this.requireWalletId();
+    // The funding spend pins this coin via coinIds, and the Cloud Wallet API
+    // rejects pinned coins whose total is below amount + fee (it supplements
+    // only the unpinned path). Pick a coin large enough to also cover the fee.
+    const requiredAmount = amount + this.getFee();
     const data = await this.gql<{
       coins: {
         edges: Array<{
@@ -236,12 +250,14 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         puzzleHash: normalizeHexString(r.coin.puzzleHash),
         amount: r.coin.amount,
       }));
-    const coinString = selectCoinStringForAmount(unspent, amount);
+    const coinString = selectCoinStringForAmount(unspent, requiredAmount);
     if (!coinString) {
-      log(`[cloud-blockchain] selectCoins: no coin >= ${amount}`);
+      log(`[cloud-blockchain] selectCoins: no coin >= ${requiredAmount}`);
       return null;
     }
-    log(`[cloud-blockchain] selectCoins amount=${amount} coinStringLen=${coinString.length}`);
+    log(
+      `[cloud-blockchain] selectCoins amount=${amount} fee=${this.getFee()} required=${requiredAmount} coinStringLen=${coinString.length}`,
+    );
     return coinString;
   }
 
@@ -521,9 +537,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const walletId = this.requireWalletId();
     const amount = absAmountFromOffer(offer);
     const conditions = conditionsForGraphql(extraConditions, maxHeight);
+    const fee = this.getFee();
 
     log(
-      `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} conditions=${jsonStringify(conditions)}`,
+      `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} fee=${fee} conditions=${jsonStringify(conditions)}`,
     );
 
     const created = await this.gql<{
@@ -540,6 +557,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         input: {
           walletId,
           amount,
+          fee: fee > 0n ? fee : undefined,
           coinIds: coinIds?.map((id) => normalizeHex(id)),
           extraConditions: conditions.length ? conditions : undefined,
           autoSubmit: false,
@@ -659,6 +677,11 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           label: 'Cloud Wallet UI URL',
           default: getCloudWalletUiUrl(),
         },
+        fee: {
+          type: 'bigint',
+          label: 'Transaction fee (mojos)',
+          default: getDefaultFee(),
+        },
       },
       finalize: async (values?: Record<string, string | bigint>) => {
         const clientId = String(values?.clientId ?? getCloudWalletClientId()).trim();
@@ -666,6 +689,14 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         const uiUrl = String(values?.uiUrl ?? getCloudWalletUiUrl()).trim();
         if (!clientId) {
           throw new Error('Cloud Wallet OAuth client ID is required');
+        }
+        const feeValue = values?.fee;
+        if (feeValue !== undefined) {
+          const fee = typeof feeValue === 'bigint' ? feeValue : BigInt(feeValue);
+          if (fee < 0n) {
+            throw new Error('Transaction fee must be zero or positive');
+          }
+          setDefaultFee(fee);
         }
         saveCloudWalletConfig({ clientId, apiUrl, uiUrl });
 

@@ -1135,12 +1135,23 @@ Shell manages wallet connections through two abstractions defined in
   each `{ type: 'string' | 'bigint', label, default }`) indicating the backend
   needs extra user input before connecting, plus an optional `title`/
   `description` for the setup modal. Examples: the simulator's initial balance
-  (`bigint`), and Cloud Wallet's OAuth `clientId` / API URL / UI URL (`string`).
-  Cloud Wallet sets `skipQr: true` and completes OAuth inside `finalize()` after
-  persisting the entered config via `cloudWalletConfig.ts` (kept separate from
-  the OAuth tokens in `cloudWalletAuth.ts`). All OAuth/GraphQL calls resolve the
-  client id and endpoints at call time through `getCloudWallet*` getters, so
-  UI-entered config takes effect without a rebuild.
+  (`bigint`), and Cloud Wallet's OAuth `clientId` / API URL / UI URL (`string`)
+  plus a transaction fee (`bigint`, in mojos). Cloud Wallet sets `skipQr: true`
+  and completes OAuth inside `finalize()` after persisting the entered config via
+  `cloudWalletConfig.ts` (kept separate from the OAuth tokens in
+  `cloudWalletAuth.ts`). The fee field is not part of `cloudWalletConfig`: it
+  writes through to the global `defaultFee` preference (`setDefaultFee`), the
+  same value the Wallet tab edits, so `CloudBlockchainInterface.getFee()` reads
+  one source of truth. All OAuth/GraphQL calls resolve the client id and
+  endpoints at call time through `getCloudWallet*` getters, so UI-entered config
+  takes effect without a rebuild.
+
+  Cloud Wallet carries the fee inside the funding spend itself: `createOfferForIds`
+  passes `fee` to the `createSpendWithExtraConditions` mutation (which adds
+  `RESERVE_FEE` and selects coins for `amount + fee`), and `selectCoins` requests
+  `amount + fee` so the pinned launcher-parent coin can cover both. It therefore
+  implements no `createFeeSpend`; `submitTransactionNow` skips the separate fee
+  spend for backends lacking that method and broadcasts with no fee parameter.
 
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single

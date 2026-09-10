@@ -2377,6 +2377,9 @@ const Shell = () => {
       try {
         await connectionSetup.finalize(values);
         log(`[Shell] handleFinalize: finalize complete`);
+        // A fee entered in the connect modal is persisted globally by finalize;
+        // resync local state so the Wallet-tab editor reflects it.
+        setDefaultFee(getDefaultFee());
         setShowConnectionSetupModal(false);
         completeConnection(iface, blockchainType, pollMs, { switchToHub: true });
       } catch (err) {
