@@ -1437,6 +1437,25 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()
     }
 
+    /// Aggregate several coinset.org-shaped spend bundles into one.  Coin spends
+    /// are concatenated and the BLS aggregate signatures are summed (BLS
+    /// aggregation is point addition), so passing our pre-signed protocol bundle
+    /// together with a separately-signed wallet fee spend yields a single bundle
+    /// whose aggregate signature covers both.  Input is a JSON array of
+    /// `CoinsetSpendBundle`.
+    #[wasm_bindgen]
+    pub fn aggregate_coinset_spend_bundles(bundles_json: &str) -> Result<JsValue, JsValue> {
+        let bundles = serde_json::from_str::<Vec<CoinsetSpendBundle>>(bundles_json)
+            .map_err(|e| JsValue::from_str(&format!("bad spend bundle json: {e}")))?;
+        let mut spends = Vec::new();
+        for bundle in bundles.iter() {
+            let converted = coinset_spend_bundle_to_spend_bundle(bundle).into_js()?;
+            spends.extend(converted.spends);
+        }
+        let merged = SpendBundle { name: None, spends };
+        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&merged)?).into_js()
+    }
+
     #[wasm_bindgen]
     pub fn convert_coinset_to_coin_string(
         parent_coin_info: &str,

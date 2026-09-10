@@ -91,9 +91,9 @@ means session obligation, walletless (`shouldReportHubBusy`), or that the active
 blockchain backend is not yet ready for play (`blockchainReady === false`, folded
 into `shouldReportHubBusy` / `shouldReportHubBusyPresence`). Readiness is owned by
 the backend behind `InternalBlockchainInterface.isReadyForPlay()` /
-`onPlayReadinessChange()`: the simulator is ready whenever connected, while
-WalletConnect polls privately for a verified full-node peer (peer count never
-leaves the backend). The app still connects to the hub normally while a backend
+`onPlayReadinessChange()`: the simulator and Cloud Wallet are ready whenever
+connected, while WalletConnect polls privately for a verified full-node peer
+(peer count never leaves the backend). The app still connects to the hub normally while a backend
 is not ready; it just advertises busy. Shell mirrors the backend's readiness into
 `blockchainReadyRef` via `onPlayReadinessChange`, and a wallet disconnect clears
 it (the backend can no longer vouch for readiness). The `HubConnection` uses a
@@ -394,7 +394,7 @@ are grouped under those phase-owned payloads:
 | `unreadGame`                    | `boolean?`                                                                                                 | Whether the Game tab has unread activity.                                                                                                                                                                                                                                                                       |
 | `walletAlert`                   | `boolean?`                                                                                                 | Whether the Wallet tab should show an alert dot.                                                                                                                                                                                                                                                                |
 | `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
-| `blockchainType`                | `'simulator' \| 'walletconnect'?`                                                                          | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
+| `blockchainType`                | `'simulator' \| 'walletconnect' \| 'cloud'?`                                                               | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
 | `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `7`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
 | `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
@@ -1115,13 +1115,31 @@ Shell manages wallet connections through two abstractions defined in
 
 - **`InternalBlockchainInterface`** — the backend-specific implementation
   (`RealBlockchainInterface` for WalletConnect, `FakeBlockchainInterface` for
-  the simulator). Each exposes `beginConnect()`, `disconnect()`,
-  `isConnected()`, `spend()`, etc.
+  the simulator, `CloudBlockchainInterface` for Cloud Wallet OAuth). Each
+  exposes `beginConnect()`, `disconnect()`, `isConnected()`, `spend()`, etc.
 - **`ConnectionSetup`** — returned by `beginConnect()`. Contains a `uri` for
-  the QR code and a `finalize()` promise that resolves when the wallet is
-  paired. Optionally contains `fields` (a map of input descriptors) indicating
-  the backend needs extra user input before connecting (e.g. the simulator's
-  initial balance).
+  the QR code and a `finalize(values?)` promise that resolves when the wallet is
+  paired. Optionally contains `fields` (a `Record` of typed input descriptors,
+  each `{ type: 'string' | 'bigint', label, default }`) indicating the backend
+  needs extra user input before connecting, plus an optional `title`/
+  `description` for the setup modal. Examples: the simulator's initial balance
+  (`bigint`), and Cloud Wallet's OAuth `clientId` / API URL / UI URL (`string`)
+  plus a transaction fee (`bigint`, in mojos). Cloud Wallet sets `skipQr: true`
+  and completes OAuth inside `finalize()` after persisting the entered config via
+  `cloudWalletConfig.ts` (kept separate from the OAuth tokens in
+  `cloudWalletAuth.ts`). The fee field is not part of `cloudWalletConfig`: it
+  writes through to the global `defaultFee` preference (`setDefaultFee`), the
+  same value the Wallet tab edits, so `CloudBlockchainInterface.getFee()` reads
+  one source of truth. All OAuth/GraphQL calls resolve the client id and
+  endpoints at call time through `getCloudWallet*` getters, so UI-entered config
+  takes effect without a rebuild.
+
+  Cloud Wallet carries the fee inside the funding spend itself: `createOfferForIds`
+  passes `fee` to the `createSpendWithExtraConditions` mutation (which adds
+  `RESERVE_FEE` and selects coins for `amount + fee`), and `selectCoins` requests
+  `amount + fee` so the pinned launcher-parent coin can cover both. It therefore
+  implements no `createFeeSpend`; `submitTransactionNow` skips the separate fee
+  spend for backends lacking that method and broadcasts with no fee parameter.
 
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single
@@ -1130,16 +1148,34 @@ and poll interval; the rest of the flow is generic.
 
 **Connection lifecycle:**
 
-1. User picks "Simulator" or "Link Wallet" → `handleConnect(bcType)`.
+1. User picks "Simulator", "Link Wallet", or "Cloud Wallet" →
+   `handleConnect(bcType)`.
 2. `handleConnect` calls `iface.beginConnect(uniqueId)`, which returns a
    `ConnectionSetup`.
-3. If `setup.fields` is present, Shell shows the `SimulatorSetupModal` overlay
-   so the user can provide the required values, then `handleFinalize()` calls
-   `setup.finalize()`.
-4. If `setup.fields` is absent (WalletConnect), Shell renders the QR code and
-   immediately awaits `setup.finalize()`, which resolves when the wallet scans.
-5. After finalize resolves, `completeConnection()` activates polling and
-   switches to the Hub tab.
+3. If `setup.fields` is present, Shell shows the generic `ConnectionSetupModal`
+   overlay so the user can provide the required values, then `handleFinalize(values)`
+   calls `setup.finalize(values)`. This path is used by both the simulator and
+   Cloud Wallet (the latter is `skipQr` yet still collects OAuth config first).
+4. If `setup.skipQr` is set with no fields (a restored WC/Cloud session), Shell
+   awaits `setup.finalize()` without showing a QR panel or modal. A failed
+   restore discards the stored Cloud Wallet tokens only for
+   `CloudWalletAuthError` — a revoked or expired grant, signalled by an
+   `invalid_grant`/`invalid_client` token response or a 401 that survives a
+   forced refresh. Network and server errors leave the refresh token in place so
+   a retry can resume, rather than demoting a momentary outage into a full popup
+   login.
+5. If `setup.skipQr` is set *with* fields (Cloud Wallet, no stored auth), Shell
+   shows `ConnectionSetupModal` and does **not** call `finalize()` from silent
+   `handleConnect` or `performResume`. Auto-finalize would open an OAuth popup
+   or fail when no client id is configured; the user must submit the form (or
+   use an explicit Reconnect).
+6. If `setup.fields` is absent and QR is required (WalletConnect pairing), Shell
+   renders the QR code and awaits `setup.finalize()`, which resolves when the
+   wallet scans.
+7. After finalize resolves, `completeConnection()` activates polling and
+   switches to the Hub tab. Connect/finalize failures are surfaced on the Choose
+   Connection screen and inside the setup modal via `connectError`, rather than
+   silently resetting the chooser.
 
 **Auto-reconnect:** Both backends implement their own WebSocket reconnect
 following the shared connection discipline described in
@@ -1148,8 +1184,12 @@ Shell's `onConnectionChange` callback handles UI state
 transitions (connected ↔ disconnected) generically. On page load, if the
 user chooses to resume a pre-game save (one with `blockchainType` but no
 `serializedGameSession`), Shell calls `handleConnect(bcType, true)` (silent mode)
-to re-establish the connection automatically — no modals or QR codes are shown,
-consistent with the principle that a reload should be invisible to the user.
+to re-establish the connection automatically — no QR codes are shown, and the
+simulator balance modal is skipped, consistent with the principle that a reload
+should be invisible to the user. Cloud Wallet without stored auth is the
+exception: `beginConnect` returns `skipQr` plus `fields`, so silent reconnect
+and `performResume` keep `ConnectionSetupModal` (with a wallet alert) rather
+than calling `finalize()` with no values.
 
 **Session persistence:** `blockchainType` is written via
 `saveSession({ blockchainType })` as soon as the wallet connection completes,

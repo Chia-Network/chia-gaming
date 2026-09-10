@@ -237,7 +237,8 @@ export function validateCommonFields(save: SessionSave): void {
   if (
     save.preferences.blockchainType !== undefined &&
     save.preferences.blockchainType !== 'simulator' &&
-    save.preferences.blockchainType !== 'walletconnect'
+    save.preferences.blockchainType !== 'walletconnect' &&
+    save.preferences.blockchainType !== 'cloud'
   ) {
     throw new Error('Garbled save: invalid blockchainType');
   }

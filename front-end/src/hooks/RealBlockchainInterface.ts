@@ -16,7 +16,12 @@ import {
   toHexString,
 } from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
-import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
+import {
+  CoinsetCoin,
+  CoinsetCoinSpend,
+  TransactionRecord,
+  WalletSpendBundle,
+} from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 import { clearWalletConnectStorage } from './save';
 import { jsonStringify } from '../util/jsonSafe';
@@ -39,16 +44,19 @@ function remoteWalletStorageKey(fingerprint: string): string {
 
 function loadCachedChangeAddress(fingerprint: string): string | null {
   try {
-    const puzzleHash = localStorage.getItem(changeAddressStorageKey(fingerprint));
-    return puzzleHash && /^[0-9a-f]{64}$/i.test(puzzleHash) ? puzzleHash.toLowerCase() : null;
+    const address = localStorage.getItem(changeAddressStorageKey(fingerprint));
+    // Keep the full bech32m address (with its network HRP), not just the puzzle
+    // hash: the fee spend re-uses it verbatim. Validate it still decodes to a
+    // 32-byte puzzle hash so stale/foreign values are treated as a cache miss.
+    return address && decodeBech32mPuzzleHash(address) ? address : null;
   } catch {
     return null;
   }
 }
 
-function saveCachedChangeAddress(fingerprint: string, puzzleHash: string): void {
+function saveCachedChangeAddress(fingerprint: string, address: string): void {
   try {
-    localStorage.setItem(changeAddressStorageKey(fingerprint), puzzleHash.toLowerCase());
+    localStorage.setItem(changeAddressStorageKey(fingerprint), address);
   } catch {
     // Best-effort cache; a miss only means we ask the wallet again.
   }
@@ -210,6 +218,63 @@ async function rootRemovalsFromSpendBundle(spendBundle: WalletSpendBundle): Prom
   );
 }
 
+function firstDefined<T>(source: Record<string, unknown>, ...keys: string[]): T | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null) return value as T;
+  }
+  return undefined;
+}
+
+// The wallet returns spend bundles over WalletConnect in camelCase
+// (`spendBundle`, `coinSpends`, `coin.parentCoinInfo`, `aggregatedSignature`),
+// but the WASM aggregator and our removal derivation both consume the coinset
+// snake_case shape. Normalize the wallet's bundle into that canonical shape once
+// here, accepting either casing, so nothing downstream has to care.
+function normalizeWalletSpendBundle(raw: unknown): WalletSpendBundle | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const bundle = raw as Record<string, unknown>;
+  const coinSpendsRaw = firstDefined<unknown[]>(bundle, 'coin_spends', 'coinSpends');
+  const aggregatedSignature = firstDefined<string>(
+    bundle,
+    'aggregated_signature',
+    'aggregatedSignature',
+  );
+  if (!Array.isArray(coinSpendsRaw) || typeof aggregatedSignature !== 'string') return null;
+
+  const coinSpends: CoinsetCoinSpend[] = [];
+  for (const entry of coinSpendsRaw) {
+    if (entry === null || typeof entry !== 'object') return null;
+    const cs = entry as Record<string, unknown>;
+    const coinRaw = cs.coin as Record<string, unknown> | undefined;
+    if (coinRaw === null || typeof coinRaw !== 'object') return null;
+    const parentCoinInfo = firstDefined<string>(coinRaw!, 'parent_coin_info', 'parentCoinInfo');
+    const puzzleHash = firstDefined<string>(coinRaw!, 'puzzle_hash', 'puzzleHash');
+    const amount = coinRaw!.amount;
+    const puzzleReveal = firstDefined<string>(cs, 'puzzle_reveal', 'puzzleReveal');
+    const solution = cs.solution as string | undefined;
+    if (
+      typeof parentCoinInfo !== 'string' ||
+      typeof puzzleHash !== 'string' ||
+      (typeof amount !== 'bigint' && typeof amount !== 'number') ||
+      typeof puzzleReveal !== 'string' ||
+      typeof solution !== 'string'
+    ) {
+      return null;
+    }
+    coinSpends.push({
+      coin: {
+        parent_coin_info: parentCoinInfo,
+        puzzle_hash: puzzleHash,
+        amount: typeof amount === 'bigint' ? amount : BigInt(amount),
+      },
+      puzzle_reveal: puzzleReveal,
+      solution,
+    });
+  }
+  return { coin_spends: coinSpends, aggregated_signature: aggregatedSignature };
+}
+
 export class RealBlockchainInterface implements InternalBlockchainInterface {
   readonly requestGapMs = WC_INTER_REQUEST_MS;
   blockchainAddressData: BlockchainInboundAddressResult;
@@ -225,7 +290,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private peerPollTimer: ReturnType<typeof setTimeout> | null = null;
   private peerPollEpoch = 0;
   private wcSubscription: { unsubscribe: () => void } | null = null;
-  private pendingLocalRemovalsForNextPush: CoinsetCoin[] = [];
   private monitoringReady = false;
   private monitoringPromise: Promise<void> | null = null;
   private monitoringEpoch = 0;
@@ -256,19 +320,19 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('no fingerprint set in walletconnect');
       }
 
-      let puzzleHash = loadCachedChangeAddress(fingerprint);
-      if (!puzzleHash) {
-        const addr = await rpc.getNextAddress({ walletId: 1n, newAddress: true });
-        puzzleHash = decodeBech32mPuzzleHash(addr);
-        if (!puzzleHash) {
-          throw new Error(`failed to decode change address: ${addr}`);
-        }
-        saveCachedChangeAddress(fingerprint, puzzleHash);
-        log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
+      let address = loadCachedChangeAddress(fingerprint);
+      if (address) {
+        log(`[wc-blockchain] address restored from cache → ${address}`);
       } else {
-        log(`[wc-blockchain] address restored from cache → ${puzzleHash}`);
+        address = await rpc.getNextAddress({ walletId: 1n, newAddress: true });
+        saveCachedChangeAddress(fingerprint, address);
+        log(`[wc-blockchain] address resolved: ${address}`);
       }
-      this.blockchainAddressData = { puzzleHash };
+      const puzzleHash = decodeBech32mPuzzleHash(address);
+      if (!puzzleHash) {
+        throw new Error(`failed to decode change address: ${address}`);
+      }
+      this.blockchainAddressData = { puzzleHash, address };
       this.ensureRemoteWallet(fingerprint);
       await this.waitForRemoteWallet(epoch);
       if (epoch !== this.monitoringEpoch || !walletConnectState.getSession()) {
@@ -346,25 +410,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     log(`[wc-blockchain] pushTransactions submitting #${seq} from=${src} fee=${feeValue}`);
 
     try {
-      const submittedRootRemovals = await rootRemovalsFromSpendBundle(
-        spendBundle as WalletSpendBundle,
-      );
-      const submittedRootIds = new Set<string>();
-      for (const coin of submittedRootRemovals) {
-        submittedRootIds.add(await coinIdFromBytes(toUint8(coinStringFromCoinsetCoin(coin))));
-      }
-      const removals: CoinsetCoin[] = [];
-      for (const coin of this.pendingLocalRemovalsForNextPush) {
-        const coinId = await coinIdFromBytes(toUint8(coinStringFromCoinsetCoin(coin)));
-        if (submittedRootIds.has(coinId)) {
-          removals.push(coin);
-        }
-      }
-      if (feeValue !== 0n && removals.length === 0) {
-        throw new Error(
-          'nonzero wallet fee requires local removal metadata for chia_pushTransactions',
-        );
-      }
+      // Removals are the non-ephemeral coins this (possibly fee-aggregated)
+      // bundle spends. The wallet persists them on the pending TransactionRecord
+      // and excludes them from coin selection, which stops the next submission
+      // from reusing an as-yet-unconfirmed fee coin. The fee-paying spend is
+      // already aggregated into spendBundle, so chia_pushTransactions must NOT
+      // add its own fee; `fee` here only populates fee_amount for wallet display.
+      const removals = await rootRemovalsFromSpendBundle(spendBundle as WalletSpendBundle);
       const txRecord = await this.buildTransactionRecord(
         spendBundle as WalletSpendBundle,
         feeValue,
@@ -375,10 +427,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         transactions: [txRecord],
         push: true,
         sign: false,
-        fee: feeValue || undefined,
         allowUnsynced: true,
       });
-      this.pendingLocalRemovalsForNextPush = [];
       log(
         `[wc-blockchain] pushTransactions submitted #${seq} removals=${removals.length} result=${jsonStringify(result)}`,
       );
@@ -399,11 +449,57 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async rememberLocalRemovals(spendBundle: unknown): Promise<void> {
-    const removals = await rootRemovalsFromSpendBundle(spendBundle as WalletSpendBundle);
-    if (removals.length === 0) return;
-    this.pendingLocalRemovalsForNextPush = removals;
-    log(`[wc-blockchain] remembered local removals count=${removals.length}`);
+  async createFeeSpend(
+    fee: bigint,
+    concurrentSpendCoinId: string,
+  ): Promise<WalletSpendBundle | null> {
+    if (fee <= 0n) return null;
+    const { puzzleHash: changePuzzleHash, address: changeAddress } = this.blockchainAddressData;
+    if (!changePuzzleHash || !changeAddress) {
+      log('[wc-blockchain] createFeeSpend skipped: no change address yet');
+      return null;
+    }
+    const coinId = concurrentSpendCoinId.startsWith('0x')
+      ? concurrentSpendCoinId
+      : `0x${normalizeHexString(concurrentSpendCoinId)}`;
+    try {
+      // push=false so the wallet signs the fee spend (auto_sign_txs) but does
+      // not broadcast it. We aggregate it into the protocol bundle ourselves and
+      // push the combined bundle. ASSERT_CONCURRENT_SPEND binds this fee spend to
+      // a coin our protocol bundle spends, so it can never be mined on its own.
+      // Use the wallet's own address string verbatim: send_transaction validates
+      // the address HRP against its network, so a re-encoded mainnet (xch) prefix
+      // would be rejected on testnet (txch), unlike the inert to_address on push.
+      const response = await rpc.sendTransaction({
+        walletId: 1n,
+        amount: 1n,
+        address: changeAddress,
+        fee,
+        push: false,
+        allowUnsynced: true,
+        extraConditions: [{ opcode: 64n, args: { coin_id: coinId } }],
+      });
+      const record =
+        (response as any)?.transactions?.[0] ?? (response as any)?.transaction ?? undefined;
+      // The wallet returns camelCase over WalletConnect; normalize into the
+      // canonical snake_case coinset shape the aggregator and removal code use.
+      const rawBundle = record?.spendBundle ?? record?.spend_bundle;
+      const spendBundle = normalizeWalletSpendBundle(rawBundle);
+      if (!spendBundle) {
+        throw new Error('wallet returned no signed spend bundle for the fee');
+      }
+      log(
+        `[wc-blockchain] createFeeSpend ok fee=${fee} bind=${coinId} coinSpends=${spendBundle.coin_spends.length}`,
+      );
+      return spendBundle;
+    } catch (e) {
+      // Propagate the real reason (RPC error, missing signed bundle) so the
+      // caller's user-facing warning is accurate rather than always blaming
+      // insufficient balance.
+      const text = collectErrorText(e);
+      log(`[wc-blockchain] createFeeSpend failed: ${text}`);
+      throw e instanceof Error ? e : new Error(text);
+    }
   }
 
   async getBalance(): Promise<bigint> {
