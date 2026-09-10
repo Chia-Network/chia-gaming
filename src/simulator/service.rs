@@ -87,7 +87,7 @@ struct WsRequest {
     params: Value,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct WsResponse {
     id: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -775,6 +775,8 @@ fn serialize_ws_response(resp: &WsResponse) -> String {
 }
 
 struct DispatchResult {
+    request_id: Option<u64>,
+    method: Option<String>,
     response: String,
     extra_messages: Vec<String>,
 }
@@ -830,6 +832,8 @@ fn dispatch_ws_request(
                 error: Some(format!("invalid request JSON: {e}")),
             };
             return DispatchResult {
+                request_id: None,
+                method: None,
                 response: serialize_ws_response(&resp),
                 extra_messages: vec![],
             };
@@ -970,6 +974,8 @@ fn dispatch_ws_request(
     };
 
     DispatchResult {
+        request_id: Some(req.id),
+        method: Some(req.method),
         response: serialize_ws_response(&resp),
         extra_messages,
     }
@@ -1219,6 +1225,15 @@ fn run_game_actor(
                 messages.push(dispatch.response);
                 messages.extend(dispatch.extra_messages);
                 let send_result = queue_actor_messages(connection_id, client, messages);
+                if dispatch.method.as_deref() == Some("register") {
+                    sim_log(&format!(
+                        "DBG_SIM_RPC actor enqueue method=register connection_id={connection_id} id={} result={}",
+                        dispatch
+                            .request_id
+                            .map_or_else(|| "?".to_string(), |id| id.to_string()),
+                        if send_result.is_ok() { "ok" } else { "error" }
+                    ));
+                }
                 if send_result.is_err() {
                     clients.remove(&connection_id);
                 }
@@ -1498,11 +1513,22 @@ async fn handle_connection(
         close_websocket(&mut websocket).await;
         return;
     }
+    let mut diagnostic_register_ids = HashSet::new();
     let (reason, peer_closed) = loop {
         tokio::select! {
             incoming = websocket.next() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
+                        if let Ok(request) = serde_json::from_str::<WsRequest>(&text) {
+                            if request.method == "register" {
+                                diagnostic_register_ids.insert(request.id);
+                                sim_log(&format!(
+                                    "DBG_SIM_RPC server receive method=register connection_id={connection_id} id={} name={}",
+                                    request.id,
+                                    request.params["name"].as_str().unwrap_or("?")
+                                ));
+                            }
+                        }
                         let request_result = tokio::select! {
                             result = actor.request(
                                 connection_id,
@@ -1543,8 +1569,26 @@ async fn handle_connection(
                 let Some(message) = outbound else {
                     break ("actor_outbound_closed".to_string(), false);
                 };
+                let diagnostic_response_id = match &message {
+                    Message::Text(text) => serde_json::from_str::<WsResponse>(text)
+                        .ok()
+                        .map(|response| response.id)
+                        .filter(|id| diagnostic_register_ids.contains(id)),
+                    _ => None,
+                };
+                if let Some(id) = diagnostic_response_id {
+                    sim_log(&format!(
+                        "DBG_SIM_RPC socket write start method=register connection_id={connection_id} id={id}"
+                    ));
+                }
                 if let Err(e) = send_websocket_message(&mut websocket, message).await {
                     break (e, false);
+                }
+                if let Some(id) = diagnostic_response_id {
+                    diagnostic_register_ids.remove(&id);
+                    sim_log(&format!(
+                        "DBG_SIM_RPC socket write done method=register connection_id={connection_id} id={id}"
+                    ));
                 }
             }
             _ = wait_for_shutdown(&mut actor_disconnected) => {

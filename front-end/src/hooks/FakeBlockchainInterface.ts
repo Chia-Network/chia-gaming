@@ -28,7 +28,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private ws: any | null = null;
   private wsUrl: string;
   private nextId = 0;
-  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+  private pending = new Map<
+    number,
+    { method: string; resolve: (v: any) => void; reject: (e: any) => void }
+  >();
   private token = '';
   private uniqueId = '';
   private initialBalance: bigint | undefined;
@@ -143,12 +146,25 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           const id = Number(data.id);
           const p = this.pending.get(id);
           if (p) {
+            if (p.method === 'register') {
+              console.warn(
+                `[DBG_SIM_RPC] client receive method=register id=${id} pending=${[
+                  ...this.pending.keys(),
+                ].join(',')}`,
+              );
+            }
             this.pending.delete(id);
             if (data.error) {
               p.reject(new Error(data.error));
             } else {
               p.resolve(data.result);
             }
+          } else {
+            console.warn(
+              `[DBG_SIM_RPC] client unmatched response id=${id} pending=${[
+                ...this.pending.keys(),
+              ].join(',')}`,
+            );
           }
         }
       };
@@ -222,7 +238,14 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     const id = this.nextId++;
     const msg = jsonStringify({ id, method, params: params ?? {} });
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { method, resolve, reject });
+      if (method === 'register') {
+        console.warn(
+          `[DBG_SIM_RPC] client send method=register id=${id} name=${String(
+            params?.name ?? '',
+          )} pending=${[...this.pending.keys()].join(',')}`,
+        );
+      }
       this.ws!.send(msg);
     });
   }
