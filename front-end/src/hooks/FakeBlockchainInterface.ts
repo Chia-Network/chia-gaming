@@ -247,6 +247,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         );
       }
       this.ws!.send(msg);
+      if (method === 'register') {
+        console.warn(`[DBG_SIM_RPC] client send returned method=register id=${id}`);
+      }
     });
   }
 
