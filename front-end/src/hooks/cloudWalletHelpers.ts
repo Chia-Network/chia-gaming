@@ -16,6 +16,39 @@ export function jsonSafeVariables(value: unknown): unknown {
   return value;
 }
 
+/** Decode a non-negative CLVM integer atom given as hex (empty atom = 0). */
+function decodeNonNegativeClvmIntHex(hex: string): bigint {
+  const clean = hex.trim().toLowerCase().replace(/^0x/, '');
+  if (clean === '') return 0n;
+  const normalized = clean.length % 2 === 0 ? clean : `0${clean}`;
+  const bytes = normalized.match(/.{1,2}/g)?.map((b) => Number.parseInt(b, 16)) ?? [];
+  if (bytes.length === 0) return 0n;
+  if ((bytes[0] & 0x80) !== 0 && bytes[0] !== 0) {
+    throw new Error(`unexpected negative CLVM integer encoding: ${hex}`);
+  }
+  let result = 0n;
+  for (const b of bytes) {
+    result = (result << 8n) + BigInt(b);
+  }
+  return result;
+}
+
+const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
+const CREATE_COIN = 51n;
+
+function graphqlArgsForCondition(opcode: bigint, args: string[]): string[] {
+  const raw = args.map((a) => String(a));
+  // Cloud Wallet GraphQL takes decimal integers, matching WalletConnect's
+  // `{height}` / `{amount}` objects rather than CLVM atom hex.
+  if (opcode === ASSERT_BEFORE_HEIGHT_ABSOLUTE && raw[0] !== undefined) {
+    return [decodeNonNegativeClvmIntHex(raw[0]).toString()];
+  }
+  if (opcode === CREATE_COIN && raw.length >= 2) {
+    return [raw[0], decodeNonNegativeClvmIntHex(raw[1]).toString(), ...raw.slice(2)];
+  }
+  return raw;
+}
+
 export function conditionsForGraphql(
   extraConditions: Array<{ opcode: bigint; args: string[] }> | undefined,
   maxHeight: bigint | undefined,
@@ -24,16 +57,37 @@ export function conditionsForGraphql(
   for (const c of extraConditions ?? []) {
     out.push({
       opcode: c.opcode.toString(),
-      args: (c.args ?? []).map((a) => String(a)),
+      args: graphqlArgsForCondition(c.opcode, c.args ?? []),
     });
   }
   if (maxHeight !== undefined) {
     out.push({
       opcode: '87',
-      args: [encodeU64AsClvmHex(maxHeight)],
+      args: [maxHeight.toString()],
     });
   }
   return out;
+}
+
+const SEND_MESSAGE_IN_SOLUTION = /ff42ff/i;
+const RECEIVE_MESSAGE_IN_SOLUTION = /ff43ff/i;
+
+/**
+ * Vault spends emit SEND_MESSAGE (66) on the custody singleton and must pair it
+ * with RECEIVE_MESSAGE (67) on the inner p2. Extra conditions that *replace*
+ * the inner list drop that receive, and the full node rejects the bundle with
+ * MESSAGE_NOT_SENT_OR_RECEIVED. Scan solutions only: puzzle reveals quote the
+ * opcodes in program code even when the spend is unpaired.
+ */
+export function assertVaultMessagesPaired(coinSpends: Array<{ solution?: unknown }>): void {
+  const solutions = coinSpends.map((cs) => normalizeHex(cs.solution));
+  const hasSend = solutions.some((s) => SEND_MESSAGE_IN_SOLUTION.test(s));
+  const hasReceive = solutions.some((s) => RECEIVE_MESSAGE_IN_SOLUTION.test(s));
+  if (hasSend && !hasReceive) {
+    throw new Error(
+      'Cloud Wallet signed bundle has SEND_MESSAGE without RECEIVE_MESSAGE. Extra conditions likely replaced vault message pairing; the full node would reject this spend (MESSAGE_NOT_SENT_OR_RECEIVED).',
+    );
+  }
 }
 
 export function selectCoinStringForAmount(

@@ -765,6 +765,11 @@ describe('transaction submission', () => {
         'spend rejected: status=[3,5] Coin not found: CoinID(Hash(b))',
       ),
     ).toBe(true);
+    expect(
+      isBenignTransactionSubmitError(
+        'This transaction conflicts with an existing transaction in the mempool.',
+      ),
+    ).toBe(true);
     expect(isBenignTransactionSubmitError('spend rejected: status=[3,99] something else')).toBe(
       false,
     );
@@ -776,6 +781,9 @@ describe('transaction submission', () => {
       )
       .mockRejectedValueOnce(
         new Error('spend rejected: status=[3,5] Coin not found: CoinID(Hash(c))'),
+      )
+      .mockRejectedValueOnce(
+        new Error('This transaction conflicts with an existing transaction in the mempool.'),
       );
     const blockchain = new BlockchainPoller(
       {
@@ -802,7 +810,11 @@ describe('transaction submission', () => {
     });
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() => [testSpendBundle('03'), testSpendBundle('04')]),
+      drain_submissions: jest.fn(() => [
+        testSpendBundle('03'),
+        testSpendBundle('04'),
+        testSpendBundle('05'),
+      ]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -810,7 +822,7 @@ describe('transaction submission', () => {
     blob.processResult(wasmResult());
 
     await transactionSubmitQueue(blob);
-    expect(spend).toHaveBeenCalledTimes(2);
+    expect(spend).toHaveBeenCalledTimes(3);
     expect(errors).toEqual([]);
   });
 });

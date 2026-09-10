@@ -80,6 +80,7 @@ import {
 } from '../../hooks/cloudWalletConfig';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import {
+  assertVaultMessagesPaired,
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
@@ -648,13 +649,40 @@ describe('fetchFirstConsentedWalletId', () => {
 });
 
 describe('CloudBlockchainInterface helpers', () => {
-  it('conditionsForGraphql maps opcodes and maxHeight', () => {
-    const conditions = conditionsForGraphql([{ opcode: 51n, args: ['ph', '64'] }], 100n);
-    expect(conditions[0]).toEqual({ opcode: '51', args: ['ph', '64'] });
+  it('conditionsForGraphql maps opcodes and maxHeight as decimal integers', () => {
+    const conditions = conditionsForGraphql(
+      [{ opcode: 51n, args: ['ph', encodeU64AsClvmHex(100n)] }],
+      4671865n,
+    );
+    expect(conditions[0]).toEqual({ opcode: '51', args: ['ph', '100'] });
     expect(conditions[1]).toEqual({
       opcode: '87',
-      args: [encodeU64AsClvmHex(100n)],
+      args: ['4671865'],
     });
+  });
+
+  it('assertVaultMessagesPaired rejects SEND_MESSAGE without RECEIVE_MESSAGE', () => {
+    expect(() =>
+      assertVaultMessagesPaired([
+        { solution: 'ffff01ffff3dffa0' + '11'.repeat(32) + '80' },
+        { solution: 'ffff42ff17ffa0' + '22'.repeat(32) + '80' },
+      ]),
+    ).toThrow(/SEND_MESSAGE without RECEIVE_MESSAGE/);
+  });
+
+  it('assertVaultMessagesPaired allows a paired vault spend', () => {
+    expect(() =>
+      assertVaultMessagesPaired([
+        { solution: 'ffff43ff17ffa0' + '11'.repeat(32) + '80' },
+        { solution: 'ffff42ff17ffa0' + '22'.repeat(32) + '80' },
+      ]),
+    ).not.toThrow();
+  });
+
+  it('assertVaultMessagesPaired allows a non-vault spend', () => {
+    expect(() =>
+      assertVaultMessagesPaired([{ solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' }]),
+    ).not.toThrow();
   });
 
   it('jsonSafeVariables converts bigint recursively', () => {

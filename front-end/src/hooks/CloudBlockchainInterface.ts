@@ -38,6 +38,7 @@ import {
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
+  assertVaultMessagesPaired,
 } from './cloudWalletHelpers';
 
 export {
@@ -46,6 +47,7 @@ export {
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
+  assertVaultMessagesPaired,
 } from './cloudWalletHelpers';
 
 const APPROVE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -491,7 +493,14 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('signatureRequest not found');
       }
       const status = sr.status;
-      if (status === 'SIGNED' || status === 'SUBMITTED' || status === 'PROCESSING') {
+      log(`[cloud-blockchain] signatureRequest id=${sr.id} status=${status}`);
+      if (status === 'SIGNED') {
+        return sr;
+      }
+      if (status === 'SUBMITTED' || status === 'PROCESSING') {
+        log(
+          `[cloud-blockchain] signatureRequest already ${status}; approval may have broadcast a 2-spend that will conflict with the combined funding bundle`,
+        );
         return sr;
       }
       if (status === 'CANCELLED') {
@@ -514,7 +523,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const conditions = conditionsForGraphql(extraConditions, maxHeight);
 
     log(
-      `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} conditions=${conditions.length}`,
+      `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} conditions=${jsonStringify(conditions)}`,
     );
 
     const created = await this.gql<{
@@ -583,6 +592,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         'Cloud Wallet signature request is signed but returned no coinSpends. Vault-less wallets may need a Cloud Wallet API fix.',
       );
     }
+    assertVaultMessagesPaired(coinSpends);
 
     // Use the vault's real aggregated signature from the signed request. Without it the wasm cradle
     // rejects the bundle (StrErr("bad aggsig length")) and the funding spend would be invalid; the
@@ -595,7 +605,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const hashBuf = await crypto.subtle.digest('SHA-256', nameBytes);
     const name = toHexString(new Uint8Array(hashBuf));
     log(
-      `[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length} aggsig=${aggregatedSignature ? 'real' : 'nil'} source=${signed?.coinSpends?.length ? 'signedSpendBundle' : 'coinSpends'}`,
+      `[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length} aggsig=${aggregatedSignature ? 'real' : 'nil'} source=${signed?.coinSpends?.length ? 'signedSpendBundle' : 'coinSpends'} srStatus=${sr.status}`,
     );
     return bundle;
   }

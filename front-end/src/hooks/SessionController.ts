@@ -123,7 +123,11 @@ function extractErrorMessage(e: unknown): string {
 export function isBenignTransactionSubmitError(message: string): boolean {
   return (
     /spend rejected: status=\[3,9\].*Conflicting transaction/i.test(message) ||
-    /spend rejected: status=\[3,5\].*Coin not found/i.test(message)
+    /spend rejected: status=\[3,5\].*Coin not found/i.test(message) ||
+    // Cloud Wallet / full-node: the spend is already in the mempool (ours or a
+    // peer's competing spend of the same coin). Either way the chain will pick
+    // a winner; a popup does not help.
+    /conflicts with an existing transaction in the mempool/i.test(message)
   );
 }
 
