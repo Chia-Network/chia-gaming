@@ -38,7 +38,7 @@ import {
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
-  assertVaultMessagesPaired,
+  coinSpendsFromSignatureRequest,
 } from './cloudWalletHelpers';
 
 export {
@@ -47,7 +47,7 @@ export {
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
-  assertVaultMessagesPaired,
+  coinSpendsFromSignatureRequest,
 } from './cloudWalletHelpers';
 
 const APPROVE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -578,21 +578,11 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       }
     }
 
-    // Prefer the complete signedSpendBundle: for vault wallets it includes the custody (singleton)
-    // coin spend that emits the SEND_MESSAGE paired with the inner p2 coin's RECEIVE_MESSAGE. Building
-    // from the filtered `coinSpends` alone drops that spend and the full node rejects the bundle with
-    // MESSAGE_NOT_SENT_OR_RECEIVED. Fall back to `coinSpends` for non-vault wallets / older APIs.
+    // Prefer the complete signedSpendBundle: for vault wallets it includes the custody
+    // (singleton) coin spend. signatureRequest.coinSpends omits that spend (clear-signing);
+    // using it alone is rejected by the full node with MESSAGE_NOT_SENT_OR_RECEIVED.
     const signed = sr.signedSpendBundle;
-    const coinSpends =
-      Array.isArray(signed?.coinSpends) && signed.coinSpends.length > 0
-        ? signed.coinSpends
-        : sr.coinSpends;
-    if (!Array.isArray(coinSpends) || coinSpends.length === 0) {
-      throw new Error(
-        'Cloud Wallet signature request is signed but returned no coinSpends. Vault-less wallets may need a Cloud Wallet API fix.',
-      );
-    }
-    assertVaultMessagesPaired(coinSpends);
+    const coinSpends = coinSpendsFromSignatureRequest(sr);
 
     // Use the vault's real aggregated signature from the signed request. Without it the wasm cradle
     // rejects the bundle (StrErr("bad aggsig length")) and the funding spend would be invalid; the
@@ -605,7 +595,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const hashBuf = await crypto.subtle.digest('SHA-256', nameBytes);
     const name = toHexString(new Uint8Array(hashBuf));
     log(
-      `[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length} aggsig=${aggregatedSignature ? 'real' : 'nil'} source=${signed?.coinSpends?.length ? 'signedSpendBundle' : 'coinSpends'} srStatus=${sr.status}`,
+      `[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length} aggsig=${aggregatedSignature ? 'real' : 'nil'} source=signedSpendBundle srStatus=${sr.status}`,
     );
     return bundle;
   }

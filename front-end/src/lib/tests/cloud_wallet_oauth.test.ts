@@ -80,7 +80,7 @@ import {
 } from '../../hooks/cloudWalletConfig';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import {
-  assertVaultMessagesPaired,
+  coinSpendsFromSignatureRequest,
   conditionsForGraphql,
   jsonSafeVariables,
   selectCoinStringForAmount,
@@ -661,28 +661,46 @@ describe('CloudBlockchainInterface helpers', () => {
     });
   });
 
-  it('assertVaultMessagesPaired rejects SEND_MESSAGE without RECEIVE_MESSAGE', () => {
-    expect(() =>
-      assertVaultMessagesPaired([
-        { solution: 'ffff01ffff3dffa0' + '11'.repeat(32) + '80' },
-        { solution: 'ffff42ff17ffa0' + '22'.repeat(32) + '80' },
-      ]),
-    ).toThrow(/SEND_MESSAGE without RECEIVE_MESSAGE/);
+  it('coinSpendsFromSignatureRequest uses signedSpendBundle for a vault (inner p2 + custody)', () => {
+    const innerP2 = { solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' };
+    const custody = { solution: 'ffff42ff17ffa0' + '22'.repeat(32) + '80' };
+    expect(
+      coinSpendsFromSignatureRequest({
+        signedSpendBundle: { coinSpends: [innerP2, custody] },
+        coinSpends: [innerP2],
+      }),
+    ).toEqual([innerP2, custody]);
   });
 
-  it('assertVaultMessagesPaired allows a paired vault spend', () => {
-    expect(() =>
-      assertVaultMessagesPaired([
-        { solution: 'ffff43ff17ffa0' + '11'.repeat(32) + '80' },
-        { solution: 'ffff42ff17ffa0' + '22'.repeat(32) + '80' },
-      ]),
-    ).not.toThrow();
+  it('coinSpendsFromSignatureRequest uses a one-spend signedSpendBundle', () => {
+    const p2 = { solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' };
+    expect(
+      coinSpendsFromSignatureRequest({
+        signedSpendBundle: { coinSpends: [p2] },
+        coinSpends: [p2],
+      }),
+    ).toEqual([p2]);
   });
 
-  it('assertVaultMessagesPaired allows a non-vault spend', () => {
+  it('coinSpendsFromSignatureRequest refuses coinSpends when signedSpendBundle is missing', () => {
     expect(() =>
-      assertVaultMessagesPaired([{ solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' }]),
-    ).not.toThrow();
+      coinSpendsFromSignatureRequest({
+        coinSpends: [{ solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' }],
+      }),
+    ).toThrow(/vault custody spend missing/);
+  });
+
+  it('coinSpendsFromSignatureRequest refuses an empty signedSpendBundle', () => {
+    expect(() =>
+      coinSpendsFromSignatureRequest({
+        signedSpendBundle: { coinSpends: [] },
+        coinSpends: [{ solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' }],
+      }),
+    ).toThrow(/vault custody spend missing/);
+  });
+
+  it('coinSpendsFromSignatureRequest throws when neither bundle has spends', () => {
+    expect(() => coinSpendsFromSignatureRequest({})).toThrow(/returned no coinSpends/);
   });
 
   it('jsonSafeVariables converts bigint recursively', () => {

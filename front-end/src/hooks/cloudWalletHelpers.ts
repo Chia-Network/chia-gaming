@@ -69,25 +69,40 @@ export function conditionsForGraphql(
   return out;
 }
 
-const SEND_MESSAGE_IN_SOLUTION = /ff42ff/i;
-const RECEIVE_MESSAGE_IN_SOLUTION = /ff43ff/i;
+function asCoinSpends(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
 
 /**
- * Vault spends emit SEND_MESSAGE (66) on the custody singleton and must pair it
- * with RECEIVE_MESSAGE (67) on the inner p2. Extra conditions that *replace*
- * the inner list drop that receive, and the full node rejects the bundle with
- * MESSAGE_NOT_SENT_OR_RECEIVED. Scan solutions only: puzzle reveals quote the
- * opcodes in program code even when the spend is unpaired.
+ * Pick coin spends from a SIGNED Cloud Wallet signature request.
+ *
+ * Vault wallets omit the custody singleton from `signatureRequest.coinSpends`
+ * (clear-signing). The complete bundle is `signedSpendBundle`: inner p2 +
+ * custody. Falling back to `coinSpends` broadcasts the inner spend without
+ * the vault SEND_MESSAGE; the full node rejects that with
+ * MESSAGE_NOT_SENT_OR_RECEIVED.
+ *
+ * Do not scan solutions for opcodes 66/67. MIPS emits RECEIVE_MESSAGE from the
+ * puzzle, not as a quoted condition in the inner p2 solution, so a solution-only
+ * regex always looks unpaired on a correct vault spend.
  */
-export function assertVaultMessagesPaired(coinSpends: Array<{ solution?: unknown }>): void {
-  const solutions = coinSpends.map((cs) => normalizeHex(cs.solution));
-  const hasSend = solutions.some((s) => SEND_MESSAGE_IN_SOLUTION.test(s));
-  const hasReceive = solutions.some((s) => RECEIVE_MESSAGE_IN_SOLUTION.test(s));
-  if (hasSend && !hasReceive) {
+export function coinSpendsFromSignatureRequest(sr: {
+  signedSpendBundle?: { coinSpends?: unknown[] } | null;
+  coinSpends?: unknown[] | null;
+}): unknown[] {
+  const signedSpends = asCoinSpends(sr.signedSpendBundle?.coinSpends);
+  if (signedSpends.length > 0) {
+    return signedSpends;
+  }
+  const requestSpends = asCoinSpends(sr.coinSpends);
+  if (requestSpends.length > 0) {
     throw new Error(
-      'Cloud Wallet signed bundle has SEND_MESSAGE without RECEIVE_MESSAGE. Extra conditions likely replaced vault message pairing; the full node would reject this spend (MESSAGE_NOT_SENT_OR_RECEIVED).',
+      'Cloud Wallet signature request is missing signedSpendBundle (vault custody spend missing). Refusing to fall back to signatureRequest.coinSpends, which omits the vault custody singleton.',
     );
   }
+  throw new Error(
+    'Cloud Wallet signature request is signed but returned no coinSpends. Vault-less wallets may need a Cloud Wallet API fix.',
+  );
 }
 
 export function selectCoinStringForAmount(
