@@ -100,7 +100,9 @@ describe('CloudBlockchainInterface fee support', () => {
     mockFee = 500n;
     const calls = mockGraphql((query) => {
       if (query.includes('createSpendWithExtraConditions')) {
-        return { createSpendWithExtraConditions: { signatureRequest: { id: 'SR_1', status: 'PENDING' } } };
+        return {
+          createSpendWithExtraConditions: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
+        };
       }
       return {};
     });
@@ -115,7 +117,9 @@ describe('CloudBlockchainInterface fee support', () => {
     mockFee = 0n;
     const calls = mockGraphql((query) => {
       if (query.includes('createSpendWithExtraConditions')) {
-        return { createSpendWithExtraConditions: { signatureRequest: { id: 'SR_1', status: 'PENDING' } } };
+        return {
+          createSpendWithExtraConditions: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
+        };
       }
       return {};
     });
