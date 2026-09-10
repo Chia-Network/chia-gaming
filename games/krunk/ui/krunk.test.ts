@@ -149,7 +149,10 @@ describe('Krunk automatic moves', () => {
     });
     const snapshots: KrunkHandState[] = [];
     const hand = testHand(persisted);
-    const dispatch = jest.fn(() => snapshots.push(structuredClone(hand.getState())));
+    const dispatch = jest.fn((intent: { type: string }) => {
+      snapshots.push(structuredClone(hand.getState()));
+      return intent.type === 'make-move' ? ('queued' as const) : undefined;
+    });
     const view: GameMountView<KrunkHand> = {
       frozen: false,
       hand,
@@ -180,6 +183,55 @@ describe('Krunk automatic moves', () => {
         myTurn: false,
         guesses: [{ word: 'CRANE', clue: [-1n, -1n, -1n, -1n, -1n] }],
         queuedGuesses: ['SLATE'],
+      }),
+    );
+  });
+
+  it('clears all remaining queued guesses when a restored guess is rejected', () => {
+    const persisted = krunkStateCodec.encode({
+      perPlayerStake: 100n,
+      members: [
+        initialKrunkGameState('alice'),
+        {
+          ...initialKrunkGameState('bob'),
+          handler: KrunkHandler.BobGuess,
+          myTurn: true,
+          queuedGuesses: ['XXXXX', 'CRANE', 'SLATE'],
+        },
+      ],
+    });
+    const hand = testHand(persisted);
+    const dispatch = jest.fn((intent: { type: string }) =>
+      intent.type === 'make-move' ? ('rejected' as const) : undefined,
+    );
+    const view: GameMountView<KrunkHand> = {
+      frozen: false,
+      hand,
+      port: { isChannelReady: () => true, dispatch },
+    };
+    let hook: ReturnType<typeof useKrunkHand> | null = null;
+
+    function Harness() {
+      hook = useKrunkHand(view, 1);
+      return null;
+    }
+
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    act(() => hook!.submitNextQueuedGuess());
+
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
+      'state-changed',
+      'make-move',
+      'state-changed',
+    ]);
+    expect(hand.getState().members[1]).toEqual(
+      expect.objectContaining({
+        handler: KrunkHandler.BobGuess,
+        myTurn: true,
+        guesses: [],
+        queuedGuesses: [],
       }),
     );
   });

@@ -1,6 +1,10 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
-import { requireLiveGameMount, type GameMountView } from '../../host';
+import {
+  requireLiveGameMount,
+  type GameIntentDisposition,
+  type GameMountView,
+} from '../../host';
 import { krunkSettlementStatus } from './settlement';
 import { krunkOutcomeFromPlay } from './handProposal';
 import {
@@ -225,12 +229,15 @@ export function useKrunkHand(
   memberIndexRef.current = memberIndex;
   activeRef.current = interactive;
 
-  const commitLocalAction = useCallback((next: KrunkGameState, command: LocalGameCommand): void => {
-    const memberIndex = memberIndexRef.current;
-    const live = requireLiveGameMount(viewRef.current);
-    live.hand.updateGame(memberIndex, () => next);
-    live.port.dispatch({ type: 'make-move', memberIndex, readable: command.readable });
-  }, []);
+  const commitLocalAction = useCallback(
+    (next: KrunkGameState, command: LocalGameCommand): GameIntentDisposition | void => {
+      const memberIndex = memberIndexRef.current;
+      const live = requireLiveGameMount(viewRef.current);
+      live.hand.updateGame(memberIndex, () => next);
+      return live.port.dispatch({ type: 'make-move', memberIndex, readable: command.readable });
+    },
+    [],
+  );
 
   const commitStateChange = useCallback((next: KrunkGameState): void => {
     const memberIndex = memberIndexRef.current;
@@ -358,7 +365,7 @@ export function useKrunkHand(
     const [word, ...queuedGuesses] = cur.queuedGuesses;
     const dequeued = { ...cur, queuedGuesses };
     commitStateChange(dequeued);
-    commitLocalAction(
+    const disposition = commitLocalAction(
       {
         ...dequeued,
         guesses: [...dequeued.guesses, { word, clue: PENDING_CLUE }],
@@ -367,6 +374,9 @@ export function useKrunkHand(
       },
       { type: 'make-move', readable: wordToProgram(word) },
     );
+    if (disposition === 'rejected') {
+      commitStateChange({ ...dequeued, queuedGuesses: [] });
+    }
   }, [commitLocalAction, commitStateChange]);
 
   return {

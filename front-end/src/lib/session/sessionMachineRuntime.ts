@@ -1,4 +1,8 @@
-import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
+import type {
+  GameCommandDisposition,
+  SessionController,
+  RestoreStatus,
+} from '../../hooks/SessionController';
 import { runSessionMachineTransition } from './sessionMachineEffects';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
 import { persistSessionSnapshot } from './sessionMachinePersist';
@@ -132,7 +136,7 @@ export class SessionMachineRuntime {
     this.dispatch({ type: 'hand-state-changed', gameType, state });
   }
 
-  commitLocalGameAction(request: LocalGameActionRequest): void {
+  commitLocalGameAction(request: LocalGameActionRequest): GameCommandDisposition {
     const checkpoint = structuredClone(this.state.model.game.handState);
     try {
       const game = this.state.model.game;
@@ -160,7 +164,7 @@ export class SessionMachineRuntime {
       const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
       if (disposition === 'rejected') {
         this.restoreAndRender(checkpoint);
-        return;
+        return disposition;
       }
       const accepted = this.snapshotActiveHand();
       this.dispatch({
@@ -169,6 +173,7 @@ export class SessionMachineRuntime {
         id: request.id,
         state: accepted.state,
       });
+      return disposition;
     } catch (error) {
       this.restoreAndRender(checkpoint);
       throw error;
