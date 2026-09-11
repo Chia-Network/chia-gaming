@@ -1,3 +1,7 @@
+import { WebSocket } from 'ws';
+
+(globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 if (typeof globalThis.localStorage === 'undefined') {

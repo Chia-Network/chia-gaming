@@ -146,6 +146,9 @@ importers:
       '@types/react-test-renderer':
         specifier: 19.1.0
         version: 19.1.0
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
@@ -167,6 +170,9 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+      ws:
+        specifier: 8.21.2
+        version: 8.21.2
 
   hub/hub-frontend:
     dependencies:
