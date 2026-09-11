@@ -4115,13 +4115,12 @@ const Shell = () => {
                   >
                     Link Wallet
                   </Button>
-                  <Button
-                    variant="solid"
-                    fullWidth
-                    onClick={() => handleConnect('cloud', false, true)}
-                  >
-                    Cloud Wallet
-                  </Button>
+                  <div className="flex flex-col gap-1">
+                    <Button variant="solid" fullWidth disabled title="Coming soon">
+                      Cloud Wallet
+                    </Button>
+                    <p className="text-xs text-canvas-text text-center">Coming soon</p>
+                  </div>
                 </div>
                 {connectError ? (
                   <p className="w-full max-w-sm text-sm text-alert-text text-center break-words">
