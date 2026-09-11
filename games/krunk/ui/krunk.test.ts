@@ -134,7 +134,7 @@ describe('Krunk automatic moves', () => {
     );
   });
 
-  it('durably dequeues before submitting a restored queued guess', () => {
+  it('uses an empty retry checkpoint while preserving accepted queued guesses', () => {
     const persisted = krunkStateCodec.encode({
       perPlayerStake: 100n,
       members: [
@@ -175,7 +175,7 @@ describe('Krunk automatic moves', () => {
       'make-move',
     ]);
     expect(snapshots[0].members[1]).toEqual(
-      expect.objectContaining({ guesses: [], queuedGuesses: ['SLATE'] }),
+      expect.objectContaining({ guesses: [], queuedGuesses: [] }),
     );
     expect(snapshots[1].members[1]).toEqual(
       expect.objectContaining({
@@ -187,7 +187,7 @@ describe('Krunk automatic moves', () => {
     );
   });
 
-  it('clears all remaining queued guesses when a restored guess is rejected', () => {
+  it('clears all remaining queued guesses from the rejection checkpoint', () => {
     const persisted = krunkStateCodec.encode({
       perPlayerStake: 100n,
       members: [
@@ -201,9 +201,11 @@ describe('Krunk automatic moves', () => {
       ],
     });
     const hand = testHand(persisted);
-    const dispatch = jest.fn((intent: { type: string }) =>
-      intent.type === 'make-move' ? ('rejected' as const) : undefined,
-    );
+    const snapshots: KrunkHandState[] = [];
+    const dispatch = jest.fn((intent: { type: string }) => {
+      snapshots.push(structuredClone(hand.getState()));
+      return intent.type === 'make-move' ? ('rejected' as const) : undefined;
+    });
     const view: GameMountView<KrunkHand> = {
       frozen: false,
       hand,
@@ -224,14 +226,21 @@ describe('Krunk automatic moves', () => {
     expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
       'state-changed',
       'make-move',
-      'state-changed',
     ]);
-    expect(hand.getState().members[1]).toEqual(
+    expect(snapshots[0].members[1]).toEqual(
       expect.objectContaining({
         handler: KrunkHandler.BobGuess,
         myTurn: true,
         guesses: [],
         queuedGuesses: [],
+      }),
+    );
+    expect(snapshots[1].members[1]).toEqual(
+      expect.objectContaining({
+        handler: KrunkHandler.BobWaiting,
+        myTurn: false,
+        guesses: [{ word: 'XXXXX', clue: [-1n, -1n, -1n, -1n, -1n] }],
+        queuedGuesses: ['CRANE', 'SLATE'],
       }),
     );
   });

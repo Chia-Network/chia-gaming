@@ -71,8 +71,6 @@ export type GameIntent =
   | { type: 'accept-settlement'; memberIndex: number }
   | { type: 'cheat'; memberIndex: number; moverShare: bigint };
 
-export type GameIntentDisposition = 'rejected' | 'queued' | 'applied';
-
 export interface GameHandInitialization {
   parameters: ProposalParameterValue;
   members: readonly {
@@ -130,7 +128,7 @@ export interface HandProposalFormProps<TParams> {
 
 export interface LiveGamePort {
   isChannelReady(): boolean;
-  dispatch(intent: GameIntent): GameIntentDisposition | void;
+  dispatch(intent: GameIntent): void;
 }
 
 export interface GameMountNames {

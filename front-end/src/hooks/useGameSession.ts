@@ -41,12 +41,12 @@ import { getDefaultFee, getPlayerId } from './save';
 export type { GameTerminalInfo, QueuedNotification } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
 
-export function runWithRuntimeErrorReporting<T>(
-  run: () => T,
+export function runWithRuntimeErrorReporting(
+  run: () => void,
   report: (message: string) => void,
-): T {
+): void {
   try {
-    return run();
+    run();
   } catch (error) {
     if (!wasClientErrorReported(error)) {
       markClientErrorReported(error);
@@ -195,7 +195,7 @@ export function useGameSession(
                 ? { type: 'accept-settlement' }
                 : { type: 'cheat', moverShare: intent.moverShare },
         };
-        return runWithRuntimeErrorReporting(
+        runWithRuntimeErrorReporting(
           () => runtime.commitLocalGameAction(request),
           (message) => dispatch({ type: 'enqueue-error', kind: 'infra-error', message }),
         );
