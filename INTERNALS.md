@@ -163,7 +163,11 @@ conflicting spend won — it is never rebroadcast again. Rebroadcasting an
 *identical* bundle is harmless (the mempool de-duplicates by fingerprint), and a
 cross-party conflict (the opponent spending the same coin with a *different*
 bundle) is expected on a real chain and resolves naturally, since only one spend
-of a coin can confirm. Eager timeout claims are deliberately excluded from this
+of a coin can confirm. On the browser side this harmlessness is enforced by
+`isBenignTransactionSubmitError`, which classifies the node's
+duplicate/`ALREADY_INCLUDING_TRANSACTION` verdict as benign: both peers push the
+byte-identical funding bundle at channel creation, so the second arrival is
+always de-duplicated and must not surface as an error. Eager timeout claims are deliberately excluded from this
 path (they carry a relative timelock) because the ripeness logic above already
 resubmits them in a reorg-aware way. Coverage:
 `auto_resubmits_dropped_output_bearing_spend_until_it_lands`,

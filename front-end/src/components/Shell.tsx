@@ -85,6 +85,7 @@ import {
 } from '../hooks/save';
 import type { ChiaNetwork } from '../lib/session/saveEnvelope';
 import { getCurrencyLabels } from '../constants/currency';
+import { MIN_NONZERO_FEE_MOJOS, isEffectivelyZeroFee } from '../constants/fees';
 import {
   sessionController,
   destroySessionController,
@@ -1136,7 +1137,17 @@ const Shell = () => {
     [feeUnit],
   );
 
-  const feeInputValid = parseFeeInput(feeInput) !== null;
+  const parsedFeeInput = parseFeeInput(feeInput);
+  // A fee below the mempool's 5 mojo/cost floor is treated as zero by the node,
+  // so it buys nothing and is rejected outright on a full mempool. Forbid the
+  // in-between values; zero (a free transaction) and floor-or-above are allowed.
+  const feeInputError =
+    parsedFeeInput === null
+      ? 'Enter a valid amount.'
+      : isEffectivelyZeroFee(parsedFeeInput)
+        ? `A fee below ${MIN_NONZERO_FEE_MOJOS.toLocaleString()} ${getCurrencyLabels().mojos} is treated as zero by the network and will not confirm. Use 0 or at least ${MIN_NONZERO_FEE_MOJOS.toLocaleString()} ${getCurrencyLabels().mojos}.`
+        : null;
+  const feeInputValid = feeInputError === null;
 
   const startEditingFee = useCallback(() => {
     setFeeInput(feeDisplayText());
@@ -1146,7 +1157,7 @@ const Shell = () => {
 
   const commitFee = useCallback(() => {
     const mojos = parseFeeInput(feeInput);
-    if (mojos === null) return;
+    if (mojos === null || isEffectivelyZeroFee(mojos)) return;
     setDefaultFee(mojos);
     saveDefaultFee(mojos);
     setFeeEditing(false);
@@ -3859,33 +3870,38 @@ const Shell = () => {
                     </div>
                   </div>
                   {feeEditing ? (
-                    <div className="flex gap-2">
-                      <input
-                        ref={feeInputRef}
-                        type="text"
-                        inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
-                        value={feeInput}
-                        onChange={(e) => setFeeInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && feeInputValid) commitFee();
-                          if (e.key === 'Escape') cancelEditFee();
-                        }}
-                        className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
-                      />
-                      <button
-                        onClick={commitFee}
-                        disabled={!feeInputValid}
-                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
-                      >
-                        Set
-                      </button>
-                      <button
-                        onClick={cancelEditFee}
-                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                      >
-                        ✕
-                      </button>
-                    </div>
+                    <>
+                      <div className="flex gap-2">
+                        <input
+                          ref={feeInputRef}
+                          type="text"
+                          inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
+                          value={feeInput}
+                          onChange={(e) => setFeeInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && feeInputValid) commitFee();
+                            if (e.key === 'Escape') cancelEditFee();
+                          }}
+                          className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                        />
+                        <button
+                          onClick={commitFee}
+                          disabled={!feeInputValid}
+                          className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
+                        >
+                          Set
+                        </button>
+                        <button
+                          onClick={cancelEditFee}
+                          className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      {feeInputError && feeInput.trim() !== '' ? (
+                        <p className="text-xs text-alert-text mt-1 break-words">{feeInputError}</p>
+                      ) : null}
+                    </>
                   ) : (
                     <button
                       onClick={startEditingFee}
@@ -3979,33 +3995,38 @@ const Shell = () => {
                     </div>
                   </div>
                   {feeEditing ? (
-                    <div className="flex gap-2">
-                      <input
-                        ref={feeInputRef}
-                        type="text"
-                        inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
-                        value={feeInput}
-                        onChange={(e) => setFeeInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && feeInputValid) commitFee();
-                          if (e.key === 'Escape') cancelEditFee();
-                        }}
-                        className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
-                      />
-                      <button
-                        onClick={commitFee}
-                        disabled={!feeInputValid}
-                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
-                      >
-                        Set
-                      </button>
-                      <button
-                        onClick={cancelEditFee}
-                        className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                      >
-                        ✕
-                      </button>
-                    </div>
+                    <>
+                      <div className="flex gap-2">
+                        <input
+                          ref={feeInputRef}
+                          type="text"
+                          inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
+                          value={feeInput}
+                          onChange={(e) => setFeeInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && feeInputValid) commitFee();
+                            if (e.key === 'Escape') cancelEditFee();
+                          }}
+                          className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                        />
+                        <button
+                          onClick={commitFee}
+                          disabled={!feeInputValid}
+                          className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
+                        >
+                          Set
+                        </button>
+                        <button
+                          onClick={cancelEditFee}
+                          className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      {feeInputError && feeInput.trim() !== '' ? (
+                        <p className="text-xs text-alert-text mt-1 break-words">{feeInputError}</p>
+                      ) : null}
+                    </>
                   ) : (
                     <button
                       onClick={startEditingFee}

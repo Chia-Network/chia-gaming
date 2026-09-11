@@ -167,4 +167,72 @@ describe('CloudBlockchainInterface fee support', () => {
     // With required 150, coin A is too small; coin B (parent cc, ph dd) is picked.
     expect(feeCoin?.startsWith('cc'.repeat(32) + 'dd'.repeat(32))).toBe(true);
   });
+
+  it('finalize rejects a sub-floor fee before starting OAuth', async () => {
+    mockGraphql(() => ({}));
+    const iface = new CloudBlockchainInterface();
+    // fresh=true clears stored auth so beginConnect returns the OAuth-config
+    // path whose finalize collects the fee.
+    const setup = await iface.beginConnect('uid', true);
+    await expect(
+      setup.finalize?.({ clientId: 'client-x', fee: 500n }),
+    ).rejects.toThrow(/treated as zero/i);
+  });
+
+  it('finalize accepts zero and a floor fee (failing later in OAuth, not the fee check)', async () => {
+    mockGraphql(() => ({}));
+    const iface = new CloudBlockchainInterface();
+    // A fee that clears the floor check falls through to the OAuth flow, so the
+    // rejection is some downstream OAuth error, never the fee-floor error.
+    const setupZero = await iface.beginConnect('uid', true);
+    await expect(setupZero.finalize?.({ clientId: 'client-x', fee: 0n })).rejects.not.toThrow(
+      /treated as zero/i,
+    );
+
+    const setupFloor = await iface.beginConnect('uid', true);
+    await expect(
+      setupFloor.finalize?.({ clientId: 'client-x', fee: 100_000_000n }),
+    ).rejects.not.toThrow(/treated as zero/i);
+  });
+
+  function sampleBundle() {
+    return {
+      aggregated_signature: '0x' + 'ab'.repeat(96),
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: '0x' + '11'.repeat(32),
+            puzzle_hash: '0x' + '22'.repeat(32),
+            amount: 1n,
+          },
+          puzzle_reveal: '0x' + 'aa',
+          solution: '0x' + 'bb',
+        },
+      ],
+    };
+  }
+
+  it('spend throws on a non-accepted broadcast status', async () => {
+    mockGraphql((query) => {
+      if (query.includes('broadcastSpendBundle')) {
+        return { broadcastSpendBundle: { status: 'FAILED' } };
+      }
+      return {};
+    });
+    const iface = new CloudBlockchainInterface();
+    await expect(iface.spend('', sampleBundle(), '', 'test')).rejects.toThrow(
+      /rejected: status=FAILED/,
+    );
+  });
+
+  it('spend resolves on an accepted broadcast status', async () => {
+    mockGraphql((query) => {
+      if (query.includes('broadcastSpendBundle')) {
+        return { broadcastSpendBundle: { status: 'SUCCESS' } };
+      }
+      return {};
+    });
+    const iface = new CloudBlockchainInterface();
+    await expect(iface.spend('', sampleBundle(), '', 'test')).resolves.toBe('SUCCESS');
+  });
 });

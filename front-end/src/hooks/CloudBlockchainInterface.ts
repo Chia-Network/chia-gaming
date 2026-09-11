@@ -33,6 +33,7 @@ import {
   type CloudWalletAuthState,
 } from './cloudWalletAuth';
 import { getDefaultFee, setDefaultFee } from './save';
+import { MIN_NONZERO_FEE_MOJOS, isEffectivelyZeroFee } from '../constants/fees';
 import {
   absAmountFromOffer,
   coinSpendsToWalletBundle,
@@ -53,6 +54,20 @@ export {
 
 const APPROVE_TIMEOUT_MS = 10 * 60 * 1000;
 const SR_POLL_MS = 1500;
+
+/**
+ * Broadcast statuses the Cloud Wallet API returns for an accepted spend. Any
+ * other status is treated as a rejection (fail fast for alpha); if the API uses
+ * a word not listed here, the thrown "rejected: status=..." message names it so
+ * the allowlist can be corrected.
+ */
+const ACCEPTED_BROADCAST_STATUSES = new Set([
+  'SUCCESS',
+  'SUBMITTED',
+  'PENDING',
+  'PROCESSING',
+  'OK',
+]);
 
 export class CloudBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult = { puzzleHash: '' };
@@ -404,7 +419,17 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       },
     );
     const status = data.broadcastSpendBundle?.status ?? 'unknown';
-    log(`[cloud-blockchain] broadcastSpendBundle from=${source ?? 'unknown'} status=${status}`);
+    log(
+      `[cloud-blockchain] broadcastSpendBundle from=${source ?? 'unknown'} status=${status} spends=${bundle.coin_spends.length}`,
+    );
+    // A rejection reported in `status` (rather than as a GraphQL error) would
+    // otherwise look like success and silently strand the channel. Fail fast on
+    // any unrecognized status; the thrown message carries the raw status so the
+    // fee-rate classifier can rewrite it and the first unknown status is
+    // self-diagnosing.
+    if (!ACCEPTED_BROADCAST_STATUSES.has(status.toUpperCase())) {
+      throw new Error(`Cloud Wallet broadcastSpendBundle rejected: status=${status}`);
+    }
     return status;
   }
 
@@ -679,7 +704,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         },
         fee: {
           type: 'bigint',
-          label: 'Transaction fee (mojos)',
+          label: `Transaction fee (mojos) — use 0 or at least ${MIN_NONZERO_FEE_MOJOS.toLocaleString()}; smaller nonzero fees are treated as zero by the network`,
           default: getDefaultFee(),
         },
       },
@@ -695,6 +720,11 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           const fee = typeof feeValue === 'bigint' ? feeValue : BigInt(feeValue);
           if (fee < 0n) {
             throw new Error('Transaction fee must be zero or positive');
+          }
+          if (isEffectivelyZeroFee(fee)) {
+            throw new Error(
+              `A fee below ${MIN_NONZERO_FEE_MOJOS.toLocaleString()} mojos is treated as zero by the network and will not confirm. Use 0 or at least ${MIN_NONZERO_FEE_MOJOS.toLocaleString()} mojos.`,
+            );
           }
           setDefaultFee(fee);
         }

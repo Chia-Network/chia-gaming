@@ -1153,6 +1153,24 @@ Shell manages wallet connections through two abstractions defined in
   implements no `createFeeSpend`; `submitTransactionNow` skips the separate fee
   spend for backends lacking that method and broadcasts with no fee parameter.
 
+  **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
+  (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
+  fee: it buys no inclusion, and on a full mempool the node rejects the bundle
+  with `INVALID_FEE_TOO_CLOSE_TO_ZERO` instead of admitting it as free. The front
+  end therefore forbids the in-between values: `front-end/src/constants/fees.ts`
+  defines `MIN_NONZERO_FEE_MOJOS` (100M mojos, derived from 5 mojo/cost times a
+  conservative bundle cost) and `isEffectivelyZeroFee`, and both fee entry points
+  (the Wallet-tab editor in `Shell.tsx` and the Cloud Wallet connect modal's fee
+  field) reject a nonzero fee below it. Zero (a free transaction) and
+  floor-or-above are allowed. This is a floor below which a fee definitely cannot
+  work, not a guarantee of inclusion. Cloud-vs-Cloud is the pairing that most
+  needs it: neither peer has a wallet-built fee spend, so the entered fee is the
+  whole story, whereas a WalletConnect peer aggregates a real `createFeeSpend`
+  bundle. Both peers push the byte-identical funding bundle, so the node de-dups
+  the second arrival; `isBenignTransactionSubmitError` recognizes that
+  duplicate/`ALREADY_INCLUDING_TRANSACTION` as harmless, and a fee-rate rejection
+  is rewritten by `rewriteFeeRateRejection` into an actionable message.
+
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single
 `getInterface(bcType)` helper maps the type string to the concrete instance
