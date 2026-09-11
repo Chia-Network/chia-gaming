@@ -174,9 +174,9 @@ describe('CloudBlockchainInterface fee support', () => {
     // fresh=true clears stored auth so beginConnect returns the OAuth-config
     // path whose finalize collects the fee.
     const setup = await iface.beginConnect('uid', true);
-    await expect(
-      setup.finalize?.({ clientId: 'client-x', fee: 500n }),
-    ).rejects.toThrow(/treated as zero/i);
+    await expect(setup.finalize?.({ clientId: 'client-x', fee: 500n })).rejects.toThrow(
+      /treated as zero/i,
+    );
   });
 
   it('finalize accepts zero and a floor fee (failing later in OAuth, not the fee check)', async () => {
