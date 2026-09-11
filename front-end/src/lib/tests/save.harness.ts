@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { saveSession, type SessionSave, _resetForTests } from '../../hooks/save';
 import { SESSION_DB_NAME } from '../session/indexedDb';
+import type { BlockchainType } from '../session/saveEnvelope';
 import { liveSave } from './session_save_envelope.fixtures';
 export const testIndexedDb = indexedDB;
 
@@ -71,7 +72,7 @@ export function saveLiveFields(fields: Record<string, unknown> = sampleSession):
     void saveSession({
       scope: 'common',
       preferences: {
-        blockchainType: fields.blockchainType as 'simulator' | 'walletconnect' | undefined,
+        blockchainType: fields.blockchainType as BlockchainType | undefined,
         defaultFee: fields.defaultFee as bigint | undefined,
         hubUrl: fields.hubUrl as string | undefined,
       },
@@ -87,7 +88,7 @@ export function saveLiveFields(fields: Record<string, unknown> = sampleSession):
 }
 
 export function savePreferences(fields: {
-  blockchainType?: 'simulator' | 'walletconnect';
+  blockchainType?: BlockchainType;
   hubUrl?: string;
 }): Promise<void> {
   return saveSession({ scope: 'common', preferences: fields });

@@ -58,6 +58,14 @@ const MIME_TYPES = new Map<string, string>([
 /** Chialisp `.dat` payloads and anything else are fetched as bytes. */
 const DEFAULT_MIME_TYPE = 'application/octet-stream';
 
+/** Must match `CLOUD_WALLET_OAUTH_CALLBACK_PATH` in `front-end/src/constants/env.ts`. */
+const OAUTH_CALLBACK_PATH = '/oauth/callback';
+
+function isOAuthCallbackPath(pathname: string): boolean {
+  const normalized = pathname.replace(/\/$/, '') || '/';
+  return normalized === OAUTH_CALLBACK_PATH;
+}
+
 /** Must run before the `ready` event: Chromium reads the scheme registry once at startup. */
 export function registerAppSchemeAsPrivileged(): void {
   protocol.registerSchemesAsPrivileged([
@@ -112,10 +120,15 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
       return textResponse('Not found', 404);
     }
 
-    const filePath = resolveRequestedFile(rendererRoot, url.pathname);
+    let filePath = resolveRequestedFile(rendererRoot, url.pathname);
     if (filePath === null) {
       log.warn(`rejected out-of-root request: ${url.pathname}`);
       return textResponse('Forbidden', 403);
+    }
+    // Cloud Wallet OAuth returns the popup to this path. There is no file at
+    // that name; serve the player document so App.tsx can render OAuthCallback.
+    if (isOAuthCallbackPath(url.pathname)) {
+      filePath = path.join(rendererRoot, 'index.html');
     }
     // Read through Node's fs rather than `net.fetch(file://…)`: asar support is
     // implemented as an fs shim, so this is what lets the renderer stay sealed

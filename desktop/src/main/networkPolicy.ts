@@ -24,6 +24,11 @@ export type NetworkPolicy = {
   allowedRequestOrigins: ReadonlySet<string>;
   /** Origins allowed to load as a sub-frame of the player document. */
   allowedFrameOrigins: ReadonlySet<string>;
+  /**
+   * Origins allowed as `window.open` popups (Cloud Wallet OAuth / funding
+   * approval). These are top-level windows, not sub-frames.
+   */
+  allowedPopupOrigins: ReadonlySet<string>;
   contentSecurityPolicy: string;
 };
 
@@ -81,15 +86,19 @@ export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
     ...config.hubOrigins,
     ...config.hubOrigins.map(webSocketOrigin),
     ...WALLET_CONNECT_REQUEST_ORIGINS,
+    ...config.cloudWalletOrigins,
   ];
   const frameOrigins = [...config.hubOrigins, ...WALLET_CONNECT_FRAME_ORIGINS];
+  const popupOrigins = [...config.cloudWalletOrigins];
 
   const uniqueRequestOrigins = [...new Set(requestOrigins)].sort();
   const uniqueFrameOrigins = [...new Set(frameOrigins)].sort();
+  const uniquePopupOrigins = [...new Set(popupOrigins)].sort();
 
   return {
     allowedRequestOrigins: new Set(uniqueRequestOrigins),
     allowedFrameOrigins: new Set(uniqueFrameOrigins),
+    allowedPopupOrigins: new Set(uniquePopupOrigins),
     contentSecurityPolicy: buildContentSecurityPolicy(uniqueRequestOrigins, uniqueFrameOrigins),
   };
 }

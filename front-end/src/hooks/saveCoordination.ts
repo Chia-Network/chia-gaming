@@ -198,7 +198,7 @@ export function signalHardResetToOtherTabs(): void {
 }
 
 export function installStorageCoordination(onHardReset: () => void): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
   window.addEventListener('storage', (event: StorageEvent) => {
     if (event.key === RESET_KEY) {
       onHardReset();

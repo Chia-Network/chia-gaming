@@ -26,6 +26,7 @@ import {
   encodeU64AsClvmHex,
 } from '../util';
 import { log, diagStack } from '../services/log';
+import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
 import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
 import { flushSessionSave } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
@@ -123,8 +124,37 @@ function extractErrorMessage(e: unknown): string {
 export function isBenignTransactionSubmitError(message: string): boolean {
   return (
     /spend rejected: status=\[3,9\].*Conflicting transaction/i.test(message) ||
-    /spend rejected: status=\[3,5\].*Coin not found/i.test(message)
+    /spend rejected: status=\[3,5\].*Coin not found/i.test(message) ||
+    // Cloud Wallet / full-node: the spend is already in the mempool (ours or a
+    // peer's competing spend of the same coin). Either way the chain will pick
+    // a winner; a popup does not help.
+    /conflicts with an existing transaction in the mempool/i.test(message) ||
+    // Both peers push the byte-identical funding bundle by design, so the second
+    // arrival is de-duplicated by the node's bundle-hash check. Resubmitting an
+    // identical bundle is harmless (see INTERNALS.md), so this is not an error.
+    /ALREADY_INCLUDING_TRANSACTION/i.test(message) ||
+    /duplicate transaction/i.test(message) ||
+    /already in the mempool/i.test(message)
   );
+}
+
+/**
+ * Chia's mempool treats a fee below 5 mojos per cost unit as zero and, on a full
+ * mempool, rejects the bundle outright rather than admitting it as free. This
+ * rewrites the node's terse fee-rate codes into an actionable message. The fee
+ * rejection is fatal (unlike the benign cases above), so callers must still
+ * surface it loudly.
+ */
+export function rewriteFeeRateRejection(message: string): string {
+  if (/INVALID_FEE_TOO_CLOSE_TO_ZERO|INVALID_FEE_LOW_FEE|fee.*too close to zero/i.test(message)) {
+    return (
+      `The network rejected the transaction because its fee is effectively zero ` +
+      `(below ${MIN_NONZERO_FEE_MOJOS.toLocaleString()} mojos, the 5 mojo/cost floor). ` +
+      `Set the transaction fee to 0 (a free transaction) or to at least ` +
+      `${MIN_NONZERO_FEE_MOJOS.toLocaleString()} mojos and try again. (${message})`
+    );
+  }
+  return message;
 }
 
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
@@ -771,7 +801,7 @@ export class SessionController implements PollingGameSession {
         .join(', ');
       diagStack('submitTransaction failed', e);
       log(`[wasm] submitTransaction failed: ${message} coins=[${coinDescs}]`);
-      this.rxjsEmitter?.next({ type: 'error', error: message });
+      this.rxjsEmitter?.next({ type: 'error', error: rewriteFeeRateRejection(message) });
     }
   }
 
