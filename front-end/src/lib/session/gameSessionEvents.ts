@@ -8,11 +8,6 @@ import { isSettlementOutcome, parseSettlementShare, settlementLabel } from '../s
 import type { GameTerminalModel, GameTurnState, QueuedNotificationModel } from './types';
 
 export type GameTerminalInfo = GameTerminalModel;
-export interface GameTerminalAttentionInfo {
-  label: string;
-  myReward: string | null;
-  rewardCoinHex: string | null;
-}
 export type QueuedNotification = QueuedNotificationModel;
 
 export function dispatchWasmNotification(

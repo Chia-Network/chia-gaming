@@ -5,9 +5,4 @@ export * from './normalization';
 export * from './selectors';
 export * from './persistence';
 export * from './gameSlice';
-export * from './gameStateCodec';
-export {
-  canRemountFinishedGameState,
-  decodePersistedGameState,
-  gameStateCodecFor,
-} from '../gameRegistry';
+export { decodePersistedGameState } from '../gameRegistry';

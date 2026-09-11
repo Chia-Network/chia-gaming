@@ -1,4 +1,28 @@
-import { isForfeitOutcome, settlementByUs, type SettlementOutcome } from '../../host';
+import type { SettlementOutcome } from '../../host';
+
+export function isForfeitOutcome(outcome: SettlementOutcome): boolean {
+  return outcome === 'forfeited_skipped_reveal' || outcome === 'forfeited_we_accepted';
+}
+
+export function settlementByUs(outcome: SettlementOutcome): boolean | null {
+  switch (outcome) {
+    case 'accept_settlement':
+    case 'we_accepted':
+    case 'forfeited_skipped_reveal':
+    case 'forfeited_we_accepted':
+    case 'lost':
+    case 'timed_out_waiting_for_our_move':
+    case 'attempt_to_move_failed':
+    case 'slashed_opponent':
+      return true;
+    case 'opponent_timed_out':
+    case 'opponent_slashed_us':
+    case 'opponent_cheated':
+      return false;
+    case 'settled_cleanly':
+      return null;
+  }
+}
 
 export function calpokerTimeoutBadge(
   outcome: SettlementOutcome,

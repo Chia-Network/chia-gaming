@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { RestoreStatus } from '../../hooks/SessionController';
-import { terminalGameHandSource, type GameHandOrigin, type GameHandSource } from '@games/host';
+import { terminalGameHandSource, type GameHandSource } from '../gameHandSource';
 import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
 import type { ComposeDraftState } from './composeDraft';
-import type { ComposeDraftValue } from '@games/host';
 import type {
   BetweenHandModeModel,
   ChannelStatusModel,
@@ -22,6 +21,7 @@ import {
   selectGameSpecificView as selectTerminalGameSpecificView,
   selectSessionPhase,
 } from './selectors';
+import { restoreRegisteredGameHand } from '../gameRegistry';
 
 export interface UseGameSessionResult {
   sessionModel: SessionModel;
@@ -35,7 +35,6 @@ export interface UseGameSessionResult {
   gameCoin: GameCoinModel;
   gameTerminal: GameTerminalModel;
   handKey: number;
-  handOrigin: GameHandOrigin;
   activeGameId: string | null;
   activeGameIds: string[];
   currentHandGameIds: string[];
@@ -53,7 +52,6 @@ export interface UseGameSessionResult {
   openComposeProposal: () => void;
   setComposeGameTimeout: (value: bigint) => void;
   setComposeGameType: (value: HandProposal['gameType']) => void;
-  updateSelectedComposeDraft: (draft: Partial<ComposeDraftValue>) => void;
   composeProposalSent: boolean;
   newHandRequested: boolean;
   submitComposedProposal: (handProposal: HandProposal) => void;
@@ -63,8 +61,6 @@ export interface UseGameSessionResult {
   cleanShutdownStarted: boolean;
   goOnChain: () => void;
   betweenHands: boolean;
-  lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
-  restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   restoreStatus: RestoreStatus;
   restoreError: string | null;
   sessionPhase: Exclude<SessionPhase, 'none'>;
@@ -150,14 +146,13 @@ export function projectTerminalSessionResult(
     gameCoin: view.gameCoin,
     gameTerminal: view.gameTerminal,
     handKey: model.game.handKey,
-    handOrigin: 'terminal',
     activeGameId: view.activeGameId,
     activeGameIds: view.activeGameIds,
     currentHandGameIds: model.game.currentHandIds,
     iProposedHand: selectIProposedHand(model),
     activeGameType: view.activeGameType,
     displayGameId: view.displayGameId,
-    handSource: terminalGameHandSource(model.game.handState),
+    handSource: terminalGameHandSource(restoreRegisteredGameHand(model)),
     appendGameLog: NOOP,
     betweenHandMode: model.betweenHand.mode,
     incomingProposalGroup: selectIncomingProposalGroup(model),
@@ -168,7 +163,6 @@ export function projectTerminalSessionResult(
     openComposeProposal: NOOP,
     setComposeGameTimeout: NOOP,
     setComposeGameType: NOOP,
-    updateSelectedComposeDraft: NOOP,
     composeProposalSent: model.betweenHand.compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: NOOP,

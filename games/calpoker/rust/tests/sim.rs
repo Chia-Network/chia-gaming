@@ -1005,6 +1005,14 @@ mod sim_tests {
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("game should complete");
             assert_stayed_off_chain(&outcome, "log_state_numbers");
+            assert!(
+                outcome
+                    .logs
+                    .iter()
+                    .flatten()
+                    .any(|line| line.starts_with("[send-clean-shutdown]")),
+                "no dedicated clean-shutdown send in logs"
+            );
 
             for who in 0..2 {
                 let log = &outcome.logs[who];
@@ -1021,9 +1029,9 @@ mod sim_tests {
                     format_log(log)
                 );
 
-                // Collect state numbers from [send] and [recv] lines only.
-                // Other lines like [channel-created] report the current state
-                // as a snapshot, not a transition.
+                // Collect state numbers from ordinary signed [send] batches
+                // and [recv] batches only. Dedicated clean shutdown transfers
+                // the potato without advancing the ordinary unroll state.
                 let states: Vec<(usize, usize)> = log
                     .iter()
                     .enumerate()
@@ -1039,7 +1047,6 @@ mod sim_tests {
                     states.len(),
                     format_log(log)
                 );
-
                 // Every consecutive pair must differ by exactly 1.
                 for window in states.windows(2) {
                     let (prev_idx, prev_state) = window[0];

@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use crate::channel_state::game_handler::{GameHandler, MyTurnInputs};
-use crate::channel_state::types::ReadableMove;
+use crate::channel_state::types::{Evidence, ReadableMove};
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, Error, Hash, Program, Puzzle, Sha256Input,
@@ -148,16 +148,22 @@ fn call_my_turn_handler(
 
     let result = run_clvm(allocator, handler, args);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert!(items.len() >= 8, "my_turn returned {} items", items.len());
+    assert!(items.len() >= 7, "my_turn returned {} items", items.len());
+    let validator_for_my_move_hash_bytes =
+        clvm_utils::tree_hash(allocator.allocator(), items[2]).to_bytes();
+    let validator_for_my_move_hash = allocator
+        .allocator()
+        .new_atom(&validator_for_my_move_hash_bytes)
+        .unwrap();
 
     MyTurnResult {
         move_bytes_node: items[1],
         validator_for_my_move: items[2],
-        validator_for_my_move_hash: items[3],
-        max_move_size: int_from_node(allocator, items[6]),
-        new_mover_share: int_from_node(allocator, items[7]),
-        their_turn_handler: if items.len() > 8 {
-            items[8]
+        validator_for_my_move_hash,
+        max_move_size: int_from_node(allocator, items[4]),
+        new_mover_share: int_from_node(allocator, items[5]),
+        their_turn_handler: if items.len() > 6 {
+            items[6]
         } else {
             NodePtr::NIL
         },
@@ -220,7 +226,7 @@ struct GameSetup {
     initial_mover_share: i64,
 }
 
-/// Builds the dictionary-curried factory and extracts slot 0, where the sender
+/// Builds the dictionary-curried factory and extracts slot 0, where player A
 /// is Alice (the word picker).
 fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup {
     let factory_raw = read_hex_puzzle(
@@ -240,22 +246,26 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
     }
     .to_clvm(allocator)
     .unwrap();
-    let stake = BET_SIZE.to_clvm(allocator).unwrap();
-    let result = run_clvm(allocator, factory_curried, stake);
+    let arguments = (BET_SIZE, (BET_SIZE, ((), ())))
+        .to_clvm(allocator)
+        .unwrap();
+    let result = run_clvm(allocator, factory_curried, arguments);
     let records = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(records.len(), 2, "Krunk factory must return two records");
     let game_spec = proper_list(allocator.allocator(), records[0], true).unwrap();
-    assert_eq!(game_spec.len(), 12, "factory record must have 12 fields");
+    assert_eq!(game_spec.len(), 10, "factory record must have 10 fields");
+    let proposal_my_contribution = int_from_node(allocator, game_spec[0]);
+    let proposal_their_contribution = int_from_node(allocator, game_spec[1]);
 
     GameSetup {
-        alice_handler: game_spec[9],
-        bob_handler: game_spec[10],
-        proposal_my_contribution: int_from_node(allocator, game_spec[0]),
-        proposal_their_contribution: int_from_node(allocator, game_spec[1]),
-        proposal_amount: int_from_node(allocator, game_spec[2]),
-        initial_state: game_spec[7],
-        initial_max_move_size: int_from_node(allocator, game_spec[6]),
-        initial_mover_share: int_from_node(allocator, game_spec[8]),
+        alice_handler: game_spec[7],
+        bob_handler: game_spec[8],
+        proposal_my_contribution,
+        proposal_their_contribution,
+        proposal_amount: proposal_my_contribution + proposal_their_contribution,
+        initial_state: game_spec[5],
+        initial_max_move_size: int_from_node(allocator, game_spec[4]),
+        initial_mover_share: int_from_node(allocator, game_spec[6]),
     }
 }
 
@@ -306,55 +316,57 @@ fn test_krunk_guesser_funds_zero() {
     let mut allocator = AllocEncoder::new();
     let factory = factory_puzzle(&mut allocator, &test_dictionary());
     let factory_clvm = factory.to_clvm(&mut allocator).unwrap();
-    let stake = BET_SIZE.to_clvm(&mut allocator).unwrap();
-    let result = run_clvm(&mut allocator, factory_clvm, stake);
+    let arguments = (BET_SIZE, (BET_SIZE, ((), ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
+    let result = run_clvm(&mut allocator, factory_clvm, arguments);
     let records = proper_list(allocator.allocator(), result, true).unwrap();
     let slot0 = proper_list(allocator.allocator(), records[0], true).unwrap();
     let slot1 = proper_list(allocator.allocator(), records[1], true).unwrap();
-    assert_eq!(slot0.len(), 12);
-    assert_eq!(slot1.len(), 12);
+    assert_eq!(slot0.len(), 10);
+    assert_eq!(slot1.len(), 10);
     assert_eq!(int_from_node(&mut allocator, slot0[0]), BET_SIZE);
     assert_eq!(int_from_node(&mut allocator, slot0[1]), 0);
-    assert_eq!(int_from_node(&mut allocator, slot0[2]), BET_SIZE);
-    assert_eq!(int_from_node(&mut allocator, slot0[3]), 1);
-    assert_eq!(int_from_node(&mut allocator, slot0[5]), 0);
-    assert_eq!(int_from_node(&mut allocator, slot0[6]), 32);
-    assert_eq!(int_from_node(&mut allocator, slot0[8]), 0);
+    assert_eq!(
+        int_from_node(&mut allocator, slot0[0]) + int_from_node(&mut allocator, slot0[1]),
+        BET_SIZE
+    );
+    assert_eq!(int_from_node(&mut allocator, slot0[2]), 1);
+    assert_eq!(int_from_node(&mut allocator, slot0[3]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot0[4]), 32);
+    assert_eq!(int_from_node(&mut allocator, slot0[6]), 0);
     assert_eq!(int_from_node(&mut allocator, slot1[0]), 0);
     assert_eq!(int_from_node(&mut allocator, slot1[1]), BET_SIZE);
-    assert_eq!(int_from_node(&mut allocator, slot1[2]), BET_SIZE);
+    assert_eq!(
+        int_from_node(&mut allocator, slot1[0]) + int_from_node(&mut allocator, slot1[1]),
+        BET_SIZE
+    );
+    assert_eq!(int_from_node(&mut allocator, slot1[2]), 0);
     assert_eq!(int_from_node(&mut allocator, slot1[3]), 0);
-    assert_eq!(int_from_node(&mut allocator, slot1[5]), 0);
-    assert_eq!(int_from_node(&mut allocator, slot1[6]), 32);
-    assert_eq!(int_from_node(&mut allocator, slot1[8]), 0);
+    assert_eq!(int_from_node(&mut allocator, slot1[4]), 32);
+    assert_eq!(int_from_node(&mut allocator, slot1[6]), 0);
     assert_clvm_eq(
         &mut allocator,
-        slot0[4],
-        slot1[4],
-        "validator hashes must match",
+        slot0[5],
+        slot1[5],
+        "initial states must match",
     );
     assert_clvm_eq(
         &mut allocator,
         slot0[7],
         slot1[7],
-        "initial states must match",
+        "Alice my-turn handlers must match",
+    );
+    assert_clvm_eq(
+        &mut allocator,
+        slot0[8],
+        slot1[8],
+        "Bob their-turn handlers must match",
     );
     assert_clvm_eq(
         &mut allocator,
         slot0[9],
         slot1[9],
-        "Alice my-turn handlers must match",
-    );
-    assert_clvm_eq(
-        &mut allocator,
-        slot0[10],
-        slot1[10],
-        "Bob their-turn handlers must match",
-    );
-    assert_clvm_eq(
-        &mut allocator,
-        slot0[11],
-        slot1[11],
         "validators must match",
     );
 }
@@ -365,7 +377,9 @@ fn test_krunk_rejects_malformed_economics() {
     let factory = factory_puzzle(&mut allocator, &dictionary);
     let factory_clvm = factory.to_clvm(&mut allocator).unwrap();
 
-    let zero = 0i64.to_clvm(&mut allocator).unwrap();
+    let zero = (0i64, (0i64, ((), ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(run_program(
         allocator.allocator(),
         &chia_dialect(),
@@ -375,7 +389,9 @@ fn test_krunk_rejects_malformed_economics() {
     )
     .is_err());
 
-    let non_multiple = 101i64.to_clvm(&mut allocator).unwrap();
+    let non_multiple = (101i64, (101i64, ((), ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(run_program(
         allocator.allocator(),
         &chia_dialect(),
@@ -385,12 +401,14 @@ fn test_krunk_rejects_malformed_economics() {
     )
     .is_err());
 
-    let one_element_list = (BET_SIZE, ()).to_clvm(&mut allocator).unwrap();
+    let unequal = (BET_SIZE, (BET_SIZE + 100, ((), ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(run_program(
         allocator.allocator(),
         &chia_dialect(),
         factory_clvm,
-        one_element_list,
+        unequal,
         0,
     )
     .is_err());
@@ -571,6 +589,140 @@ fn test_krunk_happy_path_correct_guess() {
     assert_eq!(alice_reveal.new_mover_share, AMOUNT);
 }
 
+fn test_krunk_premature_reveal_has_correct_guess_readable() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator, test_dictionary());
+    let entropy = make_entropy(&mut allocator, "concession_salt");
+    let alice_word = atom(&mut allocator, b"world");
+    let alice_commit = call_my_turn_handler(
+        &mut allocator,
+        setup.alice_handler,
+        alice_word,
+        AMOUNT,
+        setup.initial_state,
+        0,
+        entropy,
+    );
+    let (_, after_commit) = run_validator(
+        &mut allocator,
+        alice_commit.validator_for_my_move_hash,
+        alice_commit.move_bytes_node,
+        0,
+        alice_commit.max_move_size,
+        setup.initial_state,
+        alice_commit.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let state_after_commit = proper_list(allocator.allocator(), after_commit, true).unwrap()[1];
+    let bob_receive = call_their_turn_handler(
+        &mut allocator,
+        setup.bob_handler,
+        AMOUNT,
+        setup.initial_state,
+        state_after_commit,
+        alice_commit.move_bytes_node,
+        alice_commit.validator_for_my_move_hash,
+        0,
+    );
+
+    let correct_word = atom(&mut allocator, b"world");
+    let correct_entropy = make_entropy(&mut allocator, "correct_guess");
+    let correct_guess = call_my_turn_handler(
+        &mut allocator,
+        bob_receive.my_turn_handler,
+        correct_word,
+        AMOUNT,
+        state_after_commit,
+        0,
+        correct_entropy,
+    );
+    let (_, after_correct_guess) = run_validator(
+        &mut allocator,
+        correct_guess.validator_for_my_move_hash,
+        correct_guess.move_bytes_node,
+        0,
+        correct_guess.max_move_size,
+        state_after_commit,
+        correct_guess.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let correct_guess_state =
+        proper_list(allocator.allocator(), after_correct_guess, true).unwrap()[1];
+    let alice_receive = call_their_turn_handler(
+        &mut allocator,
+        alice_commit.their_turn_handler,
+        AMOUNT,
+        state_after_commit,
+        correct_guess_state,
+        correct_guess.move_bytes_node,
+        correct_guess.validator_for_my_move_hash,
+        0,
+    );
+    let reveal_entropy = make_entropy(&mut allocator, "correct_reveal");
+    let reveal = call_my_turn_handler(
+        &mut allocator,
+        alice_receive.my_turn_handler,
+        NodePtr::NIL,
+        AMOUNT,
+        correct_guess_state,
+        0,
+        reveal_entropy,
+    );
+    let normal_readable = call_their_turn_handler(
+        &mut allocator,
+        correct_guess.their_turn_handler,
+        AMOUNT,
+        correct_guess_state,
+        NodePtr::NIL,
+        reveal.move_bytes_node,
+        reveal.validator_for_my_move_hash,
+        reveal.new_mover_share,
+    )
+    .readable_move;
+
+    let wrong_word = atom(&mut allocator, b"crane");
+    let wrong_entropy = make_entropy(&mut allocator, "wrong_guess");
+    let wrong_guess = call_my_turn_handler(
+        &mut allocator,
+        bob_receive.my_turn_handler,
+        wrong_word,
+        AMOUNT,
+        state_after_commit,
+        0,
+        wrong_entropy,
+    );
+    let (_, after_wrong_guess) = run_validator(
+        &mut allocator,
+        wrong_guess.validator_for_my_move_hash,
+        wrong_guess.move_bytes_node,
+        0,
+        wrong_guess.max_move_size,
+        state_after_commit,
+        wrong_guess.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let wrong_guess_state =
+        proper_list(allocator.allocator(), after_wrong_guess, true).unwrap()[1];
+    let concession_readable = call_their_turn_handler(
+        &mut allocator,
+        wrong_guess.their_turn_handler,
+        AMOUNT,
+        wrong_guess_state,
+        NodePtr::NIL,
+        reveal.move_bytes_node,
+        reveal.validator_for_my_move_hash,
+        reveal.new_mover_share,
+    )
+    .readable_move;
+
+    assert_clvm_eq(
+        &mut allocator,
+        normal_readable,
+        concession_readable,
+        "a funded premature reveal must look exactly like a correct guess",
+    );
+}
+
 fn test_krunk_bob_invalid_guess_slash() {
     let mut allocator = AllocEncoder::new();
     let setup = setup_game(&mut allocator, test_dictionary());
@@ -622,6 +774,12 @@ fn test_krunk_bob_invalid_guess_slash() {
         !evidence_items.is_empty(),
         "handler should produce evidence for invalid guess"
     );
+    let signed_evidence = Evidence::from_nodeptr(&mut allocator, evidence_items[0]).unwrap();
+    assert!(
+        signed_evidence.signature().is_some(),
+        "dictionary evidence must retain its aggregate signature"
+    );
+    let evidence = signed_evidence.to_nodeptr(&mut allocator).unwrap();
 
     let guess_clvm = guess_validator.to_clvm(&mut allocator).unwrap();
 
@@ -634,7 +792,7 @@ fn test_krunk_bob_invalid_guess_slash() {
         5,
         state,
         guess_clvm,
-        evidence_items[0],
+        evidence,
     );
     assert_eq!(
         code,
@@ -1291,6 +1449,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_krunk_happy_path_correct_guess",
             &test_krunk_happy_path_correct_guess,
+        ),
+        (
+            "test_krunk_premature_reveal_has_correct_guess_readable",
+            &test_krunk_premature_reveal_has_correct_guess_readable,
         ),
         (
             "test_krunk_bob_invalid_guess_slash",

@@ -1,5 +1,5 @@
 import { selectDisplayedGameInstance, type SessionModel } from './model';
-import { canRemountFinishedGameState } from '../gameRegistry';
+import { decodePersistedGameState } from '../gameRegistry';
 
 /**
  * Keep persisted bigint payloads out of React's enumerable prop inspection.
@@ -20,13 +20,13 @@ export function sessionModelForReactProps(model: SessionModel): SessionModel {
 
 export interface FinishedSessionDisplay {
   terminalLabel: string | null;
-  canRemountHand: boolean;
+  hasSavedHand: boolean;
 }
 
 /** Shell-only decision: a validated feature mount receives the opaque payload. */
 export function selectFinishedSessionDisplay(model: SessionModel): FinishedSessionDisplay {
   return {
     terminalLabel: selectDisplayedGameInstance(model)?.terminal.label ?? null,
-    canRemountHand: canRemountFinishedGameState(model.game.handState),
+    hasSavedHand: decodePersistedGameState(model.game.handState) !== null,
   };
 }

@@ -329,6 +329,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "bencodex",
+ "blst",
  "chia-bls",
  "chia-consensus",
  "chia-protocol",

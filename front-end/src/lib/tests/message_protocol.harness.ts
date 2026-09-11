@@ -13,7 +13,8 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { _resetForTests as resetSaveState, saveSession } from '../../hooks/save';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
-import { mockGamePackageIdentity, TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
   get: (target, property) =>
@@ -55,9 +56,6 @@ export const mockWasmConnection = new Proxy({} as WasmConnection, {
     if (property === 'game_session_serialization_schema') return () => 1;
     if (property === 'registered_game_packages') {
       return () => [...TEST_PROTOCOL_IDS];
-    }
-    if (property === 'warm_game_package') {
-      return (key: string) => mockGamePackageIdentity(key);
     }
     return () => undefined;
   },
@@ -141,8 +139,16 @@ export function makeMockCradle(
 export function makePeerConn(
   sentMessages: Array<{ msgno: number; msg: Uint8Array }>,
   sentAcks: number[],
+  receivePolicy?: ReadonlySessionReceivePolicy,
 ): PeerConnectionResult {
   return {
+    reliableState: {
+      sessionId: '00'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 0n,
+      unackedMessages: [],
+      disposition: 'active',
+    },
     sendMessage: (msgno, msg) => {
       sentMessages.push({ msgno, msg });
       return true;
@@ -154,6 +160,7 @@ export function makePeerConn(
     sendKeepalive: () => true,
     hostLog: () => {},
     close: () => {},
+    receivePolicy,
   };
 }
 
@@ -170,6 +177,7 @@ export interface TestHarness {
  */
 export function createReadyBlob(
   onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
+  receivePolicy?: ReadonlySessionReceivePolicy,
 ): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
@@ -178,7 +186,7 @@ export function createReadyBlob(
     'test',
     100n,
     100n,
-    makePeerConn(sentMessages, sentAcks),
+    makePeerConn(sentMessages, sentAcks, receivePolicy),
   );
   const cradle = makeMockCradle(onDeliver);
 
@@ -217,6 +225,7 @@ export function createReadyBlob(
 /** Returns a SessionController at qe=1 — messages will be buffered until kickSystem(2). */
 export function createUnreadyBlob(
   onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
+  receivePolicy?: ReadonlySessionReceivePolicy,
 ): TestHarness {
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
@@ -225,7 +234,7 @@ export function createUnreadyBlob(
     'test',
     100n,
     100n,
-    makePeerConn(sentMessages, sentAcks),
+    makePeerConn(sentMessages, sentAcks, receivePolicy),
   );
   const cradle = makeMockCradle(onDeliver);
 

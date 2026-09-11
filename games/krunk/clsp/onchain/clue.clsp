@@ -3,7 +3,6 @@
 (import games.krunk.clsp.onchain.guess exposing (program_hash as guess_hash))
 (import games.krunk.clsp.onchain.krunk_make_clue exposing make_clue)
 (import std.if_any_fail)
-(import std.assert)
 (import std.and)
 (import std.relops)
 (import std.li)
@@ -20,6 +19,15 @@
     (if (= n 0)
         lst
         (drop (- n 1) (r lst))
+    )
+)
+
+(defun reveal_mover_share (base_unit bob_guesses revealed_word)
+    (if (not (= (len bob_guesses) 5))
+        (krunk_payout_share base_unit (len bob_guesses))
+        (= (f bob_guesses) revealed_word)
+        (krunk_payout_share base_unit 5)
+        0
     )
 )
 
@@ -45,44 +53,45 @@
                 (li dict_pubkey base_unit bob_guesses (c MOVE alice_clues) alice_commit clue_hash)
                 5)
         )
+        (= (strlen MOVE) 21)
         ; Alice revealed salt||word.
-        (if (= (strlen evidence) 10)
-            ; Slash: Alice's committed word is outside a signed dictionary range.
-            (assign
-                revealed_word (substr MOVE 16 21)
-                (assert
-                    (>= revealed_word (substr evidence 0 5))
-                    (<= revealed_word (substr evidence 5 10))
-                    (list 0 0 0 (list AGG_SIG_UNSAFE dict_pubkey evidence))
-                )
-            )
-            (if (= (strlen evidence) 1)
-                ; Slash: Alice gave a provably wrong prior clue. At reveal
-                ; time bob_guesses has one extra latest guess with no clue,
-                ; so evidence indexes alice_clues and bob_guesses is offset.
-                (assert
-                    (< evidence (len alice_clues))
-                    (!= (make_clue (substr MOVE 16 21)
-                            (f (drop (+ evidence 1) bob_guesses)))
-                        (f (drop evidence alice_clues)))
-                    0
-                )
-                (if_any_fail
-                    (= (strlen MOVE) 21)
-                    (= alice_commit (sha256 (substr MOVE 0 16) (substr MOVE 16 21)))
-                    (= MOVER_SHARE
-                        (if (= (f bob_guesses) (substr MOVE 16 21))
-                            (krunk_payout_share base_unit (len bob_guesses))
-                            (if (= (len bob_guesses) 5)
-                                0
-                                (x "clue reveal before terminal")
-                            )
-                        )
+        (assign
+            revealed_word (substr MOVE 16 21)
+            valid_terminal (list 0 0 0)
+            (if_any_fail
+                (= MOVER_SHARE (reveal_mover_share base_unit bob_guesses revealed_word))
+                (= alice_commit (sha256 (substr MOVE 0 16) revealed_word))
+                0
+                (if (l evidence)
+                    valid_terminal
+                    (= (strlen evidence) 1)
+                    ; Slash only when the selected prior clue is wrong.
+                    ; At reveal time bob_guesses has one extra latest
+                    ; guess with no clue, so the lists are offset by one.
+                    (if (not (>= evidence 0))
+                        valid_terminal
+                        (not (< evidence (len alice_clues)))
+                        valid_terminal
+                        (= (make_clue revealed_word
+                                (f (drop (+ evidence 1) bob_guesses)))
+                            (f (drop evidence alice_clues)))
+                        valid_terminal
+                        0
                     )
-                    0
-                    (list 0 0 0)
+                    (= (strlen evidence) 10)
+                    ; A signed dictionary-gap range containing the
+                    ; word authorizes this conditional slash.
+                    (if (not (>= revealed_word (substr evidence 0 5)))
+                        valid_terminal
+                        (<= revealed_word (substr evidence 5 10))
+                        (list 0 0 0
+                            (list AGG_SIG_UNSAFE dict_pubkey evidence))
+                        valid_terminal
+                    )
+                    valid_terminal
                 )
             )
         )
+        0
     )
 )

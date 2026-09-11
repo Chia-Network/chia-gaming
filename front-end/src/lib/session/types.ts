@@ -8,25 +8,41 @@ import type {
 } from '../../types/ChiaGaming';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { ComposeDraftState } from './composeDraft';
-import type { PersistedGameState } from './gameStateCodec';
+import type { PersistedGameState, SettlementOutcome } from '@games/host';
 
-export type {
-  GameTerminalType,
-  GameTerminalModel,
-  HandProposalBase,
-  ProposalGroupOrigin,
-} from '@games/host';
-import type {
-  GameTerminalModel,
-  HandProposal as HostHandProposal,
-  ProposalGroupOrigin,
-} from '@games/host';
+export type { HandProposalBase } from '@games/host';
+export type { ProposalGroupOrigin } from './proposalOrigin';
+import type { HandProposal as HostHandProposal } from '@games/host';
+import type { ProposalGroupOrigin } from './proposalOrigin';
 import type { CatalogGameType } from '../../generated/gamePresets';
 
 export type RegisteredGameType = CatalogGameType;
 export type { CatalogGameType };
 
 export type LocalActionKind = 'make_move' | 'accept_settlement' | 'cheat';
+
+export type GameTerminalType =
+  | 'none'
+  | 'settled'
+  | 'insufficient-balance'
+  | 'ended-cancelled'
+  | 'game-error';
+
+export interface GameTerminalModel {
+  type: GameTerminalType;
+  outcome: SettlementOutcome | null;
+  label: string | null;
+  myReward: string | null;
+  rewardCoinHex: string | null;
+}
+
+export const EMPTY_GAME_TERMINAL_MODEL: GameTerminalModel = {
+  type: 'none',
+  outcome: null,
+  label: null,
+  myReward: null,
+  rewardCoinHex: null,
+};
 
 export type GameTurnState =
   | 'my-turn'
@@ -39,13 +55,6 @@ export type GameTurnState =
   | 'finishing-waiting-timeout'
   | 'finishing-spending'
   | 'ended';
-
-export interface PendingGameCandidate {
-  gameType: RegisteredGameType;
-  id: string;
-  action: LocalActionKind;
-  featureState: unknown;
-}
 
 export type HandProposal = Omit<HostHandProposal, 'gameType'> & {
   gameType: CatalogGameType;
@@ -108,9 +117,9 @@ export type NotificationKind =
   | 'action-failed'
   | 'infra-error'
   | 'durability-error'
-  | 'game-terminal'
   | 'proposal-rejected'
-  | 'insufficient-bal';
+  | 'insufficient-bal'
+  | 'move-rejected';
 
 export interface ChannelStatusModel {
   state: ChannelStatus;
@@ -136,9 +145,7 @@ export interface QueuedNotificationModel {
   kind: NotificationKind;
   title: string;
   message: string;
-  payload?:
-    | ChannelStatusModel
-    | { label: string; myReward: string | null; rewardCoinHex: string | null };
+  payload?: ChannelStatusModel;
 }
 
 export type ProposalGroupDisposition =
@@ -185,7 +192,6 @@ export interface GameModel {
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
-  pendingCandidates: Record<string, PendingGameCandidate>;
   queue: QueuedNotificationModel[];
 }
 
@@ -213,7 +219,6 @@ export interface SessionModel {
   betweenHand: BetweenHandModel;
   history: SessionHistoryModel;
   myRunningBalance: bigint;
-  lastOutcomeWin?: 'win' | 'lose' | 'tie';
 }
 
 type LegacyGameInput = Omit<Partial<GameModel>, 'instances'> & {
@@ -228,7 +233,6 @@ export interface SessionModelInput {
   betweenHand?: Partial<BetweenHandModel>;
   history?: Partial<SessionHistoryModel>;
   myRunningBalance?: bigint;
-  lastOutcomeWin?: 'win' | 'lose' | 'tie';
 }
 
 export type GameDashboardActionKind =
@@ -268,4 +272,4 @@ export interface StatusBarBalanceSegment {
 }
 
 export type { PeerLiveness, SessionPhase };
-export type { GameStateCodec, PersistedGameState } from './gameStateCodec';
+export type { PersistedGameState } from '@games/host';

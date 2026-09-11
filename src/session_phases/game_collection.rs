@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use crate::channel_state::game::Game;
-use crate::common::types::{AllocEncoder, GameType, Program};
-use crate::session_phases::types::GameFactory;
+use crate::common::load_clvm::read_binary_puzzle;
+use crate::common::types::{AllocEncoder, GameType, Program, ProgramRef};
 
 include!(concat!(env!("OUT_DIR"), "/game_register.rs"));
 
@@ -14,24 +14,19 @@ thread_local! {
 
 #[derive(Clone, Default)]
 pub struct RegisteredGameSet {
-    pub factories: BTreeMap<GameType, GameFactory>,
+    pub factories: BTreeMap<GameType, ProgramRef>,
     pub package_ids: Vec<(String, GameType)>,
 }
 
 pub fn register_package(
     allocator: &mut AllocEncoder,
     key: &str,
-    factory: GameFactory,
+    factory: ProgramRef,
     probe: Program,
-    factories: &mut BTreeMap<GameType, GameFactory>,
+    factories: &mut BTreeMap<GameType, ProgramRef>,
     package_ids: &mut Vec<(String, GameType)>,
 ) {
-    let program = factory
-        .program
-        .as_ref()
-        .unwrap_or_else(|| panic!("package {key} factory program missing"))
-        .clone();
-    let games = Game::run_factory(allocator, (*program).clone().into(), &probe)
+    let games = Game::run_factory(allocator, factory.clone().into(), &probe)
         .unwrap_or_else(|e| panic!("package {key} factory probe failed: {e:?}"));
     if games.is_empty() {
         panic!("package {key} factory returned no games");
@@ -44,8 +39,25 @@ pub fn register_package(
     package_ids.push((key.to_string(), id));
 }
 
+pub fn register_built_package(
+    allocator: &mut AllocEncoder,
+    key: &str,
+    id: GameType,
+    factories: &mut BTreeMap<GameType, ProgramRef>,
+    package_ids: &mut Vec<(String, GameType)>,
+) {
+    let factory_path = format!("games/{key}/clsp/factory_prepared.clvm.bin");
+    let factory = read_binary_puzzle(allocator, &factory_path)
+        .unwrap_or_else(|e| panic!("package {key} loading failed: {e:?}"));
+    if factories.contains_key(&id) {
+        panic!("package {key} duplicate first-validator hash {id}");
+    }
+    factories.insert(id.clone(), factory.to_program().into());
+    package_ids.push((key.to_string(), id));
+}
+
 /// Register production games. Under `cfg(test)`, also register test packages.
-pub fn game_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, GameFactory> {
+pub fn game_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, ProgramRef> {
     register_games(allocator).factories
 }
 
@@ -97,17 +109,6 @@ fn cached_register(allocator: &mut AllocEncoder, include_test: bool) -> Register
     })
 }
 
-/// Probe one production package into the process-wide cache. Idempotent.
-pub fn warm_production_package(
-    allocator: &mut AllocEncoder,
-    key: &str,
-) -> Result<GameType, String> {
-    if !production_package_keys().contains(&key) {
-        return Err(format!("unknown production package {key}"));
-    }
-    Ok(with_cache(false, |set| ensure_package(allocator, key, set)))
-}
-
 pub fn register_games(allocator: &mut AllocEncoder) -> RegisteredGameSet {
     cached_register(allocator, cfg!(test))
 }
@@ -121,6 +122,6 @@ pub fn game_type_for_package(allocator: &mut AllocEncoder, key: &str) -> GameTyp
         .unwrap_or_else(|| panic!("unknown game package {key}"))
 }
 
-pub fn production_package_ids(allocator: &mut AllocEncoder) -> Vec<(String, GameType)> {
-    cached_register(allocator, false).package_ids
+pub fn production_package_ids(_allocator: &mut AllocEncoder) -> Vec<(String, GameType)> {
+    built_production_package_ids()
 }

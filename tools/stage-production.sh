@@ -46,13 +46,11 @@ while IFS= read -r -d '' f; do
     gzip -c -n -f "$f" > "$f.gz" || exit 1
   done < <(find "$PLAYER_STAGE" -type f \
     \( -name '*.html' -o -name '*.js' -o -name '*.mjs' -o -name '*.css' \
-       -o -name '*.json' -o -name '*.wasm' -o -name '*.hex' -o -name '*.dat' \
+       -o -name '*.json' -o -name '*.wasm' -o -name '*.clvm.bin' \
        -o -name '*.svg' \) -print0)
 
 echo "=== Sanity-checking Krunk files ==="
-for f in \
-    "games/krunk/clsp/factory_krunk_factory.hex" \
-    "games/krunk/clsp/krunk_signed_dict_tree.dat"
+for f in "games/krunk/clsp/factory_prepared.clvm.bin"
 do
     if [ ! -f "$PLAYER_STAGE/$f" ]; then
         echo "ERROR: missing $f in player staging"

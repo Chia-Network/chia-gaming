@@ -240,6 +240,166 @@ fn run_validator_step(
     }
 }
 
+fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
+    nodes.iter().rev().fold(NodePtr::NIL, |tail, node| {
+        allocator.allocator().new_pair(*node, tail).unwrap()
+    })
+}
+
+fn sha256_concat_bytes(parts: &[&[u8]]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    hasher.finalize().into()
+}
+
+fn infohash_b_node(
+    allocator: &mut AllocEncoder,
+    next_validator_hash: Option<[u8; 32]>,
+    state: NodePtr,
+) -> NodePtr {
+    match next_validator_hash {
+        None => NodePtr::NIL,
+        Some(hash) => {
+            let state_hash = clvm_utils::tree_hash(allocator.allocator(), state);
+            let bytes = sha256_concat_bytes(&[hash.as_slice(), &state_hash.to_bytes()]);
+            allocator.allocator().new_atom(&bytes).unwrap()
+        }
+    }
+}
+
+fn run_referee_slash(
+    allocator: &mut AllocEncoder,
+    validator: &Puzzle,
+    move_bytes: &[u8],
+    max_move_size: i64,
+    mover_share: i64,
+    previous_state: NodePtr,
+    evidence: Option<&[u8]>,
+    infohash_b: NodePtr,
+) -> Result<NodePtr, String> {
+    let referee =
+        read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex").expect("load referee");
+    let referee_clvm = referee.to_clvm(allocator).unwrap();
+    let validator_clvm = validator.to_clvm(allocator).unwrap();
+    let validator_hash = validator.sha256tree(allocator);
+    let previous_state_hash = clvm_utils::tree_hash(allocator.allocator(), previous_state);
+    let infohash_a = sha256_concat_bytes(&[
+        validator_hash.hash().bytes().as_slice(),
+        &previous_state_hash.to_bytes(),
+    ]);
+
+    let mover_pubkey = allocator.allocator().new_atom(&[0x11; 48]).unwrap();
+    let waiter_pubkey = allocator.allocator().new_atom(&[0x22; 48]).unwrap();
+    let timeout = 10_i64.to_clvm(allocator).unwrap();
+    let amount = AMOUNT.to_clvm(allocator).unwrap();
+    let referee_hash = referee.sha256tree(allocator);
+    let mod_hash = allocator
+        .allocator()
+        .new_atom(referee_hash.hash().bytes())
+        .unwrap();
+    let nonce = 1_i64.to_clvm(allocator).unwrap();
+    let move_node = allocator.allocator().new_atom(move_bytes).unwrap();
+    let max_move_size = max_move_size.to_clvm(allocator).unwrap();
+    let mover_share = mover_share.to_clvm(allocator).unwrap();
+    let infohash_a = allocator.allocator().new_atom(&infohash_a).unwrap();
+    let evidence = evidence
+        .map(|bytes| allocator.allocator().new_atom(bytes).unwrap())
+        .unwrap_or(NodePtr::NIL);
+    let payout_ph = allocator.allocator().new_atom(&[0x33; 32]).unwrap();
+
+    let curried_args = list_from_nodes(
+        allocator,
+        &[
+            mover_pubkey,
+            waiter_pubkey,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            move_node,
+            max_move_size,
+            infohash_b,
+            mover_share,
+            infohash_a,
+        ],
+    );
+    let slash_args = list_from_nodes(
+        allocator,
+        &[previous_state, validator_clvm, evidence, payout_ph],
+    );
+    let args = allocator
+        .allocator()
+        .new_pair(curried_args, slash_args)
+        .unwrap();
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        referee_clvm,
+        args,
+        0,
+    )
+    .map(|reduction| reduction.1)
+    .map_err(|e| format!("CLVM error: {e:?}"))
+}
+
+fn assert_referee_slash_succeeds(
+    allocator: &mut AllocEncoder,
+    validator: &Puzzle,
+    move_bytes: &[u8],
+    max_move_size: i64,
+    mover_share: i64,
+    previous_state: NodePtr,
+    evidence: Option<&[u8]>,
+) {
+    let output = run_referee_slash(
+        allocator,
+        validator,
+        move_bytes,
+        max_move_size,
+        mover_share,
+        previous_state,
+        evidence,
+        NodePtr::NIL,
+    )
+    .expect("referee slash should execute");
+    assert_eq!(
+        proper_list(allocator.allocator(), output, true)
+            .expect("referee conditions")
+            .len(),
+        2,
+        "unconditional slash must emit CREATE_COIN and AGG_SIG_UNSAFE payout conditions"
+    );
+}
+
+fn assert_referee_slash_rejected(
+    allocator: &mut AllocEncoder,
+    validator: &Puzzle,
+    move_bytes: &[u8],
+    max_move_size: i64,
+    mover_share: i64,
+    previous_state: NodePtr,
+    evidence: Option<&[u8]>,
+    infohash_b: NodePtr,
+) {
+    assert!(
+        run_referee_slash(
+            allocator,
+            validator,
+            move_bytes,
+            max_move_size,
+            mover_share,
+            previous_state,
+            evidence,
+            infohash_b,
+        )
+        .is_err(),
+        "slash of a valid move must fail"
+    );
+}
+
 struct StepSpec {
     move_bytes: Vec<u8>,
     mover_share: i64,
@@ -299,8 +459,29 @@ fn run_step_and_check(
                 spec.validator_name, expected, r.move_code
             );
             if r.move_code == MoveCode::Slash {
+                assert_referee_slash_succeeds(
+                    allocator,
+                    &info.puzzle,
+                    &spec.move_bytes,
+                    last.next_max_move_size,
+                    spec.mover_share,
+                    last.state,
+                    spec.evidence.as_deref(),
+                );
                 None
             } else {
+                let infohash_b =
+                    infohash_b_node(allocator, r.next_validator_hash, r.state);
+                assert_referee_slash_rejected(
+                    allocator,
+                    &info.puzzle,
+                    &spec.move_bytes,
+                    r.next_max_move_size,
+                    spec.mover_share,
+                    last.state,
+                    spec.evidence.as_deref(),
+                    infohash_b,
+                );
                 Some(r)
             }
         }
@@ -621,6 +802,51 @@ fn test_spacepoker_begin_round_happy() {
 }
 
 #[test]
+fn test_spacepoker_mid_round_raise_zero_is_not_slashable() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let alice_image_4 = sha256_bytes(&[0x11; 16]);
+    let bob_image_4 = find_waiter_value_for_outcome(&alice_image_4, true);
+    let after_b = drive_to_begin_round(&mut a, &lib, &alice_image_4, &bob_image_4);
+
+    let mut open = alice_image_4.to_vec();
+    open.push(0);
+    let after_open = run_step_and_check(
+        &mut a,
+        &lib,
+        &after_b,
+        &make_step(
+            &open,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "begin_round",
+        ),
+    )
+    .expect("open should reach mid_round");
+
+    let raise_zero = vec![0u8; 33];
+    let result = run_step_and_check(
+        &mut a,
+        &lib,
+        &after_open,
+        &make_step(
+            &raise_zero,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "mid_round",
+        ),
+    );
+    assert!(
+        result.is_some(),
+        "a zero raise in mid_round must be a valid move, not a slash"
+    );
+}
+
+#[test]
 fn test_spacepoker_begin_round_slash_bad_image() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -932,7 +1158,26 @@ fn test_spacepoker_end_slash_bad_selection_popcount() {
 }
 
 #[test]
-fn test_spacepoker_end_valid_move_nil_evidence_exception() {
+fn test_spacepoker_end_slash_out_of_range_selection() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let mover_preimage = [0xA1; 16];
+    let waiter_preimage = [0xB2; 16];
+    let end_state = make_end_state(&mut a, &lib, BET_UNIT, &mover_preimage, &waiter_preimage);
+
+    let mut move_bytes = mover_preimage.to_vec();
+    move_bytes.push(0x8F);
+
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &end_state,
+        &make_step(&move_bytes, 0, None, MoveCode::Slash, false, "end"),
+    );
+}
+
+#[test]
+fn test_spacepoker_end_valid_move_nil_evidence_denies_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let mover_preimage = [0xA1; 16];
@@ -950,7 +1195,7 @@ fn test_spacepoker_end_valid_move_nil_evidence_exception() {
             &move_bytes,
             AMOUNT / 2,
             None,
-            MoveCode::ClvmException,
+            MoveCode::MakeMove,
             false,
             "end",
         ),
@@ -958,7 +1203,7 @@ fn test_spacepoker_end_valid_move_nil_evidence_exception() {
 }
 
 #[test]
-fn test_spacepoker_end_valid_move_bad_evidence_exception() {
+fn test_spacepoker_end_valid_move_bad_evidence_denies_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let mover_preimage = [0xA1; 16];
@@ -976,7 +1221,33 @@ fn test_spacepoker_end_valid_move_bad_evidence_exception() {
             &move_bytes,
             AMOUNT / 2,
             Some(&[0x0F]),
-            MoveCode::ClvmException,
+            MoveCode::MakeMove,
+            false,
+            "end",
+        ),
+    );
+}
+
+#[test]
+fn test_spacepoker_end_valid_move_out_of_range_evidence_denies_slash() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let mover_preimage = [0xA1; 16];
+    let waiter_preimage = [0xB2; 16];
+    let end_state = make_end_state(&mut a, &lib, BET_UNIT, &mover_preimage, &waiter_preimage);
+
+    let mut move_bytes = mover_preimage.to_vec();
+    move_bytes.push(0x1F);
+
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &end_state,
+        &make_step(
+            &move_bytes,
+            AMOUNT / 2,
+            Some(&[0x8F]),
+            MoveCode::MakeMove,
             false,
             "end",
         ),
@@ -1022,6 +1293,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_spacepoker_begin_round_happy,
         ),
         (
+            "test_spacepoker_mid_round_raise_zero_is_not_slashable",
+            &test_spacepoker_mid_round_raise_zero_is_not_slashable,
+        ),
+        (
             "test_spacepoker_begin_round_slash_bad_image",
             &test_spacepoker_begin_round_slash_bad_image,
         ),
@@ -1058,12 +1333,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_spacepoker_end_slash_bad_selection_popcount,
         ),
         (
-            "test_spacepoker_end_valid_move_nil_evidence_exception",
-            &test_spacepoker_end_valid_move_nil_evidence_exception,
+            "test_spacepoker_end_slash_out_of_range_selection",
+            &test_spacepoker_end_slash_out_of_range_selection,
         ),
         (
-            "test_spacepoker_end_valid_move_bad_evidence_exception",
-            &test_spacepoker_end_valid_move_bad_evidence_exception,
+            "test_spacepoker_end_valid_move_nil_evidence_denies_slash",
+            &test_spacepoker_end_valid_move_nil_evidence_denies_slash,
+        ),
+        (
+            "test_spacepoker_end_valid_move_bad_evidence_denies_slash",
+            &test_spacepoker_end_valid_move_bad_evidence_denies_slash,
+        ),
+        (
+            "test_spacepoker_end_valid_move_out_of_range_evidence_denies_slash",
+            &test_spacepoker_end_valid_move_out_of_range_evidence_denies_slash,
         ),
     ]
 }

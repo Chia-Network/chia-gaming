@@ -3,18 +3,10 @@ import type { ProtocolGameId } from '../types/ChiaGaming';
 
 export type GamePackageIdentity = { key: string; id: string };
 
-type GameWarmWasm = {
-  warm_game_package?: (key: string) => GamePackageIdentity;
+type GameIdentityWasm = {
   registered_game_packages: () => GamePackageIdentity[];
 };
 
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, 0);
-  });
-}
-
-let warmPromise: Promise<GamePackageIdentity[]> | null = null;
 const protocolIdByCatalog = new Map<CatalogGameType, ProtocolGameId>();
 const catalogByProtocolId = new Map<string, CatalogGameType>();
 
@@ -67,7 +59,6 @@ export function catalogGameTypeFromWire(value: string): CatalogGameType | null {
 }
 
 export function _resetGameIdentityWarmupForTests(): void {
-  warmPromise = null;
   resetProtocolIds();
 }
 
@@ -75,8 +66,8 @@ function record(row: GamePackageIdentity): void {
   writeIdentity(row.key, row.id);
 }
 
-/** Finish any remaining factory probes on this turn. Cheap if page-load warmup already ran. */
-export function completeRegisteredGames(wasm: GameWarmWasm): GamePackageIdentity[] {
+/** Bind the protocol identities calculated by the package build. */
+export function completeRegisteredGames(wasm: GameIdentityWasm): GamePackageIdentity[] {
   if (protocolIdentitiesReady()) {
     return snapshotWarmed();
   }
@@ -90,36 +81,8 @@ function snapshotWarmed(): GamePackageIdentity[] {
   return PRODUCTION_PACKAGE_KEYS.map((key) => {
     const id = protocolIdByCatalog.get(key);
     if (id === undefined) {
-      throw new Error(`Missing warmed identity for ${key}`);
+      throw new Error(`Missing built identity for ${key}`);
     }
     return { key, id };
   });
-}
-
-/**
- * Probe factories one package at a time, yielding to the event loop between
- * them so the hub UI stays responsive during Krunk's large dictionary curry.
- */
-export function warmRegisteredGames(wasm: GameWarmWasm): Promise<GamePackageIdentity[]> {
-  const warmOne = wasm.warm_game_package;
-  if (!warmOne) {
-    return Promise.resolve(completeRegisteredGames(wasm));
-  }
-  if (!warmPromise) {
-    warmPromise = (async () => {
-      try {
-        for (const key of PRODUCTION_PACKAGE_KEYS) {
-          if (protocolIdByCatalog.has(key)) continue;
-          await yieldToEventLoop();
-          if (protocolIdByCatalog.has(key)) continue;
-          record(warmOne(key));
-        }
-        return completeRegisteredGames(wasm);
-      } catch (err) {
-        warmPromise = null;
-        throw err;
-      }
-    })();
-  }
-  return warmPromise;
 }

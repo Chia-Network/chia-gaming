@@ -64,8 +64,9 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
           <p className="text-xs text-canvas-solid text-center">
             A hub finds you an opponent and relays your game messages. It sees who you play against
             and how much you wager, and it displays its own interface in this tab. It cannot take
-            your funds or change the outcome of a game, because those are settled on-chain. Connect
-            only to a hub you chose yourself.
+            your funds or change the outcome of a game, because those are settled on-chain. Do not
+            send funds directly to a hub or players on a hub. You do not need to do that to play
+            games.
           </p>
         </div>
 

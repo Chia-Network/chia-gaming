@@ -2,7 +2,7 @@
 //
 // `build:deploy` has already emitted index.js / index.css there. This step
 // adds the artifacts produced outside the front-end build (the wasm pair, plus
-// the open-ended images/ and clsp/*.hex sets), then floor-checks the result so
+// the open-ended images/ and binary CLVM sets), then floor-checks the result so
 // an incomplete bundle fails the build loudly instead of shipping silently.
 
 import { cpSync, mkdirSync, existsSync, readdirSync, statSync, copyFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ const FE = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const APP = join(FE, 'dist', 'app');
 
 // Where wasm-pack wrote chia_gaming_wasm.js / _bg.wasm, and where the compiled
-// chialisp hex live. Defaults match tools/build-deploy.sh; overridable via env.
+// binary Chialisp artifacts live. Defaults match tools/build-deploy.sh; overridable via env.
 const WASM_OUT_DIR = process.env.WASM_OUT_DIR || join(FE, 'dist');
 const CLSP_DIR = process.env.CLSP_DIR || resolve(FE, '..', 'clsp');
 const GAMES_DIR = process.env.GAMES_DIR || resolve(FE, '..', 'games');
@@ -37,13 +37,13 @@ if (existsSync(imagesSrc)) {
   cpSync(imagesSrc, join(APP, 'images'), { recursive: true });
 }
 
-// Open-ended: copy every compiled clsp hex, preserving directory structure.
-function copyHex(dir) {
+// Open-ended: copy every binary CLVM artifact, preserving directory structure.
+function copyClvmBinaries(dir) {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) {
-      copyHex(p);
-    } else if (p.endsWith('.hex') || p.endsWith('.dat')) {
+      copyClvmBinaries(p);
+    } else if (p.endsWith('.clvm.bin')) {
       const dst = join(APP, 'clsp', relative(CLSP_DIR, p));
       mkdirSync(dirname(dst), { recursive: true });
       copyFileSync(p, dst);
@@ -51,7 +51,7 @@ function copyHex(dir) {
   }
 }
 if (existsSync(CLSP_DIR)) {
-  copyHex(CLSP_DIR);
+  copyClvmBinaries(CLSP_DIR);
 }
 
 function copyGameAssets(dir) {
@@ -59,7 +59,7 @@ function copyGameAssets(dir) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) {
       copyGameAssets(p);
-    } else if (p.endsWith('.hex') || p.endsWith('.dat')) {
+    } else if (p.endsWith('.clvm.bin')) {
       const dst = join(APP, relative(REPO_ROOT, p));
       mkdirSync(dirname(dst), { recursive: true });
       copyFileSync(p, dst);
@@ -80,10 +80,10 @@ for (const f of ['index.js', 'index.css', ...WASM_FILES]) {
   }
 }
 if (dirIsEmpty(join(APP, 'clsp'))) {
-  errors.push('clsp/ is missing or empty (no compiled .hex)');
+  errors.push('clsp/ is missing or empty (no binary CLVM artifacts)');
 }
 if (dirIsEmpty(join(APP, 'games'))) {
-  errors.push('games/ is missing or empty (no compiled factory .hex)');
+  errors.push('games/ is missing or empty (no binary game artifacts)');
 }
 if (dirIsEmpty(join(APP, 'images'))) {
   errors.push('images/ is missing or empty');

@@ -4,7 +4,8 @@ use clvmr::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove};
+use crate::channel_state::game_handler::PreparedMove;
+use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv};
 use crate::channel_state::ChannelState;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
@@ -12,7 +13,7 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::GameStatusKind;
 use crate::session_phases::effects::{CancelReason, Effect, GameNotification};
-use crate::session_phases::types::{GameAction, PeerMessage, PotatoState};
+use crate::session_phases::types::{GameAction, PotatoState};
 
 pub enum UnrollOutcome {
     Preempted(SpendBundle),
@@ -126,10 +127,11 @@ impl ChannelStateBase {
     pub fn emit_failure_cleanup(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
         if let Ok(ch) = self.channel_state_mut() {
-            let cancelled_ids = ch.cancel_all_proposals();
-            for id in cancelled_ids {
+            let cancelled_groups = ch.cancel_all_proposals();
+            for group_ids in cancelled_groups {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id,
+                    id: group_ids[0],
+                    group_ids,
                     reason: CancelReason::ChannelError,
                 }));
             }
@@ -148,27 +150,16 @@ impl ChannelStateBase {
         effects
     }
 
-    /// Deserialize a peer message and handle `CleanShutdownComplete`;
-    /// ignore everything else.
+    /// Deserialize a peer message to reject malformed input; passive phases
+    /// ignore all valid peer messages.
     pub fn received_message_passive(&self, msg: Vec<u8>) -> Result<Vec<Effect>, Error> {
-        let msg_envelope: PeerMessage = bencodex::from_slice(&msg)
-            .map_err(|e| Error::StrErr(format!("bencodex deserialize error: {e:?}")))?;
-
-        if let PeerMessage::CleanShutdownComplete(coin_spend) = &msg_envelope {
-            return Ok(vec![Effect::SpendTransaction(
-                SpendBundle {
-                    name: Some("Create unroll".to_string()),
-                    spends: vec![coin_spend.clone()],
-                },
-                None,
-            )]);
-        }
+        let _msg_envelope = crate::session_phases::peer_wire::decode_peer_message(&msg)?;
         Ok(vec![])
     }
 
-    pub fn park_move(&mut self, id: &GameID, readable: &ReadableMove, new_entropy: Hash) {
+    pub fn park_move(&mut self, id: &GameID, prepared: PreparedMove) {
         self.game_action_queue
-            .push_back(GameAction::Move(*id, readable.clone(), new_entropy));
+            .push_back(GameAction::Move(*id, prepared));
     }
 
     pub fn park_accept_settlement(&mut self, id: &GameID) {

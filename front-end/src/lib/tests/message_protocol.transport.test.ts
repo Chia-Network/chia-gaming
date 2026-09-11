@@ -13,7 +13,10 @@ import {
   createReadyBlob,
   createUnreadyBlob,
   enc,
+  makeMockCradle,
+  makePeerConn,
   mockRpc,
+  mockWasmConnection,
   setActiveBlob,
   submitTransaction,
   testSpendBundle,
@@ -28,6 +31,7 @@ import {
   _resetGameIdentityWarmupForTests,
 } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
+import { sessionReceivePolicy } from '../session/receivePolicy';
 
 describe('WASM result boundary', () => {
   it.each(['events', 'watchCoins', 'unwatchCoins', 'actionSucceeded', 'disposition'] as const)(
@@ -323,7 +327,7 @@ describe('protocol identity loading', () => {
     blob.flushDeferredWork();
     expect(protocolIdentitiesReady()).toBe(false);
     expect(tags).toEqual(['ChannelStatus']);
-    expect(errors.some((error) => error.includes('Missing warmed identity'))).toBe(true);
+    expect(errors.some((error) => error.includes('Missing built identity'))).toBe(true);
   });
 });
 
@@ -345,7 +349,14 @@ describe('SessionController WASM action results', () => {
     [
       'proposeGame',
       (blob: SessionController) =>
-        blob.proposeGame({ game_type: testProtocolId('calpoker'), timeout: 5n, parameters: null }),
+        blob.proposeGame({
+          game_type: testProtocolId('calpoker'),
+          timeout: 5n,
+          player_a_contribution: 1n,
+          player_b_contribution: 1n,
+          sender_is_player_a: true,
+          parameters: null,
+        }),
     ],
     ['acceptProposal', (blob: SessionController) => blob.acceptProposal('7')],
     ['cancelProposal', (blob: SessionController) => blob.cancel_proposal('7')],
@@ -465,8 +476,26 @@ describe('active game tracking', () => {
         ...wasmResult(),
         disposition: { kind: 'active' },
         events: [
-          { Notification: { ProposalAccepted: { id: '1', amount: '100', our_turn: true } } },
-          { Notification: { ProposalAccepted: { id: '3', amount: '100', our_turn: false } } },
+          {
+            Notification: {
+              ProposalAcceptedGroup: {
+                members: [
+                  {
+                    id: '1',
+                    player_a_contribution: '100',
+                    player_b_contribution: '0',
+                    our_turn: true,
+                  },
+                  {
+                    id: '3',
+                    player_a_contribution: '0',
+                    player_b_contribution: '100',
+                    our_turn: false,
+                  },
+                ],
+              },
+            },
+          },
         ],
       });
       blob.flushDeferredWork();
@@ -647,7 +676,7 @@ describe('game action failure events', () => {
 });
 
 describe('duplicate detection', () => {
-  it('delivers once but ACKs twice after pending durability flush', async () => {
+  it('delivers once and coalesces duplicate ACKs behind durability', async () => {
     const { blob, cradle, sentAcks } = createReadyBlob();
     setActiveBlob(blob);
 
@@ -656,13 +685,14 @@ describe('duplicate detection', () => {
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
     await blob.flushPendingWork();
-    expect(sentAcks).toEqual([1, 1]);
+    expect(sentAcks).toEqual([1]);
   });
 
-  it('retransmits unacked outbound when a duplicate inbound arrives (post-reload peer)', async () => {
+  it('acknowledges a duplicate inbound without retransmitting unacked outbound', async () => {
     const { blob, sentMessages, sentAcks } = createReadyBlob();
     setActiveBlob(blob);
     const offer = enc('offer-sent-payload');
+    blob.messageNumber = 3n;
     blob.unackedMessages = [{ msgno: 2n, msg: offer }];
 
     blob.deliverMessage(1n, enc('first'));
@@ -670,17 +700,16 @@ describe('duplicate detection', () => {
     sentMessages.length = 0;
     sentAcks.length = 0;
 
-    // Peer reloaded and resent msgno 1; we must replay our still-unacked offer.
     blob.deliverMessage(1n, enc('first-again'));
     await blob.flushPendingWork();
 
     expect(sentAcks).toEqual([1]);
-    expect(sentMessages).toEqual([{ msgno: 2, msg: offer }]);
+    expect(sentMessages).toEqual([]);
   });
 });
 
-describe('keepalive retransmission', () => {
-  it('retransmits unacked outbound when a peer keepalive arrives', () => {
+describe('keepalive activity', () => {
+  it('does not retransmit unacked outbound when a peer keepalive arrives', () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
     const pending = enc('pending-offer');
@@ -688,7 +717,7 @@ describe('keepalive retransmission', () => {
 
     blob.receiveKeepalive();
 
-    expect(sentMessages).toEqual([{ msgno: 3, msg: pending }]);
+    expect(sentMessages).toEqual([]);
   });
 
   it('does not send when there is nothing unacked', () => {
@@ -718,6 +747,49 @@ describe('out-of-order delivery with reorder queue', () => {
     expect(blob.remoteNumber).toBe(3n);
     await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 2, 3]);
+  });
+
+  it('fails and clears queued frames when the future gap is exceeded', () => {
+    const policy = sessionReceivePolicy({ maxFutureReliableMsgnoGap: 1n });
+    const { blob, cradle } = createReadyBlob(undefined, policy);
+
+    blob.deliverMessage(3n, enc('too-far'));
+
+    expect(cradle.deliver_message).not.toHaveBeenCalled();
+    expect(cradle.go_on_chain).toHaveBeenCalledTimes(1);
+    expect((blob as any).reorderQueue.size).toBe(0);
+    expect(blob.storedMessages).toEqual([]);
+  });
+
+  it('fails on queued message count and aggregate bytes', () => {
+    const countLimited = createReadyBlob(undefined, sessionReceivePolicy({ maxQueuedMessages: 1 }));
+    countLimited.blob.deliverMessage(2n, enc('a'));
+    countLimited.blob.deliverMessage(3n, enc('b'));
+    expect(countLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
+    expect((countLimited.blob as any).reorderQueue.size).toBe(0);
+
+    const byteLimited = createUnreadyBlob(undefined, sessionReceivePolicy({ maxQueuedBytes: 3 }));
+    byteLimited.blob.deliverMessage(1n, enc('ab'));
+    byteLimited.blob.deliverMessage(2n, enc('cd'));
+    expect(byteLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
+    expect(byteLimited.blob.storedMessages).toEqual([]);
+  });
+
+  it('does not double-account duplicate queued msgnos', () => {
+    const { blob, cradle } = createReadyBlob(
+      undefined,
+      sessionReceivePolicy({ maxQueuedMessages: 1, maxQueuedBytes: 1 }),
+    );
+
+    blob.deliverMessage(2n, enc('x'));
+    blob.deliverMessage(2n, enc('x'));
+    blob.deliverMessage(1n, enc('a'));
+
+    expect(cradle.go_on_chain).not.toHaveBeenCalled();
+    expect((cradle.deliver_message as jest.Mock).mock.calls.map((call) => call[0])).toEqual([
+      enc('a'),
+      enc('x'),
+    ]);
   });
 });
 
@@ -767,6 +839,7 @@ describe('ACK pruning', () => {
       { msgno: 2n, msg: enc('b') },
       { msgno: 3n, msg: enc('c') },
     ];
+    blob.messageNumber = 4n;
     blob.receiveAck(2n);
 
     expect(blob.unackedMessages).toEqual([{ msgno: 3n, msg: enc('c') }]);
@@ -774,6 +847,25 @@ describe('ACK pruning', () => {
 });
 
 describe('outbound message numbering', () => {
+  it('continues numbering from the proposal transport state without reset', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const peer = makePeerConn(sentMessages, []);
+    const proposal = enc('session proposal');
+    peer.reliableState!.messageNumber = 2n;
+    peer.reliableState!.unackedMessages = [{ msgno: 1n, msg: proposal }];
+    const blob = new SessionController(null, 'test', 100n, 100n, peer);
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(makeMockCradle());
+    blob.onSaveNeeded = jest.fn();
+
+    expect(blob.queueHostMessage(enc('handshake A'))).toBe(2n);
+    await blob.flushPendingWork();
+
+    expect(blob.messageNumber).toBe(3n);
+    expect(blob.unackedMessages.map(({ msgno }) => msgno)).toEqual([1n, 2n]);
+    expect(sentMessages.map(({ msgno }) => msgno)).toEqual([2]);
+  });
+
   it('assigns sequential numbers and tracks in unackedMessages', async () => {
     const helloBytes = enc('hello');
     const { blob, sentMessages } = createReadyBlob(() => ({

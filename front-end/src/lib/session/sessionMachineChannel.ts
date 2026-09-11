@@ -89,7 +89,6 @@ export function reduceChannelEvent(
             wasmNotificationHistory: event.wasmNotificationHistory,
             diagnosticLog: event.diagnosticLog,
           },
-          lastOutcomeWin: event.lastOutcomeWin,
         },
       };
       break;

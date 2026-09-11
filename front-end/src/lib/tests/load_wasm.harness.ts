@@ -10,7 +10,7 @@ import { SESSION_DB_NAME } from '../session/indexedDb';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
-import { reduceRegisteredGameState } from '../gameRegistry';
+import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
@@ -129,12 +129,34 @@ afterEach(async () => {
   }
 });
 
+export function makeTestReliableState(): NonNullable<PeerConnectionResult['reliableState']> {
+  return {
+    sessionId: '00'.repeat(16),
+    messageNumber: 1n,
+    remoteNumber: 0n,
+    unackedMessages: [],
+    disposition: 'active',
+  };
+}
+
 export class SessionControllerAdapter {
   blob: SessionController | undefined;
   waiting_messages: Array<SimpleMessage>;
+  readonly peerConnection: PeerConnectionResult;
 
   constructor() {
     this.waiting_messages = [];
+    this.peerConnection = {
+      reliableState: makeTestReliableState(),
+      sendMessage: (msgno: number, message: Uint8Array) => {
+        this.add_outbound_message(msgno, message);
+        return true;
+      },
+      sendAck: () => true,
+      sendKeepalive: () => true,
+      hostLog: () => {},
+      close: () => {},
+    };
   }
 
   getObservable() {
@@ -285,13 +307,22 @@ export async function action_with_messages(
     const startedAt = Date.now();
     while (!all_handshaked(cradles)) {
       iterations++;
+      process.stderr.write(
+        `[DBG_UNROLL] handshake iter=${iterations} ready=${cradles.map((c) => c.handshaked()).join(',')} outbound=${cradles.map((c) => c.waiting_messages.length).join(',')}\n`,
+      );
       let deliveredOutbound = false;
+      const acknowledgements: Array<{ sender: SessionControllerAdapter; msgno: number }> = [];
       for (let c = 0; c < 2; c++) {
         const outbound = cradles[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
           deliveredOutbound = true;
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
+          acknowledgements.push({ sender: cradles[c], msgno: outbound[i].msgno });
         }
+      }
+      await flushWrapperDrain(cradles);
+      for (const acknowledgement of acknowledgements) {
+        acknowledgement.sender.blob?.receiveAck(BigInt(acknowledgement.msgno));
       }
       await flushWrapperDrain(cradles);
       if (!deliveredOutbound && !all_handshaked(cradles)) {
@@ -334,11 +365,17 @@ export async function exchangeUntilIdle(cradles: SessionControllerAdapter[]): Pr
   let idleRounds = 0;
   for (let round = 0; round < 100 && idleRounds < 2; round += 1) {
     let delivered = false;
+    const acknowledgements: Array<{ sender: SessionControllerAdapter; msgno: number }> = [];
     for (let index = 0; index < cradles.length; index += 1) {
       for (const outbound of cradles[index].outbound_messages()) {
         delivered = true;
         cradles[index ^ 1].deliver_message(outbound.msgno, outbound.msg);
+        acknowledgements.push({ sender: cradles[index], msgno: outbound.msgno });
       }
+    }
+    await flushWrapperDrain(cradles);
+    for (const acknowledgement of acknowledgements) {
+      acknowledgement.sender.blob?.receiveAck(BigInt(acknowledgement.msgno));
     }
     await flushWrapperDrain(cradles);
     idleRounds = delivered ? 0 : idleRounds + 1;
@@ -354,30 +391,18 @@ export async function createActivePair(
     addActiveCradle(new SessionControllerAdapter()),
     addActiveCradle(new SessionControllerAdapter()),
   ] as [SessionControllerAdapter, SessionControllerAdapter];
-  const peerConnections = cradles.map(
-    (cradle): PeerConnectionResult => ({
-      sendMessage: (msgno: number, message: Uint8Array) => {
-        cradle.add_outbound_message(msgno, message);
-        return true;
-      },
-      sendAck: () => true,
-      sendKeepalive: () => true,
-      hostLog: () => {},
-      close: () => {},
-    }),
-  );
   const first = await initSessionController(
     poller,
     `cafe000${index}`,
     true,
-    peerConnections[0],
+    cradles[0].peerConnection,
     new WasmStateInit(fetchPreset),
   );
   const second = await initSessionController(
     poller,
     `dead000${index}`,
     false,
-    peerConnections[1],
+    cradles[1].peerConnection,
     new WasmStateInit(fetchPreset),
   );
   first.pairingToken = `restore-games-${index}-first`;
@@ -396,18 +421,17 @@ export function postMoveHandState(
   handProposal: HandProposal,
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
-  const accepted = reduceRegisteredGameState(handProposal.gameType, null, {
-    type: 'hand-started',
-    init: {
-      id: ids[0],
-      gameIds: ids,
-      iStarted: false,
-      canAct: true,
-      origin: 'peer',
-      handProposal,
-    },
+  const hand = createRegisteredGameHand(handProposal.gameType, {
+    parameters: handProposal.parameters,
+    members: ids.map((_, index) => ({
+      playerAContribution:
+        handProposal.gameType === 'krunk' && index !== 0 ? 0n : handProposal.playerAContribution,
+      playerBContribution:
+        handProposal.gameType === 'krunk' && index === 0 ? 0n : handProposal.playerBContribution,
+      ourTurn: handProposal.gameType === 'krunk' ? index === 1 : true,
+    })),
   });
-  assert.ok(accepted, `${handProposal.gameType}: accepted group must create hand state`);
+  const accepted = snapshotRegisteredGameHand(handProposal.gameType, hand);
   if (handProposal.gameType === 'calpoker') {
     const state = calpokerStateCodec.decode(accepted);
     assert.ok(state);
@@ -435,21 +459,21 @@ export function postMoveHandState(
   }
   const state = krunkStateCodec.decode(accepted);
   assert.ok(state);
-  const mover = Object.entries(state.games).find(([, game]) => game.role === 'alice');
-  assert.ok(mover, 'krunk: receiver must own exactly one alice member');
+  const moverIndex = state.members.findIndex((game) => game.role === 'alice');
+  assert.notEqual(moverIndex, -1, 'krunk: receiver must own exactly one alice member');
+  const members = [...state.members] as [(typeof state.members)[0], (typeof state.members)[1]];
+  members[moverIndex] = {
+    ...initialKrunkGameState('alice'),
+    handler: KrunkHandler.AliceWaiting,
+    myTurn: false,
+    secretWord: 'CRANE',
+  };
   return {
     handState: krunkStateCodec.encode({
-      games: {
-        ...state.games,
-        [mover[0]]: {
-          ...initialKrunkGameState('alice'),
-          handler: KrunkHandler.AliceWaiting,
-          myTurn: false,
-          secretWord: 'CRANE',
-        },
-      },
+      ...state,
+      members,
     }),
-    moverId: mover[0],
+    moverId: ids[moverIndex],
     move: Program.fromBytes(new TextEncoder().encode('CRANE')),
   };
 }
@@ -460,11 +484,14 @@ export async function initSessionController(
   iStarted: boolean,
   peer_conn: PeerConnectionResult,
   wasmStateInit: WasmStateInit,
+  myContribution = 100n,
+  theirContribution = 100n,
 ) {
-  const myContribution = 100n;
-  const theirContribution = 100n;
-
-  await fakeBlockchainInfo.registerUser(uniqueId);
+  process.stderr.write(
+    `[DBG_UNROLL] initSession register start uniqueId=${uniqueId} iStarted=${iStarted} my=${myContribution} their=${theirContribution}\n`,
+  );
+  const rewardPuzzleHash = await fakeBlockchainInfo.registerUser(uniqueId);
+  process.stderr.write(`[DBG_UNROLL] initSession register done uniqueId=${uniqueId}\n`);
   const gameObject = new SessionController(
     blockchain,
     uniqueId,
@@ -473,7 +500,18 @@ export async function initSessionController(
     peer_conn,
   );
 
-  await configSessionController(gameObject, iStarted, wasmStateInit, blockchain, uniqueId);
+  process.stderr.write(`[DBG_UNROLL] initSession config start uniqueId=${uniqueId}\n`);
+  await configSessionController(
+    gameObject,
+    iStarted,
+    wasmStateInit,
+    blockchain,
+    uniqueId,
+    undefined,
+    undefined,
+    rewardPuzzleHash,
+  );
+  process.stderr.write(`[DBG_UNROLL] initSession config done uniqueId=${uniqueId}\n`);
 
   return gameObject;
 }
@@ -489,7 +527,10 @@ export async function isSimulatorAvailable(): Promise<boolean> {
       await sleepMs(delayMs);
     }
     try {
-      await fetch(`${BLOCKCHAIN_SERVICE_URL}/health`, { method: 'POST' });
+      await fetch(`${BLOCKCHAIN_SERVICE_URL}/health`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(2000),
+      });
       return true;
     } catch {
       // Retry; simulator may still be starting up.

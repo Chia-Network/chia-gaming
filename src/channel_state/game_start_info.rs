@@ -9,6 +9,8 @@ pub struct GameStartInfo {
     pub amount: Amount,
     pub game_handler: GameHandler,
 
+    pub player_a_contribution: Amount,
+    pub player_b_contribution: Amount,
     pub my_contribution_this_game: Amount,
     pub their_contribution_this_game: Amount,
 

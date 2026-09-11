@@ -24,12 +24,15 @@ use crate::session_phases::effects::{
     GameNotification, GameSessionEvent, GameSessionEventQueue, SessionDisposition,
     TimeoutClaimSemantic,
 };
+use crate::session_phases::handshake::{
+    MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES, MAX_QUEUED_PEER_MESSAGES,
+};
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
-    ChannelFundingWallet, GameFactory, OffChainPhaseInit, PacketSender, PeerMessage,
-    SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    ChannelFundingWallet, OffChainPhaseInit, PacketSender, PeerMessage, SpendWalletReceiver,
+    ToLocalUI, WalletSpendInterface,
 };
 
 #[cfg(test)]
@@ -326,7 +329,7 @@ impl PacketSender for GameSessionState {
         if self.peer_disconnected {
             return Ok(());
         }
-        let msg_data = bencodex::to_vec(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
+        let msg_data = crate::session_phases::peer_wire::encode_peer_message(msg)?;
         self.events
             .push_back(GameSessionEvent::OutboundMessage(msg_data));
         Ok(())
@@ -387,7 +390,7 @@ pub struct GameSession {
 
 #[derive(Debug, Clone)]
 pub struct GameSessionConfig {
-    pub game_types: BTreeMap<GameType, GameFactory>,
+    pub game_types: BTreeMap<GameType, ProgramRef>,
     pub have_potato: bool,
     pub identity: ChiaIdentity,
     pub my_contribution: Amount,
@@ -972,9 +975,10 @@ impl GameSession {
             .any(|effect| matches!(effect, Effect::GoOnChainAfterPeerError));
         let mut passthrough = Vec::new();
         for effect in effects {
-            if let Effect::QueueTerminalHandoff(coin_spend) = effect {
-                let message = bencodex::to_vec(&PeerMessage::CleanShutdownComplete(coin_spend))
-                    .map_err(|e| Error::StrErr(format!("{e:?}")))?;
+            if let Effect::QueueTerminalHandoff(channel_half_sig) = effect {
+                let message = crate::session_phases::peer_wire::encode_peer_message(
+                    &PeerMessage::CleanShutdownComplete { channel_half_sig },
+                )?;
                 assert!(
                     self.state.pending_outbound_terminal.is_none(),
                     "only one terminal outbound handoff may be pending"
@@ -1252,7 +1256,7 @@ impl GameSession {
             _ => unreachable!(),
         };
 
-        let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
+        let msg_envelope = crate::session_phases::peer_wire::decode_peer_message(&msg)?;
         let fake_move = f(&msg_envelope)?;
 
         self.state.send_message(&fake_move)
@@ -1406,7 +1410,17 @@ impl GameSession {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.make_move(&mut env, id, &readable, new_entropy)?
+            match self.peer.make_move(&mut env, id, &readable, new_entropy) {
+                Ok(effects) => effects,
+                Err(Error::GameMoveRejected { tag, message }) => {
+                    vec![Effect::Notify(GameNotification::MoveRejected {
+                        id: *id,
+                        tag: String::from_utf8_lossy(&tag).into_owned(),
+                        message: String::from_utf8_lossy(&message).into_owned(),
+                    })]
+                }
+                Err(error) => return Err(error),
+            }
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1423,7 +1437,17 @@ impl GameSession {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             let mut effects = self.peer.accept_proposal(&mut env, id)?;
-            effects.extend(self.peer.make_move(&mut env, id, &readable, new_entropy)?);
+            match self.peer.make_move(&mut env, id, &readable, new_entropy) {
+                Ok(move_effects) => effects.extend(move_effects),
+                Err(Error::GameMoveRejected { tag, message }) => {
+                    effects.push(Effect::Notify(GameNotification::MoveRejected {
+                        id: *id,
+                        tag: String::from_utf8_lossy(&tag).into_owned(),
+                        message: String::from_utf8_lossy(&message).into_owned(),
+                    }));
+                }
+                Err(error) => return Err(error),
+            }
             effects
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1511,12 +1535,26 @@ impl GameSession {
         if self.state.peer_disconnected || self.state.session_disposition.is_some() {
             return Ok(());
         }
-        const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
-        if inbound_message.len() > MAX_MESSAGE_SIZE {
+        if inbound_message.len() > MAX_PEER_MESSAGE_SIZE {
+            self.state.inbound_messages.clear();
             return Err(Error::StrErr(format!(
                 "Inbound message size {} exceeds maximum {}",
                 inbound_message.len(),
-                MAX_MESSAGE_SIZE,
+                MAX_PEER_MESSAGE_SIZE,
+            )));
+        }
+        let queued_bytes: usize = self.state.inbound_messages.iter().map(Vec::len).sum();
+        if self.state.inbound_messages.len() + 1 > MAX_QUEUED_PEER_MESSAGES {
+            self.state.inbound_messages.clear();
+            return Err(Error::StrErr(format!(
+                "Inbound queued message count exceeds maximum {MAX_QUEUED_PEER_MESSAGES}"
+            )));
+        }
+        if queued_bytes + inbound_message.len() > MAX_QUEUED_PEER_BYTES {
+            self.state.inbound_messages.clear();
+            return Err(Error::StrErr(format!(
+                "Inbound queued message bytes {} exceeds maximum {MAX_QUEUED_PEER_BYTES}",
+                queued_bytes + inbound_message.len()
             )));
         }
         self.state
@@ -1554,6 +1592,7 @@ impl GameSession {
             return Ok(());
         }
         self.state.peer_disconnected = true;
+        self.state.inbound_messages.clear();
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
@@ -1780,6 +1819,66 @@ mod genesis_challenge_tests {
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
+    fn handshake_pair_waiting_for_launcher() -> (GameSession, GameSession, AllocEncoder) {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([3u8; 32]);
+        let genesis = Hash::from_bytes([0x11; 32]);
+        let make_config = |identity, have_potato, my, their| GameSessionConfig {
+            game_types: BTreeMap::new(),
+            have_potato,
+            identity,
+            my_contribution: Amount::new(my),
+            their_contribution: Amount::new(their),
+            channel_timeout: Timeout::new(5),
+            unroll_timeout: Timeout::new(15),
+            reward_puzzle_hash: PuzzleHash::from_bytes([if have_potato { 2 } else { 3 }; 32]),
+            agg_sig_me_additional_data: genesis.clone(),
+        };
+        let initiator_identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let receiver_identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut initiator = GameSession::new_with_keys(
+            make_config(initiator_identity, true, 100, 200),
+            rng.random(),
+        );
+        let mut receiver = GameSession::new_with_keys(
+            make_config(receiver_identity, false, 200, 100),
+            rng.random(),
+        );
+
+        initiator
+            .start_handshake(&mut allocator)
+            .expect("start initiator");
+        let message_a = initiator
+            .flush_and_collect(&mut allocator)
+            .expect("collect A")
+            .events
+            .into_iter()
+            .find_map(|event| match event {
+                GameSessionEvent::OutboundMessage(message) => Some(message),
+                _ => None,
+            })
+            .expect("handshake A");
+        receiver.deliver_message(&message_a).expect("queue A");
+        let message_b = receiver
+            .flush_and_collect(&mut allocator)
+            .expect("process A")
+            .events
+            .into_iter()
+            .find_map(|event| match event {
+                GameSessionEvent::OutboundMessage(message) => Some(message),
+                _ => None,
+            })
+            .expect("handshake B");
+        initiator.deliver_message(&message_b).expect("queue B");
+        initiator
+            .flush_and_collect(&mut allocator)
+            .expect("process B");
+
+        (initiator, receiver, allocator)
+    }
+
     #[test]
     fn channel_env_new_with_genesis_uses_provided_challenge() {
         let mut allocator = AllocEncoder::new();
@@ -1803,7 +1902,7 @@ mod genesis_challenge_tests {
         let identity = ChiaIdentity::new(&mut allocator, private_key).expect("identity");
         let testnet = Hash::from_bytes([0x11; 32]);
         let config = GameSessionConfig {
-            game_types: BTreeMap::new(),
+            game_types: crate::session_phases::game_collection::game_collection(&mut allocator),
             have_potato: true,
             identity,
             my_contribution: Amount::new(100),
@@ -1818,6 +1917,17 @@ mod genesis_challenge_tests {
         assert_eq!(session.state.agg_sig_me_additional_data, testnet);
 
         let bytes = bencodex::to_vec(&session).expect("serialize");
+        assert!(
+            bytes.len() < 100_000,
+            "serialized session unexpectedly contains package factories: {} bytes",
+            bytes.len()
+        );
+        assert!(
+            !bytes
+                .windows(b"game_types".len())
+                .any(|window| window == b"game_types"),
+            "immutable package factories must not be persisted"
+        );
         let restored: GameSession = bencodex::from_slice(&bytes).expect("deserialize");
         assert_eq!(restored.state.agg_sig_me_additional_data, testnet);
         assert_ne!(
@@ -1858,5 +1968,52 @@ mod genesis_challenge_tests {
             Error::StrErr(message)
                 if message == "propose_games is not available in handshake receiver phase"
         ));
+    }
+
+    #[test]
+    fn initiator_rejects_peer_messages_while_waiting_for_launcher_wallet() {
+        let (mut initiator, _receiver, mut allocator) = handshake_pair_waiting_for_launcher();
+        let request =
+            crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::RequestPotato(()))
+                .expect("encode request");
+
+        initiator.deliver_message(&request).expect("queue request");
+        let result = initiator
+            .flush_and_collect(&mut allocator)
+            .expect("fail handshake safely");
+
+        assert!(initiator.state.is_failed);
+        assert!(initiator.state.inbound_messages.is_empty());
+        assert!(result.events.iter().any(|event| matches!(
+            event,
+            GameSessionEvent::ReceiveError(reason)
+                if reason.contains("WaitingForLauncher")
+        )));
+    }
+
+    #[test]
+    fn initiator_rejects_handshake_f_before_handshake_e() {
+        let (mut initiator, _receiver, mut allocator) = handshake_pair_waiting_for_launcher();
+        let early_f = crate::session_phases::peer_wire::encode_peer_message(
+            &PeerMessage::HandshakeF(crate::session_phases::handshake::HandshakePayloadF {
+                bundle: SpendBundle {
+                    name: None,
+                    spends: vec![],
+                },
+            }),
+        )
+        .expect("encode F");
+
+        initiator.deliver_message(&early_f).expect("queue F");
+        let result = initiator
+            .flush_and_collect(&mut allocator)
+            .expect("fail handshake safely");
+
+        assert!(initiator.state.is_failed);
+        assert!(result.events.iter().any(|event| matches!(
+            event,
+            GameSessionEvent::ReceiveError(reason)
+                if reason.contains("WaitingForLauncher")
+        )));
     }
 }

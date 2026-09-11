@@ -48,16 +48,48 @@ impl<'a> ser::Serializer for &'a mut BencodexSerializer {
         Ok(())
     }
 
-    fn serialize_i8(self, v: i8) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_i16(self, v: i16) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_i32(self, v: i32) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_i64(self, v: i64) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_i128(self, v: i128) -> Result<(), Error> { write_int(&mut self.out, v); Ok(()) }
-    fn serialize_u8(self, v: u8) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_u16(self, v: u16) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_u32(self, v: u32) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_u64(self, v: u64) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
-    fn serialize_u128(self, v: u128) -> Result<(), Error> { write_int(&mut self.out, v as i128); Ok(()) }
+    fn serialize_i8(self, v: i8) -> Result<(), Error> {
+        write_int(&mut self.out, v as i128);
+        Ok(())
+    }
+    fn serialize_i16(self, v: i16) -> Result<(), Error> {
+        write_int(&mut self.out, v as i128);
+        Ok(())
+    }
+    fn serialize_i32(self, v: i32) -> Result<(), Error> {
+        write_int(&mut self.out, v as i128);
+        Ok(())
+    }
+    fn serialize_i64(self, v: i64) -> Result<(), Error> {
+        write_int(&mut self.out, v as i128);
+        Ok(())
+    }
+    fn serialize_i128(self, v: i128) -> Result<(), Error> {
+        write_int(&mut self.out, v);
+        Ok(())
+    }
+    fn serialize_u8(self, v: u8) -> Result<(), Error> {
+        write_int(&mut self.out, v as i128);
+        Ok(())
+    }
+    fn serialize_u16(self, v: u16) -> Result<(), Error> {
+        write_int(&mut self.out, v as i128);
+        Ok(())
+    }
+    fn serialize_u32(self, v: u32) -> Result<(), Error> {
+        write_int(&mut self.out, v as i128);
+        Ok(())
+    }
+    fn serialize_u64(self, v: u64) -> Result<(), Error> {
+        write_int(&mut self.out, v as i128);
+        Ok(())
+    }
+    fn serialize_u128(self, v: u128) -> Result<(), Error> {
+        let value = i128::try_from(v)
+            .map_err(|_| Error::Message("bencodex integer exceeds i128".into()))?;
+        write_int(&mut self.out, value);
+        Ok(())
+    }
 
     fn serialize_f32(self, _v: f32) -> Result<(), Error> {
         Err(Error::Message("bencodex does not support floats".into()))
@@ -82,22 +114,46 @@ impl<'a> ser::Serializer for &'a mut BencodexSerializer {
         Ok(())
     }
 
-    fn serialize_none(self) -> Result<(), Error> { self.out.push(b'n'); Ok(()) }
-    fn serialize_some<T: ?Sized + Serialize>(self, value: &T) -> Result<(), Error> { value.serialize(self) }
-    fn serialize_unit(self) -> Result<(), Error> { self.out.push(b'n'); Ok(()) }
-    fn serialize_unit_struct(self, _name: &'static str) -> Result<(), Error> { self.out.push(b'n'); Ok(()) }
+    fn serialize_none(self) -> Result<(), Error> {
+        self.out.push(b'n');
+        Ok(())
+    }
+    fn serialize_some<T: ?Sized + Serialize>(self, value: &T) -> Result<(), Error> {
+        value.serialize(self)
+    }
+    fn serialize_unit(self) -> Result<(), Error> {
+        self.out.push(b'n');
+        Ok(())
+    }
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<(), Error> {
+        self.out.push(b'n');
+        Ok(())
+    }
 
-    fn serialize_unit_variant(self, _name: &'static str, _idx: u32, variant: &'static str) -> Result<(), Error> {
+    fn serialize_unit_variant(
+        self,
+        _name: &'static str,
+        _idx: u32,
+        variant: &'static str,
+    ) -> Result<(), Error> {
         write_unicode(&mut self.out, variant);
         Ok(())
     }
 
-    fn serialize_newtype_struct<T: ?Sized + Serialize>(self, _name: &'static str, value: &T) -> Result<(), Error> {
+    fn serialize_newtype_struct<T: ?Sized + Serialize>(
+        self,
+        _name: &'static str,
+        value: &T,
+    ) -> Result<(), Error> {
         value.serialize(self)
     }
 
     fn serialize_newtype_variant<T: ?Sized + Serialize>(
-        self, _name: &'static str, _idx: u32, variant: &'static str, value: &T,
+        self,
+        _name: &'static str,
+        _idx: u32,
+        variant: &'static str,
+        value: &T,
     ) -> Result<(), Error> {
         self.out.push(b'd');
         write_unicode(&mut self.out, variant);
@@ -123,13 +179,21 @@ impl<'a> ser::Serializer for &'a mut BencodexSerializer {
         Ok(SeqSerializer { ser: self })
     }
 
-    fn serialize_tuple_struct(self, _name: &'static str, _len: usize) -> Result<SeqSerializer<'a>, Error> {
+    fn serialize_tuple_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<SeqSerializer<'a>, Error> {
         self.out.push(b'l');
         Ok(SeqSerializer { ser: self })
     }
 
     fn serialize_tuple_variant(
-        self, _name: &'static str, _idx: u32, variant: &'static str, _len: usize,
+        self,
+        _name: &'static str,
+        _idx: u32,
+        variant: &'static str,
+        _len: usize,
     ) -> Result<TupleVariantSerializer<'a>, Error> {
         self.out.push(b'd');
         write_unicode(&mut self.out, variant);
@@ -138,17 +202,37 @@ impl<'a> ser::Serializer for &'a mut BencodexSerializer {
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<DictCollector<'a>, Error> {
-        Ok(DictCollector { ser: self, entries: Vec::new(), current_key: None })
+        Ok(DictCollector {
+            ser: self,
+            entries: Vec::new(),
+            current_key: None,
+        })
     }
 
-    fn serialize_struct(self, _name: &'static str, _len: usize) -> Result<DictCollector<'a>, Error> {
-        Ok(DictCollector { ser: self, entries: Vec::new(), current_key: None })
+    fn serialize_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<DictCollector<'a>, Error> {
+        Ok(DictCollector {
+            ser: self,
+            entries: Vec::new(),
+            current_key: None,
+        })
     }
 
     fn serialize_struct_variant(
-        self, _name: &'static str, _idx: u32, variant: &'static str, _len: usize,
+        self,
+        _name: &'static str,
+        _idx: u32,
+        variant: &'static str,
+        _len: usize,
     ) -> Result<StructVariantCollector<'a>, Error> {
-        Ok(StructVariantCollector { ser: self, variant, entries: Vec::new() })
+        Ok(StructVariantCollector {
+            ser: self,
+            variant,
+            entries: Vec::new(),
+        })
     }
 }
 
@@ -164,7 +248,10 @@ impl ser::SerializeSeq for SeqSerializer<'_> {
     fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Error> {
         value.serialize(&mut *self.ser)
     }
-    fn end(self) -> Result<(), Error> { self.ser.out.push(b'e'); Ok(()) }
+    fn end(self) -> Result<(), Error> {
+        self.ser.out.push(b'e');
+        Ok(())
+    }
 }
 
 impl ser::SerializeTuple for SeqSerializer<'_> {
@@ -173,7 +260,10 @@ impl ser::SerializeTuple for SeqSerializer<'_> {
     fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Error> {
         value.serialize(&mut *self.ser)
     }
-    fn end(self) -> Result<(), Error> { self.ser.out.push(b'e'); Ok(()) }
+    fn end(self) -> Result<(), Error> {
+        self.ser.out.push(b'e');
+        Ok(())
+    }
 }
 
 impl ser::SerializeTupleStruct for SeqSerializer<'_> {
@@ -182,7 +272,10 @@ impl ser::SerializeTupleStruct for SeqSerializer<'_> {
     fn serialize_field<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Error> {
         value.serialize(&mut *self.ser)
     }
-    fn end(self) -> Result<(), Error> { self.ser.out.push(b'e'); Ok(()) }
+    fn end(self) -> Result<(), Error> {
+        self.ser.out.push(b'e');
+        Ok(())
+    }
 }
 
 // --- Byte-aware sequence ---
@@ -279,35 +372,119 @@ impl ser::Serializer for &mut U8Probe {
         Ok(())
     }
 
-    fn serialize_bool(self, _: bool) -> Result<(), Error> { Ok(()) }
-    fn serialize_i8(self, _: i8) -> Result<(), Error> { Ok(()) }
-    fn serialize_i16(self, _: i16) -> Result<(), Error> { Ok(()) }
-    fn serialize_i32(self, _: i32) -> Result<(), Error> { Ok(()) }
-    fn serialize_i64(self, _: i64) -> Result<(), Error> { Ok(()) }
-    fn serialize_i128(self, _: i128) -> Result<(), Error> { Ok(()) }
-    fn serialize_u16(self, _: u16) -> Result<(), Error> { Ok(()) }
-    fn serialize_u32(self, _: u32) -> Result<(), Error> { Ok(()) }
-    fn serialize_u64(self, _: u64) -> Result<(), Error> { Ok(()) }
-    fn serialize_u128(self, _: u128) -> Result<(), Error> { Ok(()) }
-    fn serialize_f32(self, _: f32) -> Result<(), Error> { Err(Error::Message("float".into())) }
-    fn serialize_f64(self, _: f64) -> Result<(), Error> { Err(Error::Message("float".into())) }
-    fn serialize_char(self, _: char) -> Result<(), Error> { Ok(()) }
-    fn serialize_str(self, _: &str) -> Result<(), Error> { Ok(()) }
-    fn serialize_bytes(self, _: &[u8]) -> Result<(), Error> { Ok(()) }
-    fn serialize_none(self) -> Result<(), Error> { Ok(()) }
-    fn serialize_some<T: ?Sized + Serialize>(self, _: &T) -> Result<(), Error> { Ok(()) }
-    fn serialize_unit(self) -> Result<(), Error> { Ok(()) }
-    fn serialize_unit_struct(self, _: &'static str) -> Result<(), Error> { Ok(()) }
-    fn serialize_unit_variant(self, _: &'static str, _: u32, _: &'static str) -> Result<(), Error> { Ok(()) }
-    fn serialize_newtype_struct<T: ?Sized + Serialize>(self, _: &'static str, _: &T) -> Result<(), Error> { Ok(()) }
-    fn serialize_newtype_variant<T: ?Sized + Serialize>(self, _: &'static str, _: u32, _: &'static str, _: &T) -> Result<(), Error> { Ok(()) }
-    fn serialize_seq(self, _: Option<usize>) -> Result<Self::SerializeSeq, Error> { Err(Error::Message("seq".into())) }
-    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple, Error> { Err(Error::Message("tuple".into())) }
-    fn serialize_tuple_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeTupleStruct, Error> { Err(Error::Message("tuple struct".into())) }
-    fn serialize_tuple_variant(self, _: &'static str, _: u32, _: &'static str, _: usize) -> Result<Self::SerializeTupleVariant, Error> { Err(Error::Message("tuple variant".into())) }
-    fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, Error> { Err(Error::Message("map".into())) }
-    fn serialize_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeStruct, Error> { Err(Error::Message("struct".into())) }
-    fn serialize_struct_variant(self, _: &'static str, _: u32, _: &'static str, _: usize) -> Result<Self::SerializeStructVariant, Error> { Err(Error::Message("struct variant".into())) }
+    fn serialize_bool(self, _: bool) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_i8(self, _: i8) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_i16(self, _: i16) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_i32(self, _: i32) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_i64(self, _: i64) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_i128(self, _: i128) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_u16(self, _: u16) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_u32(self, _: u32) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_u64(self, _: u64) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_u128(self, _: u128) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_f32(self, _: f32) -> Result<(), Error> {
+        Err(Error::Message("float".into()))
+    }
+    fn serialize_f64(self, _: f64) -> Result<(), Error> {
+        Err(Error::Message("float".into()))
+    }
+    fn serialize_char(self, _: char) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_str(self, _: &str) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_bytes(self, _: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_none(self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_some<T: ?Sized + Serialize>(self, _: &T) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_unit(self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_unit_struct(self, _: &'static str) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_unit_variant(self, _: &'static str, _: u32, _: &'static str) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_newtype_struct<T: ?Sized + Serialize>(
+        self,
+        _: &'static str,
+        _: &T,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_newtype_variant<T: ?Sized + Serialize>(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: &T,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+    fn serialize_seq(self, _: Option<usize>) -> Result<Self::SerializeSeq, Error> {
+        Err(Error::Message("seq".into()))
+    }
+    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple, Error> {
+        Err(Error::Message("tuple".into()))
+    }
+    fn serialize_tuple_struct(
+        self,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeTupleStruct, Error> {
+        Err(Error::Message("tuple struct".into()))
+    }
+    fn serialize_tuple_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeTupleVariant, Error> {
+        Err(Error::Message("tuple variant".into()))
+    }
+    fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, Error> {
+        Err(Error::Message("map".into()))
+    }
+    fn serialize_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeStruct, Error> {
+        Err(Error::Message("struct".into()))
+    }
+    fn serialize_struct_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeStructVariant, Error> {
+        Err(Error::Message("struct variant".into()))
+    }
 }
 
 // --- Tuple variant ---
@@ -383,41 +560,133 @@ impl ser::Serializer for &mut KeyCapture {
     type SerializeStruct = ser::Impossible<(), Error>;
     type SerializeStructVariant = ser::Impossible<(), Error>;
 
-    fn serialize_str(self, v: &str) -> Result<(), Error> { self.0 = Some(DictKey::Unicode(v.as_bytes().to_vec())); Ok(()) }
-    fn serialize_bytes(self, v: &[u8]) -> Result<(), Error> { self.0 = Some(DictKey::Bytes(v.to_vec())); Ok(()) }
-    fn serialize_u8(self, v: u8) -> Result<(), Error> { self.0 = Some(DictKey::Bytes(vec![v])); Ok(()) }
-    fn serialize_u16(self, v: u16) -> Result<(), Error> { self.0 = Some(DictKey::Unicode(v.to_string().into_bytes())); Ok(()) }
-    fn serialize_u32(self, v: u32) -> Result<(), Error> { self.0 = Some(DictKey::Unicode(v.to_string().into_bytes())); Ok(()) }
-    fn serialize_u64(self, v: u64) -> Result<(), Error> { self.0 = Some(DictKey::Unicode(v.to_string().into_bytes())); Ok(()) }
-    fn serialize_i8(self, v: i8) -> Result<(), Error> { self.0 = Some(DictKey::Unicode(v.to_string().into_bytes())); Ok(()) }
-    fn serialize_i16(self, v: i16) -> Result<(), Error> { self.0 = Some(DictKey::Unicode(v.to_string().into_bytes())); Ok(()) }
-    fn serialize_i32(self, v: i32) -> Result<(), Error> { self.0 = Some(DictKey::Unicode(v.to_string().into_bytes())); Ok(()) }
-    fn serialize_i64(self, v: i64) -> Result<(), Error> { self.0 = Some(DictKey::Unicode(v.to_string().into_bytes())); Ok(()) }
-    fn serialize_bool(self, _: bool) -> Result<(), Error> { Err(Error::Message("bool cannot be a dict key".into())) }
-    fn serialize_f32(self, _: f32) -> Result<(), Error> { Err(Error::Message("float cannot be a dict key".into())) }
-    fn serialize_f64(self, _: f64) -> Result<(), Error> { Err(Error::Message("float cannot be a dict key".into())) }
+    fn serialize_str(self, v: &str) -> Result<(), Error> {
+        self.0 = Some(DictKey::Unicode(v.as_bytes().to_vec()));
+        Ok(())
+    }
+    fn serialize_bytes(self, v: &[u8]) -> Result<(), Error> {
+        self.0 = Some(DictKey::Bytes(v.to_vec()));
+        Ok(())
+    }
+    fn serialize_u8(self, v: u8) -> Result<(), Error> {
+        self.0 = Some(DictKey::Bytes(vec![v]));
+        Ok(())
+    }
+    fn serialize_u16(self, v: u16) -> Result<(), Error> {
+        self.0 = Some(DictKey::Unicode(v.to_string().into_bytes()));
+        Ok(())
+    }
+    fn serialize_u32(self, v: u32) -> Result<(), Error> {
+        self.0 = Some(DictKey::Unicode(v.to_string().into_bytes()));
+        Ok(())
+    }
+    fn serialize_u64(self, v: u64) -> Result<(), Error> {
+        self.0 = Some(DictKey::Unicode(v.to_string().into_bytes()));
+        Ok(())
+    }
+    fn serialize_i8(self, v: i8) -> Result<(), Error> {
+        self.0 = Some(DictKey::Unicode(v.to_string().into_bytes()));
+        Ok(())
+    }
+    fn serialize_i16(self, v: i16) -> Result<(), Error> {
+        self.0 = Some(DictKey::Unicode(v.to_string().into_bytes()));
+        Ok(())
+    }
+    fn serialize_i32(self, v: i32) -> Result<(), Error> {
+        self.0 = Some(DictKey::Unicode(v.to_string().into_bytes()));
+        Ok(())
+    }
+    fn serialize_i64(self, v: i64) -> Result<(), Error> {
+        self.0 = Some(DictKey::Unicode(v.to_string().into_bytes()));
+        Ok(())
+    }
+    fn serialize_bool(self, _: bool) -> Result<(), Error> {
+        Err(Error::Message("bool cannot be a dict key".into()))
+    }
+    fn serialize_f32(self, _: f32) -> Result<(), Error> {
+        Err(Error::Message("float cannot be a dict key".into()))
+    }
+    fn serialize_f64(self, _: f64) -> Result<(), Error> {
+        Err(Error::Message("float cannot be a dict key".into()))
+    }
     fn serialize_char(self, v: char) -> Result<(), Error> {
         let mut buf = [0u8; 4];
-        self.0 = Some(DictKey::Unicode(v.encode_utf8(&mut buf).as_bytes().to_vec())); Ok(())
+        self.0 = Some(DictKey::Unicode(
+            v.encode_utf8(&mut buf).as_bytes().to_vec(),
+        ));
+        Ok(())
     }
-    fn serialize_none(self) -> Result<(), Error> { Err(Error::Message("none cannot be a dict key".into())) }
-    fn serialize_some<T: ?Sized + Serialize>(self, value: &T) -> Result<(), Error> { value.serialize(self) }
-    fn serialize_unit(self) -> Result<(), Error> { Err(Error::Message("unit cannot be a dict key".into())) }
-    fn serialize_unit_struct(self, _: &'static str) -> Result<(), Error> { Err(Error::Message("unit struct cannot be a dict key".into())) }
+    fn serialize_none(self) -> Result<(), Error> {
+        Err(Error::Message("none cannot be a dict key".into()))
+    }
+    fn serialize_some<T: ?Sized + Serialize>(self, value: &T) -> Result<(), Error> {
+        value.serialize(self)
+    }
+    fn serialize_unit(self) -> Result<(), Error> {
+        Err(Error::Message("unit cannot be a dict key".into()))
+    }
+    fn serialize_unit_struct(self, _: &'static str) -> Result<(), Error> {
+        Err(Error::Message("unit struct cannot be a dict key".into()))
+    }
     fn serialize_unit_variant(self, _: &'static str, _: u32, v: &'static str) -> Result<(), Error> {
-        self.0 = Some(DictKey::Unicode(v.as_bytes().to_vec())); Ok(())
+        self.0 = Some(DictKey::Unicode(v.as_bytes().to_vec()));
+        Ok(())
     }
-    fn serialize_newtype_struct<T: ?Sized + Serialize>(self, _: &'static str, value: &T) -> Result<(), Error> { value.serialize(self) }
-    fn serialize_newtype_variant<T: ?Sized + Serialize>(self, _: &'static str, _: u32, _: &'static str, _: &T) -> Result<(), Error> {
-        Err(Error::Message("newtype variant cannot be a dict key".into()))
+    fn serialize_newtype_struct<T: ?Sized + Serialize>(
+        self,
+        _: &'static str,
+        value: &T,
+    ) -> Result<(), Error> {
+        value.serialize(self)
     }
-    fn serialize_seq(self, _: Option<usize>) -> Result<Self::SerializeSeq, Error> { Err(Error::Message("seq cannot be a dict key".into())) }
-    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple, Error> { Err(Error::Message("tuple cannot be a dict key".into())) }
-    fn serialize_tuple_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeTupleStruct, Error> { Err(Error::Message("tuple struct cannot be a dict key".into())) }
-    fn serialize_tuple_variant(self, _: &'static str, _: u32, _: &'static str, _: usize) -> Result<Self::SerializeTupleVariant, Error> { Err(Error::Message("tuple variant cannot be a dict key".into())) }
-    fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, Error> { Err(Error::Message("map cannot be a dict key".into())) }
-    fn serialize_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeStruct, Error> { Err(Error::Message("struct cannot be a dict key".into())) }
-    fn serialize_struct_variant(self, _: &'static str, _: u32, _: &'static str, _: usize) -> Result<Self::SerializeStructVariant, Error> { Err(Error::Message("struct variant cannot be a dict key".into())) }
+    fn serialize_newtype_variant<T: ?Sized + Serialize>(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: &T,
+    ) -> Result<(), Error> {
+        Err(Error::Message(
+            "newtype variant cannot be a dict key".into(),
+        ))
+    }
+    fn serialize_seq(self, _: Option<usize>) -> Result<Self::SerializeSeq, Error> {
+        Err(Error::Message("seq cannot be a dict key".into()))
+    }
+    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple, Error> {
+        Err(Error::Message("tuple cannot be a dict key".into()))
+    }
+    fn serialize_tuple_struct(
+        self,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeTupleStruct, Error> {
+        Err(Error::Message("tuple struct cannot be a dict key".into()))
+    }
+    fn serialize_tuple_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeTupleVariant, Error> {
+        Err(Error::Message("tuple variant cannot be a dict key".into()))
+    }
+    fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, Error> {
+        Err(Error::Message("map cannot be a dict key".into()))
+    }
+    fn serialize_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeStruct, Error> {
+        Err(Error::Message("struct cannot be a dict key".into()))
+    }
+    fn serialize_struct_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeStructVariant, Error> {
+        Err(Error::Message("struct variant cannot be a dict key".into()))
+    }
 }
 
 // --- Dict collector ---
@@ -452,7 +721,9 @@ impl ser::SerializeMap for DictCollector<'_> {
     }
 
     fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Error> {
-        let key = self.current_key.take()
+        let key = self
+            .current_key
+            .take()
             .ok_or_else(|| Error::Message("value without key".into()))?;
         let mut sub = BencodexSerializer { out: Vec::new() };
         value.serialize(&mut sub)?;
@@ -460,14 +731,21 @@ impl ser::SerializeMap for DictCollector<'_> {
         Ok(())
     }
 
-    fn end(self) -> Result<(), Error> { self.flush(); Ok(()) }
+    fn end(self) -> Result<(), Error> {
+        self.flush();
+        Ok(())
+    }
 }
 
 impl ser::SerializeStruct for DictCollector<'_> {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_field<T: ?Sized + Serialize>(&mut self, key: &'static str, value: &T) -> Result<(), Error> {
+    fn serialize_field<T: ?Sized + Serialize>(
+        &mut self,
+        key: &'static str,
+        value: &T,
+    ) -> Result<(), Error> {
         let dict_key = DictKey::Unicode(key.as_bytes().to_vec());
         let mut sub = BencodexSerializer { out: Vec::new() };
         value.serialize(&mut sub)?;
@@ -475,7 +753,10 @@ impl ser::SerializeStruct for DictCollector<'_> {
         Ok(())
     }
 
-    fn end(self) -> Result<(), Error> { self.flush(); Ok(()) }
+    fn end(self) -> Result<(), Error> {
+        self.flush();
+        Ok(())
+    }
 }
 
 // --- Struct variant collector ---
@@ -490,7 +771,11 @@ impl ser::SerializeStructVariant for StructVariantCollector<'_> {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_field<T: ?Sized + Serialize>(&mut self, key: &'static str, value: &T) -> Result<(), Error> {
+    fn serialize_field<T: ?Sized + Serialize>(
+        &mut self,
+        key: &'static str,
+        value: &T,
+    ) -> Result<(), Error> {
         let dict_key = DictKey::Unicode(key.as_bytes().to_vec());
         let mut sub = BencodexSerializer { out: Vec::new() };
         value.serialize(&mut sub)?;

@@ -51,7 +51,6 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
       wasmNotificationHistory: wasm.wasmNotificationHistory,
       diagnosticLog: wasm.diagnosticLog,
     },
-    lastOutcomeWin: wasm.lastOutcomeWin,
   });
   const current = loadState();
   const currentPairing =
@@ -62,7 +61,6 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
   }
   const presentation = snapshotFromSessionModel(model, {
     channelStatus: wasm.channelStatus ?? null,
-    lastOutcomeWin: wasm.lastOutcomeWin ?? null,
     waitingStateEnteredAt: currentPresentation?.waitingStateEnteredAt ?? null,
     cleanShutdownGraceStartedAt: currentPresentation?.cleanShutdownGraceStartedAt ?? null,
   });
@@ -77,7 +75,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
       pairing: {
         token: wasm.pairingToken,
         peerId: currentPairing?.peerId,
-        gameSessionId: currentPairing?.gameSessionId,
+        gameSessionId: wasm.gameSessionId,
         iStarted: wasm.iStarted,
         myContribution: wasm.myContribution,
         theirContribution: wasm.theirContribution,
@@ -94,6 +92,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
         remoteNumber: wasm.remoteNumber,
         rewardPuzzleHash: wasm.rewardPuzzleHash,
         unackedMessages: wasm.unackedMessages,
+        disposition: wasm.transportDisposition,
         durabilityWarning: wasm.durabilityWarning,
       },
       presentation,

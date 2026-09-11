@@ -14,6 +14,7 @@ use clvmr::allocator::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     CachedAcceptSettlement, CachedRedoActions, CachedSendMove, ChannelCoinSpendInfo,
@@ -27,14 +28,17 @@ use crate::channel_state::types::{
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key,
-    puzzle_hash_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
+    puzzle_hash_for_synthetic_public_key, standard_solution_partial,
+    verify_reward_payout_signature, ChiaIdentity,
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
     PuzzleHash, Sha256tree, Spend, Timeout,
 };
-use crate::referee::types::{GameMoveDetails, ParsedRefereeSolution, TheirTurnCoinSpentResult};
+use crate::referee::types::{
+    GameMoveDetails, GameMoveStateInfo, ParsedRefereeSolution, TheirTurnCoinSpentResult,
+};
 use crate::referee::Referee;
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -137,6 +141,81 @@ pub struct ChannelState {
 }
 
 impl ChannelState {
+    fn validate_peer_identity(
+        private_keys: &ChannelPrivateKeys,
+        reward_puzzle_hash: &PuzzleHash,
+        their_channel_pubkey: &PublicKey,
+        their_unroll_pubkey: &PublicKey,
+        their_referee_pubkey: &PublicKey,
+        their_reward_puzzle_hash: &PuzzleHash,
+        their_reward_payout_signature: &Aggsig,
+    ) -> Result<(), Error> {
+        if !verify_reward_payout_signature(
+            their_referee_pubkey,
+            their_reward_puzzle_hash,
+            their_reward_payout_signature,
+        ) {
+            return Err(Error::Channel(
+                "Invalid reward payout signature in handshake".to_string(),
+            ));
+        }
+
+        Self::validate_peer_identity_separation(
+            private_keys,
+            reward_puzzle_hash,
+            their_channel_pubkey,
+            their_unroll_pubkey,
+            their_referee_pubkey,
+            their_reward_puzzle_hash,
+        )
+    }
+
+    pub(crate) fn validate_peer_identity_separation(
+        private_keys: &ChannelPrivateKeys,
+        reward_puzzle_hash: &PuzzleHash,
+        their_channel_pubkey: &PublicKey,
+        their_unroll_pubkey: &PublicKey,
+        their_referee_pubkey: &PublicKey,
+        their_reward_puzzle_hash: &PuzzleHash,
+    ) -> Result<(), Error> {
+        let local_keys = [
+            (
+                "channel",
+                private_to_public_key(&private_keys.my_channel_coin_private_key),
+            ),
+            (
+                "unroll",
+                private_to_public_key(&private_keys.my_unroll_coin_private_key),
+            ),
+            (
+                "referee",
+                private_to_public_key(&private_keys.my_referee_private_key),
+            ),
+        ];
+        let peer_keys = [
+            ("channel", their_channel_pubkey),
+            ("unroll", their_unroll_pubkey),
+            ("referee", their_referee_pubkey),
+        ];
+        for (local_name, local_key) in &local_keys {
+            for (peer_name, peer_key) in &peer_keys {
+                if local_key == *peer_key {
+                    return Err(Error::Channel(format!(
+                        "Handshake public key collision: local {local_name} key equals peer {peer_name} key"
+                    )));
+                }
+            }
+        }
+
+        if reward_puzzle_hash == their_reward_puzzle_hash {
+            return Err(Error::Channel(
+                "Handshake reward puzzle hashes must be distinct".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn is_initial_potato(&self) -> bool {
         self.latest_sent_unroll.coin.started_with_potato
     }
@@ -487,19 +566,15 @@ impl ChannelState {
         unroll_advance_timeout: Timeout,
         reward_puzzle_hash: PuzzleHash,
     ) -> Result<(Self, ChannelInitiationResult), Error> {
-        let our_channel_pubkey = private_to_public_key(&private_keys.my_channel_coin_private_key);
-        let our_unroll_pubkey = private_to_public_key(&private_keys.my_unroll_coin_private_key);
-        if their_channel_pubkey == our_channel_pubkey {
-            return Err(Error::Channel(
-                "Duplicated channel coin public key".to_string(),
-            ));
-        }
-
-        if their_unroll_pubkey == our_unroll_pubkey {
-            return Err(Error::Channel(
-                "Duplicated unroll coin public key".to_string(),
-            ));
-        }
+        Self::validate_peer_identity(
+            &private_keys,
+            &reward_puzzle_hash,
+            &their_channel_pubkey,
+            &their_unroll_pubkey,
+            &their_referee_pubkey,
+            &their_reward_puzzle_hash,
+            &their_reward_payout_signature,
+        )?;
 
         if unroll_advance_timeout.to_u64() == 0 {
             return Err(Error::Channel(
@@ -507,6 +582,7 @@ impl ChannelState {
             ));
         }
 
+        let our_channel_pubkey = private_to_public_key(&private_keys.my_channel_coin_private_key);
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
 
         let channel_coin_puzzle_hash =
@@ -919,6 +995,8 @@ impl ChannelState {
             group_id,
             ph,
             Rc::new(r),
+            start_info.player_a_contribution.clone(),
+            start_info.player_b_contribution.clone(),
             start_info.my_contribution_this_game.clone(),
             start_info.their_contribution_this_game.clone(),
         ));
@@ -1033,6 +1111,8 @@ impl ChannelState {
             group_id,
             ph,
             Rc::new(r),
+            start_info.player_a_contribution.clone(),
+            start_info.player_b_contribution.clone(),
             start_info.my_contribution_this_game.clone(),
             start_info.their_contribution_this_game.clone(),
         ));
@@ -1115,10 +1195,20 @@ impl ChannelState {
         Ok(())
     }
 
-    pub fn cancel_all_proposals(&mut self) -> Vec<GameID> {
-        let ids: Vec<GameID> = self.proposed_games.iter().map(|p| p.game_id).collect();
+    pub fn cancel_all_proposals(&mut self) -> Vec<Vec<GameID>> {
+        let mut groups: Vec<Vec<GameID>> = Vec::new();
+        for proposal in &self.proposed_games {
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|group| group[0] == proposal.group_id)
+            {
+                group.push(proposal.game_id);
+            } else {
+                groups.push(vec![proposal.game_id]);
+            }
+        }
         self.proposed_games.clear();
-        ids
+        groups
     }
 
     pub fn has_our_outstanding_proposals(&self) -> bool {
@@ -1163,6 +1253,33 @@ impl ChannelState {
             .proposed_games
             .iter()
             .filter(|p| p.group_id == gid)
+            .map(|p| p.game_id)
+            .collect())
+    }
+
+    /// Resolve a wire group ID to its members in factory insertion order.
+    /// Wire actions must name the canonical first member, never another member.
+    pub fn canonical_group_member_ids(&self, group_id: &GameID) -> Result<Vec<GameID>, Error> {
+        let proposal = self
+            .proposed_games
+            .iter()
+            .find(|p| p.game_id == *group_id)
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "canonical_group_member_ids: no proposal with id {:?}",
+                    group_id
+                ))
+            })?;
+        if proposal.group_id != *group_id {
+            return Err(Error::StrErr(format!(
+                "proposal group action used non-canonical member {:?}; expected {:?}",
+                group_id, proposal.group_id
+            )));
+        }
+        Ok(self
+            .proposed_games
+            .iter()
+            .filter(|p| p.group_id == *group_id)
             .map(|p| p.game_id)
             .collect())
     }
@@ -1274,24 +1391,30 @@ impl ChannelState {
             })
     }
 
-    /// Apply a send-side move mutation. Does NOT finalize signatures.
+    pub fn prepare_move(
+        &self,
+        env: &mut ChannelEnv<'_>,
+        game_id: &GameID,
+        readable_move: &ReadableMove,
+        new_entropy: Hash,
+    ) -> Result<PreparedMove, Error> {
+        let game_idx = self.get_game_by_id(game_id)?;
+        self.live_games[game_idx].prepare_move(env.allocator, readable_move, new_entropy)
+    }
+
+    /// Apply a prepared send-side move mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo.
     pub fn send_move_no_finalize(
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        readable_move: &ReadableMove,
-        new_entropy: Hash,
+        prepared: PreparedMove,
     ) -> Result<MoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let state_number = self.state_number;
 
-        let referee_result = self.live_games[game_idx].internal_make_move(
-            env.allocator,
-            readable_move,
-            new_entropy.clone(),
-            state_number,
-        )?;
+        let referee_result =
+            self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
 
         let match_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
 
@@ -1326,23 +1449,24 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        game_move: &GameMoveDetails,
+        basic: &GameMoveStateInfo,
+        terminal: bool,
     ) -> Result<ChannelMoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let game_amount = self.live_games[game_idx].get_amount();
-        if game_move.basic.mover_share > game_amount {
+        if basic.mover_share > game_amount {
             return Err(Error::StrErr(format!(
                 "received move with mover_share {} exceeding game amount {}",
-                game_move.basic.mover_share.to_u64(),
+                basic.mover_share.to_u64(),
                 game_amount.to_u64(),
             )));
         }
 
         let max_move_size = self.live_games[game_idx].get_max_move_size();
-        if game_move.basic.move_made.len() > max_move_size {
+        if basic.move_made.len() > max_move_size {
             return Err(Error::StrErr(format!(
                 "received move of {} bytes exceeds max_move_size {}",
-                game_move.basic.move_made.len(),
+                basic.move_made.len(),
                 max_move_size,
             )));
         }
@@ -1351,7 +1475,8 @@ impl ChannelState {
 
         let their_move_result = self.live_games[game_idx].internal_their_move(
             env.allocator,
-            game_move,
+            basic,
+            terminal,
             state_number,
         )?;
 
@@ -1970,8 +2095,7 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        readable_move: &ReadableMove,
-        entropy: Hash,
+        prepared: PreparedMove,
         existing_coin: &CoinString,
     ) -> Result<(PuzzleHash, PuzzleHash, usize, GameMoveDetails, Spend), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
@@ -1979,12 +2103,8 @@ impl ChannelState {
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
         let state_number = self.state_number;
 
-        let move_result = self.live_games[game_idx].internal_make_move(
-            env.allocator,
-            readable_move,
-            entropy,
-            state_number,
-        )?;
+        let move_result =
+            self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
 
         let tx =
             self.live_games[game_idx].get_transaction_for_move(env.allocator, existing_coin)?;

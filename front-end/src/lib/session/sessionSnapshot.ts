@@ -1,19 +1,12 @@
 import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import type { SavedHandProposal, SessionPresentationSave } from './saveEnvelope';
 import { encodeComposeDraftState } from './persistenceBetweenHands';
-import {
-  encodeHandProposalExtras,
-  decodeGameFeatureState,
-  isCatalogGameType,
-  packageFor,
-  validateHandProposal,
-} from '../gameRegistry';
+import { isCatalogGameType, validateHandProposal } from '../gameRegistry';
 import { channelStatusPayloadFromModel } from './normalization';
 import type { HandProposal, RegisteredGameType, SessionModel } from './types';
 
 export interface SessionPresentationFacts {
   channelStatus?: ChannelStatusPayload | null;
-  lastOutcomeWin?: 'win' | 'lose' | 'tie' | null;
   waitingStateEnteredAt?: bigint | null;
   cleanShutdownGraceStartedAt?: bigint | null;
 }
@@ -34,11 +27,12 @@ export function snapshotFromSessionModel(
       throw new Error(`Session invariant broken: invalid ${handProposal.gameType} hand proposal`);
     }
     return {
-      my_contribution: handProposal.myContribution.toString(),
-      their_contribution: handProposal.theirContribution.toString(),
+      player_a_contribution: handProposal.playerAContribution.toString(),
+      player_b_contribution: handProposal.playerBContribution.toString(),
+      sender_is_player_a: handProposal.senderIsPlayerA,
       game_timeout: handProposal.gameTimeout.toString(),
       game_type: requireCatalogGameType(handProposal.gameType, 'handProposal.gameType'),
-      ...encodeHandProposalExtras(handProposal),
+      parameters: handProposal.parameters,
     };
   };
 
@@ -73,11 +67,6 @@ export function snapshotFromSessionModel(
     if (group.memberIds.length === 0 || group.primaryId !== group.memberIds[0]) {
       throw new Error('Session invariant broken: proposal primary ID must be its first member');
     }
-    if (!packageFor(group.handProposal.gameType).validateHandMembership(group.memberIds, null)) {
-      throw new Error(
-        `Session invariant broken: ${group.handProposal.gameType} proposal has ${group.memberIds.length} members`,
-      );
-    }
     if (
       (group.disposition === 'incoming-cached' || group.disposition === 'incoming-review') &&
       group.origin !== 'peer'
@@ -104,35 +93,11 @@ export function snapshotFromSessionModel(
   if (model.game.handState !== null) {
     requireCatalogGameType(model.game.handState.gameType, 'handState.gameType');
   }
-  for (const [id, pending] of Object.entries(model.game.pendingCandidates)) {
-    if (
-      pending.id !== id ||
-      pending.gameType !== model.game.activeGameType ||
-      !model.game.currentHandIds.includes(id) ||
-      !model.game.activeIds.includes(id) ||
-      decodeGameFeatureState(pending.gameType, pending.featureState) === null
-    ) {
-      throw new Error(`Session invariant broken: invalid pending candidate ${id}`);
-    }
-  }
 
   return {
     activeGameIds: model.game.activeIds,
     activeGameType: requireCatalogGameType(model.game.activeGameType, 'activeGameType'),
     handState: model.game.handState,
-    pendingCandidates: model.game.currentHandIds.flatMap((id) => {
-      const pending = model.game.pendingCandidates[id];
-      return pending
-        ? [
-            {
-              gameType: pending.gameType,
-              id: pending.id,
-              action: pending.action,
-              featureState: pending.featureState,
-            },
-          ]
-        : [];
-    }),
     currentHandGameIds: model.game.currentHandIds,
     currentHandOrigin: model.game.currentHandOrigin,
     lastDisplayedGameId: model.game.lastDisplayedId,
@@ -155,8 +120,6 @@ export function snapshotFromSessionModel(
       facts.channelStatus === undefined
         ? channelStatusPayloadFromModel(model.channel.status)
         : facts.channelStatus,
-    lastOutcomeWin:
-      facts.lastOutcomeWin === undefined ? (model.lastOutcomeWin ?? null) : facts.lastOutcomeWin,
     myRunningBalance: model.myRunningBalance.toString(),
     channelNotifQueue: model.channel.queue.map(({ id, kind, title, message }) => ({
       id,

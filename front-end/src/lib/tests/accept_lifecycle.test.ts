@@ -58,11 +58,17 @@ describe('acceptLifecycle', () => {
       pairing: {
         token: 't1',
         peerId: 'peer',
-        gameSessionId: 'gs',
+        gameSessionId: '50'.repeat(16),
         iStarted: true,
         myContribution: '10',
         theirContribution: '10',
         perGameAmount: '1',
+      },
+      transport: {
+        messageNumber: 1n,
+        remoteNumber: 0n,
+        unackedMessages: [],
+        disposition: 'active',
       },
     };
 

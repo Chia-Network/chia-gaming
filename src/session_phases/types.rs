@@ -3,15 +3,17 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
 };
+#[cfg(test)]
+use crate::common::types::Program;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, Error, GameID, GameType, Hash, Program, ProgramRef, PuzzleHash,
-    Timeout,
+    Aggsig, Amount, Error, GameID, GameType, Hash, ProgramRef, PuzzleHash, Timeout,
 };
-use crate::referee::types::GameMoveDetails;
+use crate::referee::types::GameMoveStateInfo;
 use crate::session_phases::effects::Effect;
 use crate::session_phases::handshake::{
     HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
@@ -22,26 +24,23 @@ pub use crate::session_phases::wallet_traits::{
     ChannelFundingWallet, SpendWalletReceiver, WalletSpendInterface,
 };
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct WireGameSpec {
     pub game_id: GameID,
-    pub amount: Amount,
-    pub sender_contribution: Amount,
-    pub receiver_contribution: Amount,
-    pub sender_goes_first: bool,
+    pub player_a_contribution: Amount,
+    pub player_b_contribution: Amount,
+    pub player_a_goes_first: bool,
     pub initial_validation_program_hash: Hash,
+    pub initial_validation_info_hash: Hash,
     pub initial_move: Vec<u8>,
-    pub initial_max_move_size: usize,
-    pub initial_state: Program,
+    pub initial_max_move_size: u32,
     pub initial_mover_share: Amount,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct WireProposalGroup {
     pub start: GameProposal,
     pub members: Vec<WireGameSpec>,
-    /// Always the first member's game id (including singleton groups).
-    pub group_id: GameID,
 }
 
 pub trait ToLocalUI {
@@ -91,17 +90,22 @@ pub trait FromLocalUI {
     fn shut_down(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct PeerMove {
+    pub basic: GameMoveStateInfo,
+    pub terminal: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub enum BatchAction {
     ProposeGroup(WireProposalGroup),
-    AcceptProposal(GameID),
-    CancelProposal(GameID),
-    Move(GameID, GameMoveDetails),
-    #[serde(rename = "AcceptSettlement")]
+    AcceptProposalGroup(GameID),
+    CancelProposalGroup(GameID),
+    Move(GameID, PeerMove),
     AcceptSettlement(GameID, Amount),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub enum PeerMessage {
     HandshakeA(HandshakePayloadB),
     HandshakeB(HandshakePayloadB),
@@ -113,9 +117,13 @@ pub enum PeerMessage {
     Batch {
         actions: Vec<BatchAction>,
         signatures: StateUpdateSignatures,
-        clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
     },
-    CleanShutdownComplete(CoinSpend),
+    CleanShutdown {
+        channel_half_sig: Aggsig,
+    },
+    CleanShutdownComplete {
+        channel_half_sig: Aggsig,
+    },
     RequestPotato(()),
     Message(GameID, Vec<u8>),
 }
@@ -147,14 +155,13 @@ pub enum PotatoState {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GameAction {
-    Move(GameID, ReadableMove, Hash),
-    #[serde(rename = "AcceptSettlement")]
+    Move(GameID, PreparedMove),
     AcceptSettlement(GameID),
     CleanShutdown,
     QueuedProposalGroup(Vec<Rc<GameStartInfo>>, WireProposalGroup),
-    QueuedAcceptProposal(GameID),
-    QueuedCancelProposal(GameID),
-    QueuedCancelProposalSilently(GameID),
+    QueuedAcceptProposalGroup(GameID),
+    QueuedCancelProposalGroup(GameID),
+    QueuedCancelProposalGroupSilently(GameID),
     Cheat(GameID, Amount, Hash),
     #[cfg(test)]
     ForcedSelfAccept(GameID),
@@ -187,18 +194,18 @@ pub(crate) fn validate_new_move_action<'a>(
 impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
+            GameAction::Move(gi, prepared) => write!(formatter, "Move({gi:?},{prepared:?})"),
             GameAction::AcceptSettlement(gi) => write!(formatter, "AcceptSettlement({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::QueuedProposalGroup(_, _) => write!(formatter, "QueuedProposalGroup(..)"),
-            GameAction::QueuedAcceptProposal(gi) => {
-                write!(formatter, "QueuedAcceptProposal({gi:?})")
+            GameAction::QueuedAcceptProposalGroup(gi) => {
+                write!(formatter, "QueuedAcceptProposalGroup({gi:?})")
             }
-            GameAction::QueuedCancelProposal(gi) => {
-                write!(formatter, "QueuedCancelProposal({gi:?})")
+            GameAction::QueuedCancelProposalGroup(gi) => {
+                write!(formatter, "QueuedCancelProposalGroup({gi:?})")
             }
-            GameAction::QueuedCancelProposalSilently(gi) => {
-                write!(formatter, "QueuedCancelProposalSilently({gi:?})")
+            GameAction::QueuedCancelProposalGroupSilently(gi) => {
+                write!(formatter, "QueuedCancelProposalGroupSilently({gi:?})")
             }
             GameAction::Cheat(gi, ms, _) => write!(formatter, "Cheat({gi:?},{ms:?})"),
             #[cfg(test)]
@@ -210,13 +217,34 @@ impl std::fmt::Debug for GameAction {
 #[cfg(test)]
 mod move_authority_tests {
     use super::*;
+    use crate::channel_state::game_handler::PreparedMove;
+    use crate::channel_state::types::StateUpdateProgram;
+    use crate::common::types::{AllocEncoder, Amount};
+    use std::collections::VecDeque;
 
-    fn queued_move(game_id: GameID) -> GameAction {
+    fn queued_move_with_bytes(game_id: GameID, move_bytes: Vec<u8>) -> GameAction {
+        let mut allocator = AllocEncoder::new();
+        let validator = StateUpdateProgram::new(
+            &mut allocator,
+            "queued test",
+            Rc::new(Program::from_bytes(&[0x80])),
+        );
         GameAction::Move(
             game_id,
-            ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80]))),
-            Hash::default(),
+            PreparedMove {
+                move_bytes,
+                outgoing_move_state_update_program: validator.clone(),
+                incoming_move_state_update_program: validator,
+                max_move_size: 0,
+                mover_share: Amount::default(),
+                waiting_handler: None,
+                message_parser: None,
+            },
         )
+    }
+
+    fn queued_move(game_id: GameID) -> GameAction {
+        queued_move_with_bytes(game_id, vec![])
     }
 
     #[test]
@@ -238,18 +266,49 @@ mod move_authority_tests {
     fn move_when_game_authority_says_their_turn_fails_loudly() {
         let _ = validate_new_move_action(&GameID(7), Some(false), &[], false);
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameFactory {
-    pub program: Option<Rc<Program>>,
+    #[test]
+    fn prepared_move_queue_round_trips_multiple_game_ids_in_order() {
+        let queue = VecDeque::from([
+            queued_move_with_bytes(GameID(7), b"first".to_vec()),
+            queued_move_with_bytes(GameID(9), b"second".to_vec()),
+        ]);
+
+        let encoded = bencodex::to_vec(&queue).expect("serialize prepared move queue");
+        assert!(!encoded.windows(8).any(|window| window == b"readable"));
+        assert!(!encoded.windows(7).any(|window| window == b"entropy"));
+
+        let restored: VecDeque<GameAction> =
+            bencodex::from_slice(&encoded).expect("deserialize prepared move queue");
+        let restored: Vec<_> = restored
+            .into_iter()
+            .map(|action| match action {
+                GameAction::Move(id, prepared) => (id, prepared.move_bytes),
+                other => panic!("unexpected restored action: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            restored,
+            vec![
+                (GameID(7), b"first".to_vec()),
+                (GameID(9), b"second".to_vec())
+            ]
+        );
+    }
+
+    #[test]
+    fn prepared_moves_for_different_games_may_coexist() {
+        let queue = [queued_move(GameID(7))];
+        validate_new_move_action(&GameID(9), Some(true), &queue, false)
+            .expect("different game ids may each have one prepared move");
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct OffChainPhaseInit {
     pub have_potato: bool,
     pub private_keys: ChannelPrivateKeys,
-    pub game_types: BTreeMap<GameType, GameFactory>,
+    pub game_types: BTreeMap<GameType, ProgramRef>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub channel_timeout: Timeout,

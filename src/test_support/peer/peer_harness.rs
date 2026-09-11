@@ -1,17 +1,19 @@
 #[cfg(test)]
 use std::collections::{HashMap, VecDeque};
 
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::channel_state::types::ChannelEnv;
 #[cfg(test)]
 use crate::channel_state::types::{ChannelPrivateKeys, ReadableMove};
-use crate::common::standard_coin::private_to_public_key;
+use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
 #[cfg(test)]
-use crate::common::types::{GameID, PrivateKey, Program, Timeout};
+use crate::common::types::{
+    GameID, Hash, Node, PrivateKey, Program, Puzzle, Sha256tree, Timeout, ToQuotedProgram,
+};
 #[cfg(test)]
 use crate::game_session::{MessagePeerQueue, MessagePipe, PeerLifecyclePhase};
 #[cfg(test)]
@@ -21,11 +23,13 @@ use crate::session_phases::effects::{
 #[cfg(test)]
 use crate::session_phases::game_collection;
 #[cfg(test)]
+use crate::session_phases::handshake::raw_coin_conditions_to_clvm;
+#[cfg(test)]
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 #[cfg(test)]
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 #[cfg(test)]
-use crate::session_phases::proposal::GameProposal;
+use crate::session_phases::proposal::{GameProposal, ProposalParameters};
 use crate::session_phases::types::{
     ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
@@ -89,7 +93,7 @@ impl MessagePeerQueue for Pipe {
 
 impl PacketSender for MessagePipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
-        let msg_data = bencodex::to_vec(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
+        let msg_data = crate::session_phases::peer_wire::encode_peer_message(msg)?;
         self.queue.push_back(msg_data);
         Ok(())
     }
@@ -277,22 +281,52 @@ where
 
 #[cfg(test)]
 fn build_dummy_wallet_bundle_for_request(
+    allocator: &mut AllocEncoder,
     request: &crate::session_phases::handshake::CoinSpendRequest,
 ) -> SpendBundle {
-    let coin = CoinString::from_parts(
-        &request.coin_id.clone().unwrap_or_default(),
-        &PuzzleHash::default(),
-        &request.amount,
+    let parent = request
+        .coin_id
+        .clone()
+        .unwrap_or_else(|| CoinID::new(Hash::from_bytes([1; 32])));
+    let private_key = PrivateKey::from_bytes(&[3; 32]).expect("dummy wallet key");
+    let public_key = private_to_public_key(&private_key);
+    let raw_message = b"dummy wallet funding";
+    let message_node = Node(
+        allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(raw_message))
+            .expect("dummy signature message"),
     );
-    let nil = Program::from_hex("80").expect("nil program hex should parse");
+    let mut conditions = vec![Node(
+        (50_u8, (public_key, (message_node, ())))
+            .to_clvm(allocator)
+            .expect("dummy AGG_SIG_ME condition"),
+    )];
+    conditions.extend(
+        raw_coin_conditions_to_clvm(allocator, &request.conditions, request.max_height)
+            .expect("dummy wallet request conditions"),
+    );
+    let conditions = conditions
+        .to_clvm(allocator)
+        .expect("dummy wallet conditions");
+    let puzzle: Puzzle = conditions
+        .to_quoted_program(allocator)
+        .expect("quote dummy wallet conditions")
+        .into();
+    let coin = CoinString::from_parts(&parent, &puzzle.sha256tree(allocator), &request.amount);
+    let signature = sign_agg_sig_me(
+        &private_key,
+        raw_message,
+        &coin.to_coin_id(),
+        &Hash::from_bytes(crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA),
+    );
     SpendBundle {
         name: Some("dummy wallet coin spend request".to_string()),
         spends: vec![CoinSpend {
             coin,
             bundle: Spend {
-                puzzle: nil.clone().into(),
-                solution: nil.into(),
-                signature: Default::default(),
+                puzzle,
+                solution: Program::from_bytes(&[0x80]).into(),
+                signature,
             },
         }],
     }
@@ -324,7 +358,7 @@ where
                 pending.extend(follow_up);
             }
             Effect::NeedCoinSpend(req) => {
-                let bundle = build_dummy_wallet_bundle_for_request(&req);
+                let bundle = build_dummy_wallet_bundle_for_request(allocator, &req);
                 let mut env = ChannelEnv::new(allocator)?;
                 let follow_up = handlers[who].provide_coin_spend_bundle(&mut env, bundle)?;
                 pending.extend(follow_up);
@@ -554,21 +588,18 @@ pub fn test_peer_smoke() {
 
     let game_ids = {
         let (game_ids, effects1) = {
-            let params_node = (Amount::new(100), (true, ()))
-                .to_clvm(&mut allocator)
-                .into_gen()
-                .expect("encode proposal parameters");
-            let parameters =
-                Program::from_nodeptr(&mut allocator, params_node).expect("proposal parameters");
             let calpoker_type = game_collection::game_type_for_package(&mut allocator, "calpoker");
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
             let (game_ids, effects1) = FromLocalUI::propose_games(
                 &mut peers[1],
                 &mut env,
                 &[GameProposal {
+                    player_a_contribution: Amount::new(100),
+                    player_b_contribution: Amount::new(100),
+                    sender_is_player_a: true,
                     game_type: calpoker_type,
                     timeout: Timeout::new(15),
-                    parameters,
+                    parameters: ProposalParameters::Null,
                 }],
             )
             .expect("should run");

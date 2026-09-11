@@ -1,6 +1,4 @@
 import type { ChannelStatus, GameConnectionState, WasmNotification } from '../../types/ChiaGaming';
-import type { ComposeDraftValue } from '@games/host';
-import type { ComposeDraftState } from './composeDraft';
 import type { GameSliceAction } from './gameSlice';
 import type {
   BetweenHandModeModel,
@@ -16,16 +14,12 @@ import type {
 import type { NonTerminalGameStatusPayload } from './presentation';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { Program } from 'clvm-lib';
-
-export type OutcomeWin = 'win' | 'lose' | 'tie';
+import type { PersistedGameState } from '@games/host';
 
 export interface SessionMachineCoordination {
   firstGameAccepted: boolean;
   sameTermsRequested: boolean;
-  expectingCounterProposal: boolean;
-  lastOutcomeWin?: OutcomeWin;
   nextNotificationId: bigint;
-  rejectionTimerGeneration: number;
   channelEnrichmentGeneration: number;
   gameEnrichmentGeneration: Record<string, number>;
   hostOnChain: boolean;
@@ -44,7 +38,6 @@ export type LocalGameCommand =
 export interface LocalGameActionRequest {
   gameType: RegisteredGameType;
   id: string;
-  state: unknown;
   command: LocalGameCommand;
 }
 
@@ -67,9 +60,6 @@ export type SessionMachineEffect =
   | { type: 'controller-propose-game'; handProposal: HandProposal }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
-  | { type: 'controller-set-last-outcome'; outcomeWin: OutcomeWin }
-  | { type: 'timer-schedule'; key: 'rejection-fallback'; generation: number; delayMs: number }
-  | { type: 'timer-cancel'; key: 'rejection-fallback' }
   | { type: 'persist-session' }
   | {
       type: 'request-coin-enrichment';
@@ -96,7 +86,6 @@ export type SessionMachineEvent =
       };
       wasmNotificationHistory: string[];
       diagnosticLog: string[];
-      lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
     }
   | { type: 'clean-shutdown-started'; started: boolean }
   | { type: 'dismissed-channel-status'; status: ChannelStatus | null }
@@ -117,22 +106,21 @@ export type SessionMachineEvent =
   | { type: 'set-last-terms'; handProposal: HandProposal }
   | { type: 'set-pending-retry-terms'; handProposal: HandProposal | null }
   | { type: 'set-new-hand-requested'; requested: boolean }
-  | { type: 'set-compose-draft'; compose: ComposeDraftState }
   | { type: 'select-compose-game'; gameType: RegisteredGameType }
   | { type: 'set-compose-timeout'; timeout: bigint }
-  | { type: 'update-selected-compose-draft'; draft: Partial<ComposeDraftValue> }
   | { type: 'set-compose-proposal-sent'; sent: boolean }
   | { type: 'clear-proposals'; ids?: readonly string[] }
   | { type: 'set-same-terms-requested'; requested: boolean }
-  | { type: 'set-expecting-counter-proposal'; expecting: boolean }
   | { type: 'set-first-game-accepted'; accepted: boolean }
-  | { type: 'set-last-outcome'; outcomeWin: OutcomeWin }
   | {
       type: 'notification-accepted-group';
-      id: string;
-      amount: string;
-      iStarted: boolean;
-      isMyTurn: boolean;
+      members: readonly {
+        id: string;
+        playerAContribution: bigint;
+        playerBContribution: bigint;
+        ourTurn: boolean;
+      }[];
+      handState?: PersistedGameState;
     }
   | {
       type: 'notification-game-status';
@@ -140,15 +128,15 @@ export type SessionMachineEvent =
       payload: NonTerminalGameStatusPayload;
       channelState: ChannelStatus;
       readable: Uint8Array | null;
-      moverShare: string | null;
+      moverShare: bigint | null;
       iStarted: boolean;
+      handState?: PersistedGameState;
     }
-  | { type: 'notification-game-terminal'; id: string; terminal: GameTerminalModel }
   | {
-      type: 'notification-move-rejected';
+      type: 'notification-game-terminal';
       id: string;
-      tag: string;
-      message: string;
+      terminal: GameTerminalModel;
+      handState?: PersistedGameState;
     }
   | {
       type: 'notification-insufficient-balance';
@@ -157,27 +145,19 @@ export type SessionMachineEvent =
     }
   | { type: 'notification-abandoned' }
   | {
-      type: 'feature-state';
+      type: 'hand-state-changed';
       gameType: RegisteredGameType;
-      id: string;
       state: unknown;
+      handState?: PersistedGameState;
     }
   | {
-      type: 'local-game-action-staged';
+      type: 'local-game-action-committed';
       gameType: RegisteredGameType;
       id: string;
-      action: LocalActionKind;
       state: unknown;
-    }
-  | {
-      type: 'local-game-action-applied';
-      gameType: RegisteredGameType;
-      id: string;
-      action: LocalActionKind;
-      state: unknown;
+      handState?: PersistedGameState;
     }
   | { type: 'local-action-applied'; id: string; action: LocalActionKind }
-  | { type: 'discard-pending-candidate'; id: string; action?: LocalActionKind }
   | { type: 'request-accept-proposal'; id: string }
   | { type: 'request-cancel-proposal'; id: string }
   | { type: 'request-propose-game'; handProposal: HandProposal }
@@ -199,7 +179,6 @@ export type SessionMachineEvent =
   | { type: 'start-clean-shutdown' }
   | { type: 'go-on-chain' }
   | { type: 'go-on-chain-result'; started: boolean }
-  | { type: 'rejection-fallback-fired'; generation: number }
   | { type: 'wasm-notification'; notification: WasmNotification; iStarted: boolean }
   | {
       type: 'enqueue-error';

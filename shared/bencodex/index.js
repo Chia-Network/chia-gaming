@@ -215,11 +215,23 @@ function getBoolean(map, key) {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function getBytes(map, key) {
+  const value = map.get(key);
+  return value instanceof Uint8Array ? value : undefined;
+}
+
+function getInteger(map, key) {
+  const value = map.get(key);
+  return typeof value === 'bigint' ? value : undefined;
+}
+
 module.exports = {
   BencodexError,
   decode,
   encode,
   getBoolean,
+  getBytes,
+  getInteger,
   getText,
   isDictionary,
 };

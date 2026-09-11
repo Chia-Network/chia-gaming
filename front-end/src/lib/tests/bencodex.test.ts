@@ -1,6 +1,8 @@
 import {
   decode,
   encode,
+  getBytes,
+  getInteger,
   isDictionary,
   type BencodexKey,
   type BencodexValue,
@@ -51,5 +53,16 @@ describe('local bencodex codec', () => {
     const decoded = decode(encoded);
     expect(isDictionary(decoded)).toBe(true);
     expect((decoded as Map<BencodexKey, BencodexValue>).get('a')).toBe(2n);
+  });
+
+  it('reads byte strings and integers without coercing other value types', () => {
+    const bytes = Uint8Array.of(1, 2, 3);
+    const decoded = decode(encode({ bytes, integer: 42n, text: '42' }));
+    expect(isDictionary(decoded)).toBe(true);
+    if (!isDictionary(decoded)) throw new Error('expected dictionary');
+    expect(getBytes(decoded, 'bytes')).toEqual(bytes);
+    expect(getInteger(decoded, 'integer')).toBe(42n);
+    expect(getInteger(decoded, 'text')).toBeUndefined();
+    expect(getBytes(decoded, 'text')).toBeUndefined();
   });
 });

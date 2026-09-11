@@ -3,32 +3,21 @@ import {
   useKrunkHand,
   canDraftKrunkGuess,
   canQueueKrunkGuess,
-  isKrunkDictionaryRejectionError,
   krunkBoardNotice,
   krunkGuessesWithQueued,
   KrunkHandler,
   KrunkGuess,
   KrunkRole,
 } from './useKrunkHand';
-import {
-  defaultFormatAmount,
-  gameHandState,
-  type GameHandSource,
-  type GameTerminalModel,
-  type PersistedGameState,
-} from '../../host';
-import { useGameHost } from '../../host/ui';
-import { krunkStateCodec } from './serialize';
+import type { GameMountView } from '../../host';
+import { formatKrunkAmount } from './formatting';
+import type { KrunkHand, KrunkHandState } from './serialize';
 
 export interface KrunkProps {
-  handSource: GameHandSource;
-  currentHandGameIds: string[];
-  activeGameIds: string[];
+  view: GameMountView<KrunkHand>;
   onGameLog?: (lines: string[]) => void;
   myName?: string;
   opponentName?: string;
-  terminalsById: Record<string, GameTerminalModel>;
-  amountsById: Record<string, string>;
 }
 
 const CLUE_TILE = ['⬛', '🟧', '🟩'] as const;
@@ -39,7 +28,7 @@ export function formatKrunkHandLog(
   betSize: bigint,
   guesses: KrunkGuess[],
   revealedWord: string | null,
-  formatAmount: (mojos: bigint) => string = defaultFormatAmount,
+  formatAmount: (mojos: bigint) => string = formatKrunkAmount,
 ): string[] {
   const roleLabel = role === 'alice' ? 'picking' : 'guessing';
   const lines = [`Krunk (${roleLabel}) ${formatAmount(betSize)}`];
@@ -54,29 +43,23 @@ export function formatKrunkHandLog(
 }
 
 export function krunkGameSlots(
-  currentHandGameIds: string[],
-  activeGameIds: string[] = currentHandGameIds,
-  persistedState?: PersistedGameState | null,
+  handState: KrunkHandState,
 ): {
-  aliceGameId: string | null;
-  bobGameId: string | null;
+  aliceMemberIndex: number;
+  bobMemberIndex: number;
   aliceActive: boolean;
   bobActive: boolean;
 } {
-  const persistedGames = krunkStateCodec.decode(persistedState)?.games;
-  if (!persistedGames) {
-    throw new Error('Krunk requires initialized durable game state');
-  }
-  const persistedAlice = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'alice');
-  const persistedBob = currentHandGameIds.find((id) => persistedGames?.[id]?.role === 'bob');
-  if (!currentHandGameIds.every((id) => persistedGames[id]) || !persistedAlice || !persistedBob) {
+  const aliceMemberIndex = handState.members.findIndex((member) => member.role === 'alice');
+  const bobMemberIndex = handState.members.findIndex((member) => member.role === 'bob');
+  if (aliceMemberIndex < 0 || bobMemberIndex < 0 || aliceMemberIndex === bobMemberIndex) {
     throw new Error('Krunk persisted roles must contain one alice and one bob');
   }
   return {
-    aliceGameId: persistedAlice,
-    bobGameId: persistedBob,
-    aliceActive: activeGameIds.includes(persistedAlice),
-    bobActive: activeGameIds.includes(persistedBob),
+    aliceMemberIndex,
+    bobMemberIndex,
+    aliceActive: handState.members[aliceMemberIndex].handler !== KrunkHandler.Terminal,
+    bobActive: handState.members[bobMemberIndex].handler !== KrunkHandler.Terminal,
   };
 }
 
@@ -425,47 +408,26 @@ function OnScreenKeyboard({
 }
 
 const Krunk: React.FC<KrunkProps> = ({
-  handSource,
-  currentHandGameIds,
-  activeGameIds,
+  view,
   onGameLog,
-  myName: _myName,
-  opponentName,
-  terminalsById,
-  amountsById,
 }) => {
-  const { formatAmount } = useGameHost();
-  const interactive = handSource.interactionMode === 'live';
-  const persistedState = gameHandState(handSource);
-  const { aliceGameId, bobGameId } = krunkGameSlots(
-    currentHandGameIds,
-    activeGameIds,
-    persistedState,
-  );
-  const aliceId = aliceGameId ?? '';
-  const bobId = bobGameId ?? '';
-  const acceptedAmount = amountsById[aliceId] ?? amountsById[bobId];
-  if (acceptedAmount === undefined) {
-    throw new Error('Krunk is missing the accepted game amount');
-  }
-  const betSize = BigInt(acceptedAmount);
-  // Keep each hand "live" for the whole atomic hand via currentHandGameIds.
-  // activeGameIds can drop a sibling during turn/settle handoffs and was
-  // latching useKrunkHand into a finished state (blocking clue updates and
-  // keyboard input while waiting on a clue).
-  const aliceInHand = aliceGameId !== null && currentHandGameIds.includes(aliceGameId);
-  const bobInHand = bobGameId !== null && currentHandGameIds.includes(bobGameId);
+  const interactive = !view.frozen;
+  const handState = view.hand.getState();
+  const { aliceMemberIndex, bobMemberIndex } = krunkGameSlots(handState);
+  const betSize = handState.perPlayerStake * 2n;
+  const aliceInHand =
+    handState.members[aliceMemberIndex].handler !== KrunkHandler.Terminal;
+  const bobInHand =
+    handState.members[bobMemberIndex].handler !== KrunkHandler.Terminal;
   const aliceInteractive = interactive && aliceInHand;
-  const bobInteractive = interactive && bobInHand;
 
-  // useKrunkHand maps iStarted → role: iStarted=true means bob, false means alice.
-  // Alice game (I pick the word): iStarted=false → role='alice'.
-  // Bob game (I guess): iStarted=true → role='bob'.
-  const aliceHand = useKrunkHand(handSource, aliceId, false, aliceInteractive);
+  const aliceHand = useKrunkHand(view, aliceMemberIndex);
 
-  const bobHand = useKrunkHand(handSource, bobId, true, bobInteractive);
+  const bobHand = useKrunkHand(view, bobMemberIndex);
   const setAliceSecretWord = aliceHand.setSecretWord;
   const submitBobGuessMove = bobHand.submitGuess;
+  const queueBobGuess = bobHand.queueGuess;
+  const submitNextQueuedBobGuess = bobHand.submitNextQueuedGuess;
 
   // Write each half to the session history panel when it finishes.
   // The two games can complete at different times; log them separately.
@@ -482,7 +444,7 @@ const Krunk: React.FC<KrunkProps> = ({
         betSize,
         aliceHand.gameState.guesses,
         aliceHand.gameState.revealedWord ?? aliceHand.gameState.secretWord,
-        formatAmount,
+        formatKrunkAmount,
       ),
     );
   }, [
@@ -491,7 +453,6 @@ const Krunk: React.FC<KrunkProps> = ({
     aliceHand.gameState.revealedWord,
     aliceHand.gameState.secretWord,
     betSize,
-    formatAmount,
     onGameLog,
   ]);
   useEffect(() => {
@@ -505,7 +466,7 @@ const Krunk: React.FC<KrunkProps> = ({
         betSize,
         bobHand.gameState.guesses,
         bobHand.gameState.revealedWord,
-        formatAmount,
+        formatKrunkAmount,
       ),
     );
   }, [
@@ -513,7 +474,6 @@ const Krunk: React.FC<KrunkProps> = ({
     bobHand.gameState.guesses,
     bobHand.gameState.revealedWord,
     betSize,
-    formatAmount,
     onGameLog,
   ]);
 
@@ -521,7 +481,7 @@ const Krunk: React.FC<KrunkProps> = ({
   const wordCommitted = aliceHand.gameState.secretWord !== null;
   const [wordDraft, setWordDraft] = useState('');
   const [guessDraft, setGuessDraft] = useState('');
-  const [guessQueue, setGuessQueue] = useState<string[]>([]);
+  const guessQueue = bobHand.gameState.queuedGuesses;
 
   // Resolved cells must receive their delay in the render where they mount:
   // LetterCell intentionally latches that initial delay.
@@ -530,9 +490,7 @@ const Krunk: React.FC<KrunkProps> = ({
     (g) => !g.clue.every((v) => v === -1n),
   ).length;
   const newlyResolvedIndex = newlyResolvedKrunkIndex(resolvedCount, prevResolvedCountRef.current);
-  // Dictionary rejection rolls back the sent guess in gameState; hide any
-  // still-queued rows in the same render (don't wait for the clear effect).
-  const displayQueue = isKrunkDictionaryRejectionError(bobHand.gameState.error) ? [] : guessQueue;
+  const displayQueue = guessQueue;
   const displayedBobGuesses = krunkGuessesWithQueued(bobHand.gameState.guesses, displayQueue);
   const [animateIndex, setAnimateIndex] = useState<number | undefined>(undefined);
   useEffect(() => {
@@ -563,7 +521,6 @@ const Krunk: React.FC<KrunkProps> = ({
     return () => clearTimeout(t);
   }, [bobMissed, animateBobReveal]);
 
-  const bobGameOver = bobHand.gameState.handler === KrunkHandler.Terminal;
   const filledGuessCount = bobHand.gameState.guesses.length + displayQueue.length;
   const isBobGuessPhase =
     interactive &&
@@ -580,35 +537,20 @@ const Krunk: React.FC<KrunkProps> = ({
     bobInHand &&
     canQueueKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
 
-  // Drain the queue whenever it becomes our turn to guess. Only pop after
-  // we know submit will accept (BobGuess); otherwise a rejected submit
-  // would silently drop the queued word.
-  //
-  // A dictionary rejection also lands in BobGuess — drop everything still
-  // queued rather than auto-sending guesses that assumed the rejected word.
+  // Persist the dequeue before attempting the move so a rejected word cannot
+  // be restored from the action checkpoint and submitted in a retry loop.
   useEffect(() => {
     if (!interactive) return;
-    if (isKrunkDictionaryRejectionError(bobHand.gameState.error)) {
-      if (guessQueue.length > 0) setGuessQueue([]);
-      return;
-    }
     if (!isBobGuessPhase || guessQueue.length === 0) return;
     if (bobHand.gameState.handler !== KrunkHandler.BobGuess) return;
-    const next = guessQueue[0];
-    setGuessQueue((rest) => rest.slice(1));
-    submitBobGuessMove(next);
+    submitNextQueuedBobGuess();
   }, [
     isBobGuessPhase,
     interactive,
-    guessQueue,
+    guessQueue.length,
     bobHand.gameState.handler,
-    bobHand.gameState.error,
-    submitBobGuessMove,
+    submitNextQueuedBobGuess,
   ]);
-
-  useEffect(() => {
-    if (bobGameOver && guessQueue.length > 0) setGuessQueue([]);
-  }, [bobGameOver, guessQueue.length]);
 
   const pickingWord = aliceInteractive && !wordCommitted;
   const showWordDraft = aliceInHand && !wordCommitted;
@@ -639,7 +581,7 @@ const Krunk: React.FC<KrunkProps> = ({
       submitBobGuessMove(guessDraft);
     } else if (canQueueGuess || (isBobGuessPhase && guessQueue.length > 0)) {
       if (filledGuessCount >= MAX_GUESSES) return false;
-      setGuessQueue((prev) => [...prev, guessDraft]);
+      queueBobGuess(guessDraft);
     } else {
       return false;
     }
@@ -652,6 +594,7 @@ const Krunk: React.FC<KrunkProps> = ({
     guessQueue.length,
     filledGuessCount,
     submitBobGuessMove,
+    queueBobGuess,
   ]);
 
   const submitActive = useCallback(() => {
@@ -660,7 +603,7 @@ const Krunk: React.FC<KrunkProps> = ({
     if (submitted) keyboardFocusRef.current?.focus();
   }, [keyboardMode, commitWord, submitGuess]);
 
-  const themLabel = opponentName ?? 'Opponent';
+  const themLabel = view.opponentName ?? 'Opponent';
 
   const handComplete =
     bobHand.gameState.handler === KrunkHandler.Terminal &&
@@ -671,10 +614,9 @@ const Krunk: React.FC<KrunkProps> = ({
       krunkBoardNotice(
         bobHand.gameState,
         themLabel,
-        terminalsById[bobId],
-        amountsById[bobId] ?? null,
+        handState.perPlayerStake,
       ),
-    [bobHand.gameState, themLabel, terminalsById, amountsById, bobId],
+    [bobHand.gameState, themLabel, handState.perPlayerStake],
   );
 
   const aliceBoardNotice = useMemo(
@@ -682,10 +624,9 @@ const Krunk: React.FC<KrunkProps> = ({
       krunkBoardNotice(
         aliceHand.gameState,
         themLabel,
-        terminalsById[aliceId],
-        amountsById[aliceId] ?? null,
+        handState.perPlayerStake,
       ),
-    [aliceHand.gameState, themLabel, terminalsById, amountsById, aliceId],
+    [aliceHand.gameState, themLabel, handState.perPlayerStake],
   );
 
   const sharedStatusNotice = useMemo(() => {

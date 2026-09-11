@@ -27,7 +27,7 @@ use crate::utils::proper_list;
 pub struct GameMoveStateInfo {
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
-    pub max_move_size: usize,
+    pub max_move_size: u32,
     /// Raw CLVM atom bytes for max_move_size, preserved exactly as seen on-chain.
     /// Used in to_clvm to ensure curry hashes match the on-chain puzzle hash
     /// even if the peer used a non-canonical encoding.

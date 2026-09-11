@@ -11,7 +11,7 @@
     "build": "pnpm run generate:games && pnpm exec tsc --project . --noEmit && pnpm exec esbuild src/index.tsx --bundle --sourcemap --jsx=automatic --outfile=dist/js/index-rollup.js --alias:@=./src --alias:@games=../games && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
     "build:deploy": "pnpm run generate:games && pnpm exec tsc --project . --noEmit && pnpm exec esbuild src/index.tsx --bundle --format=esm --splitting --jsx=automatic --outdir=dist/app --alias:@=./src --alias:@games=../games && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
     "bundle": "node -e \"require('node:fs').rmSync('dist/app', { recursive: true, force: true })\" && pnpm run build:deploy && node scripts/assemble-bundle.mjs",
-    "test": "pnpm run generate:games && pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --verbose --useStderr --ci"
+    "test": "pnpm run generate:games && pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --testPathIgnorePatterns=load_wasm --silent=false --verbose --useStderr --ci --forceExit && node -e \"console.error('=== WASM/Jest load_wasm starting ===')\" && pnpm exec jest --runInBand --testPathPatterns=load_wasm --silent=false --verbose --useStderr --ci --forceExit"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.23",
@@ -41,13 +41,15 @@
     "@types/react": "19.2.0",
     "@types/react-dom": "19.2.0",
     "@types/react-test-renderer": "19.1.0",
+    "@types/ws": "8.18.1",
     "esbuild": "0.28.1",
     "fake-indexeddb": "^6.2.5",
     "jest": "30.4.2",
     "react-test-renderer": "19.2.8",
     "tailwindcss": "4.3.3",
     "ts-jest": "29.4.12",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "ws": "8.21.2"
   },
   "jest": {
     "preset": "ts-jest",
@@ -71,6 +73,11 @@
       "src"
     ],
     "moduleNameMapper": {
+      "^react$": "<rootDir>/node_modules/react",
+      "^react-dom$": "<rootDir>/node_modules/react-dom",
+      "^react/jsx-runtime$": "<rootDir>/node_modules/react/jsx-runtime",
+      "^react/jsx-dev-runtime$": "<rootDir>/node_modules/react/jsx-dev-runtime",
+      "^react-test-renderer$": "<rootDir>/node_modules/react-test-renderer",
       "^@/(.*)$": "<rootDir>/src/$1",
       "^@games/(.*)$": "<rootDir>/../games/$1",
       "\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm|wav|mp3|m4a|aac|oga)$": "<rootDir>/scripts/testMock.js",

@@ -4,7 +4,7 @@ import {
   gameModelNeedsGameTabAttention,
   peerProposalIdNeedsGameTabAttention,
 } from '../gameTabAttention';
-import { EMPTY_GAME_TERMINAL_MODEL } from '@games/host';
+import { EMPTY_GAME_TERMINAL_MODEL } from '../session/types';
 import { createSessionModel } from '../session/model';
 
 function gameWith(

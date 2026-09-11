@@ -59,6 +59,38 @@ fn large_integer() {
 }
 
 #[test]
+fn i128_boundaries_round_trip() {
+    for value in [i128::MIN, i128::MAX] {
+        let encoded = to_vec(&value).unwrap();
+        assert_eq!(from_slice::<i128>(&encoded).unwrap(), value);
+    }
+}
+
+#[test]
+fn integer_above_i64_round_trips() {
+    let value = i128::from(i64::MAX) + 1;
+    let encoded = to_vec(&value).unwrap();
+    assert_eq!(encoded, b"i9223372036854775808e");
+    assert_eq!(from_slice::<i128>(&encoded).unwrap(), value);
+}
+
+#[test]
+fn integers_outside_i128_are_rejected() {
+    assert!(
+        from_slice::<i128>(b"i170141183460469231731687303715884105728e").is_err(),
+        "i128::MAX + 1 must be rejected"
+    );
+    assert!(
+        from_slice::<i128>(b"i-170141183460469231731687303715884105729e").is_err(),
+        "i128::MIN - 1 must be rejected"
+    );
+    assert!(
+        to_vec(&(i128::MAX as u128 + 1)).is_err(),
+        "the serializer must not wrap a u128 outside the supported range"
+    );
+}
+
+#[test]
 fn bytestring() {
     let bytes: &[u8] = b"spam";
     // serde_bytes or manual serialize_bytes
@@ -74,6 +106,17 @@ fn empty_bytestring() {
     assert_eq!(encoded, b"0:");
     let decoded: serde_bytes::ByteBuf = from_slice(b"0:").unwrap();
     assert_eq!(decoded.as_ref(), b"");
+}
+
+#[test]
+fn bytestring_length_overflow_is_an_error() {
+    let encoded = format!("{}:", usize::MAX);
+    assert!(from_slice::<serde_bytes::ByteBuf>(encoded.as_bytes()).is_err());
+}
+
+#[test]
+fn bytestring_larger_than_remaining_input_is_an_error() {
+    assert!(from_slice::<serde_bytes::ByteBuf>(b"5:spam").is_err());
 }
 
 #[test]
@@ -144,7 +187,10 @@ fn struct_field_sorting() {
 #[test]
 fn unit_variant() {
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
-    enum Color { Red, Green }
+    enum Color {
+        Red,
+        Green,
+    }
     assert_eq!(to_vec(&Color::Red).unwrap(), b"u3:Red");
     assert_eq!(from_slice::<Color>(b"u3:Red").unwrap(), Color::Red);
     assert_eq!(from_slice::<Color>(b"u5:Green").unwrap(), Color::Green);
@@ -184,11 +230,19 @@ fn struct_variant() {
 #[test]
 fn nested_struct() {
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
-    struct Inner { val: u32 }
+    struct Inner {
+        val: u32,
+    }
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
-    struct Outer { inner: Inner, name: String }
+    struct Outer {
+        inner: Inner,
+        name: String,
+    }
 
-    let val = Outer { inner: Inner { val: 7 }, name: "test".into() };
+    let val = Outer {
+        inner: Inner { val: 7 },
+        name: "test".into(),
+    };
     let encoded = to_vec(&val).unwrap();
     let decoded: Outer = from_slice(&encoded).unwrap();
     assert_eq!(decoded, val);

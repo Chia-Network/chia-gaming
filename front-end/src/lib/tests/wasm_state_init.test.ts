@@ -7,14 +7,9 @@ import {
   _resetWasmLoadForTests,
   PRESET_FILES,
 } from '../../hooks/WasmStateInit';
-import { PRODUCTION_PACKAGE_KEYS } from '../../generated/gamePackages';
-import {
-  completeRegisteredGames,
-  protocolIdentitiesReady,
-  warmRegisteredGames,
-} from '../../lib/gameIdentities';
+import { completeRegisteredGames, protocolIdentitiesReady } from '../../lib/gameIdentities';
 import type { WasmConnection } from '../../types/ChiaGaming';
-import { mockGamePackageIdentity, TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 describe('WasmStateInit lazy load', () => {
   beforeEach(() => {
@@ -30,7 +25,6 @@ describe('WasmStateInit lazy load', () => {
       init: jest.fn(),
       cache_file: jest.fn(),
       registered_game_packages: jest.fn(() => [...TEST_PROTOCOL_IDS]),
-      warm_game_package: jest.fn((key: string) => mockGamePackageIdentity(key)),
     } as unknown as WasmConnection;
   }
 
@@ -44,7 +38,6 @@ describe('WasmStateInit lazy load', () => {
 
     expect(initFn).not.toHaveBeenCalled();
     expect(fetchPreset).not.toHaveBeenCalled();
-    expect(wasm.warm_game_package).not.toHaveBeenCalled();
   });
 
   it('notifies glue after registering window.loadWasm', () => {
@@ -135,7 +128,7 @@ describe('WasmStateInit lazy load', () => {
     expect(fetchPreset.mock.calls.length).toBeGreaterThan(PRESET_FILES.length);
   });
 
-  it('startWasmBootstrap loads and warms factories until the protocol id table is complete', async () => {
+  it('startWasmBootstrap loads artifacts and binds build-generated protocol ids', async () => {
     const wasm = mockWasm();
     const initFn = jest.fn(async () => {});
     const fetchPreset = jest.fn(async () => new Uint8Array([1, 2, 3]));
@@ -144,14 +137,12 @@ describe('WasmStateInit lazy load', () => {
     storeInitArgs(initFn, wasm);
     startWasmBootstrap();
 
-    await warmRegisteredGames(wasm);
+    await ensureWasmLoaded();
+    completeRegisteredGames(wasm);
 
     expect(initFn).toHaveBeenCalledTimes(1);
     expect(fetchPreset).toHaveBeenCalledTimes(PRESET_FILES.length);
-    expect(wasm.warm_game_package).toHaveBeenCalledTimes(PRODUCTION_PACKAGE_KEYS.length);
-    for (const key of PRODUCTION_PACKAGE_KEYS) {
-      expect(wasm.warm_game_package).toHaveBeenCalledWith(key);
-    }
+    expect(wasm.registered_game_packages).toHaveBeenCalled();
     expect(protocolIdentitiesReady()).toBe(true);
     completeRegisteredGames(wasm);
     expect(protocolIdentitiesReady()).toBe(true);

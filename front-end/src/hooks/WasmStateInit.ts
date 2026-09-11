@@ -1,7 +1,7 @@
 import { WasmConnection, WasmInitFn, ChiaGame, RngId } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
 import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
-import { _resetGameIdentityWarmupForTests, warmRegisteredGames } from '../lib/gameIdentities';
+import { _resetGameIdentityWarmupForTests, completeRegisteredGames } from '../lib/gameIdentities';
 import { PRESET_FILES } from '../generated/gamePresets';
 
 let chia_gaming_init: WasmInitFn | undefined = undefined;
@@ -85,13 +85,12 @@ async function runWasmLoad(): Promise<WasmConnection> {
 }
 
 /**
- * Start WASM + preset fetch on page load, then probe factories in the
- * background. Handshake only needs the loaded module; protocol identities
- * are bound later when the channel is live.
+ * Start WASM + preset fetch on page load, then bind build-generated protocol
+ * identities without executing factories.
  */
 export function startWasmBootstrap(): void {
   void ensureWasmLoaded()
-    .then((wasm) => warmRegisteredGames(wasm))
+    .then((wasm) => completeRegisteredGames(wasm))
     .catch((err) => {
       console.warn('wasm bootstrap failed', err);
     });

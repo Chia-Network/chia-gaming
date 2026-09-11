@@ -132,17 +132,22 @@ canonical reference for the full build sequence.
 
 Run commands from the repo root unless noted.
 
-### 1. Chialisp (.hex files)
+### 1. Chialisp
 
 ```bash
 ./tools/build-chialisp.sh
 ```
 
-This is the sole entry point for compiling `.clsp` sources to `.hex`. It
-content-hashes the sources, compiler inputs, and generated outputs, rebuilding
-only when an input changes or an output is missing or modified. Ordinary Cargo
-commands do not compile Chialisp. The hex files are loaded by the WASM module at
-runtime over HTTP.
+This is the sole entry point for compiling `.clsp` sources. The Chialisp
+compiler emits `.hex`; the build then decodes each output into a
+`.clvm.bin` artifact. For each game it also curries any factory arguments,
+runs the build-only probe, records the protocol ID, and emits one prepared
+runtime factory. It content-hashes the sources, compiler inputs, and generated
+outputs, rebuilding only when an input changes or an output is missing or
+modified. Ordinary Cargo commands do not compile Chialisp. Only prepared
+factories and core runtime programs are loaded by the WASM module over HTTP.
+The gitignored `games/package_manifest.json` caches the generated protocol IDs
+for subsequent Rust builds; it is build output, not a hand-edited catalog.
 
 ### 2. WASM (browser target)
 
@@ -278,6 +283,8 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 | `HUB_MAX_BYTES_PER_WINDOW`   | no       | Maximum control-channel bytes per connection per window (default `1000000`)                             |
 | `GAME_MAX_MESSAGES_PER_WINDOW` | no     | Maximum game-relay messages per connection per window (default `1000`)                                  |
 | `GAME_MAX_BYTES_PER_WINDOW`  | no       | Maximum game-relay bytes per connection per window (default `11534336`)                                 |
+| `GAME_MAX_RECENT_CORRESPONDENTS` | no  | Maximum recent relay correspondents retained per hub session (default `16`)                              |
+| `GAME_RECENT_CORRESPONDENT_TTL_MS` | no | Sliding lifetime for recent-correspondent reconnect hints (default `1800000`)                            |
 | `HUB_TRUST_PROXY`            | no       | Set to `1` only when direct access is blocked and a trusted proxy sets `X-Forwarded-For` (default `0`) |
 
 #### Simulator
@@ -327,9 +334,9 @@ Set `--self` to the hub's public URL. The same `--dir`, `--self`,
 - **Separate origins.** The player app and hub must be served from
 different origins. The hub loads inside an iframe from the hub's
 origin; same-origin would break the security boundary.
-- **Asset co-location.** WASM files and `.hex` chialisp files must be
+- **Asset co-location.** WASM files and `.clvm.bin` Chialisp artifacts must be
 under the same `basePath` as `index.js`. The player app prefetches the
-WASM module and game/factory `.hex` (and krunk `.dat`) presets at page
+WASM module and binary game/factory presets at page
 load — not when a session is accepted — via relative paths under
 `basePath`.
 - `**--self` must match the public URL.** The hub uses it to derive

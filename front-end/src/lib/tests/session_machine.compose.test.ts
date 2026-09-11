@@ -10,7 +10,7 @@ import { CALPOKER_TERMS, send } from './session_machine.harness';
 import { liveSave } from './session_save_envelope.fixtures';
 
 describe('session machine behavior sequences', () => {
-  it('keeps compose commands in one session-owned draft', () => {
+  it('keeps only host-owned compose fields in the session machine', () => {
     let state = createSessionMachineState(
       createSessionModel({
         betweenHand: {
@@ -24,16 +24,7 @@ describe('session machine behavior sequences', () => {
     );
 
     state = send(state, { type: 'select-compose-game', gameType: 'calpoker' });
-    state = send(state, { type: 'update-selected-compose-draft', draft: { amount: 37n } });
-
-    state = send(state, { type: 'select-compose-game', gameType: 'krunk' });
-    state = send(state, { type: 'update-selected-compose-draft', draft: { amount: 900n } });
-
     state = send(state, { type: 'select-compose-game', gameType: 'spacepoker' });
-    state = send(state, {
-      type: 'update-selected-compose-draft',
-      draft: { unitSize: 11n, stackSize: 17n },
-    });
 
     state = send(state, { type: 'set-compose-timeout', timeout: 23n });
 
@@ -43,21 +34,15 @@ describe('session machine behavior sequences', () => {
       selectedGame: 'spacepoker',
 
       gameTimeout: 23n,
-
       proposalSent: true,
-
-      drafts: {
-        calpoker: { amount: 37n },
-        krunk: { amount: 900n },
-        spacepoker: { unitSize: 11n, stackSize: 17n },
-      },
     });
+    expect(Object.hasOwn(state.model.betweenHand.compose, 'drafts')).toBe(false);
   });
 
   it('uses the restored model directly as the machine projection', () => {
     const restored = sessionModelFromSave(
       liveSave({
-        version: 11n,
+        version: 22n,
 
         playerId: 'p1',
 
@@ -107,13 +92,14 @@ describe('session machine behavior sequences', () => {
         betweenHandMode: 'compose-proposal',
 
         betweenHandLastHandProposal: {
-          my_contribution: '20',
-
-          their_contribution: '20',
+          player_a_contribution: '20',
+          player_b_contribution: '20',
+          sender_is_player_a: false,
 
           game_timeout: '15',
 
           game_type: 'calpoker',
+          parameters: null,
         },
 
         handState: calpokerStateCodec.encode({
@@ -135,10 +121,12 @@ describe('session machine behavior sequences', () => {
             origin: 'local',
             disposition: 'outgoing',
             hand_proposal: {
-              my_contribution: '10',
-              their_contribution: '10',
+              player_a_contribution: '10',
+              player_b_contribution: '10',
+              sender_is_player_a: false,
               game_timeout: '15',
               game_type: 'calpoker',
+              parameters: null,
             },
           },
         ],

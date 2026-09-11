@@ -3,7 +3,7 @@ mod gaming_wasm {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
     use std::convert::TryFrom;
-    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
     use hex::FromHexError;
 
@@ -16,16 +16,20 @@ mod gaming_wasm {
     use wasm_bindgen::prelude::*;
 
     use chia_gaming::common::load_clvm::wasm_cache_file;
-    use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
+    use chia_gaming::common::standard_coin::{
+        private_to_public_key, puzzle_hash_for_pk, sign_agg_sig_me, ChiaIdentity,
+    };
 
     use chia_gaming::channel_state::types::ReadableMove;
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
         convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend,
         CoinString, CoinsetCoin, CoinsetSpendBundle,
-        CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, PublicKey,
-        Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+        CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, ProgramRef, PublicKey,
+        Node, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
+        ToQuotedProgram,
     };
+    use clvm_traits::{ClvmEncoder, ToClvm};
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
     use flate2::Decompress;
@@ -39,8 +43,7 @@ mod gaming_wasm {
     };
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
-    use chia_gaming::session_phases::proposal::GameProposal;
-    use chia_gaming::session_phases::types::GameFactory;
+    use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -69,7 +72,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 6;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 7;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -95,11 +98,19 @@ mod gaming_wasm {
         fn __wasm_call_ctors();
     }
 
+    static WASM_CTORS_RAN: AtomicBool = AtomicBool::new(false);
+
+    /// Hosts may call this more than once; constructors must run at most once.
     #[wasm_bindgen]
     pub fn init() {
         #[cfg(target_family = "wasm")]
-        unsafe {
-            __wasm_call_ctors();
+        {
+            if WASM_CTORS_RAN.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            unsafe {
+                __wasm_call_ctors();
+            }
         }
     }
 
@@ -116,6 +127,15 @@ mod gaming_wasm {
         CRADLES.with(|cell| {
             let mut mut_ref = cell.borrow_mut();
             mut_ref.insert(this_id, runner);
+        });
+    }
+
+    /// Release a session the host is done with. `shut_down` is an on-chain
+    /// protocol action and does not drop the WASM object.
+    #[wasm_bindgen]
+    pub fn drop_game_session(cid: i32) {
+        CRADLES.with(|cell| {
+            cell.borrow_mut().remove(&cid);
         });
     }
 
@@ -139,7 +159,7 @@ mod gaming_wasm {
     }
 
     struct GameConfigPartial {
-        game_types: BTreeMap<GameType, GameFactory>,
+        game_types: BTreeMap<GameType, ProgramRef>,
         have_potato: bool,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
@@ -729,6 +749,10 @@ mod gaming_wasm {
         // First generated member's initial validation puzzle hash, as 32-byte hex.
         game_type: String,
         timeout: u64,
+        player_a_contribution: u64,
+        player_b_contribution: u64,
+        sender_is_player_a: bool,
+        parameters: ProposalParameters,
     }
 
     fn game_id_to_string(id: &GameID) -> String {
@@ -759,7 +783,7 @@ mod gaming_wasm {
     }
 
     /// Bootstrap metadata: catalog `key` plus first-member validation puzzle hash `id`.
-    /// Registration discovers `id` by running the factory with representative parameters.
+    /// Package build discovers `id` by running the factory with representative parameters.
     /// Peer/WASM wire uses `id` (the hash). The JS session model and saves use catalog keys.
     #[wasm_bindgen]
     pub fn registered_game_packages() -> Result<JsValue, JsValue> {
@@ -775,38 +799,22 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&list).map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
-    /// Probe one production factory into the process-wide cache. Idempotent.
-    /// The host yields between calls so the browser event loop can stay responsive.
     #[wasm_bindgen]
-    pub fn warm_game_package(key: String) -> Result<JsValue, JsValue> {
-        let mut allocator = AllocEncoder::new();
-        let id = game_collection::warm_production_package(&mut allocator, &key)
-            .map_err(|e| JsValue::from_str(&e))?;
-        serde_wasm_bindgen::to_value(&JsPackageIdentity {
-            key,
-            id: id.to_string(),
-        })
-        .map_err(|e| JsValue::from_str(&format!("{e}")))
-    }
-
-    #[wasm_bindgen]
-    pub fn propose_games(cid: i32, games: JsValue, parameters_list: JsValue) -> Result<JsValue, JsValue> {
+    pub fn propose_games(cid: i32, games: JsValue) -> Result<JsValue, JsValue> {
         let js_games: Vec<JsGameProposal> =
             serde_wasm_bindgen::from_value(games).into_js()?;
-        let params_arr: Vec<Vec<u8>> =
-            serde_wasm_bindgen::from_value(parameters_list).into_js()?;
-        if js_games.len() != params_arr.len() {
-            return Err(JsValue::from_str("games and parameters_list must have the same length"));
-        }
         with_game(cid, move |cradle: &mut JsGameSession| {
             let mut game_starts = Vec::with_capacity(js_games.len());
-            for (g, p) in js_games.iter().zip(params_arr.iter()) {
+            for g in &js_games {
                 let game_type = parse_game_type_hex(&g.game_type)
                     .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
                 game_starts.push(GameProposal {
+                    player_a_contribution: Amount::new(g.player_a_contribution),
+                    player_b_contribution: Amount::new(g.player_b_contribution),
+                    sender_is_player_a: g.sender_is_player_a,
                     game_type,
                     timeout: Timeout::new(g.timeout),
-                    parameters: Program::from_bytes(p),
+                    parameters: g.parameters.clone(),
                 });
             }
             let ids = cradle.cradle.propose_games(
@@ -1492,5 +1500,68 @@ mod gaming_wasm {
     pub fn sha256bytes(bytes_str: &str) -> Result<JsValue, JsValue> {
         let hashed = hex::encode(Sha256Input::Bytes(bytes_str.as_bytes()).hash().bytes());
         serde_wasm_bindgen::to_value(&hashed).into_js()
+    }
+
+    #[wasm_bindgen]
+    pub fn test_two_spend_aggregate_signature_validation() -> Result<(), JsValue> {
+        fn make_spend(
+            allocator: &mut AllocEncoder,
+            tag: u8,
+            private_key: &PrivateKey,
+            raw_message: &[u8],
+        ) -> Result<(CoinSpend, Aggsig), types::Error> {
+            let public_key = private_to_public_key(private_key);
+            let message = Node(
+                allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(raw_message))
+                    .map_err(|err| types::Error::StrErr(format!("{err:?}")))?,
+            );
+            let conditions = ((50_u8, (public_key, (message, ()))), ())
+                .to_clvm(allocator)
+                .map_err(|err| types::Error::StrErr(format!("{err:?}")))?;
+            let puzzle: Puzzle = conditions.to_quoted_program(allocator)?.into();
+            let coin = CoinString::from_parts(
+                &CoinID::new(Hash::from_bytes([tag; 32])),
+                &puzzle.sha256tree(allocator),
+                &Amount::new(1),
+            );
+            let additional_data =
+                Hash::from_bytes(chia_gaming::common::constants::AGG_SIG_ME_ADDITIONAL_DATA);
+            let signature = sign_agg_sig_me(
+                private_key,
+                raw_message,
+                &coin.to_coin_id(),
+                &additional_data,
+            );
+            Ok((
+                CoinSpend {
+                    coin,
+                    bundle: Spend {
+                        puzzle,
+                        solution: Program::from_bytes(&[0x80]).into(),
+                        signature: Aggsig::default(),
+                    },
+                },
+                signature,
+            ))
+        }
+
+        let mut allocator = AllocEncoder::new();
+        let key_a = PrivateKey::from_bytes(&[1; 32]).into_js()?;
+        let key_b = PrivateKey::from_bytes(&[2; 32]).into_js()?;
+        let (mut spend_a, signature_a) =
+            make_spend(&mut allocator, 1, &key_a, b"message A").into_js()?;
+        let (spend_b, signature_b) =
+            make_spend(&mut allocator, 2, &key_b, b"message B").into_js()?;
+        spend_a.bundle.signature = signature_a.aggregate(&signature_b);
+        SpendBundle {
+            name: None,
+            spends: vec![spend_a, spend_b],
+        }
+        .validate_consensus(
+            &Hash::from_bytes(chia_gaming::common::constants::AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .into_js()
     }
 }

@@ -1,13 +1,12 @@
-import {
-  gameHandSourceFromMountView,
-  gameHandState,
-  requireLiveGameHandSource,
-  type GameMountView,
-  type LiveGamePort,
-} from '@games/host';
+import { type GameMountView, type LiveGamePort } from '@games/host';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
-import { isCatalogGameType, packageFor } from '../gameRegistry';
-import { gameCanActById, renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
+import {
+  createRegisteredGameHand,
+  isCatalogGameType,
+  packageFor,
+  restoreRegisteredGameHandState,
+} from '../gameRegistry';
+import { renderFrozenGameMount, renderLiveGameMount } from '../gameMountRegistry';
 import { createSessionModel } from '../session/model';
 
 const terminal = {
@@ -20,14 +19,41 @@ const terminal = {
 
 function modelFor(gameType: 'calpoker' | 'spacepoker' | 'krunk') {
   const ids = gameType === 'krunk' ? ['1', '2'] : ['1'];
+  const handProposal =
+    gameType === 'spacepoker'
+      ? {
+          gameType,
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          senderIsPlayerA: false,
+          gameTimeout: 15n,
+          parameters: 10n,
+        }
+      : {
+          gameType,
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          senderIsPlayerA: gameType === 'krunk',
+          gameTimeout: 15n,
+          parameters: null,
+        };
+  const hand = createRegisteredGameHand(gameType, {
+    parameters: handProposal.parameters,
+    members: ids.map((_, index) => ({
+      playerAContribution: gameType === 'krunk' ? (index === 0 ? 100n : 0n) : 100n,
+      playerBContribution: gameType === 'krunk' ? (index === 0 ? 0n : 100n) : 100n,
+      ourTurn: gameType === 'krunk' ? index === 0 : true,
+    })),
+  });
   return createSessionModel({
+    betweenHand: { lastHandProposal: handProposal },
     game: {
       handKey: 7,
       currentHandIds: ids,
       activeIds: ids,
       lastDisplayedId: '1',
       activeGameType: gameType,
-      handState: { gameType, version: 1n, state: {} },
+      handState: { gameType, state: hand.getState() },
       instances: Object.fromEntries(
         ids.map((id) => [
           id,
@@ -58,20 +84,7 @@ describe('game mount registry', () => {
       const port = { isChannelReady: () => true, dispatch: jest.fn() } as LiveGamePort;
       const model = modelFor(gameType);
       const common = {
-        handOrigin: 'fresh' as const,
-        handState: model.game.handState,
-        lastDisplayedId: model.game.lastDisplayedId,
-        activeIds: model.game.activeIds,
-        currentHandIds: model.game.currentHandIds,
-        canActById: Object.fromEntries(model.game.currentHandIds.map((id) => [id, true])),
-        iStarted: true,
-        playerNumber: 1,
-        instances: Object.fromEntries(
-          Object.entries(model.game.instances).map(([id, instance]) => [
-            id,
-            { amount: instance.amount, terminal: instance.terminal },
-          ]),
-        ),
+        hand: restoreRegisteredGameHandState(gameType, model.game.handState!),
       };
       const live: GameMountView = {
         ...common,
@@ -79,41 +92,32 @@ describe('game mount registry', () => {
         port,
         appendGameLog: jest.fn(),
       };
-      const frozen: GameMountView = { ...common, frozen: true, handOrigin: 'terminal' };
+      const frozen: GameMountView = { ...common, frozen: true };
 
       expect(() => packageFor(gameType).render(live)).not.toThrow();
       expect(() => packageFor(gameType).render(frozen)).not.toThrow();
-      expect(requireLiveGameHandSource(gameHandSourceFromMountView(live))).toBe(port);
-      expect(() => requireLiveGameHandSource(gameHandSourceFromMountView(frozen))).toThrow(
-        'Protocol commands require a live game hand source',
-      );
+      expect(live.port).toBe(port);
+      expect(frozen).not.toHaveProperty('port');
     },
   );
 
   it('passes the current machine snapshot and host-owned hand key to a live mount', () => {
     const base = modelFor('calpoker');
-    const model = createSessionModel({
-      ...base,
-      game: {
-        ...base.game,
-        pendingCandidates: {
-          '1': {
-            gameType: 'calpoker',
-            id: '1',
-            action: 'make_move',
-            featureState: {},
-          },
-        },
-      },
-    });
+    const model = createSessionModel(base);
     const port = { isChannelReady: () => true, dispatch: jest.fn() } as LiveGamePort;
     const session = {
       sessionModel: model,
       handKey: 7,
-      handOrigin: 'fresh',
       iStarted: true,
       playerNumber: 1,
-      handSource: { interactionMode: 'live', handState: model.game.handState, port },
+      handSource: {
+        frozen: false,
+        hand: createRegisteredGameHand('calpoker', {
+          parameters: model.betweenHand.lastHandProposal!.parameters,
+          members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: true }],
+        }),
+        port,
+      },
       appendGameLog: jest.fn(),
       gameSpecificView: { gameType: 'calpoker' },
     } as unknown as UseGameSessionResult;
@@ -121,19 +125,17 @@ describe('game mount registry', () => {
     const mount = renderLiveGameMount(session, {});
 
     expect(mount.key).toBe('7');
-    expect(gameHandState(mount.props.handSource)).toBe(model.game.handState);
-    expect(mount.props.handSource.interactionMode).toBe('live');
-    expect(gameCanActById(model)['1']).toBe(false);
+    expect(mount.props.view.hand.getState()).toEqual(model.game.handState?.state);
+    expect(mount.props.view.frozen).toBe(false);
+    expect(mount.props.gameId).toBeUndefined();
   });
 
   it('cold-restores a frozen mount without protocol capabilities', () => {
     const model = modelFor('calpoker');
-    const mount = renderFrozenGameMount(model, { iStarted: false });
+    const mount = renderFrozenGameMount(model, {});
 
     expect(mount.key).toBe('7');
-    expect(mount.props.handSource.interactionMode).toBe('terminal');
-    expect(() => requireLiveGameHandSource(mount.props.handSource)).toThrow(
-      'Protocol commands require a live game hand source',
-    );
+    expect(mount.props.view.frozen).toBe(true);
+    expect(mount.props.view).not.toHaveProperty('port');
   });
 });

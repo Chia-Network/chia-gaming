@@ -12,7 +12,7 @@ import {
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 
 describe('finished session shell display', () => {
-  it('falls back when a Calpoker hand lacks a validated display snapshot', () => {
+  it('permits remount when the generic Calpoker envelope is present', () => {
     const model = createSessionModel({
       game: {
         activeGameType: 'calpoker',
@@ -35,14 +35,13 @@ describe('finished session shell display', () => {
         },
         handState: {
           gameType: 'calpoker',
-          version: 1n,
           state: { cards: [1n, 2n] },
         },
       },
     });
 
     expect(selectFinishedSessionDisplay(model)).toEqual({
-      canRemountHand: false,
+      hasSavedHand: true,
       terminalLabel: 'Opponent timed out',
     });
   });
@@ -54,15 +53,13 @@ describe('finished session shell display', () => {
         currentHandIds: ['picker', 'guesser'],
         lastDisplayedId: 'picker',
         handState: krunkStateCodec.encode({
-          games: {
-            picker: initialKrunkGameState('alice'),
-            guesser: initialKrunkGameState('bob'),
-          },
+          perPlayerStake: 100n,
+          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       },
     });
 
-    expect(selectFinishedSessionDisplay(model).canRemountHand).toBe(true);
+    expect(selectFinishedSessionDisplay(model).hasSavedHand).toBe(true);
   });
 
   it('keeps the terminal hand wrapper available for pointer and text interaction', () => {
@@ -72,10 +69,8 @@ describe('finished session shell display', () => {
         currentHandIds: ['picker', 'guesser'],
         lastDisplayedId: 'picker',
         handState: krunkStateCodec.encode({
-          games: {
-            picker: initialKrunkGameState('alice'),
-            guesser: initialKrunkGameState('bob'),
-          },
+          perPlayerStake: 100n,
+          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       },
     });
@@ -91,7 +86,7 @@ describe('finished session shell display', () => {
   it('does not expose bigint hand payloads to React prop enumeration', () => {
     const model = createSessionModel({
       game: {
-        handState: { gameType: 'krunk', version: 1n, state: { clues: [2n] } },
+        handState: { gameType: 'krunk', state: { clues: [2n] } },
       },
     });
 

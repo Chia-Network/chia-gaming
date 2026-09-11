@@ -1,4 +1,6 @@
 import {
+  deferredHubRemapEscalationAction,
+  hubPlayerIdRemapAction,
   isAvailableForNewSessionPrompt,
   isRestoreBlocked,
   restoreGateAfterTerminalFinalization,
@@ -7,6 +9,7 @@ import {
   shouldAwaitShutdownOnPeerUnreachable,
   shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
+  shouldDeferHubRemapEscalation,
   shouldMountGameSession,
   shouldReportHubBusy,
   shouldReportHubBusyPresence,
@@ -262,6 +265,45 @@ describe('restore lifecycle gates', () => {
     expect(shouldAwaitShutdownOnPeerUnreachable('ShutdownTransactionPending')).toBe(true);
     expect(shouldAwaitShutdownOnPeerUnreachable('ShuttingDown')).toBe(false);
     expect(shouldAwaitShutdownOnPeerUnreachable('Active')).toBe(false);
+  });
+
+  it('treats a changed hub player id as a new routing epoch', () => {
+    const oldId = 'p_00000000000000000000000000000000';
+    const newId = 'p_11111111111111111111111111111111';
+    expect(hubPlayerIdRemapAction(undefined, newId, 'live', 'off-chain', 'Active')).toBe('none');
+    expect(hubPlayerIdRemapAction(oldId, oldId, 'live', 'off-chain', 'Active')).toBe('none');
+    expect(hubPlayerIdRemapAction(oldId, newId, 'pre-handshake', 'off-chain', 'Handshaking')).toBe(
+      'cancel-attempt',
+    );
+    expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'off-chain', 'Active')).toBe('go-on-chain');
+    expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'none', null, true)).toBe('go-on-chain');
+    expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'off-chain', 'Handshaking', true)).toBe(
+      'go-on-chain',
+    );
+    expect(hubPlayerIdRemapAction(oldId, newId, 'live', 'on-chain', 'GoingOnChain')).toBe('ignore');
+    expect(
+      hubPlayerIdRemapAction(oldId, newId, 'live', 'off-chain', 'ShutdownTransactionPending'),
+    ).toBe('ignore');
+    expect(hubPlayerIdRemapAction(oldId, newId, undefined, 'off-chain', 'Handshaking', true)).toBe(
+      'cancel-attempt',
+    );
+    expect(
+      hubPlayerIdRemapAction(oldId, newId, undefined, 'off-chain', 'Handshaking', true, true),
+    ).toBe('none');
+  });
+
+  it('scopes deferred hub remap escalation to one restore attempt', () => {
+    expect(shouldDeferHubRemapEscalation(true, undefined)).toBe(true);
+    expect(shouldDeferHubRemapEscalation(true, 'idle')).toBe(true);
+    expect(shouldDeferHubRemapEscalation(true, 'restoring')).toBe(true);
+    expect(shouldDeferHubRemapEscalation(true, 'restored')).toBe(false);
+    expect(shouldDeferHubRemapEscalation(true, 'failed')).toBe(false);
+    expect(shouldDeferHubRemapEscalation(false, 'idle')).toBe(false);
+    expect(deferredHubRemapEscalationAction(null, 'pair-1', 'restored')).toBe('wait');
+    expect(deferredHubRemapEscalationAction('pair-1', 'pair-1', 'restoring')).toBe('wait');
+    expect(deferredHubRemapEscalationAction('pair-1', 'pair-1', 'restored')).toBe('escalate');
+    expect(deferredHubRemapEscalationAction('pair-1', 'pair-2', 'restored')).toBe('discard');
+    expect(deferredHubRemapEscalationAction('pair-1', 'pair-1', 'failed')).toBe('discard');
   });
 
   it('mounts a saved session without requiring a live blockchain connection', () => {

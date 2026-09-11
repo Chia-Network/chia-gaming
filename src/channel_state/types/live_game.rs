@@ -2,13 +2,14 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::ReadableMove;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash, Spend,
     Timeout,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveWireData, ParsedRefereeSolution, TheirTurnCoinSpentResult,
+    GameMoveStateInfo, GameMoveWireData, ParsedRefereeSolution, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
 use crate::referee::Referee;
@@ -92,23 +93,33 @@ impl LiveGame {
         }
     }
 
-    pub fn internal_make_move(
-        &mut self,
+    pub fn prepare_move(
+        &self,
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
         new_entropy: Hash,
+    ) -> Result<PreparedMove, Error> {
+        game_assert!(
+            self.referee_maker.is_my_turn(),
+            "prepare_move called when it is not our turn"
+        );
+        self.referee_maker
+            .prepare_my_turn_move(allocator, readable_move, new_entropy)
+    }
+
+    pub fn apply_prepared_move(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        prepared: PreparedMove,
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
         game_assert!(
             self.referee_maker.is_my_turn(),
-            "internal_make_move called when it is not our turn"
+            "apply_prepared_move called when it is not our turn"
         );
-        let (new_ref, referee_result) = self.referee_maker.my_turn_make_move(
-            allocator,
-            readable_move,
-            new_entropy.clone(),
-            state_number,
-        )?;
+        let (new_ref, referee_result) =
+            self.referee_maker
+                .apply_prepared_move(allocator, prepared, state_number)?;
         let new_ph = new_ref.outcome_referee_puzzle_hash(allocator)?;
         self.referee_maker = new_ref;
         self.last_referee_puzzle_hash = new_ph;
@@ -118,7 +129,8 @@ impl LiveGame {
     pub fn internal_their_move(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_move: &GameMoveDetails,
+        basic: &GameMoveStateInfo,
+        terminal: bool,
         state_number: usize,
     ) -> Result<TheirTurnMoveResult, Error> {
         if self.referee_maker.is_my_turn() {
@@ -128,7 +140,7 @@ impl LiveGame {
         }
         let (new_ref, their_move_result) =
             self.referee_maker
-                .their_turn_move_off_chain(allocator, game_move, state_number)?;
+                .peer_move_off_chain(allocator, basic, terminal, state_number)?;
         if let Some(r) = new_ref {
             if their_move_result.puzzle_hash_for_unroll.is_some() {
                 let new_ph = r.outcome_referee_puzzle_hash(allocator)?;

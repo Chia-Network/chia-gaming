@@ -12,6 +12,8 @@ pub struct ProposedGame {
     pub group_id: GameID,
     pub initial_puzzle_hash: PuzzleHash,
     pub referee: Rc<Referee>,
+    pub player_a_contribution: Amount,
+    pub player_b_contribution: Amount,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
 }
@@ -22,6 +24,8 @@ impl ProposedGame {
         group_id: GameID,
         initial_puzzle_hash: PuzzleHash,
         referee: Rc<Referee>,
+        player_a_contribution: Amount,
+        player_b_contribution: Amount,
         my_contribution: Amount,
         their_contribution: Amount,
     ) -> Self {
@@ -30,6 +34,8 @@ impl ProposedGame {
             group_id,
             initial_puzzle_hash,
             referee,
+            player_a_contribution,
+            player_b_contribution,
             my_contribution,
             their_contribution,
         }

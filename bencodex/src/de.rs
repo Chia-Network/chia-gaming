@@ -42,7 +42,10 @@ impl<'de> Deserializer<'de> {
 
     fn parse_int_value(&mut self) -> Result<i128, Error> {
         // Already consumed the leading 'i'
-        let end = self.input.iter().position(|&b| b == b'e')
+        let end = self
+            .input
+            .iter()
+            .position(|&b| b == b'e')
             .ok_or_else(|| Error::InvalidData("unterminated integer".into()))?;
         let digits = &self.input[..end];
         let s = std::str::from_utf8(digits)
@@ -50,25 +53,31 @@ impl<'de> Deserializer<'de> {
         if s.starts_with("-0") || (s.starts_with('0') && s.len() > 1) {
             return Err(Error::InvalidData("invalid integer encoding".into()));
         }
-        let val: i128 = s.parse()
+        let val: i128 = s
+            .parse()
             .map_err(|_| Error::InvalidData(format!("cannot parse integer: {s}")))?;
         self.advance(end + 1);
         Ok(val)
     }
 
     fn parse_bytestring(&mut self) -> Result<&'de [u8], Error> {
-        let colon = self.input.iter().position(|&b| b == b':')
+        let colon = self
+            .input
+            .iter()
+            .position(|&b| b == b':')
             .ok_or_else(|| Error::InvalidData("missing ':' in bytestring".into()))?;
         let len_str = std::str::from_utf8(&self.input[..colon])
             .map_err(|_| Error::InvalidData("non-utf8 in bytestring length".into()))?;
-        let len: usize = len_str.parse()
+        let len: usize = len_str
+            .parse()
             .map_err(|_| Error::InvalidData(format!("bad bytestring length: {len_str}")))?;
         let start = colon + 1;
-        if self.input.len() < start + len {
+        let end = start.checked_add(len).ok_or(Error::Eof)?;
+        if self.input.len() < end {
             return Err(Error::Eof);
         }
-        let data = &self.input[start..start + len];
-        self.advance(start + len);
+        let data = &self.input[start..end];
+        self.advance(end);
         Ok(data)
     }
 
@@ -129,37 +138,71 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
                 let bytes = self.parse_bytestring()?;
                 visitor.visit_borrowed_bytes(bytes)
             }
-            other => Err(Error::InvalidData(format!("unexpected byte: 0x{other:02x}"))),
+            other => Err(Error::InvalidData(format!(
+                "unexpected byte: 0x{other:02x}"
+            ))),
         }
     }
 
     fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
-            b't' => { self.advance(1); visitor.visit_bool(true) }
-            b'f' => { self.advance(1); visitor.visit_bool(false) }
+            b't' => {
+                self.advance(1);
+                visitor.visit_bool(true)
+            }
+            b'f' => {
+                self.advance(1);
+                visitor.visit_bool(false)
+            }
             _ => self.deserialize_any(visitor),
         }
     }
 
-    fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_i16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_i32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_i64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_i128<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_u8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_u16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_u32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_u64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_u128<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
+    fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_i16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_i32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_i64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_i128<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_u8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_u16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_u32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_u64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_u128<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
     fn deserialize_f32<V: Visitor<'de>>(self, _visitor: V) -> Result<V::Value, Error> {
         Err(Error::Message("bencodex does not support floats".into()))
     }
     fn deserialize_f64<V: Visitor<'de>>(self, _visitor: V) -> Result<V::Value, Error> {
         Err(Error::Message("bencodex does not support floats".into()))
     }
-    fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
-    fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> { self.deserialize_any(visitor) }
+    fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
+    fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.deserialize_any(visitor)
+    }
 
     fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
@@ -193,11 +236,19 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         }
     }
 
-    fn deserialize_unit_struct<V: Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Error> {
+    fn deserialize_unit_struct<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Error> {
         self.deserialize_unit(visitor)
     }
 
-    fn deserialize_newtype_struct<V: Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Error> {
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Error> {
         visitor.visit_newtype_struct(self)
     }
 
@@ -220,11 +271,20 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         }
     }
 
-    fn deserialize_tuple<V: Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Error> {
+    fn deserialize_tuple<V: Visitor<'de>>(
+        self,
+        _len: usize,
+        visitor: V,
+    ) -> Result<V::Value, Error> {
         self.deserialize_seq(visitor)
     }
 
-    fn deserialize_tuple_struct<V: Visitor<'de>>(self, _name: &'static str, _len: usize, visitor: V) -> Result<V::Value, Error> {
+    fn deserialize_tuple_struct<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        _len: usize,
+        visitor: V,
+    ) -> Result<V::Value, Error> {
         self.deserialize_seq(visitor)
     }
 
@@ -300,7 +360,10 @@ struct ListAccess<'a, 'de> {
 impl<'a, 'de> SeqAccess<'de> for ListAccess<'a, 'de> {
     type Error = Error;
 
-    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Error> {
+    fn next_element_seed<T: DeserializeSeed<'de>>(
+        &mut self,
+        seed: T,
+    ) -> Result<Option<T::Value>, Error> {
         if self.de.peek()? == b'e' {
             return Ok(None);
         }
@@ -318,13 +381,17 @@ struct BytesSeqAccess<'de> {
 impl<'de> SeqAccess<'de> for BytesSeqAccess<'de> {
     type Error = Error;
 
-    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Error> {
+    fn next_element_seed<T: DeserializeSeed<'de>>(
+        &mut self,
+        seed: T,
+    ) -> Result<Option<T::Value>, Error> {
         if self.pos >= self.bytes.len() {
             return Ok(None);
         }
         let byte = self.bytes[self.pos];
         self.pos += 1;
-        seed.deserialize(de::value::U8Deserializer::new(byte)).map(Some)
+        seed.deserialize(de::value::U8Deserializer::new(byte))
+            .map(Some)
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -341,7 +408,10 @@ struct DictAccess<'a, 'de> {
 impl<'a, 'de> MapAccess<'de> for DictAccess<'a, 'de> {
     type Error = Error;
 
-    fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, Error> {
+    fn next_key_seed<K: DeserializeSeed<'de>>(
+        &mut self,
+        seed: K,
+    ) -> Result<Option<K::Value>, Error> {
         if self.de.peek()? == b'e' {
             return Ok(None);
         }
@@ -373,14 +443,20 @@ struct UnitOnly;
 
 impl<'de> de::VariantAccess<'de> for UnitOnly {
     type Error = Error;
-    fn unit_variant(self) -> Result<(), Error> { Ok(()) }
+    fn unit_variant(self) -> Result<(), Error> {
+        Ok(())
+    }
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, _seed: T) -> Result<T::Value, Error> {
         Err(Error::Message("expected unit variant".into()))
     }
     fn tuple_variant<V: Visitor<'de>>(self, _len: usize, _visitor: V) -> Result<V::Value, Error> {
         Err(Error::Message("expected unit variant".into()))
     }
-    fn struct_variant<V: Visitor<'de>>(self, _fields: &'static [&'static str], _visitor: V) -> Result<V::Value, Error> {
+    fn struct_variant<V: Visitor<'de>>(
+        self,
+        _fields: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value, Error> {
         Err(Error::Message("expected unit variant".into()))
     }
 }
@@ -395,7 +471,10 @@ impl<'a, 'de> de::EnumAccess<'de> for DictVariantAccess<'a, 'de> {
     type Error = Error;
     type Variant = DictVariantValue<'a, 'de>;
 
-    fn variant_seed<V: DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, DictVariantValue<'a, 'de>), Error> {
+    fn variant_seed<V: DeserializeSeed<'de>>(
+        self,
+        seed: V,
+    ) -> Result<(V::Value, DictVariantValue<'a, 'de>), Error> {
         let val = seed.deserialize(&mut *self.de)?;
         Ok((val, DictVariantValue { de: self.de }))
     }
@@ -431,7 +510,11 @@ impl<'a, 'de> de::VariantAccess<'de> for DictVariantValue<'a, 'de> {
         }
     }
 
-    fn struct_variant<V: Visitor<'de>>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Error> {
+    fn struct_variant<V: Visitor<'de>>(
+        self,
+        _fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Error> {
         if self.de.peek()? == b'd' {
             self.de.advance(1);
             let result = visitor.visit_map(DictAccess { de: self.de })?;
@@ -440,7 +523,9 @@ impl<'a, 'de> de::VariantAccess<'de> for DictVariantValue<'a, 'de> {
             self.de.consume_end()?;
             Ok(result)
         } else {
-            Err(Error::InvalidData("expected dict for struct variant".into()))
+            Err(Error::InvalidData(
+                "expected dict for struct variant".into(),
+            ))
         }
     }
 }

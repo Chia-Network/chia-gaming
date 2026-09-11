@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+import type { RegisteredGameProposalFormHandle } from '../lib/gamePackage';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import {
   describeReceivedProposal,
@@ -5,8 +7,7 @@ import {
   packageFor,
   REGISTERED_GAMES,
 } from '../lib/gameRegistry';
-import { composeDraftCanSubmit, composeDraftTerms } from '../lib/session/model';
-import { composeDraftValue } from '../lib/session/composeDraft';
+import { proposalContributionForOrigin } from '../lib/session/proposalOrigin';
 import { Button } from './button';
 
 export function ComposeProposalDialog({
@@ -18,12 +19,44 @@ export function ComposeProposalDialog({
 }) {
   const compose = session.composeDraftState;
   const pkg = packageFor(compose.selectedGame);
-  const canSubmit = composeDraftCanSubmit(compose, maxPerHandMojos);
+  const formRef = useRef<RegisteredGameProposalFormHandle>(null);
+  const canSubmit = !session.composeProposalSent && compose.gameTimeout > 0n;
+  const initialProposal =
+    session.lastHandProposal?.gameType === compose.selectedGame ? session.lastHandProposal : null;
+  const initialParameters = initialProposal
+    ? pkg.decodeProposalParameters(initialProposal.parameters)
+    : null;
+  const previousOrigin = session.iProposedHand ? 'local' : 'peer';
+  const initialValues =
+    initialProposal && initialParameters !== null
+      ? {
+          senderContribution: proposalContributionForOrigin(initialProposal, previousOrigin),
+          receiverContribution: proposalContributionForOrigin(
+            initialProposal,
+            previousOrigin === 'local' ? 'peer' : 'local',
+          ),
+          parameters: initialParameters,
+        }
+      : null;
 
   const submit = () => {
     if (!canSubmit) return;
-    const terms = composeDraftTerms(compose);
-    if (terms) session.submitComposedProposal(terms);
+    const result = formRef.current?.getProposal();
+    if (!result?.ok) return;
+    const senderIsPlayerA = !session.iStarted;
+    const parameters = pkg.encodeProposalParameters(result.parameters);
+    session.submitComposedProposal({
+      gameType: compose.selectedGame,
+      playerAContribution: senderIsPlayerA
+        ? result.senderContribution
+        : result.receiverContribution,
+      playerBContribution: senderIsPlayerA
+        ? result.receiverContribution
+        : result.senderContribution,
+      senderIsPlayerA,
+      gameTimeout: compose.gameTimeout,
+      parameters,
+    });
   };
 
   return (
@@ -45,10 +78,11 @@ export function ComposeProposalDialog({
           ))}
         </div>
         {pkg.renderHandProposalForm({
-          draft: composeDraftValue(compose, compose.selectedGame),
+          ref: formRef,
           disabled: session.composeProposalSent,
           maxPerHandMojos,
-          onChange: (update) => session.updateSelectedComposeDraft(update),
+          defaultContribution: session.perGameAmount,
+          initialValues,
           onSubmit: submit,
         })}
         <div className="flex w-full flex-col items-center gap-1">

@@ -27,7 +27,65 @@ import {
   testIndexedDb,
   wasmResult,
 } from './message_protocol.harness';
-import { mockGamePackageIdentity, TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+
+describe('WASM command persistence', () => {
+  it('debounces successful eventless mutations and ignores read-only polling', async () => {
+    jest.useFakeTimers();
+    const { blob, cradle } = createReadyBlob();
+    setActiveBlob(blob);
+    const save = jest.fn();
+    blob.onSaveNeeded = save;
+    (cradle as unknown as { make_move: jest.Mock }).make_move = jest.fn(() => wasmResult());
+
+    try {
+      expect(blob.makeMove('7', null)).toBe('queued');
+      expect(blob.makeMove('7', null)).toBe('queued');
+      expect(save).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(499);
+      expect(save).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(1);
+      expect(save).toHaveBeenCalledTimes(1);
+
+      blob.reportNewBlock(2n);
+      await jest.advanceTimersByTimeAsync(500);
+      expect(save).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps outbound delivery behind one immediate durability flush', async () => {
+    jest.useFakeTimers();
+    const outbound = enc('eventless-command-outbound');
+    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob();
+    setActiveBlob(blob);
+    const save = jest.fn(() => {
+      expect(sentMessages).toEqual([]);
+      expect(sentAcks).toEqual([]);
+    });
+    blob.onSaveNeeded = save;
+    (cradle as unknown as { make_move: jest.Mock }).make_move = jest.fn(() =>
+      wasmResult({ events: [{ OutboundMessage: outbound }] }),
+    );
+
+    try {
+      expect(blob.makeMove('7', null)).toBe('queued');
+      expect(save).not.toHaveBeenCalled();
+      expect(sentMessages).toEqual([]);
+
+      await blob.flushPendingWork();
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+
+      await jest.advanceTimersByTimeAsync(500);
+      expect(save).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
 
 describe('durability failures', () => {
   it('routes a rejected background save to the durability channel', async () => {
@@ -46,6 +104,36 @@ describe('durability failures', () => {
       expect(warnings).toEqual(['Session storage failed: background write failed.']);
     } finally {
       sub.unsubscribe();
+      jest.useRealTimers();
+    }
+  });
+
+  it('defers a background snapshot until queued WASM events drain', async () => {
+    jest.useFakeTimers();
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    const save = jest.fn(() => {
+      expect((blob as any).eventQueue).toEqual([]);
+    });
+    blob.onSaveNeeded = save;
+
+    try {
+      blob.scheduleSave();
+      await jest.advanceTimersByTimeAsync(499);
+      blob.processResult({
+        ...wasmResult(),
+        events: [{ Notification: { ActionFailed: { reason: 'late rejection' } } }],
+      });
+      clearTimeout((blob as any).drainTimer);
+      (blob as any).drainTimer = null;
+
+      await jest.advanceTimersByTimeAsync(1);
+      expect(save).not.toHaveBeenCalled();
+
+      blob.flushDeferredWork();
+      await jest.advanceTimersByTimeAsync(500);
+      expect(save).toHaveBeenCalledTimes(1);
+    } finally {
       jest.useRealTimers();
     }
   });
@@ -210,7 +298,7 @@ describe('restore ordering', () => {
     expect(cradle.report_coin_states).toHaveBeenNthCalledWith(2, 11n, secondSnapshot);
   });
 
-  it('restores counters before spilling buffered messages and replaying unacked', async () => {
+  it('restores counters before spilling buffered messages without replaying unacked', async () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const blob = new SessionController(
@@ -226,7 +314,6 @@ describe('restore ordering', () => {
     const restoreWasmConnection = {
       game_session_serialization_schema: () => 4,
       registered_game_packages: () => [...TEST_PROTOCOL_IDS],
-      warm_game_package: (key: string) => mockGamePackageIdentity(key),
     } as unknown as WasmConnection;
     const wasmStateInit = {
       getWasmConnection: jest.fn(async () => restoreWasmConnection),
@@ -240,7 +327,7 @@ describe('restore ordering', () => {
     const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
 
     const save = liveSave({
-      version: 11n,
+      version: 22n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
       gameSessionSchemaVersion: 4n,
@@ -263,7 +350,7 @@ describe('restore ordering', () => {
 
     expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(sentAcks).toEqual([1]);
-    expect(sentMessages).toEqual([{ msgno: 4, msg: enc('outbound') }]);
+    expect(sentMessages).toEqual([]);
     expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
     expect(blob.messageNumber).toBe(5n);
     expect(blob.remoteNumber).toBe(1n);
@@ -347,7 +434,6 @@ describe('cradle serialization schema restore guard', () => {
           ({
             game_session_serialization_schema: () => 4,
             registered_game_packages: () => [...TEST_PROTOCOL_IDS],
-            warm_game_package: (key: string) => mockGamePackageIdentity(key),
           }) as unknown as WasmConnection,
       ),
       deserializeGame: deserializeMock,
@@ -364,7 +450,7 @@ describe('cradle serialization schema restore guard', () => {
       expectConsoleError('[save] rejecting incompatible session record');
       markSavedSession();
       await writeSessionRecord({
-        version: 11n,
+        version: 22n,
         playerId: 'restore-schema-player',
         rewardPuzzleHash: '11'.repeat(32),
         serializedGameSession: new Uint8Array([1, 2, 3]),

@@ -19,6 +19,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  makeTestReliableState,
   pollOnce,
   startSimulator,
 } from './load_wasm.harness';
@@ -40,19 +41,13 @@ it(
   'persists and reloads real handshake and post-move game cradles',
   async () => {
     try {
-      const poller = await startSimulator([
-        'cafe0000',
-        'dead0000',
-        'cafe0001',
-        'dead0001',
-        'cafe0002',
-        'dead0002',
-      ]);
+      const poller = await startSimulator(['a11ce000', 'b0b77777']);
       if (!poller) return;
 
       const cradle1 = addActiveCradle(new SessionControllerAdapter());
       const cradle2 = addActiveCradle(new SessionControllerAdapter());
       const peer_conn1: PeerConnectionResult = {
+        reliableState: makeTestReliableState(),
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
           return true;
@@ -86,6 +81,7 @@ it(
       cradle1.set_blob(wasm_blob1);
 
       const peer_conn2: PeerConnectionResult = {
+        reliableState: makeTestReliableState(),
         sendMessage: (msgno: number, message: Uint8Array) => {
           cradle2.add_outbound_message(msgno, message);
           return true;
@@ -125,25 +121,34 @@ it(
       assert.equal(sentA.length, 1, 'initiator should have one HandshakeA message');
 
       cradle2.deliver_message(sentA[0].msgno, sentA[0].msg);
-      assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
       await flushWrapperDrain([cradle2]);
+      wasm_blob1.receiveAck(BigInt(sentA[0].msgno));
+      await flushWrapperDrain([cradle1]);
+      assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
       const sentB = cradle2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
       cradle1.deliver_message(sentB[0].msgno, sentB[0].msg);
-      assertCradleRoundTrip('initiator-processed-b-needs-launcher', wasm_blob1);
       await flushWrapperDrain([cradle1]);
+      wasm_blob2.receiveAck(BigInt(sentB[0].msgno));
+      await flushWrapperDrain([cradle2]);
+      assertCradleRoundTrip('initiator-processed-b-needs-launcher', wasm_blob1);
       assertCradleRoundTrip('initiator-provided-launcher-sent-c', wasm_blob1);
       const sentC = cradle1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
       cradle2.deliver_message(sentC[0].msgno, sentC[0].msg);
-      assertCradleRoundTrip('receiver-processed-c-sent-d', wasm_blob2);
       await flushWrapperDrain([cradle2]);
+      wasm_blob1.receiveAck(BigInt(sentC[0].msgno));
+      await flushWrapperDrain([cradle1]);
+      assertCradleRoundTrip('receiver-processed-c-sent-d', wasm_blob2);
       const sentD = cradle2.outbound_messages();
       assert.equal(sentD.length, 1, 'receiver should have one HandshakeD message');
 
       cradle1.deliver_message(sentD[0].msgno, sentD[0].msg);
+      await flushWrapperDrain([cradle1]);
+      wasm_blob2.receiveAck(BigInt(sentD[0].msgno));
+      await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('initiator-processed-d-waiting-for-height', wasm_blob1);
       await fakeBlockchainInfo.farmBlock();
       await pollOnce(poller);
@@ -154,6 +159,9 @@ it(
       assert.equal(sentE.length, 1, 'initiator should have one HandshakeE message');
 
       cradle2.deliver_message(sentE[0].msgno, sentE[0].msg);
+      await flushWrapperDrain([cradle2]);
+      wasm_blob1.receiveAck(BigInt(sentE[0].msgno));
+      await flushWrapperDrain([cradle1]);
       const makingOfferAcceptanceBytes = assertCradleRoundTrip(
         'receiver-processed-e-making-offer-acceptance',
         wasm_blob2,
@@ -209,5 +217,5 @@ it(
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
   },
-  300 * 1000,
+  120 * 1000,
 );

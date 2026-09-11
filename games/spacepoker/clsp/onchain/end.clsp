@@ -3,7 +3,6 @@
 (import games.spacepoker.clsp.onchain.space_hand_eval exposing space_hand_eval)
 (import std.and)
 (import std.if_any_fail)
-(import std.assert)
 (import std.relops)
 (import std.deep_compare)
 (import std.popcount)
@@ -25,31 +24,42 @@
         0
         (assign
             mover_bitfield (substr MOVE 16 17)
-            (mover_cards waiter_cards mover_boost waiter_boost)
-                (make_all_cards (substr MOVE 0 16) waiter_preimage)
-            mover_selected (pull_from_bitfield mover_cards mover_bitfield)
-            (if (!= (popcount mover_bitfield) 5)
+            (if_any_fail
+                (not (logand mover_bitfield 0x80))
+                (= (popcount mover_bitfield) 5)
                 0
-                ; evidence is waiter's card selection bitfield (provided by slasher).
-                ; The move creates a coin with roles swapped, so MOVER_SHARE
-                ; is the previous waiter's share. Slash succeeds only if the
-                ; previous mover allocated that player LESS than deserved.
-                (assert (= (popcount evidence) 5)
-                    (assign
-                        waiter_selected (pull_from_bitfield waiter_cards evidence)
-                        fair_share (assign result (deep_compare
-                                (space_hand_eval mover_selected mover_boost)
-                                (space_hand_eval waiter_selected waiter_boost))
-                            (if (not result)
-                                (/ AMOUNT 2)
-                                (= result 1)
-                                (- (/ AMOUNT 2) half_pot)
-                                (+ (/ AMOUNT 2) half_pot)
-                            )
-                        )
-                        (if (< MOVER_SHARE fair_share)
-                            0
+                (assign
+                    (mover_cards waiter_cards mover_boost waiter_boost)
+                        (make_all_cards (substr MOVE 0 16) waiter_preimage)
+                    mover_selected (pull_from_bitfield mover_cards mover_bitfield)
+                    ; Evidence is the waiter's card selection bitfield. Invalid
+                    ; evidence denies this slash without aborting the validator.
+                    (if (l evidence)
+                        (list 0)
+                        (if_any_fail
+                            (= (strlen evidence) 1)
+                            (not (logand evidence 0x80))
+                            (= (popcount evidence) 5)
                             (list 0)
+                            (assign
+                                waiter_selected (pull_from_bitfield waiter_cards evidence)
+                                fair_share (assign result (deep_compare
+                                        (space_hand_eval mover_selected mover_boost)
+                                        (space_hand_eval waiter_selected waiter_boost))
+                                    (if (not result)
+                                        (/ AMOUNT 2)
+                                        (= result 1)
+                                        (- (/ AMOUNT 2) half_pot)
+                                        (+ (/ AMOUNT 2) half_pot)
+                                    )
+                                )
+                                ; The move creates a coin with roles swapped, so
+                                ; MOVER_SHARE is the previous waiter's share.
+                                (if (< MOVER_SHARE fair_share)
+                                    0
+                                    (list 0)
+                                )
+                            )
                         )
                     )
                 )

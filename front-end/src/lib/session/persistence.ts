@@ -11,17 +11,11 @@ import type {
   SessionPreferencesSave,
   SessionPresentationSave,
   SessionSave,
+  SessionTransportSave,
   TerminalSessionSave,
 } from './saveEnvelope';
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
-import {
-  decodePersistedGameState,
-  decodeGameFeatureState,
-  encodeHandProposalExtras,
-  gameHandMembershipDescription,
-  isCatalogGameType,
-  validateGameHandMembership,
-} from '../gameRegistry';
+import { decodePersistedGameState, isCatalogGameType } from '../gameRegistry';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -34,7 +28,7 @@ import {
   INITIAL_CHANNEL_STATUS_MODEL,
   normalizeSessionPresentation,
 } from './normalization';
-import type { BetweenHandModeModel, HandProposal, LocalActionKind, SessionModel } from './types';
+import type { BetweenHandModeModel, HandProposal, SessionModel } from './types';
 import { isTerminalChannelSnapshot } from './selectors';
 import {
   parseComposeDraftState,
@@ -53,6 +47,7 @@ import {
   validatePairing,
   validateTerminalCoins,
   validateTerminalFields,
+  validateTransport,
 } from './persistencePayloads';
 import {
   optionalString,
@@ -166,7 +161,7 @@ function parsePairing(value: unknown): SessionPairingSave {
   const pairing: SessionPairingSave = {
     token: requireString(fields.token, 'pairing.token'),
     peerId: optionalString(fields.peerId, 'pairing.peerId'),
-    gameSessionId: optionalString(fields.gameSessionId, 'pairing.gameSessionId'),
+    gameSessionId: requireString(fields.gameSessionId, 'pairing.gameSessionId'),
     iStarted: requireBoolean(fields.iStarted, 'pairing.iStarted'),
     myContribution: requireString(fields.myContribution, 'pairing.myContribution'),
     theirContribution: requireString(fields.theirContribution, 'pairing.theirContribution'),
@@ -180,12 +175,45 @@ function parsePairing(value: unknown): SessionPairingSave {
   return pairing;
 }
 
+function parseTransportFields(
+  fields: Record<string, unknown>,
+  label: 'transport' | 'live',
+): SessionTransportSave {
+  if (!Array.isArray(fields.unackedMessages)) {
+    throw new Error(`Garbled save: invalid ${label}.unackedMessages`);
+  }
+  return {
+    messageNumber: requireBigint(fields.messageNumber, `${label}.messageNumber`),
+    remoteNumber: requireBigint(fields.remoteNumber, `${label}.remoteNumber`),
+    unackedMessages: fields.unackedMessages.map((message, index) => {
+      const record = requireRecord(message, `${label}.unackedMessages[${index}]`);
+      if (!(record.msg instanceof Uint8Array)) {
+        throw new Error(`Garbled save: invalid ${label}.unackedMessages[${index}].msg`);
+      }
+      return {
+        msgno: requireBigint(record.msgno, `${label}.unackedMessages[${index}].msgno`),
+        msg: record.msg,
+      };
+    }),
+    disposition: parseDiscriminant<SessionTransportSave['disposition']>(
+      fields.disposition,
+      new Set(['active', 'proposal-received', 'outbound-reject', 'inbound-reject']),
+      `${label}.disposition`,
+    ),
+  };
+}
+
+function parseTransport(value: unknown): SessionTransportSave {
+  const fields = requireRecord(value, 'transport');
+  const transport = parseTransportFields(fields, 'transport');
+  validateTransport(transport, 'transport');
+  return transport;
+}
+
 function parseLive(value: unknown): LiveSessionSave['live'] {
   const fields = requireRecord(value, 'live');
-  if (!Array.isArray(fields.unackedMessages)) {
-    throw new Error('Garbled save: invalid live.unackedMessages');
-  }
   const live: LiveSessionSave['live'] = {
+    ...parseTransportFields(fields, 'live'),
     serializedGameSession:
       fields.serializedGameSession instanceof Uint8Array
         ? fields.serializedGameSession
@@ -197,18 +225,6 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
       'live.gameSessionSchemaVersion',
     ),
     rewardPuzzleHash: requireString(fields.rewardPuzzleHash, 'live.rewardPuzzleHash'),
-    messageNumber: requireBigint(fields.messageNumber, 'live.messageNumber'),
-    remoteNumber: requireBigint(fields.remoteNumber, 'live.remoteNumber'),
-    unackedMessages: fields.unackedMessages.map((message, index) => {
-      const record = requireRecord(message, `live.unackedMessages[${index}]`);
-      if (!(record.msg instanceof Uint8Array)) {
-        throw new Error(`Garbled save: invalid live.unackedMessages[${index}].msg`);
-      }
-      return {
-        msgno: requireBigint(record.msgno, `live.unackedMessages[${index}].msgno`),
-        msg: record.msg,
-      };
-    }),
     durabilityWarning: optionalString(fields.durabilityWarning, 'live.durabilityWarning', true),
   };
   validateLive(live);
@@ -283,11 +299,12 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
 
 function savedHandProposalFromModel(handProposal: HandProposal): SavedHandProposal {
   return {
-    my_contribution: handProposal.myContribution.toString(),
-    their_contribution: handProposal.theirContribution.toString(),
+    player_a_contribution: handProposal.playerAContribution.toString(),
+    player_b_contribution: handProposal.playerBContribution.toString(),
+    sender_is_player_a: handProposal.senderIsPlayerA,
     game_timeout: handProposal.gameTimeout.toString(),
     game_type: handProposal.gameType,
-    ...encodeHandProposalExtras(handProposal),
+    parameters: handProposal.parameters,
   };
 }
 
@@ -322,44 +339,6 @@ function parsePresentation(value: unknown): SessionPresentationSave {
   if (fields.handState !== null && decodedHandState === null) {
     throw new Error('Garbled save: invalid handState');
   }
-  if (!Array.isArray(fields.pendingCandidates)) {
-    throw new Error('Garbled save: invalid pendingCandidates');
-  }
-  const pendingCandidates = fields.pendingCandidates.map((value, index) => {
-    const pending = requireRecord(value, `pendingCandidates[${index}]`);
-    if (!isCatalogGameType(pending.gameType)) {
-      throw new Error(`Garbled save: invalid pendingCandidates[${index}].gameType`);
-    }
-    const id = requireString(pending.id, `pendingCandidates[${index}].id`);
-    const action = parseDiscriminant<LocalActionKind>(
-      pending.action,
-      new Set(['make_move', 'accept_settlement', 'cheat']),
-      `pendingCandidates[${index}].action`,
-    );
-    const featureState = decodeGameFeatureState(pending.gameType, pending.featureState);
-    if (featureState === null) {
-      throw new Error(`Garbled save: invalid pendingCandidates[${index}].featureState`);
-    }
-    if (
-      pending.gameType !== fields.activeGameType ||
-      !currentHandGameIds.includes(id) ||
-      !activeGameIds.includes(id)
-    ) {
-      throw new Error(`Garbled save: pending candidate ${id} is not an active hand member`);
-    }
-    return { gameType: pending.gameType, id, action, featureState };
-  });
-  if (new Set(pendingCandidates.map((pending) => pending.id)).size !== pendingCandidates.length) {
-    throw new Error('Garbled save: duplicate pending candidate id');
-  }
-  const lastOutcomeWin =
-    fields.lastOutcomeWin === null
-      ? null
-      : parseDiscriminant<'win' | 'lose' | 'tie'>(
-          fields.lastOutcomeWin,
-          new Set(['win', 'lose', 'tie']),
-          'lastOutcomeWin',
-        );
   const dismissedChannelStatus =
     fields.dismissedChannelStatus === null
       ? null
@@ -401,9 +380,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     gameInstances,
     activeGameType: fields.activeGameType,
     handState: decodedHandState?.persisted ?? null,
-    pendingCandidates,
     channelStatus: decodeChannelStatusPayload(fields.channelStatus),
-    lastOutcomeWin,
     myRunningBalance: (() => {
       parseDecimalString(fields.myRunningBalance, 'myRunningBalance');
       return requireString(fields.myRunningBalance, 'myRunningBalance');
@@ -492,6 +469,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
     case 'preferences':
       if (
         envelope.pairing !== undefined ||
+        envelope.transport !== undefined ||
         envelope.live !== undefined ||
         envelope.presentation !== undefined ||
         envelope.terminal !== undefined
@@ -512,11 +490,15 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         ...common,
         phase: 'pre-handshake',
         pairing: parsePairing(envelope.pairing),
+        transport: parseTransport(envelope.transport),
       } satisfies PreHandshakeSessionSave;
       break;
     case 'live':
       if (envelope.terminal !== undefined) {
         throw new Error('Garbled save: unexpected live phase payload');
+      }
+      if (envelope.transport !== undefined) {
+        throw new Error('Garbled save: unexpected live transport payload');
       }
       presentation = parsePresentation(envelope.presentation);
       typedEnvelope = {
@@ -529,7 +511,11 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       restoring = true;
       break;
     case 'terminal': {
-      if (envelope.pairing !== undefined || envelope.live !== undefined) {
+      if (
+        envelope.pairing !== undefined ||
+        envelope.transport !== undefined ||
+        envelope.live !== undefined
+      ) {
         throw new Error('Garbled save: unexpected terminal phase payload');
       }
       const terminal = requireRecord(envelope.terminal, 'terminal');
@@ -655,16 +641,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   if (decodedHandState !== null && currentHandIds.length === 0) {
     throw new Error('Garbled save: handState requires currentHandGameIds');
   }
-  if (
-    currentHandIds.length > 0 &&
-    isCatalogGameType(save.activeGameType) &&
-    !validateGameHandMembership(save.activeGameType, currentHandIds, handState)
-  ) {
-    throw new Error(
-      `Garbled save: ${save.activeGameType} requires ${gameHandMembershipDescription(save.activeGameType)}`,
-    );
-  }
-
   const compose = parseComposeDraftState(save.betweenHandCompose);
   const lastHandProposal =
     save.betweenHandLastHandProposal === null
@@ -720,9 +696,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         lastDisplayedId,
         activeGameType: save.activeGameType,
         handState,
-        pendingCandidates: Object.fromEntries(
-          save.pendingCandidates.map((pending) => [pending.id, pending]),
-        ),
         queue: parseQueuedNotifications(save.gameNotifQueue),
       },
       betweenHand: {
@@ -752,7 +725,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         ),
       },
       myRunningBalance: parseDecimalString(save.myRunningBalance, 'myRunningBalance'),
-      lastOutcomeWin: save.lastOutcomeWin ?? undefined,
     }),
   );
   return { model, phase: typedEnvelope.phase, save: typedEnvelope };

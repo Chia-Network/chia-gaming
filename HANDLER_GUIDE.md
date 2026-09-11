@@ -87,16 +87,14 @@ move format.
 | `mover_share` | Current mover's share if timeout occurs |
 | `entropy` | 32 bytes of randomness for this turn |
 
-### Return: Success (9-10 elements)
+### Return: Success (7-8 elements)
 
 ```
 (
   label                    ; string, for UI/debug
   move                     ; bytes, the move to send on-chain
   outgoing_validator       ; program, validates THIS move
-  outgoing_validator_hash  ; sha256tree of outgoing_validator
   incoming_validator       ; program, validates opponent's NEXT move
-  incoming_validator_hash  ; sha256tree of incoming_validator (nil if game over)
   max_move_size            ; int, max bytes the opponent may send
   mover_share              ; int, our share if opponent times out
   their_turn_handler       ; program for processing opponent's response (nil if game over)
@@ -108,10 +106,11 @@ move format.
   will use this (via the referee) to verify our move was legal.
 - `incoming_validator` validates the move *the opponent will produce next*.
   This is passed forward so the referee knows how to validate the reply.
+- The host derives both validator hashes from the returned programs.
 - When `their_turn_handler` is nil, this is the final move of the game.
-  `incoming_validator_hash` should also be nil in this case.
-- `message_parser` is optional. It is the 10th element of the return list
-  (zero-based index 9 in Rust/vector access). If the element is absent or nil,
+  `incoming_validator` should also be nil in this case.
+- `message_parser` is optional. It is the 8th element of the return list
+  (zero-based index 7 in Rust/vector access). If the element is absent or nil,
   the game does not accept out-of-band readable messages for this state.
 
 ### Return: Rejection (2 elements)
@@ -169,7 +168,9 @@ binds a validator program to a particular state. Some existing handler code may
 still name this argument `validation_info_hash`, but the value passed to
 their-turn handlers is the raw validation program hash because the framework has
 the validation program available at that call site. Referee coins commit to the
-validation info hash instead.
+validation info hash instead. Neither hash is accepted from the peer move
+message: the framework computes both from its locally held validation program
+and pre-move state before invoking this handler.
 
 ### Return: Normal Move (2-4 elements)
 
@@ -236,22 +237,34 @@ turns will be taken.
 The proposal API takes one atomic group request:
 
 ```
-(game_type parameters timeout)
+GameProposal {
+  player_a_contribution,
+  player_b_contribution,
+  sender_is_player_a,
+  game_type,
+  timeout,
+  parameters
+}
 ```
 
-`parameters` is the game-specific CLVM object and `timeout` is shared by every
-game produced for the group. Each game package's `factoryParameters` codec is
-the parser for that object (see `clsp/handler_api.md`). Both peers look up and run the same registered,
-deterministic factory using those parameters. The factory returns a non-empty
-ordered list of canonical 12-field game records:
+`parameters` is the game-specific structured Bencodex value and `timeout` is
+shared by every game produced for the group. `sender_is_player_a` globally maps
+the proposal sender to the stable A/B orientation. Game frontend code validates
+the parameter value without handling CLVM. The Rust host converts it
+deterministically and invokes the registered factory with:
+
+```
+(player_a_contribution player_b_contribution game_parameters)
+```
+
+Both peers use the same complete arguments. The factory returns a
+non-empty ordered list of canonical 10-field game records:
 
 ```
 (
-  sender_contribution
-  receiver_contribution
-  amount
-  sender_goes_first
-  initial_validator_hash
+  player_a_contribution
+  player_b_contribution
+  player_a_goes_first
   initial_move
   initial_max_move_size
   initial_state
@@ -262,19 +275,22 @@ ordered list of canonical 12-field game records:
 )
 ```
 
-Contributions and `sender_goes_first` are oriented to the proposal sender.
-The higher layer keeps that canonical orientation on the wire, then swaps
-sender/receiver contributions into the local `my_contribution` /
-`their_contribution` perspective when constructing each peer's game. It also
-selects `my_turn_handler` or `their_turn_handler` according to whether that
-peer is the initial mover. The factory handlers themselves are not regenerated
-from peer-specific inputs.
+Contributions, `player_a_goes_first`, and member order use one stable A/B
+orientation. The higher layer uses `sender_is_player_a` to project those facts
+to sender/receiver and local/opponent perspectives without reordering members.
+It selects `my_turn_handler` for the first player and `their_turn_handler` for
+the waiting player. The factory handlers are not regenerated from peer-specific
+inputs. The first member's initial-validator hash is the protocol identity.
 
-The validator program and its hash come from the same local factory execution,
-and the framework verifies that they match. The wire member metadata is checked
-against the receiver's independently derived factory output, including list
-order and cardinality. The current factories produce one game for Calpoker,
-one for Space Poker, and two for Krunk.
+The framework derives each game's amount from its two contributions and hashes
+the returned initial validator. Wire members retain only setup commitments:
+contributions, first-player orientation, validator and validation-info hashes,
+initial move, maximum move size, and initial mover share. Raw initial state,
+validator code, handlers, and the derived amount stay local. The receiver
+reruns the factory, checks the retained metadata (including list order and
+cardinality), derives the group ID from the first member, and builds
+`GameStartInfo` entirely from its local factory result. The current factories
+produce one game for Calpoker, one for Space Poker, and two for Krunk.
 
 There is no proposal parser and no peer-specific `wire_data`/`local_data`
 proposal split in this model. This is separate from the optional advisory
@@ -392,8 +408,8 @@ used in two places:
   determine the next game state without duplicating that logic.
 
 Note: `mover_share` is **not** in the validator's return value. It is part
-of the referee's curried arguments and is checked separately by the
-`if_any_fail` / `assert` logic within each validator.
+of the referee's curried arguments and is checked separately by each
+validator.
 
 ### Validator Return: Valid Move with Conditions (Conditional Slash)
 
@@ -410,6 +426,10 @@ The referee prepends these conditions to its standard payout conditions.
 Example: a Krunk dictionary range slash returns
 `(AGG_SIG_UNSAFE dict_pubkey evidence)` as the 4th element, which the
 referee emits so the blockchain verifies the BLS signature on the range.
+The local referee treats a handler-provided signed evidence entry as a
+conditional slash candidate even though this validator result is non-nil; the
+signature is aggregated into the slash spend and the blockchain enforces the
+returned condition.
 
 If values align with commitments but no conditions are present (list ends
 at element 3), the move is valid and the slash attempt fails (assert
@@ -434,6 +454,73 @@ A slash also succeeds when the validator returns non-nil values that
 This covers cases where the validator deliberately returns mismatched
 values to signal fraud provable from game state alone (no external
 conditions needed).
+
+### Slash Success Versus Slash Rejection
+
+A CLVM hard fail aborts the referee spend: the transaction never enters the
+mempool or a block. That is a legitimate way to **reject** a slash. It is a
+bug only when the committed move is illegal and the supplied evidence is the
+intended proof — then the cheat is unslashable.
+
+- Illegal moves must return nil, a misaligned payload, or extra slash
+  conditions, without hard-failing on the intended evidence.
+- A slash of a valid move may hard-fail, or return an aligned payload with no
+  extra conditions.
+- Extra conditions on an aligned payload are a conditional slash; they must
+  not appear unless the evidence actually proves fraud.
+
+### Krunk Reveal and Evidence Semantics
+
+Krunk's `clue.clsp` reveal validator treats an early reveal as a concession.
+The scheduled guesser shares, in `base_unit` multiples, are
+`100, 100, 20, 5, 1` for correct guesses one through five. A fifth incorrect
+guess pays zero. If Alice reveals after an incorrect guess one through four,
+the reveal is valid only when it pays the same scheduled share as a correct
+guess at that depth. An underfunded concession, malformed reveal, or reveal
+that does not open Alice's commitment returns nil and is unconditionally
+slashable.
+
+Evidence has two proof-specific forms:
+
+- A one-byte index selects a prior clue. If recomputing that clue from the
+  revealed word proves Alice's clue wrong, the validator returns nil. A correct
+  clue or irrelevant index returns the ordinary aligned terminal result and
+  does not authorize a slash.
+- A ten-byte `lower_bound || upper_bound` dictionary-gap proof conditionally
+  slashes when the revealed word lies inside that range. The validator appends
+  `(AGG_SIG_UNSAFE dict_pubkey evidence)`, so the referee slash succeeds only
+  when the blockchain verifies the range signature. A range that does not
+  contain the word authorizes nothing.
+
+The dictionary handler obtains both the range and its precomputed aggregate
+signature from the signed dictionary tree. In a handler `evidence_list`, signed
+evidence is represented as `("s" evidence signature)`. Rust unwraps this
+envelope before calling the validator and aggregates `signature` with the
+ordinary reward-payout signature when constructing the slash spend. Plain
+evidence entries remain unchanged. Keeping the signature beside its evidence
+prevents a conditional validator result that emits an `AGG_SIG_UNSAFE`
+condition but can never satisfy it.
+
+For presentation, Bob's terminal handler maps any nonzero, validator-approved
+reveal payout—including a premature concession—to the same
+`(revealed_word, all-green clue)` readable as an actual correct guess. The
+frontend therefore follows one normal correct-guess path and does not duplicate
+the payout rules.
+
+### Space Poker Showdown Bitfields
+
+Space Poker showdown masks select five cards from a seven-card list, so only
+bits 0 through 6 are meaningful. `popcount == 5` is not sufficient validation:
+a mask such as `0x8f` has five set bits but selects only four cards because bit
+7 has no corresponding card. Passing that shortened list to the hand evaluator
+can raise and make the illegal terminal move unslashable.
+
+The terminal validator therefore rejects a mover mask when bit 7 is set before
+selecting or evaluating cards, then separately requires exactly five set bits.
+The waiter's evidence mask follows the same range and popcount rules. Invalid
+evidence returns the ordinary aligned terminal result, denying that slash
+attempt without aborting the validator; an invalid committed mover mask returns
+nil and is unconditionally slashable.
 
 ### How the On-Chain Referee Uses Validators
 
@@ -461,8 +548,8 @@ in three cases:
 
 If the validator returns aligned values with no extra conditions (list ends
 at element 3), the move was valid and the slash attempt fails (the spend
-aborts). If the validator raises (CLVM exception), the slash transaction
-fails to mine.
+aborts). If the validator hard-fails, the slash transaction never exists;
+that is also a valid way to reject a slash of an honest move.
 
 Validators have a two-sided security contract:
 
@@ -494,10 +581,10 @@ share.
 Validators form their own chain, parallel to the handler chain. Each move
 carries two validators:
 
-- **Outgoing validator**: Validates the move being made right now. Its hash
-  was committed by the *previous* move's `incoming_validator_hash`.
-- **Incoming validator**: Will validate the opponent's *next* move. Its hash
-  is committed in this move's on-chain state.
+- **Outgoing validator**: Validates the move being made right now. Its derived
+  hash was committed by the *previous* move's incoming validator.
+- **Incoming validator**: Will validate the opponent's *next* move. Its derived
+  hash is committed in this move's on-chain state.
 
 This creates a chain of commitments:
 
@@ -518,7 +605,7 @@ Move 2:
 
 Final move:
   outgoing_validator = e.clsp  (hash matches what the prior move committed)
-  incoming_validator_hash = nil  (no next move)
+  incoming_validator = nil  (no next move)
 ```
 
 The hash chain ensures that each player commits to the validation rules for
@@ -584,8 +671,8 @@ turn-taking protocol. The **message parser** mechanism enables this.
 
 ### How It Works
 
-1. A my-turn handler may return a `message_parser` program (element 10 of the
-   return list, zero-based index 9). This program knows how to decode advisory
+1. A my-turn handler may return a `message_parser` program (element 8 of the
+   return list, zero-based index 7). This program knows how to decode advisory
    messages for the current game state. If the element is absent or nil, no
    parser is installed.
 2. When the their-turn handler processes the opponent's reply, it can return
@@ -643,8 +730,9 @@ Nil moves are appropriate when:
 ### Examples
 
 **Calpoker commitA** (step a): Alice's handler generates a preimage from
-entropy, hashes it, and sends the hash. The frontend calls
-`makeMove(gameId, null)` -- no user input is needed.
+entropy, hashes it, and sends the hash. The package dispatches
+`{ type: 'make-move', memberIndex: 0, readable: null }` -- no user input is
+needed.
 
 **Calpoker commitB** (step b): Bob's handler generates his seed from
 entropy and sends it. Same nil pattern.
@@ -656,21 +744,21 @@ these during the "Shuffling..." phase.
 **Space poker end reveal**: The mover's handler has the base preimage from
 its curried chain and computes the optimal 5-card selection via
 `space_hand_calc`. It concatenates `preimage || bitfield` and sends it.
-The frontend calls `makeMove(gameId, null)` -- the handler fills in the
-actual 17-byte move. On-chain, this move is validated by `end.clsp` which
+The package dispatches a nil `make-move` intent for member index 0; the handler
+fills in the actual 17-byte move. On-chain, this move is validated by `end.clsp` which
 independently derives all cards and checks the hand evaluation.
 
 ### Frontend Pattern
 
-The frontend detects automatic moves by checking the game phase. During
-setup phases (commits), it calls `makeMove(gameId, null)` as soon as it's
-the player's turn, without waiting for user interaction. The UI shows a
+The package detects automatic moves by checking its game phase. During setup
+phases (commits), it dispatches a nil move for the stable member index as soon
+as it is the player's turn, without waiting for user interaction. The UI shows a
 status message like "Shuffling..." while these automatic moves fire.
 
 ```typescript
 // Auto-play commit steps
 if (phase === 'setup' && isMyTurn) {
-  gameObject.makeMove(gameId, null);
+  port.dispatch({ type: 'make-move', memberIndex: 0, readable: null });
 }
 ```
 
@@ -705,8 +793,8 @@ arrives, Bob independently verifies the same information.
 
 ### Mechanics
 
-1. A **my-turn handler** may return a `message_parser` as element 10 of the
-   return list (zero-based index 9). This parser knows how to decode messages
+1. A **my-turn handler** may return a `message_parser` as element 8 of the
+   return list (zero-based index 7). This parser knows how to decode messages
    for the current game state. If the element is absent or nil, no parser is
    installed.
 
@@ -775,7 +863,7 @@ unbreakable chain of verification.
 | e | Alice | `calpoker_alice_handler_e` | `e.clsp` | `salt\|\|discards\|\|selects` |
 
 After step e, Alice's my-turn handler returns nil for `their_turn_handler`
-and nil for `incoming_validator_hash`, signaling the game is over.
+and nil for `incoming_validator`, signaling the game is over.
 
 ### Key Code
 

@@ -37,7 +37,9 @@ when proposing a game; each player's nonce counter increments independently.
 Typical examples:
 
 - `Move(player, game_id, readable, was_received)` moves in the specified game.
-- `AcceptProposal(player, game_id)` accepts the proposal with that exact game ID.
+- `AcceptProposal(player, game_id)` accepts the proposal group containing that
+  member ID; the production boundary resolves it to the canonical first member
+  and queues one group action.
 - `AcceptSettlement(player, game_id)` accepts the current game result for that exact game
   ID (off-chain voluntary accept or on-chain timeout-claim intent).
 - `ProposeNewGame(player, trigger)` creates a proposal; the resulting `GameID`
@@ -60,8 +62,8 @@ The full `sim-tests` enum lives in `src/test_support/sim_script.rs`.
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ProposeNewGame(player, trigger)`                     | Player proposes a new game with `my_turn = true` when the trigger fires.                                                                                                                                                                                                                           |
 | `ProposeNewGameTheirTurn(player, trigger)`            | Player proposes a new game with `my_turn = false` when the trigger fires.                                                                                                                                                                                                                          |
-| `AcceptProposal(player, game_id)`                     | Player accepts a pending proposal. The sim loop handles this as a two-phase action because acceptance may need a potato round trip.                                                                                                                                                                |
-| `CancelProposal(player, game_id)`                     | Player cancels a pending proposal.                                                                                                                                                                                                                                                                 |
+| `AcceptProposal(player, game_id)`                     | Player accepts the pending proposal group containing that member. The sim loop handles this as a two-phase action because acceptance may need a potato round trip.                                                                                                                                 |
+| `CancelProposal(player, game_id)`                     | Player cancels the pending proposal group containing that member.                                                                                                                                                                                                                                  |
 | `Move(player, game_id, readable, was_received)`       | Submit a normal move for the specified game. The final boolean records whether the move was received.                                                                                                                                                                                              |
 | `FakeMove(player, game_id, readable, sabotage_bytes)` | Submit a move with custom sabotage bytes for validation/error-path tests.                                                                                                                                                                                                                          |
 | `Cheat(player, game_id, mover_share)`                 | Queue a move with invalid game data, leaving `mover_share` to the victim on timeout.                                                                                                                                                                                                               |
@@ -239,8 +241,8 @@ The sim loop handles this in two phases:
 
 1. Phase 1 calls `accept_proposal` once the proposal is received, records the
    game ID in `accepted_proposal_ids`, and leaves `move_number` unchanged.
-2. Phase 2 advances the script once `ProposalAccepted`, `InsufficientBalance`,
-   or `ProposalCancelled` appears for that game ID.
+2. Phase 2 advances the script once a `ProposalAcceptedGroup` containing that
+   game ID, `InsufficientBalance`, or `ProposalCancelled` appears.
 
 ## Writing a Test
 

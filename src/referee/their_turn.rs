@@ -41,6 +41,16 @@ pub struct TheirTurnRefereeGameState {
     pub move_spend: Option<Rc<OnChainRefereeMoveData>>,
 }
 
+// Unsigned evidence must make the validator return nil. Signed evidence comes
+// only from a trusted local handler's certified conditional proof; its non-nil
+// result carries the condition that the referee enforces on-chain.
+fn validator_result_authorizes_slash(
+    validation_result: &StateUpdateResult,
+    evidence: &Evidence,
+) -> bool {
+    validation_result.is_none() || evidence.signature().is_some()
+}
+
 impl TheirTurnRefereeGameState {
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.create_this_coin.clone()
@@ -48,6 +58,28 @@ impl TheirTurnRefereeGameState {
 
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.spend_this_coin.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validator_result_authorizes_slash;
+    use crate::channel_state::types::Evidence;
+    use crate::common::types::{Aggsig, Program};
+    use std::rc::Rc;
+
+    #[test]
+    fn unsigned_evidence_requires_nil_but_signed_evidence_is_conditional() {
+        let program = Rc::new(Program::from_bytes(&[0x80]));
+        let valid_result = Some(program.clone());
+        let slash_result = None;
+        let unsigned = Evidence::new(program.clone());
+        let signed = Evidence::with_signature(program, Aggsig::default());
+
+        assert!(!validator_result_authorizes_slash(&valid_result, &unsigned));
+        assert!(validator_result_authorizes_slash(&slash_result, &unsigned));
+        assert!(validator_result_authorizes_slash(&valid_result, &signed));
+        assert!(validator_result_authorizes_slash(&slash_result, &signed));
     }
 }
 
@@ -279,6 +311,24 @@ impl TheirTurnReferee {
         validator_move_args.run(allocator)
     }
 
+    pub fn peer_move_off_chain(
+        &self,
+        allocator: &mut AllocEncoder,
+        basic: &GameMoveStateInfo,
+        terminal: bool,
+        state_number: usize,
+    ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
+        let (state, validation_program) = self.get_validation_program_for_their_move()?;
+        let details = crate::referee::game_move_details_for_state(
+            allocator,
+            basic.clone(),
+            terminal,
+            validation_program,
+            state,
+        );
+        self.their_turn_move_off_chain(allocator, &details, state_number)
+    }
+
     pub fn their_turn_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
@@ -376,6 +426,14 @@ impl TheirTurnReferee {
             },
         )?;
 
+        if is_terminal != result.next_handler.is_none() {
+            return Err(Error::StrErr(format!(
+                "received move terminal={} disagrees with handler result terminal={}",
+                is_terminal,
+                result.next_handler.is_none(),
+            )));
+        }
+
         let new_self = self.accept_their_move(
             result.next_handler.clone(),
             new_state.clone(),
@@ -386,15 +444,18 @@ impl TheirTurnReferee {
         )?;
 
         for evidence in result.slash_evidence.iter() {
-            if matches!(
-                self.run_state_update(
-                    allocator,
-                    offchain_puzzle_args.clone(),
-                    state.clone(),
-                    evidence.clone(),
-                ),
-                Ok(None)
+            let slash_authorized = match self.run_state_update(
+                allocator,
+                offchain_puzzle_args.clone(),
+                state.clone(),
+                evidence.clone(),
             ) {
+                Ok(validation_result) => {
+                    validator_result_authorizes_slash(&validation_result, evidence)
+                }
+                Err(_) => false,
+            };
+            if slash_authorized {
                 return Ok((
                     None,
                     TheirTurnMoveResult {
@@ -464,7 +525,8 @@ impl TheirTurnReferee {
         };
         let max_move_size_raw = mms_raw.clone();
         let max_move_size = if let Some(mms) = u64_from_atom(&max_move_size_raw) {
-            mms as usize
+            u32::try_from(mms)
+                .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?
         } else {
             return Err(Error::StrErr(
                 "max move size wasn't a properly sized atom".to_string(),
@@ -618,7 +680,10 @@ impl TheirTurnReferee {
         evidence: Evidence,
         cheating_move_mover_share: Amount,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        let signature = self.fixed.my_reward_payout_signature.clone();
+        let signature = evidence
+            .signature()
+            .map(|proof| self.fixed.my_reward_payout_signature.aggregate(proof))
+            .unwrap_or_else(|| self.fixed.my_reward_payout_signature.clone());
 
         let solution = OnChainRefereeSolution::Slash(Rc::new(OnChainRefereeSlash {
             validation_program,
