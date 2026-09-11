@@ -778,9 +778,9 @@ describe('transaction submission', () => {
     // second arrival. That is harmless and must not surface as an error.
     expect(isBenignTransactionSubmitError('Err.ALREADY_INCLUDING_TRANSACTION')).toBe(true);
     expect(isBenignTransactionSubmitError('duplicate transaction de-duplicated')).toBe(true);
-    expect(
-      isBenignTransactionSubmitError('This transaction is already in the mempool.'),
-    ).toBe(true);
+    expect(isBenignTransactionSubmitError('This transaction is already in the mempool.')).toBe(
+      true,
+    );
     expect(isBenignTransactionSubmitError('spend rejected: status=[3,99] something else')).toBe(
       false,
     );
