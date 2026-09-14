@@ -58,9 +58,10 @@ export function createMainWindow(): BrowserWindow {
     }
   });
 
-  playerMainWebContentsId = window.webContents.id;
+  const webContentsId = window.webContents.id;
+  playerMainWebContentsId = webContentsId;
   window.on('closed', () => {
-    if (playerMainWebContentsId === window.webContents.id) {
+    if (playerMainWebContentsId === webContentsId) {
       playerMainWebContentsId = undefined;
     }
   });
