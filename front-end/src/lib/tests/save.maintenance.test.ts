@@ -16,6 +16,10 @@ import {
 } from '../../hooks/save';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import {
+  startPendingWalletConnectWipe,
+  _resetPendingWalletConnectWipeForTests,
+} from '../../hooks/saveHardReset';
+import {
   clearTestGlobal,
   makeStorage,
   sampleSession,
@@ -64,14 +68,18 @@ describe('tab lease', () => {
 });
 
 describe('hard reset', () => {
-  it('clears localStorage, sessionStorage, and cached session state', async () => {
+  it('clears localStorage and cached session state, leaving only the deferred-wipe marker', async () => {
     saveLiveFields({ ...sampleSession, blockchainType: 'walletconnect' });
     sessionStorage.setItem('appState_tabId', 'tab-1');
 
     await hardReset();
 
     expect(localStorage.length).toBe(0);
-    expect(sessionStorage.length).toBe(0);
+    // Hard reset intentionally leaves one sessionStorage survivor: the marker
+    // that tells the next boot to finish a WalletConnect IndexedDB wipe that a
+    // live connection may have blocked here.
+    expect(sessionStorage.length).toBe(1);
+    expect(sessionStorage.getItem('appState_pendingWcWipe')).not.toBeNull();
     expect(await peekSession()).toBeNull();
   });
 
@@ -193,6 +201,83 @@ describe('hard reset', () => {
     releaseEnumeration!([{ name: 'extra-unknown-db' }]);
     await done;
     expect(deleteDatabase).toHaveBeenCalledWith('extra-unknown-db');
+  });
+
+  it('resolves even when a database deletion is blocked by an open connection', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const deleteDatabase = jest.fn((_name: string) => {
+      const request: {
+        onsuccess?: () => void;
+        onerror?: () => void;
+        onblocked?: () => void;
+        error?: unknown;
+      } = {};
+      // A live connection blocks the delete; the request never succeeds.
+      setTimeout(() => request.onblocked?.(), 0);
+      return request;
+    });
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
+      deleteDatabase,
+    });
+
+    await expect(hardReset()).resolves.toBeUndefined();
+    warn.mockRestore();
+  });
+});
+
+describe('deferred WalletConnect wipe', () => {
+  it('completes a wipe left pending by a prior hard reset, then no-ops', async () => {
+    // A prior hard reset sets the pending-wipe marker (its own delete may have
+    // been blocked). Drive it through the public API rather than the literal key.
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([]),
+      deleteDatabase: jest.fn((_name: string) => {
+        const request: { onsuccess?: () => void; onblocked?: () => void } = {};
+        setTimeout(() => request.onsuccess?.(), 0);
+        return request;
+      }),
+    });
+    await hardReset();
+    _resetPendingWalletConnectWipeForTests();
+
+    const deleteDatabase = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onblocked?: () => void } = {};
+      setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    });
+    setTestGlobal('indexedDB', {
+      databases: jest
+        .fn()
+        .mockResolvedValue([
+          { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
+          { name: 'chia-gaming-session' },
+        ]),
+      deleteDatabase,
+    });
+
+    await startPendingWalletConnectWipe();
+
+    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+    expect(deleteDatabase).not.toHaveBeenCalledWith('chia-gaming-session');
+    expect(sessionStorage.getItem('appState_pendingWcWipe')).toBeNull();
+
+    const callsAfterFirst = deleteDatabase.mock.calls.length;
+    await startPendingWalletConnectWipe();
+    expect(deleteDatabase.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it('no-ops when no wipe is pending', async () => {
+    _resetPendingWalletConnectWipeForTests();
+    const deleteDatabase = jest.fn();
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
+      deleteDatabase,
+    });
+
+    await startPendingWalletConnectWipe();
+
+    expect(deleteDatabase).not.toHaveBeenCalled();
   });
 });
 

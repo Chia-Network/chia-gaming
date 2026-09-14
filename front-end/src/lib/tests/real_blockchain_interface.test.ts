@@ -30,6 +30,14 @@ const mockWalletConnectState = {
   init: jest.fn(async () => {}),
   getSession: jest.fn(() => mockWalletSession),
   getAddress: jest.fn(() => mockWalletFingerprint),
+  startConnect: jest.fn(async () => ({
+    uri: 'wc:pairingtopic@2?relay-protocol=irn&symKey=deadbeef',
+    approval: async () => ({}),
+  })),
+  connect: jest.fn(async () => {}),
+  forgetSessions: jest.fn(async () => {
+    mockWalletSession = undefined;
+  }),
   disconnect: jest.fn(async () => {
     mockWalletSession = undefined;
     for (const next of mockWalletListeners) {
@@ -112,6 +120,9 @@ describe('RealBlockchainInterface', () => {
     mockWalletConnectState.init.mockClear();
     mockWalletConnectState.getSession.mockClear();
     mockWalletConnectState.getAddress.mockClear();
+    mockWalletConnectState.startConnect.mockClear();
+    mockWalletConnectState.connect.mockClear();
+    mockWalletConnectState.forgetSessions.mockClear();
     mockWalletConnectState.disconnect.mockClear();
   });
 
@@ -125,6 +136,33 @@ describe('RealBlockchainInterface', () => {
     jest.advanceTimersByTime(500);
     await Promise.resolve();
   }
+
+  it('reissues a QR on repeated fresh Link Wallet without wiping IndexedDB', async () => {
+    const deleteDatabase = jest.fn();
+    const priorIndexedDb = (globalThis as { indexedDB?: unknown }).indexedDB;
+    setTestGlobal('indexedDB', { deleteDatabase });
+    try {
+      const blockchain = new RealBlockchainInterface();
+
+      const first = await blockchain.beginConnect('id', true);
+      expect(first.qrUri).toBe('wc:pairingtopic@2?relay-protocol=irn&symKey=deadbeef');
+
+      // Cancelling the pairing tears down through disconnect(), not a storage wipe.
+      await blockchain.disconnect();
+
+      const second = await blockchain.beginConnect('id', true);
+      expect(second.qrUri).toBe('wc:pairingtopic@2?relay-protocol=irn&symKey=deadbeef');
+
+      expect(mockWalletConnectState.forgetSessions).toHaveBeenCalledTimes(2);
+      expect(deleteDatabase).not.toHaveBeenCalled();
+    } finally {
+      if (priorIndexedDb === undefined) {
+        Reflect.deleteProperty(globalThis, 'indexedDB');
+      } else {
+        setTestGlobal('indexedDB', priorIndexedDb);
+      }
+    }
+  });
 
   it('notifies blockchain readiness after WalletConnect reconnect events', async () => {
     jest.useFakeTimers();

@@ -33,7 +33,7 @@ import {
   decodeSessionSaveEnvelope,
   SESSION_SAVE_ENVELOPE_VERSION,
 } from '../lib/session/persistence';
-import { clearWalletConnectStorage, hardResetStorage } from './saveHardReset';
+import { hardResetStorage } from './saveHardReset';
 import { loadPreferences, savePreferences, writeRawObsoleteState } from './savePreferences';
 import {
   checkLease,
@@ -64,7 +64,6 @@ export {
   clearAutoResumeOnce,
   clearLease,
   clearSavedSessionMarker,
-  clearWalletConnectStorage,
   hasSavedSessionMarker,
   isLeaseConflict,
   markAutoResumeOnce,

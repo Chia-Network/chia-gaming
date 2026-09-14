@@ -6,10 +6,24 @@ import { PROJECT_ID, RELAY_URL } from '../constants/env';
 import { getChainId, getRequiredNamespaces } from '../constants/wallet-connect';
 import { log } from '../services/log';
 import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
+import { startPendingWalletConnectWipe } from './saveHardReset';
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
   uri: string;
+}
+
+/**
+ * Extract the pairing topic from a WalletConnect v2 URI of the form
+ * `wc:<topic>@<version>?...`. Throws if the topic is absent so a cancelled
+ * pairing can always be torn down rather than leaking a live pairing.
+ */
+function pairingTopicFromUri(uri: string): string {
+  const match = /^wc:([0-9a-f]+)@/i.exec(uri);
+  if (!match) {
+    throw new Error(`WalletConnect connect() returned an unparseable URI: ${uri}`);
+  }
+  return match[1];
 }
 
 export interface WalletConnectOutboundState {
@@ -33,6 +47,7 @@ class WalletState {
   client?: InstanceType<typeof Client>;
   observable: Subject<WalletConnectOutboundState>;
   private initPromise: Promise<void> | null = null;
+  private pendingPairingTopic?: string;
 
   constructor() {
     this.isConnected = false;
@@ -108,6 +123,7 @@ class WalletState {
     this.address = address;
     this.chainId = detectedChain;
     this.session = session;
+    this.pendingPairingTopic = undefined;
     this.logSessionIds('connected');
     this.observable.next({
       stateName: 'connected',
@@ -134,9 +150,20 @@ class WalletState {
     });
   }
 
-  reset() {
-    this.initPromise = null;
-    this.client = undefined;
+  async forgetSessions() {
+    const client = this.client;
+    if (client) {
+      for (const topic of client.session.keys) {
+        try {
+          await client.disconnect({
+            topic,
+            reason: { code: 6000, message: 'User disconnected' },
+          });
+        } catch {
+          // WC disconnect can fail if the session is already gone.
+        }
+      }
+    }
     this.resetSession();
   }
 
@@ -150,6 +177,9 @@ class WalletState {
   }
 
   private async doInit(): Promise<void> {
+    // Finish any wipe deferred from a hard reset before opening the WC database.
+    await startPendingWalletConnectWipe();
+
     const metadata = walletConnectDappMetadata();
     this.observable.next({ stateName: 'initializing', initializing: true });
     log('WalletConnect initializing...');
@@ -208,18 +238,31 @@ class WalletState {
   }
 
   async disconnect() {
-    if (!this.client || !this.session) return;
+    const client = this.client;
+    if (!client) return;
 
-    const topic = this.session.topic;
+    const pendingPairingTopic = this.pendingPairingTopic;
+    const sessionTopic = this.session?.topic;
+    this.pendingPairingTopic = undefined;
     this.resetSession();
 
-    try {
-      await this.client.disconnect({
-        topic,
-        reason: { code: 6000, message: 'User disconnected' },
-      });
-    } catch {
-      // WC disconnect can fail if session is already gone
+    if (pendingPairingTopic) {
+      try {
+        await client.core.pairing.disconnect({ topic: pendingPairingTopic });
+      } catch {
+        // Pairing disconnect can fail if the pairing is already gone.
+      }
+    }
+
+    if (sessionTopic) {
+      try {
+        await client.disconnect({
+          topic: sessionTopic,
+          reason: { code: 6000, message: 'User disconnected' },
+        });
+      } catch {
+        // WC disconnect can fail if session is already gone
+      }
     }
   }
 
@@ -247,6 +290,7 @@ class WalletState {
       });
 
       if (!uri) throw new Error('WalletConnect connect() returned no URI');
+      this.pendingPairingTopic = pairingTopicFromUri(uri);
       return { uri, approval };
     } catch (err) {
       console.error('[WC] startConnect() FAILED', err);
