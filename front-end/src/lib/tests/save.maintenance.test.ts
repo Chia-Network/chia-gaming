@@ -267,6 +267,42 @@ describe('deferred WalletConnect wipe', () => {
     expect(deleteDatabase.mock.calls.length).toBe(callsAfterFirst);
   });
 
+  it('keeps the marker when the wipe is still blocked, so the next boot retries', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([]),
+      deleteDatabase: jest.fn((_name: string) => {
+        const request: { onsuccess?: () => void; onblocked?: () => void } = {};
+        setTimeout(() => request.onsuccess?.(), 0);
+        return request;
+      }),
+    });
+    await hardReset();
+    _resetPendingWalletConnectWipeForTests();
+
+    const deleteDatabase = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onblocked?: () => void } = {};
+      // Another tab still holds the database open, so the delete never lands.
+      setTimeout(() => request.onblocked?.(), 0);
+      return request;
+    });
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
+      deleteDatabase,
+    });
+
+    await startPendingWalletConnectWipe();
+
+    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+    expect(sessionStorage.getItem('appState_pendingWcWipe')).not.toBeNull();
+
+    // The failed wipe is not memoized as done: a later caller tries again.
+    const callsAfterFirst = deleteDatabase.mock.calls.length;
+    await startPendingWalletConnectWipe();
+    expect(deleteDatabase.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+    warn.mockRestore();
+  });
+
   it('no-ops when no wipe is pending', async () => {
     _resetPendingWalletConnectWipeForTests();
     const deleteDatabase = jest.fn();

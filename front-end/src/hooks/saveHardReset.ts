@@ -8,31 +8,32 @@ const KNOWN_WALLETCONNECT_DB_NAMES = [
 ];
 const KNOWN_HARD_RESET_DB_NAMES = [SESSION_DB_NAME, ...KNOWN_WALLETCONNECT_DB_NAMES];
 
-function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<void> {
+/** Resolves true when the database is gone, false when it survived the attempt. */
+function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<boolean> {
   return new Promise((resolve) => {
     try {
       const request = indexedDB.deleteDatabase(name);
-      request.onsuccess = () => resolve();
+      request.onsuccess = () => resolve(true);
       request.onerror = () => {
         console.error(
           `[save] ${context}: failed to delete IndexedDB database "${name}":`,
           request.error,
         );
-        resolve();
+        resolve(false);
       };
       request.onblocked = () => {
         console.warn(
           `[save] ${context}: deletion blocked for IndexedDB database "${name}"; ` +
             'open connections will be wiped at next boot',
         );
-        resolve();
+        resolve(false);
       };
     } catch (error) {
       console.error(
         `[save] ${context}: failed to start IndexedDB database deletion for "${name}":`,
         error,
       );
-      resolve();
+      resolve(false);
     }
   });
 }
@@ -50,8 +51,9 @@ function clearWalletConnectLocalStorageKeys(): void {
   }
 }
 
-async function clearWalletConnectIndexedDb(): Promise<void> {
-  if (typeof indexedDB === 'undefined') return;
+/** Resolves true when no WalletConnect database survived the attempt. */
+async function clearWalletConnectIndexedDb(): Promise<boolean> {
+  if (typeof indexedDB === 'undefined') return true;
   const dynamicDatabaseLookup = indexedDB as IDBFactory & {
     databases?: () => Promise<Array<{ name?: string }>>;
   };
@@ -64,20 +66,21 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
         .filter(
           (name): name is string => typeof name === 'string' && isWalletConnectStorageKey(name),
         );
-      await Promise.all(
+      const deleted = await Promise.all(
         toDelete.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
       );
-      return;
+      return deleted.every(Boolean);
     } catch {
       // Fall through to known database names.
     }
   }
 
-  await Promise.all(
+  const deleted = await Promise.all(
     KNOWN_WALLETCONNECT_DB_NAMES.map((name) =>
       deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup'),
     ),
   );
+  return deleted.every(Boolean);
 }
 
 export async function clearWalletConnectStorage(): Promise<void> {
@@ -125,8 +128,15 @@ let pendingWalletConnectWipe: Promise<void> | null = null;
 export function startPendingWalletConnectWipe(): Promise<void> {
   if (pendingWalletConnectWipe) return pendingWalletConnectWipe;
   if (!hasPendingWalletConnectWipe()) return Promise.resolve();
-  pendingWalletConnectWipe = clearWalletConnectIndexedDb().then(() => {
-    clearPendingWalletConnectWipe();
+  pendingWalletConnectWipe = clearWalletConnectIndexedDb().then((wiped) => {
+    if (wiped) {
+      clearPendingWalletConnectWipe();
+      return;
+    }
+    // Something still holds the database open — another tab, since nothing in
+    // this one has opened it yet. Keep the marker so the next boot retries, and
+    // drop the memo so a later caller this boot doesn't inherit the failure.
+    pendingWalletConnectWipe = null;
   });
   return pendingWalletConnectWipe;
 }
