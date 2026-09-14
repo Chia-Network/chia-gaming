@@ -150,6 +150,22 @@ class WalletState {
     });
   }
 
+  /**
+   * Release the pairing we are waiting on. A pairing created by `connect()`
+   * stays live in the WalletConnect store until it expires, so every path that
+   * stops waiting for its approval has to cancel it explicitly.
+   */
+  private async cancelPendingPairing() {
+    const topic = this.pendingPairingTopic;
+    if (!topic) return;
+    this.pendingPairingTopic = undefined;
+    try {
+      await this.client?.core.pairing.disconnect({ topic });
+    } catch {
+      // Pairing disconnect can fail if the pairing is already gone.
+    }
+  }
+
   async forgetSessions() {
     const client = this.client;
     if (client) {
@@ -241,18 +257,9 @@ class WalletState {
     const client = this.client;
     if (!client) return;
 
-    const pendingPairingTopic = this.pendingPairingTopic;
     const sessionTopic = this.session?.topic;
-    this.pendingPairingTopic = undefined;
     this.resetSession();
-
-    if (pendingPairingTopic) {
-      try {
-        await client.core.pairing.disconnect({ topic: pendingPairingTopic });
-      } catch {
-        // Pairing disconnect can fail if the pairing is already gone.
-      }
-    }
+    await this.cancelPendingPairing();
 
     if (sessionTopic) {
       try {
@@ -277,6 +284,11 @@ class WalletState {
       stateName: 'connecting',
       connecting: true,
     });
+
+    // An attempt we never finished still holds a live pairing; cancel it before
+    // creating another, since the new topic overwrites the one we would need to
+    // tear it down with.
+    await this.cancelPendingPairing();
 
     try {
       const { uri, approval } = await this.client.connect({
@@ -309,6 +321,9 @@ class WalletState {
       this.onSessionConnected(session);
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
+      // The proposal is dead once approval settles with an error, but its
+      // pairing is not; the wallet declining must not leak it.
+      await this.cancelPendingPairing();
       this.observable.next({
         stateName: 'initialized',
         waitingApproval: false,
