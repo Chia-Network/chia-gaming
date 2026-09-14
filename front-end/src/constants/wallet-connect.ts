@@ -77,7 +77,19 @@ export function getGenesisChallenge(): string {
 export function getRequiredNamespaces(): ProposalTypes.RequiredNamespaces {
   return {
     chia: {
-      methods: Object.values(ChiaMethod),
+      methods: Object.values(ChiaMethod).filter(
+        (method) => method !== ChiaMethod.GetFullNodePeerCount,
+      ),
+      chains: [getChainId()],
+      events: [],
+    },
+  };
+}
+
+export function getOptionalNamespaces(): ProposalTypes.OptionalNamespaces {
+  return {
+    chia: {
+      methods: [ChiaMethod.GetFullNodePeerCount],
       chains: [getChainId()],
       events: [],
     },

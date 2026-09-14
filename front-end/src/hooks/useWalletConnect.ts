@@ -3,7 +3,11 @@ import { SessionTypes } from '@walletconnect/types';
 import { Subject } from 'rxjs';
 
 import { PROJECT_ID, RELAY_URL } from '../constants/env';
-import { getChainId, getRequiredNamespaces } from '../constants/wallet-connect';
+import {
+  getChainId,
+  getOptionalNamespaces,
+  getRequiredNamespaces,
+} from '../constants/wallet-connect';
 import { log } from '../services/log';
 import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
 import { startPendingWalletConnectWipe } from './saveHardReset';
@@ -72,6 +76,10 @@ class WalletState {
 
   getAddress() {
     return this.address;
+  }
+
+  supportsMethod(method: string): boolean {
+    return this.session?.namespaces.chia?.methods?.includes(method) ?? false;
   }
 
   private logSessionIds(label: string) {
@@ -295,6 +303,7 @@ class WalletState {
     try {
       const { uri, approval } = await this.client.connect({
         requiredNamespaces: getRequiredNamespaces(),
+        optionalNamespaces: getOptionalNamespaces(),
       });
 
       this.observable.next({

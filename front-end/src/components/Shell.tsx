@@ -872,7 +872,8 @@ const Shell = () => {
     walletConnectedRef.current = walletConnected;
   }, [walletConnected]);
   // Whether the active blockchain backend reports it is ready for play (sim:
-  // connected; WalletConnect: full-node peer verified). Read synchronously by
+  // connected; WalletConnect: full-node peer verified when supported).
+  // Read synchronously by
   // getPresence (called from the HubConnection constructor and on every
   // reconnect) and by isAvailableForNewSessionPrompt, so it lives in a ref
   // rather than state — no UI depends on it, only the hub busy bit does.
@@ -3152,8 +3153,8 @@ const Shell = () => {
 
   // Mirror the active backend's play-readiness into blockchainReadyRef and push
   // the hub busy bit. The backend owns the computation (sim: connected;
-  // WalletConnect: full-node peer verified) — Shell no longer knows about peer
-  // count. We connect to the hub normally but advertise busy (presenceBusy)
+  // WalletConnect: full-node peer verified when supported) — Shell no longer
+  // knows about peer count. We connect to the hub normally but advertise busy (presenceBusy)
   // until the backend reports ready. isAvailableForNewSessionPrompt / getPresence
   // read blockchainReadyRef synchronously (e.g. inbound session_proposal, or
   // getPresence on a hub reconnect), so the ref update and busy push happen

@@ -92,8 +92,9 @@ blockchain backend is not yet ready for play (`blockchainReady === false`, folde
 into `shouldReportHubBusy` / `shouldReportHubBusyPresence`). Readiness is owned by
 the backend behind `InternalBlockchainInterface.isReadyForPlay()` /
 `onPlayReadinessChange()`: the simulator and Cloud Wallet are ready whenever
-connected, while WalletConnect polls privately for a verified full-node peer
-(peer count never leaves the backend). The app still connects to the hub normally while a backend
+connected. WalletConnect polls privately for a verified full-node peer when
+the wallet grants that optional RPC; otherwise connectivity implies readiness.
+The app still connects to the hub normally while a backend
 is not ready; it just advertises busy. Shell mirrors the backend's readiness into
 `blockchainReadyRef` via `onPlayReadinessChange`, and a wallet disconnect clears
 it (the backend can no longer vouch for readiness). The `HubConnection` uses a
