@@ -267,6 +267,51 @@ describe('deferred WalletConnect wipe', () => {
     expect(deleteDatabase.mock.calls.length).toBe(callsAfterFirst);
   });
 
+  it('keeps the marker when the boot-time wipe is itself blocked, so the next boot retries', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const succeedingDelete = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onblocked?: () => void } = {};
+      setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    });
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([]),
+      deleteDatabase: succeedingDelete,
+    });
+    await hardReset();
+    _resetPendingWalletConnectWipeForTests();
+
+    // Another tab still holds the WalletConnect database open at this boot.
+    const blockedDelete = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onblocked?: () => void } = {};
+      setTimeout(() => request.onblocked?.(), 0);
+      return request;
+    });
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
+      deleteDatabase: blockedDelete,
+    });
+
+    await startPendingWalletConnectWipe();
+
+    expect(blockedDelete).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+    expect(sessionStorage.getItem('appState_pendingWcWipe')).not.toBeNull();
+
+    // Next boot: the blocking connection is gone and the wipe completes.
+    _resetPendingWalletConnectWipeForTests();
+    succeedingDelete.mockClear();
+    setTestGlobal('indexedDB', {
+      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
+      deleteDatabase: succeedingDelete,
+    });
+
+    await startPendingWalletConnectWipe();
+
+    expect(succeedingDelete).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+    expect(sessionStorage.getItem('appState_pendingWcWipe')).toBeNull();
+    warn.mockRestore();
+  });
+
   it('no-ops when no wipe is pending', async () => {
     _resetPendingWalletConnectWipeForTests();
     const deleteDatabase = jest.fn();
