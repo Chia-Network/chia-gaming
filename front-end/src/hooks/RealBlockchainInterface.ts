@@ -16,6 +16,7 @@ import {
   toHexString,
 } from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
+import { ChiaMethod } from '../constants/wallet-connect';
 import {
   CoinsetCoin,
   CoinsetCoinSpend,
@@ -283,8 +284,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
-  // Play readiness: the wallet has a verified full-node peer. Polled privately
-  // while connected; peer count never leaves this class.
+  // Play readiness: use a verified full-node peer when the wallet supports the
+  // optional count RPC; otherwise connectivity is sufficient.
   private readyForPlay = false;
   private peerPollTimer: ReturnType<typeof setTimeout> | null = null;
   private peerPollEpoch = 0;
@@ -807,10 +808,14 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         /* ignore */
       }
     }
-    // Readiness follows connectivity: poll for a full-node peer while connected;
-    // a disconnect drops readiness (the wallet can no longer vouch for a peer).
+    // Use peer-backed readiness when the wallet granted that optional method.
+    // Wallets without it are assumed ready once connected.
     if (connected) {
-      this.startPeerReadinessPoll();
+      if (walletConnectState.supportsMethod(ChiaMethod.GetFullNodePeerCount)) {
+        this.startPeerReadinessPoll();
+      } else {
+        this.setReadyForPlay(true);
+      }
     } else {
       this.stopPeerReadinessPoll();
     }

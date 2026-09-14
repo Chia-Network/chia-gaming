@@ -550,8 +550,8 @@ export interface InternalBlockchainInterface {
   onConnectionChange(cb: (connected: boolean) => void): () => void;
   // True when this backend can fund/resolve channels (hub may advertise
   // not-busy). Simulator and Cloud Wallet: ready whenever connected.
-  // WalletConnect: ready once a full-node peer is verified. Peer count is a
-  // private implementation detail.
+  // WalletConnect: ready once a full-node peer is verified when the wallet
+  // supports that optional RPC, otherwise ready whenever connected.
   isReadyForPlay(): boolean;
   onPlayReadinessChange(cb: (ready: boolean) => void): () => void;
 }

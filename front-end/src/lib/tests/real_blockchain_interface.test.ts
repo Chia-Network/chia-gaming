@@ -16,6 +16,7 @@ jest.mock('../../hooks/WalletConnectRpc', () => ({
 const mockWalletListeners = new Set<(evt: any) => void>();
 let mockWalletSession: unknown;
 let mockWalletFingerprint = '123456';
+let mockSupportsPeerCount = true;
 const mockWalletConnectState = {
   getObservable: () => ({
     subscribe: ({ next }: { next: (evt: any) => void }) => {
@@ -30,6 +31,7 @@ const mockWalletConnectState = {
   init: jest.fn(async () => {}),
   getSession: jest.fn(() => mockWalletSession),
   getAddress: jest.fn(() => mockWalletFingerprint),
+  supportsMethod: jest.fn(() => mockSupportsPeerCount),
   startConnect: jest.fn(async () => ({
     uri: 'wc:pairingtopic@2?relay-protocol=irn&symKey=deadbeef',
     approval: async () => ({}),
@@ -117,9 +119,11 @@ describe('RealBlockchainInterface', () => {
     mockWalletListeners.clear();
     mockWalletSession = undefined;
     mockWalletFingerprint = '123456';
+    mockSupportsPeerCount = true;
     mockWalletConnectState.init.mockClear();
     mockWalletConnectState.getSession.mockClear();
     mockWalletConnectState.getAddress.mockClear();
+    mockWalletConnectState.supportsMethod.mockClear();
     mockWalletConnectState.startConnect.mockClear();
     mockWalletConnectState.connect.mockClear();
     mockWalletConnectState.forgetSessions.mockClear();
@@ -222,6 +226,28 @@ describe('RealBlockchainInterface', () => {
       }
       expect(blockchain.isReadyForPlay()).toBe(false);
       expect(ready).toEqual([true, false]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('assumes enough peers when the wallet does not support the peer-count method', async () => {
+    jest.useFakeTimers();
+    try {
+      mockSupportsPeerCount = false;
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+
+      const blockchain = new RealBlockchainInterface();
+      const ready: boolean[] = [];
+      blockchain.onPlayReadinessChange((r) => ready.push(r));
+
+      await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(blockchain.isReadyForPlay()).toBe(true);
+      expect(ready).toEqual([true]);
+      expect(mockGetFullNodePeerCount).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }

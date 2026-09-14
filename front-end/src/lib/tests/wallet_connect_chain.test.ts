@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import {
   getChainId,
   getGenesisChallenge,
+  getOptionalNamespaces,
   getRequiredNamespaces,
   ChiaMethod,
 } from '../../constants/wallet-connect';
@@ -61,9 +62,15 @@ describe('WalletConnect chain id follows the network preference', () => {
     expect(getChainId()).toBe('chia:mainnet');
   });
 
-  it('always requests the full Chia method set', () => {
-    const methods = getRequiredNamespaces().chia.methods;
-    expect(methods).toEqual(Object.values(ChiaMethod));
+  it('requests peer count as optional and keeps it out of required methods', () => {
+    expect(getRequiredNamespaces().chia.methods).toEqual(
+      Object.values(ChiaMethod).filter((method) => method !== ChiaMethod.GetFullNodePeerCount),
+    );
+    expect(getOptionalNamespaces().chia).toEqual({
+      methods: [ChiaMethod.GetFullNodePeerCount],
+      chains: ['chia:mainnet'],
+      events: [],
+    });
   });
 });
 

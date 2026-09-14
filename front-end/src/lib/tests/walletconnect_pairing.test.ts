@@ -24,6 +24,13 @@ jest.mock('../../constants/wallet-connect', () => ({
   getRequiredNamespaces: () => ({
     chia: { methods: [], chains: ['chia:mainnet'], events: [] },
   }),
+  getOptionalNamespaces: () => ({
+    chia: {
+      methods: ['chia_getFullNodePeerCount'],
+      chains: ['chia:mainnet'],
+      events: [],
+    },
+  }),
 }));
 
 jest.mock('../../util/walletConnectMetadata', () => ({
@@ -59,6 +66,18 @@ describe('WalletConnect pairing teardown', () => {
 
     const { uri } = await walletConnectState.startConnect();
     expect(uri).toContain('wc:abc123def@2');
+    expect(mockClient.connect).toHaveBeenCalledWith({
+      requiredNamespaces: {
+        chia: { methods: [], chains: ['chia:mainnet'], events: [] },
+      },
+      optionalNamespaces: {
+        chia: {
+          methods: ['chia_getFullNodePeerCount'],
+          chains: ['chia:mainnet'],
+          events: [],
+        },
+      },
+    });
 
     await walletConnectState.disconnect();
 

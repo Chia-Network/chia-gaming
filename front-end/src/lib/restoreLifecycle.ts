@@ -68,7 +68,7 @@ export function shouldAdvertiseAvailable(
  * busy to the hub regardless of session phase — the lobby must not offer matches
  * we cannot play. The same applies until the blockchain backend reports it is
  * ready for play (`blockchainReady`); the backend owns that computation (e.g.
- * WalletConnect waits for a verified full-node peer). With a wallet and a ready
+ * WalletConnect waits for a verified full-node peer when supported). With a wallet and a ready
  * backend, busy tracks the broader session obligation.
  */
 export function shouldReportHubBusy(
