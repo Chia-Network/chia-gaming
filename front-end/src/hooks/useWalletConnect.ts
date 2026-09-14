@@ -151,14 +151,16 @@ class WalletState {
   }
 
   /**
-   * Release the pairing we are waiting on. A pairing created by `connect()`
-   * stays live in the WalletConnect store until it expires, so every path that
-   * stops waiting for its approval has to cancel it explicitly.
+   * Release a pairing we have stopped waiting on. A pairing created by
+   * `connect()` stays live in the WalletConnect store until it expires, so
+   * every path that abandons an attempt has to cancel it explicitly. The topic
+   * is a parameter rather than read from `pendingPairingTopic` because an
+   * attempt can outlive its turn as the current one: a late failure must tear
+   * down its own pairing, not whichever attempt is pending by then.
    */
-  private async cancelPendingPairing() {
-    const topic = this.pendingPairingTopic;
+  private async cancelPairing(topic: string | undefined) {
     if (!topic) return;
-    this.pendingPairingTopic = undefined;
+    if (this.pendingPairingTopic === topic) this.pendingPairingTopic = undefined;
     try {
       await this.client?.core.pairing.disconnect({ topic });
     } catch {
@@ -259,7 +261,7 @@ class WalletState {
 
     const sessionTopic = this.session?.topic;
     this.resetSession();
-    await this.cancelPendingPairing();
+    await this.cancelPairing(this.pendingPairingTopic);
 
     if (sessionTopic) {
       try {
@@ -288,7 +290,7 @@ class WalletState {
     // An attempt we never finished still holds a live pairing; cancel it before
     // creating another, since the new topic overwrites the one we would need to
     // tear it down with.
-    await this.cancelPendingPairing();
+    await this.cancelPairing(this.pendingPairingTopic);
 
     try {
       const { uri, approval } = await this.client.connect({
@@ -316,20 +318,30 @@ class WalletState {
   }
 
   async connect(approval: () => Promise<SessionTypes.Struct>) {
+    // The pairing this approval belongs to. An approval can reject long after
+    // it was abandoned (proposal expiry), by which time a retry may own the
+    // pending topic, so teardown below uses this one rather than the current.
+    const topic = this.pendingPairingTopic;
     try {
       const session = await approval();
       this.onSessionConnected(session);
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
+      // A retry or an explicit disconnect during the wait owns the connection
+      // state now, and has already reported it; a superseded attempt may only
+      // clean up after itself.
+      const superseded = this.pendingPairingTopic !== topic;
       // The proposal is dead once approval settles with an error, but its
       // pairing is not; the wallet declining must not leak it.
-      await this.cancelPendingPairing();
-      this.observable.next({
-        stateName: 'initialized',
-        waitingApproval: false,
-        connecting: false,
-        connected: false,
-      });
+      await this.cancelPairing(topic);
+      if (!superseded) {
+        this.observable.next({
+          stateName: 'initialized',
+          waitingApproval: false,
+          connecting: false,
+          connected: false,
+        });
+      }
       throw err;
     }
   }

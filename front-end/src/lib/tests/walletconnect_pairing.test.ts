@@ -136,6 +136,51 @@ describe('WalletConnect pairing teardown', () => {
     expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'ccc333' });
   });
 
+  it('leaves a retry alone when a superseded approval rejects late', async () => {
+    await walletConnectState.init();
+    mockClient.connect.mockResolvedValue({
+      uri: 'wc:eee555@2?relay-protocol=irn&symKey=deadbeef',
+      approval: async () => ({}),
+    });
+    await walletConnectState.startConnect();
+
+    let rejectFirst: (err: Error) => void = () => {};
+    expectConsoleError('connect() approval FAILED or rejected');
+    const firstAttempt = walletConnectState.connect(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+
+    // The user gives up on that QR and links again before the wallet answers.
+    mockClient.connect.mockResolvedValue({
+      uri: 'wc:fff666@2?relay-protocol=irn&symKey=deadbeef',
+      approval: async () => ({}),
+    });
+    await walletConnectState.startConnect();
+    mockClient.core.pairing.disconnect.mockClear();
+
+    const states: string[] = [];
+    const subscription = walletConnectState
+      .getObservable()
+      .subscribe((state) => states.push(state.stateName));
+
+    // Only now does the abandoned proposal expire, with the retry waiting.
+    rejectFirst(new Error('Proposal expired'));
+    await expect(firstAttempt).rejects.toThrow('Proposal expired');
+    subscription.unsubscribe();
+
+    expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'eee555' });
+    expect(mockClient.core.pairing.disconnect).not.toHaveBeenCalledWith({ topic: 'fff666' });
+    // The retry is still waiting for its wallet; the stale failure says nothing.
+    expect(states).toEqual([]);
+
+    // And the retry's pairing is still the one tracked for teardown.
+    await walletConnectState.disconnect();
+    expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'fff666' });
+  });
+
   it('disconnects every known session topic on forgetSessions', async () => {
     await walletConnectState.init();
     mockClient.session.keys = ['topic-1', 'topic-2'];
