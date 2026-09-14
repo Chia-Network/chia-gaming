@@ -8,8 +8,8 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "generate:games": "node scripts/generate-game-registry.mjs",
-    "build": "pnpm run generate:games && pnpm exec tsc --project . --noEmit && pnpm exec esbuild src/index.tsx --bundle --sourcemap --jsx=automatic --outfile=dist/js/index-rollup.js --alias:@=./src --alias:@games=../games && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
-    "build:deploy": "pnpm run generate:games && pnpm exec tsc --project . --noEmit && pnpm exec esbuild src/index.tsx --bundle --format=esm --splitting --jsx=automatic --outdir=dist/app --alias:@=./src --alias:@games=../games && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
+    "build": "pnpm run generate:games && pnpm exec tsc --project . --noEmit && pnpm exec esbuild src/index.tsx --bundle --sourcemap --jsx=automatic --outfile=dist/js/index-rollup.js --alias:@=./src --alias:@games=../games --alias:react=./node_modules/react --alias:clvm-lib=./node_modules/clvm-lib && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
+    "build:deploy": "pnpm run generate:games && pnpm exec tsc --project . --noEmit && pnpm exec esbuild src/index.tsx --bundle --format=esm --splitting --jsx=automatic --outdir=dist/app --alias:@=./src --alias:@games=../games --alias:react=./node_modules/react --alias:clvm-lib=./node_modules/clvm-lib && pnpm exec tailwindcss -i ./src/index.css -o ./dist/app/index.css",
     "bundle": "node -e \"require('node:fs').rmSync('dist/app', { recursive: true, force: true })\" && pnpm run build:deploy && node scripts/assemble-bundle.mjs",
     "test": "pnpm run generate:games && pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --testPathIgnorePatterns=load_wasm --silent=false --verbose --useStderr --ci --forceExit && node -e \"console.error('=== WASM/Jest load_wasm starting ===')\" && pnpm exec jest --runInBand --testPathPatterns=load_wasm --silent=false --verbose --useStderr --ci --forceExit"
   },

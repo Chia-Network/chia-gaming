@@ -23,7 +23,6 @@ import {
   WalletSpendBundle,
 } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
-import { clearWalletConnectStorage } from './save';
 import { jsonStringify } from '../util/jsonSafe';
 
 const PUSH_RETRY_DELAY = 30000;
@@ -883,17 +882,16 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
+    await walletConnectState.init();
+    this.subscribeToWcEvents();
     if (fresh) {
-      await clearWalletConnectStorage();
+      await walletConnectState.forgetSessions();
       clearCachedChangeAddresses();
       clearCachedRemoteWalletIds();
       this.blockchainAddressData = { puzzleHash: '' };
       this.remoteWalletId = undefined;
       this.remoteWalletEnsurePromise = null;
-      walletConnectState.reset();
     }
-    await walletConnectState.init();
-    this.subscribeToWcEvents();
 
     if (walletConnectState.getSession()) {
       return {

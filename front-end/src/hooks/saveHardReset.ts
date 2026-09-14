@@ -8,29 +8,32 @@ const KNOWN_WALLETCONNECT_DB_NAMES = [
 ];
 const KNOWN_HARD_RESET_DB_NAMES = [SESSION_DB_NAME, ...KNOWN_WALLETCONNECT_DB_NAMES];
 
-function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<void> {
+/** Resolves true when the database is gone, false when the delete did not complete. */
+function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<boolean> {
   return new Promise((resolve) => {
     try {
       const request = indexedDB.deleteDatabase(name);
-      request.onsuccess = () => resolve();
+      request.onsuccess = () => resolve(true);
       request.onerror = () => {
         console.error(
           `[save] ${context}: failed to delete IndexedDB database "${name}":`,
           request.error,
         );
-        resolve();
+        resolve(false);
       };
       request.onblocked = () => {
         console.warn(
-          `[save] ${context}: deletion blocked for IndexedDB database "${name}"; waiting for other connections to close`,
+          `[save] ${context}: deletion blocked for IndexedDB database "${name}"; ` +
+            'open connections will be wiped at next boot',
         );
+        resolve(false);
       };
     } catch (error) {
       console.error(
         `[save] ${context}: failed to start IndexedDB database deletion for "${name}":`,
         error,
       );
-      resolve();
+      resolve(false);
     }
   });
 }
@@ -48,8 +51,9 @@ function clearWalletConnectLocalStorageKeys(): void {
   }
 }
 
-async function clearWalletConnectIndexedDb(): Promise<void> {
-  if (typeof indexedDB === 'undefined') return;
+/** Resolves true when every WalletConnect database was actually deleted. */
+async function clearWalletConnectIndexedDb(): Promise<boolean> {
+  if (typeof indexedDB === 'undefined') return true;
   const dynamicDatabaseLookup = indexedDB as IDBFactory & {
     databases?: () => Promise<Array<{ name?: string }>>;
   };
@@ -62,25 +66,80 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
         .filter(
           (name): name is string => typeof name === 'string' && isWalletConnectStorageKey(name),
         );
-      await Promise.all(
+      const deleted = await Promise.all(
         toDelete.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
       );
-      return;
+      return deleted.every((ok) => ok);
     } catch {
       // Fall through to known database names.
     }
   }
 
-  await Promise.all(
+  const deleted = await Promise.all(
     KNOWN_WALLETCONNECT_DB_NAMES.map((name) =>
       deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup'),
     ),
   );
+  return deleted.every((ok) => ok);
 }
 
 export async function clearWalletConnectStorage(): Promise<void> {
   clearWalletConnectLocalStorageKeys();
   await clearWalletConnectIndexedDb();
+}
+
+// A hard reset can be blocked from deleting the WalletConnect IndexedDB while a
+// live client still holds it open. In that case we defer the wipe to the next
+// boot, when nothing has opened the database yet, via this sessionStorage
+// marker (per-tab, survives the reload — the tab whose connection was blocking).
+const PENDING_WC_WIPE_KEY = 'appState_pendingWcWipe';
+
+function markPendingWalletConnectWipe(): void {
+  try {
+    sessionStorage.setItem(PENDING_WC_WIPE_KEY, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+function hasPendingWalletConnectWipe(): boolean {
+  try {
+    return sessionStorage.getItem(PENDING_WC_WIPE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function clearPendingWalletConnectWipe(): void {
+  try {
+    sessionStorage.removeItem(PENDING_WC_WIPE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+let pendingWalletConnectWipe: Promise<void> | null = null;
+
+/**
+ * If a prior hard reset left a WalletConnect IndexedDB wipe pending (its delete
+ * was blocked by a live connection), complete it now — before any WalletConnect
+ * client opens the database. Memoized so callers racing at boot share one wipe.
+ *
+ * If this wipe is itself blocked (another tab still holds the database open) the
+ * marker is left in place so the next boot tries again.
+ */
+export function startPendingWalletConnectWipe(): Promise<void> {
+  if (pendingWalletConnectWipe) return pendingWalletConnectWipe;
+  if (!hasPendingWalletConnectWipe()) return Promise.resolve();
+  pendingWalletConnectWipe = clearWalletConnectIndexedDb().then((completed) => {
+    if (completed) clearPendingWalletConnectWipe();
+  });
+  return pendingWalletConnectWipe;
+}
+
+/** @internal test-only: forget the memoized boot-time wipe. */
+export function _resetPendingWalletConnectWipeForTests(): void {
+  pendingWalletConnectWipe = null;
 }
 
 async function clearAllIndexedDbForHardReset(): Promise<void> {
@@ -128,4 +187,9 @@ export async function hardResetStorage(stopPersistence: () => void): Promise<voi
     console.error('[save] failed to clear sessionStorage during hard reset:', error);
   }
   await clearAllIndexedDbForHardReset();
+  // A live WalletConnect connection can block the WC IndexedDB deletion above,
+  // in which case the database survives this reset. Mark it so the next boot
+  // completes the wipe before any client reopens it. Set after sessionStorage
+  // is cleared so this marker is the only survivor.
+  markPendingWalletConnectWipe();
 }

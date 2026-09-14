@@ -6,10 +6,24 @@ import { PROJECT_ID, RELAY_URL } from '../constants/env';
 import { getChainId, getRequiredNamespaces } from '../constants/wallet-connect';
 import { log } from '../services/log';
 import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
+import { startPendingWalletConnectWipe } from './saveHardReset';
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
   uri: string;
+}
+
+/**
+ * Extract the pairing topic from a WalletConnect v2 URI of the form
+ * `wc:<topic>@<version>?...`. Throws if the topic is absent so a cancelled
+ * pairing can always be torn down rather than leaking a live pairing.
+ */
+function pairingTopicFromUri(uri: string): string {
+  const match = /^wc:([0-9a-f]+)@/i.exec(uri);
+  if (!match) {
+    throw new Error(`WalletConnect connect() returned an unparseable URI: ${uri}`);
+  }
+  return match[1];
 }
 
 export interface WalletConnectOutboundState {
@@ -33,6 +47,7 @@ class WalletState {
   client?: InstanceType<typeof Client>;
   observable: Subject<WalletConnectOutboundState>;
   private initPromise: Promise<void> | null = null;
+  private pendingPairingTopic?: string;
 
   constructor() {
     this.isConnected = false;
@@ -108,6 +123,7 @@ class WalletState {
     this.address = address;
     this.chainId = detectedChain;
     this.session = session;
+    this.pendingPairingTopic = undefined;
     this.logSessionIds('connected');
     this.observable.next({
       stateName: 'connected',
@@ -134,9 +150,38 @@ class WalletState {
     });
   }
 
-  reset() {
-    this.initPromise = null;
-    this.client = undefined;
+  /**
+   * Release a pairing we have stopped waiting on. A pairing created by
+   * `connect()` stays live in the WalletConnect store until it expires, so
+   * every path that abandons an attempt has to cancel it explicitly. The topic
+   * is a parameter rather than read from `pendingPairingTopic` because an
+   * attempt can outlive its turn as the current one: a late failure must tear
+   * down its own pairing, not whichever attempt is pending by then.
+   */
+  private async cancelPairing(topic: string | undefined) {
+    if (!topic) return;
+    if (this.pendingPairingTopic === topic) this.pendingPairingTopic = undefined;
+    try {
+      await this.client?.core.pairing.disconnect({ topic });
+    } catch {
+      // Pairing disconnect can fail if the pairing is already gone.
+    }
+  }
+
+  async forgetSessions() {
+    const client = this.client;
+    if (client) {
+      for (const topic of client.session.keys) {
+        try {
+          await client.disconnect({
+            topic,
+            reason: { code: 6000, message: 'User disconnected' },
+          });
+        } catch {
+          // WC disconnect can fail if the session is already gone.
+        }
+      }
+    }
     this.resetSession();
   }
 
@@ -150,6 +195,9 @@ class WalletState {
   }
 
   private async doInit(): Promise<void> {
+    // Finish any wipe deferred from a hard reset before opening the WC database.
+    await startPendingWalletConnectWipe();
+
     const metadata = walletConnectDappMetadata();
     this.observable.next({ stateName: 'initializing', initializing: true });
     log('WalletConnect initializing...');
@@ -208,18 +256,22 @@ class WalletState {
   }
 
   async disconnect() {
-    if (!this.client || !this.session) return;
+    const client = this.client;
+    if (!client) return;
 
-    const topic = this.session.topic;
+    const sessionTopic = this.session?.topic;
     this.resetSession();
+    await this.cancelPairing(this.pendingPairingTopic);
 
-    try {
-      await this.client.disconnect({
-        topic,
-        reason: { code: 6000, message: 'User disconnected' },
-      });
-    } catch {
-      // WC disconnect can fail if session is already gone
+    if (sessionTopic) {
+      try {
+        await client.disconnect({
+          topic: sessionTopic,
+          reason: { code: 6000, message: 'User disconnected' },
+        });
+      } catch {
+        // WC disconnect can fail if session is already gone
+      }
     }
   }
 
@@ -235,6 +287,11 @@ class WalletState {
       connecting: true,
     });
 
+    // An attempt we never finished still holds a live pairing; cancel it before
+    // creating another, since the new topic overwrites the one we would need to
+    // tear it down with.
+    await this.cancelPairing(this.pendingPairingTopic);
+
     try {
       const { uri, approval } = await this.client.connect({
         requiredNamespaces: getRequiredNamespaces(),
@@ -247,6 +304,7 @@ class WalletState {
       });
 
       if (!uri) throw new Error('WalletConnect connect() returned no URI');
+      this.pendingPairingTopic = pairingTopicFromUri(uri);
       return { uri, approval };
     } catch (err) {
       console.error('[WC] startConnect() FAILED', err);
@@ -260,17 +318,30 @@ class WalletState {
   }
 
   async connect(approval: () => Promise<SessionTypes.Struct>) {
+    // The pairing this approval belongs to. An approval can reject long after
+    // it was abandoned (proposal expiry), by which time a retry may own the
+    // pending topic, so teardown below uses this one rather than the current.
+    const topic = this.pendingPairingTopic;
     try {
       const session = await approval();
       this.onSessionConnected(session);
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
-      this.observable.next({
-        stateName: 'initialized',
-        waitingApproval: false,
-        connecting: false,
-        connected: false,
-      });
+      // A retry or an explicit disconnect during the wait owns the connection
+      // state now, and has already reported it; a superseded attempt may only
+      // clean up after itself.
+      const superseded = this.pendingPairingTopic !== topic;
+      // The proposal is dead once approval settles with an error, but its
+      // pairing is not; the wallet declining must not leak it.
+      await this.cancelPairing(topic);
+      if (!superseded) {
+        this.observable.next({
+          stateName: 'initialized',
+          waitingApproval: false,
+          connecting: false,
+          connected: false,
+        });
+      }
       throw err;
     }
   }

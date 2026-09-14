@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { startWasmBootstrap } from './hooks/WasmStateInit';
+import { startPendingWalletConnectWipe } from './hooks/saveHardReset';
 import App from './App';
 // Install theme-sync listener as early as possible so cross-origin iframes
 // can receive theme updates from the parent. Also request the parent
@@ -24,6 +25,10 @@ try {
 
 const container = document.getElementById('root');
 const root = createRoot(container!);
+
+// Complete any WalletConnect IndexedDB wipe deferred from a prior hard reset,
+// before any WalletConnect client can reopen the database.
+void startPendingWalletConnectWipe();
 
 startWasmBootstrap();
 root.render(<App />);
