@@ -885,7 +885,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     await walletConnectState.init();
     this.subscribeToWcEvents();
     if (fresh) {
-      await walletConnectState.forgetSessions();
+      await walletConnectState.forgetConnections();
       clearCachedChangeAddresses();
       clearCachedRemoteWalletIds();
       this.blockchainAddressData = { puzzleHash: '' };

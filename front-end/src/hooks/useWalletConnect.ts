@@ -48,6 +48,9 @@ class WalletState {
   observable: Subject<WalletConnectOutboundState>;
   private initPromise: Promise<void> | null = null;
   private pendingPairingTopic?: string;
+  // Bumped by every pairing teardown so a startConnect() that was already in
+  // flight knows its pairing has been abandoned before it even existed.
+  private pairingEpoch = 0;
 
   constructor() {
     this.isConnected = false;
@@ -150,7 +153,41 @@ class WalletState {
     });
   }
 
-  async forgetSessions() {
+  private async disconnectPairing(topic: string) {
+    try {
+      await this.client?.core.pairing.disconnect({ topic });
+    } catch {
+      // Pairing disconnect can fail if the pairing is already gone.
+    }
+  }
+
+  /**
+   * Abandon the current pairing attempt: forget its topic and claim a new
+   * epoch, invalidating any startConnect() still in flight so the pairing it
+   * is about to receive gets torn down rather than outliving the attempt that
+   * asked for it. Synchronous, so the epoch cannot be claimed by someone else
+   * while the caller is suspended on an await. Returns the claimed epoch and
+   * the topic the caller still has to disconnect.
+   */
+  private takePendingPairing(): { topic?: string; epoch: number } {
+    const topic = this.pendingPairingTopic;
+    this.pendingPairingTopic = undefined;
+    return { topic, epoch: ++this.pairingEpoch };
+  }
+
+  private async cancelPendingPairing() {
+    const { topic } = this.takePendingPairing();
+    if (topic) {
+      await this.disconnectPairing(topic);
+    }
+  }
+
+  /**
+   * Forget every session and pairing this client knows about. A fresh connect
+   * must leave nothing live on the relay, and pairings outlive the sessions
+   * they carried, so both stores have to be emptied.
+   */
+  async forgetConnections() {
     const client = this.client;
     if (client) {
       for (const topic of client.session.keys) {
@@ -163,7 +200,11 @@ class WalletState {
           // WC disconnect can fail if the session is already gone.
         }
       }
+      for (const pairing of client.core.pairing.getPairings()) {
+        await this.disconnectPairing(pairing.topic);
+      }
     }
+    await this.cancelPendingPairing();
     this.resetSession();
   }
 
@@ -239,22 +280,14 @@ class WalletState {
 
   async disconnect() {
     const client = this.client;
-    if (!client) return;
-
-    const pendingPairingTopic = this.pendingPairingTopic;
     const sessionTopic = this.session?.topic;
-    this.pendingPairingTopic = undefined;
     this.resetSession();
 
-    if (pendingPairingTopic) {
-      try {
-        await client.core.pairing.disconnect({ topic: pendingPairingTopic });
-      } catch {
-        // Pairing disconnect can fail if the pairing is already gone.
-      }
-    }
+    // Runs even without a client: a cancel during init() has no pairing to
+    // drop yet, but must still invalidate the startConnect() that follows.
+    await this.cancelPendingPairing();
 
-    if (sessionTopic) {
+    if (client && sessionTopic) {
       try {
         await client.disconnect({
           topic: sessionTopic,
@@ -267,10 +300,17 @@ class WalletState {
   }
 
   async startConnect(): Promise<StartConnectResult> {
-    if (!this.client) {
+    const client = this.client;
+    if (!client) {
       const msg = 'startConnect() called but client is undefined -- init() may have failed';
       console.error('[WC]', msg);
       throw new Error(msg);
+    }
+
+    // Asking for a new QR abandons the previous attempt's pairing.
+    const { topic: abandoned, epoch } = this.takePendingPairing();
+    if (abandoned) {
+      await this.disconnectPairing(abandoned);
     }
 
     this.observable.next({
@@ -279,7 +319,7 @@ class WalletState {
     });
 
     try {
-      const { uri, approval } = await this.client.connect({
+      const { uri, approval } = await client.connect({
         requiredNamespaces: getRequiredNamespaces(),
       });
 
@@ -290,7 +330,14 @@ class WalletState {
       });
 
       if (!uri) throw new Error('WalletConnect connect() returned no URI');
-      this.pendingPairingTopic = pairingTopicFromUri(uri);
+      const topic = pairingTopicFromUri(uri);
+      if (epoch !== this.pairingEpoch) {
+        // A teardown ran while client.connect() was in flight, so this pairing
+        // was already abandoned by the time the relay handed it to us.
+        await this.disconnectPairing(topic);
+        throw new Error('WalletConnect pairing was cancelled');
+      }
+      this.pendingPairingTopic = topic;
       return { uri, approval };
     } catch (err) {
       console.error('[WC] startConnect() FAILED', err);
@@ -304,11 +351,19 @@ class WalletState {
   }
 
   async connect(approval: () => Promise<SessionTypes.Struct>) {
+    const epoch = this.pairingEpoch;
     try {
       const session = await approval();
       this.onSessionConnected(session);
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
+      // The wallet rejected the proposal or it expired; the pairing that
+      // carried it can never produce a session now. Only drop it while it is
+      // still the current attempt's — an abandoned approval can reject long
+      // after a newer QR replaced it, and that newer pairing is still live.
+      if (epoch === this.pairingEpoch) {
+        await this.cancelPendingPairing();
+      }
       this.observable.next({
         stateName: 'initialized',
         waitingApproval: false,

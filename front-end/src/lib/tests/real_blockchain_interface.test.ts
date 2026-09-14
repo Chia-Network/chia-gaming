@@ -35,7 +35,7 @@ const mockWalletConnectState = {
     approval: async () => ({}),
   })),
   connect: jest.fn(async () => {}),
-  forgetSessions: jest.fn(async () => {
+  forgetConnections: jest.fn(async () => {
     mockWalletSession = undefined;
   }),
   disconnect: jest.fn(async () => {
@@ -122,7 +122,7 @@ describe('RealBlockchainInterface', () => {
     mockWalletConnectState.getAddress.mockClear();
     mockWalletConnectState.startConnect.mockClear();
     mockWalletConnectState.connect.mockClear();
-    mockWalletConnectState.forgetSessions.mockClear();
+    mockWalletConnectState.forgetConnections.mockClear();
     mockWalletConnectState.disconnect.mockClear();
   });
 
@@ -153,7 +153,7 @@ describe('RealBlockchainInterface', () => {
       const second = await blockchain.beginConnect('id', true);
       expect(second.qrUri).toBe('wc:pairingtopic@2?relay-protocol=irn&symKey=deadbeef');
 
-      expect(mockWalletConnectState.forgetSessions).toHaveBeenCalledTimes(2);
+      expect(mockWalletConnectState.forgetConnections).toHaveBeenCalledTimes(2);
       expect(deleteDatabase).not.toHaveBeenCalled();
     } finally {
       if (priorIndexedDb === undefined) {
