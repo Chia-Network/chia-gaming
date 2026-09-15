@@ -31,6 +31,7 @@ import {
 } from '../types/ChiaGaming';
 import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
 import { deriveHubSessionId } from '../services/hubSessionCredential';
+import { installHubIframeAuthentication } from '../services/hubIframeAuthentication';
 import {
   PeerSession,
   decodePeerAppMessage,
@@ -3217,27 +3218,7 @@ const Shell = () => {
     if (hubOrigin === null || !sessionId || iframeUrl === 'about:blank') return;
     const iframe = document.getElementById('hub-iframe') as HTMLIFrameElement | null;
     if (iframe === null) return;
-    const targetOrigin = new URL(iframeUrl).origin;
-    const sendCredentials = () => {
-      iframe.contentWindow?.postMessage({ type: 'hub-auth', sessionId }, targetOrigin);
-    };
-    const handleMessage = (event: MessageEvent) => {
-      if (
-        event.source === iframe.contentWindow &&
-        event.origin === targetOrigin &&
-        event.data?.type === 'hub-auth-request'
-      ) {
-        sendCredentials();
-      }
-    };
-    iframe.addEventListener('load', sendCredentials);
-    window.addEventListener('message', handleMessage);
-    const initialSend = setTimeout(sendCredentials, 150);
-    return () => {
-      clearTimeout(initialSend);
-      iframe.removeEventListener('load', sendCredentials);
-      window.removeEventListener('message', handleMessage);
-    };
+    return installHubIframeAuthentication({ iframe, iframeUrl, sessionId });
   }, [hubOrigin, iframeUrl, sessionId]);
 
   const [resuming, setResuming] = useState(false);
