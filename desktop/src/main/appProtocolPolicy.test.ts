@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import {
-  appAssetCacheControl,
-  BoundedAssetReader,
-  isAppSchemeRequestAllowed,
-} from './appProtocolPolicy.ts';
+import { appAssetCacheControl, isAppSchemeRequestAllowed, readAsset } from './appProtocolPolicy.ts';
 
 function request(
   url: string,
@@ -92,32 +88,18 @@ describe('app protocol policy', () => {
     assert.equal(isAppSchemeRequestAllowed(request('chiagaming://app/index.js', {})), false);
   });
 
-  it('coalesces repeated asset reads and limits distinct reads', async () => {
-    let activeReads = 0;
-    let maximumActiveReads = 0;
+  it('does not retain asset bodies between reads', async () => {
     let readCount = 0;
-    const releases: Array<() => void> = [];
-    const reader = new BoundedAssetReader(async () => {
+    const read = async () => {
       readCount += 1;
-      activeReads += 1;
-      maximumActiveReads = Math.max(maximumActiveReads, activeReads);
-      await new Promise<void>((resolve) => releases.push(resolve));
-      activeReads -= 1;
-      return Uint8Array.of(1);
-    });
+      return Uint8Array.of(readCount);
+    };
 
-    const reads = [
-      ...Array.from({ length: 16 }, () => reader.readAsset('/same.wasm')),
-      ...Array.from({ length: 8 }, (_, index) => reader.readAsset(`/${index}.js`)),
-    ];
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    while (releases.length > 0 || activeReads > 0) {
-      releases.splice(0).forEach((release) => release());
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    await Promise.all(reads);
+    const first = new Uint8Array(await readAsset(read, '/same.wasm'));
+    const second = new Uint8Array(await readAsset(read, '/same.wasm'));
 
-    assert.equal(readCount, 9);
-    assert.equal(maximumActiveReads, 4);
+    assert.equal(readCount, 2);
+    assert.deepEqual([...first], [1]);
+    assert.deepEqual([...second], [2]);
   });
 });

@@ -53,51 +53,7 @@ export function isAppSchemeRequestAllowed(request: AppSchemeRequest): boolean {
 
 type AssetRead = (filePath: string) => Promise<Uint8Array>;
 
-export class BoundedAssetReader {
-  private readonly cache = new Map<string, Promise<ArrayBuffer>>();
-  private readonly waiters: Array<() => void> = [];
-  private readonly read: AssetRead;
-  private readonly maxConcurrentReads: number;
-  private activeReads = 0;
-
-  constructor(read: AssetRead, maxConcurrentReads = 4) {
-    this.read = read;
-    this.maxConcurrentReads = maxConcurrentReads;
-  }
-
-  readAsset(filePath: string): Promise<ArrayBuffer> {
-    const cached = this.cache.get(filePath);
-    if (cached) return cached;
-
-    const pending = this.readWithPermit(filePath).catch((error: unknown) => {
-      this.cache.delete(filePath);
-      throw error;
-    });
-    this.cache.set(filePath, pending);
-    return pending;
-  }
-
-  private async readWithPermit(filePath: string): Promise<ArrayBuffer> {
-    await this.acquirePermit();
-    try {
-      const file = await this.read(filePath);
-      return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
-    } finally {
-      this.releasePermit();
-    }
-  }
-
-  private async acquirePermit(): Promise<void> {
-    if (this.activeReads < this.maxConcurrentReads) {
-      this.activeReads += 1;
-      return;
-    }
-    await new Promise<void>((resolve) => this.waiters.push(resolve));
-    this.activeReads += 1;
-  }
-
-  private releasePermit(): void {
-    this.activeReads -= 1;
-    this.waiters.shift()?.();
-  }
+export async function readAsset(read: AssetRead, filePath: string): Promise<ArrayBuffer> {
+  const file = await read(filePath);
+  return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
 }
