@@ -152,21 +152,28 @@ receiving side:
    The peer cannot influence this check — `max_move_size` comes from our own
    game state, not from the peer's message.
 
-3. **Runs the current validator**, computes the next infohash from its
-   return value, then slash-invokes a curried referee (`referee/their_turn.rs`).
-   This evaluates a CLVM program that we hold locally (the current step's
-   validation program inside the referee), passing the peer's move bytes as
-   an atom argument. The program is ours; the peer only controls a small
-   bounded input.
+3. **Runs the current validator to discover the transition**, computing the
+   next infohash from its returned next-validator hash and state.
 
-4. **Runs the game handler** (`call_their_turn_handler` in
+4. **Slash-invokes a referee committed to that transition with nil evidence**
+   (`referee/their_turn.rs`). Discovery and commitment checking are separate
+   executions by design; reusing the discovery result would not prove that the
+   committed arguments themselves reject the slash.
+
+5. **Runs the validator with the committed arguments**, then runs the game
+   handler (`call_their_turn_handler` in
    `channel_state/game_handler.rs`). Again, our locally-held handler
    program, with the peer's move data as a bounded argument. Whether the
    game continues is determined by this handler's successor, not by a peer
    flag. Slash evidence is considered independently of that successor.
 
+6. **Tries every handler evidence candidate in order** by slash-invoking the
+   same committed referee again until one succeeds or the list is exhausted.
+
 The peer cannot send a CLVM program for us to evaluate. They send data, and
-we run our own programs against it.
+we run our own factory-registered programs against it. Repeated validator
+execution is expected because transition discovery, commitment checking, and
+each evidence candidate answer different questions.
 
 Their-turn handlers are still security-sensitive. They run after the generic
 referee envelope has bounded the move bytes, but the bytes are still malicious
@@ -176,9 +183,10 @@ constructing or recording the slash path. Game-rule failures must be expressed
 as validator `SLASH` outcomes and handler evidence candidates, not handler
 crashes. The framework tries nil evidence before calling the handler. A
 successful slash skips the handler; a valid payload is a soft non-slash and
-supplies `state`; a raise still calls the handler with nil `state`. Handler
-audits should focus on peer-controlled inputs that survive the generic envelope
-and that nil-evidence slash precheck.
+supplies `state`; a raise aborts off-chain acceptance and does not call the
+handler with a fabricated nil state. Handler audits should focus on
+peer-controlled inputs that survive the generic envelope and nil-evidence
+slash precheck.
 
 ---
 

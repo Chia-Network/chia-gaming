@@ -783,34 +783,43 @@ referee arguments with real mover and waiter pubkeys, substitutes the incoming
 move and validation program, and uses the same state-update program that would
 be used by the on-chain referee when validating peer moves.
 
-Each factory record supplies a proper, nonempty `validation_programs` registry.
-Its first entry is initially current; later entry order is irrelevant. For each
-move, the current validator is run off-chain first with nil evidence. A returned
-valid payload supplies `next_validator_hash`, `new_state`, and the next maximum
-move size. Rust resolves a non-nil hash by tree hash in the factory registry and
-makes that program current for the next move. The my-turn handler supplies none
-of those validator programs or size limits; it remains the authority for the
-move's `mover_share`.
+Each factory record supplies `initial_state` and a proper, nonempty
+`validation_programs` registry. Its first entry is initially current; later
+entry order is irrelevant. Games normally use canonical nil initial state.
+For each move, a valid payload supplies `next_validator_hash`, `new_state`, and
+the next maximum move size. Rust resolves a non-nil hash by tree hash in the
+factory registry and makes that program current for the next move. Handlers
+supply none of those validator programs, hashes, states, or size limits; they
+continue to chain only off-chain handlers and remain the authority for
+`mover_share`.
 
-The returned `new_state` is passed to the their-turn handler. If the run
-**raises**, the handler still runs with `state` nil. A terminal move is still a
-normal move, but the validator returns a nil next hash, so there is no
-follow-on state for future moves. That nil must agree with a nil next handler
-from the otherwise unchanged their-turn handler output. The their-turn handler
-still interprets the move and may provide slash evidence. Any evidence it
-provides is checked by running the normal state-update program with that
-evidence.
+For a peer move, Rust first runs the current validator with nil evidence to
+discover the candidate transition. It then curries a real referee with those
+derived commitments and slash-invokes nil evidence. If that succeeds, the move
+is rejected before the handler. Otherwise Rust runs the validator with the
+committed arguments to obtain the `new_state` passed to the their-turn handler.
+A raise in any required run aborts off-chain acceptance; the handler is not
+called with a fabricated nil state.
+
+A terminal move is still a normal move, but the validator returns a nil next
+hash, so there is no follow-on state for future moves. That nil must agree with
+a nil next handler from the otherwise unchanged their-turn handler output. The
+their-turn handler still interprets the move and may provide an ordered list of
+slash evidence. Each candidate is checked by slash-invoking the normal
+state-update program again. Repeated execution is therefore expected:
+transition discovery, committed nil-evidence checking, and evidence trials are
+distinct phases.
 
 The peer move message does not carry a terminal flag or either validation
 hash. The receiver runs the current validator and computes the next validation
 info hash the same way the on-chain referee does: nil if the validator's
 next-validator program hash is nil, otherwise
 `sha256(next_validator_hash, shatree(new_state))`. Off-chain accept then
-curries a real referee with that infohash and slash-invokes it (nil evidence,
-then any handler evidence). If any invocation succeeds, the move is slashable
-and is rejected. These reconstructed internal values are what enter
-`RefereePuzzleArgs` and the signed unroll state — the signed leaf is the new
-virtual coin's puzzle hash. Slash evidence from the handler is checked
+curries a real referee with that infohash and slash-invokes it with nil evidence,
+then later with each handler evidence candidate. If any invocation succeeds,
+the move is slashable and is rejected. These reconstructed internal values are
+what enter `RefereePuzzleArgs` and the signed unroll state — the signed leaf is
+the new virtual coin's puzzle hash. Slash evidence from the handler is checked
 regardless of whether the move is final.
 
 This keeps off-chain and on-chain validation semantics aligned. Some games may

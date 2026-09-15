@@ -177,7 +177,7 @@ The fields mean:
 | `player_a_goes_first` | Canonical nil or `1`. |
 | `initial_move` | The first committed move as a CLVM atom; use nil when there is no pre-existing move. |
 | `initial_max_move_size` | Maximum byte length accepted for that move. |
-| `initial_state` | Initial validator state; any CLVM value. |
+| `initial_state` | Initial validator state; normally canonical nil, or another CLVM value when the first transition genuinely needs pre-existing state. |
 | `initial_mover_share` | Mover's timeout payout in mojos, between zero and the member's total amount. |
 | `my_turn_handler` | Off-chain program for the player who starts. |
 | `their_turn_handler` | Off-chain program for the waiting player. |
@@ -334,7 +334,13 @@ Their-turn handlers process adversarial peer input. Check cheap shape and
 length constraints before indexing, hashing, or allocating. A game-rule
 violation must produce slash evidence that makes the validator return nil, not
 crash the handler. The framework checks the envelope's committed maximum move
-size and tries nil evidence before calling the handler.
+size and tries nil evidence before calling the handler. Specifically, it runs
+the current validator once to discover the transition, slash-invokes a referee
+committed to that transition with nil evidence, and then obtains the committed
+state supplied to the handler. A raise aborts off-chain acceptance; the handler
+is never called with a fabricated state. Afterward, each evidence candidate is
+tried in order through another slash invocation. These repeated validator runs
+are intentional and must all be safe for bounded adversarial move bytes.
 
 Validators run both off-chain when checking evidence and on-chain during a
 slash. Every validator has this input shape:

@@ -42,6 +42,8 @@ nonempty list of every validator program the game may select. Its first program
 is the initial validator; later programs are registry entries whose list order
 has no protocol meaning. Validators are selected by tree hash. The first
 member's first validation-program hash is the registered protocol identity.
+Use canonical nil for `initial_state` unless the first transition genuinely
+needs pre-existing validator state.
 
 The host derives `amount` by adding the player A and B contributions. It
 also calculates the first validator's tree hash, which is the protocol game ID
@@ -102,7 +104,9 @@ My-turn return (success, 4-5 elements):
     message_parser                 ; optional program or nil (see Message Parser below)
   )
 
-  The current validator is selected from the factory's `validation_programs`
+  The handler does not return a validator program, validator hash, state, or
+  move-size limit. The current validator is selected from the factory's
+  `validation_programs`
   registry, initially its first entry. Running it with this move and nil
   evidence derives the next validator hash, new state, and next maximum move
   size. Rust resolves a non-nil hash in the registry and makes the resolved
@@ -136,9 +140,9 @@ Their-turn return (normal move, 2-4 elements):
   - evidence_list contains potential slash evidence candidates. The
     handler does not need to verify each piece actually triggers a
     slash — just return everything that might work. The Rust framework
-    tests each candidate by running the validator with that evidence;
-    if the validator returns nil (slash) rather than a valid payload, the
-    slash succeeds. If none of the candidates trigger a slash, the game
+    tests each candidate in list order by slash-invoking the committed referee
+    with that evidence. If the invocation succeeds, the slash succeeds. If
+    none of the candidates trigger a slash, the game
     continues normally. Evidence candidates that do not apply must be
     rejected by the validator as non-slashes (a non-nil result), not by
     requiring the handler to pre-filter them. Nil evidence is always
@@ -155,10 +159,13 @@ allocate excessively before returning slash evidence, treat that as a security
 bug by default. Referee-envelope violations such as `max_move_size` are checked
 before the handler; game-rule violations that survive that envelope must be
 handled as slashable validator outcomes/evidence, not handler crashes. Terminal
-their-turn handlers get the same nil-evidence precheck as non-terminal handlers:
-if nil evidence successfully slashes, the framework skips the handler. If that
-run returns a valid payload, the handler gets that `new_state`. If it raises,
-the handler still runs with `state` nil and must use `pre_state` and `move`.
+their-turn handlers get the same nil-evidence precheck as non-terminal handlers.
+Rust first runs the validator to discover the candidate transition, then
+slash-invokes a referee committed to that transition with nil evidence. If that
+slash succeeds, the framework skips the handler. If any required nil-evidence
+run raises, off-chain acceptance fails and the handler is not called with a
+fabricated nil state. Otherwise a committed validator run supplies the
+handler's `state`.
 Inputs that survive a successful slash precheck are still peer-controlled and
 must be safe for the handler to process.
 
@@ -193,6 +200,14 @@ move, Rust runs the current validator with nil evidence, reads the returned next
 validator hash, and resolves that hash against the registry. Registry order
 after the first entry is irrelevant.
 
+For a peer move, transition discovery and slash checking are deliberately
+separate executions. The discovery run determines the next validator hash,
+state, and size limit. Rust then commits those values in real referee arguments
+and slash-invokes nil evidence. After that check it obtains the committed state
+for the handler, and every handler evidence candidate causes another ordered
+slash invocation. Handlers only propose evidence; they do not replace these
+validator executions.
+
 Validator return values are untagged: a non-nil payload list for valid moves
 `(next_validation_program_hash new_state max_move_size ...)`, or nil for slash.
 Nil means the move is illegal for the supplied evidence. A non-nil result means
@@ -201,9 +216,9 @@ accepted by the move path; mismatched infohash or max-move-size values are
 slashable on-chain. Validator-returned extra conditions are also slashable on
 the slash path and are prepended to the payout conditions; this supports
 conditional slashes, such as requiring an aggregate signature that proves a
-challenged value falls in a committed range. Rust parses the result as Option —
-Some(new_state) for valid moves, None for slash — and uses None to initiate a
-slash.
+challenged value falls in a committed range. Rust parses non-nil transition
+payloads into the next hash, state, and size limit; nil means that slash
+invocation succeeded.
 
 Validator security rule: malicious moves must be slashable without validator
 exceptions, while invalid slash attempts against valid moves must fail. Check

@@ -356,6 +356,17 @@ does the separate `cached_redo_actions` state record the post-application facts
 needed to replay a move after an unroll; the prepared queue is not the redo
 cache.
 
+On receipt, validator execution has three distinct jobs and is deliberately not
+collapsed into one cached probe. Rust first runs the current local
+factory-registry program with the bounded move and nil evidence to discover the
+candidate next hash, state, and size limit. It then commits those values into a
+real referee and slash-invokes nil evidence. A surviving move is evaluated with
+the committed arguments to supply state to the their-turn handler, after which
+every handler evidence candidate is tried in order through another slash
+invocation. The peer never supplies executable programs, and handlers never
+return validator programs; non-nil next hashes are resolved in the local
+registry.
+
 The `game_action_queue` is populated only by local API calls (user/UI actions),
 never directly by received peer messages. Received batches can still make queued
 local actions stale as a side effect of valid peer state changes, so failed peer

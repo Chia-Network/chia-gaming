@@ -883,15 +883,23 @@ PeerMove {
 }
 ```
 
-The receiver locates the live game, validates turn authority and the move using
-the locally held validation program and game handlers, and updates the referee
-state. It computes the next validation info hash the same way the on-chain
-referee does: nil if the validator's next-validator hash is nil, otherwise
-`sha256(next_validator_hash, shatree(new_state))`. Off-chain accept then curries
-a real referee with that infohash and slash-invokes it with nil evidence, then
-with each handler evidence candidate. If any invocation succeeds, the move is
-slashable and is rejected. This check also applies when the next-validator hash
-is nil. The signed unroll leaf is the new virtual coin's puzzle hash.
+The receiver locates the live game and validates turn authority. It runs the
+current locally held factory-registry validator with nil evidence to discover
+the candidate next validator hash, state, and size limit. It computes the next
+validation info hash the same way the on-chain referee does: nil if the
+next-validator hash is nil, otherwise
+`sha256(next_validator_hash, shatree(new_state))`.
+
+Off-chain accept then curries a real referee with those commitments and
+slash-invokes it with nil evidence. If that does not slash, a committed
+validator run supplies state to the locally held their-turn handler. Each
+handler evidence candidate then causes another ordered slash invocation. If any
+invocation succeeds, the move is slashable and is rejected. Discovery,
+commitment checking, and evidence trials intentionally execute the validator
+separately. The peer and handlers never supply validator programs; a returned
+non-nil next hash is resolved in the receiver's factory registry. These checks
+also apply when the next-validator hash is nil. The signed unroll leaf is the
+new virtual coin's puzzle hash.
 
 The peer does not supply the next `max_move_size`. The receiver takes it from
 the nil-evidence validator result and canonically encodes it when constructing

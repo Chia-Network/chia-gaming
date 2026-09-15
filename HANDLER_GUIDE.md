@@ -100,6 +100,8 @@ move format.
 ```
 
 - The handler owns `mover_share`; validators do not choose it.
+- The handler returns the next off-chain handler, but it never returns a
+  validator program, validator hash, state, or move-size limit.
 - The current validator comes from the factory registry. Rust runs it with the
   move and nil evidence to derive the next validator hash, new state, and next
   maximum move size, then resolves a non-nil hash in that registry for the next
@@ -138,9 +140,13 @@ loop, or allocation blowup caused by a peer-supplied move is a security bug by
 default, not a normal parse failure. Generic referee-envelope checks such as
 `max_move_size` happen before the handler, so handlers may assume those bounds,
 but game-rule failures must be represented through validator/slash behavior and
-evidence candidates, not CLVM raises. The framework tries nil evidence before
-calling the handler, including for terminal moves. Nil evidence is the
-non-accusatory inspection mode and must return one of two outcomes:
+evidence candidates, not CLVM raises. The framework first runs the current
+validator with nil evidence to reconstruct the candidate transition, then
+slash-invokes a referee committed to that transition with nil evidence. This
+second execution is intentional: the first discovers the arguments, while the
+second asks whether those committed arguments are slashable. Only a move that
+survives both phases reaches the handler, including terminal moves. Nil
+evidence must therefore produce one of two outcomes:
 
 - **Slash** — nil, a misaligned payload, or extra slash conditions. The
   handler is skipped.
@@ -148,10 +154,12 @@ non-accusatory inspection mode and must return one of two outcomes:
   `(next_validator_hash new_state max_move_size)`. The move is not slashable
   with empty evidence. `new_state` is passed to the handler as `state`.
 
-An assert in inspection mode is a hard validator error. Off chain, the peer
-move cannot be accepted and the game must go on chain; while processing an
-observed on-chain move, the error is propagated. Terminal validators return
-`(list 0)` when the move is valid but no evidence was supplied.
+After the commitment check, Rust runs the validator with the committed
+arguments to obtain the state passed to the handler. An assert in any required
+nil-evidence run is a hard validator error: the peer move is not accepted
+off-chain and the game must go on chain. The handler is not called with a
+fabricated nil state. Terminal validators return `(list 0)` when the move is
+valid but no evidence was supplied.
 
 Handlers are responsible for safely processing the peer-controlled moves that
 survive the slash precheck.
@@ -166,7 +174,7 @@ survive the slash precheck.
 |-----------|-------------|
 | `amount` | Total game pot |
 | `pre_state` | On-chain state BEFORE the opponent's move |
-| `state` | After-state from the successful nil-evidence validator run; nil for a terminal result |
+| `state` | After-state from the committed nil-evidence validator run; canonical nil for a terminal result |
 | `move` | Opponent's move bytes |
 | `validation_program_hash` | Tree hash of the validation program for this move |
 | `mover_share` | Opponent's declared share of the pot |
@@ -203,7 +211,9 @@ this handler.
   succeed, the game continues normally -- evidence that doesn't work is
   silently discarded.
   Nil evidence is always tried automatically by the framework *before*
-  calling the handler, so the handler never needs to include it. Slash
+  calling the handler, so the handler never includes it in `evidence_list`.
+  After the handler returns, each listed candidate is tried in order and may
+  execute the same adversarial move through the validator again. Slash
   evidence is independent of whether `next_handler` is nil: a final move
   may still be slashed, and a continuing move may still be slashed. When
   evidence actually produces a slash, the other fields are unused. If no
@@ -299,7 +309,9 @@ the waiting player. The factory handlers are not regenerated from peer-specific
 inputs. `validation_programs` must be a proper, nonempty list. Its first program
 is initially current; later ordering is irrelevant because Rust resolves every
 subsequent validator by tree hash. The first member's first validator hash is
-the protocol identity.
+the protocol identity. `initial_state` is the state supplied to that first
+validator and first local handler; games normally use canonical nil unless
+their first transition genuinely needs pre-existing state.
 
 The framework derives each game's amount from its two contributions and hashes
 the registry's first validator. Wire members retain only setup commitments:
@@ -335,6 +347,15 @@ their_turn_handler(amount, pre_state, new_state, move,
                    current_validator_hash, mover_share)
   -> readable_move, evidence, next_my_turn_handler, optional message
 ```
+
+For a received move, deriving that transition is not the slash check. Rust
+first uses a placeholder commitment to discover the transition, then curries a
+referee with the derived commitment and slash-invokes it with nil evidence. If
+that does not slash, Rust evaluates the validator with the committed arguments
+to supply `new_state` to the handler. Every handler evidence candidate causes a
+further ordered slash invocation until one succeeds or the list is exhausted.
+This repeated execution is required because parameter discovery, commitment
+verification, and evidence trials answer different questions.
 
 Key observations:
 
@@ -415,7 +436,7 @@ validator.
 ### Validator Return: Valid Move with Conditions (Conditional Slash)
 
 ```
-(new_validation_info_hash new_state max_move_size condition1 condition2 ...)
+(next_validation_program_hash new_state max_move_size condition1 condition2 ...)
 ```
 
 Elements beyond the first three are **conditions** that the referee must
@@ -446,9 +467,8 @@ Nil means the move is unconditionally illegal. On-chain, the referee emits
 payout conditions giving the full game amount to the slasher without
 requiring any additional cryptographic proof.
 
-Off-chain, the Rust code represents validator results as
-`Option<Rc<Program>>` — `Some(result)` for non-nil payloads,
-`None` for slash — and initiates a slash when it gets `None`.
+Off-chain, Rust parses a non-nil payload into its next validator hash, state,
+and move-size limit. A nil result means the attempted slash succeeded.
 
 A slash also succeeds when the validator returns non-nil values that
 **don't align** with the referee's committed infohash or max_move_size.
@@ -604,14 +624,12 @@ state, preventing either player from substituting different validation rules.
 ### Off-Chain (Normal Play)
 
 During normal play, both handlers and validators run off-chain on each
-player's machine. The Rust code (`src/referee/my_turn.rs`,
-`src/referee/their_turn.rs`) orchestrates this:
-
-1. Call the handler to produce or interpret a move.
-2. Run the current registry validator with nil evidence.
-3. Resolve a non-nil next validator hash and update the referee's state and
-   maximum move size; treat nil as terminal.
-4. Send the move to the opponent via the potato protocol.
+player's machine. For a local move, Rust calls the my-turn handler, validates
+its move with the current registry validator, resolves the returned next hash,
+and sends the move. For a received move, Rust discovers the transition with a
+nil-evidence validator run, verifies the resulting commitment through the real
+referee slash path, reruns the committed transition for the handler state, and
+then tries each handler-provided evidence candidate through that slash path.
 
 Both players independently run the same validators and arrive at the same
 state. If they disagree, one of them will detect fraud when they try to
