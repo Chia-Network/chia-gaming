@@ -4,6 +4,7 @@ import path from 'node:path';
 import { protocol } from 'electron';
 
 import {
+  appAssetCacheControl,
   BoundedAssetReader,
   isAppSchemeRequestAllowed,
   isOAuthCallbackPath,
@@ -133,7 +134,7 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
       'content-type': MIME_TYPES.get(path.extname(filePath).toLowerCase()) ?? DEFAULT_MIME_TYPE,
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
-      'cache-control': 'public, max-age=31536000, immutable',
+      'cache-control': appAssetCacheControl(filePath),
     });
     // The CSP belongs on the document, which is the only thing that can host
     // script. Read per document, so reloading is all it takes to apply a hub

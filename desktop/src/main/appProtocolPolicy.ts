@@ -22,6 +22,12 @@ export function isOAuthCallbackPath(pathname: string): boolean {
   return normalized === OAUTH_CALLBACK_PATH;
 }
 
+export function appAssetCacheControl(filePath: string): string {
+  return filePath.toLowerCase().endsWith('.html')
+    ? 'no-store'
+    : 'public, max-age=31536000, immutable';
+}
+
 export function isAppSchemeRequestAllowed(request: AppSchemeRequest): boolean {
   const url = new URL(request.url);
   const fetchSite = request.headers.get('sec-fetch-site');

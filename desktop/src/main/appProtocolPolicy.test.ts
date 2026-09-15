@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { BoundedAssetReader, isAppSchemeRequestAllowed } from './appProtocolPolicy.ts';
+import {
+  appAssetCacheControl,
+  BoundedAssetReader,
+  isAppSchemeRequestAllowed,
+} from './appProtocolPolicy.ts';
 
 function request(
   url: string,
@@ -12,6 +16,12 @@ function request(
 }
 
 describe('app protocol policy', () => {
+  it('does not cache documents as immutable assets', () => {
+    assert.equal(appAssetCacheControl('/renderer/index.html'), 'no-store');
+    assert.equal(appAssetCacheControl('/renderer/INDEX.HTML'), 'no-store');
+    assert.equal(appAssetCacheControl('/renderer/app.js'), 'public, max-age=31536000, immutable');
+  });
+
   it('allows app requests and only the OAuth cross-site navigation', () => {
     assert.equal(
       isAppSchemeRequestAllowed(
