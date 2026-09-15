@@ -128,6 +128,12 @@ fn failed_game_action_context(action: &GameAction) -> Option<(GameID, FailedGame
     }
 }
 
+struct DrainQueueFailure {
+    queue_index: Option<usize>,
+    action: Option<GameAction>,
+    source: Error,
+}
+
 fn format_batch_action(action: &BatchAction) -> String {
     match action {
         BatchAction::ProposeGroup(group) => {
@@ -437,8 +443,14 @@ impl OffChainPhase {
         if !self.has_potato() || self.game_action_queue.is_empty() {
             return Ok(vec![]);
         }
-        let (_sent, effects) = self.drain_queue_into_batch(env)?;
-        Ok(effects)
+        match self.drain_queue_into_batch(env) {
+            Ok((_sent, effects)) => Ok(effects),
+            Err(failure) => {
+                self.last_failed_queued_action =
+                    failure.action.as_ref().and_then(failed_game_action_context);
+                Err(failure.source)
+            }
+        }
     }
 
     pub fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
@@ -485,26 +497,32 @@ impl OffChainPhase {
             let drain_queue_snapshot = self.game_action_queue.clone();
             match self.drain_queue_into_batch(env) {
                 Ok(result) => break result,
-                Err(error) => {
-                    let Some((id, action)) = self.take_failed_queued_action() else {
-                        return Err(error);
+                Err(failure) => {
+                    let DrainQueueFailure {
+                        queue_index,
+                        action: failed_action,
+                        source,
+                    } = failure;
+                    let Some((failed_index, failed_action)) =
+                        queue_index.zip(failed_action.as_ref())
+                    else {
+                        return Err(source);
                     };
-                    let failed_index = drain_queue_snapshot
-                        .iter()
-                        .position(|queued| failed_game_action_context(queued) == Some((id, action)))
-                        .ok_or_else(|| {
-                            Error::StrErr(
-                                "failed queued action missing from local drain snapshot"
-                                    .to_string(),
-                            )
-                        })?;
+                    let Some((id, action)) = failed_game_action_context(failed_action) else {
+                        return Err(source);
+                    };
+                    if failed_index >= drain_queue_snapshot.len() {
+                        return Err(Error::StrErr(
+                            "failed queued action index exceeds local drain snapshot".to_string(),
+                        ));
+                    }
                     self.channel_state = drain_channel_snapshot;
                     self.game_action_queue = drain_queue_snapshot;
                     self.game_action_queue.remove(failed_index);
                     effects.push(Effect::Notify(GameNotification::ActionFailed {
                         id: Some(id),
                         action: Some(action),
-                        reason: format!("{error:?}"),
+                        reason: format!("{source:?}"),
                     }));
                 }
             }
@@ -1017,6 +1035,26 @@ impl OffChainPhase {
     fn drain_queue_into_batch(
         &mut self,
         env: &mut ChannelEnv<'_>,
+    ) -> Result<(bool, Vec<Effect>), DrainQueueFailure> {
+        let mut current_action = None;
+        let result = self.drain_queue_into_batch_inner(env, &mut current_action);
+        result.map_err(|source| {
+            let (queue_index, action) = match current_action {
+                Some((index, action)) => (Some(index), Some(action)),
+                None => (None, None),
+            };
+            DrainQueueFailure {
+                queue_index,
+                action,
+                source,
+            }
+        })
+    }
+
+    fn drain_queue_into_batch_inner(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        current_action: &mut Option<(usize, GameAction)>,
     ) -> Result<(bool, Vec<Effect>), Error> {
         game_assert!(
             matches!(self.have_potato, PotatoState::Present),
@@ -1027,9 +1065,11 @@ impl OffChainPhase {
         let mut deferred = VecDeque::new();
         let mut applied_actions = Vec::new();
         let mut request_potato_back = false;
+        let mut queue_index = 0;
 
         while let Some(action) = self.game_action_queue.pop_front() {
-            self.last_failed_queued_action = failed_game_action_context(&action);
+            *current_action = Some((queue_index, action.clone()));
+            queue_index += 1;
             match action {
                 GameAction::Move(game_id, prepared) => {
                     let ch = self.channel_state_mut()?;
@@ -1143,6 +1183,7 @@ impl OffChainPhase {
                             self.channel_state_mut()?.send_cancel_proposal(id)?;
                         }
                         batch_actions.push(BatchAction::CancelProposalGroup(group_id));
+                        *current_action = None;
                         continue;
                     }
                     let saved_channel = self.channel_state.clone();
@@ -1189,6 +1230,7 @@ impl OffChainPhase {
                         deferred.push_back(GameAction::CleanShutdown);
                         deferred.append(&mut self.game_action_queue);
                         request_potato_back = true;
+                        *current_action = None;
                         break;
                     }
                     {
@@ -1232,7 +1274,6 @@ impl OffChainPhase {
                     effects.push(Effect::PeerCleanShutdown {
                         channel_half_sig: spend.signature,
                     });
-                    self.last_failed_queued_action = None;
                     return Ok((true, effects));
                 }
                 #[cfg(test)]
@@ -1242,6 +1283,7 @@ impl OffChainPhase {
                     batch_actions.push(BatchAction::AcceptProposalGroup(game_id));
                 }
             }
+            *current_action = None;
         }
 
         self.game_action_queue = deferred;
@@ -1249,7 +1291,6 @@ impl OffChainPhase {
         if batch_actions.is_empty() {
             // No batch was packaged; deferred actions remain pending for a
             // future potato receipt, so this flush has no attributable failure.
-            self.last_failed_queued_action = None;
             return Ok((false, effects));
         }
 
@@ -1282,7 +1323,6 @@ impl OffChainPhase {
 
         // Packaging and delivery intent succeeded. Later failures cannot be
         // attributed to a still-pending local action from this flush.
-        self.last_failed_queued_action = None;
         Ok((true, effects))
     }
 
