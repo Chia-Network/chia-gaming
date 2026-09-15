@@ -1180,7 +1180,7 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  flushDeferredWork(): void {
+  private drainDeferredEvents(): void {
     if (this.drainTimer) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
@@ -1195,7 +1195,10 @@ export class SessionController implements PollingGameSession {
         Math.max(ACTIVE_DRAIN_EVENT_BUDGET, this.eventQueue.length),
       );
     }
+  }
 
+  flushDeferredWork(): void {
+    this.drainDeferredEvents();
     if (this.durabilityFlushTimer) {
       clearTimeout(this.durabilityFlushTimer);
       this.durabilityFlushTimer = null;
@@ -1219,7 +1222,8 @@ export class SessionController implements PollingGameSession {
         !this.drainScheduled &&
         !this.durabilityFlushScheduled &&
         this.pendingOutboundSends.length === 0 &&
-        this.pendingAcks.length === 0
+        this.pendingAcks.length === 0 &&
+        !this.reliableTransport.hasPendingDurability()
       ) {
         return;
       }
@@ -1594,7 +1598,7 @@ export class SessionController implements PollingGameSession {
   }
 
   private async persistReliableBoundary(): Promise<void> {
-    this.flushDeferredWork();
+    this.drainDeferredEvents();
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
