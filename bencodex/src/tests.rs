@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{from_slice, to_vec};
+use crate::{
+    from_slice, from_slice_with_limits, parse, parse_with_limits, to_vec, Limits,
+};
 
 #[test]
 fn bool_true() {
@@ -348,4 +350,51 @@ fn tuple_variant_round_trip() {
     let encoded = to_vec(&val).unwrap();
     let decoded: Msg = from_slice(&encoded).unwrap();
     assert_eq!(decoded, val);
+}
+
+#[test]
+fn value_and_serde_decoders_reject_excessive_depth() {
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct Nested(Vec<Nested>);
+
+    let limits = Limits::default();
+    let mut nested = vec![b'l'; limits.max_depth + 2];
+    nested.extend(std::iter::repeat_n(b'e', limits.max_depth + 2));
+
+    assert!(parse(&nested).is_err());
+    let error = from_slice::<Nested>(&nested).unwrap_err();
+    assert!(error.to_string().contains("maximum value nesting depth"));
+
+    let raised_limits = Limits {
+        max_depth: limits.max_depth + 1,
+        ..limits
+    };
+    assert!(parse_with_limits(&nested, raised_limits).is_ok());
+    assert!(from_slice_with_limits::<Nested>(&nested, raised_limits).is_ok());
+}
+
+#[test]
+fn value_and_serde_decoders_reject_excessive_value_count() {
+    let limits = Limits::default();
+    let mut wide = Vec::with_capacity(limits.max_values + 2);
+    wide.push(b'l');
+    wide.extend(std::iter::repeat_n(b'n', limits.max_values + 1));
+    wide.push(b'e');
+
+    assert!(parse(&wide).is_err());
+    let error = from_slice::<Vec<()>>(&wide).unwrap_err();
+    assert!(error.to_string().contains("maximum value count"));
+}
+
+#[test]
+fn custom_value_limit_is_enforced_by_both_decoders() {
+    let limits = Limits {
+        max_depth: usize::MAX,
+        max_values: 2,
+    };
+    let input = b"lnne";
+
+    assert!(parse_with_limits(input, limits).is_err());
+    assert!(from_slice_with_limits::<Vec<()>>(input, limits).is_err());
 }

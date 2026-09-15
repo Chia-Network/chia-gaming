@@ -1,9 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::Error;
-
-const MAX_PARSE_DEPTH: usize = 512;
-const MAX_PARSE_VALUES: usize = 100_000;
+use crate::{Error, Limits};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -23,10 +20,15 @@ pub fn encode(value: &Value) -> Result<Vec<u8>, Error> {
 }
 
 pub fn parse(input: &[u8]) -> Result<Value, Error> {
+    parse_with_limits(input, Limits::default())
+}
+
+pub fn parse_with_limits(input: &[u8], limits: Limits) -> Result<Value, Error> {
     let mut parser = Parser {
         input,
         offset: 0,
         values: 0,
+        limits,
     };
     let value = parser.value(0)?;
     if parser.offset != input.len() {
@@ -102,6 +104,7 @@ struct Parser<'a> {
     input: &'a [u8],
     offset: usize,
     values: usize,
+    limits: Limits,
 }
 
 impl Parser<'_> {
@@ -116,13 +119,13 @@ impl Parser<'_> {
     }
 
     fn value(&mut self, depth: usize) -> Result<Value, Error> {
-        if depth > MAX_PARSE_DEPTH {
+        if depth > self.limits.max_depth {
             return Err(Error::InvalidData(
                 "maximum value nesting depth exceeded".to_string(),
             ));
         }
         self.values += 1;
-        if self.values > MAX_PARSE_VALUES {
+        if self.values > self.limits.max_values {
             return Err(Error::InvalidData(
                 "maximum value count exceeded".to_string(),
             ));
@@ -263,13 +266,14 @@ mod tests {
 
     #[test]
     fn parse_rejects_excessive_depth_and_value_count() {
-        let mut nested = vec![b'l'; MAX_PARSE_DEPTH + 2];
-        nested.extend(std::iter::repeat_n(b'e', MAX_PARSE_DEPTH + 2));
+        let limits = Limits::default();
+        let mut nested = vec![b'l'; limits.max_depth + 2];
+        nested.extend(std::iter::repeat_n(b'e', limits.max_depth + 2));
         assert!(parse(&nested).is_err());
 
-        let mut wide = Vec::with_capacity(MAX_PARSE_VALUES * 2 + 2);
+        let mut wide = Vec::with_capacity(limits.max_values * 2 + 2);
         wide.push(b'l');
-        for _ in 0..=MAX_PARSE_VALUES {
+        for _ in 0..=limits.max_values {
             wide.extend_from_slice(b"0:");
         }
         wide.push(b'e');
