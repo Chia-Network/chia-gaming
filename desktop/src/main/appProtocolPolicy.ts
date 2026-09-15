@@ -9,17 +9,20 @@ type AppSchemeRequest = {
   referrer: string;
 };
 
+function normalizeDocumentPath(pathname: string): string {
+  return pathname.replace(/\/$/, '') || '/';
+}
+
 function isDocumentNavigation(request: AppSchemeRequest, pathname: string): boolean {
   return (
-    APP_DOCUMENT_PATHS.has(pathname) &&
+    APP_DOCUMENT_PATHS.has(normalizeDocumentPath(pathname)) &&
     request.headers.get('sec-fetch-mode') === 'navigate' &&
     request.headers.get('sec-fetch-dest') === 'document'
   );
 }
 
 export function isOAuthCallbackPath(pathname: string): boolean {
-  const normalized = pathname.replace(/\/$/, '') || '/';
-  return normalized === OAUTH_CALLBACK_PATH;
+  return normalizeDocumentPath(pathname) === OAUTH_CALLBACK_PATH;
 }
 
 export function appAssetCacheControl(filePath: string): string {

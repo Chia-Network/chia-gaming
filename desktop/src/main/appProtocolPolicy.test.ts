@@ -47,6 +47,16 @@ describe('app protocol policy', () => {
     );
     assert.equal(
       isAppSchemeRequestAllowed(
+        request('chiagaming://app/oauth/callback/', {
+          'sec-fetch-site': 'cross-site',
+          'sec-fetch-mode': 'navigate',
+          'sec-fetch-dest': 'document',
+        }),
+      ),
+      true,
+    );
+    assert.equal(
+      isAppSchemeRequestAllowed(
         request('chiagaming://app/oauth/callback', {
           'sec-fetch-site': 'cross-site',
           'sec-fetch-mode': 'no-cors',
