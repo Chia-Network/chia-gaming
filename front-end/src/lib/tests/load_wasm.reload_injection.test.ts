@@ -5,6 +5,7 @@ import { useCalpokerHand, type UseCalpokerHandResult } from '@games/calpoker/ui/
 import type { GameIntent, LiveGamePort } from '@games/host';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
 import {
@@ -462,6 +463,77 @@ it(
     } catch (error) {
       throw new Error(`[load_wasm reload injection failed]\n${String(error)}`, { cause: error });
     }
+  },
+  120 * 1000,
+);
+
+it(
+  'isolates deterministic simulator behavior between controller harness instances',
+  async () => {
+    const poller = await startSimulator(['a11ce010', 'b0b70010']);
+    if (!poller) return;
+
+    const adapters = [
+      addActiveCradle(new SessionControllerAdapter()),
+      addActiveCradle(new SessionControllerAdapter()),
+    ] as const;
+    const calls: [string[], string[]] = [[], []];
+    let releaseDelayedRegistration!: () => void;
+    const delayedRegistration = new Promise<void>((resolve) => {
+      releaseDelayedRegistration = resolve;
+    });
+    let signalDelayedEntered!: () => void;
+    const delayedEntered = new Promise<void>((resolve) => {
+      signalDelayedEntered = resolve;
+    });
+    const immediateBehavior = {
+      registerUser: async (uniqueId: string, balance?: bigint) => {
+        calls[0].push(uniqueId);
+        return fakeBlockchainInfo.registerUser(uniqueId, balance);
+      },
+    };
+    const delayedBehavior = {
+      registerUser: async (uniqueId: string, balance?: bigint) => {
+        calls[1].push(uniqueId);
+        signalDelayedEntered();
+        await delayedRegistration;
+        return fakeBlockchainInfo.registerUser(uniqueId, balance);
+      },
+    };
+
+    const delayedController = initSessionController(
+      poller,
+      'b0b70010',
+      false,
+      adapters[1].peerConnection,
+      new WasmStateInit(fetchPreset),
+      100n,
+      100n,
+      delayedBehavior,
+    );
+    await delayedEntered;
+    const immediateController = initSessionController(
+      poller,
+      'a11ce010',
+      true,
+      adapters[0].peerConnection,
+      new WasmStateInit(fetchPreset),
+      100n,
+      100n,
+      immediateBehavior,
+    );
+
+    const firstCompleted = await Promise.race([
+      immediateController.then(() => 'immediate'),
+      delayedController.then(() => 'delayed'),
+    ]);
+    assert.equal(firstCompleted, 'immediate');
+    assert.deepEqual(calls, [['a11ce010'], ['b0b70010']]);
+
+    adapters[0].set_blob(await immediateController);
+    releaseDelayedRegistration();
+    adapters[1].set_blob(await delayedController);
+    assert.deepEqual(calls, [['a11ce010'], ['b0b70010']]);
   },
   120 * 1000,
 );

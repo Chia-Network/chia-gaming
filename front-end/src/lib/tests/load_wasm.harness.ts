@@ -474,6 +474,10 @@ export function postMoveHandState(
   };
 }
 
+export interface SimulatorControllerBehavior {
+  registerUser(uniqueId: string, balance?: bigint): Promise<string>;
+}
+
 export async function initSessionController(
   blockchain: BlockchainPoller,
   uniqueId: string,
@@ -482,8 +486,9 @@ export async function initSessionController(
   wasmStateInit: WasmStateInit,
   myContribution = 100n,
   theirContribution = 100n,
+  simulator: SimulatorControllerBehavior = fakeBlockchainInfo,
 ) {
-  const rewardPuzzleHash = await fakeBlockchainInfo.registerUser(uniqueId);
+  const rewardPuzzleHash = await simulator.registerUser(uniqueId);
   const gameObject = new SessionController(
     blockchain,
     uniqueId,
