@@ -61,19 +61,15 @@ pub(crate) mod sim_tests {
             .ch
             .get_initial_signatures()
             .expect("receiver state 0 signatures");
-        game.player(0)
-            .ch
-            .verify_and_store_initial_peer_signatures(env, &state_zero_signatures)
-            .expect("initiator stores state 0");
-        let state_one_signatures = game
+        let genesis = game
             .player(0)
             .ch
-            .send_empty_potato(env)
-            .expect("initiator state 1 signatures");
+            .initialize_genesis_as_initiator(env, &state_zero_signatures)
+            .expect("initiator establishes genesis states");
         game.player(1)
             .ch
-            .received_empty_potato(env, &state_one_signatures)
-            .expect("receiver stores state 1");
+            .initialize_genesis_as_receiver(env, &genesis.state_one_signatures)
+            .expect("receiver establishes genesis state 1");
         game
     }
 

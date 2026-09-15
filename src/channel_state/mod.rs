@@ -164,6 +164,11 @@ pub struct ChannelState {
     proposed_games: Vec<ProposedGame>,
 }
 
+pub struct InitiatorGenesisTransition {
+    pub state_zero_spend: ChannelCoinSpendInfo,
+    pub state_one_signatures: StateUpdateSignatures,
+}
+
 impl ChannelState {
     fn validate_peer_identity(
         private_keys: &ChannelPrivateKeys,
@@ -503,6 +508,45 @@ impl ChannelState {
             solution: verified_spend.solution.p(),
             conditions: verified_spend.conditions.p(),
         })
+    }
+
+    pub fn initialize_genesis_as_initiator(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        state_zero_signatures: &StateUpdateSignatures,
+    ) -> Result<InitiatorGenesisTransition, Error> {
+        game_assert_eq!(
+            self.state_number,
+            0,
+            "initiator genesis initialization must start at state 0"
+        );
+        game_assert!(
+            !self.have_potato,
+            "initiator must not own the genesis potato"
+        );
+        let snapshot = self.clone();
+        let result = (|| {
+            let state_zero_spend =
+                self.verify_and_store_initial_peer_signatures(env, state_zero_signatures)?;
+            let state_one_signatures = self.update_cached_unroll_state(env)?;
+            game_assert_eq!(
+                self.state_number,
+                1,
+                "initiator genesis initialization must establish state 1"
+            );
+            game_assert!(
+                !self.have_potato,
+                "initiator must finish genesis without the potato"
+            );
+            Ok(InitiatorGenesisTransition {
+                state_zero_spend,
+                state_one_signatures,
+            })
+        })();
+        if result.is_err() {
+            *self = snapshot;
+        }
+        result
     }
 
     pub fn has_active_games(&self) -> bool {
@@ -956,6 +1000,45 @@ impl ChannelState {
     }
 
     pub fn received_empty_potato(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        signatures: &StateUpdateSignatures,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        self.receive_empty_potato_signatures(env, signatures)
+    }
+
+    pub fn initialize_genesis_as_receiver(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        state_one_signatures: &StateUpdateSignatures,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        game_assert_eq!(
+            self.state_number,
+            0,
+            "receiver genesis initialization must start at state 0"
+        );
+        game_assert!(self.have_potato, "receiver must own the genesis potato");
+        let snapshot = self.clone();
+        let result = (|| {
+            let spend = self.receive_empty_potato_signatures(env, state_one_signatures)?;
+            game_assert_eq!(
+                self.state_number,
+                1,
+                "receiver genesis initialization must establish state 1"
+            );
+            game_assert!(
+                self.have_potato,
+                "receiver must finish genesis with the potato"
+            );
+            Ok(spend)
+        })();
+        if result.is_err() {
+            *self = snapshot;
+        }
+        result
+    }
+
+    fn receive_empty_potato_signatures(
         &mut self,
         env: &mut ChannelEnv<'_>,
         signatures: &StateUpdateSignatures,

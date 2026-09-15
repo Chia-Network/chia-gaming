@@ -408,11 +408,12 @@ impl HandshakeReceiverPhase {
 
                 let spend_info = {
                     let ch = self.channel_state_mut()?;
-                    ch.received_empty_potato(env, signatures).map_err(|e| {
-                        Error::StrErr(format!(
-                            "receiver step E: verify state 1 signatures failed: {e}"
-                        ))
-                    })?
+                    ch.initialize_genesis_as_receiver(env, signatures)
+                        .map_err(|e| {
+                            Error::StrErr(format!(
+                                "receiver step E: genesis initialization failed: {e}"
+                            ))
+                        })?
                 };
                 self.last_channel_coin_spend_info = Some(spend_info);
                 if self.last_height > 0 {

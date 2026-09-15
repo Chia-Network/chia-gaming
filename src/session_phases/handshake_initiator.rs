@@ -420,24 +420,17 @@ impl HandshakeInitiatorPhase {
                     )));
                 };
 
-                let spend_info = {
+                let genesis = {
                     let ch = self.channel_state_mut()?;
-                    ch.verify_and_store_initial_peer_signatures(env, &msg.signatures)
+                    ch.initialize_genesis_as_initiator(env, &msg.signatures)
                         .map_err(|e| {
                             Error::StrErr(format!(
-                                "initiator step D: verify/store initial peer signatures failed: {e}"
+                                "initiator step D: genesis initialization failed: {e}"
                             ))
                         })?
                 };
-                self.last_channel_coin_spend_info = Some(spend_info);
-                let our_sigs = {
-                    let ch = self.channel_state_mut()?;
-                    ch.send_empty_potato(env).map_err(|e| {
-                        Error::StrErr(format!(
-                            "initiator step D: create state 1 signatures failed: {e}"
-                        ))
-                    })?
-                };
+                self.last_channel_coin_spend_info = Some(genesis.state_zero_spend);
+                let our_sigs = genesis.state_one_signatures;
                 if self.last_height > 0 {
                     let coin_spend_request = self.build_alice_coin_spend_request()?;
                     self.channel_deadline = self.compute_not_valid_after_height();
