@@ -134,6 +134,12 @@ directory and rejects anything that escapes it. It reads through Node's `fs`
 rather than `net.fetch(file://…)` because asar support is implemented as an `fs`
 shim; that is what lets the renderer stay sealed inside `app.asar`, where the
 integrity-validation fuse still covers it, instead of being unpacked beside it.
+Cross-site asset requests are rejected using Chromium Fetch Metadata, with the
+Cloud Wallet's top-level `/oauth/callback` navigation as the sole exception.
+Successful reads are cached and simultaneous requests for the same asset are
+coalesced; at most four distinct uncached files are read concurrently. Packaged
+renderer assets are immutable for the lifetime of the process and receive
+matching immutable cache headers.
 
 ### Content Security Policy
 

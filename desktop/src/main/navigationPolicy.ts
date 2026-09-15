@@ -10,6 +10,9 @@ export function isNavigationAllowed(
   if (isMainFrame && isPlayerMainContents) {
     return isPlayerAppDocumentUrl(url);
   }
+  if (!isMainFrame && isPlayerMainContents && isAppUrl(url)) {
+    return false;
+  }
   if (url === 'about:blank' || isAppUrl(url)) {
     return true;
   }

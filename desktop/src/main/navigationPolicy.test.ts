@@ -30,5 +30,6 @@ describe('desktop navigation policy', () => {
       true,
     );
     assert.equal(isNavigationAllowed('https://frames.example/embed', false, policy, true), true);
+    assert.equal(isNavigationAllowed('chiagaming://app/about.html', false, policy, true), false);
   });
 });
