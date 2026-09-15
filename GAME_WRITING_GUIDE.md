@@ -123,7 +123,7 @@ Two identifiers appear in the code:
 
 - The **catalog key** is the readable name from `registry.json`. The frontend
   uses it in saves and when choosing a UI package.
-- The **protocol ID** is the first generated game's initial validation puzzle
+- The **protocol ID** is the first generated game's first validation-program
   hash (`initial_validation_program_hash`). Peers use that puzzle hash to
   identify the game on the wire. It is not a hash of the factory code.
 
@@ -166,7 +166,7 @@ these 10 fields:
 ```clojure
 (player_a_contribution player_b_contribution player_a_goes_first initial_move
  initial_max_move_size initial_state initial_mover_share my_turn_handler
- their_turn_handler initial_validator)
+ their_turn_handler validation_programs)
 ```
 
 The fields mean:
@@ -181,7 +181,7 @@ The fields mean:
 | `initial_mover_share` | Mover's timeout payout in mojos, between zero and the member's total amount. |
 | `my_turn_handler` | Off-chain program for the player who starts. |
 | `their_turn_handler` | Off-chain program for the waiting player. |
-| `initial_validator` | On-chain program committed at game start and used to begin validator chaining. |
+| `validation_programs` | Proper, nonempty list of all validator programs. The first is initially current; later order is irrelevant because programs are selected by tree hash. |
 
 The handler fields are program values, not names. Curry secrets or
 role-specific data into them when needed. California Poker validates equal
@@ -189,6 +189,10 @@ positive contributions and nil parameters, then emits one record:
 
 ```clojure
 (import games.calpoker.clsp.onchain.a exposing (program as pokera))
+(import games.calpoker.clsp.onchain.b exposing (program as pokerb))
+(import games.calpoker.clsp.onchain.c exposing (program as pokerc))
+(import games.calpoker.clsp.onchain.d exposing (program as pokerd))
+(import games.calpoker.clsp.onchain.e exposing (program as pokere))
 (import std.li)
 (import std.assert)
 (import std.relops)
@@ -206,7 +210,7 @@ positive contributions and nil parameters, then emits one record:
                 0 32 0 0
                 calpoker_alice_handler_a
                 calpoker_bob_handler_a
-                pokera
+                (li pokera pokerb pokerc pokerd pokere)
             )
         )
     )
@@ -226,9 +230,11 @@ reinterpret or reorder factory members. Krunk always returns two members in
 fixed order: member 0 has player A first and member 1 has player B first.
 
 Return each player's contribution separately; the host derives the total
-amount. Return the initial validator program itself; the host derives its tree
-hash. The first member's initial-validator hash is the package's protocol
-identity. See [the factory return format](clsp/handler_api.md#game-factory).
+amount. Return every validator program in field 9's proper, nonempty registry;
+the host derives their tree hashes. Its first program is initially current and
+later programs are resolved by tree hash, independent of list order. The first
+member's first-validator hash is the package's protocol identity. See
+[the factory return format](clsp/handler_api.md#game-factory).
 
 During play, the engine uses:
 
@@ -257,15 +263,16 @@ coin; the waiting player receives `amount - mover_share`. A local move chooses
 the share for the next coin. The opponent-facing handler and validator must
 reject a peer move whose declared share disagrees with the game result.
 
-A successful my-turn handler returns seven or eight values:
+A successful my-turn handler returns four or five values:
 
 ```clojure
-(label move outgoing_validator incoming_validator max_move_size
- mover_share their_turn_handler optional_message_parser)
+(label move mover_share their_turn_handler optional_message_parser)
 ```
 
-`outgoing_validator` validates the move just created.
-`incoming_validator` commits to the opponent's next move. A two-value
+The handler owns `mover_share`. It returns no validator programs and no maximum
+move size. Rust runs the current factory-registry validator with the move and
+nil evidence to obtain the next validator hash, state, and maximum move size,
+then resolves a non-nil hash in the same registry; nil is terminal. A two-value
 `(error_tag message_bytes)` return rejects local UI input as `MoveRejected`; a
 CLVM raise is an internal handler failure.
 
@@ -273,16 +280,18 @@ The host validates that the addressed member currently grants local move
 authority, then runs this my-turn handler synchronously at the move-directive
 boundary. A tagged rejection is therefore synchronous and queues no readable
 input. On success Rust retains only a durable uncurried `PreparedMove` containing
-the relevant handler outputs, including the optional parser when present. It does not
-retain the readable, entropy, a transaction, a curried referee, or a derived
-puzzle hash. Potato acquisition or later on-chain actuation consumes that
-prepared output to apply/curry/sign/send; it never reruns your handler.
+the move, mover share, waiting handler, and optional parser. It does not retain
+validator programs, a maximum move size, the readable, entropy, a transaction,
+a curried referee, or a derived puzzle hash. Potato acquisition or later
+on-chain actuation consumes that prepared output to apply/curry/sign/send; it
+never reruns your handler.
 Post-application redo caching is a separate protocol mechanism.
 
 Import validators using their compiled `program` export, as above. Factory field
-10 and handler validator returns contain those program values. Handler functions
-are also program values; use `(curry handler captured_value...)` when the next
-phase needs a secret or other role-specific data.
+9 contains the proper nonempty list of those program values; handlers do not
+return validators. Handler functions are also program values; use
+`(curry handler captured_value...)` when the next phase needs a secret or other
+role-specific data.
 
 A their-turn handler returns:
 
@@ -309,7 +318,7 @@ returns its first my-turn handler:
     preimage (substr entropy 0 16)
     (list "calpoker_alice_handler_a"
           (sha256 preimage)
-          pokera pokerb 16 0
+          0
           (curry calpoker_alice_handler_b preimage))))
 
 (defun calpoker_bob_handler_a
@@ -358,6 +367,9 @@ move shape before operations such as `substr`. A nil-evidence run that
 finds no slash must return a valid payload, including a next state when
 there is one, because the receiver uses that run to derive the transition
 and next max move size. Evidence is never required for this inspection run.
+For a continuing move, the returned hash must resolve to a program in the
+factory registry and the their-turn handler must return a non-nil next handler.
+For a terminal move, both the next validator hash and next handler must be nil.
 Non-nil evidence either proves the validator's specific accusation or fails to
 slash. A validator may reject unusable evidence by raising or may treat it like
 nil and return the valid payload. Evidence processing that can raise must occur
@@ -376,12 +388,12 @@ validator is a compact example:
       0))
 ```
 
-The first validator is not executed to create the first local move; the factory
-supplies `initial_state`, and the handler returns the validators that continue
-the chain. Each outgoing validator hash must match the prior incoming
-commitment. See California Poker's
-[`onchain/`](games/calpoker/clsp/onchain) directory for the complete chain,
-[`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) for complete move-chain,
+The factory supplies `initial_state` to the first local handler and selects the
+first registry validator as current for that move. Each successful nil-evidence
+validator run returns the tree hash selecting the next registry program. See
+California Poker's
+[`onchain/`](games/calpoker/clsp/onchain) directory for the complete validator
+registry and sequence, [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) for handler flow,
 nil-move, evidence, and conditional-slash examples,
 [`clsp/handler_api.md`](clsp/handler_api.md) for the full return contracts, and
 [`CLVM_DOS.md`](CLVM_DOS.md) for cost and size limits.
@@ -402,8 +414,8 @@ The final `()` is Calpoker's nil parameter value; it is not an omitted
 argument. Krunk uses `(list 100 100 ())`, while Space Poker supplies its positive
 integer bet unit as the third item. The build compiles both files, curries any
 `factory_args.clvm.bin` into the factory, and runs the probe against that
-prepared factory. It records the first returned game's initial validation
-puzzle hash as the protocol ID and emits one prepared binary factory for
+prepared factory. It records the first returned game's first validation-program
+hash as the protocol ID and emits one prepared binary factory for
 runtime use. The factory itself is never hashed as an identifier.
 
 Factory loading, binary serialization, caching, and registration are player
@@ -449,7 +461,7 @@ California Poker's
 [`handlers.rs`](games/calpoker/rust/tests/handlers.rs) and
 [`validation.rs`](games/calpoker/rust/tests/validation.rs) are the complete
 examples; their card calculations are game-specific, but their puzzle loading,
-move-chain, and slash harness structure are reusable.
+move-sequence, and slash harness structure are reusable.
 Start from `calpoker_factory_succeeds` for factory invocation and
 `test_calpoker_handlers_happy_path` for a two-sided handler chain. There is no
 package-facing Rust helper that can infer your handler arguments or readable
@@ -1225,10 +1237,11 @@ and terminal projection.
 
 The minimum useful test layers are:
 
-1. **Factory:** valid terms produce the expected ordered 10-field records;
+1. **Factory:** valid terms produce the expected ordered 10-field records and
+   proper nonempty validator registries;
    malformed parameters and contribution rules fail.
-2. **Handlers:** each legal local move returns the intended move, validator
-   chain, next handler, and readable; invalid local UI input rejects.
+2. **Handlers:** each legal local move returns the intended move, mover share,
+   next handler, and readable; invalid local UI input rejects.
 3. **Validators/referee:** legal moves survive invalid slash attempts and each
    illegal peer move is slashable with the intended evidence.
 4. **Package state:** `createHand`, `receive`, `getState`, and `restoreHand`

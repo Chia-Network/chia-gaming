@@ -7,7 +7,7 @@ use crate::channel_state::game_handler::{
     GameHandler, MessageHandler, MyTurnInputs, MyTurnResult, PreparedMove,
 };
 use crate::channel_state::game_start_info::GameStartInfo;
-use crate::channel_state::types::{Evidence, ReadableMove};
+use crate::channel_state::types::{Evidence, ReadableMove, StateUpdateProgram};
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
@@ -33,10 +33,12 @@ pub enum MyTurnRefereeGameState {
         initial_state: Rc<Program>,
         initial_puzzle_args: Rc<RefereePuzzleArgs>,
         game_handler: GameHandler,
+        validation_program: StateUpdateProgram,
     },
     AfterTheirTurn {
         // Live information for this turn.
         game_handler: Option<GameHandler>,
+        validation_program: Option<StateUpdateProgram>,
         state_after_their_turn: Rc<Program>,
 
         // Stored info for referee args
@@ -78,84 +80,11 @@ impl MyTurnRefereeGameState {
 /// roles each turn.  The mover signs moves via AGG_SIG_ME; the waiter can
 /// claim via timeout.
 ///
-/// The flow of things:
-///
-/// our turn 0th move, we do not call the initial validation program
-/// but instead use initial state for the game state.  We pass that state to the game
-/// handler along with the local move to get a serialized move and send it.
-/// We'll produce a state update by applying the local move and the initial_state to the
-/// initial validation program.
-///
-/// their turn 0th move: we received a serialized move, so we'll use the initial_state with
-/// the their turn handler and the serialized move to produce a remote move.  we'll give the
-/// remote move to the initial validation program with the initial state and get the next
-/// state.
-///
-/// Each side needs two validation phases in a standard turn.
-///
-/// The last turn needs to leave behind 2 validation programs.
-///
-/// The first uses the local move along with the state output from the most recent validation
-/// program and produces a new state.
-///
-/// In the second case, we run the their turn handler with the most recent state and the
-/// serialized move, yielding a remove move.  We use the remote move and the most recent
-/// state to generate a new state from the their turn validation program.
-///
-/// The remote side never sees our entropy, that's the main thing that cannot be represented
-/// in the game state, as the game state must be shared.
-///
-/// Anything we must hide from the entropy must be curried into the game handler for use
-/// later.
-///
-/// The flow of a successful subsequent turn is:
-///
-/// my turn:                                   ┌-------------------------------------------┐
-///                                            v                                           |
-/// ┌-> my_turn_handler(local_move, state_after_their_turn0) ->                            |
-/// |            { serialized_our_move, ------------┐    |                                 |
-/// |   ┌--------- their_turn_handler,              |    |                                 |
-/// |   |          local_readable_move,             |    |                                 |
-/// |   |   ┌----- their_turn_validation_program,   |    |                                 |
-/// |   |   |    }                                  |    └------------┐                    |
-/// |   |   |                                       |                 |                    |
-/// |   |   |                                       v                 v                    |
-/// | ┌-|---|->my_turn_validation_program(serialized_our_move, state_after_their_turn0) -> |
-/// | | |   |    state_after_our_turn --------------------------------┐                    |
-/// | | |   |                                                         |                    |
-/// | | |   | their turn:                                             |                    |
-/// | | |   v                                                         v                    |
-/// | | |   their_turn_validation_program(serialized_their_move, state_after_our_turn) ->  |
-/// | | |     state_after_their_turn1 -┐                              |                    |
-/// | | |                              |                              |                    |
-/// | | v                              |                              |                    |
-/// | | their_turn_handler(            ├---------------------------------------------------┘
-/// | |   serialized_their_move,       |                              |
-/// | |   state_after_their_turn1 <----┘                              |
-/// | |   state_after_our_turn, <-------------------------------------┘
-/// | | ) ->
-/// | |   { remote_readable_move,
-/// | └---- my_turn_validation_program,
-/// └------ my_turn_handler,
-///         evidence, --------------> try these with their_turn_validation_program
-///       }
-///
-/// On-chain, the validation programs form a single chain of events:
-///
-///   a.clsp -> b.clsp -> c.clsp -> d.clsp -> e.clsp -> lambda from e.
-///
-/// Off-chain (on the players' machines), there are two progressions, one on
-/// each side:
-///
-/// alice: alice handler 0 -> move 0
-/// bob: move 0 -> a.clsp with state initial_state
-/// bob: bob handler 0 -> move 1
-/// alice: move 1 -> b.clsp
-/// ...
-///
-/// On-chain there's no difference between move 0 _leaving_ alice and
-/// _arriving_ at bob, so we need to ensure that an outgoing move uses the
-/// same validation program as the incoming move that follows.
+/// The factory registry supplies the initial validation program and every
+/// program that can follow it. For each move, both peers run the same current
+/// validator. Its returned hash selects the next program from that registry,
+/// so handlers never choose or transport on-chain code. Entropy-derived
+/// private state remains curried only into off-chain handlers.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MyTurnReferee {
     pub fixed: Rc<RefereeFixedContext>,
@@ -201,6 +130,7 @@ impl MyTurnReferee {
             initial_state: game_start_info.initial_state.p(),
             initial_puzzle_args: setup.ref_puzzle_args,
             game_handler: game_start_info.game_handler.clone(),
+            validation_program: game_start_info.initial_validation_program(),
         });
 
         Ok((
@@ -249,6 +179,19 @@ impl MyTurnReferee {
         }
     }
 
+    fn get_validation_program_for_my_move(&self) -> Result<StateUpdateProgram, Error> {
+        match self.state.borrow() {
+            MyTurnRefereeGameState::Initial {
+                validation_program, ..
+            } => Ok(validation_program.clone()),
+            MyTurnRefereeGameState::AfterTheirTurn {
+                validation_program, ..
+            } => validation_program.clone().ok_or_else(|| {
+                Error::StrErr("move attempted after terminal validator transition".to_string())
+            }),
+        }
+    }
+
     pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
         match self.state.borrow() {
             MyTurnRefereeGameState::Initial { .. } => None,
@@ -285,12 +228,13 @@ impl MyTurnReferee {
         current_state: Rc<Program>,
         current_puzzle_args: Rc<RefereePuzzleArgs>,
         new_puzzle_args: Rc<RefereePuzzleArgs>,
-        my_turn_result: Rc<PreparedMove>,
+        current_validation_program: StateUpdateProgram,
+        next_validation_program: Option<StateUpdateProgram>,
         message_handler: Option<MessageHandler>,
         state_number: usize,
     ) -> Result<TheirTurnReferee, Error> {
         let move_spend = Rc::new(OnChainRefereeMoveData {
-            validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
+            validation_program: current_validation_program,
             state: current_state.clone(),
             new_move: new_puzzle_args.game_move.clone(),
             before_args: current_puzzle_args.clone(),
@@ -299,9 +243,7 @@ impl MyTurnReferee {
 
         let new_state = TheirTurnRefereeGameState {
             game_handler: game_handler.clone(),
-            their_turn_validation_program: my_turn_result
-                .incoming_move_state_update_program
-                .clone(),
+            their_turn_validation_program: next_validation_program,
             current_state: new_state.clone(),
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
@@ -357,9 +299,6 @@ impl MyTurnReferee {
                 name: "cheat".to_string(),
                 move_bytes: fake_move.clone(),
                 mover_share: cheat_share.clone(),
-                max_move_size: args.game_move.basic.max_move_size as usize,
-                outgoing_move_state_update_program: args.validation_program.clone(),
-                incoming_move_state_update_program: args.validation_program.clone(),
                 waiting_handler: Some(game_handler.clone()),
                 message_parser: None,
             }
@@ -416,22 +355,16 @@ impl MyTurnReferee {
         let result = Rc::new(result);
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
-        let outgoing = result.outgoing_move_state_update_program.clone();
-        let basic = GameMoveStateInfo {
+        let outgoing = self.get_validation_program_for_my_move()?;
+        let mut basic = GameMoveStateInfo {
             move_made: result.move_bytes.clone(),
             mover_share: result.mover_share.clone(),
-            max_move_size: u32::try_from(result.max_move_size)
-                .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?,
+            max_move_size: 0,
         };
         let prev_hash = ref_puzzle_args.game_move.validation_info_hash.clone();
-        let placeholder_info_hash = if result.incoming_move_state_update_program.is_nil() {
-            ValidationInfoHash::None
-        } else {
-            prev_hash.clone()
-        };
         let placeholder = GameMoveDetails {
             basic: basic.clone(),
-            validation_info_hash: placeholder_info_hash,
+            validation_info_hash: ValidationInfoHash::None,
             validation_program_hash: None,
         };
         let extract_args = Rc::new(RefereePuzzleArgs {
@@ -474,6 +407,23 @@ impl MyTurnReferee {
             .new_state
             .clone()
             .unwrap_or_else(|| state_to_update.clone());
+        basic.max_move_size = parsed.next_max_move_size;
+        let next_validation_program = if self.enable_cheating.is_some() {
+            Some(outgoing.clone())
+        } else {
+            parsed
+                .next_validator_hash
+                .as_ref()
+                .map(|hash| self.fixed.validation_programs.resolve(hash))
+                .transpose()?
+        };
+        if self.enable_cheating.is_none() {
+            game_assert_eq!(
+                result.waiting_handler.is_some(),
+                next_validation_program.is_some(),
+                "my-turn handler continuation disagrees with validator transition"
+            );
+        }
         let game_move_details = crate::referee::game_move_details_from_transition(
             allocator,
             basic,
@@ -485,7 +435,7 @@ impl MyTurnReferee {
             mover_pubkey: self.fixed.their_referee_pubkey.clone(),
             waiter_pubkey: self.fixed.my_identity.public_key.clone(),
             game_move: game_move_details.clone(),
-            validation_program: outgoing,
+            validation_program: outgoing.clone(),
             previous_validation_info_hash: prev_hash,
             ..ref_puzzle_args.clone()
         });
@@ -496,7 +446,8 @@ impl MyTurnReferee {
             state_to_update,
             args.clone(),
             rc_puzzle_args.clone(),
-            result.clone(),
+            outgoing,
+            next_validation_program,
             result.message_parser.clone(),
             state_number,
         )?;

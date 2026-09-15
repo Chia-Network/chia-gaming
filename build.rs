@@ -318,7 +318,12 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
                 fields.len()
             ));
         }
-        let id = clvm_utils::tree_hash(&allocator, fields[9]).to_bytes();
+        let validators = proper_list(&allocator, fields[9])
+            .ok_or_else(|| format!("factory {key} validators are not a proper list"))?;
+        let initial_validator = validators
+            .first()
+            .ok_or_else(|| format!("factory {key} returned no validators"))?;
+        let id = clvm_utils::tree_hash(&allocator, *initial_validator).to_bytes();
 
         package_ids.insert(key.clone(), id);
         manifest.push(serde_json::json!({

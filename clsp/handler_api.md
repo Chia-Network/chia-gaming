@@ -27,7 +27,7 @@ Every record is a proper list with exactly 10 fields:
 ```
 (player_a_contribution player_b_contribution player_a_goes_first initial_move
  initial_max_move_size initial_state initial_mover_share my_turn_handler
- their_turn_handler initial_validator)
+ their_turn_handler validation_programs)
 ```
 
 `player_a_goes_first` is canonical nil or `1`. Handler order is always the
@@ -37,12 +37,15 @@ shape locally; the wire retains only the ordered setup commitments, and the
 receiver rebuilds raw state, handlers, and validator programs from its own
 factory run. Rust maps player A/B to sender/receiver and local/opponent globally
 using the proposal's one `sender_is_player_a` bit; member order never changes.
-The first member's derived initial-validator hash is the registered protocol
-identity.
+Field 5 remains `initial_state`. Field 9, `validation_programs`, is a proper,
+nonempty list of every validator program the game may select. Its first program
+is the initial validator; later programs are registry entries whose list order
+has no protocol meaning. Validators are selected by tree hash. The first
+member's first validation-program hash is the registered protocol identity.
 
 The host derives `amount` by adding the player A and B contributions. It
-also calculates the initial validator's tree hash, which is the protocol game
-ID for the first record. Factories do not return either redundant value.
+also calculates the first validator's tree hash, which is the protocol game ID
+for the first record. Factories do not return either redundant value.
 
 Canonical CLVM parameters, produced only inside the Rust host by converting the
 game's structured Bencodex proposal parameters:
@@ -90,20 +93,20 @@ There are two kinds of handlers:
 
 ## Return values
 
-My-turn return (success, 7-8 elements):
+My-turn return (success, 4-5 elements):
   (
     label                          ; string, for UI/debug
     move                           ; bytes, the move to send on-chain
-    outgoing_validator             ; program, validates THIS move
-    incoming_validator             ; program, validates opponent's NEXT move
-    max_move_size                  ; int, max bytes the opponent may send
     mover_share                    ; int, our share if opponent times out
     their_turn_handler             ; program, handler for opponent's turn
     message_parser                 ; optional program or nil (see Message Parser below)
   )
 
-  "outgoing" = validates the move we just produced (our move).
-  "incoming" = validates the move the opponent will produce next.
+  The current validator is selected from the factory's `validation_programs`
+  registry, initially its first entry. Running it with this move and nil
+  evidence derives the next validator hash, new state, and next maximum move
+  size. Rust resolves a non-nil hash in the registry and makes the resolved
+  program current for the next move; nil is terminal.
   The their_turn_handler receives the opponent's response.
   message_parser may be absent. When present and non-nil, it can parse
   out-of-band messages from the opponent (see below).
@@ -184,13 +187,11 @@ display.
 Validators (a.clsp through e.clsp) run both on-chain and off-chain.
 Handlers run off-chain only to produce moves and interpret opponent moves.
 
-A handler returns two validators per move:
-  - outgoing_validator: validates the move we just made
-  - incoming_validator: validates the opponent's reply
-
-The host hashes both returned validators. The outgoing validator's derived hash
-must match what the previous incoming validator committed to, creating a chain
-of validated state transitions.
+Handlers do not return or chain validators. The factory supplies a nonempty
+validator registry, and the referee begins with its first program. For each
+move, Rust runs the current validator with nil evidence, reads the returned next
+validator hash, and resolves that hash against the registry. Registry order
+after the first entry is irrelevant.
 
 Validator return values are untagged: a non-nil payload list for valid moves
 `(next_validation_program_hash new_state max_move_size ...)`, or nil for slash.
@@ -213,7 +214,10 @@ the transition and next max move size. Non-nil evidence either proves its
 specific accusation or fails to slash. A validator may reject unusable evidence
 by raising or may treat it like nil and return the valid transition. Evidence
 processing that can raise must occur only after the move itself is known to be
-valid.
+valid. A nil next validator hash is terminal and must agree with a nil next
+handler from the unchanged their-turn handler output; a non-nil hash must
+resolve to a program in the factory registry and accompany a non-nil next
+handler. `mover_share` remains handler-owned and is not returned by validators.
 
 Move-path enforcement: the on-chain referee does NOT re-run the validator
 when a move is submitted. It trusts the submitted values and advances the

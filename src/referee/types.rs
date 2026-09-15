@@ -7,7 +7,9 @@ use clvmr::run_program;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_state::types::{CachedSendMove, Evidence, ReadableMove, StateUpdateProgram};
+use crate::channel_state::types::{
+    CachedSendMove, Evidence, ReadableMove, StateUpdateProgram, ValidationProgramRegistry,
+};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
@@ -136,6 +138,7 @@ pub enum TheirTurnCoinSpentResult {
 pub struct RefereeFixedContext {
     pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,
+    pub validation_programs: ValidationProgramRegistry,
 
     pub my_identity: ChiaIdentity,
 

@@ -35,7 +35,7 @@ use crate::referee::Referee;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TheirTurnRefereeGameState {
     pub game_handler: Option<GameHandler>,
-    pub their_turn_validation_program: StateUpdateProgram,
+    pub their_turn_validation_program: Option<StateUpdateProgram>,
     pub current_state: Rc<Program>,
     pub create_this_coin: Rc<RefereePuzzleArgs>,
     pub spend_this_coin: Rc<RefereePuzzleArgs>,
@@ -57,6 +57,7 @@ mod tests {
     use super::*;
 
     use crate::channel_state::game_start_info::GameStartInfo;
+    use crate::channel_state::types::ValidationProgramRegistry;
     use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
     use crate::common::load_clvm::read_binary_puzzle;
     use crate::common::standard_coin::sign_reward_payout;
@@ -103,6 +104,9 @@ mod tests {
 
         let initial_validator =
             StateUpdateProgram::new(&mut allocator, "committed args validator", validator);
+        let validation_programs =
+            ValidationProgramRegistry::new(&mut allocator, &[initial_validator.to_program()])
+                .expect("validator registry");
         let nil = Rc::new(Program::from_bytes(&[0x80]));
         let start = Rc::new(GameStartInfo {
             amount: Amount::new(30),
@@ -111,7 +115,7 @@ mod tests {
             player_b_contribution: Amount::new(20),
             my_contribution_this_game: Amount::new(10),
             their_contribution_this_game: Amount::new(20),
-            initial_validation_program: initial_validator,
+            validation_programs,
             initial_state: ProgramRef::new(nil),
             initial_move: vec![],
             initial_max_move_size: 32,
@@ -191,7 +195,7 @@ impl TheirTurnReferee {
 
         let state = Rc::new(TheirTurnRefereeGameState {
             game_handler: Some(game_start_info.game_handler.clone()),
-            their_turn_validation_program: game_start_info.initial_validation_program.clone(),
+            their_turn_validation_program: Some(game_start_info.initial_validation_program()),
             current_state: game_start_info.initial_state.p(),
             create_this_coin: setup.ref_puzzle_args.clone(),
             spend_this_coin: setup.ref_puzzle_args,
@@ -241,10 +245,14 @@ impl TheirTurnReferee {
     pub fn get_validation_program_for_their_move(
         &self,
     ) -> Result<(Rc<Program>, StateUpdateProgram), Error> {
-        Ok((
-            self.state.current_state.clone(),
-            self.state.their_turn_validation_program.clone(),
-        ))
+        let validation_program = self
+            .state
+            .their_turn_validation_program
+            .clone()
+            .ok_or_else(|| {
+                Error::StrErr("opponent move received after terminal validator transition".into())
+            })?;
+        Ok((self.state.current_state.clone(), validation_program))
     }
 
     pub fn get_amount(&self) -> Amount {
@@ -271,6 +279,7 @@ impl TheirTurnReferee {
     pub fn accept_their_move(
         &self,
         game_handler: Option<GameHandler>,
+        validation_program: Option<StateUpdateProgram>,
         new_state: Rc<Program>,
         old_args: Rc<RefereePuzzleArgs>,
         referee_args: Rc<RefereePuzzleArgs>,
@@ -279,6 +288,7 @@ impl TheirTurnReferee {
     ) -> Result<MyTurnReferee, Error> {
         let new_state = MyTurnRefereeGameState::AfterTheirTurn {
             game_handler: game_handler.clone(),
+            validation_program,
             state_after_their_turn: new_state.clone(),
             create_this_coin: old_args,
             spend_this_coin: referee_args,
@@ -522,7 +532,13 @@ impl TheirTurnReferee {
         )?;
         let new_state = parsed
             .new_state
+            .clone()
             .unwrap_or_else(|| Rc::new(Program(vec![0x80])));
+        let next_validation_program = parsed
+            .next_validator_hash
+            .as_ref()
+            .map(|hash| self.fixed.validation_programs.resolve(hash))
+            .transpose()?;
 
         let state_nodeptr = new_state.to_nodeptr(allocator)?;
         let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
@@ -543,8 +559,14 @@ impl TheirTurnReferee {
             },
         )?;
 
+        game_assert_eq!(
+            result.next_handler.is_some(),
+            next_validation_program.is_some(),
+            "their-turn handler continuation disagrees with validator transition"
+        );
         let new_self = self.accept_their_move(
             result.next_handler.clone(),
+            next_validation_program,
             new_state.clone(),
             puzzle_args.clone(),
             rc_puzzle_args.clone(),
@@ -722,6 +744,7 @@ impl TheirTurnReferee {
         let adjusted_self = match new_self.state.as_ref() {
             MyTurnRefereeGameState::AfterTheirTurn {
                 game_handler,
+                validation_program,
                 state_after_their_turn,
                 spend_this_coin,
                 move_spend,
@@ -729,6 +752,7 @@ impl TheirTurnReferee {
             } => {
                 let adjusted_state = Rc::new(MyTurnRefereeGameState::AfterTheirTurn {
                     game_handler: game_handler.clone(),
+                    validation_program: validation_program.clone(),
                     state_after_their_turn: state_after_their_turn.clone(),
                     create_this_coin: args.clone(),
                     spend_this_coin: spend_this_coin.clone(),

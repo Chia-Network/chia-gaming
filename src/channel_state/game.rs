@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
@@ -7,7 +8,7 @@ use crate::utils::proper_list;
 
 use crate::channel_state::game_handler::GameHandler;
 use crate::channel_state::game_start_info::GameStartInfo;
-use crate::channel_state::types::{StateUpdateProgram, ValidationInfo};
+use crate::channel_state::types::{StateUpdateProgram, ValidationInfo, ValidationProgramRegistry};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     GameID, Hash, IntoErr, Program, Puzzle, Sha256tree, Timeout, MAX_BLOCK_COST_CLVM,
@@ -30,19 +31,18 @@ pub struct FactoryGame {
     pub initial_mover_share: u64,
     pub my_turn_handler: Program,
     pub their_turn_handler: Program,
-    pub initial_validation_program: Rc<Program>,
+    pub validation_programs: ValidationProgramRegistry,
 }
 
 impl FactoryGame {
+    pub fn initial_validation_program(&self) -> StateUpdateProgram {
+        self.validation_programs.initial()
+    }
+
     pub fn initial_validation_info_hash(&self, allocator: &mut AllocEncoder) -> Hash {
-        let initial_validation_program = StateUpdateProgram::new_hash(
-            self.initial_validation_program.clone(),
-            "initial",
-            self.initial_validation_program_hash.clone(),
-        );
         ValidationInfo::new_state_update(
             allocator,
-            initial_validation_program,
+            self.initial_validation_program(),
             self.initial_state.clone(),
         )
         .hash()
@@ -87,11 +87,7 @@ impl FactoryGame {
             player_b_contribution: self.player_b_contribution.clone(),
             my_contribution_this_game: my_contribution,
             their_contribution_this_game: their_contribution,
-            initial_validation_program: StateUpdateProgram::new_hash(
-                self.initial_validation_program.clone(),
-                "initial",
-                self.initial_validation_program_hash.clone(),
-            ),
+            validation_programs: self.validation_programs.clone(),
             initial_state: self.initial_state.clone().into(),
             initial_move: self.initial_move.clone(),
             initial_max_move_size: self.initial_max_move_size,
@@ -112,7 +108,7 @@ impl Game {
     /// non-empty proper list of 10-field game records:
     /// (player_a_contribution player_b_contribution player_a_goes_first initial_move
     ///  initial_max_move_size initial_state initial_mover_share my_turn_handler
-    ///  their_turn_handler initial_validator)
+    ///  their_turn_handler validation_programs)
     pub fn run_factory(
         allocator: &mut AllocEncoder,
         factory_program: Puzzle,
@@ -170,11 +166,38 @@ impl Game {
             let player_a_contribution = Amount::from_clvm(allocator, fields[0])?;
             let player_b_contribution = Amount::from_clvm(allocator, fields[1])?;
             let amount = player_a_contribution.clone() + player_b_contribution.clone();
-            let initial_validation_program = Rc::new(Program::from_nodeptr(allocator, fields[9])?);
-            let initial_validation_program_hash = initial_validation_program
-                .sha256tree(allocator)
-                .hash()
-                .clone();
+            let validation_program_nodes = proper_list(allocator.allocator(), fields[9], true)
+                .ok_or_else(|| {
+                    Error::StrErr(format!(
+                        "proposal factory game {index} validation programs are not a proper list"
+                    ))
+                })?;
+            if validation_program_nodes.is_empty() {
+                return Err(Error::StrErr(format!(
+                    "proposal factory game {index} returned no validation programs"
+                )));
+            }
+            let mut validation_programs = Vec::with_capacity(validation_program_nodes.len());
+            let mut validation_program_hashes = HashSet::new();
+            for (validator_index, node) in validation_program_nodes.into_iter().enumerate() {
+                let program = Rc::new(Program::from_nodeptr(allocator, node)?);
+                if program.is_nil() {
+                    return Err(Error::StrErr(format!(
+                        "proposal factory game {index} validation program {validator_index} is nil"
+                    )));
+                }
+                let hash = program.sha256tree(allocator).hash().clone();
+                if !validation_program_hashes.insert(hash) {
+                    return Err(Error::StrErr(format!(
+                        "proposal factory game {index} has duplicate validation program {validator_index}"
+                    )));
+                }
+                validation_programs.push(program);
+            }
+            let initial_validation_program_hash =
+                validation_programs[0].sha256tree(allocator).hash().clone();
+            let validation_programs =
+                ValidationProgramRegistry::new(allocator, &validation_programs)?;
             let initial_mover_share = atom_from_clvm(allocator, fields[6])
                 .and_then(|a| u64_from_atom(&a))
                 .ok_or_else(|| {
@@ -213,7 +236,7 @@ impl Game {
                 initial_mover_share,
                 my_turn_handler: Program::from_nodeptr(allocator, fields[7])?,
                 their_turn_handler: Program::from_nodeptr(allocator, fields[8])?,
-                initial_validation_program,
+                validation_programs,
             });
         }
 
@@ -225,29 +248,53 @@ impl Game {
 mod atomic_factory_tests {
     use super::*;
     use crate::common::types::Node;
+    use clvmr::NodePtr;
+
+    fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
+        nodes.iter().rev().fold(NodePtr::NIL, |tail, node| {
+            allocator.allocator().new_pair(*node, tail).unwrap()
+        })
+    }
+
+    fn quoted_factory(
+        allocator: &mut AllocEncoder,
+        initial_mover_share: u64,
+        validation_programs: NodePtr,
+    ) -> Puzzle {
+        let player_a_contribution = 10u64.to_clvm(allocator).unwrap();
+        let player_b_contribution = 0u64.to_clvm(allocator).unwrap();
+        let player_a_goes_first = true.to_clvm(allocator).unwrap();
+        let initial_move = Vec::<u8>::new().to_clvm(allocator).unwrap();
+        let initial_max_move_size = 32u64.to_clvm(allocator).unwrap();
+        let initial_state = ().to_clvm(allocator).unwrap();
+        let initial_mover_share = initial_mover_share.to_clvm(allocator).unwrap();
+        let record = list_from_nodes(
+            allocator,
+            &[
+                player_a_contribution,
+                player_b_contribution,
+                player_a_goes_first,
+                initial_move,
+                initial_max_move_size,
+                initial_state,
+                initial_mover_share,
+                NodePtr::NIL,
+                NodePtr::NIL,
+                validation_programs,
+            ],
+        );
+        let records = list_from_nodes(allocator, &[record]);
+        let quote = allocator.allocator().one();
+        let factory_node = allocator.allocator().new_pair(quote, records).unwrap();
+        Puzzle::from_nodeptr(allocator, factory_node).unwrap()
+    }
 
     #[test]
     fn run_factory_rejects_initial_mover_share_above_amount() {
         let mut allocator = AllocEncoder::new();
-        let record = (
-            10u64,
-            (
-                0u64,
-                (
-                    true,
-                    (
-                        Vec::<u8>::new(),
-                        (32u64, ((), (11u64, ((), ((), ((), ())))))),
-                    ),
-                ),
-            ),
-        )
-            .to_clvm(&mut allocator)
-            .unwrap();
-        let records = (Node(record), ()).to_clvm(&mut allocator).unwrap();
-        let quote = allocator.allocator().one();
-        let factory_node = allocator.allocator().new_pair(quote, records).unwrap();
-        let factory = Puzzle::from_nodeptr(&mut allocator, factory_node).unwrap();
+        let validator = allocator.allocator().one();
+        let validators = list_from_nodes(&mut allocator, &[validator]);
+        let factory = quoted_factory(&mut allocator, 11, validators);
 
         let error = match Game::run_factory(&mut allocator, factory, &Program::from_bytes(&[0x80]))
         {
@@ -259,6 +306,54 @@ mod atomic_factory_tests {
             format!("{error:?}").contains("mover share 11 exceeds amount 10"),
             "unexpected error: {error:?}"
         );
+    }
+
+    #[test]
+    fn run_factory_requires_unique_nonempty_validation_programs() {
+        let mut allocator = AllocEncoder::new();
+
+        let empty_factory = quoted_factory(&mut allocator, 0, NodePtr::NIL);
+        assert!(
+            Game::run_factory(&mut allocator, empty_factory, &Program::from_bytes(&[0x80]))
+                .is_err()
+        );
+
+        let validator = allocator.allocator().one();
+        let duplicate = list_from_nodes(&mut allocator, &[validator, validator]);
+        let duplicate_factory = quoted_factory(&mut allocator, 0, duplicate);
+        assert!(Game::run_factory(
+            &mut allocator,
+            duplicate_factory,
+            &Program::from_bytes(&[0x80])
+        )
+        .is_err());
+
+        let improper = allocator
+            .allocator()
+            .new_pair(validator, validator)
+            .unwrap();
+        let improper_factory = quoted_factory(&mut allocator, 0, improper);
+        assert!(Game::run_factory(
+            &mut allocator,
+            improper_factory,
+            &Program::from_bytes(&[0x80])
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn run_factory_uses_first_validation_program_as_identity() {
+        let mut allocator = AllocEncoder::new();
+        let first = allocator.allocator().one();
+        let second = 2u64.to_clvm(&mut allocator).unwrap();
+        let expected = Node(first).sha256tree(&mut allocator).hash().clone();
+        let validators = list_from_nodes(&mut allocator, &[first, second]);
+        let factory = quoted_factory(&mut allocator, 0, validators);
+
+        let games =
+            Game::run_factory(&mut allocator, factory, &Program::from_bytes(&[0x80])).unwrap();
+        assert_eq!(games[0].initial_validation_program_hash, expected);
+        assert_eq!(games[0].validation_programs.len(), 2);
     }
 
     fn factory_game(player_a_goes_first: bool) -> FactoryGame {
@@ -274,7 +369,11 @@ mod atomic_factory_tests {
             initial_mover_share: 0,
             my_turn_handler: Program::from_bytes(&[0x80]),
             their_turn_handler: Program::from_bytes(&[0x80]),
-            initial_validation_program: Rc::new(Program::from_bytes(&[0x80])),
+            validation_programs: ValidationProgramRegistry::new(
+                &mut AllocEncoder::new(),
+                &[Rc::new(Program::from_bytes(&[0x01]))],
+            )
+            .expect("validator registry"),
         }
     }
 

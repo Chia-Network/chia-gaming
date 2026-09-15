@@ -111,7 +111,7 @@ mod apply_prepared_move_tests {
     use super::*;
 
     use crate::channel_state::game_handler::GameHandler;
-    use crate::channel_state::types::StateUpdateProgram;
+    use crate::channel_state::types::ValidationProgramRegistry;
     use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
     use crate::common::load_clvm::read_binary_puzzle;
     use crate::common::types::{GameID, PrivateKey, ProgramRef, Sha256tree};
@@ -122,7 +122,7 @@ mod apply_prepared_move_tests {
     }
 
     #[test]
-    fn nil_incoming_validator_does_not_bypass_outgoing_validation() {
+    fn current_validator_runs_for_terminal_handler_result() {
         let mut allocator = AllocEncoder::new();
         let my_identity = identity(&mut allocator, 1);
         let their_identity = identity(&mut allocator, 2);
@@ -131,8 +131,10 @@ mod apply_prepared_move_tests {
                 .expect("referee puzzle");
         let referee_puzzle_hash = referee_puzzle.sha256tree(&mut allocator);
         let nil = Rc::new(Program::from_bytes(&[0x80]));
-        let initial_validator =
-            StateUpdateProgram::new(&mut allocator, "initial validator", nil.clone());
+        let rejecting_validator = Rc::new(Program::from_bytes(&[0xff, 0x08, 0x80]));
+        let validation_programs =
+            ValidationProgramRegistry::new(&mut allocator, &[rejecting_validator])
+                .expect("validator registry");
         let start = Rc::new(GameStartInfo {
             amount: Amount::new(30),
             game_handler: GameHandler::MyTurnHandler(ProgramRef::new(nil.clone())),
@@ -140,7 +142,7 @@ mod apply_prepared_move_tests {
             player_b_contribution: Amount::new(20),
             my_contribution_this_game: Amount::new(10),
             their_contribution_this_game: Amount::new(20),
-            initial_validation_program: initial_validator,
+            validation_programs,
             initial_state: ProgramRef::new(nil.clone()),
             initial_move: vec![],
             initial_max_move_size: 32,
@@ -168,18 +170,6 @@ mod apply_prepared_move_tests {
 
         let prepared = PreparedMove {
             move_bytes: vec![0x42],
-            // Serialized `(x)` always raises if the validator is executed.
-            outgoing_move_state_update_program: StateUpdateProgram::new(
-                &mut allocator,
-                "rejecting outgoing validator",
-                Rc::new(Program::from_bytes(&[0xff, 0x08, 0x80])),
-            ),
-            incoming_move_state_update_program: StateUpdateProgram::new(
-                &mut allocator,
-                "terminal incoming validator",
-                nil,
-            ),
-            max_move_size: 32,
             mover_share: Amount::default(),
             waiting_handler: None,
             message_parser: None,
@@ -189,7 +179,7 @@ mod apply_prepared_move_tests {
             referee
                 .apply_prepared_move(&mut allocator, prepared, 1)
                 .is_err(),
-            "nil incoming validator must not skip outgoing validation"
+            "the registry-selected current validator must run before a terminal transition"
         );
     }
 }
@@ -225,6 +215,7 @@ pub(crate) fn referee_initial_setup(
     let fixed = Rc::new(RefereeFixedContext {
         referee_coin_puzzle,
         referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
+        validation_programs: game_start_info.validation_programs.clone(),
         their_referee_pubkey: their_pubkey.clone(),
         their_reward_payout_signature: their_reward_payout_signature.clone(),
         my_reward_payout_signature: sign_reward_payout(
@@ -240,7 +231,7 @@ pub(crate) fn referee_initial_setup(
         agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
     });
 
-    let ip = game_start_info.initial_validation_program.clone();
+    let ip = game_start_info.initial_validation_program();
     let vi_hash =
         ValidationInfo::new_state_update(allocator, ip.clone(), game_start_info.initial_state.p());
     let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(

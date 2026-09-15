@@ -783,14 +783,23 @@ referee arguments with real mover and waiter pubkeys, substitutes the incoming
 move and validation program, and uses the same state-update program that would
 be used by the on-chain referee when validating peer moves.
 
-When a move has a follow-on state, the state update is run off-chain first
-with nil evidence. A returned valid payload is a soft non-slash: that
-`new_state` is passed to the their-turn handler. If the run **raises**, the
-handler still runs with `state` nil. A terminal move is still a normal move,
-but it sets the next validation program to nil, so there is no follow-on
-state for future moves. The their-turn handler still interprets the move and
-may provide slash evidence. Any evidence it provides is checked by running the
-normal state-update program with that evidence.
+Each factory record supplies a proper, nonempty `validation_programs` registry.
+Its first entry is initially current; later entry order is irrelevant. For each
+move, the current validator is run off-chain first with nil evidence. A returned
+valid payload supplies `next_validator_hash`, `new_state`, and the next maximum
+move size. Rust resolves a non-nil hash by tree hash in the factory registry and
+makes that program current for the next move. The my-turn handler supplies none
+of those validator programs or size limits; it remains the authority for the
+move's `mover_share`.
+
+The returned `new_state` is passed to the their-turn handler. If the run
+**raises**, the handler still runs with `state` nil. A terminal move is still a
+normal move, but the validator returns a nil next hash, so there is no
+follow-on state for future moves. That nil must agree with a nil next handler
+from the otherwise unchanged their-turn handler output. The their-turn handler
+still interprets the move and may provide slash evidence. Any evidence it
+provides is checked by running the normal state-update program with that
+evidence.
 
 The peer move message does not carry a terminal flag or either validation
 hash. The receiver runs the current validator and computes the next validation

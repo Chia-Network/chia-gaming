@@ -13,7 +13,7 @@ use crate::channel_state::game::Game;
 use crate::channel_state::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
-    Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
+    Evidence, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
 use crate::common::load_clvm::read_binary_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
@@ -210,7 +210,7 @@ impl BareDebugGameHandler {
                 next_mover_share: game_start.initial_mover_share.clone(),
                 mover_share: game_start.initial_mover_share.clone(),
                 state: game_start.initial_state.clone(),
-                validation_program_queue: [game_start.initial_validation_program.clone()]
+                validation_program_queue: [game_start.initial_validation_program()]
                     .iter()
                     .cloned()
                     .collect(),
@@ -228,7 +228,7 @@ impl BareDebugGameHandler {
                     .collect(),
             };
             handler.last_validation_data.push_back((
-                game_start.initial_validation_program.clone(),
+                game_start.initial_validation_program(),
                 game_start.initial_state.clone(),
             ));
             handler
@@ -282,22 +282,13 @@ impl BareDebugGameHandler {
 
         assert_eq!(my_handler_result.move_bytes, move_data);
 
-        if self.move_count == 0 {
-            assert_eq!(
-                my_handler_result
-                    .outgoing_move_state_update_program
-                    .to_program(),
-                self.validation_program_queue[0].to_program()
-            );
-        }
-
         self.next_handler = my_handler_result.waiting_handler.clone();
-        self.next_max_move_size = my_handler_result.max_move_size;
+        self.next_max_move_size = 512;
         self.validation_program_queue.clear();
+        let validation_program = self.start.initial_validation_program();
         self.validation_program_queue
-            .push_back(my_handler_result.outgoing_move_state_update_program.p());
-        self.validation_program_queue
-            .push_back(my_handler_result.incoming_move_state_update_program.p());
+            .push_back(validation_program.clone());
+        self.validation_program_queue.push_back(validation_program);
         self.next_mover_share = my_handler_result.mover_share.clone();
 
         Ok(())
@@ -820,8 +811,8 @@ pub fn test_debug_game_validation_move() {
     let debug_games = pair_of_array_mut(&mut debug_games);
 
     assert_eq!(
-        debug_games.0.game.initial_validation_program,
-        debug_games.1.game.initial_validation_program
+        debug_games.0.game.validation_programs,
+        debug_games.1.game.validation_programs
     );
 
     let _move1 = debug_games

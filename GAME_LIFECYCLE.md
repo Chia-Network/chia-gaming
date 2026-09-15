@@ -16,7 +16,7 @@ see `OVERVIEW.md`. For on-chain dispute resolution, see `ON_CHAIN.md`.
 Games are initiated through a propose/accept flow:
 
 1. **Propose:** The caller submits one group request containing `game_type`
-   (the first generated member's initial validation puzzle hash, not a factory
+   (the first generated member's first validation-program hash, not a factory
    hash or package name), game-specific `parameters`, and one shared `timeout`.
    Both peers run the same deterministic factory, which produces the ordered
    game records for the group. The potato holder sends one
@@ -44,9 +44,12 @@ and requires that the first returned record's `initial_validation_program_hash`
 equals that `game_type`. The wire member list must be non-empty and have the
 same ordered cardinality as the factory result. The peer wire intentionally
 contains and compares only the small protocol-visible initialization/referee
-facts needed to prove both sides instantiated the same game. Each wire member
-must match the corresponding canonical factory record for:
-player-A/player-B contributions, `player_a_goes_first`, initial validator hash,
+facts needed to prove both sides instantiated the same game. Each factory
+record's field 9 is a proper nonempty `validation_programs` registry: the first
+program is initially current and later programs are resolved by tree hash, so
+their order is irrelevant. Each wire member must match the corresponding
+canonical factory record for:
+player-A/player-B contributions, `player_a_goes_first`, first validator hash,
 initial validation-info hash (the validator/state commitment used by the
 referee), initial move, maximum move size, and initial mover share. Raw initial
 state and the contribution-derived amount are not sent. Validator programs and
@@ -230,13 +233,16 @@ runs the my-turn handler. A tagged `(tag message)` rejection emits synchronous
 `MoveRejected`, and neither the readable input nor any move is queued.
 
 On success the queue stores only the durable uncurried `PreparedMove` outputs
-from that handler: move bytes, outgoing/incoming validator programs, maximum
-move size, mover share, waiting handler, and optional message parser. It does
-not store the readable, entropy, transaction, curried referee, or derived puzzle
-hash. When the potato arrives, off-chain application consumes the prepared
-output to advance/curry/sign/send without rerunning the handler. The same split
-applies to later on-chain actuation. Post-application `CachedSendMove` redo
-state is separate from this pre-application queue.
+from that handler: move bytes, mover share, waiting handler, and optional
+message parser. It does not store validator programs, a maximum move size, the
+readable, entropy, transaction, curried referee, or derived puzzle hash. When
+the potato arrives, off-chain application runs the current factory-registry
+validator with the move and nil evidence, resolves a returned non-nil next
+validator hash (or treats nil as terminal), and consumes the prepared output to
+advance/curry/sign/send without rerunning the handler. The same split applies
+to later on-chain actuation.
+Post-application `CachedSendMove` redo state is separate from this
+pre-application queue.
 
 Multiple games can be in flight simultaneously, and any potato pass may carry
 actions for several of them.
@@ -256,10 +262,9 @@ When `apply_received_move` processes an incoming `BatchAction::Move`, it checks:
 
 - `**mover_share` <= game amount:** The peer cannot claim a timeout share larger
 than the pot.
-- **Move size <= `max_move_size`:** The move bytes must not exceed the limit set
-by the previous move's validator. The limit is read from `spend_this_coin()`
-(the post-move referee args), which reflects the constraint the validator
-declared for the *next* move.
+- **Move size <= `max_move_size`:** The move bytes must not exceed the limit
+selected for the current move by the prior validator transition. The limit is
+read from `spend_this_coin()` (the post-move referee args).
 
 Both failures reject the batch (rollback and go-on-chain).
 
@@ -362,10 +367,15 @@ paths that emit `GameSettled` immediately with a forfeit outcome (#3–#5).
 
 ### Automatic AcceptSettlement
 
-When a move arrives whose next handler/validator is nil (the game is over) and
+When a move arrives whose next handler and next validator hash are both nil
+(the game is over) and
 there are no slashing conditions, `OffChainPhase` automatically queues
 `GameAction::AcceptSettlement` for that game. The frontend does **not** need to
 call `acceptSettlement()` explicitly after a game ends.
+
+The two terminal signals must agree. A nil next validator hash with a non-nil
+next handler, or a non-nil next validator hash with a nil next handler, is an
+invalid transition.
 
 Detection uses `ChannelState::is_game_finished(game_id)`, which returns true
 when `is_my_turn()` and `is_game_over()` (nil next handler on the `Referee`).

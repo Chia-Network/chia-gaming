@@ -337,16 +337,21 @@ local move directive first validates that this game currently grants us the
 turn and has no queued or pending move, then immediately runs the my-turn
 handler. A tagged two-value rejection is returned synchronously as
 `MoveRejected`; the invalid readable is never queued. Success queues only the
-durable, uncurried `PreparedMove` handler outputs: move bytes, outgoing and
-incoming validator programs, maximum move size, mover share, waiting handler,
-and optional message parser. The readable UI input and entropy are not retained,
-nor are later-derived transaction data, a curried referee, or a referee puzzle
-hash.
+durable, uncurried `PreparedMove` handler outputs: move bytes, mover share,
+waiting handler, and optional message parser. It retains no validator programs
+or maximum move size. The readable UI input and entropy are not retained, nor
+are later-derived transaction data, a curried referee, or a referee puzzle hash.
 
 When the potato is available—or when an already prepared move is actuated
-on-chain—the engine consumes that `PreparedMove` to apply the referee
-transition, curry and hash the resulting puzzle, sign as required, and send the
-batch or spend. It does not run the my-turn handler again. Only after application
+on-chain—the engine runs the current validator from the factory registry with
+the move and nil evidence, resolves a returned non-nil next validator hash in
+that registry, and consumes the `PreparedMove` to apply the referee transition,
+curry and hash the resulting puzzle, sign as required, and send the batch or
+spend. The registry is a proper nonempty list in factory field 9: its first
+entry is initially current and later order is irrelevant because lookup is by
+tree hash. A nil next validator hash is terminal and must agree with a nil next
+handler. Mover share remains handler-owned. The engine does not run the my-turn
+handler again. Only after application
 does the separate `cached_redo_actions` state record the post-application facts
 needed to replay a move after an unroll; the prepared queue is not the redo
 cache.
@@ -563,7 +568,7 @@ exposes the diagnostic cheat action.
 Each game lives in one top-level package under `games/<key>/`, registered only
 in [`games/registry.json`](games/registry.json) (`production` vs `test`). Package
 keys are build/bootstrap identifiers. The protocol identity is the first
-generated member's initial validation puzzle hash
+generated member's first validation-program hash
 (`initial_validation_program_hash`) — never the factory's hash or the
 human-readable key. Registration discovers it by running the factory with
 representative valid parameters. Adding a game means creating that conventional

@@ -43,7 +43,7 @@
                 0
                 calpoker_alice_handler_a
                 calpoker_bob_handler_a
-                pokera
+                (list pokera pokerb pokerc pokerd pokere)
             )
         )
     )
@@ -57,9 +57,6 @@
         (list
             "calpoker_alice_handler_a"
             (sha256 preimage)
-            pokera
-            pokerb
-            16
             0
             (curry calpoker_alice_handler_b preimage)
         )
@@ -139,9 +136,6 @@
             (list
                 "calpoker_alice_handler_c"
                 (concat PREIMAGE new_commit)
-                pokerc
-                pokerd
-                1
                 0
                 (curry calpoker_alice_handler_d salt my_discards_bitfield)
             )
@@ -197,9 +191,6 @@
     (list
         "calpoker_alice_handler_e"
         NEXT_MOVE
-        pokere
-        0
-        0
         SPLIT
         0
     )
@@ -219,9 +210,6 @@
     (list
         "calpoker_bob_handler_b"
         (substr entropy 0 16)
-        pokerb
-        pokerc
-        48
         0
         calpoker_bob_handler_c
         parse_message
@@ -265,9 +253,6 @@
                     "popcount" (popcount my_discards_bitfield)
                 ))
             )
-            pokerd
-            pokere
-            18
             0
             calpoker_bob_handler_e
             0

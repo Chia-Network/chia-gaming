@@ -33,10 +33,10 @@
   (c (+ 1 COUNT) (r curry-args))
   )
 
-;; Compute shatree(curry-args) using SELF_HASH in place of shatree(SELF_PROG)
-;; curry-args = (COUNT SELF_HASH SELF_PROG)
+;; The validator is always curried with count zero. The live count comes from
+;; state, so every turn uses the same factory-registered program.
 (defun curry-args-hash ((CURRY_PACK))
-  (sha256 2 (sha256 1 COUNT)
+  (sha256 2 (sha256 1 ())
     (sha256 2 (sha256 1 SELF_HASH)
       (sha256 2 SELF_HASH (sha256 1 ()))))
   )
@@ -72,6 +72,7 @@
      evidence
      )
   (assign
+   count (+ 0 (f state))
    pv_hash (validator-hash curry-args)
    move-counter-data
    (concat
@@ -86,7 +87,7 @@
     (byteify AMOUNT)
     (byteify NONCE)
     (byteify MOVER_SHARE)
-    (byteify COUNT)
+    (byteify count)
     )
 
    move-counter-data-len (strlen (print "move-counter-data?" move-counter-data))
@@ -120,7 +121,7 @@
      mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
      (list
       (validator-hash (curry-args-incr curry-args))
-      (list (+ COUNT 1) slashable-move mover-share)
+      (list (+ count 1) slashable-move mover-share)
       512
       )
      )
@@ -146,9 +147,6 @@
             "debug game: move"
             ;; move bytes
             (concat prefix (byteify mover-share) slash)
-            (curry SELF_PROG "validator" curry-args)
-            (curry SELF_PROG "validator" incr-curry-args)
-            512
             mover-share
             (curry SELF_PROG "theirturn" incr-curry-args)
             )
@@ -227,7 +225,7 @@
       0
       (curry SELF_PROG "myturn" curry-args)
       (curry SELF_PROG "theirturn" curry-args)
-      (curry SELF_PROG "validator" curry-args)
+      (list (curry SELF_PROG "validator" curry-args))
       )
      )
     )
