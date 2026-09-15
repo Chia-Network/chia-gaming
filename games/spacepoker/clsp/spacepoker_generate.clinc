@@ -125,7 +125,7 @@
                 0
                 spacepoker_alice_commitA
                 spacepoker_bob_handler_commitA
-                val_commitA
+                (list val_commitA val_commitB val_begin val_mid val_end)
             )
         )
     )
@@ -143,9 +143,6 @@
         (list
             "spacepoker_alice_commitA"
             image_5
-            val_commitA
-            val_commitB
-            32
             (/ amount 2)
             (curry spacepoker_alice_handler_commitB chain)
         )
@@ -198,9 +195,6 @@
                 (list
                     "spacepoker_alice_begin_round"
                     move_bytes
-                    val_begin
-                    val_mid
-                    42
                     new_mover_share
                     (curry spacepoker_alice_handler_mid_round_their CHAIN BET_UNIT)
                 )
@@ -210,9 +204,6 @@
                 (list
                     "spacepoker_alice_begin_round pong"
                     image_N
-                    val_begin
-                    val_begin
-                    42
                     new_mover_share
                     (curry spacepoker_alice_handler_begin_round_their CHAIN BET_UNIT)
                 )
@@ -295,9 +286,6 @@
                 (list
                     "spacepoker_alice_mid_round raise"
                     move_bytes
-                    val_mid
-                    val_mid
-                    42
                     new_mover_share
                     (curry spacepoker_alice_handler_mid_round_their CHAIN BET_UNIT)
                 )
@@ -309,9 +297,6 @@
                 base (list
                     "spacepoker_alice_mid_round call"
                     preimage
-                    val_mid
-                    (if (= N 1) val_end val_begin)
-                    (if (= N 1) 17 42)
                     new_mover_share
                     (if (= N 1)
                         (curry spacepoker_alice_handler_end_their CHAIN)
@@ -371,9 +356,6 @@
         (list
             "spacepoker_alice_end"
             move_bytes
-            val_end
-            0
-            0
             final_mover_share
             0
         )
@@ -473,9 +455,6 @@
         (list
             "spacepoker_bob_commitB"
             image_4
-            val_commitB
-            val_begin
-            42
             (- (/ amount 2) bet_unit)
             (curry spacepoker_bob_handler_begin_round_their chain bet_unit)
             (curry spacepoker_bob_parse_deal_message chain)
@@ -543,9 +522,6 @@
                 (list
                     "spacepoker_bob_mid_round raise"
                     move_bytes
-                    val_mid
-                    val_mid
-                    42
                     new_mover_share
                     (curry spacepoker_bob_handler_mid_round_their CHAIN BET_UNIT)
                 )
@@ -557,9 +533,6 @@
                 base (list
                     "spacepoker_bob_mid_round call"
                     preimage
-                    val_mid
-                    (if (= N 1) val_end val_begin)
-                    (if (= N 1) 17 42)
                     new_mover_share
                     (if (= N 1)
                         (curry spacepoker_bob_handler_end_their CHAIN)
@@ -655,9 +628,6 @@
                 (list
                     "spacepoker_bob_begin_round"
                     move_bytes
-                    val_begin
-                    val_mid
-                    42
                     new_mover_share
                     (curry spacepoker_bob_handler_mid_round_their CHAIN BET_UNIT)
                 )
@@ -667,9 +637,6 @@
                 (list
                     "spacepoker_bob_begin_round pong"
                     image_N
-                    val_begin
-                    val_begin
-                    42
                     new_mover_share
                     (curry spacepoker_bob_handler_begin_round_their CHAIN BET_UNIT)
                 )
@@ -701,9 +668,6 @@
         (list
             "spacepoker_bob_end"
             move_bytes
-            val_end
-            0
-            0
             final_mover_share
             0
         )

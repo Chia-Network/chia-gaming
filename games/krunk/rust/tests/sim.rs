@@ -76,8 +76,8 @@ mod sim_tests {
     use super::*;
 
     use crate::session_phases::effects::{
-        ChannelStatus, ChannelStatusSnapshot, GameNotification, GameStatusKind, LocalActionKind,
-        SettlementOutcome,
+        ChannelStatus, ChannelStatusSnapshot, FailedGameAction, GameNotification, GameStatusKind,
+        LocalActionKind, SettlementOutcome,
     };
     use crate::session_phases::types::PeerMessage;
     use crate::simulator::tests::session_phases_sim::{
@@ -425,6 +425,7 @@ mod sim_tests {
                         true,
                     ),
                     SimScriptAction::WaitBlocks(1, 0),
+                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
                 ];
                 let move_count = moves.len();
                 let outcome = run_krunk_container_with_action_list_with_success_predicate(
@@ -457,6 +458,178 @@ mod sim_tests {
                 );
             },
         ));
+
+        res.push((
+            "test_repeated_move_wait_requires_new_application",
+            &|| {
+                let mut allocator = AllocEncoder::new();
+                let request_potato = crate::session_phases::peer_wire::encode_peer_message(
+                    &PeerMessage::RequestPotato(()),
+                )
+                .expect("serialize request");
+                let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+                let moves = vec![
+                    SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                    SimScriptAction::AcceptProposal(1, GameID(1)),
+                    game_moves[0].clone(),
+                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
+                    game_moves[1].clone(),
+                    // Give away the potato before Alice's second move so its
+                    // application occurs after the second wait boundary.
+                    SimScriptAction::InjectRawMessage(0, request_potato),
+                    game_moves[2].clone(),
+                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
+                ];
+                let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&krunk_ran_all_the_moves_predicate(moves.len())),
+                    None,
+                )
+                .expect("each move wait should observe its own application");
+
+                let applications = outcome.local_uis[0]
+                    .notifications
+                    .iter()
+                    .filter(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::LocalActionApplied {
+                                id: GameID(1),
+                                action: LocalActionKind::MakeMove,
+                            }
+                        )
+                    })
+                    .count();
+                assert_eq!(
+                    applications, 2,
+                    "the second wait must not reuse Alice's first application"
+                );
+            },
+        ));
+
+        res.push(("test_krunk_mid_drain_failure_rolls_back_local_actions", &|| {
+            let mut allocator = AllocEncoder::new();
+            let game_1_commit = word_program(&mut allocator, b"CRANE");
+            let game_3_commit = word_program(&mut allocator, b"CRANE");
+            let moves = vec![
+                SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::NerfMessages(1),
+                SimScriptAction::Move(
+                    1,
+                    GameID(3),
+                    ReadableMove::from_program(Rc::new(game_3_commit)),
+                    true,
+                ),
+                SimScriptAction::AcceptSettlement(1, GameID(999)),
+                SimScriptAction::AcceptSettlement(1, GameID(998)),
+                SimScriptAction::UnNerfMessages,
+                SimScriptAction::Move(
+                    0,
+                    GameID(1),
+                    ReadableMove::from_program(Rc::new(game_1_commit)),
+                    true,
+                ),
+                SimScriptAction::WaitBlocks(1, 0),
+            ];
+            let move_count = moves.len();
+
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&krunk_ran_all_the_moves_predicate(move_count)),
+                None,
+            )
+            .expect("mid-drain failure should preserve the received batch");
+
+            assert_stayed_off_chain(&outcome, "mid-drain rollback");
+            let notifications = &outcome.local_uis[1].notifications;
+            assert!(notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ActionFailed {
+                    id: Some(GameID(999)),
+                    action: Some(FailedGameAction::AcceptSettlement),
+                    ..
+                }
+            )), "expected queued settlement failure, got: {notifications:?}");
+            assert!(notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ActionFailed {
+                    id: Some(GameID(998)),
+                    action: Some(FailedGameAction::AcceptSettlement),
+                    ..
+                }
+            )), "expected second queued settlement failure, got: {notifications:?}");
+            assert_eq!(
+                notifications
+                    .iter()
+                    .filter(|notification| matches!(
+                        notification,
+                        GameNotification::LocalActionApplied {
+                            id: GameID(3),
+                            action: LocalActionKind::MakeMove,
+                        }
+                    ))
+                    .count(),
+                1,
+                "the valid action before the failure must be retried exactly once"
+            );
+        }));
+
+        res.push(("test_krunk_failed_only_drain_returns_requested_potato", &|| {
+            let mut allocator = AllocEncoder::new();
+            let game_1_commit = word_program(&mut allocator, b"CRANE");
+            let request_potato = crate::session_phases::peer_wire::encode_peer_message(
+                &PeerMessage::RequestPotato(()),
+            )
+            .expect("serialize request");
+            let moves = vec![
+                SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::NerfMessages(1),
+                SimScriptAction::InjectRawMessage(1, request_potato),
+                SimScriptAction::AcceptSettlement(1, GameID(999)),
+                SimScriptAction::UnNerfMessages,
+                SimScriptAction::Move(
+                    0,
+                    GameID(1),
+                    ReadableMove::from_program(Rc::new(game_1_commit)),
+                    true,
+                ),
+                SimScriptAction::WaitBlocks(1, 0),
+            ];
+            let move_count = moves.len();
+
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&krunk_ran_all_the_moves_predicate(move_count)),
+                None,
+            )
+            .expect("a failed sole queued action should still return a requested potato");
+
+            assert_stayed_off_chain(&outcome, "failed-only drain potato return");
+            assert!(outcome.local_uis[1].notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ActionFailed {
+                    id: Some(GameID(999)),
+                    action: Some(FailedGameAction::AcceptSettlement),
+                    ..
+                }
+            )));
+            let received_index = outcome.logs[1]
+                .iter()
+                .rposition(|line| line.starts_with("[recv]"))
+                .expect("player 1 should receive the potato-bearing move");
+            assert!(
+                outcome.logs[1][received_index + 1..]
+                    .iter()
+                    .any(|line| line.starts_with("[send]")),
+                "player 1 should return an empty potato after dropping its only failed action: {:?}",
+                outcome.logs[1]
+            );
+        }));
 
         res.push(("test_krunk_rejection_is_immediate_before_potato", &|| {
             let mut allocator = AllocEncoder::new();

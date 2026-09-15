@@ -8,12 +8,9 @@ use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
 };
-#[cfg(test)]
-use crate::common::types::Program;
 use crate::common::types::{
     Aggsig, Amount, Error, GameID, GameType, Hash, ProgramRef, PuzzleHash, Timeout,
 };
-use crate::referee::types::GameMoveStateInfo;
 use crate::session_phases::effects::Effect;
 use crate::session_phases::handshake::{
     HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
@@ -92,8 +89,8 @@ pub trait FromLocalUI {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct PeerMove {
-    pub basic: GameMoveStateInfo,
-    pub terminal: bool,
+    pub move_made: Vec<u8>,
+    pub mover_share: Amount,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
@@ -218,24 +215,14 @@ impl std::fmt::Debug for GameAction {
 mod move_authority_tests {
     use super::*;
     use crate::channel_state::game_handler::PreparedMove;
-    use crate::channel_state::types::StateUpdateProgram;
-    use crate::common::types::{AllocEncoder, Amount};
+    use crate::common::types::Amount;
     use std::collections::VecDeque;
 
     fn queued_move_with_bytes(game_id: GameID, move_bytes: Vec<u8>) -> GameAction {
-        let mut allocator = AllocEncoder::new();
-        let validator = StateUpdateProgram::new(
-            &mut allocator,
-            "queued test",
-            Rc::new(Program::from_bytes(&[0x80])),
-        );
         GameAction::Move(
             game_id,
             PreparedMove {
                 move_bytes,
-                outgoing_move_state_update_program: validator.clone(),
-                incoming_move_state_update_program: validator,
-                max_move_size: 0,
                 mover_share: Amount::default(),
                 waiting_handler: None,
                 message_parser: None,
@@ -306,7 +293,6 @@ mod move_authority_tests {
 
 #[derive(Serialize, Deserialize)]
 pub struct OffChainPhaseInit {
-    pub have_potato: bool,
     pub private_keys: ChannelPrivateKeys,
     pub game_types: BTreeMap<GameType, ProgramRef>,
     pub my_contribution: Amount,

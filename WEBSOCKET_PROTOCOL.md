@@ -114,7 +114,7 @@ dictionaries are ignored. Implementations do not accept the old descriptive
 The following named wire types are used below:
 
 - `PlayerID`: exactly 16 opaque bytes;
-- `SessionID`: exactly 16 secret bytes;
+- `SessionID`: exactly 16 secret bytes, scoped to one canonical hub origin;
 - `Alias`: non-empty UTF-8 text of at most 128 bytes.
 
 ## 5. Addressed relay messages
@@ -169,6 +169,11 @@ Sent once whenever a game WebSocket opens.
 
 `session_id` is required. `busy` reports whether the player application is
 currently unavailable for matchmaking.
+
+The player derives a distinct `SessionID` for each canonical HTTP(S) hub origin.
+The URL path, query, fragment, host casing, and default port do not create new
+credential scopes. A hub that learns its own bearer credential cannot replay it
+at a different origin.
 
 The hub assigns or recovers the player ID, binds this connection, and replies
 with `registered`. Alias ownership remains on the hub's internal interface.
@@ -370,20 +375,26 @@ It proves only that this WebSocket path recently carried a hub frame.
 
 ### 8.1 Hub session ID
 
-A new player application generates 16 cryptographically random bytes and
-encodes them as 32 lowercase hexadecimal characters. It persists this value and
-reuses it across reconnects and hub selections. The URL and reference
-implementation use that hexadecimal representation; `identify.session_id`
-decodes it and sends the original 16 bytes.
+A new player application generates and persists a 16-byte random master secret.
+For each canonical hub origin, it derives a 16-byte session ID using
+HMAC-SHA256 over a domain separator and that origin. It reuses the derived value
+only for reconnects to the same origin. `identify.session_id` sends those
+derived bytes.
 
-The hub HTML is opened at
-`<hub-origin>/?session=<hub-session-id>&uniqueId=<local-player-id>`. The same hub
+The hub HTML is opened at `<hub-origin>/` without credentials in the URL. Once
+loaded, it requests the hub session ID from the embedding player application
+with `postMessage`. The player verifies the requesting iframe window and origin,
+then addresses the credential response only to that hub origin. The same hub
 session ID is independently supplied to the game relay connection. It is never
-sent to a peer. The meaning and use of the URL inside the hub HTML are otherwise
-out of scope.
+sent to a peer.
 
-The current hub retains the mapping from hub session ID to player ID only for
-the lifetime of the hub process.
+The current hub retains an inactive mapping from hub session ID to player ID
+for up to 24 hours, bounded to 10,000 retained sessions by default. The
+retention clock starts when the mapping loses its last lobby/game presence, not
+when it was created or last reconnected. TTL and capacity eviction retire the
+player ID, alias, challenges, and recent-correspondent edges together.
+Deployments may override these bounds with `HUB_RETAINED_SESSION_TTL_MS` and
+`HUB_MAX_RETAINED_SESSIONS`.
 
 ### 8.2 Registration
 
@@ -495,7 +506,8 @@ frame. It uses close code `4002` and reason `idle_timeout`.
 Other current close codes are:
 
 - `4001`, `replaced_by_new_connection`;
-- `4008`, `rate_limited`; and
+- `4008`, `rate_limited`;
+- `1009`, oversized WebSocket message; and
 - `1001`, `server_shutdown`.
 
 Peer keepalives are different: they are opaque addressed payloads carried
@@ -509,15 +521,28 @@ Current hub defaults use a ten-second accounting window:
 - at most 1,000 game-channel messages per connection per window;
 - at most 11 MiB of game-channel frame bytes per connection per window.
 
+The WebSocket parser uses separate transport-level message limits: hub-control
+JSON defaults to 64 KiB, while game traffic defaults to 11 MiB. Each parser
+enforces its limit while reassembling a message and closes an oversized
+connection with code `1009`, before emitting the application-level `message`
+event. Deployments may override the ceilings independently with
+`HUB_CONTROL_MAX_WS_PAYLOAD_BYTES` and `GAME_MAX_WS_PAYLOAD_BYTES`.
+
+The reference hub also admits at most 22 MiB of outstanding encoded game data
+per destination WebSocket and 256 MiB across all game WebSockets. A relay that
+would exceed either outbound budget is not queued; its sender receives
+`delivery_failure`. Deployments may override these limits.
+
 Deployments may override these values. Exceeding a per-connection rate budget
 closes the connection with code `4008`. The hub may also enforce local
 connection caps. Rejection at that stage uses HTTP status
 `503 Service Unavailable`; no WebSocket connection is established. Limits
 involving the hub HTML's internal connections are out of scope.
 
-The rate budget is not an end-to-end peer message size declaration. The current
-peer receive policy separately defaults to a 10 MiB authoritative peer-message
-body limit.
+The transport limit and rate budget are not end-to-end peer message size
+declarations. The current peer receive policy separately defaults to a 10 MiB
+authoritative peer-message body limit; the transport ceiling leaves room for
+the relay envelope around that body.
 
 ## 11. Terminology and trust
 
@@ -525,9 +550,9 @@ body limit.
   session.
 - **Hub**: a third-party service that assigns public player IDs and relays
   addressed payloads.
-- **Hub session ID**: a secret bearer value generated by a player application.
-  It is sent as `session_id` and identifies the same player application across
-  hub reconnects.
+- **Hub session ID**: a secret bearer value derived by a player application for
+  one canonical hub origin. It is sent as `session_id` and identifies the same
+  player application across reconnects to that origin.
 - **Player ID**: a public routing identifier assigned by the hub. Current hubs
   send it as 16 opaque bytes. The reference hub represents the same bytes
   internally as `p_` followed by 32 lowercase hexadecimal characters.

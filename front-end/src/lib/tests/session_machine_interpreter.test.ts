@@ -703,7 +703,7 @@ describe('session machine controller command failures', () => {
       persist: async () => persisted.push(runtime.getState()),
     });
 
-    runtime.dispatch({ type: 'accept-review' });
+    runtime.dispatch({ type: 'accept-review', primaryId: '7' });
 
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
     expect(runtime.getState().model.betweenHand.proposalGroups[0]?.primaryId).toBe('7');
@@ -748,7 +748,7 @@ describe('session machine controller command failures', () => {
           throw new Error('accept failed');
         },
       },
-      { type: 'accept-review' } as const,
+      { type: 'accept-review', primaryId: '7' } as const,
     ],
     [
       'cancel',
@@ -786,7 +786,12 @@ describe('session machine controller command failures', () => {
   });
 
   it.each([
-    ['accept', { acceptProposal: jest.fn() }, { type: 'accept-review' } as const, 'decision'],
+    [
+      'accept',
+      { acceptProposal: jest.fn() },
+      { type: 'accept-review', primaryId: '7' } as const,
+      'decision',
+    ],
     [
       'cancel',
       { cancel_proposal: jest.fn() },

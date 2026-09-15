@@ -575,7 +575,7 @@ mod tests {
             coin: coin_for_puzzle(tag, &puzzle, allocator),
             bundle: Spend {
                 puzzle,
-                solution: Program::from_bytes(&[0x80]).into(),
+                solution: Program::nil().into(),
                 signature: Aggsig::default(),
             },
         }

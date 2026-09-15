@@ -33,10 +33,10 @@
   (c (+ 1 COUNT) (r curry-args))
   )
 
-;; Compute shatree(curry-args) using SELF_HASH in place of shatree(SELF_PROG)
-;; curry-args = (COUNT SELF_HASH SELF_PROG)
+;; The validator is always curried with count zero. The live count comes from
+;; state, so every turn uses the same factory-registered program.
 (defun curry-args-hash ((CURRY_PACK))
-  (sha256 2 (sha256 1 COUNT)
+  (sha256 2 (sha256 1 ())
     (sha256 2 (sha256 1 SELF_HASH)
       (sha256 2 SELF_HASH (sha256 1 ()))))
   )
@@ -53,10 +53,11 @@
   waiter-pubkey
   )
 
-;; Every valid move encapsulates the entire set of data that the validator will be exposed
-;; to.
+;; Every valid move encapsulates the stable data exposed to the validator.
+;; MAX_MOVE_SIZE and INFOHASH_B are outputs committed by the candidate coin,
+;; so they cannot be inputs to the move that determines them.
 ;;
-;; MOVE is the concatenation of all curried parameters except move followed by
+;; MOVE is the concatenation of the remaining curried parameters followed by
 ;; - the shatree of previous validation program
 ;; - slashable
 ;;   a byte that is nonzero if the move is slashable.  the user must match this byte to slash.
@@ -71,6 +72,7 @@
      evidence
      )
   (assign
+   count (+ 0 (f state))
    pv_hash (validator-hash curry-args)
    move-counter-data
    (concat
@@ -78,16 +80,14 @@
     (if WAITER_PUBKEY WAITER_PUBKEY (current-waiter-pubkey curry-args WAITER_PUBKEY))
     MOVER_PUBKEY
     MOD_HASH
-    INFOHASH_B
     INFOHASH_A
     pv_hash
     ;; Then variable length stuff
     (byteify TIMEOUT)
     (byteify AMOUNT)
     (byteify NONCE)
-    (byteify MAX_MOVE_SIZE)
     (byteify MOVER_SHARE)
-    (byteify COUNT)
+    (byteify count)
     )
 
    move-counter-data-len (strlen (print "move-counter-data?" move-counter-data))
@@ -102,9 +102,7 @@
      (print (list "INFOHASH_A " INFOHASH_A) 0)
      (print (list "INFOHASH_B " INFOHASH_B) 0)
      (print (list "INFOHASH_C " "NONE YET") 0)
-     ;; check previous validation info hash
      (print (list "Previous infohash calculation: " (sha256 pv_hash (shatree state))) 0)
-     (print "did we have the right previous validation info hash" (not (= INFOHASH_B (sha256 pv_hash (shatree state)))))
      ;; if mover and waiter are the same then things are broken
      (print "ensure we didn't just send the same pubkey for mover and waiter" (= MOVER_PUBKEY WAITER_PUBKEY))
      ;; the evidence is the slash
@@ -123,9 +121,8 @@
      mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
      (list
       (validator-hash (curry-args-incr curry-args))
-      (list (+ COUNT 1) slashable-move mover-share)
+      (list (+ count 1) slashable-move mover-share)
       512
-      (list "debug game: move with count" (+ COUNT 1) "slash hint" slashable-move "mover share" mover-share)
       )
      )
     )
@@ -150,9 +147,6 @@
             "debug game: move"
             ;; move bytes
             (concat prefix (byteify mover-share) slash)
-            (curry SELF_PROG "validator" curry-args)
-            (curry SELF_PROG "validator" incr-curry-args)
-            512
             mover-share
             (curry SELF_PROG "theirturn" incr-curry-args)
             )
@@ -204,7 +198,9 @@
             (x "their turn: wrong slash byte in state" smove slash-byte)
             (list
              (list count smove mshare)
-             (list slash-byte)
+             ; The first candidate deliberately does not slash. This keeps the
+             ; test game exercising ordered retries through later evidence.
+             (list 0 slash-byte)
              (curry SELF_PROG "myturn" (curry-args-incr curry-args))
              )
             )
@@ -229,7 +225,7 @@
       0
       (curry SELF_PROG "myturn" curry-args)
       (curry SELF_PROG "theirturn" curry-args)
-      (curry SELF_PROG "validator" curry-args)
+      (list (curry SELF_PROG "validator" curry-args))
       )
      )
     )

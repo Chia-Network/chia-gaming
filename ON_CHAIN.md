@@ -267,17 +267,18 @@ channel coin, so only one can land on-chain.
 
 Because of this, the system never blindly trusts that the clean shutdown
 landed. When `SpendChannelCoinPhase` is created for the clean shutdown
-path, it stores the exact on-chain solution (`ProgramRef`) that was
-co-signed for the shutdown.  When the channel coin spend is detected, the
-handler compares the on-chain solution directly against the stored one:
+path, it stores the expected standard-coin solution (`ProgramRef`) that was
+co-signed for the shutdown. When the channel coin spend is detected, the
+handler compares the tree hash of the delegated puzzle against the stored
+one. This is the value covered by `AGG_SIG_ME`; the outer solution argument
+applied to that puzzle is not signed.
 
-1. **Clean shutdown landed:** The on-chain solution matches the expected
-   solution byte-for-byte.  The handler emits `ChannelStatus` with state
-   `ResolvedClean`.
-2. **An unroll landed instead:** The solution does not match.  The handler
-   runs the puzzle to extract conditions, then matches `CREATE_COIN` puzzle
-   hashes against the `unroll_puzzle_hash_map` to identify which unroll
-   state landed.  Since no games are active, the unroll creates only reward
+1. **Clean shutdown landed:** The delegated-puzzle tree hash matches the
+   expected hash. The handler emits `ChannelStatus` with state `ResolvedClean`.
+2. **An unroll landed instead:** The delegated-puzzle hash does not match. The
+   handler runs the puzzle to extract conditions, then matches `CREATE_COIN`
+   puzzle hashes against the `unroll_puzzle_hash_map` to identify which unroll
+   state landed. Since no games are active, the unroll creates only reward
    coins; `finish_on_chain_transition` finds an empty game map and
    transitions to `OnChainPhase`. The outcome is the same correct
    balances, just with more on-chain transactions.
@@ -319,6 +320,13 @@ on-chain sequence number against their own latest state:
 Preemption is **immediate** — no timelock. This is by design: the preempting
 player gets first-mover advantage because they're correcting an out-of-date
 unroll. Timeouts require waiting for `unroll_timeout` blocks.
+
+The handshake establishes two different fully signed unrolls with the same
+opening payout. Handshake D gives the initiator even state 0; handshake E gives
+the receiver odd state 1 and the potato. If the initiator later publishes the
+retained genesis unroll, the receiver can immediately preempt it with state 1
+under the ordinary opposite-parity rule. The receiver's first normal Batch
+advances to even state 2.
 
 ### After Preemption or Timeout
 
@@ -670,9 +678,11 @@ The referee puzzle (`referee.clsp`) accepts three types of solutions:
   fails to mine — this is why validators must classify malicious moves as
   slashable before any evidence-sensitive code can raise (see `CLVM_DOS.md`,
   "Game-Specific Responsibilities")
-  - Validator raises are acceptable only for invalid slash attempts, such as
-  malformed evidence against an otherwise valid move. A malicious move itself
-  must be classified as slashable before evidence-sensitive code can raise.
+  - Nil evidence must return the aligned transition for a valid move because it
+  is also used off chain to derive that transition. Non-nil evidence either
+  proves its specific accusation or fails to slash; unusable evidence may raise
+  or be treated like nil. A malicious move itself must be classified as
+  slashable before any evidence-sensitive code can raise.
   - Requires `AGG_SIG_UNSAFE MOVER_PUBKEY ("x" || mover_payout_ph)` — the same
   pre-signed payout authorization used by timeouts, so no additional signing
   is needed at slash time
@@ -773,21 +783,44 @@ referee arguments with real mover and waiter pubkeys, substitutes the incoming
 move and validation program, and uses the same state-update program that would
 be used by the on-chain referee when validating peer moves.
 
-When a move has a follow-on state, the state update is run off-chain first to
-validate the move and derive that state before the receiving player's
-their-turn handler interprets it. A terminal move is still a normal move, but
-it sets the next validation program to nil, so there is no follow-on state to
-derive for future moves. The their-turn handler still interprets the move and
-may provide slash evidence. Any evidence it provides is checked by running the
-normal state-update program with that evidence.
+Each factory record supplies `initial_state` and a proper, nonempty
+`validation_programs` registry. Its first entry is initially current; later
+entry order is irrelevant. Games normally use canonical nil initial state.
+For each move, a valid payload supplies `next_validator_hash`, `new_state`, and
+the next maximum move size. Rust resolves a non-nil hash by tree hash in the
+factory registry and makes that program current for the next move. Handlers
+supply none of those validator programs, hashes, states, or size limits; they
+continue to chain only off-chain handlers and remain the authority for
+`mover_share`.
 
-The peer move message carries only a terminal boolean, not either validation
-hash. For a nonterminal move, the receiver reconstructs the validation info
-hash from its locally held validation program and pre-move state and computes
-the bare program hash locally. For a terminal move it reconstructs the nil
-validation-info commitment. The claimed terminal bit must agree with whether
-the local handler transition has a successor. These reconstructed internal
-values are what enter `RefereePuzzleArgs` and the signed unroll state.
+For a peer move, Rust first runs the current validator with nil evidence to
+discover the candidate transition. It then curries a real referee with those
+derived commitments and slash-invokes nil evidence. If that succeeds, the move
+is rejected before the handler. Otherwise Rust runs the validator with the
+committed arguments to obtain the `new_state` passed to the their-turn handler.
+A raise in any required run aborts off-chain acceptance; the handler is not
+called with a fabricated nil state.
+
+A terminal move is still a normal move, but the validator returns a nil next
+hash, so there is no follow-on state for future moves. That nil must agree with
+a nil next handler from the otherwise unchanged their-turn handler output. The
+their-turn handler still interprets the move and may provide an ordered list of
+slash evidence. Each candidate is checked by slash-invoking the normal
+state-update program again. Repeated execution is therefore expected:
+transition discovery, committed nil-evidence checking, and evidence trials are
+distinct phases.
+
+The peer move message does not carry a terminal flag or either validation
+hash. The receiver runs the current validator and computes the next validation
+info hash the same way the on-chain referee does: nil if the validator's
+next-validator program hash is nil, otherwise
+`sha256(next_validator_hash, shatree(new_state))`. Off-chain accept then
+curries a real referee with that infohash and slash-invokes it with nil evidence,
+then later with each handler evidence candidate. If any invocation succeeds,
+the move is slashable and is rejected. These reconstructed internal values are
+what enter `RefereePuzzleArgs` and the signed unroll state — the signed leaf is
+the new virtual coin's puzzle hash. Slash evidence from the handler is checked
+regardless of whether the move is final.
 
 This keeps off-chain and on-chain validation semantics aligned. Some games may
 repeat a small amount of logic between their on-chain validator and off-chain
@@ -801,8 +834,10 @@ The terminology is easy to mix up:
 - A `validation_program_hash` is the tree hash of a validator program by
   itself.
 - A validation info hash is
-  `sha256(validation_program_hash, shatree(state))`. It commits to both the
-  validator program and the state that program validates.
+  `sha256(validator_hash, shatree(state))`. It commits to a validator
+  program and the state that program validates. For the next coin, the
+  referee computes `sha256(next_validator_hash, shatree(new_state))`, or
+  nil if the next-validator hash is nil.
 
 The referee coin stores validation info hashes, not bare program hashes. The
 current move's commitment is stored in `game_move.validation_info_hash`, and the

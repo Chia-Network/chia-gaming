@@ -88,12 +88,32 @@ enum MoveCode {
     Slash = 2,
 }
 
-fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> (MoveCode, NodePtr) {
+struct ValidatorResult {
+    code: MoveCode,
+    next_validator_hash: NodePtr,
+    new_state: NodePtr,
+    next_max_move_size: i64,
+}
+
+fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> ValidatorResult {
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     if items.is_empty() {
-        (MoveCode::Slash, result)
+        ValidatorResult {
+            code: MoveCode::Slash,
+            next_validator_hash: NodePtr::NIL,
+            new_state: NodePtr::NIL,
+            next_max_move_size: 0,
+        }
     } else {
-        (MoveCode::MakeMove, result)
+        ValidatorResult {
+            code: MoveCode::MakeMove,
+            next_validator_hash: items[0],
+            new_state: items.get(1).copied().unwrap_or(NodePtr::NIL),
+            next_max_move_size: items
+                .get(2)
+                .map(|node| int_from_node(allocator, *node))
+                .unwrap_or(0),
+        }
     }
 }
 
@@ -106,7 +126,7 @@ fn run_validator(
     state: NodePtr,
     validator_program: NodePtr,
     evidence: NodePtr,
-) -> (MoveCode, NodePtr) {
+) -> ValidatorResult {
     let amount_node = AMOUNT.to_clvm(allocator).unwrap();
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
@@ -137,11 +157,6 @@ fn run_validator(
 
 struct MyTurnResult {
     move_bytes_node: NodePtr,
-    validator_for_my_move: NodePtr,
-    validator_for_my_move_hash: NodePtr,
-    validator_for_their_next_move: NodePtr,
-    validator_for_their_move_hash: NodePtr,
-    max_move_size: i64,
     new_mover_share: i64,
     their_turn_handler: NodePtr,
 }
@@ -168,40 +183,16 @@ fn call_my_turn_handler(
     let items = proper_list(allocator.allocator(), result, true)
         .expect("my_turn handler should return a list");
 
-    // Return format: (handler_name move_bytes validator_for_my_move
-    //   validator_for_their_next_move max_move_size new_mover_share
-    //   [their_turn_handler] [message_parser])
     assert!(
-        items.len() >= 7,
-        "my_turn handler returned {} items, expected >= 7",
+        (4..=5).contains(&items.len()),
+        "my_turn handler returned {} items, expected 4 or 5",
         items.len()
     );
-    let validator_for_my_move_hash_bytes =
-        clvm_utils::tree_hash(allocator.allocator(), items[2]).to_bytes();
-    let validator_for_my_move_hash = allocator
-        .allocator()
-        .new_atom(&validator_for_my_move_hash_bytes)
-        .unwrap();
-    let validator_for_their_move_hash_bytes =
-        clvm_utils::tree_hash(allocator.allocator(), items[3]).to_bytes();
-    let validator_for_their_move_hash = allocator
-        .allocator()
-        .new_atom(&validator_for_their_move_hash_bytes)
-        .unwrap();
 
     MyTurnResult {
         move_bytes_node: items[1],
-        validator_for_my_move: items[2],
-        validator_for_my_move_hash,
-        validator_for_their_next_move: items[3],
-        validator_for_their_move_hash,
-        max_move_size: int_from_node(allocator, items[4]),
-        new_mover_share: int_from_node(allocator, items[5]),
-        their_turn_handler: if items.len() > 6 {
-            items[6]
-        } else {
-            NodePtr::NIL
-        },
+        new_mover_share: int_from_node(allocator, items[2]),
+        their_turn_handler: items[3],
     }
 }
 
@@ -309,9 +300,8 @@ fn call_their_turn_handler(
 
 struct GameSetup {
     alice_handler: NodePtr,
-    alice_validator: NodePtr,
     bob_handler: NodePtr,
-    bob_validator: NodePtr,
+    validators: Vec<NodePtr>,
     initial_validator_hash: NodePtr,
     initial_state: NodePtr,
     initial_max_move_size: i64,
@@ -325,9 +315,7 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
-    let parameters = (BET_SIZE, (BET_SIZE, ((), ())))
-        .to_clvm(allocator)
-        .unwrap();
+    let parameters = (BET_SIZE, (BET_SIZE, ((), ()))).to_clvm(allocator).unwrap();
     let result = run_clvm(allocator, factory_clvm, parameters);
     let records = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(records.len(), 1, "Calpoker factory must return one record");
@@ -340,8 +328,14 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
         AMOUNT
     );
     assert_eq!(int_from_node(allocator, record[2]), 1);
+    let validators = proper_list(allocator.allocator(), record[9], true)
+        .expect("factory validators must be a proper list");
+    assert!(
+        !validators.is_empty(),
+        "factory validators must be nonempty"
+    );
     let initial_validator_hash_bytes =
-        clvm_utils::tree_hash(allocator.allocator(), record[9]).to_bytes();
+        clvm_utils::tree_hash(allocator.allocator(), validators[0]).to_bytes();
     let initial_validator_hash = allocator
         .allocator()
         .new_atom(&initial_validator_hash_bytes)
@@ -349,14 +343,33 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
 
     GameSetup {
         alice_handler: record[7],
-        alice_validator: record[9],
         bob_handler: record[8],
-        bob_validator: record[9],
+        validators,
         initial_validator_hash,
         initial_max_move_size: int_from_node(allocator, record[4]),
         initial_state: record[5],
         initial_mover_share: int_from_node(allocator, record[6]),
     }
+}
+
+fn validator_for_hash(
+    allocator: &mut AllocEncoder,
+    validators: &[NodePtr],
+    hash: NodePtr,
+) -> NodePtr {
+    let hash_bytes = atom_bytes(allocator, hash);
+    validators
+        .iter()
+        .copied()
+        .find(|program| {
+            hash_bytes == clvm_utils::tree_hash(allocator.allocator(), *program).to_bytes()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "validator hash {} missing from factory list",
+                hex::encode(hash_bytes)
+            )
+        })
 }
 
 #[derive(Clone, Copy)]
@@ -375,8 +388,6 @@ struct HandlerMove {
 }
 
 fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[HandlerMove]) {
-    // Each player has separate my_turn and their_turn handlers
-    // Alice starts as my_turn player (goes first), Bob starts as their_turn player
     let mut alice_my_turn_handler = setup.alice_handler;
     let mut alice_their_turn_handler: NodePtr = NodePtr::NIL;
     let mut bob_my_turn_handler: NodePtr = NodePtr::NIL;
@@ -389,20 +400,35 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
     let mut alice_max_move_size = setup.initial_max_move_size;
     let mut bob_max_move_size = setup.initial_max_move_size;
 
-    let mut alice_their_turn_validator = setup.alice_validator;
-    let mut bob_their_turn_validator = setup.bob_validator;
-    let mut alice_their_turn_vp_hash = setup.initial_validator_hash;
-    let mut bob_their_turn_vp_hash = setup.initial_validator_hash;
+    let mut alice_validator =
+        validator_for_hash(allocator, &setup.validators, setup.initial_validator_hash);
+    let mut bob_validator = alice_validator;
+    let mut alice_vp_hash = setup.initial_validator_hash;
+    let mut bob_vp_hash = setup.initial_validator_hash;
 
-    let mut whose_move: usize = 0; // 0=alice, 1=bob
+    let mut whose_move: usize = 0;
 
     for (step_idx, hm) in moves.iter().enumerate() {
         let is_alice = whose_move == 0;
 
-        let (handler, state, mover_share) = if is_alice {
-            (alice_my_turn_handler, alice_state, alice_mover_share)
+        let (handler, state, mover_share, validator, validator_hash, max_move_size) = if is_alice {
+            (
+                alice_my_turn_handler,
+                alice_state,
+                alice_mover_share,
+                alice_validator,
+                alice_vp_hash,
+                alice_max_move_size,
+            )
         } else {
-            (bob_my_turn_handler, bob_state, bob_mover_share)
+            (
+                bob_my_turn_handler,
+                bob_state,
+                bob_mover_share,
+                bob_validator,
+                bob_vp_hash,
+                bob_max_move_size,
+            )
         };
 
         let mut my_turn = call_my_turn_handler(
@@ -429,66 +455,67 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
             "step {step_idx}: mover_share mismatch"
         );
 
-        let is_terminal = my_turn.their_turn_handler == NodePtr::NIL;
-        let new_state = if is_terminal {
-            state
-        } else {
-            let (code, validator_result) = run_validator(
-                allocator,
-                my_turn.validator_for_my_move_hash,
-                my_turn.move_bytes_node,
-                hm.expected_mover_share,
-                my_turn.max_move_size,
-                state,
-                my_turn.validator_for_my_move,
-                NodePtr::NIL,
-            );
-            assert_eq!(
-                code,
-                MoveCode::MakeMove,
-                "step {step_idx}: validator rejected our move"
-            );
-            let validator_items =
-                proper_list(allocator.allocator(), validator_result, true).unwrap();
-            validator_items[1]
-        };
+        let mover_validation = run_validator(
+            allocator,
+            validator_hash,
+            my_turn.move_bytes_node,
+            hm.expected_mover_share,
+            max_move_size,
+            state,
+            validator,
+            NodePtr::NIL,
+        );
+        assert_eq!(
+            mover_validation.code,
+            MoveCode::MakeMove,
+            "step {step_idx}: validator rejected our move"
+        );
+        let is_terminal = mover_validation.next_validator_hash == NodePtr::NIL;
+        assert_eq!(
+            is_terminal,
+            my_turn.their_turn_handler == NodePtr::NIL,
+            "step {step_idx}: terminal validator hash and next handler disagree"
+        );
 
-        // Update mover's state and validators
         if is_alice {
-            alice_state = new_state;
+            alice_state = mover_validation.new_state;
             alice_mover_share = my_turn.new_mover_share;
-            alice_max_move_size = my_turn.max_move_size;
-            alice_their_turn_vp_hash = my_turn.validator_for_their_move_hash;
-            alice_their_turn_validator = my_turn.validator_for_their_next_move;
-            // my_turn produces a their_turn_handler for alice (to be used when opponent moves)
+            alice_max_move_size = mover_validation.next_max_move_size;
+            alice_vp_hash = mover_validation.next_validator_hash;
+            if !is_terminal {
+                alice_validator = validator_for_hash(allocator, &setup.validators, alice_vp_hash);
+            }
             alice_their_turn_handler = my_turn.their_turn_handler;
         } else {
-            bob_state = new_state;
+            bob_state = mover_validation.new_state;
             bob_mover_share = my_turn.new_mover_share;
-            bob_max_move_size = my_turn.max_move_size;
-            bob_their_turn_vp_hash = my_turn.validator_for_their_move_hash;
-            bob_their_turn_validator = my_turn.validator_for_their_next_move;
+            bob_max_move_size = mover_validation.next_max_move_size;
+            bob_vp_hash = mover_validation.next_validator_hash;
+            if !is_terminal {
+                bob_validator = validator_for_hash(allocator, &setup.validators, bob_vp_hash);
+            }
             bob_their_turn_handler = my_turn.their_turn_handler;
         }
 
-        // Now the other player's their_turn
         whose_move ^= 1;
         let is_alice_waiter = whose_move == 0;
 
-        let (waiter_handler, waiter_state, waiter_vp_hash, waiter_max_move_size) =
+        let (waiter_handler, waiter_state, waiter_vp_hash, waiter_max_move_size, waiter_validator) =
             if is_alice_waiter {
                 (
                     alice_their_turn_handler,
                     alice_state,
-                    alice_their_turn_vp_hash,
+                    alice_vp_hash,
                     alice_max_move_size,
+                    alice_validator,
                 )
             } else {
                 (
                     bob_their_turn_handler,
                     bob_state,
-                    bob_their_turn_vp_hash,
+                    bob_vp_hash,
                     bob_max_move_size,
+                    bob_validator,
                 )
             };
 
@@ -498,123 +525,74 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
             my_turn.new_mover_share
         };
 
-        if is_terminal {
-            // Terminal move: skip waiter validation and their-turn handler.
-            let their_turn = call_their_turn_handler(
-                allocator,
-                waiter_handler,
-                AMOUNT,
-                waiter_state,
-                NodePtr::NIL,
-                my_turn.move_bytes_node,
-                waiter_vp_hash,
-                effective_mover_share,
-            );
-
-            if matches!(hm.test_type, TestType::CheckForAliceTriesToCheat) {
-                let evidence_items =
-                    proper_list(allocator.allocator(), their_turn.evidence_list, true);
-                if let Some(items) = evidence_items {
-                    let mut found_slash = false;
-                    for ev in &items {
-                        let (ev_code, _) = run_validator(
-                            allocator,
-                            waiter_vp_hash,
-                            my_turn.move_bytes_node,
-                            effective_mover_share,
-                            waiter_max_move_size,
-                            waiter_state,
-                            if is_alice_waiter {
-                                alice_their_turn_validator
-                            } else {
-                                bob_their_turn_validator
-                            },
-                            *ev,
-                        );
-                        if ev_code == MoveCode::Slash {
-                            found_slash = true;
-                        }
-                    }
-                    assert!(found_slash, "step {step_idx}: expected slash evidence");
-                }
-            }
-
-            if is_alice_waiter {
-                alice_state = waiter_state;
-                alice_mover_share = effective_mover_share;
+        let waiter_validation = run_validator(
+            allocator,
+            waiter_vp_hash,
+            my_turn.move_bytes_node,
+            effective_mover_share,
+            waiter_max_move_size,
+            waiter_state,
+            waiter_validator,
+            NodePtr::NIL,
+        );
+        let waiter_terminal = waiter_validation.next_validator_hash == NodePtr::NIL;
+        let their_turn = call_their_turn_handler(
+            allocator,
+            waiter_handler,
+            AMOUNT,
+            waiter_state,
+            if waiter_terminal {
+                NodePtr::NIL
             } else {
-                bob_state = waiter_state;
-                bob_mover_share = effective_mover_share;
+                waiter_validation.new_state
+            },
+            my_turn.move_bytes_node,
+            waiter_vp_hash,
+            effective_mover_share,
+        );
+
+        if matches!(hm.test_type, TestType::CheckForAliceTriesToCheat) {
+            let evidence_items = proper_list(allocator.allocator(), their_turn.evidence_list, true);
+            if let Some(items) = evidence_items {
+                let found_slash = items.iter().any(|ev| {
+                    run_validator(
+                        allocator,
+                        waiter_vp_hash,
+                        my_turn.move_bytes_node,
+                        effective_mover_share,
+                        waiter_max_move_size,
+                        waiter_state,
+                        waiter_validator,
+                        *ev,
+                    )
+                    .code
+                        == MoveCode::Slash
+                });
+                assert!(found_slash, "step {step_idx}: expected slash evidence");
+            }
+        }
+
+        if is_alice_waiter {
+            alice_state = waiter_validation.new_state;
+            alice_mover_share = effective_mover_share;
+            alice_max_move_size = waiter_validation.next_max_move_size;
+            alice_vp_hash = waiter_validation.next_validator_hash;
+            if !waiter_terminal {
+                alice_validator = validator_for_hash(allocator, &setup.validators, alice_vp_hash);
+                alice_my_turn_handler = their_turn.my_turn_handler;
             }
         } else {
-            let (_waiter_code, waiter_validator_result) = run_validator(
-                allocator,
-                waiter_vp_hash,
-                my_turn.move_bytes_node,
-                effective_mover_share,
-                waiter_max_move_size,
-                waiter_state,
-                if is_alice_waiter {
-                    alice_their_turn_validator
-                } else {
-                    bob_their_turn_validator
-                },
-                NodePtr::NIL,
-            );
-
-            let waiter_validator_items =
-                proper_list(allocator.allocator(), waiter_validator_result, true).unwrap();
-            let waiter_new_state = waiter_validator_items[1];
-
-            let their_turn = call_their_turn_handler(
-                allocator,
-                waiter_handler,
-                AMOUNT,
-                waiter_state,
-                waiter_new_state,
-                my_turn.move_bytes_node,
-                waiter_vp_hash,
-                effective_mover_share,
-            );
-
-            if matches!(hm.test_type, TestType::CheckForAliceTriesToCheat) {
-                let evidence_items =
-                    proper_list(allocator.allocator(), their_turn.evidence_list, true);
-                if let Some(items) = evidence_items {
-                    let mut found_slash = false;
-                    for ev in &items {
-                        let (ev_code, _) = run_validator(
-                            allocator,
-                            waiter_vp_hash,
-                            my_turn.move_bytes_node,
-                            effective_mover_share,
-                            waiter_max_move_size,
-                            waiter_state,
-                            if is_alice_waiter {
-                                alice_their_turn_validator
-                            } else {
-                                bob_their_turn_validator
-                            },
-                            *ev,
-                        );
-                        if ev_code == MoveCode::Slash {
-                            found_slash = true;
-                        }
-                    }
-                    assert!(found_slash, "step {step_idx}: expected slash evidence");
-                }
-            }
-
-            if is_alice_waiter {
-                alice_state = waiter_new_state;
-                alice_mover_share = effective_mover_share;
-                alice_my_turn_handler = their_turn.my_turn_handler;
-            } else {
-                bob_state = waiter_new_state;
-                bob_mover_share = effective_mover_share;
+            bob_state = waiter_validation.new_state;
+            bob_mover_share = effective_mover_share;
+            bob_max_move_size = waiter_validation.next_max_move_size;
+            bob_vp_hash = waiter_validation.next_validator_hash;
+            if !waiter_terminal {
+                bob_validator = validator_for_hash(allocator, &setup.validators, bob_vp_hash);
                 bob_my_turn_handler = their_turn.my_turn_handler;
             }
+        }
 
+        if !waiter_terminal {
             let alice_hex = node_to_hex(allocator, alice_state);
             let bob_hex = node_to_hex(allocator, bob_state);
             assert_eq!(
@@ -737,19 +715,34 @@ fn bob_terminal_context_after_step_d(
     let mut alice_max_move_size = setup.initial_max_move_size;
     let mut bob_max_move_size = setup.initial_max_move_size;
 
-    let mut alice_their_turn_validator = setup.alice_validator;
-    let mut bob_their_turn_validator = setup.bob_validator;
-    let mut alice_their_turn_vp_hash = setup.initial_validator_hash;
-    let mut bob_their_turn_vp_hash = setup.initial_validator_hash;
+    let mut alice_validator =
+        validator_for_hash(allocator, &setup.validators, setup.initial_validator_hash);
+    let mut bob_validator = alice_validator;
+    let mut alice_vp_hash = setup.initial_validator_hash;
+    let mut bob_vp_hash = setup.initial_validator_hash;
 
     let mut whose_move: usize = 0; // 0=alice, 1=bob
 
     for hm in moves.iter().take(4) {
         let is_alice = whose_move == 0;
-        let (handler, state, mover_share) = if is_alice {
-            (alice_my_turn_handler, alice_state, alice_mover_share)
+        let (handler, state, mover_share, validator, validator_hash, max_move_size) = if is_alice {
+            (
+                alice_my_turn_handler,
+                alice_state,
+                alice_mover_share,
+                alice_validator,
+                alice_vp_hash,
+                alice_max_move_size,
+            )
         } else {
-            (bob_my_turn_handler, bob_state, bob_mover_share)
+            (
+                bob_my_turn_handler,
+                bob_state,
+                bob_mover_share,
+                bob_validator,
+                bob_vp_hash,
+                bob_max_move_size,
+            )
         };
 
         let my_turn = call_my_turn_handler(
@@ -766,46 +759,40 @@ fn bob_terminal_context_after_step_d(
         assert_eq!(actual_move_bytes, hm.expected_move_bytes);
         assert_eq!(my_turn.new_mover_share, hm.expected_mover_share);
 
-        let (code, validator_result) = run_validator(
+        let validator_result = run_validator(
             allocator,
-            my_turn.validator_for_my_move_hash,
+            validator_hash,
             my_turn.move_bytes_node,
             hm.expected_mover_share,
-            my_turn.max_move_size,
+            max_move_size,
             state,
-            my_turn.validator_for_my_move,
+            validator,
             NodePtr::NIL,
         );
-        assert_eq!(code, MoveCode::MakeMove);
-        let validator_items = proper_list(allocator.allocator(), validator_result, true).unwrap();
-        let new_state = validator_items[1];
+        assert_eq!(validator_result.code, MoveCode::MakeMove);
 
         if is_alice {
-            alice_state = new_state;
+            alice_state = validator_result.new_state;
             alice_mover_share = my_turn.new_mover_share;
-            alice_max_move_size = my_turn.max_move_size;
-            alice_their_turn_vp_hash = my_turn.validator_for_their_move_hash;
-            alice_their_turn_validator = my_turn.validator_for_their_next_move;
+            alice_max_move_size = validator_result.next_max_move_size;
+            alice_vp_hash = validator_result.next_validator_hash;
+            alice_validator = validator_for_hash(allocator, &setup.validators, alice_vp_hash);
             alice_their_turn_handler = my_turn.their_turn_handler;
         } else {
-            bob_state = new_state;
+            bob_state = validator_result.new_state;
             bob_mover_share = my_turn.new_mover_share;
-            bob_max_move_size = my_turn.max_move_size;
-            bob_their_turn_vp_hash = my_turn.validator_for_their_move_hash;
-            bob_their_turn_validator = my_turn.validator_for_their_next_move;
+            bob_max_move_size = validator_result.next_max_move_size;
+            bob_vp_hash = validator_result.next_validator_hash;
+            bob_validator = validator_for_hash(allocator, &setup.validators, bob_vp_hash);
             bob_their_turn_handler = my_turn.their_turn_handler;
         }
 
         whose_move ^= 1;
         let is_alice_waiter = whose_move == 0;
         let (waiter_handler, waiter_state, waiter_vp_hash) = if is_alice_waiter {
-            (
-                alice_their_turn_handler,
-                alice_state,
-                alice_their_turn_vp_hash,
-            )
+            (alice_their_turn_handler, alice_state, alice_vp_hash)
         } else {
-            (bob_their_turn_handler, bob_state, bob_their_turn_vp_hash)
+            (bob_their_turn_handler, bob_state, bob_vp_hash)
         };
 
         let waiter_validator_result = run_validator(
@@ -820,16 +807,14 @@ fn bob_terminal_context_after_step_d(
             },
             waiter_state,
             if is_alice_waiter {
-                alice_their_turn_validator
+                alice_validator
             } else {
-                bob_their_turn_validator
+                bob_validator
             },
             NodePtr::NIL,
-        )
-        .1;
-        let waiter_items =
-            proper_list(allocator.allocator(), waiter_validator_result, true).unwrap();
-        let waiter_new_state = waiter_items[1];
+        );
+        assert_eq!(waiter_validator_result.code, MoveCode::MakeMove);
+        let waiter_new_state = waiter_validator_result.new_state;
 
         let their_turn = call_their_turn_handler(
             allocator,
@@ -845,18 +830,24 @@ fn bob_terminal_context_after_step_d(
         if is_alice_waiter {
             alice_state = waiter_new_state;
             alice_mover_share = hm.expected_mover_share;
+            alice_max_move_size = waiter_validator_result.next_max_move_size;
+            alice_vp_hash = waiter_validator_result.next_validator_hash;
+            alice_validator = validator_for_hash(allocator, &setup.validators, alice_vp_hash);
             alice_my_turn_handler = their_turn.my_turn_handler;
         } else {
             bob_state = waiter_new_state;
             bob_mover_share = hm.expected_mover_share;
+            bob_max_move_size = waiter_validator_result.next_max_move_size;
+            bob_vp_hash = waiter_validator_result.next_validator_hash;
+            bob_validator = validator_for_hash(allocator, &setup.validators, bob_vp_hash);
             bob_my_turn_handler = their_turn.my_turn_handler;
         }
     }
 
     BobTerminalContext {
         pre_state: bob_state,
-        validation_program: bob_their_turn_validator,
-        validation_program_hash: bob_their_turn_vp_hash,
+        validation_program: bob_validator,
+        validation_program_hash: bob_vp_hash,
         max_move_size: bob_max_move_size,
     }
 }
@@ -890,9 +881,7 @@ fn test_calpoker_factory_rejects_malformed_parameters() {
         "valid uniform arguments should be accepted"
     );
 
-    let zero_args = (0i64, (0i64, ((), ())))
-        .to_clvm(&mut allocator)
-        .unwrap();
+    let zero_args = (0i64, (0i64, ((), ()))).to_clvm(&mut allocator).unwrap();
     assert!(
         !calpoker_factory_succeeds(&mut allocator, zero_args),
         "zero stake must be rejected"
@@ -954,7 +943,7 @@ fn test_calpoker_terminal_nil_evidence_precheck_slashes_short_final_move() {
     );
 
     let short_move_node = allocator.allocator().new_atom(short_final_move).unwrap();
-    let (code, _) = run_validator(
+    let result = run_validator(
         &mut allocator,
         ctx.validation_program_hash,
         short_move_node,
@@ -965,7 +954,7 @@ fn test_calpoker_terminal_nil_evidence_precheck_slashes_short_final_move() {
         NodePtr::NIL,
     );
     assert_eq!(
-        code,
+        result.code,
         MoveCode::Slash,
         "the step-e validator should classify the short final move as slashable"
     );

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{from_slice, to_vec};
+use crate::{
+    from_slice, from_slice_with_limits, parse, parse_with_limits, to_vec, Limits,
+};
 
 #[test]
 fn bool_true() {
@@ -334,6 +336,45 @@ fn invalid_integer_negative_zero() {
 }
 
 #[test]
+fn non_decimal_integer_grammars_are_rejected_by_both_decoders() {
+    for input in [
+        b"i+12e".as_slice(),
+        b"i 12e".as_slice(),
+        b"i12 e".as_slice(),
+        b"i 0x10e".as_slice(),
+        b"i 0o17e".as_slice(),
+        b"i 0b101e".as_slice(),
+    ] {
+        assert!(parse(input).is_err(), "{input:?}");
+        assert!(from_slice::<i128>(input).is_err(), "{input:?}");
+    }
+}
+
+#[test]
+fn noncanonical_string_lengths_are_rejected_by_both_decoders() {
+    assert!(parse(b"01:x").is_err());
+    assert!(from_slice::<serde_bytes::ByteBuf>(b"01:x").is_err());
+    assert!(parse(b"u01:x").is_err());
+    assert!(from_slice::<String>(b"u01:x").is_err());
+}
+
+#[test]
+fn noncanonical_dictionary_order_is_rejected_by_both_decoders() {
+    use std::collections::BTreeMap;
+
+    for input in [
+        b"du1:bi1eu1:ai2ee".as_slice(),
+        b"du1:ai1eu1:ai2ee".as_slice(),
+    ] {
+        assert!(parse(input).is_err(), "{input:?}");
+        assert!(
+            from_slice::<BTreeMap<String, i128>>(input).is_err(),
+            "{input:?}"
+        );
+    }
+}
+
+#[test]
 fn trailing_bytes_error() {
     assert!(from_slice::<u64>(b"i42eextra").is_err());
 }
@@ -348,4 +389,51 @@ fn tuple_variant_round_trip() {
     let encoded = to_vec(&val).unwrap();
     let decoded: Msg = from_slice(&encoded).unwrap();
     assert_eq!(decoded, val);
+}
+
+#[test]
+fn value_and_serde_decoders_reject_excessive_depth() {
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct Nested(Vec<Nested>);
+
+    let limits = Limits::default();
+    let mut nested = vec![b'l'; limits.max_depth + 2];
+    nested.extend(std::iter::repeat_n(b'e', limits.max_depth + 2));
+
+    assert!(parse(&nested).is_err());
+    let error = from_slice::<Nested>(&nested).unwrap_err();
+    assert!(error.to_string().contains("maximum value nesting depth"));
+
+    let raised_limits = Limits {
+        max_depth: limits.max_depth + 1,
+        ..limits
+    };
+    assert!(parse_with_limits(&nested, raised_limits).is_ok());
+    assert!(from_slice_with_limits::<Nested>(&nested, raised_limits).is_ok());
+}
+
+#[test]
+fn value_and_serde_decoders_reject_excessive_value_count() {
+    let limits = Limits::default();
+    let mut wide = Vec::with_capacity(limits.max_values + 2);
+    wide.push(b'l');
+    wide.extend(std::iter::repeat_n(b'n', limits.max_values + 1));
+    wide.push(b'e');
+
+    assert!(parse(&wide).is_err());
+    let error = from_slice::<Vec<()>>(&wide).unwrap_err();
+    assert!(error.to_string().contains("maximum value count"));
+}
+
+#[test]
+fn custom_value_limit_is_enforced_by_both_decoders() {
+    let limits = Limits {
+        max_depth: usize::MAX,
+        max_values: 2,
+    };
+    let input = b"lnne";
+
+    assert!(parse_with_limits(input, limits).is_err());
+    assert!(from_slice_with_limits::<Vec<()>>(input, limits).is_err());
 }

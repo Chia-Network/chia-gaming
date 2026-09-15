@@ -168,7 +168,7 @@ describe('terminal protocol cleanup', () => {
       },
       events: [],
     });
-    await (blob as any).flushDurabilityAndSend();
+    await blob.flushPendingWork();
 
     blob.receiveAck(1n);
 

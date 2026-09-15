@@ -72,12 +72,35 @@ enum MoveCode {
     Slash = 2,
 }
 
-fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> (MoveCode, NodePtr) {
+struct ValidatorResult {
+    code: MoveCode,
+    output: NodePtr,
+    next_validator_hash: NodePtr,
+    new_state: NodePtr,
+    next_max_move_size: i64,
+}
+
+fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> ValidatorResult {
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     if items.is_empty() {
-        (MoveCode::Slash, result)
+        ValidatorResult {
+            code: MoveCode::Slash,
+            output: result,
+            next_validator_hash: NodePtr::NIL,
+            new_state: NodePtr::NIL,
+            next_max_move_size: 0,
+        }
     } else {
-        (MoveCode::MakeMove, result)
+        ValidatorResult {
+            code: MoveCode::MakeMove,
+            output: result,
+            next_validator_hash: items[0],
+            new_state: items.get(1).copied().unwrap_or(NodePtr::NIL),
+            next_max_move_size: items
+                .get(2)
+                .map(|node| int_from_node(allocator, *node))
+                .unwrap_or(0),
+        }
     }
 }
 
@@ -90,7 +113,7 @@ fn run_validator(
     state: NodePtr,
     validator_program: NodePtr,
     evidence: NodePtr,
-) -> (MoveCode, NodePtr) {
+) -> ValidatorResult {
     let amount_node = AMOUNT.to_clvm(allocator).unwrap();
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
@@ -121,9 +144,6 @@ fn run_validator(
 
 struct MyTurnResult {
     move_bytes_node: NodePtr,
-    validator_for_my_move: NodePtr,
-    validator_for_my_move_hash: NodePtr,
-    max_move_size: i64,
     new_mover_share: i64,
     their_turn_handler: NodePtr,
 }
@@ -148,25 +168,16 @@ fn call_my_turn_handler(
 
     let result = run_clvm(allocator, handler, args);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert!(items.len() >= 7, "my_turn returned {} items", items.len());
-    let validator_for_my_move_hash_bytes =
-        clvm_utils::tree_hash(allocator.allocator(), items[2]).to_bytes();
-    let validator_for_my_move_hash = allocator
-        .allocator()
-        .new_atom(&validator_for_my_move_hash_bytes)
-        .unwrap();
+    assert!(
+        (4..=5).contains(&items.len()),
+        "my_turn returned {} items, expected 4 or 5",
+        items.len()
+    );
 
     MyTurnResult {
         move_bytes_node: items[1],
-        validator_for_my_move: items[2],
-        validator_for_my_move_hash,
-        max_move_size: int_from_node(allocator, items[4]),
-        new_mover_share: int_from_node(allocator, items[5]),
-        their_turn_handler: if items.len() > 6 {
-            items[6]
-        } else {
-            NodePtr::NIL
-        },
+        new_mover_share: int_from_node(allocator, items[2]),
+        their_turn_handler: items[3],
     }
 }
 
@@ -218,6 +229,8 @@ fn call_their_turn_handler(
 struct GameSetup {
     alice_handler: NodePtr,
     bob_handler: NodePtr,
+    validators: Vec<NodePtr>,
+    initial_validator_hash: NodePtr,
     proposal_my_contribution: i64,
     proposal_their_contribution: i64,
     proposal_amount: i64,
@@ -229,11 +242,8 @@ struct GameSetup {
 /// Builds the dictionary-curried factory and extracts slot 0, where player A
 /// is Alice (the word picker).
 fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup {
-    let factory_raw = read_hex_puzzle(
-        allocator,
-        "games/krunk/clsp/factory_krunk_factory.hex",
-    )
-    .expect("load factory");
+    let factory_raw = read_hex_puzzle(allocator, "games/krunk/clsp/factory_krunk_factory.hex")
+        .expect("load factory");
 
     let n_words = dictionary.len();
     let sigs: Vec<Aggsig> = (0..=n_words).map(|_| Aggsig::default()).collect();
@@ -246,20 +256,32 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
     }
     .to_clvm(allocator)
     .unwrap();
-    let arguments = (BET_SIZE, (BET_SIZE, ((), ())))
-        .to_clvm(allocator)
-        .unwrap();
+    let arguments = (BET_SIZE, (BET_SIZE, ((), ()))).to_clvm(allocator).unwrap();
     let result = run_clvm(allocator, factory_curried, arguments);
     let records = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(records.len(), 2, "Krunk factory must return two records");
     let game_spec = proper_list(allocator.allocator(), records[0], true).unwrap();
     assert_eq!(game_spec.len(), 10, "factory record must have 10 fields");
+    let validators = proper_list(allocator.allocator(), game_spec[9], true)
+        .expect("factory validators must be a proper list");
+    assert!(
+        !validators.is_empty(),
+        "factory validators must be nonempty"
+    );
+    let initial_validator_hash_bytes =
+        clvm_utils::tree_hash(allocator.allocator(), validators[0]).to_bytes();
+    let initial_validator_hash = allocator
+        .allocator()
+        .new_atom(&initial_validator_hash_bytes)
+        .unwrap();
     let proposal_my_contribution = int_from_node(allocator, game_spec[0]);
     let proposal_their_contribution = int_from_node(allocator, game_spec[1]);
 
     GameSetup {
         alice_handler: game_spec[7],
         bob_handler: game_spec[8],
+        validators,
+        initial_validator_hash,
         proposal_my_contribution,
         proposal_their_contribution,
         proposal_amount: proposal_my_contribution + proposal_their_contribution,
@@ -267,6 +289,85 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
         initial_max_move_size: int_from_node(allocator, game_spec[4]),
         initial_mover_share: int_from_node(allocator, game_spec[6]),
     }
+}
+
+fn validator_for_hash(
+    allocator: &mut AllocEncoder,
+    validators: &[NodePtr],
+    hash: NodePtr,
+) -> NodePtr {
+    let hash_bytes = allocator.allocator().atom(hash).to_vec();
+    validators
+        .iter()
+        .copied()
+        .find(|program| {
+            hash_bytes == clvm_utils::tree_hash(allocator.allocator(), *program).to_bytes()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "validator hash {} missing from factory list",
+                hex::encode(hash_bytes)
+            )
+        })
+}
+
+#[derive(Clone, Copy)]
+struct ValidatorCursor {
+    program: NodePtr,
+    hash: NodePtr,
+    max_move_size: i64,
+}
+
+fn initial_validator_cursor(allocator: &mut AllocEncoder, setup: &GameSetup) -> ValidatorCursor {
+    ValidatorCursor {
+        program: validator_for_hash(allocator, &setup.validators, setup.initial_validator_hash),
+        hash: setup.initial_validator_hash,
+        max_move_size: setup.initial_max_move_size,
+    }
+}
+
+fn advance_validator_cursor(
+    allocator: &mut AllocEncoder,
+    setup: &GameSetup,
+    cursor: &mut ValidatorCursor,
+    result: &ValidatorResult,
+) {
+    assert_eq!(result.code, MoveCode::MakeMove);
+    cursor.hash = result.next_validator_hash;
+    cursor.max_move_size = result.next_max_move_size;
+    if cursor.hash != NodePtr::NIL {
+        cursor.program = validator_for_hash(allocator, &setup.validators, cursor.hash);
+    }
+}
+
+fn validate_terminal_move(
+    allocator: &mut AllocEncoder,
+    cursor: ValidatorCursor,
+    state: NodePtr,
+    my_turn: &MyTurnResult,
+) -> ValidatorResult {
+    let result = run_validator(
+        allocator,
+        cursor.hash,
+        my_turn.move_bytes_node,
+        my_turn.new_mover_share,
+        cursor.max_move_size,
+        state,
+        cursor.program,
+        NodePtr::NIL,
+    );
+    assert_eq!(result.code, MoveCode::MakeMove);
+    assert_eq!(
+        result.next_validator_hash,
+        NodePtr::NIL,
+        "terminal validator must return nil next hash"
+    );
+    assert_eq!(
+        my_turn.their_turn_handler,
+        NodePtr::NIL,
+        "nil next validator hash must agree with nil next handler"
+    );
+    result
 }
 
 fn make_entropy(allocator: &mut AllocEncoder, seed: &str) -> NodePtr {
@@ -284,11 +385,8 @@ fn test_dictionary() -> Vec<Bytes> {
 }
 
 fn factory_puzzle(allocator: &mut AllocEncoder, dictionary: &[Bytes]) -> Puzzle {
-    let factory_raw = read_hex_puzzle(
-        allocator,
-        "games/krunk/clsp/factory_krunk_factory.hex",
-    )
-    .expect("load factory");
+    let factory_raw = read_hex_puzzle(allocator, "games/krunk/clsp/factory_krunk_factory.hex")
+        .expect("load factory");
     let sigs: Vec<Aggsig> = (0..=dictionary.len()).map(|_| Aggsig::default()).collect();
     let dict_tree =
         build_signed_dict_tree_from_bytes(allocator, dictionary, &sigs).expect("build dict tree");
@@ -363,12 +461,13 @@ fn test_krunk_guesser_funds_zero() {
         slot1[8],
         "Bob their-turn handlers must match",
     );
-    assert_clvm_eq(
-        &mut allocator,
-        slot0[9],
-        slot1[9],
-        "validators must match",
-    );
+    let slot0_validators = proper_list(allocator.allocator(), slot0[9], true)
+        .expect("slot 0 validators must be a proper list");
+    let slot1_validators = proper_list(allocator.allocator(), slot1[9], true)
+        .expect("slot 1 validators must be a proper list");
+    assert!(!slot0_validators.is_empty());
+    assert!(!slot1_validators.is_empty());
+    assert_clvm_eq(&mut allocator, slot0[9], slot1[9], "validators must match");
 }
 
 fn test_krunk_rejects_malformed_economics() {
@@ -377,9 +476,7 @@ fn test_krunk_rejects_malformed_economics() {
     let factory = factory_puzzle(&mut allocator, &dictionary);
     let factory_clvm = factory.to_clvm(&mut allocator).unwrap();
 
-    let zero = (0i64, (0i64, ((), ())))
-        .to_clvm(&mut allocator)
-        .unwrap();
+    let zero = (0i64, (0i64, ((), ()))).to_clvm(&mut allocator).unwrap();
     assert!(run_program(
         allocator.allocator(),
         &chia_dialect(),
@@ -459,6 +556,7 @@ fn test_krunk_invalid_words_are_typed_rejections() {
 
     let alice_word = atom(&mut allocator, b"crane");
     let entropy = make_entropy(&mut allocator, "typed_rejection_salt");
+    let mut validator = initial_validator_cursor(&mut allocator, &setup);
     let alice_commit = call_my_turn_handler(
         &mut allocator,
         setup.alice_handler,
@@ -468,17 +566,17 @@ fn test_krunk_invalid_words_are_typed_rejections() {
         0,
         entropy,
     );
-    let (_, val_result) = run_validator(
+    let val_result = run_validator(
         &mut allocator,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         alice_commit.move_bytes_node,
         0,
-        alice_commit.max_move_size,
+        validator.max_move_size,
         setup.initial_state,
-        alice_commit.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let state_after_commit = proper_list(allocator.allocator(), val_result, true).unwrap()[1];
+    let state_after_commit = val_result.new_state;
     let bob_receive = call_their_turn_handler(
         &mut allocator,
         setup.bob_handler,
@@ -486,9 +584,10 @@ fn test_krunk_invalid_words_are_typed_rejections() {
         setup.initial_state,
         state_after_commit,
         alice_commit.move_bytes_node,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         0,
     );
+    advance_validator_cursor(&mut allocator, &setup, &mut validator, &val_result);
     assert_not_in_dictionary_rejection(
         &mut allocator,
         bob_receive.my_turn_handler,
@@ -504,6 +603,7 @@ fn test_krunk_happy_path_correct_guess() {
     let alice_word = atom(&mut allocator, b"crane");
     let bob_guess = atom(&mut allocator, b"crane");
     let entropy = make_entropy(&mut allocator, "alice_salt_seed");
+    let mut validator = initial_validator_cursor(&mut allocator, &setup);
 
     let alice_commit = call_my_turn_handler(
         &mut allocator,
@@ -516,18 +616,17 @@ fn test_krunk_happy_path_correct_guess() {
     );
     assert_eq!(alice_commit.new_mover_share, 0);
 
-    let (_, val_result) = run_validator(
+    let val_result = run_validator(
         &mut allocator,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         alice_commit.move_bytes_node,
         0,
-        alice_commit.max_move_size,
+        validator.max_move_size,
         setup.initial_state,
-        alice_commit.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let val_items = proper_list(allocator.allocator(), val_result, true).unwrap();
-    let state_after_commit = val_items[1];
+    let state_after_commit = val_result.new_state;
 
     let bob_receive = call_their_turn_handler(
         &mut allocator,
@@ -536,9 +635,10 @@ fn test_krunk_happy_path_correct_guess() {
         setup.initial_state,
         state_after_commit,
         alice_commit.move_bytes_node,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         0,
     );
+    advance_validator_cursor(&mut allocator, &setup, &mut validator, &val_result);
 
     let bob_entropy = make_entropy(&mut allocator, "bob_entropy");
     let bob_move = call_my_turn_handler(
@@ -550,20 +650,19 @@ fn test_krunk_happy_path_correct_guess() {
         0,
         bob_entropy,
     );
-    assert_eq!(bob_move.max_move_size, 21);
+    assert_eq!(validator.max_move_size, 5);
 
-    let (_, after_guess) = run_validator(
+    let after_guess = run_validator(
         &mut allocator,
-        bob_move.validator_for_my_move_hash,
+        validator.hash,
         bob_move.move_bytes_node,
         0,
-        bob_move.max_move_size,
+        validator.max_move_size,
         state_after_commit,
-        bob_move.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let guess_items = proper_list(allocator.allocator(), after_guess, true).unwrap();
-    let state_after_guess = guess_items[1];
+    let state_after_guess = after_guess.new_state;
 
     let alice_receive = call_their_turn_handler(
         &mut allocator,
@@ -572,9 +671,11 @@ fn test_krunk_happy_path_correct_guess() {
         state_after_commit,
         state_after_guess,
         bob_move.move_bytes_node,
-        bob_move.validator_for_my_move_hash,
+        validator.hash,
         0,
     );
+    advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_guess);
+    assert_eq!(validator.max_move_size, 21);
 
     let alice_reveal_entropy = make_entropy(&mut allocator, "alice_reveal");
     let alice_reveal = call_my_turn_handler(
@@ -587,6 +688,7 @@ fn test_krunk_happy_path_correct_guess() {
         alice_reveal_entropy,
     );
     assert_eq!(alice_reveal.new_mover_share, AMOUNT);
+    validate_terminal_move(&mut allocator, validator, state_after_guess, &alice_reveal);
 }
 
 fn test_krunk_premature_reveal_has_correct_guess_readable() {
@@ -594,6 +696,7 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
     let setup = setup_game(&mut allocator, test_dictionary());
     let entropy = make_entropy(&mut allocator, "concession_salt");
     let alice_word = atom(&mut allocator, b"world");
+    let mut validator = initial_validator_cursor(&mut allocator, &setup);
     let alice_commit = call_my_turn_handler(
         &mut allocator,
         setup.alice_handler,
@@ -603,17 +706,17 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
         0,
         entropy,
     );
-    let (_, after_commit) = run_validator(
+    let after_commit = run_validator(
         &mut allocator,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         alice_commit.move_bytes_node,
         0,
-        alice_commit.max_move_size,
+        validator.max_move_size,
         setup.initial_state,
-        alice_commit.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let state_after_commit = proper_list(allocator.allocator(), after_commit, true).unwrap()[1];
+    let state_after_commit = after_commit.new_state;
     let bob_receive = call_their_turn_handler(
         &mut allocator,
         setup.bob_handler,
@@ -621,9 +724,10 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
         setup.initial_state,
         state_after_commit,
         alice_commit.move_bytes_node,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         0,
     );
+    advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_commit);
 
     let correct_word = atom(&mut allocator, b"world");
     let correct_entropy = make_entropy(&mut allocator, "correct_guess");
@@ -636,18 +740,18 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
         0,
         correct_entropy,
     );
-    let (_, after_correct_guess) = run_validator(
+    let mut correct_validator = validator;
+    let after_correct_guess = run_validator(
         &mut allocator,
-        correct_guess.validator_for_my_move_hash,
+        correct_validator.hash,
         correct_guess.move_bytes_node,
         0,
-        correct_guess.max_move_size,
+        correct_validator.max_move_size,
         state_after_commit,
-        correct_guess.validator_for_my_move,
+        correct_validator.program,
         NodePtr::NIL,
     );
-    let correct_guess_state =
-        proper_list(allocator.allocator(), after_correct_guess, true).unwrap()[1];
+    let correct_guess_state = after_correct_guess.new_state;
     let alice_receive = call_their_turn_handler(
         &mut allocator,
         alice_commit.their_turn_handler,
@@ -655,8 +759,14 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
         state_after_commit,
         correct_guess_state,
         correct_guess.move_bytes_node,
-        correct_guess.validator_for_my_move_hash,
+        correct_validator.hash,
         0,
+    );
+    advance_validator_cursor(
+        &mut allocator,
+        &setup,
+        &mut correct_validator,
+        &after_correct_guess,
     );
     let reveal_entropy = make_entropy(&mut allocator, "correct_reveal");
     let reveal = call_my_turn_handler(
@@ -668,6 +778,12 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
         0,
         reveal_entropy,
     );
+    validate_terminal_move(
+        &mut allocator,
+        correct_validator,
+        correct_guess_state,
+        &reveal,
+    );
     let normal_readable = call_their_turn_handler(
         &mut allocator,
         correct_guess.their_turn_handler,
@@ -675,7 +791,7 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
         correct_guess_state,
         NodePtr::NIL,
         reveal.move_bytes_node,
-        reveal.validator_for_my_move_hash,
+        correct_validator.hash,
         reveal.new_mover_share,
     )
     .readable_move;
@@ -691,18 +807,24 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
         0,
         wrong_entropy,
     );
-    let (_, after_wrong_guess) = run_validator(
+    let mut wrong_validator = validator;
+    let after_wrong_guess = run_validator(
         &mut allocator,
-        wrong_guess.validator_for_my_move_hash,
+        wrong_validator.hash,
         wrong_guess.move_bytes_node,
         0,
-        wrong_guess.max_move_size,
+        wrong_validator.max_move_size,
         state_after_commit,
-        wrong_guess.validator_for_my_move,
+        wrong_validator.program,
         NodePtr::NIL,
     );
-    let wrong_guess_state =
-        proper_list(allocator.allocator(), after_wrong_guess, true).unwrap()[1];
+    let wrong_guess_state = after_wrong_guess.new_state;
+    advance_validator_cursor(
+        &mut allocator,
+        &setup,
+        &mut wrong_validator,
+        &after_wrong_guess,
+    );
     let concession_readable = call_their_turn_handler(
         &mut allocator,
         wrong_guess.their_turn_handler,
@@ -710,7 +832,7 @@ fn test_krunk_premature_reveal_has_correct_guess_readable() {
         wrong_guess_state,
         NodePtr::NIL,
         reveal.move_bytes_node,
-        reveal.validator_for_my_move_hash,
+        wrong_validator.hash,
         reveal.new_mover_share,
     )
     .readable_move;
@@ -730,6 +852,7 @@ fn test_krunk_bob_invalid_guess_slash() {
     let alice_word = atom(&mut allocator, b"crane");
     let bad_guess = atom(&mut allocator, b"xyzzy");
     let entropy = make_entropy(&mut allocator, "alice_salt_seed2");
+    let validator = initial_validator_cursor(&mut allocator, &setup);
 
     let alice_commit = call_my_turn_handler(
         &mut allocator,
@@ -740,17 +863,17 @@ fn test_krunk_bob_invalid_guess_slash() {
         0,
         entropy,
     );
-    let (_, val_result) = run_validator(
+    let val_result = run_validator(
         &mut allocator,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         alice_commit.move_bytes_node,
         0,
         32,
         setup.initial_state,
-        alice_commit.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let state = proper_list(allocator.allocator(), val_result, true).unwrap()[1];
+    let state = val_result.new_state;
 
     let guess_validator =
         read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/guess.hex").unwrap();
@@ -784,7 +907,7 @@ fn test_krunk_bob_invalid_guess_slash() {
     let guess_clvm = guess_validator.to_clvm(&mut allocator).unwrap();
 
     // With range evidence, the validator returns a 4-element list (conditional slash)
-    let (code, result) = run_validator(
+    let result = run_validator(
         &mut allocator,
         guess_hash,
         bad_guess,
@@ -795,11 +918,11 @@ fn test_krunk_bob_invalid_guess_slash() {
         evidence,
     );
     assert_eq!(
-        code,
+        result.code,
         MoveCode::MakeMove,
         "conditional slash returns non-empty list"
     );
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = proper_list(allocator.allocator(), result.output, true).unwrap();
     assert_eq!(
         items.len(),
         4,
@@ -824,6 +947,7 @@ fn test_krunk_multi_guess_game() {
 
     let alice_word = atom(&mut allocator, b"world");
     let entropy = make_entropy(&mut allocator, "multi_guess_salt");
+    let mut validator = initial_validator_cursor(&mut allocator, &setup);
 
     // Alice commits
     let alice_commit = call_my_turn_handler(
@@ -835,17 +959,17 @@ fn test_krunk_multi_guess_game() {
         0,
         entropy,
     );
-    let (_, val_result) = run_validator(
+    let val_result = run_validator(
         &mut allocator,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         alice_commit.move_bytes_node,
         0,
         32,
         setup.initial_state,
-        alice_commit.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let mut state = proper_list(allocator.allocator(), val_result, true).unwrap()[1];
+    let mut state = val_result.new_state;
 
     // Bob receives commit
     let bob_receive = call_their_turn_handler(
@@ -855,9 +979,10 @@ fn test_krunk_multi_guess_game() {
         setup.initial_state,
         state,
         alice_commit.move_bytes_node,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         0,
     );
+    advance_validator_cursor(&mut allocator, &setup, &mut validator, &val_result);
 
     let mut alice_handler = alice_commit.their_turn_handler;
     let mut bob_handler = bob_receive.my_turn_handler;
@@ -878,17 +1003,17 @@ fn test_krunk_multi_guess_game() {
             bob_entropy,
         );
 
-        let (_, after_guess) = run_validator(
+        let after_guess = run_validator(
             &mut allocator,
-            bob_move.validator_for_my_move_hash,
+            validator.hash,
             bob_move.move_bytes_node,
             0,
-            bob_move.max_move_size,
+            validator.max_move_size,
             state,
-            bob_move.validator_for_my_move,
+            validator.program,
             NodePtr::NIL,
         );
-        let new_state = proper_list(allocator.allocator(), after_guess, true).unwrap()[1];
+        let new_state = after_guess.new_state;
 
         let alice_receive = call_their_turn_handler(
             &mut allocator,
@@ -897,9 +1022,10 @@ fn test_krunk_multi_guess_game() {
             state,
             new_state,
             bob_move.move_bytes_node,
-            bob_move.validator_for_my_move_hash,
+            validator.hash,
             0,
         );
+        advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_guess);
         if i == 0 {
             let readable =
                 proper_list(allocator.allocator(), alice_receive.readable_move, true).unwrap();
@@ -923,17 +1049,17 @@ fn test_krunk_multi_guess_game() {
             alice_clue_entropy,
         );
 
-        let (_, after_clue) = run_validator(
+        let after_clue = run_validator(
             &mut allocator,
-            alice_clue.validator_for_my_move_hash,
+            validator.hash,
             alice_clue.move_bytes_node,
             0,
-            alice_clue.max_move_size,
+            validator.max_move_size,
             state,
-            alice_clue.validator_for_my_move,
+            validator.program,
             NodePtr::NIL,
         );
-        let clue_state = proper_list(allocator.allocator(), after_clue, true).unwrap()[1];
+        let clue_state = after_clue.new_state;
 
         let bob_clue_receive = call_their_turn_handler(
             &mut allocator,
@@ -942,9 +1068,10 @@ fn test_krunk_multi_guess_game() {
             state,
             clue_state,
             alice_clue.move_bytes_node,
-            alice_clue.validator_for_my_move_hash,
+            validator.hash,
             0,
         );
+        advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_clue);
         if i == 0 {
             assert_eq!(
                 int_list_from_node(&mut allocator, bob_clue_receive.readable_move),
@@ -970,17 +1097,17 @@ fn test_krunk_multi_guess_game() {
         bob_entropy,
     );
 
-    let (_, after_guess) = run_validator(
+    let after_guess = run_validator(
         &mut allocator,
-        bob_move.validator_for_my_move_hash,
+        validator.hash,
         bob_move.move_bytes_node,
         0,
-        bob_move.max_move_size,
+        validator.max_move_size,
         state,
-        bob_move.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let new_state = proper_list(allocator.allocator(), after_guess, true).unwrap()[1];
+    let new_state = after_guess.new_state;
 
     let alice_receive = call_their_turn_handler(
         &mut allocator,
@@ -989,9 +1116,10 @@ fn test_krunk_multi_guess_game() {
         state,
         new_state,
         bob_move.move_bytes_node,
-        bob_move.validator_for_my_move_hash,
+        validator.hash,
         0,
     );
+    advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_guess);
     state = new_state;
 
     // Alice reveals (correct guess triggers reveal)
@@ -1010,6 +1138,7 @@ fn test_krunk_multi_guess_game() {
         alice_reveal.new_mover_share, 5,
         "4th guess payout = 5% of 100 = 5"
     );
+    validate_terminal_move(&mut allocator, validator, state, &alice_reveal);
 
     // Bob receives the reveal. The framework passes nil state for terminal moves.
     let bob_reveal_receive = call_their_turn_handler(
@@ -1019,7 +1148,7 @@ fn test_krunk_multi_guess_game() {
         state,
         NodePtr::NIL,
         alice_reveal.move_bytes_node,
-        alice_reveal.validator_for_my_move_hash,
+        validator.hash,
         alice_reveal.new_mover_share,
     );
     let evidence_items = proper_list(
@@ -1033,6 +1162,11 @@ fn test_krunk_multi_guess_game() {
         5,
         "bob should return all plausible clue evidence indices"
     );
+    assert_eq!(
+        allocator.allocator().atom(evidence_items[0]).as_ref(),
+        &[0x00],
+        "clue index zero must be encoded as a one-byte atom, not nil"
+    );
 }
 
 fn test_krunk_5_wrong_guesses_alice_wins() {
@@ -1041,6 +1175,7 @@ fn test_krunk_5_wrong_guesses_alice_wins() {
 
     let alice_word = atom(&mut allocator, b"world");
     let entropy = make_entropy(&mut allocator, "five_wrong_salt");
+    let mut validator = initial_validator_cursor(&mut allocator, &setup);
 
     // Alice commits
     let alice_commit = call_my_turn_handler(
@@ -1052,17 +1187,17 @@ fn test_krunk_5_wrong_guesses_alice_wins() {
         0,
         entropy,
     );
-    let (_, val_result) = run_validator(
+    let val_result = run_validator(
         &mut allocator,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         alice_commit.move_bytes_node,
         0,
         32,
         setup.initial_state,
-        alice_commit.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let mut state = proper_list(allocator.allocator(), val_result, true).unwrap()[1];
+    let mut state = val_result.new_state;
 
     let bob_receive = call_their_turn_handler(
         &mut allocator,
@@ -1071,9 +1206,10 @@ fn test_krunk_5_wrong_guesses_alice_wins() {
         setup.initial_state,
         state,
         alice_commit.move_bytes_node,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         0,
     );
+    advance_validator_cursor(&mut allocator, &setup, &mut validator, &val_result);
 
     let mut alice_handler = alice_commit.their_turn_handler;
     let mut bob_handler = bob_receive.my_turn_handler;
@@ -1094,17 +1230,17 @@ fn test_krunk_5_wrong_guesses_alice_wins() {
             bob_entropy,
         );
 
-        let (_, after_guess) = run_validator(
+        let after_guess = run_validator(
             &mut allocator,
-            bob_move.validator_for_my_move_hash,
+            validator.hash,
             bob_move.move_bytes_node,
             0,
-            bob_move.max_move_size,
+            validator.max_move_size,
             state,
-            bob_move.validator_for_my_move,
+            validator.program,
             NodePtr::NIL,
         );
-        let new_state = proper_list(allocator.allocator(), after_guess, true).unwrap()[1];
+        let new_state = after_guess.new_state;
 
         let alice_receive = call_their_turn_handler(
             &mut allocator,
@@ -1113,9 +1249,10 @@ fn test_krunk_5_wrong_guesses_alice_wins() {
             state,
             new_state,
             bob_move.move_bytes_node,
-            bob_move.validator_for_my_move_hash,
+            validator.hash,
             0,
         );
+        advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_guess);
         state = new_state;
 
         if i < 4 {
@@ -1131,17 +1268,17 @@ fn test_krunk_5_wrong_guesses_alice_wins() {
                 alice_clue_entropy,
             );
 
-            let (_, after_clue) = run_validator(
+            let after_clue = run_validator(
                 &mut allocator,
-                alice_clue.validator_for_my_move_hash,
+                validator.hash,
                 alice_clue.move_bytes_node,
                 0,
-                alice_clue.max_move_size,
+                validator.max_move_size,
                 state,
-                alice_clue.validator_for_my_move,
+                validator.program,
                 NodePtr::NIL,
             );
-            let clue_state = proper_list(allocator.allocator(), after_clue, true).unwrap()[1];
+            let clue_state = after_clue.new_state;
 
             let bob_clue_receive = call_their_turn_handler(
                 &mut allocator,
@@ -1150,9 +1287,10 @@ fn test_krunk_5_wrong_guesses_alice_wins() {
                 state,
                 clue_state,
                 alice_clue.move_bytes_node,
-                alice_clue.validator_for_my_move_hash,
+                validator.hash,
                 0,
             );
+            advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_clue);
             state = clue_state;
             alice_handler = alice_clue.their_turn_handler;
             bob_handler = bob_clue_receive.my_turn_handler;
@@ -1172,6 +1310,7 @@ fn test_krunk_5_wrong_guesses_alice_wins() {
                 alice_reveal.new_mover_share, 0,
                 "5 wrong guesses → alice keeps all"
             );
+            validate_terminal_move(&mut allocator, validator, state, &alice_reveal);
         }
     }
 }
@@ -1285,6 +1424,7 @@ fn play_game_to_depth(depth: usize) -> i64 {
 
     let alice_word = atom(&mut allocator, b"world");
     let entropy = make_entropy(&mut allocator, &format!("depth_{depth}_salt"));
+    let mut validator = initial_validator_cursor(&mut allocator, &setup);
 
     let alice_commit = call_my_turn_handler(
         &mut allocator,
@@ -1295,17 +1435,17 @@ fn play_game_to_depth(depth: usize) -> i64 {
         0,
         entropy,
     );
-    let (_, val_result) = run_validator(
+    let val_result = run_validator(
         &mut allocator,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         alice_commit.move_bytes_node,
         0,
         32,
         setup.initial_state,
-        alice_commit.validator_for_my_move,
+        validator.program,
         NodePtr::NIL,
     );
-    let mut state = proper_list(allocator.allocator(), val_result, true).unwrap()[1];
+    let mut state = val_result.new_state;
 
     let bob_receive = call_their_turn_handler(
         &mut allocator,
@@ -1314,9 +1454,10 @@ fn play_game_to_depth(depth: usize) -> i64 {
         setup.initial_state,
         state,
         alice_commit.move_bytes_node,
-        alice_commit.validator_for_my_move_hash,
+        validator.hash,
         0,
     );
+    advance_validator_cursor(&mut allocator, &setup, &mut validator, &val_result);
 
     let mut alice_handler = alice_commit.their_turn_handler;
     let mut bob_handler = bob_receive.my_turn_handler;
@@ -1340,17 +1481,17 @@ fn play_game_to_depth(depth: usize) -> i64 {
             0,
             bob_entropy,
         );
-        let (_, after_guess) = run_validator(
+        let after_guess = run_validator(
             &mut allocator,
-            bob_move.validator_for_my_move_hash,
+            validator.hash,
             bob_move.move_bytes_node,
             0,
-            bob_move.max_move_size,
+            validator.max_move_size,
             state,
-            bob_move.validator_for_my_move,
+            validator.program,
             NodePtr::NIL,
         );
-        let new_state = proper_list(allocator.allocator(), after_guess, true).unwrap()[1];
+        let new_state = after_guess.new_state;
 
         let alice_receive = call_their_turn_handler(
             &mut allocator,
@@ -1359,9 +1500,10 @@ fn play_game_to_depth(depth: usize) -> i64 {
             state,
             new_state,
             bob_move.move_bytes_node,
-            bob_move.validator_for_my_move_hash,
+            validator.hash,
             0,
         );
+        advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_guess);
         state = new_state;
 
         if i < depth - 1 {
@@ -1376,17 +1518,17 @@ fn play_game_to_depth(depth: usize) -> i64 {
                 0,
                 alice_clue_entropy,
             );
-            let (_, after_clue) = run_validator(
+            let after_clue = run_validator(
                 &mut allocator,
-                alice_clue.validator_for_my_move_hash,
+                validator.hash,
                 alice_clue.move_bytes_node,
                 0,
-                alice_clue.max_move_size,
+                validator.max_move_size,
                 state,
-                alice_clue.validator_for_my_move,
+                validator.program,
                 NodePtr::NIL,
             );
-            let clue_state = proper_list(allocator.allocator(), after_clue, true).unwrap()[1];
+            let clue_state = after_clue.new_state;
             let bob_clue_receive = call_their_turn_handler(
                 &mut allocator,
                 bob_move.their_turn_handler,
@@ -1394,9 +1536,10 @@ fn play_game_to_depth(depth: usize) -> i64 {
                 state,
                 clue_state,
                 alice_clue.move_bytes_node,
-                alice_clue.validator_for_my_move_hash,
+                validator.hash,
                 0,
             );
+            advance_validator_cursor(&mut allocator, &setup, &mut validator, &after_clue);
             state = clue_state;
             alice_handler = alice_clue.their_turn_handler;
             bob_handler = bob_clue_receive.my_turn_handler;
@@ -1413,6 +1556,7 @@ fn play_game_to_depth(depth: usize) -> i64 {
                 0,
                 alice_reveal_entropy,
             );
+            validate_terminal_move(&mut allocator, validator, state, &alice_reveal);
             return alice_reveal.new_mover_share;
         }
     }

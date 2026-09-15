@@ -30,9 +30,7 @@ use crate::session_phases::handshake::{
     MAX_QUEUED_PEER_MESSAGES,
 };
 use crate::session_phases::proposal::GameProposal;
-use crate::session_phases::types::{
-    OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,
-};
+use crate::session_phases::types::{OffChainPhaseInit, PeerMessage, SpendWalletReceiver};
 use crate::session_phases::OffChainPhase;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,7 +47,6 @@ enum InitiatorState {
 #[derive(Serialize, Deserialize)]
 pub struct HandshakeInitiatorPhase {
     state: InitiatorState,
-    have_potato: PotatoState,
 
     channel_state: Option<ChannelState>,
     channel_initiation_transaction: Option<SpendBundle>,
@@ -87,7 +84,6 @@ impl HandshakeInitiatorPhase {
     pub fn new(phi: OffChainPhaseInit) -> Self {
         HandshakeInitiatorPhase {
             state: InitiatorState::WaitingForStart,
-            have_potato: PotatoState::Present,
             channel_state: None,
             channel_initiation_transaction: None,
             launcher_coin: None,
@@ -139,7 +135,7 @@ impl HandshakeInitiatorPhase {
     fn make_channel_state(
         &self,
         parent: CoinID,
-        start_potato: bool,
+        is_receiver: bool,
         msg: &HandshakePayloadB,
         env: &mut ChannelEnv<'_>,
     ) -> Result<(ChannelState, ChannelInitiationResult), Error> {
@@ -147,7 +143,7 @@ impl HandshakeInitiatorPhase {
             env,
             self.private_keys.clone(),
             parent,
-            start_potato,
+            is_receiver,
             msg.channel_public_key.clone(),
             msg.unroll_public_key.clone(),
             msg.referee_pubkey.clone(),
@@ -254,7 +250,8 @@ impl HandshakeInitiatorPhase {
         Ok(CoinSpend {
             coin: launcher_coin,
             bundle: Spend {
-                puzzle: Puzzle::from_bytes(&crate::common::constants::SINGLETON_LAUNCHER),
+                puzzle: Puzzle::from_bytes(&crate::common::constants::SINGLETON_LAUNCHER)
+                    .expect("valid singleton launcher constant"),
                 solution: launcher_solution_program.into(),
                 signature: Aggsig::default(),
             },
@@ -323,7 +320,7 @@ impl HandshakeInitiatorPhase {
         self.replacement.take().map(|ph| *ph)
     }
 
-    fn try_transition_to_potato(&mut self) {
+    fn try_transition_to_off_chain(&mut self) {
         if self.replacement.is_some() {
             return;
         }
@@ -343,7 +340,6 @@ impl HandshakeInitiatorPhase {
             let ph = OffChainPhase::from_completed_handshake(
                 true,
                 ch,
-                std::mem::replace(&mut self.have_potato, PotatoState::Absent),
                 self.game_types.clone(),
                 self.private_keys.clone(),
                 self.my_contribution.clone(),
@@ -420,20 +416,17 @@ impl HandshakeInitiatorPhase {
                     )));
                 };
 
-                let our_sigs = {
-                    let ch = self.channel_state()?;
-                    ch.get_initial_signatures()?
-                };
-                let spend_info = {
+                let genesis = {
                     let ch = self.channel_state_mut()?;
-                    ch.verify_and_store_initial_peer_signatures(env, &msg.signatures)
+                    ch.initialize_genesis_as_initiator(env, &msg.signatures)
                         .map_err(|e| {
                             Error::StrErr(format!(
-                                "initiator step D: verify/store initial peer signatures failed: {e}"
+                                "initiator step D: genesis initialization failed: {e}"
                             ))
                         })?
                 };
-                self.last_channel_coin_spend_info = Some(spend_info);
+                self.last_channel_coin_spend_info = Some(genesis.state_zero_spend);
+                let our_sigs = genesis.state_one_signatures;
                 if self.last_height > 0 {
                     let coin_spend_request = self.build_alice_coin_spend_request()?;
                     self.channel_deadline = self.compute_not_valid_after_height();
@@ -494,7 +487,7 @@ impl HandshakeInitiatorPhase {
             }
         }
 
-        self.try_transition_to_potato();
+        self.try_transition_to_off_chain();
         Ok(effects)
     }
 
@@ -600,7 +593,7 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
                 ch.have_potato(),
             )));
         }
-        self.try_transition_to_potato();
+        self.try_transition_to_off_chain();
         Ok(Some(effects))
     }
 
@@ -769,7 +762,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
             let info = *info.clone();
             let sigs = sigs.clone();
             let result = self.try_send_step_e(info, sigs)?;
-            self.try_transition_to_potato();
+            self.try_transition_to_off_chain();
             return Ok(result);
         }
 
@@ -1089,7 +1082,7 @@ mod finished_message_tests {
             coin,
             bundle: Spend {
                 puzzle,
-                solution: Program::from_bytes(&[0x80]).into(),
+                solution: Program::nil().into(),
                 signature,
             },
         }
@@ -1128,7 +1121,6 @@ mod finished_message_tests {
     fn finished_phase(e_bundle: SpendBundle, announcement: Hash) -> HandshakeInitiatorPhase {
         let mut rng = ChaCha8Rng::from_seed([20; 32]);
         let mut phase = HandshakeInitiatorPhase::new(OffChainPhaseInit {
-            have_potato: true,
             private_keys: rng.random(),
             game_types: BTreeMap::new(),
             my_contribution: Amount::new(100),

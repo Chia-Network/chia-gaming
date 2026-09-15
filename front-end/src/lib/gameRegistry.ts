@@ -8,6 +8,7 @@ import type {
 import type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
 export type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
 import type { HandProposal } from './session/types';
+import { isValidGameTimeoutBlocks } from './session/gameTimeout';
 import type { SessionModel } from './session/types';
 import type { ProposalGroupOrigin } from './session/proposalOrigin';
 
@@ -103,7 +104,7 @@ export function validateHandProposal(handProposal: HandProposal): boolean {
     handProposal.playerBContribution > 0n &&
     typeof handProposal.senderIsPlayerA === 'boolean' &&
     typeof handProposal.gameTimeout === 'bigint' &&
-    handProposal.gameTimeout > 0n &&
+    isValidGameTimeoutBlocks(handProposal.gameTimeout) &&
     isProposalParameterValue(handProposal.parameters)
   );
 }

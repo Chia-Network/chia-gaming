@@ -278,11 +278,19 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 | `PORT`                       | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                              |
 | `HUB_MAX_TOTAL_CONNECTIONS`  | no       | Maximum combined hub and game WebSocket connections (default `2000`)                                   |
 | `HUB_MAX_CONNECTIONS_PER_IP` | no       | Maximum combined WebSocket connections per client IP (default `8`)                                     |
+| `HUB_MAX_PLAYERS`            | no       | Maximum players concurrently present in the hub roster (default `1000`)                                |
+| `HUB_MAX_RETAINED_SESSIONS`  | no       | Maximum active and reconnectable session identities retained in memory (default `10000`)                |
+| `HUB_RETAINED_SESSION_TTL_MS` | no      | Lifetime after the identity loses its final lobby/game presence (default `86400000`)                     |
 | `HUB_RATE_WINDOW_MS`         | no       | Window used by both per-connection message and byte budgets (default `10000`)                           |
+| `HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW` | no | Maximum WebSocket upgrade attempts per client IP per rate window (default `100`)                 |
 | `HUB_MAX_MESSAGES_PER_WINDOW` | no      | Maximum control-channel messages per connection per window (default `100`)                              |
 | `HUB_MAX_BYTES_PER_WINDOW`   | no       | Maximum control-channel bytes per connection per window (default `1000000`)                             |
+| `HUB_CONTROL_MAX_WS_PAYLOAD_BYTES` | no | Hub-control JSON transport ceiling enforced during WebSocket reassembly (default `65536`)               |
+| `GAME_MAX_WS_PAYLOAD_BYTES`  | no       | Game-relay transport ceiling enforced during WebSocket reassembly (default `11534336`)                   |
 | `GAME_MAX_MESSAGES_PER_WINDOW` | no     | Maximum game-relay messages per connection per window (default `1000`)                                  |
 | `GAME_MAX_BYTES_PER_WINDOW`  | no       | Maximum game-relay bytes per connection per window (default `11534336`)                                 |
+| `GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION` | no | Maximum encoded game bytes queued to one WebSocket (default `23068672`)                         |
+| `GAME_MAX_TOTAL_OUTBOUND_BYTES` | no    | Maximum encoded game bytes queued across all WebSockets (default `268435456`)                            |
 | `GAME_MAX_RECENT_CORRESPONDENTS` | no  | Maximum recent relay correspondents retained per hub session (default `16`)                              |
 | `GAME_RECENT_CORRESPONDENT_TTL_MS` | no | Sliding lifetime for recent-correspondent reconnect hints (default `1800000`)                            |
 | `HUB_TRUST_PROXY`            | no       | Set to `1` only when direct access is blocked and a trusted proxy sets `X-Forwarded-For` (default `0`) |
@@ -353,6 +361,11 @@ the control channel, while `GAME_MAX_*_PER_WINDOW` apply to the game relay.
 Exceeding either budget closes the connection with WebSocket code `4008` and
 reason `rate_limited`. Tune these limits together so the byte budget permits the
 largest valid frame expected by the deployment.
+- **Outbound relay backpressure.** The hub rejects a relay with
+  `delivery_failure` before either its destination queue exceeds
+  `GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION` or aggregate outstanding sends
+  exceed `GAME_MAX_TOTAL_OUTBOUND_BYTES`. Keep the per-connection limit above
+  the largest encoded relay frame.
 - **Caching rules.** Only root URLs (`index.html`, `build-meta.json`,
 favicon, etc.) stay stable across rebuilds; each deploy mints a new
 `/app/<nonce>/` tree. Configure your production web server (nginx,

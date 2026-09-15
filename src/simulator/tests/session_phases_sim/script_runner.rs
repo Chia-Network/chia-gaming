@@ -144,6 +144,9 @@ pub(in super::super) fn run_script(
         .any(|action| action.schedule().expects_on_chain_transition);
 
     while !matches!(ending, Some(0)) {
+        if let Some(action) = moves_input.get(move_number) {
+            harness.establish_readiness_boundary(move_number, action.schedule().readiness);
+        }
         harness.begin_step(move_number, moves_input.get(move_number));
         let (_progress, early_success) = harness.pump_block(
             allocator,
@@ -190,10 +193,10 @@ pub(in super::super) fn run_script(
         }
         if harness.wait_active() {
             harness.advance_wait(allocator)?;
-        } else if moves_input
-            .get(move_number)
-            .is_some_and(|action| harness.readiness_satisfied(action.schedule().readiness))
-        {
+        } else if moves_input.get(move_number).is_some_and(|action| {
+            harness.establish_readiness_boundary(move_number, action.schedule().readiness);
+            harness.readiness_satisfied(move_number, action.schedule().readiness)
+        }) {
             if move_number < moves_input.len() {
                 let ga = &moves_input[move_number];
                 let schedule = ga.schedule();
@@ -221,7 +224,7 @@ pub(in super::super) fn run_script(
                             _ => 15,
                         };
                         let parameters = if package_key == "calpoker" || package_key == "krunk" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else if package_key == "debug" {
@@ -312,20 +315,6 @@ pub(in super::super) fn run_script(
                         harness.make_move(allocator, *who, gid, readable.clone(), entropy)?;
                         ()
                     }
-                    SimScriptAction::TerminalMismatchMove(who, gid, readable) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "TerminalMismatchMove", gid, gid);
-                        }
-                        let entropy = rng.random();
-                        harness.sabotage_move_terminal(
-                            allocator,
-                            *who,
-                            gid,
-                            readable.clone(),
-                            entropy,
-                        )?;
-                        ()
-                    }
                     SimScriptAction::Cheat(who, gid, cheat_share) => {
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Cheat", gid, gid);
@@ -352,6 +341,10 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::UnNerfTransactions(replay) => {
                         harness.unnerf_transactions(allocator, *replay)?;
+                        ()
+                    }
+                    SimScriptAction::MutateNerfedShutdownSolution => {
+                        harness.mutate_nerfed_shutdown_solution(allocator)?;
                         ()
                     }
                     SimScriptAction::BlockCoinReports(who) => {
@@ -390,6 +383,9 @@ pub(in super::super) fn run_script(
                         }
                         ()
                     }
+                    SimScriptAction::WaitForChannel(_) => {}
+                    SimScriptAction::WaitForProposal(_, _) => {}
+                    SimScriptAction::WaitForMoveApplied(_, _) => {}
                     SimScriptAction::CorruptStateNumber(who, new_sn) => {
                         harness.corrupt_state_number(*who, *new_sn)?;
                         ()
@@ -416,7 +412,7 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::WrongParityProposal(who) => {
                         let parameters = if package_key == "calpoker" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else {
@@ -436,7 +432,7 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                        harness.mutate_last_proposal(*who, |wire| {
                             wire.members[0].game_id = GameID(wire.members[0].game_id.0 ^ 1);
                             Ok(())
                         })?;
@@ -444,7 +440,7 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::InvalidProposalParameters(who) => {
                         let parameters = if package_key == "calpoker" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else {
@@ -464,12 +460,13 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
-                            wire.start.parameters = if package_key == "calpoker" {
-                                ProposalParameters::Integer(1)
-                            } else {
-                                ProposalParameters::Null
-                            };
+                        let invalid_parameters = if package_key == "calpoker" {
+                            ProposalParameters::Integer(1)
+                        } else {
+                            ProposalParameters::Null
+                        };
+                        harness.mutate_last_proposal(*who, move |wire| {
+                            wire.start.parameters = invalid_parameters;
                             Ok(())
                         })?;
                         ()
@@ -494,7 +491,7 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                        harness.mutate_last_proposal(*who, |wire| {
                             wire.members[0].player_a_contribution =
                                 wire.members[0].player_a_contribution.clone() + Amount::new(1);
                             Ok(())
@@ -503,7 +500,7 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::InvalidProposalValidationInfoHash(who) => {
                         let parameters = if package_key == "calpoker" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else {
                             extras.clone()
                         };
@@ -521,7 +518,7 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                        harness.mutate_last_proposal(*who, |wire| {
                             wire.members[0].initial_validation_info_hash =
                                 Hash::from_bytes([0x5a; 32]);
                             Ok(())
@@ -530,7 +527,7 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::InvalidProposalTimeout(who) => {
                         let parameters = if package_key == "calpoker" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else {
@@ -550,7 +547,7 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                        harness.mutate_last_proposal(*who, |wire| {
                             wire.start.timeout = Timeout::new(0);
                             Ok(())
                         })?;
@@ -563,6 +560,10 @@ pub(in super::super) fn run_script(
 
                 if advance_script {
                     move_number += 1;
+                    if let Some(action) = moves_input.get(move_number) {
+                        harness
+                            .establish_readiness_boundary(move_number, action.schedule().readiness);
+                    }
                 }
                 if schedule.post_action_drain == PostActionDrain::OnChain && harness.any_on_chain()
                 {

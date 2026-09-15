@@ -1029,12 +1029,16 @@ mod sim_tests {
                     format_log(log)
                 );
 
-                // Collect state numbers from ordinary signed [send] batches
-                // and [recv] batches only. Dedicated clean shutdown transfers
-                // the potato without advancing the ordinary unroll state.
+                let cc_idx = cc_idx.expect("channel-created entry checked above");
+
+                // Collect ordinary signed batches after channel activation.
+                // Handshake logs may include state 0 while activation silently
+                // establishes state 1; ordinary traffic is strictly monotonic
+                // from the first post-activation batch onward.
                 let states: Vec<(usize, usize)> = log
                     .iter()
                     .enumerate()
+                    .filter(|(idx, _)| *idx > cc_idx)
                     .filter(|(_, line)| line.starts_with("[send]") || line.starts_with("[recv]"))
                     .filter_map(|(idx, line)| {
                         extract_state_number(line).map(|s| (idx, s))

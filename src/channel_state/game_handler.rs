@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use serde::{Deserialize, Serialize};
 
 use crate::utils::proper_list;
@@ -7,18 +5,17 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::run_program;
 use clvmr::NodePtr;
 
-use crate::channel_state::types::{Evidence, ReadableMove, StateUpdateProgram};
+use crate::channel_state::types::{Evidence, ReadableMove};
 use crate::common::types::{
-    atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    Hash, IntoErr, Node, Program, ProgramRef, MAX_BLOCK_COST_CLVM,
+    atom_from_clvm, chia_dialect, u64_from_atom, AllocEncoder, Amount, Error, Hash, IntoErr, Node,
+    Program, ProgramRef, MAX_BLOCK_COST_CLVM,
 };
 use crate::referee::types::GameMoveDetails;
 
 // How to call the clvm program in this object:
 //
 // My turn handler takes (local_move amount state mover_share entropy) and returns
-//       (label move outgoing_validator incoming_validator max_move_size mover_share
-//        their_turn_handler message_parser)
+//       (label move mover_share their_turn_handler message_parser)
 // Message parser takes (message state amount) and returns readable_info or raises
 //
 // Their turn handler takes (amount pre_state state move validation_program_hash mover_share) and returns
@@ -54,9 +51,6 @@ pub struct MyTurnResult {
     // Next player's turn game handler.
     pub name: String,
     pub move_bytes: Vec<u8>,
-    pub outgoing_move_state_update_program: StateUpdateProgram,
-    pub incoming_move_state_update_program: StateUpdateProgram,
-    pub max_move_size: usize,
     pub mover_share: Amount,
     pub waiting_handler: Option<GameHandler>,
     pub message_parser: Option<MessageHandler>,
@@ -65,9 +59,6 @@ pub struct MyTurnResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PreparedMove {
     pub move_bytes: Vec<u8>,
-    pub outgoing_move_state_update_program: StateUpdateProgram,
-    pub incoming_move_state_update_program: StateUpdateProgram,
-    pub max_move_size: usize,
     pub mover_share: Amount,
     pub waiting_handler: Option<GameHandler>,
     pub message_parser: Option<MessageHandler>,
@@ -77,9 +68,6 @@ impl From<MyTurnResult> for PreparedMove {
     fn from(result: MyTurnResult) -> Self {
         PreparedMove {
             move_bytes: result.move_bytes,
-            outgoing_move_state_update_program: result.outgoing_move_state_update_program,
-            incoming_move_state_update_program: result.incoming_move_state_update_program,
-            max_move_size: result.max_move_size,
             mover_share: result.mover_share,
             waiting_handler: result.waiting_handler,
             message_parser: result.message_parser,
@@ -108,22 +96,6 @@ fn run_code(allocator: &mut AllocEncoder, code: NodePtr, env: NodePtr) -> Result
     )
     .into_gen()
     .map(|r| r.1)
-}
-
-fn get_state_update_program(
-    allocator: &mut AllocEncoder,
-    name: &str,
-    suffix: &str,
-    pl: &[NodePtr],
-    loc: usize,
-) -> Result<StateUpdateProgram, Error> {
-    let final_name = format!("{} {}", name, suffix);
-    let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[loc])?);
-    Ok(StateUpdateProgram::new(
-        allocator,
-        &final_name,
-        validation_prog,
-    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,7 +188,7 @@ impl GameHandler {
             return Err(Error::GameMoveRejected { tag, message });
         }
 
-        if pl.len() < 7 {
+        if pl.len() < 4 {
             return Err(Error::StrErr(format!(
                 "bad result from game handler: {}",
                 Node(run_result).to_hex(allocator)?
@@ -227,25 +199,19 @@ impl GameHandler {
             .ok_or_else(|| Error::StrErr("game handler name was not an atom".to_string()))?;
         let name = std::str::from_utf8(&name_atom)
             .map_err(|e| Error::StrErr(format!("game handler name is not valid UTF-8: {e}")))?;
-        let max_move_size =
-            if let Some(mm) = atom_from_clvm(allocator, pl[4]).and_then(|a| usize_from_atom(&a)) {
-                mm
-            } else {
-                return Err(Error::StrErr("bad max move size".to_string()));
-            };
         let mover_share =
-            if let Some(ms) = atom_from_clvm(allocator, pl[5]).and_then(|a| u64_from_atom(&a)) {
+            if let Some(ms) = atom_from_clvm(allocator, pl[2]).and_then(|a| u64_from_atom(&a)) {
                 Amount::new(ms)
             } else {
                 return Err(Error::StrErr(format!(
                     "bad share {}",
-                    Node(pl[5]).to_hex(allocator)?
+                    Node(pl[2]).to_hex(allocator)?
                 )));
             };
-        let message_parser = if pl.len() <= 7 || pl[7] == allocator.allocator().nil() {
+        let message_parser = if pl.len() <= 4 || pl[4] == allocator.allocator().nil() {
             None
         } else {
-            Some(MessageHandler::from_nodeptr(allocator, pl[7])?)
+            Some(MessageHandler::from_nodeptr(allocator, pl[4])?)
         };
         let move_data = if let Some(m) = atom_from_clvm(allocator, pl[1]).map(|a| a.to_vec()) {
             m
@@ -257,23 +223,15 @@ impl GameHandler {
             )));
         };
 
-        let outgoing_move_state_update_program =
-            get_state_update_program(allocator, name, "my turn", &pl, 2)?;
-        let incoming_move_state_update_program =
-            get_state_update_program(allocator, name, "their_turn", &pl, 3)?;
-
         Ok(MyTurnResult {
             name: name.to_string(),
-            waiting_handler: if pl[6] == allocator.allocator().nil() {
+            waiting_handler: if pl[3] == allocator.allocator().nil() {
                 None
             } else {
-                Some(GameHandler::their_handler_from_nodeptr(allocator, pl[6])?)
+                Some(GameHandler::their_handler_from_nodeptr(allocator, pl[3])?)
             },
-            outgoing_move_state_update_program,
-            incoming_move_state_update_program,
             move_bytes: move_data,
             mover_share,
-            max_move_size,
             message_parser,
         })
     }

@@ -23,6 +23,7 @@
     "@walletconnect/types": "2.23.10",
     "bech32": "^2.0.0",
     "chia-gaming-bencodex": "workspace:*",
+    "chia-gaming-protocol-constants": "workspace:*",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "clvm-lib": "1.0.1",

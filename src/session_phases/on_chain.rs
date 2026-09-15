@@ -1668,8 +1668,7 @@ impl OnChainPhase {
                     let my_turn = self.my_move_in_game(&game_id);
                     if my_turn == Some(true) {
                         self.enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
-                        let readable_move =
-                            ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
+                        let readable_move = ReadableMove::from_program(Rc::new(Program::nil()));
                         let prepared = {
                             let game_idx = self.get_game_by_id(&game_id)?;
                             self.live_games[game_idx].prepare_move(

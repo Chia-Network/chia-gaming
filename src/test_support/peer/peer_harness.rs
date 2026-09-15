@@ -325,7 +325,7 @@ fn build_dummy_wallet_bundle_for_request(
             coin,
             bundle: Spend {
                 puzzle,
-                solution: Program::from_bytes(&[0x80]).into(),
+                solution: Program::nil().into(),
                 signature,
             },
         }],
@@ -509,7 +509,7 @@ pub fn test_peer_smoke() {
 
     let new_handler = |allocator: &mut AllocEncoder,
                        rng: &mut ChaCha8Rng,
-                       have_potato: bool|
+                       is_initiator: bool|
      -> Box<dyn PeerLifecyclePhase> {
         let private_keys1: ChannelPrivateKeys = rng.random();
         let reward_private_key1: PrivateKey = rng.random();
@@ -518,7 +518,6 @@ pub fn test_peer_smoke() {
             puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
         let phi = OffChainPhaseInit {
-            have_potato,
             private_keys: private_keys1,
             game_types: game_type_map.clone(),
             my_contribution: Amount::new(100),
@@ -527,7 +526,7 @@ pub fn test_peer_smoke() {
             unroll_timeout: Timeout::new(15),
             reward_puzzle_hash: reward_puzzle_hash1.clone(),
         };
-        if have_potato {
+        if is_initiator {
             Box::new(HandshakeInitiatorPhase::new(phi))
         } else {
             Box::new(HandshakeReceiverPhase::new(phi))

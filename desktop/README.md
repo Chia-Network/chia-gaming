@@ -134,6 +134,12 @@ directory and rejects anything that escapes it. It reads through Node's `fs`
 rather than `net.fetch(file://…)` because asar support is implemented as an `fs`
 shim; that is what lets the renderer stay sealed inside `app.asar`, where the
 integrity-validation fuse still covers it, instead of being unpacked beside it.
+Cross-site asset requests are rejected using Chromium Fetch Metadata, with the
+Cloud Wallet's top-level `/oauth/callback` navigation as the sole exception.
+Each request performs a stateless ASAR-safe filesystem read; Chromium owns
+response caching and request coalescing. Static assets receive immutable cache
+headers, while HTML receives `Cache-Control: no-store` because each document
+response carries the current hub-specific CSP.
 
 ### Content Security Policy
 
@@ -167,6 +173,12 @@ the WalletConnect endpoints `sign-client` actually reaches: the `.com` and
 `.org` relays, the Verify API, and `pulse.walletconnect.org`. Requests on
 `chiagaming://` are answered from disk and never touch the network stack.
 
+Chromium transports that do not pass through `onBeforeRequest` are restricted
+separately. WebTransport is disabled before Chromium starts. Every web contents
+uses Electron's `disable_non_proxied_udp` WebRTC IP policy, which suppresses
+local host candidates and direct UDP rather than pretending WebRTC is covered
+by the origin allowlist.
+
 ### Hub trust
 
 A hub is third-party infrastructure the player is meant to choose, so the
@@ -193,10 +205,11 @@ is actually choosing.
   get an empty preload so they cannot see `__chiaHub`. Every other `window.open`
   is denied. About-window links still use `shell.openExternal` for the project
   URL only.
-- `will-frame-navigate` keeps the player window's top frame on `chiagaming://app`,
-  allows Cloud Wallet popups to reach `cloudWalletOrigins` and to return to the
-  app for `/oauth/callback`, and restricts sub-frames to the frame allowlist. It
-  is used in preference to `will-navigate`, which only sees the top frame.
+- `will-frame-navigate` keeps the player window's top frame on
+  `chiagaming://app/index.html`, allows Cloud Wallet popups to reach
+  `cloudWalletOrigins` and to return to the app for `/oauth/callback`, and
+  restricts sub-frames to the frame allowlist. It is used in preference to
+  `will-navigate`, which only sees the top frame.
 - `will-attach-webview` is blocked, on top of `webviewTag: false`.
 - Permission requests and checks are denied except `clipboard-sanitized-write`
   from the app origin, which is what `navigator.clipboard.writeText` needs to

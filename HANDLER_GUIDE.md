@@ -21,7 +21,7 @@ bounds, validation program cost, argument checking), see `CLVM_DOS.md`.
 - [Proposal Execution Model](#proposal-execution-model)
 - [Detailed Turn Data Flow](#detailed-turn-data-flow)
 - [Validators](#validators)
-- [Validator Chaining](#validator-chaining)
+- [Validator Registry and Selection](#validator-registry-and-selection)
 - [On-Chain vs Off-Chain](#on-chain-vs-off-chain)
 - [Message Parsers](#message-parsers)
 - [Nil Moves (Automatic Moves)](#nil-moves-automatic-moves)
@@ -45,10 +45,10 @@ Games are driven by two cooperating systems:
   and registration are in `GAME_WRITING_GUIDE.md`.
 
 Handlers and validators are complementary: handlers decide *what* to play,
-validators prove *that it was legal*. A handler that produces an illegal
-move will pass locally (the handler trusts its own output) but the
-opponent's off-chain code will detect the fraud when it runs the validator,
-and can then slash on-chain.
+validators prove *that it was legal*. Rust runs the current validator locally
+with each produced move and nil evidence before advancing. The opponent repeats
+that validation off-chain and can slash on-chain if a malicious peer nevertheless
+commits an illegal move.
 
 ---
 
@@ -58,7 +58,7 @@ There are two handler types, reflecting the two sides of a turn:
 
 | Handler | When it runs | Who runs it | What it produces |
 |---------|-------------|-------------|-----------------|
-| **My-turn handler** | It's our turn to move | The moving player | A serialized move, validators, and state for the next turn |
+| **My-turn handler** | It's our turn to move | The moving player | A serialized move, mover share, and the handler for the opponent's turn |
 | **Their-turn handler** | The opponent just moved | The waiting player | A readable interpretation of the move, evidence for slashing, and the next my-turn handler |
 
 Handlers alternate: a my-turn handler produces a their-turn handler (for the
@@ -87,30 +87,29 @@ move format.
 | `mover_share` | Current mover's share if timeout occurs |
 | `entropy` | 32 bytes of randomness for this turn |
 
-### Return: Success (7-8 elements)
+### Return: Success (4-5 elements)
 
 ```
 (
   label                    ; string, for UI/debug
   move                     ; bytes, the move to send on-chain
-  outgoing_validator       ; program, validates THIS move
-  incoming_validator       ; program, validates opponent's NEXT move
-  max_move_size            ; int, max bytes the opponent may send
   mover_share              ; int, our share if opponent times out
   their_turn_handler       ; program for processing opponent's response (nil if game over)
   message_parser           ; optional program or nil (see Message Parsers)
 )
 ```
 
-- `outgoing_validator` validates the move *we just produced*. The opponent
-  will use this (via the referee) to verify our move was legal.
-- `incoming_validator` validates the move *the opponent will produce next*.
-  This is passed forward so the referee knows how to validate the reply.
-- The host derives both validator hashes from the returned programs.
-- When `their_turn_handler` is nil, this is the final move of the game.
-  `incoming_validator` should also be nil in this case.
-- `message_parser` is optional. It is the 8th element of the return list
-  (zero-based index 7 in Rust/vector access). If the element is absent or nil,
+- The handler owns `mover_share`; validators do not choose it.
+- The handler returns the next off-chain handler, but it never returns a
+  validator program, validator hash, state, or move-size limit.
+- The current validator comes from the factory registry. Rust runs it with the
+  move and nil evidence to derive the next validator hash, new state, and next
+  maximum move size, then resolves a non-nil hash in that registry for the next
+  move.
+- When `their_turn_handler` is nil, this is the final move of the game. The
+  current validator must also return a nil next validator hash.
+- `message_parser` is the optional fifth element (zero-based index 4). If the
+  element is absent or nil,
   the game does not accept out-of-band readable messages for this state.
 
 ### Return: Rejection (2 elements)
@@ -141,10 +140,29 @@ loop, or allocation blowup caused by a peer-supplied move is a security bug by
 default, not a normal parse failure. Generic referee-envelope checks such as
 `max_move_size` happen before the handler, so handlers may assume those bounds,
 but game-rule failures must be represented through validator/slash behavior and
-evidence candidates, not CLVM raises. The framework tries nil evidence before
-calling the handler, including for terminal moves; if that succeeds as a slash,
-the handler is skipped. Handlers are responsible for safely processing the
-peer-controlled moves that survive that precheck.
+evidence candidates, not CLVM raises. The framework first runs the current
+validator with nil evidence to reconstruct the candidate transition, then
+slash-invokes a referee committed to that transition with nil evidence. This
+second execution is intentional: the first discovers the arguments, while the
+second asks whether those committed arguments are slashable. Only a move that
+survives both phases reaches the handler, including terminal moves. Nil
+evidence must therefore produce one of two outcomes:
+
+- **Slash** — nil, a misaligned payload, or extra slash conditions. The
+  handler is skipped.
+- **Soft non-slash** — a normal valid payload
+  `(next_validator_hash new_state max_move_size)`. The move is not slashable
+  with empty evidence. `new_state` is passed to the handler as `state`.
+
+After the commitment check, Rust runs the validator with the committed
+arguments to obtain the state passed to the handler. An assert in any required
+nil-evidence run is a hard validator error: the peer move is not accepted
+off-chain and the game must go on chain. The handler is not called with a
+fabricated nil state. Terminal validators return `(list 0)` when the move is
+valid but no evidence was supplied.
+
+Handlers are responsible for safely processing the peer-controlled moves that
+survive the slash precheck.
 
 ### Parameters
 
@@ -156,21 +174,22 @@ peer-controlled moves that survive that precheck.
 |-----------|-------------|
 | `amount` | Total game pot |
 | `pre_state` | On-chain state BEFORE the opponent's move |
-| `state` | On-chain state AFTER the opponent's move |
+| `state` | After-state from the committed nil-evidence validator run; canonical nil for a terminal result |
 | `move` | Opponent's move bytes |
 | `validation_program_hash` | Tree hash of the validation program for this move |
 | `mover_share` | Opponent's declared share of the pot |
 
 `validation_program_hash` is not the same thing as a validation info hash. The
 program hash identifies a validator program by itself. A validation info hash is
-the referee commitment `sha256(validation_program_hash, shatree(state))`, which
-binds a validator program to a particular state. Some existing handler code may
-still name this argument `validation_info_hash`, but the value passed to
-their-turn handlers is the raw validation program hash because the framework has
-the validation program available at that call site. Referee coins commit to the
-validation info hash instead. Neither hash is accepted from the peer move
-message: the framework computes both from its locally held validation program
-and pre-move state before invoking this handler.
+the referee commitment `sha256(next_validator_hash, shatree(new_state))`, which
+binds the *next* validator program to the state that program will validate.
+Some existing handler code may still name this argument `validation_info_hash`,
+but the value passed to their-turn handlers is the raw validation program hash
+of *this* move because the framework has the validation program available at
+that call site. Referee coins commit to the validation info hash instead.
+Neither hash is accepted from the peer move message: the framework computes
+the next infohash from the current validator's return value before invoking
+this handler.
 
 ### Return: Normal Move (2-4 elements)
 
@@ -187,14 +206,19 @@ and pre-move state before invoking this handler.
 - `evidence_list` contains potential slash evidence candidates. The handler
   does **not** need to verify that each piece of evidence actually triggers a
   slash -- just return everything that *might* work. The Rust framework
-  (`their_turn_move_off_chain`) tests each candidate against the validator;
-  the first one that produces a `SLASH` result wins. If none succeed, the
-  game continues normally -- evidence that doesn't work is silently discarded.
+  (`their_turn_move_off_chain`) tests each candidate by slash-invoking a
+  curried referee; the first one that succeeds as a slash wins. If none
+  succeed, the game continues normally -- evidence that doesn't work is
+  silently discarded.
   Nil evidence is always tried automatically by the framework *before*
-  calling the handler, so the handler never needs to include it. When the
-  handler is certain the move is fraudulent, it puts the evidence in the
-  list and can return junk for the other fields (`readable_move`,
-  `next_handler`, etc.) since they will never be used.
+  calling the handler, so the handler never includes it in `evidence_list`.
+  After the handler returns, each listed candidate is tried in order and may
+  execute the same adversarial move through the validator again. Slash
+  evidence is independent of whether `next_handler` is nil: a final move
+  may still be slashed, and a continuing move may still be slashed. When
+  evidence actually produces a slash, the other fields are unused. If no
+  evidence slashes, `next_handler` is how the receiver learns whether the
+  game continues, so it must not be junk in that case.
 - `message` is optional (the fourth element may be absent). When present and
   non-empty, it is sent out-of-band to the opponent and parsed by their
   `message_parser`.
@@ -223,12 +247,14 @@ my_turn_handler_0 ──produces──> their_turn_handler_0
 
 The initial handler pair is established when the game is proposed and
 accepted: the proposal factory produces fixed my-turn and their-turn handlers
-plus the initial validator for each game. The higher layer selects the handler
-appropriate to the local side and first mover. From there, each turn's handler
-output specifies the next handler, creating an implicit state machine.
+plus a validator registry for each game. The higher layer selects the handler
+appropriate to the local side and first mover and selects the registry's first
+validator as current. From there, each turn's handler output specifies the next
+handler, creating an implicit handler state machine independent of validator
+selection.
 
-When a handler returns nil for the next handler, the game is over. No more
-turns will be taken.
+When a handler returns nil for the next handler, the current validator must
+return nil for its next validator hash. That agreement marks the game terminal.
 
 ---
 
@@ -271,7 +297,7 @@ non-empty ordered list of canonical 10-field game records:
   initial_mover_share
   my_turn_handler
   their_turn_handler
-  initial_validator
+  validation_programs
 )
 ```
 
@@ -280,13 +306,18 @@ orientation. The higher layer uses `sender_is_player_a` to project those facts
 to sender/receiver and local/opponent perspectives without reordering members.
 It selects `my_turn_handler` for the first player and `their_turn_handler` for
 the waiting player. The factory handlers are not regenerated from peer-specific
-inputs. The first member's initial-validator hash is the protocol identity.
+inputs. `validation_programs` must be a proper, nonempty list. Its first program
+is initially current; later ordering is irrelevant because Rust resolves every
+subsequent validator by tree hash. The first member's first validator hash is
+the protocol identity. `initial_state` is the state supplied to that first
+validator and first local handler; games normally use canonical nil unless
+their first transition genuinely needs pre-existing state.
 
 The framework derives each game's amount from its two contributions and hashes
-the returned initial validator. Wire members retain only setup commitments:
+the registry's first validator. Wire members retain only setup commitments:
 contributions, first-player orientation, validator and validation-info hashes,
 initial move, maximum move size, and initial mover share. Raw initial state,
-validator code, handlers, and the derived amount stay local. The receiver
+validator registry, handlers, and the derived amount stay local. The receiver
 reruns the factory, checks the retained metadata (including list order and
 cardinality), derives the group ID from the first member, and builds
 `GameStartInfo` entirely from its local factory result. The current factories
@@ -300,41 +331,31 @@ message parsers described below, which remain part of active gameplay.
 
 ## Detailed Turn Data Flow
 
-The following diagram (from `src/referee/my_turn.rs`) shows how data flows
-through a single round of play -- one of our moves followed by one of
-theirs:
+For each move, handler progression and validator selection meet in Rust:
 
 ```
-my turn:                                   ┌-------------------------------------------┐
-                                           v                                           |
-┌-> my_turn_handler(local_move, state_after_their_turn0) ->                            |
-|            { serialized_our_move, ------------┐    |                                 |
-|   ┌--------- their_turn_handler,              |    |                                 |
-|   |          local_readable_move,             |    |                                 |
-|   |   ┌----- their_turn_validation_program,   |    |                                 |
-|   |   |    }                                  |    └------------┐                    |
-|   |   |                                       |                 |                    |
-|   |   |                                       v                 v                    |
-| ┌-|---|->my_turn_validation_program(serialized_our_move, state_after_their_turn0) -> |
-| | |   |    state_after_our_turn --------------------------------┐                    |
-| | |   |                                                         |                    |
-| | |   | their turn:                                             |                    |
-| | |   v                                                         v                    |
-| | |   their_turn_validation_program(serialized_their_move, state_after_our_turn) ->  |
-| | |     state_after_their_turn1 -┐                              |                    |
-| | |                              |                              |                    |
-| | v                              |                              |                    |
-| | their_turn_handler(            ├---------------------------------------------------┘
-| |   serialized_their_move,       |                              |
-| |   state_after_their_turn1 <----┘                              |
-| |   state_after_our_turn, <-------------------------------------┘
-| | ) ->
-| |   { remote_readable_move,
-| └---- my_turn_validation_program,
-└------ my_turn_handler,
-        evidence, --------------> try these with their_turn_validation_program
-      }
+my_turn_handler(local_move, state, mover_share, entropy)
+  -> move, next mover_share, their_turn_handler, optional message_parser
+
+current_validator(move, pre_state, nil evidence)
+  -> next_validator_hash, new_state, next_max_move_size
+
+Rust resolves a non-nil next_validator_hash in the factory registry and makes
+the resolved program current for the next move; nil is terminal.
+
+their_turn_handler(amount, pre_state, new_state, move,
+                   current_validator_hash, mover_share)
+  -> readable_move, evidence, next_my_turn_handler, optional message
 ```
+
+For a received move, deriving that transition is not the slash check. Rust
+first uses a placeholder commitment to discover the transition, then curries a
+referee with the derived commitment and slash-invokes it with nil evidence. If
+that does not slash, Rust evaluates the validator with the committed arguments
+to supply `new_state` to the handler. Every handler evidence candidate causes a
+further ordered slash invocation until one succeeds or the list is exhausted.
+This repeated execution is required because parameter discovery, commitment
+verification, and evidence trials answer different questions.
 
 Key observations:
 
@@ -342,22 +363,23 @@ Key observations:
   (before the opponent moved) and `state_after_their_turn1` (after). This lets
   it compare the two to detect fraud.
 - **Evidence feeds back into the validator**: the `evidence` returned by
-  `their_turn_handler` is tested against `their_turn_validation_program` by the
+  `their_turn_handler` is tested against the current validator program by the
   framework. The handler just proposes candidates; the framework does the
   actual slash check.
-- **The loop feeds forward**: the outputs of one round (`my_turn_handler`,
-  `my_turn_validation_program`) become the inputs to the next round.
+- **The two state machines agree at terminal**: nil
+  `next_validator_hash` must accompany nil `next_my_turn_handler`; otherwise
+  the returned hash must resolve in the factory registry.
 
 ### The 0th Move
 
-On the very first move, the initial validation program is **not** called.
-Instead, the game's `initial_state` is used directly as the state input to
-the handler. The first validator only runs when the *opponent* processes
-move 0.
+The game's `initial_state` is used directly as the state input to the first
+my-turn handler. The registry's first validator is current for move 0 and is
+run with that move and nil evidence to derive the following validator hash,
+state, and maximum move size.
 
 ### On-Chain vs Off-Chain Chains
 
-On-chain, validators form a single linear chain:
+On-chain, validator hashes describe the protocol sequence:
 
 ```
 a.clsp -> b.clsp -> c.clsp -> d.clsp -> e.clsp -> (terminal)
@@ -374,11 +396,9 @@ alice: move 1 -> b.clsp
 ```
 
 On-chain there is no difference between a move *leaving* one player and
-*arriving* at the other, so the outgoing validation program for a move must
-be the same program that the opponent uses as the incoming validator for
-that move. This is why `my_turn_handler` returns both `outgoing_validator`
-and `incoming_validator` -- they correspond to adjacent links in the single
-on-chain chain.
+*arriving* at the other. Both peers therefore use the same factory registry
+and resolve the validator hash returned by the current validator. Handlers do
+not carry validator programs between turns.
 
 ---
 
@@ -398,14 +418,16 @@ untagged result:
 (next_validation_program_hash new_state max_move_size)
 ```
 
-These three elements describe the new game state after the move. They are
-used in two places:
+These three elements describe the new game state after the move.
 
 - **On-chain**: The referee checks that these values match the commitments
   in the coin's curried state (infohash and max_move_size). If they align,
   the move is valid and the slash attempt fails.
-- **Off-chain**: The Rust code extracts `new_state` so the handler can
-  determine the next game state without duplicating that logic.
+- **Off-chain**: A successful nil-evidence run is a soft non-slash: the
+  framework takes `new_state` and `max_move_size` from it before calling the
+  their-turn handler. Every structurally valid move must return a payload with
+  nil evidence. `(list 0)` is the valid terminal payload: the next validator
+  hash is nil, there is no after-state, and the next max move size is zero.
 
 Note: `mover_share` is **not** in the validator's return value. It is part
 of the referee's curried arguments and is checked separately by each
@@ -414,7 +436,7 @@ validator.
 ### Validator Return: Valid Move with Conditions (Conditional Slash)
 
 ```
-(new_validation_info_hash new_state max_move_size condition1 condition2 ...)
+(next_validation_program_hash new_state max_move_size condition1 condition2 ...)
 ```
 
 Elements beyond the first three are **conditions** that the referee must
@@ -445,9 +467,8 @@ Nil means the move is unconditionally illegal. On-chain, the referee emits
 payout conditions giving the full game amount to the slasher without
 requiring any additional cryptographic proof.
 
-Off-chain, the Rust code represents validator results as
-`Option<Rc<Program>>` — `Some(result)` for non-nil payloads,
-`None` for slash — and initiates a slash when it gets `None`.
+Off-chain, Rust parses a non-nil payload into its next validator hash, state,
+and move-size limit. A nil result means the attempted slash succeeded.
 
 A slash also succeeds when the validator returns non-nil values that
 **don't align** with the referee's committed infohash or max_move_size.
@@ -478,19 +499,20 @@ guess pays zero. If Alice reveals after an incorrect guess one through four,
 the reveal is valid only when it pays the same scheduled share as a correct
 guess at that depth. An underfunded concession, malformed reveal, or reveal
 that does not open Alice's commitment returns nil and is unconditionally
-slashable.
+slashable. Those move-only faults are slashable with nil evidence. Unsupported
+non-nil evidence lengths return the same terminal result as nil.
 
 Evidence has two proof-specific forms:
 
 - A one-byte index selects a prior clue. If recomputing that clue from the
   revealed word proves Alice's clue wrong, the validator returns nil. A correct
-  clue or irrelevant index returns the ordinary aligned terminal result and
-  does not authorize a slash.
+  clue returns the ordinary aligned terminal result; an out-of-range index
+  raises and cannot authorize a slash.
 - A ten-byte `lower_bound || upper_bound` dictionary-gap proof conditionally
   slashes when the revealed word lies inside that range. The validator appends
   `(AGG_SIG_UNSAFE dict_pubkey evidence)`, so the referee slash succeeds only
   when the blockchain verifies the range signature. A range that does not
-  contain the word authorizes nothing.
+  contain the word raises and cannot authorize a slash.
 
 The dictionary handler obtains both the range and its precomputed aggregate
 signature from the signed dictionary tree. In a handler `evidence_list`, signed
@@ -517,10 +539,11 @@ can raise and make the illegal terminal move unslashable.
 
 The terminal validator therefore rejects a mover mask when bit 7 is set before
 selecting or evaluating cards, then separately requires exactly five set bits.
-The waiter's evidence mask follows the same range and popcount rules. Invalid
-evidence returns the ordinary aligned terminal result, denying that slash
-attempt without aborting the validator; an invalid committed mover mask returns
-nil and is unconditionally slashable.
+The waiter's evidence mask follows the same range and popcount rules. Nil
+evidence returns `(list 0)` without comparing hands. Invalid non-nil evidence
+raises, rejecting that slash attempt. A well-formed waiter mask that does not
+prove overclaim also returns `(list 0)`. An invalid committed mover mask
+returns nil and is unconditionally slashable.
 
 ### How the On-Chain Referee Uses Validators
 
@@ -558,12 +581,14 @@ Validators have a two-sided security contract:
   slash-triggering result, without raising. This includes malformed lengths,
   bad popcounts, bad preimage reveals, wrong mover shares, and invalid
   next-state commitments.
-- Every invalid slash attempt against a valid move must fail. The validator may
-  fail that slash by returning the valid move payload or, for malformed
-  evidence, by raising so the slash transaction cannot be mined. Evidence
-  assertions are only safe after the move itself has already been classified as
-  valid; otherwise malformed evidence could mask a malicious move by causing an
-  exception instead of a slash.
+- Every invalid slash attempt against a valid move must fail. Non-nil evidence
+  either proves its specific accusation or fails to slash. A validator may
+  reject unusable evidence by raising or may treat it like nil and return the
+  valid payload. Nil evidence must never raise: it is also used off chain to
+  extract the transition and next max move size. Evidence assertions are only
+  safe after the move itself has already been classified as valid; otherwise
+  malformed evidence could mask a malicious move by causing an exception
+  instead of a slash.
 
 In practice, validators should cheaply classify move shape before any
 length-sensitive `substr`, hand-evaluation helper, or evidence processing.
@@ -576,41 +601,21 @@ share.
 
 ---
 
-## Validator Chaining
+## Validator Registry and Selection
 
-Validators form their own chain, parallel to the handler chain. Each move
-carries two validators:
+The factory returns every validator program in one proper, nonempty
+`validation_programs` list. The first entry is initially current. For every
+move, Rust runs the current validator with nil evidence and reads its
+`next_validation_program_hash`:
 
-- **Outgoing validator**: Validates the move being made right now. Its derived
-  hash was committed by the *previous* move's incoming validator.
-- **Incoming validator**: Will validate the opponent's *next* move. Its derived
-  hash is committed in this move's on-chain state.
+- A non-nil hash is resolved by tree hash against the factory registry and the
+  resolved program becomes current for the next move.
+- A nil hash is terminal and must agree with a nil next handler.
 
-This creates a chain of commitments:
-
-```
-Move 0:
-  outgoing_validator = a.clsp  (hash matches initial_validator_hash from proposal)
-  incoming_validator = b.clsp  (hash stored on-chain for Move 1 to match)
-
-Move 1:
-  outgoing_validator = b.clsp  (hash matches what Move 0 committed)
-  incoming_validator = c.clsp  (hash stored on-chain for Move 2 to match)
-
-Move 2:
-  outgoing_validator = c.clsp  (hash matches what Move 1 committed)
-  incoming_validator = d.clsp  (hash stored on-chain for Move 3 to match)
-
-...
-
-Final move:
-  outgoing_validator = e.clsp  (hash matches what the prior move committed)
-  incoming_validator = nil  (no next move)
-```
-
-The hash chain ensures that each player commits to the validation rules for
-the *next* move before seeing that move. Neither player can retroactively
-change what program will validate their opponent's response.
+Only the first registry position is meaningful. All later entries are an
+unordered lookup set, so protocol correctness must never depend on their order.
+The returned hash still commits the next coin to the selected validator and
+state, preventing either player from substituting different validation rules.
 
 ---
 
@@ -619,13 +624,12 @@ change what program will validate their opponent's response.
 ### Off-Chain (Normal Play)
 
 During normal play, both handlers and validators run off-chain on each
-player's machine. The Rust code (`src/referee/my_turn.rs`,
-`src/referee/their_turn.rs`) orchestrates this:
-
-1. Call the handler to produce a move (or interpret one)
-2. Run the validator to compute the new state
-3. Update the referee's internal state
-4. Send the move to the opponent via the potato protocol
+player's machine. For a local move, Rust calls the my-turn handler, validates
+its move with the current registry validator, resolves the returned next hash,
+and sends the move. For a received move, Rust discovers the transition with a
+nil-evidence validator run, verifies the resulting commitment through the real
+referee slash path, reruns the committed transition for the handler state, and
+then tries each handler-provided evidence candidate through that slash path.
 
 Both players independently run the same validators and arrive at the same
 state. If they disagree, one of them will detect fraud when they try to
@@ -671,8 +675,8 @@ turn-taking protocol. The **message parser** mechanism enables this.
 
 ### How It Works
 
-1. A my-turn handler may return a `message_parser` program (element 8 of the
-   return list, zero-based index 7). This program knows how to decode advisory
+1. A my-turn handler may return a `message_parser` program as its optional
+   fifth element (zero-based index 4). This program knows how to decode advisory
    messages for the current game state. If the element is absent or nil, no
    parser is installed.
 2. When the their-turn handler processes the opponent's reply, it can return
@@ -793,8 +797,8 @@ arrives, Bob independently verifies the same information.
 
 ### Mechanics
 
-1. A **my-turn handler** may return a `message_parser` as element 8 of the
-   return list (zero-based index 7). This parser knows how to decode messages
+1. A **my-turn handler** may return a `message_parser` as its optional fifth
+   element (zero-based index 4). This parser knows how to decode messages
    for the current game state. If the element is absent or nil, no parser is
    installed.
 
@@ -843,14 +847,14 @@ Alice my-turn handler a  ──>  Bob their-turn handler a
                                                                                                                                                     (game over, nil handler)
 ```
 
-### Validator Chain
+### Validator Sequence
 
 ```
 a.clsp ──> b.clsp ──> c.clsp ──> d.clsp ──> e.clsp ──> (nil, game over)
 ```
 
-Each validator's hash is committed by the previous move, creating an
-unbreakable chain of verification.
+All five programs are present in the factory registry. The first is initially
+current; each validator returns the tree hash selecting the next one.
 
 ### The Steps
 
@@ -862,8 +866,9 @@ unbreakable chain of verification.
 | d | Bob | `calpoker_bob_handler_d` | `d.clsp` | `bob_discards` |
 | e | Alice | `calpoker_alice_handler_e` | `e.clsp` | `salt\|\|discards\|\|selects` |
 
-After step e, Alice's my-turn handler returns nil for `their_turn_handler`
-and nil for `incoming_validator`, signaling the game is over.
+After step e, Alice's my-turn handler returns nil for
+`their_turn_handler`, and `e.clsp` returns a nil next validator hash. Their
+agreement signals that the game is over.
 
 ### Key Code
 

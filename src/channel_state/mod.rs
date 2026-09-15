@@ -36,10 +36,35 @@ use crate::common::types::{
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
     PuzzleHash, Sha256tree, Spend, Timeout,
 };
-use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, ParsedRefereeSolution, TheirTurnCoinSpentResult,
-};
+use crate::referee::types::{GameMoveDetails, ParsedRefereeSolution, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
+
+pub use crate::common::protocol_timeout_bounds::{
+    MAX_GAME_TIMEOUT_BLOCKS, MIN_GAME_TIMEOUT_BLOCKS,
+};
+
+fn validate_game_timeout(game_timeout: u64) -> Result<(), Error> {
+    if !(MIN_GAME_TIMEOUT_BLOCKS..=MAX_GAME_TIMEOUT_BLOCKS).contains(&game_timeout) {
+        return Err(Error::StrErr(format!(
+            "proposal game_timeout {game_timeout} outside [{MIN_GAME_TIMEOUT_BLOCKS}, {MAX_GAME_TIMEOUT_BLOCKS}]",
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod game_timeout_tests {
+    use super::{validate_game_timeout, MAX_GAME_TIMEOUT_BLOCKS, MIN_GAME_TIMEOUT_BLOCKS};
+
+    #[test]
+    fn proposal_game_timeout_accepts_only_bounded_values() {
+        assert!(validate_game_timeout(MIN_GAME_TIMEOUT_BLOCKS).is_ok());
+        assert!(validate_game_timeout(MAX_GAME_TIMEOUT_BLOCKS).is_ok());
+        assert!(validate_game_timeout(MIN_GAME_TIMEOUT_BLOCKS - 1).is_err());
+        assert!(validate_game_timeout(MAX_GAME_TIMEOUT_BLOCKS + 1).is_err());
+        assert!(validate_game_timeout(u64::MAX).is_err());
+    }
+}
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -138,6 +163,11 @@ pub struct ChannelState {
     // These are metadata only — they do not affect the unroll commitment
     // or player balances until accepted.
     proposed_games: Vec<ProposedGame>,
+}
+
+pub struct InitiatorGenesisTransition {
+    pub state_zero_spend: ChannelCoinSpendInfo,
+    pub state_one_signatures: StateUpdateSignatures,
 }
 
 impl ChannelState {
@@ -481,6 +511,45 @@ impl ChannelState {
         })
     }
 
+    pub fn initialize_genesis_as_initiator(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        state_zero_signatures: &StateUpdateSignatures,
+    ) -> Result<InitiatorGenesisTransition, Error> {
+        game_assert_eq!(
+            self.state_number,
+            0,
+            "initiator genesis initialization must start at state 0"
+        );
+        game_assert!(
+            !self.have_potato,
+            "initiator must not own the genesis potato"
+        );
+        let snapshot = self.clone();
+        let result = (|| {
+            let state_zero_spend =
+                self.verify_and_store_initial_peer_signatures(env, state_zero_signatures)?;
+            let state_one_signatures = self.update_cached_unroll_state(env)?;
+            game_assert_eq!(
+                self.state_number,
+                1,
+                "initiator genesis initialization must establish state 1"
+            );
+            game_assert!(
+                !self.have_potato,
+                "initiator must finish genesis without the potato"
+            );
+            Ok(InitiatorGenesisTransition {
+                state_zero_spend,
+                state_one_signatures,
+            })
+        })();
+        if result.is_err() {
+            *self = snapshot;
+        }
+        result
+    }
+
     pub fn has_active_games(&self) -> bool {
         !self.live_games.is_empty()
     }
@@ -555,7 +624,7 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         private_keys: ChannelPrivateKeys,
         launcher_coin_id: CoinID,
-        we_start_with_potato: bool,
+        is_receiver: bool,
         their_channel_pubkey: PublicKey,
         their_unroll_pubkey: PublicKey,
         their_referee_pubkey: PublicKey,
@@ -605,13 +674,13 @@ impl ChannelState {
             my_allocated_balance: Amount::default(),
             their_allocated_balance: Amount::default(),
 
-            have_potato: we_start_with_potato,
+            have_potato: false,
 
             cached_redo_actions: Vec::new(),
 
             state_number: 0,
-            my_next_nonce: if we_start_with_potato { 0 } else { 1 },
-            their_next_nonce: if we_start_with_potato { 1 } else { 0 },
+            my_next_nonce: if is_receiver { 0 } else { 1 },
+            their_next_nonce: if is_receiver { 1 } else { 0 },
 
             channel_coin_spend: CoinSpend {
                 coin: channel_coin_parent,
@@ -630,7 +699,7 @@ impl ChannelState {
         };
 
         myself.latest_sent_unroll.coin.state_number = 0;
-        myself.latest_sent_unroll.coin.started_with_potato = myself.have_potato;
+        myself.latest_sent_unroll.coin.started_with_potato = is_receiver;
 
         // Unroll puzzle knows its sequence number and knows the hashes of the
         // things to exit in the two different ways (one is a hash of a list of
@@ -936,6 +1005,56 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         signatures: &StateUpdateSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
+        self.receive_empty_potato_signatures(env, signatures)
+    }
+
+    pub fn initialize_genesis_as_receiver(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        state_one_signatures: &StateUpdateSignatures,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        game_assert_eq!(
+            self.state_number,
+            0,
+            "receiver genesis initialization must start at state 0"
+        );
+        game_assert!(
+            !self.have_potato,
+            "receiver must not own the potato before genesis completes"
+        );
+        let snapshot = self.clone();
+        let result = (|| {
+            let spend = self.verify_received_state_signatures(env, state_one_signatures)?;
+            game_assert_eq!(
+                self.state_number,
+                1,
+                "receiver genesis initialization must establish state 1"
+            );
+            game_assert!(
+                self.have_potato,
+                "receiver must finish genesis with the potato"
+            );
+            Ok(spend)
+        })();
+        if result.is_err() {
+            *self = snapshot;
+        }
+        result
+    }
+
+    fn receive_empty_potato_signatures(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        signatures: &StateUpdateSignatures,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        self.verify_received_state_signatures(env, signatures)
+    }
+
+    fn verify_received_state_signatures(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        signatures: &StateUpdateSignatures,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
         let spend = self.received_potato_verify_signatures(
@@ -1066,12 +1185,7 @@ impl ChannelState {
             )));
         }
 
-        if start_info.timeout.to_u64() == 0 {
-            return Err(Error::StrErr(format!(
-                "proposal game_timeout must be positive, got {}",
-                start_info.timeout.to_u64(),
-            )));
-        }
+        validate_game_timeout(start_info.timeout.to_u64())?;
 
         // 4.9: Limit on outstanding proposal count.
         const MAX_PROPOSALS: usize = 100;
@@ -1412,11 +1526,10 @@ impl ChannelState {
     ) -> Result<MoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let state_number = self.state_number;
+        let pre_move_puzzle_hash = self.live_games[game_idx].last_referee_puzzle_hash.clone();
 
         let referee_result =
             self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
-
-        let match_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
 
         self.live_games[game_idx].last_referee_puzzle_hash =
             self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
@@ -1429,7 +1542,7 @@ impl ChannelState {
         self.push_cached_action(CachedRedoActions::CachedSendMove(Rc::new(CachedSendMove {
             state_number: self.state_number,
             game_id: *game_id,
-            match_puzzle_hash,
+            match_puzzle_hash: pre_move_puzzle_hash,
             puzzle_hash,
             amount,
             saved_post_move_referee: saved_referee,
@@ -1449,24 +1562,24 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        basic: &GameMoveStateInfo,
-        terminal: bool,
+        move_made: &[u8],
+        mover_share: Amount,
     ) -> Result<ChannelMoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let game_amount = self.live_games[game_idx].get_amount();
-        if basic.mover_share > game_amount {
+        if mover_share > game_amount {
             return Err(Error::StrErr(format!(
                 "received move with mover_share {} exceeding game amount {}",
-                basic.mover_share.to_u64(),
+                mover_share.to_u64(),
                 game_amount.to_u64(),
             )));
         }
 
         let max_move_size = self.live_games[game_idx].get_max_move_size();
-        if basic.move_made.len() > max_move_size {
+        if move_made.len() > max_move_size {
             return Err(Error::StrErr(format!(
                 "received move of {} bytes exceeds max_move_size {}",
-                basic.move_made.len(),
+                move_made.len(),
                 max_move_size,
             )));
         }
@@ -1475,8 +1588,8 @@ impl ChannelState {
 
         let their_move_result = self.live_games[game_idx].internal_their_move(
             env.allocator,
-            basic,
-            terminal,
+            move_made,
+            mover_share,
             state_number,
         )?;
 

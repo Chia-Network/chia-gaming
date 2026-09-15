@@ -8,14 +8,15 @@ use clvmr::run_program;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{
-    CachedSendMove, Evidence, ReadableMove, StateUpdateProgram, ValidationInfo,
+    CachedSendMove, Evidence, ReadableMove, StateUpdateProgram, ValidationProgramRegistry,
 };
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr, Node,
-    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout, MAX_BLOCK_COST_CLVM,
+    chia_dialect, u64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash,
+    IntoErr, Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
+    Timeout, MAX_BLOCK_COST_CLVM,
 };
 use crate::utils::proper_list;
 
@@ -28,27 +29,6 @@ pub struct GameMoveStateInfo {
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
     pub max_move_size: u32,
-    /// Raw CLVM atom bytes for max_move_size, preserved exactly as seen on-chain.
-    /// Used in to_clvm to ensure curry hashes match the on-chain puzzle hash
-    /// even if the peer used a non-canonical encoding.
-    pub max_move_size_raw: Vec<u8>,
-}
-
-/// Canonical signed big-endian CLVM encoding of a non-negative integer.
-pub fn canonical_atom_from_usize(v: usize) -> Vec<u8> {
-    if v == 0 {
-        return vec![];
-    }
-    let be = (v as u64).to_be_bytes();
-    let start = be.iter().position(|&b| b != 0).unwrap_or(7);
-    if be[start] & 0x80 != 0 {
-        let mut out = Vec::with_capacity(be.len() - start + 1);
-        out.push(0);
-        out.extend_from_slice(&be[start..]);
-        out
-    } else {
-        be[start..].to_vec()
-    }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -65,6 +45,29 @@ impl ValidationInfoHash {
 
     pub fn is_none(&self) -> bool {
         matches!(self, ValidationInfoHash::None)
+    }
+
+    /// Same formula the on-chain referee uses for INFOHASH_B:
+    /// nil if `next_validator_hash` is nil, else
+    /// `sha256(next_validator_hash, shatree(new_state))`.
+    pub fn from_next_validator(
+        allocator: &mut AllocEncoder,
+        next_validator_hash: Option<&Hash>,
+        new_state: &Program,
+    ) -> Self {
+        match next_validator_hash {
+            None => ValidationInfoHash::None,
+            Some(next) => {
+                let state_hash = new_state.sha256tree(allocator).hash().clone();
+                ValidationInfoHash::Hash(
+                    Sha256Input::Array(vec![
+                        Sha256Input::Hash(next),
+                        Sha256Input::Hash(&state_hash),
+                    ])
+                    .hash(),
+                )
+            }
+        }
     }
 }
 
@@ -135,6 +138,7 @@ pub enum TheirTurnCoinSpentResult {
 pub struct RefereeFixedContext {
     pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,
+    pub validation_programs: ValidationProgramRegistry,
 
     pub my_identity: ChiaIdentity,
 
@@ -166,7 +170,7 @@ pub enum ParsedRefereeSolution {
         new_move: Vec<u8>,
         validation_info_hash_raw: Vec<u8>,
         new_mover_share_raw: Vec<u8>,
-        max_move_size_raw: Vec<u8>,
+        max_move_size: u32,
     },
     /// `(previous_state previous_validation_program evidence mover_payout_ph)` —
     /// second element is a pair (a program)
@@ -198,11 +202,16 @@ impl ParsedRefereeSolution {
             clvmr::allocator::SExp::Pair(_, _) => Ok(ParsedRefereeSolution::Slash),
             clvmr::allocator::SExp::Atom => {
                 let mut get_atom = |idx: usize| allocator.allocator().atom(elements[idx]).to_vec();
+                let max_move_size = u64_from_atom(&get_atom(3))
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or_else(|| {
+                        Error::StrErr("max move size wasn't a properly sized atom".to_string())
+                    })?;
                 Ok(ParsedRefereeSolution::Move {
                     new_move: get_atom(0),
                     validation_info_hash_raw: get_atom(1),
                     new_mover_share_raw: get_atom(2),
-                    max_move_size_raw: get_atom(3),
+                    max_move_size,
                 })
             }
         }
@@ -212,10 +221,16 @@ impl ParsedRefereeSolution {
 /// Validator result: `Some(new_state)` for a valid move payload, `None` for slash (`nil`).
 pub type StateUpdateResult = Option<Rc<Program>>;
 
+pub struct ParsedValidatorResult {
+    pub new_state: StateUpdateResult,
+    pub next_validator_hash: Option<Hash>,
+    pub next_max_move_size: u32,
+}
+
 pub fn parse_validator_result(
     allocator: &mut AllocEncoder,
     node: NodePtr,
-) -> Result<StateUpdateResult, Error> {
+) -> Result<ParsedValidatorResult, Error> {
     let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
         p
     } else {
@@ -223,12 +238,40 @@ pub fn parse_validator_result(
     };
 
     if lst.is_empty() {
-        return Ok(None);
+        return Ok(ParsedValidatorResult {
+            new_state: None,
+            next_validator_hash: None,
+            next_max_move_size: 0,
+        });
     }
 
-    // Terminal validators may return just (list 0) -- next_validator_hash=nil with no state.
+    // Mirror referee.clsp destructuring of
+    // (next_validator_hash new_state max_move_size . extra_conditions):
+    // omitted positional fields are nil, and trailing slash conditions do not
+    // change the transition fields extracted here.
+    let next_validator_hash = if Program::from_nodeptr(allocator, lst[0])?.is_nil() {
+        None
+    } else {
+        Some(Hash::from_nodeptr(allocator, lst[0])?)
+    };
     let state_node = if lst.len() > 1 { lst[1] } else { NodePtr::NIL };
-    Ok(Some(Rc::new(Program::from_nodeptr(allocator, state_node)?)))
+    let next_max_move_size = if lst.len() > 2 {
+        let clvmr::allocator::SExp::Atom = allocator.allocator().sexp(lst[2]) else {
+            return Err(Error::StrErr(
+                "validator max move size is not an atom".to_string(),
+            ));
+        };
+        u64_from_atom(allocator.allocator().atom(lst[2]).as_ref())
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| Error::StrErr("validator max move size exceeds u32".to_string()))?
+    } else {
+        0
+    };
+    Ok(ParsedValidatorResult {
+        new_state: Some(Rc::new(Program::from_nodeptr(allocator, state_node)?)),
+        next_validator_hash,
+        next_max_move_size,
+    })
 }
 
 /// Adjudicates a two player turn based game
@@ -297,14 +340,6 @@ impl RefereePuzzleArgs {
             previous_validation_info_hash,
         }
     }
-
-    pub fn swap(&self) -> RefereePuzzleArgs {
-        RefereePuzzleArgs {
-            mover_pubkey: self.waiter_pubkey.clone(),
-            waiter_pubkey: self.mover_pubkey.clone(),
-            ..self.clone()
-        }
-    }
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for RefereePuzzleArgs
@@ -320,9 +355,7 @@ where
             self.referee_coin_puzzle_hash.to_clvm(encoder)?,
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
-            encoder.encode_atom(clvm_traits::Atom::Borrowed(
-                &self.game_move.basic.max_move_size_raw,
-            ))?,
+            self.game_move.basic.max_move_size.to_clvm(encoder)?,
             self.game_move.validation_info_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash.to_clvm(encoder)?,
@@ -405,6 +438,10 @@ impl InternalStateUpdateArgs {
     }
 
     pub fn run(&self, allocator: &mut AllocEncoder) -> Result<StateUpdateResult, Error> {
+        Ok(self.run_parsed(allocator)?.new_state)
+    }
+
+    pub fn run_parsed(&self, allocator: &mut AllocEncoder) -> Result<ParsedValidatorResult, Error> {
         game_assert_eq!(
             self.referee_args.validation_program.hash(),
             self.validation_program.hash(),
@@ -447,21 +484,11 @@ impl OnChainRefereeMoveData {
         fixed: &RefereeFixedContext,
         coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
-        let infohash_c: Option<Hash> = if self.new_move.validation_info_hash.is_some() {
-            let vi = ValidationInfo::new_state_update(
-                allocator,
-                self.validation_program.clone(),
-                self.state.clone(),
-            );
-            Some(vi.hash().clone())
-        } else {
-            None
-        };
         let max_move_size_node = Node(
-            allocator
-                .encode_atom(clvm_traits::Atom::Borrowed(
-                    &self.new_move.basic.max_move_size_raw,
-                ))
+            self.new_move
+                .basic
+                .max_move_size
+                .to_clvm(allocator)
                 .into_gen()?,
         );
         let solution_args_node = (
@@ -469,7 +496,7 @@ impl OnChainRefereeMoveData {
                 .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
                 .into_gen()?,
             (
-                infohash_c.as_ref(),
+                self.new_move.validation_info_hash.clone(),
                 (
                     self.new_move.basic.mover_share.clone(),
                     (max_move_size_node, ()),
@@ -577,28 +604,18 @@ impl OnChainRefereeSolution {
                         &refmove.game_move.basic.move_made,
                     ))
                     .into_gen()?;
-                let infohash_c: Option<Hash> = if refmove.game_move.validation_info_hash.is_some() {
-                    let vi = ValidationInfo::new_state_update(
-                        encoder,
-                        refmove.validation_program.clone(),
-                        refmove.state.clone(),
-                    );
-                    Some(vi.hash().clone())
-                } else {
-                    None
-                };
-
                 let max_move_size_node = Node(
-                    encoder
-                        .encode_atom(clvm_traits::Atom::Borrowed(
-                            &refmove.game_move.basic.max_move_size_raw,
-                        ))
+                    refmove
+                        .game_move
+                        .basic
+                        .max_move_size
+                        .to_clvm(encoder)
                         .into_gen()?,
                 );
                 (
                     move_atom,
                     (
-                        infohash_c.as_ref(),
+                        refmove.game_move.validation_info_hash.clone(),
                         (
                             refmove.game_move.basic.mover_share.clone(),
                             (max_move_size_node, ()),

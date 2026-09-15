@@ -57,8 +57,8 @@ fn shatree_of(allocator: &mut AllocEncoder, node: NodePtr) -> [u8; 32] {
 fn run_referee_slash_with_mock(
     allocator: &mut AllocEncoder,
     validator_return: NodePtr,
-    committed_infohash_b: &[u8; 32],
-    committed_max_move_size: i64,
+    committed_infohash_b: Option<&[u8; 32]>,
+    committed_max_move_size: &[u8],
 ) -> Result<NodePtr, String> {
     let referee = load_referee_puzzle(allocator);
     let referee_clvm = referee.to_clvm(allocator).expect("referee to clvm");
@@ -88,8 +88,13 @@ fn run_referee_slash_with_mock(
     let mod_hash = hash_to_node(allocator, &referee_hash);
     let nonce = 1i64.to_clvm(allocator).expect("nonce");
     let move_node = allocator.allocator().new_atom(&[0x44; 5]).expect("move");
-    let max_move_size = committed_max_move_size.to_clvm(allocator).expect("mms");
-    let infohash_b = hash_to_node(allocator, committed_infohash_b);
+    let max_move_size = allocator
+        .allocator()
+        .new_atom(committed_max_move_size)
+        .expect("mms");
+    let infohash_b = committed_infohash_b
+        .map(|hash| hash_to_node(allocator, hash))
+        .unwrap_or(NodePtr::NIL);
     let mover_share = 0i64.to_clvm(allocator).expect("mover_share");
     let infohash_a_node = hash_to_node(allocator, &infohash_a);
 
@@ -140,7 +145,7 @@ fn run_referee_slash_with_mock(
 #[test]
 fn test_slash_succeeds_nil() {
     let mut allocator = AllocEncoder::new();
-    let result = run_referee_slash_with_mock(&mut allocator, NodePtr::NIL, &[0x00; 32], 5);
+    let result = run_referee_slash_with_mock(&mut allocator, NodePtr::NIL, Some(&[0x00; 32]), &[5]);
     let output = result.expect("slash with nil validator_result should succeed");
     let items = proper_list(allocator.allocator(), output, true).unwrap();
     assert_eq!(items.len(), 2, "should have 2 payout conditions");
@@ -160,7 +165,8 @@ fn test_slash_succeeds_misaligned_no_conditions() {
     let validator_return = list_from_nodes(&mut allocator, &[wrong_vh, state, mms]);
 
     // committed_infohash_b won't match sha256(wrong_vh, shatree(state))
-    let result = run_referee_slash_with_mock(&mut allocator, validator_return, &[0xFF; 32], 5);
+    let result =
+        run_referee_slash_with_mock(&mut allocator, validator_return, Some(&[0xFF; 32]), &[5]);
     let output = result.expect("slash with misaligned values should succeed");
     let items = proper_list(allocator.allocator(), output, true).unwrap();
     assert_eq!(items.len(), 2, "should have 2 payout conditions (no extra)");
@@ -205,7 +211,8 @@ fn test_slash_succeeds_aligned_with_conditions() {
         a.new_pair(next_vh, tail).unwrap()
     };
 
-    let result = run_referee_slash_with_mock(&mut allocator, validator_return, &infohash_b, 5);
+    let result =
+        run_referee_slash_with_mock(&mut allocator, validator_return, Some(&infohash_b), &[5]);
     let output = result.expect("conditional slash should succeed");
     let items = proper_list(allocator.allocator(), output, true).unwrap();
     // extra_conditions is ((AGG_SIG_UNSAFE ...)), appended to payout_conditions (2 items)
@@ -239,7 +246,8 @@ fn test_slash_fails_aligned_no_conditions() {
     // validator_return = (next_vh new_state mms) — only 3 elements, no extra_conditions
     let validator_return = list_from_nodes(&mut allocator, &[next_vh, new_state, mms]);
 
-    let result = run_referee_slash_with_mock(&mut allocator, validator_return, &infohash_b, 5);
+    let result =
+        run_referee_slash_with_mock(&mut allocator, validator_return, Some(&infohash_b), &[5]);
     assert!(
         result.is_err(),
         "slash should fail when move is valid (aligned, no conditions)"
@@ -247,30 +255,96 @@ fn test_slash_fails_aligned_no_conditions() {
 }
 
 #[test]
+fn test_noncanonical_committed_max_move_size_is_slashable() {
+    let mut allocator = AllocEncoder::new();
+    let next_vh = allocator
+        .allocator()
+        .new_atom(&[0xCC; 32])
+        .expect("next validator hash");
+    let new_state = allocator
+        .allocator()
+        .new_atom(b"next state")
+        .expect("new state");
+    let max_move_size = 5i64.to_clvm(&mut allocator).expect("max move size");
+    let new_state_hash = shatree_of(&mut allocator, new_state);
+    let infohash_b = sha256_concat(&[&[0xCC; 32], &new_state_hash]);
+    let validator_return = list_from_nodes(&mut allocator, &[next_vh, new_state, max_move_size]);
+
+    let result =
+        run_referee_slash_with_mock(&mut allocator, validator_return, Some(&infohash_b), &[0, 5]);
+    let output = result.expect("non-canonical committed max_move_size should authorize a slash");
+    let items = proper_list(allocator.allocator(), output, true).unwrap();
+    assert_eq!(items.len(), 2, "should have 2 payout conditions");
+}
+
+#[test]
+fn test_terminal_validator_with_nonzero_max_move_size_is_slashable() {
+    let mut allocator = AllocEncoder::new();
+    let new_state = allocator
+        .allocator()
+        .new_atom(b"terminal state")
+        .expect("new state");
+    let max_move_size = 5i64.to_clvm(&mut allocator).expect("max move size");
+    let validator_return =
+        list_from_nodes(&mut allocator, &[NodePtr::NIL, new_state, max_move_size]);
+
+    let result = run_referee_slash_with_mock(&mut allocator, validator_return, None, &[5]);
+    let output = result.expect("nonzero terminal max_move_size should authorize a slash");
+    let items = proper_list(allocator.allocator(), output, true).unwrap();
+    assert_eq!(items.len(), 2, "should have 2 payout conditions");
+}
+
+#[test]
 fn test_valid_validator_results_are_not_slash_candidates() {
     let mut allocator = AllocEncoder::new();
     let terminal = list_from_nodes(&mut allocator, &[NodePtr::NIL]);
+    let terminal_parsed = parse_validator_result(&mut allocator, terminal).unwrap();
     assert!(
-        parse_validator_result(&mut allocator, terminal)
-            .unwrap()
-            .is_some(),
+        terminal_parsed.new_state.is_some(),
         "an ordinary terminal result must not initiate a slash"
+    );
+    assert!(
+        terminal_parsed.next_validator_hash.is_none(),
+        "a nil next-validator hash means a nil infohash"
     );
 
     let next_hash = allocator.allocator().new_atom(&[0x44; 32]).unwrap();
     let state = allocator.allocator().new_atom(b"next state").unwrap();
-    let max_move_size = 5_i64.to_clvm(&mut allocator).unwrap();
-    let nonterminal = list_from_nodes(&mut allocator, &[next_hash, state, max_move_size]);
-    assert!(
-        parse_validator_result(&mut allocator, nonterminal)
-            .unwrap()
-            .is_some(),
-        "an ordinary three-element transition must not initiate a slash"
+    let without_max_move_size = list_from_nodes(&mut allocator, &[next_hash, state]);
+    let without_max_parsed = parse_validator_result(&mut allocator, without_max_move_size).unwrap();
+    assert_eq!(
+        without_max_parsed.next_max_move_size, 0,
+        "a missing max move size mirrors CLVM nil"
+    );
+    assert_eq!(
+        without_max_parsed.next_validator_hash.map(|h| h.0),
+        Some([0x44; 32])
+    );
+    let parsed_state = without_max_parsed
+        .new_state
+        .unwrap()
+        .to_nodeptr(&mut allocator)
+        .unwrap();
+    assert_eq!(
+        allocator.allocator().atom(parsed_state).as_ref(),
+        b"next state"
     );
 
-    // Debug-game validators attach a diagnostic tail. Extra elements are not
-    // themselves a local slash signal; only nil (or signed handler evidence)
-    // initiates a slash attempt.
+    let max_move_size = 5_i64.to_clvm(&mut allocator).unwrap();
+    let nonterminal = list_from_nodes(&mut allocator, &[next_hash, state, max_move_size]);
+    let nonterminal_parsed = parse_validator_result(&mut allocator, nonterminal).unwrap();
+    assert!(
+        nonterminal_parsed.new_state.is_some(),
+        "an ordinary three-element transition must not initiate a slash"
+    );
+    assert_eq!(
+        nonterminal_parsed.next_validator_hash.map(|h| h.0),
+        Some([0x44; 32])
+    );
+
+    // Extra elements past the three-element transition are referee extra
+    // conditions. parse_validator_result still reports a payload so the
+    // caller can compute the next infohash before invoking the referee.
     let diagnostic = allocator.allocator().new_atom(b"debug game: move").unwrap();
     let with_tail = list_from_nodes(
         &mut allocator,
@@ -279,8 +353,9 @@ fn test_valid_validator_results_are_not_slash_candidates() {
     assert!(
         parse_validator_result(&mut allocator, with_tail)
             .unwrap()
+            .new_state
             .is_some(),
-        "a valid result with extra diagnostic fields must not initiate a slash"
+        "a valid result with extra fields still yields a transition payload"
     );
 }
 
@@ -298,6 +373,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_slash_fails_aligned_no_conditions",
             &test_slash_fails_aligned_no_conditions,
+        ),
+        (
+            "test_noncanonical_committed_max_move_size_is_slashable",
+            &test_noncanonical_committed_max_move_size_is_slashable,
+        ),
+        (
+            "test_terminal_validator_with_nonzero_max_move_size_is_slashable",
+            &test_terminal_validator_with_nonzero_max_move_size_is_slashable,
         ),
         (
             "test_valid_validator_results_are_not_slash_candidates",

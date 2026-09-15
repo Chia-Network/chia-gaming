@@ -494,6 +494,15 @@ fn test_krunk_guess_slash_bob_out_of_dict() {
         49,
         "AGG_SIG_UNSAFE code"
     );
+    assert_successful_referee_slash(
+        &mut allocator,
+        &guess,
+        b"xyzzy",
+        0,
+        state,
+        evidence,
+        3,
+    );
 }
 
 fn test_krunk_guess_bad_range_doesnt_bracket() {
@@ -685,7 +694,7 @@ fn test_krunk_reveal_bad_range_doesnt_bracket() {
     evidence_bytes.extend_from_slice(b"denom");
     let evidence = allocator.allocator().new_atom(&evidence_bytes).unwrap();
 
-    let (code, result) = run_validator_step(
+    let result = run_validator_step(
         &mut allocator,
         &clue,
         &reveal_move,
@@ -693,15 +702,10 @@ fn test_krunk_reveal_bad_range_doesnt_bracket() {
         BASE_UNIT * 100,
         state,
         evidence,
-    )
-    .unwrap();
-    assert_eq!(code, MoveCode::MakeMove);
-    assert_eq!(
-        proper_list(allocator.allocator(), result, true)
-            .unwrap()
-            .len(),
-        3,
-        "irrelevant range evidence should not authorize a slash"
+    );
+    assert!(
+        result.is_err(),
+        "a range that does not contain the word should fail the slash attempt"
     );
     assert_referee_slash_rejected(
         &mut allocator,
@@ -746,7 +750,7 @@ fn test_krunk_reveal_valid() {
     reveal_move.extend_from_slice(word);
 
     let mover_share = BASE_UNIT * 100; // depth 1: base_unit * 100 = 200
-    let (code, result) = run_validator_step(
+    let (nil_code, nil_result) = run_validator_step(
         &mut allocator,
         &clue,
         &reveal_move,
@@ -755,13 +759,14 @@ fn test_krunk_reveal_valid() {
         state,
         NodePtr::NIL,
     )
-    .unwrap();
-    assert_eq!(code, MoveCode::MakeMove);
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 3, "valid reveal returns terminal (0 0 0)");
-    assert_eq!(int_from_atom(&mut allocator, items[0]), 0);
-    assert_eq!(int_from_atom(&mut allocator, items[1]), 0);
-    assert_eq!(int_from_atom(&mut allocator, items[2]), 0);
+    .expect("nil evidence must return the terminal transition");
+    assert_eq!(nil_code, MoveCode::MakeMove);
+    assert_eq!(
+        proper_list(allocator.allocator(), nil_result, true)
+            .unwrap()
+            .len(),
+        1
+    );
     assert_false_slash_with_common_evidence(
         &mut allocator,
         &clue,
@@ -770,6 +775,37 @@ fn test_krunk_reveal_valid() {
         state,
     );
     let oob_index = allocator.allocator().new_atom(&[0x05]).unwrap();
+    let oob_result = run_validator_step(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        21,
+        mover_share,
+        state,
+        oob_index,
+    );
+    assert!(
+        oob_result.is_err(),
+        "an out-of-range evidence index should fail the slash attempt"
+    );
+    let malformed_evidence = allocator.allocator().new_atom(&[0x00, 0x01]).unwrap();
+    let (unsupported_code, unsupported_result) = run_validator_step(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        21,
+        mover_share,
+        state,
+        malformed_evidence,
+    )
+    .expect("an unsupported evidence length should behave like nil evidence");
+    assert_eq!(unsupported_code, MoveCode::MakeMove);
+    assert_eq!(
+        proper_list(allocator.allocator(), unsupported_result, true)
+            .unwrap()
+            .len(),
+        1
+    );
     assert_referee_slash_rejected(
         &mut allocator,
         &clue,
@@ -1049,7 +1085,7 @@ fn test_krunk_premature_reveal_concedes_scheduled_payout() {
         proper_list(allocator.allocator(), result, true)
             .unwrap()
             .len(),
-        3,
+        1,
         "a correctly funded premature reveal should be accepted as terminal"
     );
     assert_referee_slash_rejected(
@@ -1160,7 +1196,7 @@ fn test_krunk_reveal_bad_commit() {
 
 // --- Reveal path: evidence slash (wrong clue) ---
 
-fn test_krunk_reveal_wrong_clue_slash() {
+fn test_krunk_reveal_wrong_clue_at_index_zero_slashes() {
     let mut allocator = AllocEncoder::new();
     let clue = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/clue.hex").unwrap();
     let dict_pubkey = make_dict_pubkey(&mut allocator);
@@ -1169,18 +1205,13 @@ fn test_krunk_reveal_wrong_clue_slash() {
     let salt = [0x77; 16];
     let commit = make_commit_for(&salt, word);
 
-    // Reveal-time state: latest guess has no clue yet, so clues are offset by
-    // one from guesses. Evidence index 1 checks the prior "crane" guess.
-    let bob_guesses = words_to_list(&mut allocator, &[b"crane", b"slate", b"crane"]);
+    // The latest "world" guess has no clue yet. Evidence index 0 checks the
+    // prior "crane" guess, whose correct clue for revealed word "crane" is
+    // 0x72. Alice supplied 0x01 instead.
+    let bob_guesses = words_to_list(&mut allocator, &[b"world", b"crane"]);
     let wrong_clue = allocator.allocator().new_atom(&[0x01]).unwrap();
-    let some_clue = allocator.allocator().new_atom(&[0x42]).unwrap();
     let a = allocator.allocator();
-    // alice_clues[0] = some_clue (for latest guess "slate")
-    // alice_clues[1] = wrong_clue (for earlier guess "crane")
-    let alice_clues = {
-        let t = a.new_pair(wrong_clue, NodePtr::NIL).unwrap();
-        a.new_pair(some_clue, t).unwrap()
-    };
+    let alice_clues = a.new_pair(wrong_clue, NodePtr::NIL).unwrap();
     let state = make_state_with_guesses(
         &mut allocator,
         dict_pubkey,
@@ -1193,17 +1224,15 @@ fn test_krunk_reveal_wrong_clue_slash() {
     reveal_move.extend_from_slice(&salt);
     reveal_move.extend_from_slice(word);
 
-    // Evidence = index 1 (second prior clue is wrong).
-    // make_clue("crane", bob_guesses[2]) = make_clue("crane", "crane") = 0x72
-    // alice_clues[1] = 0x01 ≠ 0x72 → slash succeeds
-    let evidence = allocator.allocator().new_atom(&[0x01]).unwrap();
+    // This must be the one-byte encoding of zero, not CLVM nil.
+    let evidence = allocator.allocator().new_atom(&[0x00]).unwrap();
 
     let result = run_validator_step(
         &mut allocator,
         &clue,
         &reveal_move,
         21,
-        BASE_UNIT * 20,
+        BASE_UNIT * 100,
         state,
         evidence,
     );
@@ -1221,7 +1250,7 @@ fn test_krunk_reveal_wrong_clue_slash() {
         &mut allocator,
         &clue,
         &reveal_move,
-        BASE_UNIT * 20,
+        BASE_UNIT * 100,
         state,
         evidence,
         2,
@@ -1277,7 +1306,7 @@ fn test_krunk_reveal_correct_clue_no_slash() {
         proper_list(allocator.allocator(), result, true)
             .unwrap()
             .len(),
-        3,
+        1,
         "correct-clue evidence should not authorize a slash"
     );
     assert_referee_slash_rejected(
@@ -1346,8 +1375,8 @@ fn test_reveal_payout_at_depth(depth: usize, expected_mover_share: i64) {
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(
         items.len(),
-        3,
-        "depth {depth} should return terminal (0 0 0)"
+        1,
+        "depth {depth} should return terminal (0)"
     );
     assert_false_slash_with_common_evidence(
         &mut allocator,
@@ -1452,8 +1481,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_krunk_reveal_bad_commit,
         ),
         (
-            "test_krunk_reveal_wrong_clue_slash",
-            &test_krunk_reveal_wrong_clue_slash,
+            "test_krunk_reveal_wrong_clue_at_index_zero_slashes",
+            &test_krunk_reveal_wrong_clue_at_index_zero_slashes,
         ),
         (
             "test_krunk_reveal_correct_clue_no_slash",

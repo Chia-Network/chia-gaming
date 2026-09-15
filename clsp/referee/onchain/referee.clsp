@@ -80,7 +80,8 @@
                                     (sha256 next_validator_hash (shatree new_state))
                                     0)
                                 INFOHASH_B)
-                            (= max_move_size MAX_MOVE_SIZE)))
+                            (= max_move_size MAX_MOVE_SIZE)
+                            (i next_validator_hash 1 (not max_move_size))))
                         payout_conditions
                         (assert extra_conditions
                             (append extra_conditions payout_conditions)
@@ -99,9 +100,12 @@
                 INFOHASH_B
                 (<= (strlen new_move) MAX_MOVE_SIZE)
                 (<= (strlen new_max_move_size) 2)
+                (= new_max_move_size (+ new_max_move_size 0))
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)
+                (= new_mover_share (+ new_mover_share 0))
                 (logior (not infohash_c) (= 32 (strlen infohash_c)))
+                (i infohash_c 1 (not new_max_move_size))
                 (list
                         (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
                         (list CREATE_COIN new_puzzle_hash AMOUNT)

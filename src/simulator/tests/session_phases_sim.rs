@@ -991,7 +991,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let cradle1 = GameSession::new_with_keys(
         GameSessionConfig {
             game_types: game_type_map.clone(),
-            have_potato: true,
+            is_initiator: true,
             identity: identities[0].clone(),
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
@@ -1005,7 +1005,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let cradle2 = GameSession::new_with_keys(
         GameSessionConfig {
             game_types: game_type_map.clone(),
-            have_potato: false,
+            is_initiator: false,
             identity: identities[1].clone(),
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
@@ -1699,7 +1699,9 @@ pub fn setup_debug_test(
         } else {
             assert_eq!(
                 the_move.slash,
-                Some(Rc::new(Program::from_bytes(&[do_move.slash])))
+                Some(Rc::new(
+                    Program::from_bytes(&[do_move.slash]).expect("serialized slash evidence"),
+                ))
             );
         }
 
@@ -2202,6 +2204,42 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         }
     }));
 
+    res.push(("test_clean_shutdown_equivalent_solution", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::WaitForChannel(0),
+            SimScriptAction::NerfTransactions(0),
+            SimScriptAction::NerfTransactions(1),
+            SimScriptAction::CleanShutdown(1),
+            SimScriptAction::MutateNerfedShutdownSolution,
+            SimScriptAction::UnNerfTransactions(true),
+        ];
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i].clean_shutdown_complete,
+                "player {i} should classify the equivalent spend as ResolvedClean"
+            );
+            assert!(
+                !outcome.local_uis[i]
+                    .notifications
+                    .iter()
+                    .any(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                                state: ChannelStatus::Failed,
+                                ..
+                            })
+                        )
+                    }),
+                "player {i} should not report the equivalent spend as failed"
+            );
+        }
+    }));
+
     res.push((
         "sim_test_with_peer_container_piss_off_peer_complete",
         &|| {
@@ -2300,50 +2338,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::GameSettledOpponentSide),
                 ],
                 "piss_off_complete p1",
-            );
-        },
-    ));
-
-    res.push((
-        "peer_terminal_mismatch_rejects_and_rolls_back_batch",
-        &|| {
-            let mut allocator = AllocEncoder::new();
-
-            let mut moves = vec![
-                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
-            ];
-            let mut hand_moves = prefix_test_moves(&mut allocator, GameID(1));
-            let final_move = hand_moves
-                .pop()
-                .expect("calpoker fixture should include a final move");
-            moves.extend(hand_moves);
-            if let SimScriptAction::Move(player, game_id, readable, _) = final_move {
-                moves.push(SimScriptAction::TerminalMismatchMove(
-                    player, game_id, readable,
-                ));
-            } else {
-                panic!("calpoker final fixture move should be a Move");
-            }
-            moves.push(SimScriptAction::WaitBlocks(120, 0));
-
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-                .unwrap_or_else(|e| panic!("should finish terminal-mismatch test, got: {e:?}"));
-
-            assert!(
-                outcome.local_uis[1].got_error,
-                "receiver should reject a peer terminal flag that disagrees with the handler"
-            );
-            assert!(
-                !outcome.local_uis[1].notifications.iter().any(|n| matches!(
-                    n,
-                    GameNotification::GameSettled {
-                        outcome: SettlementOutcome::AcceptSettlement
-                            | SettlementOutcome::WeAccepted,
-                        ..
-                    }
-                )),
-                "failed terminal-mismatch batch must roll back its queued AcceptSettlement"
             );
         },
     ));
@@ -5023,6 +5017,68 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
 
+    res.push(("test_genesis_unroll_is_preempted_by_state_one", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::WaitForChannel(0),
+            SimScriptAction::ForceUnroll(0),
+            SimScriptAction::WaitBlocks(120, 0),
+        ];
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        assert!(
+            outcome.local_uis[1]
+                .notifications
+                .iter()
+                .any(|notification| {
+                    matches!(
+                        notification,
+                        GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                            state: ChannelStatus::Unrolling,
+                            unrolling_state_number: Some(0),
+                            preempting_state_number: Some(1),
+                            ..
+                        })
+                    )
+                }),
+            "receiver should preempt the initiator's state 0 with state 1: {:?}",
+            outcome.local_uis[1].notifications,
+        );
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i]
+                    .notifications
+                    .iter()
+                    .any(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                                state: ChannelStatus::ResolvedUnrolled,
+                                ..
+                            })
+                        )
+                    }),
+                "player {i} should resolve the preempted genesis unroll"
+            );
+            assert!(
+                !outcome.local_uis[i]
+                    .notifications
+                    .iter()
+                    .any(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                                state: ChannelStatus::Failed,
+                                ..
+                            })
+                        )
+                    }),
+                "player {i} should not fail the channel"
+            );
+        }
+    }));
+
     res.push((
         "test_post_handshake_bob_nerfed_alice_unrolls",
         &|| {
@@ -5827,6 +5883,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // on both sides.
             let moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::WaitForProposal(1, GameID(1)),
                 SimScriptAction::CleanShutdown(1),
             ];
 

@@ -1,9 +1,21 @@
 use serde::de::{self, Deserialize, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 
-use crate::Error;
+use crate::{parse_integer, parse_length, Error, Limits};
 
 pub fn from_slice<'de, T: Deserialize<'de>>(input: &'de [u8]) -> Result<T, Error> {
-    let mut de = Deserializer { input };
+    from_slice_with_limits(input, Limits::default())
+}
+
+pub fn from_slice_with_limits<'de, T: Deserialize<'de>>(
+    input: &'de [u8],
+    limits: Limits,
+) -> Result<T, Error> {
+    let mut de = Deserializer {
+        input,
+        depth: 0,
+        values: 0,
+        limits,
+    };
     let value = T::deserialize(&mut de)?;
     if de.input.is_empty() {
         Ok(value)
@@ -17,9 +29,37 @@ pub fn from_slice<'de, T: Deserialize<'de>>(input: &'de [u8]) -> Result<T, Error
 
 struct Deserializer<'de> {
     input: &'de [u8],
+    depth: usize,
+    values: usize,
+    limits: Limits,
 }
 
 impl<'de> Deserializer<'de> {
+    fn consume_value(&mut self) -> Result<(), Error> {
+        if self.depth > self.limits.max_depth {
+            return Err(Error::InvalidData(
+                "maximum value nesting depth exceeded".to_string(),
+            ));
+        }
+        self.values += 1;
+        if self.values > self.limits.max_values {
+            return Err(Error::InvalidData(
+                "maximum value count exceeded".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn begin_container(&mut self) -> Result<(), Error> {
+        self.consume_value()?;
+        self.depth += 1;
+        Ok(())
+    }
+
+    fn end_container(&mut self) {
+        self.depth -= 1;
+    }
+
     fn peek(&self) -> Result<u8, Error> {
         self.input.first().copied().ok_or(Error::Eof)
     }
@@ -50,28 +90,13 @@ impl<'de> Deserializer<'de> {
         let digits = &self.input[..end];
         let s = std::str::from_utf8(digits)
             .map_err(|_| Error::InvalidData("non-utf8 in integer".into()))?;
-        if s.starts_with("-0") || (s.starts_with('0') && s.len() > 1) {
-            return Err(Error::InvalidData("invalid integer encoding".into()));
-        }
-        let val: i128 = s
-            .parse()
-            .map_err(|_| Error::InvalidData(format!("cannot parse integer: {s}")))?;
+        let val = parse_integer(s)?;
         self.advance(end + 1);
         Ok(val)
     }
 
     fn parse_bytestring(&mut self) -> Result<&'de [u8], Error> {
-        let colon = self
-            .input
-            .iter()
-            .position(|&b| b == b':')
-            .ok_or_else(|| Error::InvalidData("missing ':' in bytestring".into()))?;
-        let len_str = std::str::from_utf8(&self.input[..colon])
-            .map_err(|_| Error::InvalidData("non-utf8 in bytestring length".into()))?;
-        let len: usize = len_str
-            .parse()
-            .map_err(|_| Error::InvalidData(format!("bad bytestring length: {len_str}")))?;
-        let start = colon + 1;
+        let (len, start) = parse_length(self.input)?;
         let end = start.checked_add(len).ok_or(Error::Eof)?;
         if self.input.len() < end {
             return Err(Error::Eof);
@@ -87,6 +112,33 @@ impl<'de> Deserializer<'de> {
         std::str::from_utf8(bytes)
             .map_err(|_| Error::InvalidData("invalid utf-8 in unicode string".into()))
     }
+
+    fn peek_canonical_key(&self) -> Result<CanonicalKey<'de>, Error> {
+        let (kind, length_input, tag_length) = match self.peek()? {
+            b'u' => (1, &self.input[1..], 1),
+            b'0'..=b'9' => (0, self.input, 0),
+            _ => {
+                return Err(Error::InvalidData(
+                    "dictionary keys must be bytes or text".to_string(),
+                ));
+            }
+        };
+        let (length, prefix_length) = parse_length(length_input)?;
+        let start = tag_length + prefix_length;
+        let end = start.checked_add(length).ok_or(Error::Eof)?;
+        let bytes = self.input.get(start..end).ok_or(Error::Eof)?;
+        if kind == 1 {
+            std::str::from_utf8(bytes)
+                .map_err(|_| Error::InvalidData("invalid utf-8 text".to_string()))?;
+        }
+        Ok(CanonicalKey { kind, bytes })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct CanonicalKey<'de> {
+    kind: u8,
+    bytes: &'de [u8],
 }
 
 impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
@@ -95,18 +147,22 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
             b'n' => {
+                self.consume_value()?;
                 self.advance(1);
                 visitor.visit_unit()
             }
             b't' => {
+                self.consume_value()?;
                 self.advance(1);
                 visitor.visit_bool(true)
             }
             b'f' => {
+                self.consume_value()?;
                 self.advance(1);
                 visitor.visit_bool(false)
             }
             b'i' => {
+                self.consume_value()?;
                 self.advance(1);
                 let val = self.parse_int_value()?;
                 if val >= 0 && val <= u64::MAX as i128 {
@@ -118,23 +174,34 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
                 }
             }
             b'l' => {
+                self.begin_container()?;
                 self.advance(1);
-                let result = visitor.visit_seq(ListAccess { de: self })?;
+                let result = visitor.visit_seq(ListAccess { de: self });
+                self.end_container();
+                let result = result?;
                 self.consume_end()?;
                 Ok(result)
             }
             b'd' => {
+                self.begin_container()?;
                 self.advance(1);
-                let result = visitor.visit_map(DictAccess { de: self })?;
+                let result = visitor.visit_map(DictAccess {
+                    de: self,
+                    previous_key: None,
+                });
+                self.end_container();
+                let result = result?;
                 self.consume_end()?;
                 Ok(result)
             }
             b'u' => {
+                self.consume_value()?;
                 self.advance(1);
                 let s = self.parse_unicode()?;
                 visitor.visit_borrowed_str(s)
             }
             b'0'..=b'9' => {
+                self.consume_value()?;
                 let bytes = self.parse_bytestring()?;
                 visitor.visit_borrowed_bytes(bytes)
             }
@@ -147,10 +214,12 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
             b't' => {
+                self.consume_value()?;
                 self.advance(1);
                 visitor.visit_bool(true)
             }
             b'f' => {
+                self.consume_value()?;
                 self.advance(1);
                 visitor.visit_bool(false)
             }
@@ -207,6 +276,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
             b'0'..=b'9' => {
+                self.consume_value()?;
                 let bytes = self.parse_bytestring()?;
                 visitor.visit_borrowed_bytes(bytes)
             }
@@ -220,6 +290,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         if self.peek()? == b'n' {
+            self.consume_value()?;
             self.advance(1);
             visitor.visit_none()
         } else {
@@ -229,6 +300,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
 
     fn deserialize_unit<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         if self.peek()? == b'n' {
+            self.consume_value()?;
             self.advance(1);
             visitor.visit_unit()
         } else {
@@ -255,8 +327,11 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
             b'l' => {
+                self.begin_container()?;
                 self.advance(1);
-                let result = visitor.visit_seq(ListAccess { de: self })?;
+                let result = visitor.visit_seq(ListAccess { de: self });
+                self.end_container();
+                let result = result?;
                 self.consume_end()?;
                 Ok(result)
             }
@@ -264,6 +339,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             // raw bytes as a sequence of `u8` elements. This is the read side of
             // the serializer's byte-string encoding for `u8` sequences.
             b'0'..=b'9' => {
+                self.consume_value()?;
                 let bytes = self.parse_bytestring()?;
                 visitor.visit_seq(BytesSeqAccess { bytes, pos: 0 })
             }
@@ -290,8 +366,14 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         if self.peek()? == b'd' {
+            self.begin_container()?;
             self.advance(1);
-            let result = visitor.visit_map(DictAccess { de: self })?;
+            let result = visitor.visit_map(DictAccess {
+                de: self,
+                previous_key: None,
+            });
+            self.end_container();
+            let result = result?;
             self.consume_end()?;
             Ok(result)
         } else {
@@ -321,6 +403,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             }
             b'd' => {
                 // Newtype/struct/tuple variant: dict with one key
+                self.begin_container()?;
                 self.advance(1);
                 visitor.visit_enum(DictVariantAccess { de: self })
             }
@@ -331,11 +414,13 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     fn deserialize_identifier<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
             b'u' => {
+                self.consume_value()?;
                 self.advance(1);
                 let s = self.parse_unicode()?;
                 visitor.visit_borrowed_str(s)
             }
             b'0'..=b'9' => {
+                self.consume_value()?;
                 let bytes = self.parse_bytestring()?;
                 match std::str::from_utf8(bytes) {
                     Ok(s) => visitor.visit_borrowed_str(s),
@@ -403,6 +488,7 @@ impl<'de> SeqAccess<'de> for BytesSeqAccess<'de> {
 
 struct DictAccess<'a, 'de> {
     de: &'a mut Deserializer<'de>,
+    previous_key: Option<CanonicalKey<'de>>,
 }
 
 impl<'a, 'de> MapAccess<'de> for DictAccess<'a, 'de> {
@@ -415,6 +501,16 @@ impl<'a, 'de> MapAccess<'de> for DictAccess<'a, 'de> {
         if self.de.peek()? == b'e' {
             return Ok(None);
         }
+        let key = self.de.peek_canonical_key()?;
+        if self
+            .previous_key
+            .is_some_and(|previous_key| previous_key >= key)
+        {
+            return Err(Error::InvalidData(
+                "dictionary keys are not in canonical order".to_string(),
+            ));
+        }
+        self.previous_key = Some(key);
         seed.deserialize(&mut *self.de).map(Some)
     }
 
@@ -494,16 +590,21 @@ impl<'a, 'de> de::VariantAccess<'de> for DictVariantValue<'a, 'de> {
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Error> {
         let val = seed.deserialize(&mut *self.de)?;
         self.de.consume_end()?;
+        self.de.end_container();
         Ok(val)
     }
 
     fn tuple_variant<V: Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Error> {
         if self.de.peek()? == b'l' {
+            self.de.begin_container()?;
             self.de.advance(1);
-            let result = visitor.visit_seq(ListAccess { de: self.de })?;
+            let result = visitor.visit_seq(ListAccess { de: self.de });
+            self.de.end_container();
+            let result = result?;
             self.de.consume_end()?;
             // consume outer dict 'e'
             self.de.consume_end()?;
+            self.de.end_container();
             Ok(result)
         } else {
             Err(Error::InvalidData("expected list for tuple variant".into()))
@@ -516,11 +617,18 @@ impl<'a, 'de> de::VariantAccess<'de> for DictVariantValue<'a, 'de> {
         visitor: V,
     ) -> Result<V::Value, Error> {
         if self.de.peek()? == b'd' {
+            self.de.begin_container()?;
             self.de.advance(1);
-            let result = visitor.visit_map(DictAccess { de: self.de })?;
+            let result = visitor.visit_map(DictAccess {
+                de: self.de,
+                previous_key: None,
+            });
+            self.de.end_container();
+            let result = result?;
             self.de.consume_end()?;
             // consume outer dict 'e'
             self.de.consume_end()?;
+            self.de.end_container();
             Ok(result)
         } else {
             Err(Error::InvalidData(

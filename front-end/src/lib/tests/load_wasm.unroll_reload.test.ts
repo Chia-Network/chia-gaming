@@ -33,7 +33,6 @@ async function createAsymmetricActivePair(
     addActiveCradle(new SessionControllerAdapter()),
     addActiveCradle(new SessionControllerAdapter()),
   ] as [SessionControllerAdapter, SessionControllerAdapter];
-  process.stderr.write(`[DBG_UNROLL] init pair suffix=${suffix}\n`);
   const controllers = await Promise.all([
     initSessionController(
       poller,
@@ -54,23 +53,18 @@ async function createAsymmetricActivePair(
       firstContribution,
     ),
   ]);
-  process.stderr.write(`[DBG_UNROLL] inits done suffix=${suffix}\n`);
   controllers.forEach((activeController, index) => {
     activeController.pairingToken = `reload-asymmetric-${suffix}-${index}`;
     activeController.perGameAmount = 100n;
     activeController.onSaveNeeded = () => Promise.resolve();
     adapters[index].set_blob(activeController);
   });
-  process.stderr.write(`[DBG_UNROLL] handshake start suffix=${suffix}\n`);
   await action_with_messages(poller, adapters[0], adapters[1]);
-  process.stderr.write(`[DBG_UNROLL] handshake done suffix=${suffix}\n`);
   return adapters;
 }
 
 async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void> {
-  process.stderr.write('[DBG_UNROLL] runUnrollReloadAndAdvance start\n');
   const adapters = await createAsymmetricActivePair(poller, 10);
-  process.stderr.write('[DBG_UNROLL] pair active\n');
   const controller = adapters[0].blob!;
   const status = controller.lastChannelStatus;
   assert.ok(status, 'unroll reload lane must begin Active');

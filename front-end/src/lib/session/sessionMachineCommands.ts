@@ -217,7 +217,7 @@ export function reduceSessionCommand(
       };
     case 'accept-review': {
       const review = selectProposalGroupByDisposition(state.model, 'incoming-review');
-      if (!review) return { state, effects: [] };
+      if (!review || review.primaryId !== event.primaryId) return { state, effects: [] };
       return {
         state,
         effects: [

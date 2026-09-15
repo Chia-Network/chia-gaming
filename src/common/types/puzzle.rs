@@ -4,11 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use clvmr::allocator::NodePtr;
 
-use clvmr::serde::node_to_bytes;
-
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 
-use crate::common::types::{AllocEncoder, Error, IntoErr, Program, ProgramRef};
+use crate::common::types::{AllocEncoder, Error, Program, ProgramRef};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Puzzle(ProgramRef);
@@ -41,12 +39,11 @@ impl Puzzle {
     pub fn to_program(&self) -> Rc<Program> {
         self.0.p()
     }
-    pub fn from_bytes(by: &[u8]) -> Puzzle {
-        Puzzle(Program::from_bytes(by).into())
+    pub fn from_bytes(by: &[u8]) -> Result<Puzzle, Error> {
+        Ok(Puzzle(Program::from_bytes(by)?.into()))
     }
     pub fn from_nodeptr(allocator: &AllocEncoder, node: NodePtr) -> Result<Puzzle, Error> {
-        let bytes = node_to_bytes(allocator.allocator_ref(), node).into_gen()?;
-        Ok(Puzzle::from_bytes(&bytes))
+        Ok(Puzzle(Program::from_nodeptr(allocator, node)?.into()))
     }
     pub fn to_hex(&self) -> String {
         self.to_program().to_hex()

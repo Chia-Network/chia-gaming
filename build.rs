@@ -208,6 +208,50 @@ fn proper_list(allocator: &Allocator, mut node: NodePtr) -> Option<Vec<NodePtr>>
     }
 }
 
+fn validate_factory_records(
+    allocator: &Allocator,
+    key: &str,
+    records: &[NodePtr],
+) -> Result<NodePtr, String> {
+    let mut first_validator = None;
+    for (record_index, record) in records.iter().enumerate() {
+        let fields = proper_list(allocator, *record)
+            .ok_or_else(|| format!("factory {key} game {record_index} is not a proper list"))?;
+        if fields.len() != 10 {
+            return Err(format!(
+                "factory {key} game {record_index} has {} fields, expected 10",
+                fields.len()
+            ));
+        }
+        let validators = proper_list(allocator, fields[9]).ok_or_else(|| {
+            format!("factory {key} game {record_index} validators are not a proper list")
+        })?;
+        if validators.is_empty() {
+            return Err(format!(
+                "factory {key} game {record_index} returned no validators"
+            ));
+        }
+        let mut hashes = std::collections::BTreeSet::new();
+        for (validator_index, validator) in validators.iter().enumerate() {
+            if *validator == NodePtr::NIL {
+                return Err(format!(
+                    "factory {key} game {record_index} validator {validator_index} is nil"
+                ));
+            }
+            let hash = clvm_utils::tree_hash(allocator, *validator).to_bytes();
+            if !hashes.insert(hash) {
+                return Err(format!(
+                    "factory {key} game {record_index} validator {validator_index} is duplicated"
+                ));
+            }
+        }
+        if first_validator.is_none() {
+            first_validator = validators.first().copied();
+        }
+    }
+    first_validator.ok_or_else(|| format!("factory {key} returned no games"))
+}
+
 fn list_from_nodes(allocator: &mut Allocator, nodes: &[NodePtr]) -> Result<NodePtr, String> {
     let mut tail = NodePtr::NIL;
     for node in nodes.iter().rev() {
@@ -307,18 +351,8 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
         .1;
         let records = proper_list(&allocator, factory_result)
             .ok_or_else(|| format!("factory {key} did not return a proper list"))?;
-        let first = records
-            .first()
-            .ok_or_else(|| format!("factory {key} returned no games"))?;
-        let fields = proper_list(&allocator, *first)
-            .ok_or_else(|| format!("factory {key} first game is not a proper list"))?;
-        if fields.len() != 10 {
-            return Err(format!(
-                "factory {key} first game has {} fields, expected 10",
-                fields.len()
-            ));
-        }
-        let id = clvm_utils::tree_hash(&allocator, fields[9]).to_bytes();
+        let initial_validator = validate_factory_records(&allocator, key, &records)?;
+        let id = clvm_utils::tree_hash(&allocator, initial_validator).to_bytes();
 
         package_ids.insert(key.clone(), id);
         manifest.push(serde_json::json!({
@@ -509,6 +543,31 @@ pub fn register_one_package(
     fs::write(out_dir.join("game_package_test_funs.rs"), tests).unwrap();
 }
 
+fn generate_protocol_timeout_bounds(out_dir: &Path) {
+    let path = Path::new("shared/protocol-constants/constants.json");
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    let value: JsonValue = serde_json::from_str(&source)
+        .unwrap_or_else(|error| panic!("invalid {}: {error}", path.display()));
+    let bound = |group: &str, name: &str| {
+        value[group][name]
+            .as_u64()
+            .unwrap_or_else(|| panic!("{} missing unsigned integer {group}.{name}", path.display()))
+    };
+    let generated = format!(
+        "pub const MIN_GAME_TIMEOUT_BLOCKS: u64 = {};\n\
+         pub const MAX_GAME_TIMEOUT_BLOCKS: u64 = {};\n\
+         pub const MIN_SESSION_TIMEOUT_BLOCKS: u64 = {};\n\
+         pub const MAX_SESSION_TIMEOUT_BLOCKS: u64 = {};\n",
+        bound("gameTimeoutBlocks", "min"),
+        bound("gameTimeoutBlocks", "max"),
+        bound("sessionTimeoutBlocks", "min"),
+        bound("sessionTimeoutBlocks", "max"),
+    );
+    fs::write(out_dir.join("protocol_timeout_bounds.rs"), generated)
+        .expect("write generated protocol timeout bounds");
+}
+
 fn main() {
     let registry = load_registry();
     let mut seen = std::collections::BTreeSet::new();
@@ -523,9 +582,11 @@ fn main() {
     emit_rerun_directives(Path::new("games"));
     println!("cargo:rerun-if-changed=chialisp.toml");
     println!("cargo:rerun-if-changed=games/registry.json");
+    println!("cargo:rerun-if-changed=shared/protocol-constants/constants.json");
     println!("cargo:rerun-if-env-changed=CHIALISP_COMPILE");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    generate_protocol_timeout_bounds(&out_dir);
     let package_ids = if std::env::var("CHIALISP_COMPILE").is_ok() {
         compile_chialisp_with_large_stack(registry.clone());
         prepare_game_packages(&registry)

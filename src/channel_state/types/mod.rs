@@ -33,7 +33,9 @@ pub use proposed_game::ProposedGame;
 pub use read::read_unroll_puzzle;
 pub use readable_move::ReadableMove;
 pub use result::{HandshakeResult, MoveResult};
-pub use state_update_program::{HasStateUpdateProgram, StateUpdateProgram};
+pub use state_update_program::{
+    HasStateUpdateProgram, StateUpdateProgram, ValidationProgramRegistry,
+};
 pub use timeout_claim_state::TimeoutClaimState;
 pub use unroll_coin::{UnrollCoin, UnrollCoinConditionInputs};
 pub use validation_info::ValidationInfo;

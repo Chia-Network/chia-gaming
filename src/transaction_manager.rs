@@ -594,7 +594,12 @@ impl<C: ManagedGameSession> TransactionManager<C> {
     fn evaluate_mature_timeout_claims(&mut self, height: u64) -> Result<(), Error> {
         let mut to_submit: Vec<(SpendBundle, Option<TimeoutClaimSemantic>)> = Vec::new();
         for (coin, watched) in self.watched_coins.iter_mut() {
-            let ripe = matches!(watched.birthday, Some(b) if b + watched.timeout_blocks.to_u64() <= height);
+            let ripe = match watched.birthday {
+                Some(birthday) => birthday
+                    .checked_add(watched.timeout_blocks.to_u64())
+                    .is_some_and(|maturity_height| maturity_height <= height),
+                None => false,
+            };
             if ripe
                 && !watched.claim_submitted
                 && watched.spent_confirmed_at.is_none()
@@ -983,7 +988,7 @@ mod tests {
                 coin: input.clone(),
                 bundle: Spend {
                     puzzle: Puzzle::from(puzzle),
-                    solution: Program::from_bytes(&[0x80]).into(),
+                    solution: Program::nil().into(),
                     signature: Default::default(),
                 },
             }],
@@ -1756,6 +1761,44 @@ mod tests {
             mgr.cradle().submitted_timeout_claims,
             vec![TimeoutClaimSemantic::GameOpponentTurn { id: game_id }]
         );
+    }
+
+    #[test]
+    fn timeout_maturity_overflow_stays_unripe_without_blocking_other_claims() {
+        let mut allocator = AllocEncoder::new();
+        let overflow_coin = test_coin(12);
+        let valid_coin = test_coin(13);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![
+            watch_event_with_spend(
+                &overflow_coin,
+                u64::MAX,
+                test_bundle("overflowing-timeout-claim"),
+            ),
+            watch_event_with_spend(&valid_coin, 5, test_bundle("valid-timeout-claim")),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        mgr.report_coin_states(
+            &mut allocator,
+            15,
+            &[
+                CoinStateRecord {
+                    coin: overflow_coin,
+                    created_height: Some(10),
+                    spent_height: None,
+                },
+                CoinStateRecord {
+                    coin: valid_coin,
+                    created_height: Some(10),
+                    spent_height: None,
+                },
+            ],
+        )
+        .expect("overflowing maturity must not poison observation");
+
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
     }
 
     #[test]

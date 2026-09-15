@@ -177,6 +177,10 @@ mod sim_tests {
         GameCanMove { player: usize, game_id: GameID },
         AcceptProposal { player: usize, game_id: GameID },
         ChannelReady { player: usize },
+        ProposalExists { player: usize, game_id: GameID },
+        ProposalKnown { player: usize, game_id: GameID },
+        MoveApplied { player: usize, game_id: GameID },
+        NerfedTransactionAvailable,
         AfterGame { game_id: GameID },
     }
 
@@ -209,8 +213,6 @@ mod sim_tests {
         FakeMove(usize, GameID, ReadableMove, Vec<u8>),
         /// Make a normal move, but tamper the outbound batch signatures.
         BadSignatureMove(usize, GameID, ReadableMove),
-        /// Make a normal move, but invert the peer wire terminal flag.
-        TerminalMismatchMove(usize, GameID, ReadableMove),
         /// Cheat (player, game_id, mover_share).
         Cheat(usize, GameID, Amount),
         /// Force-destroy a game coin (player, game_id).
@@ -220,6 +222,8 @@ mod sim_tests {
         /// Stop nerfing transactions. If true, replay the backlog to the
         /// simulator; if false, discard it.
         UnNerfTransactions(bool),
+        /// Replace the unsigned argument in a queued clean-shutdown solution.
+        MutateNerfedShutdownSolution,
         /// Stop reporting watched coin state changes for a player.
         BlockCoinReports(usize),
         /// Resume coin reports. If true, replay the backlog to the player.
@@ -241,6 +245,12 @@ mod sim_tests {
         AcceptSettlement(usize, GameID),
         /// Shut down
         CleanShutdown(usize),
+        /// Wait until a player has observed channel creation.
+        WaitForChannel(usize),
+        /// Wait until a player has stored a proposal.
+        WaitForProposal(usize, GameID),
+        /// Wait until a player's queued move has actually applied.
+        WaitForMoveApplied(usize, GameID),
         /// Corrupt a player's state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
@@ -300,9 +310,6 @@ mod sim_tests {
                 SimScriptAction::BadSignatureMove(p, g, n) => {
                     write!(formatter, "BadSignatureMove({p},{g:?},{n:?})")
                 }
-                SimScriptAction::TerminalMismatchMove(p, g, n) => {
-                    write!(formatter, "TerminalMismatchMove({p},{g:?},{n:?})")
-                }
                 SimScriptAction::Cheat(p, g, ms) => write!(formatter, "Cheat({p},{g:?},{ms:?})"),
                 SimScriptAction::ForceDestroyCoin(p, g) => {
                     write!(formatter, "ForceDestroyCoin({p},{g:?})")
@@ -310,6 +317,9 @@ mod sim_tests {
                 SimScriptAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 SimScriptAction::UnNerfTransactions(r) => {
                     write!(formatter, "UnNerfTransactions({r})")
+                }
+                SimScriptAction::MutateNerfedShutdownSolution => {
+                    write!(formatter, "MutateNerfedShutdownSolution")
                 }
                 SimScriptAction::UnNerfTransactionsFor(p) => {
                     write!(formatter, "UnNerfTransactionsFor({p})")
@@ -336,6 +346,13 @@ mod sim_tests {
                 }
                 SimScriptAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
                 SimScriptAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
+                SimScriptAction::WaitForChannel(p) => write!(formatter, "WaitForChannel({p})"),
+                SimScriptAction::WaitForProposal(p, g) => {
+                    write!(formatter, "WaitForProposal({p},{g:?})")
+                }
+                SimScriptAction::WaitForMoveApplied(p, g) => {
+                    write!(formatter, "WaitForMoveApplied({p},{g:?})")
+                }
                 SimScriptAction::CorruptStateNumber(p, sn) => {
                     write!(formatter, "CorruptStateNumber({p},{sn})")
                 }
@@ -389,8 +406,7 @@ mod sim_tests {
             match self {
                 Self::Move(player, game_id, _, _)
                 | Self::FakeMove(player, game_id, _, _)
-                | Self::BadSignatureMove(player, game_id, _)
-                | Self::TerminalMismatchMove(player, game_id, _) => ActionSchedule {
+                | Self::BadSignatureMove(player, game_id, _) => ActionSchedule {
                     readiness: ActionReadiness::GameCanMove {
                         player: *player,
                         game_id: *game_id,
@@ -422,6 +438,27 @@ mod sim_tests {
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
                 },
+                Self::WaitForChannel(player) => ActionSchedule {
+                    readiness: ActionReadiness::ChannelReady { player: *player },
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
+                Self::WaitForProposal(player, game_id) => ActionSchedule {
+                    readiness: ActionReadiness::ProposalExists {
+                        player: *player,
+                        game_id: *game_id,
+                    },
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
+                Self::WaitForMoveApplied(player, game_id) => ActionSchedule {
+                    readiness: ActionReadiness::MoveApplied {
+                        player: *player,
+                        game_id: *game_id,
+                    },
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
                 Self::GoOnChain(_) => ActionSchedule {
                     readiness: ActionReadiness::Immediate,
                     post_action_drain: PostActionDrain::OnChain,
@@ -430,7 +467,6 @@ mod sim_tests {
                 Self::Cheat(_, _, _)
                 | Self::AcceptSettlement(_, _)
                 | Self::CleanShutdown(_)
-                | Self::CancelProposal(_, _)
                 | Self::InjectRawMessage(_, _)
                 | Self::SelfAcceptProposal(_, _)
                 | Self::WrongParityProposal(_)
@@ -439,6 +475,14 @@ mod sim_tests {
                 | Self::InvalidProposalValidationInfoHash(_)
                 | Self::InvalidProposalTimeout(_) => ActionSchedule {
                     readiness: ActionReadiness::Immediate,
+                    post_action_drain: PostActionDrain::OnChain,
+                    expects_on_chain_transition: false,
+                },
+                Self::CancelProposal(player, game_id) => ActionSchedule {
+                    readiness: ActionReadiness::ProposalKnown {
+                        player: *player,
+                        game_id: *game_id,
+                    },
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
                 },
@@ -461,6 +505,11 @@ mod sim_tests {
                 | Self::UnNerfMessages
                 | Self::SaveUnrollSnapshot(_) => ActionSchedule {
                     readiness: ActionReadiness::Immediate,
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
+                Self::MutateNerfedShutdownSolution => ActionSchedule {
+                    readiness: ActionReadiness::NerfedTransactionAvailable,
                     post_action_drain: PostActionDrain::None,
                     expects_on_chain_transition: false,
                 },
@@ -651,6 +700,32 @@ mod sim_tests {
                 PostActionDrain::OnChain,
                 false,
             );
+            let channel_no_drain = schedule(
+                ActionReadiness::ChannelReady { player: 1 },
+                PostActionDrain::None,
+                false,
+            );
+            let proposal = schedule(
+                ActionReadiness::ProposalExists {
+                    player: 1,
+                    game_id: gid,
+                },
+                PostActionDrain::None,
+                false,
+            );
+            let move_applied = schedule(
+                ActionReadiness::MoveApplied {
+                    player: 1,
+                    game_id: gid,
+                },
+                PostActionDrain::None,
+                false,
+            );
+            let nerfed_transaction = schedule(
+                ActionReadiness::NerfedTransactionAvailable,
+                PostActionDrain::None,
+                false,
+            );
             let after_game = schedule(
                 ActionReadiness::AfterGame { game_id: gid },
                 PostActionDrain::OnChain,
@@ -679,6 +754,10 @@ mod sim_tests {
                 (
                     SimScriptAction::UnNerfTransactions(true),
                     immediate_no_drain,
+                ),
+                (
+                    SimScriptAction::MutateNerfedShutdownSolution,
+                    nerfed_transaction,
                 ),
                 (SimScriptAction::BlockCoinReports(1), immediate_no_drain),
                 (
@@ -725,6 +804,9 @@ mod sim_tests {
                 (SimScriptAction::WaitBlocks(3, 1), immediate_no_drain),
                 (SimScriptAction::AcceptSettlement(1, gid), immediate_drain),
                 (SimScriptAction::CleanShutdown(1), immediate_drain),
+                (SimScriptAction::WaitForChannel(1), channel_no_drain),
+                (SimScriptAction::WaitForProposal(1, gid), proposal),
+                (SimScriptAction::WaitForMoveApplied(1, gid), move_applied),
                 (
                     SimScriptAction::CorruptStateNumber(1, 9),
                     immediate_no_drain,
@@ -745,7 +827,17 @@ mod sim_tests {
                 (SimScriptAction::NerfMessages(1), immediate_no_drain),
                 (SimScriptAction::UnNerfMessages, immediate_no_drain),
                 (SimScriptAction::AcceptProposal(1, gid), accept),
-                (SimScriptAction::CancelProposal(1, gid), immediate_drain),
+                (
+                    SimScriptAction::CancelProposal(1, gid),
+                    schedule(
+                        ActionReadiness::ProposalKnown {
+                            player: 1,
+                            game_id: gid,
+                        },
+                        PostActionDrain::OnChain,
+                        false,
+                    ),
+                ),
                 (SimScriptAction::SaveUnrollSnapshot(1), immediate_no_drain),
                 (SimScriptAction::ForceStaleUnroll(1), transition_no_drain),
                 (

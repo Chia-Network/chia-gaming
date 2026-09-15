@@ -105,8 +105,8 @@ impl CoinSpend {
 impl Default for Spend {
     fn default() -> Self {
         Spend {
-            puzzle: Puzzle::from_bytes(&[0x80]),
-            solution: Program::from_bytes(&[0x80]).into(),
+            puzzle: Program::nil().into(),
+            solution: Program::nil().into(),
             signature: Aggsig::default(),
         }
     }
@@ -415,8 +415,8 @@ pub fn convert_coinset_org_spend_to_spend(
     let puzzle_hash_bytes = check_for_hex(puzzle_hash)?;
     let puzzle_reveal_bytes = check_for_hex(puzzle_reveal)?;
     let solution_bytes = check_for_hex(solution)?;
-    let puzzle_reveal_prog = Program::from_bytes(&puzzle_reveal_bytes).into();
-    let solution_prog = Program::from_bytes(&solution_bytes).into();
+    let puzzle_reveal_prog = Program::from_bytes(&puzzle_reveal_bytes)?.into();
+    let solution_prog = Program::from_bytes(&solution_bytes)?.into();
     let coinid_hash = Hash::from_slice(&parent_coin_info_bytes)?;
     let parent_id = CoinID::new(coinid_hash);
     let puzzle_hash = PuzzleHash::from_hash(Hash::from_slice(&puzzle_hash_bytes)?);
@@ -475,7 +475,7 @@ mod consensus_validation_tests {
                 coin,
                 bundle: Spend {
                     puzzle,
-                    solution: Program::from_bytes(&[0x80]).into(),
+                    solution: Program::nil().into(),
                     signature: Aggsig::default(),
                 },
             },

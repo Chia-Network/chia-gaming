@@ -251,7 +251,7 @@ export interface WasmResult {
 
 export interface GameSessionConfig {
   rng_id: number;
-  have_potato: boolean;
+  is_initiator: boolean;
   my_contribution: Amount;
   their_contribution: Amount;
   channel_timeout: number;

@@ -30,6 +30,9 @@ import {
   CoinOfInterestEntry,
 } from '../types/ChiaGaming';
 import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
+import { deriveHubSessionId } from '../services/hubSessionCredential';
+import { installHubIframeAuthentication } from '../services/hubIframeAuthentication';
+import { HubIframe } from './HubIframe';
 import {
   PeerSession,
   decodePeerAppMessage,
@@ -677,7 +680,7 @@ const Shell = () => {
   const uniqueId = getPlayerId();
   // Do not mint hub sessionId here — boot must hydrate IndexedDB first
   // when a saved-session marker is present, or a remint poisons preferences.
-  const [, setSessionId] = useState(() => loadState().identity.sessionId ?? '');
+  const [sessionId, setSessionId] = useState(() => loadState().identity.sessionId ?? '');
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
@@ -2092,23 +2095,38 @@ const Shell = () => {
 
   const [hubOrigin, setHubOrigin] = useState<string | null>(null);
   const [hubConnectionError, setHubConnectionError] = useState<string | null>(null);
+  const hubConnectAttemptRef = useRef(0);
+  const invalidateHubConnectAttempts = useCallback(() => {
+    hubConnectAttemptRef.current++;
+  }, []);
 
   // Connect to a hub by origin URL. Creates the hub iframe + game relay WebSocket.
   const connectToHub = useCallback(
-    (origin: string, options: { resetSession?: boolean } = {}) => {
+    async (origin: string, options: { resetSession?: boolean } = {}) => {
+      const connectAttempt = ++hubConnectAttemptRef.current;
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
       setHubConnectionError(null);
       if (options.resetSession) {
         clearSessionId();
       }
-      const hubSessionId = getSessionId();
+      let hubSessionId: string;
+      try {
+        hubSessionId = await deriveHubSessionId(getSessionId(), origin);
+      } catch (error) {
+        if (connectAttempt !== hubConnectAttemptRef.current) return;
+        setHubConnectionError(
+          error instanceof Error ? error.message : 'Failed to derive hub session credential',
+        );
+        setHubLiveness('disconnected');
+        return;
+      }
+      if (connectAttempt !== hubConnectAttemptRef.current) return;
       setSessionId(hubSessionId);
 
       setHubOrigin(origin);
       saveHubUrl(origin);
-      const hubUrl = `${origin}/?session=${hubSessionId}&uniqueId=${uniqueId}`;
-      setIframeUrl(hubUrl);
+      setIframeUrl(new URL('/', origin).toString());
 
       setHubLiveness('reconnecting');
 
@@ -2552,7 +2570,6 @@ const Shell = () => {
         });
     },
     [
-      uniqueId,
       syncPeerLiveness,
       markPeerInactive,
       markPeerDead,
@@ -2654,10 +2671,11 @@ const Shell = () => {
     }
     return () => {
       cancelled = true;
+      invalidateHubConnectAttempts();
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
     };
-  }, [bootState.kind, connectToHub]);
+  }, [bootState.kind, connectToHub, invalidateHubConnectAttempts]);
 
   // Shared connection completion
   const completeConnection = useCallback(
@@ -3198,6 +3216,13 @@ const Shell = () => {
 
   useThemeSyncToIframe({ iframeId: 'hub-iframe', frameOrigin: hubOrigin, frameUrl: iframeUrl });
 
+  useEffect(() => {
+    if (hubOrigin === null || !sessionId || iframeUrl === 'about:blank') return;
+    const iframe = document.getElementById('hub-iframe') as HTMLIFrameElement | null;
+    if (iframe === null) return;
+    return installHubIframeAuthentication({ iframe, iframeUrl, sessionId });
+  }, [hubOrigin, iframeUrl, sessionId]);
+
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
 
@@ -3694,6 +3719,7 @@ const Shell = () => {
   );
 
   const doDisconnectHub = useCallback(() => {
+    invalidateHubConnectAttempts();
     cancelPendingMatchmaking({ preserveHub: false });
     hubConnRef.current?.disconnect();
     hubConnRef.current = null;
@@ -3703,7 +3729,7 @@ const Shell = () => {
     setIframeUrl('about:blank');
     setHubLiveness(null);
     markPeerInactive();
-  }, [cancelPendingMatchmaking, markPeerInactive]);
+  }, [cancelPendingMatchmaking, invalidateHubConnectAttempts, markPeerInactive]);
 
   const doDisconnectWallet = useCallback(async () => {
     stopBalancePolling();
@@ -4637,13 +4663,7 @@ const Shell = () => {
                     {hubConnectionError}
                   </p>
                 )}
-                <iframe
-                  id="hub-iframe"
-                  className="bg-canvas-bg-subtle"
-                  style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
-                  sandbox="allow-scripts allow-same-origin"
-                  src={iframeUrl}
-                />
+                <HubIframe iframeUrl={iframeUrl} />
               </>
             ) : (
               <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />

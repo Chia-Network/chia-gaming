@@ -168,6 +168,9 @@ fn run_referee_move_case(
     allocator: &mut AllocEncoder,
     current_max_move_size: i64,
     new_move_bytes: &[u8],
+    new_infohash: Option<&[u8; 32]>,
+    new_mover_share: &[u8],
+    new_max_move_size: &[u8],
 ) -> Result<NodePtr, String> {
     let referee = load_referee_puzzle(allocator);
     let referee_clvm = referee.to_clvm(allocator).expect("referee to clvm");
@@ -200,9 +203,17 @@ fn run_referee_move_case(
         .allocator()
         .new_atom(new_move_bytes)
         .expect("new_move atom");
-    let infohash_c = hash_to_node(allocator, &[0x77; 32]);
-    let new_mover_share = 0i64.to_clvm(allocator).expect("new_mover_share");
-    let new_max_move_size = 16i64.to_clvm(allocator).expect("new_max_move_size");
+    let infohash_c = new_infohash
+        .map(|hash| hash_to_node(allocator, hash))
+        .unwrap_or(NodePtr::NIL);
+    let new_mover_share = allocator
+        .allocator()
+        .new_atom(new_mover_share)
+        .expect("new_mover_share");
+    let new_max_move_size = allocator
+        .allocator()
+        .new_atom(new_max_move_size)
+        .expect("new_max_move_size");
 
     let curried_args = list_from_nodes(
         allocator,
@@ -1406,18 +1417,17 @@ fn test_calpoker_e_bob_loss_zero_make_move() {
 }
 
 #[test]
-fn test_calpoker_e_nil_evidence_exception() {
+fn test_calpoker_e_nil_evidence_returns_terminal_transition() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    // Nil evidence always causes exception now (no on-chain/off-chain distinction)
     run_step_and_check(
         &mut a,
         &lib,
         &after,
-        &make_step(&e_move(&td), 100, None, MoveCode::ClvmException, false, "e"),
+        &make_step(&e_move(&td), 100, None, MoveCode::MakeMove, false, "e"),
     );
 }
 
@@ -1435,7 +1445,139 @@ fn test_calpoker_e_bad_evidence_exception() {
         &mut a,
         &lib,
         &after,
-        &make_step(&m, 100, Some(&[0xFF]), MoveCode::ClvmException, false, "e"),
+        &make_step(
+            &m,
+            100,
+            // Numerically valid five-card bitfield, but not a one-byte encoding.
+            Some(&[0x00, 0x1F]),
+            MoveCode::ClvmException,
+            false,
+            "e",
+        ),
+    );
+}
+
+/// An honest last move must not be slashable just because the slasher
+/// omitted Bob's card-selection evidence. Nil evidence returns the aligned
+/// terminal transition, so the referee slash spend must fail.
+#[test]
+fn test_calpoker_e_nil_evidence_does_not_slash_honest_move() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let td = build_test_data();
+    let init = initial_move_result(&lib);
+    let after_d = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
+    let e_validator_hash = after_d.next_validator_hash.unwrap();
+    let e_move_bytes = e_move(&td);
+
+    let e_result = run_validator_step(
+        &mut a,
+        &lib,
+        &e_validator_hash,
+        true,
+        &e_move_bytes,
+        after_d.next_max_move_size,
+        100,
+        after_d.state,
+        Some(&td.bob_good_selections),
+    )
+    .expect("honest step e should succeed with Bob's selections");
+    assert_eq!(e_result.move_code, MoveCode::MakeMove);
+
+    let state_after_d_hash: [u8; 32] = *Program::from_nodeptr(&a, after_d.state)
+        .expect("state program")
+        .sha256tree(&mut a)
+        .hash()
+        .bytes();
+    let infohash_a = sha256_concat(&[&e_validator_hash, &state_after_d_hash]);
+
+    let referee = load_referee_puzzle(&mut a);
+    let referee_clvm = referee.to_clvm(&mut a).expect("referee to clvm");
+    let referee_hash: [u8; 32] = *referee.sha256tree(&mut a).hash().bytes();
+    let e_validator = lib
+        .by_hash
+        .get(&e_validator_hash)
+        .expect("e validator must exist");
+    let e_validator_clvm = e_validator
+        .puzzle
+        .to_clvm(&mut a)
+        .expect("e validator to clvm");
+
+    let waiter_pk = a.allocator().new_atom(&[0x11; 48]).expect("pk");
+    let mover_pk = a.allocator().new_atom(&[0x22; 48]).expect("pk");
+    let timeout = 10i64.to_clvm(&mut a).expect("timeout");
+    let amount = AMOUNT.to_clvm(&mut a).expect("amount");
+    let mod_hash = hash_to_node(&mut a, &referee_hash);
+    let nonce = 1i64.to_clvm(&mut a).expect("nonce");
+    let move_node = a.allocator().new_atom(&e_move_bytes).expect("move atom");
+    let max_move_size = e_result
+        .next_max_move_size
+        .to_clvm(&mut a)
+        .expect("max_move_size");
+    let infohash_b = NodePtr::NIL;
+    let mover_share = 100i64.to_clvm(&mut a).expect("mover_share");
+    let infohash_a_node = hash_to_node(&mut a, &infohash_a);
+    let curried_args = list_from_nodes(
+        &mut a,
+        &[
+            mover_pk,
+            waiter_pk,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            move_node,
+            max_move_size,
+            infohash_b,
+            mover_share,
+            infohash_a_node,
+        ],
+    );
+    let payout_ph = a.allocator().new_atom(&[0x33; 32]).expect("payout ph");
+    let slash_args = list_from_nodes(
+        &mut a,
+        &[after_d.state, e_validator_clvm, NodePtr::NIL, payout_ph],
+    );
+    let args = a
+        .allocator()
+        .new_pair(curried_args, slash_args)
+        .expect("args");
+    let result = run_program(a.allocator(), &chia_dialect(), referee_clvm, args, 0);
+    assert!(
+        result.is_err(),
+        "nil evidence must not slash an honest CalPoker last move: {result:?}"
+    );
+}
+
+#[test]
+fn test_calpoker_e_fake_next_infohash_slashes_with_card_evidence() {
+    let mut allocator = AllocEncoder::new();
+    let lib = load_validators(&mut allocator);
+    let td = build_test_data();
+    let init = initial_move_result(&lib);
+    let after_d =
+        run_sequence(&mut allocator, &lib, &init, &happy_path_through_d(&td)).unwrap();
+    let e_validator_hash = after_d.next_validator_hash.unwrap();
+    let e_validator = &lib
+        .by_hash
+        .get(&e_validator_hash)
+        .expect("e validator")
+        .puzzle;
+    let fake_infohash = hash_to_node(&mut allocator, &[0x77; 32]);
+
+    let result = run_game_referee_slash(
+        &mut allocator,
+        e_validator,
+        &e_move(&td),
+        0,
+        after_d.state,
+        Some(&td.bob_good_selections),
+        0,
+        fake_infohash,
+    );
+    assert!(
+        result.is_ok(),
+        "card evidence must slash a terminal move with a fake next infohash: {result:?}"
     );
 }
 
@@ -1508,10 +1650,61 @@ fn test_slash_fails_on_aligned_valid_move() {
 fn test_move_rejects_when_new_move_exceeds_max_move_size() {
     let mut allocator = AllocEncoder::new();
     let too_large_move = vec![0xEF; 9];
-    let result = run_referee_move_case(&mut allocator, 8, &too_large_move);
+    let result = run_referee_move_case(
+        &mut allocator,
+        8,
+        &too_large_move,
+        Some(&[0x77; 32]),
+        &[],
+        &[16],
+    );
     assert!(
         result.is_err(),
         "move path should reject moves larger than MAX_MOVE_SIZE"
+    );
+}
+
+#[test]
+fn test_move_rejects_terminal_infohash_with_nonzero_max_move_size() {
+    let mut allocator = AllocEncoder::new();
+    let result = run_referee_move_case(&mut allocator, 8, &[0xEF; 8], None, &[], &[1]);
+    assert!(
+        result.is_err(),
+        "move path should reject a nil next infohash with nonzero max_move_size"
+    );
+}
+
+#[test]
+fn test_move_rejects_noncanonical_new_max_move_size() {
+    let mut allocator = AllocEncoder::new();
+    let result = run_referee_move_case(
+        &mut allocator,
+        8,
+        &[0xEF; 8],
+        Some(&[0x77; 32]),
+        &[],
+        &[0, 5],
+    );
+    assert!(
+        result.is_err(),
+        "move path should reject a non-canonical new_max_move_size"
+    );
+}
+
+#[test]
+fn test_move_rejects_noncanonical_new_mover_share() {
+    let mut allocator = AllocEncoder::new();
+    let result = run_referee_move_case(
+        &mut allocator,
+        8,
+        &[0xEF; 8],
+        Some(&[0x77; 32]),
+        &[0],
+        &[5],
+    );
+    assert!(
+        result.is_err(),
+        "move path should reject a non-canonical new_mover_share"
     );
 }
 
@@ -1623,12 +1816,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_calpoker_e_bob_loss_zero_make_move,
         ),
         (
-            "test_calpoker_e_nil_evidence_exception",
-            &test_calpoker_e_nil_evidence_exception,
+            "test_calpoker_e_nil_evidence_returns_terminal_transition",
+            &test_calpoker_e_nil_evidence_returns_terminal_transition,
         ),
         (
             "test_calpoker_e_bad_evidence_exception",
             &test_calpoker_e_bad_evidence_exception,
+        ),
+        (
+            "test_calpoker_e_nil_evidence_does_not_slash_honest_move",
+            &test_calpoker_e_nil_evidence_does_not_slash_honest_move,
+        ),
+        (
+            "test_calpoker_e_fake_next_infohash_slashes_with_card_evidence",
+            &test_calpoker_e_fake_next_infohash_slashes_with_card_evidence,
         ),
         (
             "test_slash_succeeds_on_explicit_validator_slash",
@@ -1649,6 +1850,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_move_rejects_when_new_move_exceeds_max_move_size",
             &test_move_rejects_when_new_move_exceeds_max_move_size,
+        ),
+        (
+            "test_move_rejects_terminal_infohash_with_nonzero_max_move_size",
+            &test_move_rejects_terminal_infohash_with_nonzero_max_move_size,
+        ),
+        (
+            "test_move_rejects_noncanonical_new_max_move_size",
+            &test_move_rejects_noncanonical_new_max_move_size,
+        ),
+        (
+            "test_move_rejects_noncanonical_new_mover_share",
+            &test_move_rejects_noncanonical_new_mover_share,
         ),
         (
             "test_terminal_coin_nil_infohash_b_slash",

@@ -46,7 +46,7 @@ function toWsUrl(input: string): string {
   return url.toString();
 }
 
-export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string) {
+export function useHubSocket(hubUrl: string, sessionId: string) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [hubUpdateReceived, setHubUpdateReceived] = useState(false);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
@@ -81,7 +81,7 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
   }, []);
 
   useEffect(() => {
-    if (!uniqueId) return;
+    if (!sessionId) return;
 
     const wsUrl = toWsUrl(hubUrl);
 
@@ -256,7 +256,7 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
         clearInterval(keepaliveTimerRef.current);
         keepaliveTimerRef.current = null;
       }
-      send({ type: 'leave', id: uniqueId }, false);
+      send({ type: 'leave' }, false);
       try {
         wsRef.current?.close();
       } catch {
@@ -271,7 +271,7 @@ export function useHubSocket(hubUrl: string, uniqueId: string, sessionId: string
       pendingWsRef.current = null;
       pendingOutboundRef.current = [];
     };
-  }, [uniqueId, hubUrl, sessionId, send]);
+  }, [hubUrl, sessionId, send]);
 
   const joinHub = useCallback(
     (alias: string) => {

@@ -17,8 +17,10 @@ import { log } from './log';
 import { createMainWindow } from './mainWindow';
 import { buildNetworkPolicy, type PolicyRef } from './networkPolicy';
 import { installSessionSecurity, installWebContentsSecurity } from './security';
+import { installProcessTransportSecurity } from './transportSecurity';
 
-// Both of these have to happen before the 'ready' event.
+// These have to happen before the 'ready' event.
+installProcessTransportSecurity(app.commandLine);
 registerAppSchemeAsPrivileged();
 app.enableSandbox();
 app.setName('Chia Gaming');

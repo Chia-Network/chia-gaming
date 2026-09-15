@@ -45,12 +45,12 @@
                 ; Slot 0 allocates player A's contribution; player A goes first.
                 (li
                     player_a_contribution 0 1 0 32 initial_state 0
-                    alice_handler bob_handler val_commit
+                    alice_handler bob_handler (list val_commit val_guess val_clue)
                 )
                 ; Slot 1 allocates player B's contribution; player B goes first.
                 (li
                     0 player_b_contribution 0 0 32 initial_state 0
-                    alice_handler bob_handler val_commit
+                    alice_handler bob_handler (list val_commit val_guess val_clue)
                 )
             )
         )
@@ -69,9 +69,6 @@
             (list
                 "krunk_alice_handler_commit"
                 move
-                val_commit
-                val_guess
-                32
                 0
                 (curry krunk_alice_handler_guess salt word DICT_TREE)
                 0
@@ -114,9 +111,6 @@
                 (list
                     "krunk_alice_handler_clue reveal"
                     reveal
-                    val_clue
-                    0
-                    0
                     payout
                     0
                     0
@@ -125,9 +119,6 @@
             (list
                 "krunk_alice_handler_clue"
                 CLUE
-                val_clue
-                val_guess
-                5
                 0
                 (curry krunk_alice_handler_guess SALT WORD DICT_TREE)
                 0
@@ -155,9 +146,6 @@
             (list
                 "krunk_bob_handler_guess"
                 guess
-                val_guess
-                val_clue
-                21
                 0
                 (curry krunk_bob_handler_clue DICT_TREE)
                 0
@@ -166,7 +154,7 @@
     )
 )
 
-(defconst KRUNK_EVIDENCE_INDICES (li 0 1 2 3 4))
+(defconst KRUNK_EVIDENCE_INDICES (li (q . 0x00) 1 2 3 4))
 
 (defun krunk_bob_handler_clue (DICT_TREE amount pre_state state move validation_info_hash mover_share)
     (if (= (strlen move) 1)

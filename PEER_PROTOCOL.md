@@ -602,7 +602,8 @@ Receiver -> Initiator: HandshakeD(HandshakePayloadD)
 ```
 
 These are the receiver's state-zero channel and unroll half-signatures. The
-initiator verifies and stores both before continuing.
+initiator verifies and stores both, giving it the fully signed state-zero
+unroll. It then advances the unchanged opening state to state one before E.
 
 ### 7.6 Handshake E
 
@@ -617,9 +618,11 @@ Initiator -> Receiver: HandshakeE(HandshakePayloadE)
 
 `bundle` is the initiator's partial channel-funding transaction: the initiator
 wallet spend(s) plus the launcher spend. `signatures` contains the initiator's
-state-zero half-signatures. The receiver verifies and stores the signatures
-before completing its local funding work. The receiver must not treat this
-bundle as a finished funding transaction.
+state-one half-signatures. State one has the same opening payout as state zero;
+only its sequence number and resulting unroll puzzle hash differ. The receiver
+verifies and stores the signatures, giving it the fully signed state-one
+unroll, before completing its local funding work. The receiver must not treat
+this bundle as a finished funding transaction.
 
 ### 7.7 Handshake F
 
@@ -649,8 +652,10 @@ wire protocol. F and activation may be observed in either order, but transition
 requires both the role's handshake work and that local observation to be
 complete. After activation:
 
-- the initiator begins with the potato;
-- the receiver begins without it; and
+- the receiver begins with the potato and a fully signed state-one unroll;
+- the initiator begins without it and retains the fully signed state-zero
+  unroll;
+- the receiver's first ordinary Batch advances to even state two; and
 - the off-chain phase ignores a late Handshake F.
 
 In the initiator's finished handshake state, duplicate Handshake F messages are
@@ -873,36 +878,33 @@ An unknown or non-canonical group is a hard batch error.
 Move(GameID, PeerMove)
 
 PeerMove {
-  basic: GameMoveStateInfo,
-  terminal: Bool
-}
-
-GameMoveStateInfo {
   move_made: Bytes,
-  mover_share: Amount,
-  max_move_size: u32,
-  max_move_size_raw: Bytes
+  mover_share: Amount
 }
 ```
 
-The receiver locates the live game, validates turn authority and the move using
-the locally held validation program and game handlers, and updates the referee
-state. Neither the validation info hash nor the bare validation-program hash is
-sent by the peer:
+The receiver locates the live game and validates turn authority. It runs the
+current locally held factory-registry validator with nil evidence to discover
+the candidate next validator hash, state, and size limit. It computes the next
+validation info hash the same way the on-chain referee does: nil if the
+next-validator hash is nil, otherwise
+`sha256(next_validator_hash, shatree(new_state))`.
 
-- for a nonterminal move, the receiver computes the validation info hash from
-  its local validation program and pre-move state, and computes the program tree
-  hash locally;
-- for a terminal move, the receiver reconstructs the nil validation-info
-  commitment and no bare program hash.
+Off-chain accept then curries a real referee with those commitments and
+slash-invokes it with nil evidence. If that does not slash, a committed
+validator run supplies state to the locally held their-turn handler. Each
+handler evidence candidate then causes another ordered slash invocation. If any
+invocation succeeds, the move is slashable and is rejected. Discovery,
+commitment checking, and evidence trials intentionally execute the validator
+separately. The peer and handlers never supply validator programs; a returned
+non-nil next hash is resolved in the receiver's factory registry. These checks
+also apply when the next-validator hash is nil. The signed unroll leaf is the
+new virtual coin's puzzle hash.
 
-The `terminal` boolean is untrusted semantic input. After interpreting the move,
-the receiver requires it to agree with whether the local handler transition has
-a successor. A mismatch is a hard batch error. A valid move and the
-locally reconstructed commitments are part of the signed final channel state.
-
-`max_move_size_raw` preserves the exact CLVM atom bytes used when hashing the
-resulting puzzle. It accompanies the decoded numeric `max_move_size`.
+The peer does not supply the next `max_move_size`. The receiver takes it from
+the nil-evidence validator result and canonically encodes it when constructing
+the referee puzzle. A validator must not require evidence to return its
+transition. When the next validation info hash is nil, `max_move_size` is zero.
 
 If the game becomes terminal, the receiver queues a local
 `AcceptSettlement`.
@@ -1023,10 +1025,10 @@ field is untrusted input.
 
 The handshake has two fixed roles:
 
-- **Initiator** sends handshake messages A, C, and E and initially holds the
-  potato.
-- **Receiver** sends handshake messages B, D, and F and initially does not hold
-  the potato.
+- **Initiator** sends handshake messages A, C, and E and enters off-chain play
+  without the potato.
+- **Receiver** sends handshake messages B, D, and F and enters off-chain play
+  with the potato.
 
 These roles remain fixed for the lifetime of the channel. They are also called
 the first and second player in internal state.

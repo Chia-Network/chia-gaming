@@ -3,8 +3,16 @@ import path from 'node:path';
 
 import { protocol } from 'electron';
 
+import {
+  appAssetCacheControl,
+  isAppSchemeRequestAllowed,
+  isOAuthCallbackPath,
+} from './appProtocolPolicy';
+import { APP_HOST, APP_ORIGIN, APP_SCHEME } from './appUrl';
 import { log } from './log';
 import type { PolicyRef } from './networkPolicy';
+
+export { APP_ORIGIN, isAppUrl } from './appUrl';
 
 /**
  * The renderer is served from a custom scheme rather than `file://`.
@@ -14,28 +22,6 @@ import type { PolicyRef } from './networkPolicy';
  * relative asset URLs behave exactly as they do in the browser deploy — with
  * `webSecurity` left on and no `file://` privileges granted to anything.
  */
-const APP_SCHEME = 'chiagaming';
-const APP_HOST = 'app';
-export const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
-
-/**
- * True for URLs this app serves itself.
- *
- * Matched on scheme and host rather than compared against `APP_ORIGIN`, because
- * `URL.origin` is unusable for a scheme the URL standard does not consider
- * special: Node's parser reports the origin as `"null"`, and Chromium
- * serialises it as `chiagaming://app/` with a trailing slash. Neither form ever
- * equals `APP_ORIGIN`, so comparing origins silently denies the app itself.
- */
-export function isAppUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === `${APP_SCHEME}:` && url.host === APP_HOST;
-  } catch {
-    return false;
-  }
-}
-
 const MIME_TYPES = new Map<string, string>([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
@@ -57,14 +43,6 @@ const MIME_TYPES = new Map<string, string>([
 
 /** Chialisp `.dat` payloads and anything else are fetched as bytes. */
 const DEFAULT_MIME_TYPE = 'application/octet-stream';
-
-/** Must match `CLOUD_WALLET_OAUTH_CALLBACK_PATH` in `front-end/src/constants/env.ts`. */
-const OAUTH_CALLBACK_PATH = '/oauth/callback';
-
-function isOAuthCallbackPath(pathname: string): boolean {
-  const normalized = pathname.replace(/\/$/, '') || '/';
-  return normalized === OAUTH_CALLBACK_PATH;
-}
 
 /** Must run before the `ready` event: Chromium reads the scheme registry once at startup. */
 export function registerAppSchemeAsPrivileged(): void {
@@ -119,6 +97,10 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
       log.warn(`rejected request for unknown host: ${url.host}`);
       return textResponse('Not found', 404);
     }
+    if (!isAppSchemeRequestAllowed(request)) {
+      log.warn(`rejected cross-origin app asset request: ${url.pathname}`);
+      return textResponse('Forbidden', 403);
+    }
 
     let filePath = resolveRequestedFile(rendererRoot, url.pathname);
     if (filePath === null) {
@@ -135,9 +117,6 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
     // inside app.asar where the integrity-validation fuse still covers it.
     let body: ArrayBuffer;
     try {
-      // toArrayBuffer, rather than handing the Buffer straight to Response:
-      // readFile returns a view onto a pooled allocation, which is neither a
-      // standalone ArrayBuffer nor a valid BodyInit.
       const file = await readFile(filePath);
       body = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
     } catch (error) {
@@ -154,6 +133,7 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
       'content-type': MIME_TYPES.get(path.extname(filePath).toLowerCase()) ?? DEFAULT_MIME_TYPE,
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
+      'cache-control': appAssetCacheControl(filePath),
     });
     // The CSP belongs on the document, which is the only thing that can host
     // script. Read per document, so reloading is all it takes to apply a hub

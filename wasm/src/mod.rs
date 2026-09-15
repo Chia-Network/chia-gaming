@@ -149,7 +149,7 @@ mod gaming_wasm {
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsGameSessionConfig {
         rng_id: i32,
-        have_potato: bool,
+        is_initiator: bool,
         my_contribution: JsAmount,
         their_contribution: JsAmount,
         channel_timeout: i32,
@@ -160,7 +160,7 @@ mod gaming_wasm {
 
     struct GameConfigPartial {
         game_types: BTreeMap<GameType, ProgramRef>,
-        have_potato: bool,
+        is_initiator: bool,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
         my_contribution: Amount,
@@ -191,7 +191,7 @@ mod gaming_wasm {
 
         Ok(GameConfigPartial {
             game_types,
-            have_potato: jsconfig.have_potato,
+            is_initiator: jsconfig.is_initiator,
             channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
             unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
             my_contribution: jsconfig.my_contribution.amt.clone(),
@@ -280,7 +280,7 @@ mod gaming_wasm {
 
             let config = GameSessionConfig {
                 game_types: partial.game_types,
-                have_potato: partial.have_potato,
+                is_initiator: partial.is_initiator,
                 identity,
                 channel_timeout: partial.channel_timeout,
                 unroll_timeout: partial.unroll_timeout,
@@ -650,24 +650,40 @@ mod gaming_wasm {
 
         let agg_sig = Aggsig::from_bls(proto_bundle.aggregated_signature);
         let mut first = true;
-        let spends = proto_bundle.coin_spends.into_iter().map(|cs| {
-            let coin_string = CoinString::from_parts(
-                &CoinID::new(Hash::from_slice(cs.coin.parent_coin_info.as_ref())
-                    .expect("parent_coin_info is 32 bytes")),
-                &PuzzleHash::from_hash(Hash::from_slice(cs.coin.puzzle_hash.as_ref())
-                    .expect("puzzle_hash is 32 bytes")),
-                &Amount::new(cs.coin.amount),
-            );
-            let sig = if first { first = false; agg_sig.clone() } else { Aggsig::default() };
-            CoinSpend {
-                coin: coin_string,
-                bundle: Spend {
-                    puzzle: Puzzle::from_bytes(cs.puzzle_reveal.as_ref()),
-                    solution: Program::from_bytes(cs.solution.as_ref()).into(),
-                    signature: sig,
-                },
-            }
-        }).collect();
+        let spends = proto_bundle
+            .coin_spends
+            .into_iter()
+            .map(|cs| -> Result<CoinSpend, String> {
+                let coin_string = CoinString::from_parts(
+                    &CoinID::new(
+                        Hash::from_slice(cs.coin.parent_coin_info.as_ref())
+                            .expect("parent_coin_info is 32 bytes"),
+                    ),
+                    &PuzzleHash::from_hash(
+                        Hash::from_slice(cs.coin.puzzle_hash.as_ref())
+                            .expect("puzzle_hash is 32 bytes"),
+                    ),
+                    &Amount::new(cs.coin.amount),
+                );
+                let sig = if first {
+                    first = false;
+                    agg_sig.clone()
+                } else {
+                    Aggsig::default()
+                };
+                Ok(CoinSpend {
+                    coin: coin_string,
+                    bundle: Spend {
+                        puzzle: Puzzle::from_bytes(cs.puzzle_reveal.as_ref())
+                            .map_err(|error| format!("invalid puzzle reveal: {error:?}"))?,
+                        solution: Program::from_bytes(cs.solution.as_ref())
+                            .map_err(|error| format!("invalid solution: {error:?}"))?
+                            .into(),
+                        signature: sig,
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(SpendBundle { name: None, spends })
     }
@@ -863,8 +879,9 @@ mod gaming_wasm {
         entropy: Option<&str>,
     ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let readable_move =
-            ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
+        let readable_move = ReadableMove::from_program(std::rc::Rc::new(
+            Program::from_bytes(readable).into_js()?,
+        ));
         let new_entropy = if let Some(e) = entropy {
             Some(Hash::from_slice(&hex::decode(e).into_js()?).into_js()?)
         } else {
@@ -941,8 +958,9 @@ mod gaming_wasm {
         readable: &[u8],
     ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let readable_move =
-            ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
+        let readable_move = ReadableMove::from_program(std::rc::Rc::new(
+            Program::from_bytes(readable).into_js()?,
+        ));
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
             let entropy: Hash = cradle.rng.0.random();
             cradle.cradle.accept_proposal_and_move(
@@ -1431,7 +1449,7 @@ mod gaming_wasm {
     pub fn convert_spend_to_coinset_org(spend: &str) -> Result<JsValue, JsValue> {
         let mut allocator = AllocEncoder::new();
         let spend_bytes = hex::decode(spend).into_js()?;
-        let spend_program = Program::from_bytes(&spend_bytes);
+        let spend_program = Program::from_bytes(&spend_bytes).into_js()?;
         let spend_node = spend_program.to_nodeptr(&mut allocator).into_js()?;
         let spend = SpendBundle::from_clvm(&allocator, spend_node).into_js()?;
         serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()
@@ -1538,7 +1556,7 @@ mod gaming_wasm {
                     coin,
                     bundle: Spend {
                         puzzle,
-                        solution: Program::from_bytes(&[0x80]).into(),
+                        solution: Program::nil().into(),
                         signature: Aggsig::default(),
                     },
                 },

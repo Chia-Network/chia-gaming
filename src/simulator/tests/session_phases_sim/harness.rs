@@ -5,6 +5,52 @@ use super::*;
 
 const MAX_QUIESCENCE_ROUNDS: usize = 8;
 
+type ProposalMutation =
+    Box<dyn FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MoveReadinessBoundary {
+    action_index: usize,
+    player: usize,
+    game_id: GameID,
+    applied_count: usize,
+}
+
+impl MoveReadinessBoundary {
+    fn capture(
+        action_index: usize,
+        player: usize,
+        game_id: GameID,
+        ui: &LocalTestUIReceiver,
+    ) -> Self {
+        Self {
+            action_index,
+            player,
+            game_id,
+            applied_count: move_application_count(ui, game_id),
+        }
+    }
+
+    fn is_satisfied(&self, ui: &LocalTestUIReceiver) -> bool {
+        move_application_count(ui, self.game_id) > self.applied_count
+    }
+}
+
+fn move_application_count(ui: &LocalTestUIReceiver, game_id: GameID) -> usize {
+    ui.notifications
+        .iter()
+        .filter(|notification| {
+            matches!(
+                notification,
+                GameNotification::LocalActionApplied {
+                    id,
+                    action: LocalActionKind::MakeMove,
+                } if id == &game_id
+            )
+        })
+        .count()
+}
+
 #[derive(Default, Debug)]
 pub(super) struct DrainProgress {
     events: usize,
@@ -44,6 +90,7 @@ pub(super) struct SimulationHarness {
     nerf_transactions_for: u8,
     nerf_messages_for: u8,
     tamper_next_batch_signature: [bool; 2],
+    pending_proposal_mutations: [Option<ProposalMutation>; 2],
     nerfed_tx_backlog: Vec<SpendBundle>,
     timing_enabled: bool,
     step_started: std::time::Instant,
@@ -51,6 +98,7 @@ pub(super) struct SimulationHarness {
     num_steps: usize,
     host_watched_coins: [HashSet<CoinString>; 2],
     host_events: [Vec<HostBoundaryEvent>; 2],
+    move_readiness_boundary: Option<MoveReadinessBoundary>,
 }
 
 impl SimulationHarness {
@@ -71,6 +119,7 @@ impl SimulationHarness {
             nerf_transactions_for: 0,
             nerf_messages_for: 0,
             tamper_next_batch_signature: [false, false],
+            pending_proposal_mutations: [None, None],
             nerfed_tx_backlog: Vec::new(),
             timing_enabled: std::env::var("SIM_TIMING").is_ok(),
             step_started: std::time::Instant::now(),
@@ -78,6 +127,7 @@ impl SimulationHarness {
             num_steps: 0,
             host_watched_coins: [HashSet::new(), HashSet::new()],
             host_events: [Vec::new(), Vec::new()],
+            move_readiness_boundary: None,
         }
     }
 
@@ -121,7 +171,34 @@ impl SimulationHarness {
             .is_some_and(|predicate| predicate(move_number, &self.cradles))
     }
 
-    pub(super) fn readiness_satisfied(&self, readiness: ActionReadiness) -> bool {
+    pub(super) fn establish_readiness_boundary(
+        &mut self,
+        action_index: usize,
+        readiness: ActionReadiness,
+    ) {
+        let ActionReadiness::MoveApplied { player, game_id } = readiness else {
+            self.move_readiness_boundary = None;
+            return;
+        };
+        if self
+            .move_readiness_boundary
+            .is_some_and(|boundary| boundary.action_index == action_index)
+        {
+            return;
+        }
+        self.move_readiness_boundary = Some(MoveReadinessBoundary::capture(
+            action_index,
+            player,
+            game_id,
+            &self.local_uis[player],
+        ));
+    }
+
+    pub(super) fn readiness_satisfied(
+        &self,
+        action_index: usize,
+        readiness: ActionReadiness,
+    ) -> bool {
         match readiness {
             ActionReadiness::Immediate => true,
             ActionReadiness::GameCanMove { player, game_id } => {
@@ -152,6 +229,30 @@ impl SimulationHarness {
                 }
             }
             ActionReadiness::ChannelReady { player } => self.local_uis[player].channel_created,
+            ActionReadiness::ProposalExists { player, game_id } => self.cradles[player]
+                .proposal_contributions_for_testing()
+                .is_ok_and(|proposals| proposals.iter().any(|(id, _, _)| id == &game_id)),
+            ActionReadiness::ProposalKnown { player, game_id } => {
+                self.cradles[player]
+                    .proposal_contributions_for_testing()
+                    .is_ok_and(|proposals| proposals.iter().any(|(id, _, _)| id == &game_id))
+                    || self.local_uis[player].game_accepted_ids.contains(&game_id)
+                    || self.local_uis[player]
+                        .accepted_proposal_ids
+                        .contains(&game_id)
+            }
+            ActionReadiness::MoveApplied { player, game_id } => {
+                let boundary = self
+                    .move_readiness_boundary
+                    .expect("move readiness boundary must be established before evaluation");
+                assert_eq!(
+                    (boundary.action_index, boundary.player, boundary.game_id),
+                    (action_index, player, game_id),
+                    "move readiness boundary does not match current action"
+                );
+                boundary.is_satisfied(&self.local_uis[player])
+            }
+            ActionReadiness::NerfedTransactionAvailable => !self.nerfed_tx_backlog.is_empty(),
             ActionReadiness::AfterGame { game_id } => self
                 .local_uis
                 .iter()
@@ -352,7 +453,9 @@ impl SimulationHarness {
         proposals: &[GameProposal],
     ) -> Result<(), Error> {
         let ids = self.cradles[player].propose_games(allocator, proposals)?;
-        self.local_uis[player].proposed_game_ids.extend(ids);
+        self.local_uis[player]
+            .proposed_game_ids
+            .extend(ids.iter().copied());
         Ok(())
     }
 
@@ -473,45 +576,7 @@ impl SimulationHarness {
             let Some(move_action) = move_action else {
                 return Err(Error::StrErr("FakeMove found no Move action".to_string()));
             };
-            move_action.basic.move_made.extend_from_slice(move_data);
-            Ok(PeerMessage::Batch {
-                actions,
-                signatures: signatures.clone(),
-            })
-        })
-    }
-
-    pub(super) fn sabotage_move_terminal(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        player: usize,
-        game_id: &GameID,
-        readable: ReadableMove,
-        entropy: Hash,
-    ) -> Result<(), Error> {
-        self.make_move(allocator, player, game_id, readable, entropy)?;
-        self.cradles[player].flush_pending(allocator)?;
-        self.cradles[player].replace_last_message(|message| {
-            let PeerMessage::Batch {
-                actions,
-                signatures,
-            } = message
-            else {
-                return Err(Error::StrErr(format!(
-                    "TerminalMismatchMove expected Batch, got {message:?}"
-                )));
-            };
-            let mut actions = actions.clone();
-            let move_action = actions.iter_mut().find_map(|action| match action {
-                BatchAction::Move(_, data) => Some(data),
-                _ => None,
-            });
-            let Some(move_action) = move_action else {
-                return Err(Error::StrErr(
-                    "TerminalMismatchMove found no Move action".to_string(),
-                ));
-            };
-            move_action.terminal = !move_action.terminal;
+            move_action.move_made.extend_from_slice(move_data);
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
@@ -568,6 +633,40 @@ impl SimulationHarness {
                 continue;
             }
             self.simulator.push_transactions(allocator, &tx.spends)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn mutate_nerfed_shutdown_solution(
+        &mut self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<(), Error> {
+        game_assert!(
+            !self.nerfed_tx_backlog.is_empty(),
+            "no nerfed shutdown transaction"
+        );
+        for tx in &mut self.nerfed_tx_backlog {
+            for coin_spend in &mut tx.spends {
+                let spend = &mut coin_spend.bundle;
+                let solution_node = spend.solution.p().to_nodeptr(allocator)?;
+                let elements =
+                    crate::utils::proper_list(allocator.allocator(), solution_node, true)
+                        .filter(|elements| elements.len() == 3)
+                        .ok_or_else(|| {
+                            Error::StrErr(
+                                "clean shutdown standard solution must contain three items"
+                                    .to_string(),
+                            )
+                        })?;
+                let delegated_puzzle = Program::from_nodeptr(allocator, elements[1])?;
+                let one = 1.to_clvm(allocator).into_gen()?;
+                let modified = crate::common::standard_coin::solution_for_delegated_puzzle(
+                    allocator,
+                    delegated_puzzle,
+                    one,
+                )?;
+                spend.solution = Program::from_nodeptr(allocator, modified)?.into();
+            }
         }
         Ok(())
     }
@@ -679,38 +778,16 @@ impl SimulationHarness {
 
     pub(super) fn mutate_last_proposal(
         &mut self,
-        allocator: &mut AllocEncoder,
         player: usize,
-        mutation: impl FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>,
+        mutation: impl FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>
+            + 'static,
     ) -> Result<(), Error> {
-        self.cradles[player].flush_pending(allocator)?;
-        let mut mutation = Some(mutation);
-        self.cradles[player].replace_last_message(|message| {
-            let PeerMessage::Batch {
-                actions,
-                signatures,
-            } = message
-            else {
-                return Err(Error::StrErr(format!(
-                    "proposal sabotage expected Batch, got {message:?}"
-                )));
-            };
-            let mut actions = actions.clone();
-            let proposal = actions.iter_mut().find_map(|action| match action {
-                BatchAction::ProposeGroup(wire) => Some(wire),
-                _ => None,
-            });
-            let Some(proposal) = proposal else {
-                return Err(Error::StrErr(
-                    "proposal sabotage found no ProposeGroup".to_string(),
-                ));
-            };
-            mutation.take().expect("mutation called once")(proposal)?;
-            Ok(PeerMessage::Batch {
-                actions,
-                signatures: signatures.clone(),
-            })
-        })
+        game_assert!(
+            self.pending_proposal_mutations[player].is_none(),
+            "proposal mutation already pending for player {player}"
+        );
+        self.pending_proposal_mutations[player] = Some(Box::new(mutation));
+        Ok(())
     }
 
     pub(super) fn drain_to_quiescence(
@@ -810,25 +887,39 @@ impl SimulationHarness {
                         {
                             continue;
                         }
-                        let delivered_msg = if self.tamper_next_batch_signature[player_index] {
-                            let peer_message =
+                        let should_decode = self.pending_proposal_mutations[player_index].is_some()
+                            || self.tamper_next_batch_signature[player_index];
+                        let delivered_msg = if should_decode {
+                            let mut peer_message =
                                 crate::session_phases::peer_wire::decode_peer_message(msg)?;
                             if let PeerMessage::Batch {
                                 actions,
-                                mut signatures,
-                            } = peer_message
+                                signatures,
+                            } = &mut peer_message
                             {
-                                signatures.channel_half_sig = Default::default();
-                                self.tamper_next_batch_signature[player_index] = false;
-                                crate::session_phases::peer_wire::encode_peer_message(
-                                    &PeerMessage::Batch {
-                                        actions,
-                                        signatures,
-                                    },
-                                )?
-                            } else {
-                                msg.clone()
+                                if self.pending_proposal_mutations[player_index].is_some()
+                                    && actions.iter().any(|action| {
+                                        matches!(action, BatchAction::ProposeGroup(_))
+                                    })
+                                {
+                                    let mutation = self.pending_proposal_mutations[player_index]
+                                        .take()
+                                        .expect("proposal mutation checked as pending");
+                                    let proposal = actions
+                                        .iter_mut()
+                                        .find_map(|action| match action {
+                                            BatchAction::ProposeGroup(wire) => Some(wire),
+                                            _ => None,
+                                        })
+                                        .expect("proposal action checked as present");
+                                    mutation(proposal)?;
+                                }
+                                if self.tamper_next_batch_signature[player_index] {
+                                    signatures.channel_half_sig = Default::default();
+                                    self.tamper_next_batch_signature[player_index] = false;
+                                }
                             }
+                            crate::session_phases::peer_wire::encode_peer_message(&peer_message)?
                         } else {
                             msg.clone()
                         };
@@ -1014,8 +1105,33 @@ mod tests {
 
     #[test]
     fn harness_readiness_boundary_accepts_only_predicate_data() {
-        let _predicate_only_api: fn(&SimulationHarness, ActionReadiness) -> bool =
+        let _predicate_only_api: fn(&SimulationHarness, usize, ActionReadiness) -> bool =
             SimulationHarness::readiness_satisfied;
+    }
+
+    #[test]
+    fn repeated_move_wait_requires_an_application_after_its_boundary() {
+        let game_id = GameID(1);
+        let mut ui = LocalTestUIReceiver::default();
+        ui.notifications.push(GameNotification::LocalActionApplied {
+            id: game_id,
+            action: LocalActionKind::MakeMove,
+        });
+
+        let boundary = MoveReadinessBoundary::capture(7, 0, game_id, &ui);
+        assert!(
+            !boundary.is_satisfied(&ui),
+            "an application preceding this wait must not satisfy it"
+        );
+
+        ui.notifications.push(GameNotification::LocalActionApplied {
+            id: game_id,
+            action: LocalActionKind::MakeMove,
+        });
+        assert!(
+            boundary.is_satisfied(&ui),
+            "the next application after the wait boundary must satisfy it"
+        );
     }
 
     #[test]

@@ -166,7 +166,7 @@ export class WasmStateInit {
   createGame(
     rngId: number,
     wasm: WasmConnection,
-    have_potato: boolean,
+    isInitiator: boolean,
     my_contribution: bigint,
     their_contribution: bigint,
     rewardPuzzleHash: string,
@@ -176,7 +176,7 @@ export class WasmStateInit {
   ): { game: ChiaGame; puzzleHash: string } {
     const result = wasm.create_game_session({
       rng_id: rngId,
-      have_potato: have_potato,
+      is_initiator: isInitiator,
       my_contribution: { amt: my_contribution },
       their_contribution: { amt: their_contribution },
       channel_timeout: channelTimeout,

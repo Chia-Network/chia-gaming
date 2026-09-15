@@ -28,7 +28,7 @@ There are three distinct timeouts in the system:
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
 | `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. The hub accepts values in the 3-30 block range and defaults to 15.                         | 15 blocks          |
 | `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. The hub accepts values in the 3-30 block range and defaults to 15. | 15 blocks          |
-| `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. Proposals may choose any positive value; the UX defaults to 15 blocks. | 15 blocks          |
+| `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. Proposals are restricted to 3-100 blocks; the UX defaults to 15 blocks. | 15 blocks          |
 
 
 **Important:** Game coins are registered with the watcher using their specific
@@ -295,13 +295,16 @@ Local actions (moves, proposals, shutdown) queued in `game_action_queue` are
 drained by `flush_pending_actions`. Unlike peer errors, local action failures
 indicate programming bugs — the queue was populated by our own UI/logic.
 
-Rather than implementing transactional rollback (expensive and masks the bug),
-the cradle catches `flush_pending_actions` errors and emits them as
+The cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
-The JS-side game action methods (`proposeGame`, `acceptProposal`,
-`cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM
-throws and surface them through the UI error dialog. This makes local bugs
-immediately visible and diagnosable without adding rollback complexity.
+When receiving a valid peer batch also triggers a local queue drain, that drain
+has a narrower transaction boundary: an attributed local failure restores the
+post-receive channel and queue snapshots, removes only the failed action, and
+leaves earlier valid actions queued for retry. This preserves the accepted peer
+state without retaining an unsent partial local mutation. The JS-side game
+action methods (`proposeGame`, `acceptProposal`, `cancel_proposal`, `makeMove`,
+`acceptSettlement`, `cheat`) also catch WASM throws and surface them through
+the UI error dialog.
 
 ---
 
@@ -328,7 +331,9 @@ The invariant is therefore:
   invalid peer data.
 - **Local queue drain errors are internal/local problems.**
   `drain_queue_into_batch` processes user/UI actions queued through local APIs.
-  Those errors are not a normal peer-message recovery path.
+  Those errors are not a normal peer-message recovery path. An attributed
+  failure during the post-receive drain rolls back only that local drain and
+  removes the failed action; it does not reject the valid peer batch.
 
 Fields updated after successful signature verification, such as `have_potato`
 and `last_channel_coin_spend_info`, are outside the rollback problem because
@@ -348,8 +353,10 @@ Proposal construction starts from exactly one group request:
 the result. Both peers run the same registered deterministic factory. Its output
 is a non-empty ordered list of canonical 10-field records containing
 player-A/player-B contributions, `player_a_goes_first`, the initial state
-fields, fixed my-turn and their-turn handlers, and the initial validator. The
-host derives the amount from the contributions and hashes the validator locally.
+fields, fixed my-turn and their-turn handlers, and a nonempty validator
+registry. The registry's first program is initially current; later programs are
+selected by tree hash. The host derives the amount from the contributions and
+uses the first validator's hash as the protocol identity.
 
 The result remains in stable A/B orientation. The proposal-wide
 `sender_is_player_a` maps sender/receiver and local/opponent perspectives onto
@@ -366,7 +373,7 @@ Atomicity is enforced at three boundaries:
    checked when the receiver chooses to accept.
 2. **Receive:** Re-run the factory and require `ProposeGroup`'s ordered retained
    member commitments and cardinality to match exactly; raw state, handlers,
-   validation program, derived amount, and a separate group ID are not sent.
+   validator registry, derived amount, and a separate group ID are not sent.
 3. **Accept/cancel:** Expand any member ID to the complete group. Acceptance
    repeats the aggregate balance preflight before queueing one
    `AcceptProposalGroup` with the canonical first-member ID. The receiver

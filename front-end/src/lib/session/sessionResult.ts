@@ -55,7 +55,7 @@ export interface UseGameSessionResult {
   composeProposalSent: boolean;
   newHandRequested: boolean;
   submitComposedProposal: (handProposal: HandProposal) => void;
-  acceptReviewedProposal: () => void;
+  acceptReviewedProposal: (primaryId: string) => void;
   rejectReviewedProposal: () => void;
   startCleanShutdown: () => void;
   cleanShutdownStarted: boolean;

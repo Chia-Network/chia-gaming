@@ -15,9 +15,11 @@ import {
   type BencodexKey,
   type BencodexValue,
 } from 'chia-gaming-bencodex';
+import timeoutBounds from 'chia-gaming-protocol-constants';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import { Hub } from './hubState';
+import { deadlineReached, RetentionTimeline } from './retentionTimeline';
 import type { Challenge } from './types/hub';
 
 const hub = new Hub();
@@ -97,6 +99,11 @@ interface RateBudget {
   bytes: number;
 }
 
+interface ConnectionAttemptBudget {
+  windowStartedAt: number;
+  attempts: number;
+}
+
 const HUB_DISCONNECT_GRACE_MS = 3000;
 const CONNECTION_TTL_MS = 60_000;
 const PLAYER_ID_BYTES = 16;
@@ -109,9 +116,20 @@ const RECENT_CORRESPONDENT_TTL_MS = readPositiveIntegerEnv(
 const MAX_RECENT_CORRESPONDENTS = readPositiveIntegerEnv('GAME_MAX_RECENT_CORRESPONDENTS', 16);
 const MAX_TOTAL_CONNECTIONS = readPositiveIntegerEnv('HUB_MAX_TOTAL_CONNECTIONS', 2000);
 const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_IP', 8);
+const MAX_PLAYERS = readPositiveIntegerEnv('HUB_MAX_PLAYERS', 1000);
+const MAX_RETAINED_SESSIONS = readPositiveIntegerEnv('HUB_MAX_RETAINED_SESSIONS', 10_000);
+const RETAINED_SESSION_TTL_MS = readPositiveIntegerEnv(
+  'HUB_RETAINED_SESSION_TTL_MS',
+  24 * 60 * 60_000,
+);
 const RATE_WINDOW_MS = readPositiveIntegerEnv('HUB_RATE_WINDOW_MS', 10_000);
+const MAX_CONNECTION_ATTEMPTS_PER_WINDOW = readPositiveIntegerEnv(
+  'HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW',
+  100,
+);
 // Rust accepts a 10 MiB peer payload; leave room for relay framing and control messages.
 const DEFAULT_GAME_BYTES_PER_WINDOW = 11 * 1024 * 1024;
+const DEFAULT_HUB_CONTROL_MAX_WS_PAYLOAD_BYTES = 64 * 1024;
 const HUB_RATE_LIMIT: RateLimit = {
   maxMessages: readPositiveIntegerEnv('HUB_MAX_MESSAGES_PER_WINDOW', 100),
   maxBytes: readPositiveIntegerEnv('HUB_MAX_BYTES_PER_WINDOW', 1_000_000),
@@ -120,11 +138,42 @@ const GAME_RATE_LIMIT: RateLimit = {
   maxMessages: readPositiveIntegerEnv('GAME_MAX_MESSAGES_PER_WINDOW', 1000),
   maxBytes: readPositiveIntegerEnv('GAME_MAX_BYTES_PER_WINDOW', DEFAULT_GAME_BYTES_PER_WINDOW),
 };
+const HUB_CONTROL_MAX_WS_PAYLOAD_BYTES = readPositiveIntegerEnv(
+  'HUB_CONTROL_MAX_WS_PAYLOAD_BYTES',
+  DEFAULT_HUB_CONTROL_MAX_WS_PAYLOAD_BYTES,
+);
+const GAME_MAX_WS_PAYLOAD_BYTES = readPositiveIntegerEnv(
+  'GAME_MAX_WS_PAYLOAD_BYTES',
+  DEFAULT_GAME_BYTES_PER_WINDOW,
+);
+const MAX_GAME_OUTBOUND_BYTES_PER_CONNECTION = readPositiveIntegerEnv(
+  'GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION',
+  2 * DEFAULT_GAME_BYTES_PER_WINDOW,
+);
+const MAX_TOTAL_GAME_OUTBOUND_BYTES = readPositiveIntegerEnv(
+  'GAME_MAX_TOTAL_OUTBOUND_BYTES',
+  256 * 1024 * 1024,
+);
+if (HUB_CONTROL_MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
+  throw new Error('HUB_CONTROL_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
+}
+if (GAME_MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
+  throw new Error('GAME_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
+}
 const TRUST_PROXY = readBooleanEnv('HUB_TRUST_PROXY', false);
-const hubWsServer = new WebSocketServer({ noServer: true });
-const gameWsServer = new WebSocketServer({ noServer: true });
+const hubWsServer = new WebSocketServer({
+  noServer: true,
+  maxPayload: HUB_CONTROL_MAX_WS_PAYLOAD_BYTES,
+});
+const gameWsServer = new WebSocketServer({
+  noServer: true,
+  maxPayload: GAME_MAX_WS_PAYLOAD_BYTES,
+});
 const connectionsByIp = new Map<string, number>();
+const connectionAttemptsByIp = new Map<string, ConnectionAttemptBudget>();
 let totalConnections = 0;
+const queuedGameBytes = new WeakMap<WebSocket, number>();
+let totalQueuedGameBytes = 0;
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -182,6 +231,17 @@ function trackConnection(ws: WebSocket, ip: string): void {
   });
 }
 
+function isConnectionAttemptRateLimited(ip: string): boolean {
+  const now = Date.now();
+  let budget = connectionAttemptsByIp.get(ip);
+  if (!budget || now - budget.windowStartedAt >= RATE_WINDOW_MS) {
+    budget = { windowStartedAt: now, attempts: 0 };
+    connectionAttemptsByIp.set(ip, budget);
+  }
+  budget.attempts += 1;
+  return budget.attempts > MAX_CONNECTION_ATTEMPTS_PER_WINDOW;
+}
+
 function handleUpgrade(
   wsServer: WebSocketServer,
   req: IncomingMessage,
@@ -190,11 +250,17 @@ function handleUpgrade(
 ): void {
   const ip = clientIp(req);
   const ipConnections = connectionsByIp.get(ip) ?? 0;
-  if (totalConnections >= MAX_TOTAL_CONNECTIONS || ipConnections >= MAX_CONNECTIONS_PER_IP) {
+  const attemptRateLimited = isConnectionAttemptRateLimited(ip);
+  if (
+    attemptRateLimited ||
+    totalConnections >= MAX_TOTAL_CONNECTIONS ||
+    ipConnections >= MAX_CONNECTIONS_PER_IP
+  ) {
     logHubVerbose('ws_upgrade_rejected_connection_limit', {
       ip,
       total_connections: totalConnections,
       ip_connections: ipConnections,
+      attempt_rate_limited: attemptRateLimited,
     });
     rejectUpgrade(socket);
     return;
@@ -207,7 +273,13 @@ function handleUpgrade(
 }
 
 httpServer.on('upgrade', (req, socket, head) => {
-  const pathname = new URL(req.url!, `http://${req.headers.host}`).pathname;
+  let pathname: string;
+  try {
+    pathname = new URL(req.url ?? '', 'http://localhost').pathname;
+  } catch {
+    socket.destroy();
+    return;
+  }
   if (pathname === '/ws/hub') {
     handleUpgrade(hubWsServer, req, socket, head);
   } else if (pathname === '/ws/game') {
@@ -225,6 +297,7 @@ const wsGameMeta = new WeakMap<WebSocket, GameConnMeta>();
 const pendingHubLeaves = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionToPlayer = new Map<string, string>();
 const playerToSession = new Map<string, string>();
+const retentionTimeline = new RetentionTimeline();
 const knownAliases = new Map<string, string>();
 const recentCorrespondents = new Map<string, Map<string, number>>();
 const wsLastActivity = new WeakMap<WebSocket, number>();
@@ -321,6 +394,13 @@ function sessionIdFromWire(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('hex');
 }
 
+function sessionIdFromHub(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^[0-9a-f]{32}$/i.test(value)) {
+    return null;
+  }
+  return value.toLowerCase();
+}
+
 function randomPublicId(): string {
   let id: string;
   do {
@@ -329,15 +409,63 @@ function randomPublicId(): string {
   return id;
 }
 
-function ensureSession(sessionId: string): string {
+function retainedSessionHasPresence(sessionId: string, playerId: string): boolean {
+  return hub.players[playerId] !== undefined || gameConnections.has(sessionId);
+}
+
+function markRetainedSessionInactive(playerId: string, now = Date.now()): void {
+  const sessionId = playerToSession.get(playerId);
+  if (!sessionId || retainedSessionHasPresence(sessionId, playerId)) return;
+  retentionTimeline.touch(sessionId, now);
+}
+
+function evictOldestInactiveSession(reason: string): boolean {
+  const oldest = retentionTimeline.oldest(
+    [...sessionToPlayer]
+      .filter(([sessionId, playerId]) => !retainedSessionHasPresence(sessionId, playerId))
+      .map(([sessionId, playerId]) => ({ sessionId, playerId })),
+  );
+  if (!oldest) return false;
+  retirePlayerArtifacts(oldest.playerId, {
+    sessionId: oldest.sessionId,
+    retireIdentity: true,
+    reason,
+  });
+  return true;
+}
+
+function pruneRetainedSessions(): void {
+  for (const [sessionId, playerId] of [...sessionToPlayer]) {
+    if (retainedSessionHasPresence(sessionId, playerId)) continue;
+    if (retentionTimeline.isExpired(sessionId, RETAINED_SESSION_TTL_MS)) {
+      retirePlayerArtifacts(playerId, { sessionId, retireIdentity: true, reason: 'ttl' });
+    }
+  }
+}
+
+function ensureSession(sessionId: string): string | null {
   const existing = sessionToPlayer.get(sessionId);
-  if (existing) return existing;
-  // Mapping is intentionally retained for the hub process lifetime —
-  // disconnect / leaveHub must not mint a new public id for the same secret.
+  if (existing) {
+    const expired =
+      !retainedSessionHasPresence(sessionId, existing) &&
+      retentionTimeline.isExpired(sessionId, RETAINED_SESSION_TTL_MS);
+    if (!expired) {
+      retentionTimeline.touch(sessionId);
+      return existing;
+    }
+    retirePlayerArtifacts(existing, { sessionId, retireIdentity: true, reason: 'ttl' });
+  }
+  if (sessionToPlayer.size >= MAX_RETAINED_SESSIONS) {
+    pruneRetainedSessions();
+    if (sessionToPlayer.size >= MAX_RETAINED_SESSIONS && !evictOldestInactiveSession('capacity')) {
+      return null;
+    }
+  }
   const playerId = randomPublicId();
   sessionToPlayer.set(sessionId, playerId);
   playerToSession.set(playerId, sessionId);
-  logHub('session_created', { player_id: playerId, session_id: sessionId });
+  retentionTimeline.touch(sessionId);
+  logHub('session_created', { player_id: playerId });
   return playerId;
 }
 
@@ -349,6 +477,7 @@ app.use(
 );
 
 app.use((req, res, next) => {
+  res.set('Referrer-Policy', 'no-referrer');
   // Nonce /app/* URLs change every rebuild; only root shell/meta are stable.
   const p = req.path;
   let cc: string;
@@ -370,13 +499,21 @@ if (args.dir) {
   app.use(express.static(args.dir));
 }
 
-function sendWs(ws: WebSocket, type: string, payload: unknown): void {
+function sendSerializedWs(ws: WebSocket, type: string, serialized: string): void {
   if (ws.readyState !== WebSocket.OPEN) {
     logHub('send_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
     return;
   }
-  ws.send(JSON.stringify({ type, ...((payload as Record<string, unknown>) ?? {}) }));
+  ws.send(serialized);
   logHubVerbose('send_ws_ok', { ws_id: wsId(ws), type });
+}
+
+function sendWs(ws: WebSocket, type: string, payload: unknown): void {
+  sendSerializedWs(
+    ws,
+    type,
+    JSON.stringify({ type, ...((payload as Record<string, unknown>) ?? {}) }),
+  );
 }
 
 function definedBencodexFields(payload: unknown): Record<string, BencodexValue> {
@@ -441,13 +578,55 @@ function encodeGameOutbound(type: GameOutboundType, payload: unknown): Uint8Arra
   }
 }
 
-function sendGameWs(ws: WebSocket, type: GameOutboundType, payload: unknown): void {
+function sendGameWs(ws: WebSocket, type: GameOutboundType, payload: unknown): boolean {
   if (ws.readyState !== WebSocket.OPEN) {
     logHub('send_game_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
-    return;
+    return false;
   }
-  ws.send(encodeGameOutbound(type, payload));
+  const encoded = encodeGameOutbound(type, payload);
+  const trackedBytes = queuedGameBytes.get(ws) ?? 0;
+  const destinationBytes = Math.max(trackedBytes, ws.bufferedAmount);
+  if (
+    destinationBytes + encoded.byteLength > MAX_GAME_OUTBOUND_BYTES_PER_CONNECTION ||
+    totalQueuedGameBytes + encoded.byteLength > MAX_TOTAL_GAME_OUTBOUND_BYTES
+  ) {
+    logHub('send_game_ws_drop_backpressure', {
+      ws_id: wsId(ws),
+      type,
+      message_bytes: encoded.byteLength,
+      destination_bytes: destinationBytes,
+      total_queued_bytes: totalQueuedGameBytes,
+    });
+    return false;
+  }
+
+  queuedGameBytes.set(ws, trackedBytes + encoded.byteLength);
+  totalQueuedGameBytes += encoded.byteLength;
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    const remaining = (queuedGameBytes.get(ws) ?? encoded.byteLength) - encoded.byteLength;
+    if (remaining > 0) {
+      queuedGameBytes.set(ws, remaining);
+    } else {
+      queuedGameBytes.delete(ws);
+    }
+    totalQueuedGameBytes = Math.max(0, totalQueuedGameBytes - encoded.byteLength);
+  };
+  try {
+    ws.send(encoded, (error) => {
+      release();
+      if (error) {
+        logHub('send_game_ws_error', { ws_id: wsId(ws), type, error: error.message });
+      }
+    });
+  } catch (error) {
+    release();
+    throw error;
+  }
   logHubVerbose('send_game_ws_ok', { ws_id: wsId(ws), type });
+  return true;
 }
 
 function sendHubEvent(playerId: string, type: string, payload: unknown): void {
@@ -526,7 +705,7 @@ function rememberCorrespondence(a: string, b: string, now = Date.now()): void {
 function pruneRecentCorrespondents(now: number): void {
   for (const [sessionId, peers] of [...recentCorrespondents]) {
     for (const [peerSessionId, lastRelayedAt] of [...peers]) {
-      if (now - lastRelayedAt > RECENT_CORRESPONDENT_TTL_MS) {
+      if (deadlineReached(lastRelayedAt, RECENT_CORRESPONDENT_TTL_MS, now)) {
         removeCorrespondentEdge(sessionId, peerSessionId);
       }
     }
@@ -542,7 +721,7 @@ function notifyRecentCorrespondents(
   if (!peers) return;
   const now = Date.now();
   for (const [peerSessionId, lastRelayedAt] of [...peers]) {
-    if (now - lastRelayedAt > RECENT_CORRESPONDENT_TTL_MS) {
+    if (deadlineReached(lastRelayedAt, RECENT_CORRESPONDENT_TTL_MS, now)) {
       removeCorrespondentEdge(sessionId, peerSessionId);
       continue;
     }
@@ -560,9 +739,10 @@ function unbindGameConnection(ws: WebSocket): void {
   gameConnections.delete(meta.sessionId);
   logHub('game_connection_removed', {
     ws_id: wsId(ws),
-    session_id: meta.sessionId,
+    player_id: meta.playerId,
   });
   notifyRecentCorrespondents(meta.sessionId, meta.playerId, 'peer_unavailable');
+  markRetainedSessionInactive(meta.playerId);
 }
 
 function replayPendingChallengesToPlayer(playerId: string): void {
@@ -589,12 +769,11 @@ function sendGameEvent(playerId: string, type: GameOutboundType, payload: unknow
   }
   const ws = gameConnections.get(sessionId);
   if (!ws) {
-    logHub('send_game_event_drop_missing_ws', { player_id: playerId, session_id: sessionId, type });
+    logHub('send_game_event_drop_missing_ws', { player_id: playerId, type });
     return;
   }
   logHubVerbose('send_game_event', {
     player_id: playerId,
-    session_id: sessionId,
     ws_id: wsId(ws),
     type,
   });
@@ -603,8 +782,14 @@ function sendGameEvent(playerId: string, type: GameOutboundType, payload: unknow
 
 function broadcastHubUpdate(): void {
   const players = hub.getPlayers();
-  for (const [playerId] of hubConnections) {
-    sendHubEvent(playerId, 'hub_update', { players });
+  const serialized = JSON.stringify({ type: 'hub_update', players });
+  for (const [playerId, ws] of hubConnections) {
+    logHubVerbose('send_hub_event', {
+      player_id: playerId,
+      ws_id: wsId(ws),
+      type: 'hub_update',
+    });
+    sendSerializedWs(ws, 'hub_update', serialized);
   }
 }
 
@@ -617,7 +802,11 @@ function cancelPendingHubLeave(playerId: string): void {
 }
 
 function leaveHub(playerId: string): boolean {
-  if (hub.removePlayer(playerId)) {
+  const removed = retirePlayerArtifacts(playerId, {
+    retireIdentity: false,
+    reason: 'hub_leave',
+  });
+  if (removed) {
     broadcastHubUpdate();
     return true;
   }
@@ -650,6 +839,55 @@ function cancelPlayerChallenges(playerId: string): void {
   }
 }
 
+interface PlayerRetirement {
+  sessionId?: string;
+  retireIdentity: boolean;
+  reason: string;
+  now?: number;
+}
+
+/**
+ * Synchronously retires every registry artifact owned by a player.
+ *
+ * Lobby departure keeps the retained identity available for reconnect. TTL and
+ * capacity eviction additionally remove the identity, alias, and correspondent
+ * graph. Challenge resolution notifications are emitted before references are
+ * discarded so connected counterparts cannot retain stale challenge UI.
+ */
+function retirePlayerArtifacts(playerId: string, retirement: PlayerRetirement): boolean {
+  const sessionId = retirement.sessionId ?? playerToSession.get(playerId);
+  if (retirement.retireIdentity) {
+    if (!sessionId || sessionToPlayer.get(sessionId) !== playerId) {
+      throw new Error(`cannot retire inconsistent retained session for ${playerId}`);
+    }
+    if (retainedSessionHasPresence(sessionId, playerId)) {
+      throw new Error(`cannot evict active retained session for ${playerId}`);
+    }
+  }
+
+  cancelPlayerChallenges(playerId);
+  const removedPlayer = hub.removePlayer(playerId);
+
+  if (!retirement.retireIdentity) {
+    markRetainedSessionInactive(playerId, retirement.now);
+    return removedPlayer;
+  }
+
+  if (!sessionId) {
+    throw new Error(`cannot retire missing retained session for ${playerId}`);
+  }
+  cancelPendingHubLeave(playerId);
+  sessionToPlayer.delete(sessionId);
+  playerToSession.delete(playerId);
+  retentionTimeline.delete(sessionId);
+  knownAliases.delete(sessionId);
+  for (const peerSessionId of [...(recentCorrespondents.get(sessionId)?.keys() ?? [])]) {
+    removeCorrespondentEdge(sessionId, peerSessionId);
+  }
+  logHub('session_evicted', { player_id: playerId, reason: retirement.reason });
+  return removedPlayer;
+}
+
 function applyPlayerBusy(playerId: string, busy: boolean): void {
   const status = busy ? 'busy' : 'waiting';
   // Not in hub yet: busy is held on game meta and applied on join.
@@ -665,25 +903,43 @@ function applyPlayerBusy(playerId: string, busy: boolean): void {
 
 function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join' }>): void {
   const { alias, session_id } = msg;
-  logHub('hub_join', { ws_id: wsId(ws), session_id: session_id ?? null, alias: alias ?? null });
-  if (!session_id) {
-    sendWs(ws, 'error', { error: 'Missing hub session.' });
+  const sessionId = sessionIdFromHub(session_id);
+  if (!sessionId) {
+    sendWs(ws, 'error', { error: 'Invalid hub session.' });
+    return;
+  }
+  if (wsHubMeta.has(ws)) {
+    sendWs(ws, 'error', { error: 'This hub socket has already joined.' });
     return;
   }
 
-  const playerId = ensureSession(session_id);
   const suppliedAlias = alias === undefined ? undefined : normalizeAlias(alias);
   if (alias !== undefined && !suppliedAlias) {
     sendWs(ws, 'error', { error: `Alias must be 1-${MAX_ALIAS_BYTES} UTF-8 bytes.` });
     return;
   }
-  const resolvedAlias = suppliedAlias ?? knownAliases.get(session_id);
+  logHub('hub_join', { ws_id: wsId(ws), alias: suppliedAlias ?? null });
+  const resolvedAlias = suppliedAlias ?? knownAliases.get(sessionId);
   if (!resolvedAlias) {
     sendWs(ws, 'error', { error: 'Missing lobby alias.' });
     return;
   }
 
-  wsHubMeta.set(ws, { playerId, sessionId: session_id });
+  const existingPlayerId = sessionToPlayer.get(sessionId);
+  if (
+    (!existingPlayerId || !hub.players[existingPlayerId]) &&
+    Object.keys(hub.players).length >= MAX_PLAYERS
+  ) {
+    sendWs(ws, 'error', { error: 'The hub player limit has been reached.' });
+    return;
+  }
+
+  const playerId = ensureSession(sessionId);
+  if (!playerId) {
+    sendWs(ws, 'error', { error: 'The retained session limit has been reached.' });
+    return;
+  }
+  wsHubMeta.set(ws, { playerId, sessionId });
   cancelPendingHubLeave(playerId);
   const previous = hubConnections.get(playerId);
   if (previous && previous !== ws) {
@@ -702,13 +958,13 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
   } else {
     hub.players[playerId].alias = resolvedAlias;
   }
-  setKnownAlias(session_id, playerId, resolvedAlias);
+  setKnownAlias(sessionId, playerId, resolvedAlias);
   sendWs(ws, 'joined', { id: playerId, alias: resolvedAlias });
   broadcastHubUpdate();
   replayPendingChallengesToPlayer(playerId);
 
   // If the game channel was already identified, apply busy status
-  const gameWs = gameConnections.get(session_id);
+  const gameWs = gameConnections.get(sessionId);
   if (gameWs) {
     const meta = wsGameMeta.get(gameWs);
     if (meta) meta.playerId = playerId;
@@ -725,6 +981,10 @@ function onHubLeave(ws: WebSocket, _msg: Extract<HubInboundMessage, { type: 'lea
   logHub('hub_leave', { player_id: playerId });
   cancelPendingHubLeave(playerId);
   leaveHub(playerId);
+  if (hubConnections.get(playerId) === ws) {
+    hubConnections.delete(playerId);
+  }
+  wsHubMeta.delete(ws);
 }
 
 function getHubSenderId(ws: WebSocket): string | undefined {
@@ -739,13 +999,16 @@ function validateAmount(raw: string | undefined): string | null {
   return null;
 }
 
-const MIN_TIMEOUT_BLOCKS = 3;
-const MAX_TIMEOUT_BLOCKS = 30;
+const MIN_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.min;
+const MAX_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.max;
 
 function validateTimeout(raw: string | undefined, label: string): string | null {
   if (raw === undefined) return null;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < MIN_TIMEOUT_BLOCKS || n > MAX_TIMEOUT_BLOCKS) {
+  if (!/^[0-9]{1,3}$/.test(raw)) {
+    return `${label} must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.`;
+  }
+  const n = BigInt(raw);
+  if (n < BigInt(MIN_TIMEOUT_BLOCKS) || n > BigInt(MAX_TIMEOUT_BLOCKS)) {
     return `${label} must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.`;
   }
   return null;
@@ -826,22 +1089,6 @@ function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'cha
     sendWs(ws, 'error', { error: unrollTimeoutErr });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
-  }
-
-  const MIN_TIMEOUT_BLOCKS = 3;
-  const MAX_TIMEOUT_BLOCKS = 30;
-  for (const field of ['channel_timeout', 'unroll_timeout'] as const) {
-    const raw = msg[field];
-    if (raw !== undefined) {
-      const val = Number(raw);
-      if (!Number.isInteger(val) || val < MIN_TIMEOUT_BLOCKS || val > MAX_TIMEOUT_BLOCKS) {
-        sendWs(ws, 'error', {
-          error: `Invalid ${field}: must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.`,
-        });
-        sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
-        return;
-      }
-    }
   }
 
   const challenge = hub.createChallenge(
@@ -1024,20 +1271,32 @@ function onChangeAlias(
 }
 
 function onGetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'get_alias' }>): void {
-  const sessionId = msg.session_id;
-  const alias = sessionId ? (knownAliases.get(sessionId) ?? null) : null;
+  const sessionId = sessionIdFromHub(msg.session_id);
+  if (!sessionId) {
+    sendWs(ws, 'error', { error: 'Invalid hub session.' });
+    return;
+  }
+  const alias = knownAliases.get(sessionId) ?? null;
   logHubVerbose('get_alias', {
     ws_id: wsId(ws),
-    session_id: sessionId ?? null,
     found: alias !== null,
   });
   sendWs(ws, 'alias_result', { alias });
 }
 
 function onSetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'set_alias' }>): void {
-  const sessionId = msg.session_id ?? wsHubMeta.get(ws)?.sessionId;
-  if (!sessionId) return;
+  const boundSessionId = wsHubMeta.get(ws)?.sessionId;
+  const sessionId =
+    msg.session_id === undefined ? boundSessionId : sessionIdFromHub(msg.session_id);
+  if (!sessionId) {
+    sendWs(ws, 'error', { error: 'Invalid hub session.' });
+    return;
+  }
   const playerId = sessionToPlayer.get(sessionId);
+  if (!playerId) {
+    sendWs(ws, 'error', { error: 'Unknown hub session.' });
+    return;
+  }
   const alias = normalizeAlias(msg.alias);
   if (!alias) {
     sendWs(ws, 'error', { error: `Alias must be 1-${MAX_ALIAS_BYTES} UTF-8 bytes.` });
@@ -1045,29 +1304,37 @@ function onSetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'set_
   }
   logHub('set_alias', {
     ws_id: wsId(ws),
-    session_id: sessionId,
-    player_id: playerId ?? null,
+    player_id: playerId,
     alias,
   });
   setKnownAlias(sessionId, playerId, alias);
-  if (playerId && hub.players[playerId]) broadcastHubUpdate();
+  if (hub.players[playerId]) broadcastHubUpdate();
   sendWs(ws, 'alias_result', { alias });
 }
 
 // --- Game channel handlers ---
 
 function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'identify' }>): void {
+  if (wsGameMeta.has(ws)) {
+    logHub('identify_drop_already_identified', { ws_id: wsId(ws) });
+    ws.close(4003, 'already_identified');
+    return;
+  }
   const playerId = ensureSession(msg.session_id);
+  if (!playerId) {
+    logHub('identify_rejected_session_limit', { ws_id: wsId(ws) });
+    ws.close(4009, 'session_limit');
+    return;
+  }
   logHub('identify', {
     ws_id: wsId(ws),
-    session_id: msg.session_id,
     player_id: playerId,
   });
   const previousGameConn = gameConnections.get(msg.session_id);
   if (previousGameConn && previousGameConn !== ws) {
     logHub('game_connection_replaced', {
       ws_id: wsId(previousGameConn),
-      session_id: msg.session_id,
+      player_id: playerId,
     });
     try {
       previousGameConn.close(4001, 'replaced_by_new_connection');
@@ -1090,7 +1357,6 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   notifyRecentCorrespondents(msg.session_id, playerId, 'peer_available');
   logHub('identify_registered', {
     ws_id: wsId(ws),
-    session_id: msg.session_id,
     player_id: playerId,
   });
 }
@@ -1119,11 +1385,15 @@ function onGameRelay(ws: WebSocket, targetId: string, payload: Uint8Array): void
   }
 
   const fromAlias = aliasForPlayer(meta.playerId);
-  sendGameWs(targetWs, 'relay', {
+  const delivered = sendGameWs(targetWs, 'relay', {
     from: playerIdToWire(meta.playerId),
     alias: fromAlias,
     payload,
   });
+  if (!delivered) {
+    sendGameWs(ws, 'delivery_failure', { to: playerIdToWire(targetId) });
+    return;
+  }
   logHubVerbose('game_relay', {
     from: meta.playerId,
     to: targetId,
@@ -1400,8 +1670,13 @@ function sweepHubConnections(now: number): boolean {
     }
     hubConnections.delete(playerId);
     cancelPendingHubLeave(playerId);
-    cancelPlayerChallenges(playerId);
-    if (hub.removePlayer(playerId)) {
+    if (
+      retirePlayerArtifacts(playerId, {
+        retireIdentity: false,
+        reason: 'hub_idle_timeout',
+        now,
+      })
+    ) {
       changed = true;
     }
   }
@@ -1421,7 +1696,6 @@ function sweepGameConnections(now: number): void {
     const meta = ws ? wsGameMeta.get(ws) : undefined;
     const playerId = meta?.playerId;
     logHub('game_sweep_expired', {
-      session_id: sessionId,
       player_id: playerId ?? null,
       ws_id: ws ? wsId(ws) : null,
     });
@@ -1436,11 +1710,21 @@ function sweepGameConnections(now: number): void {
   }
 }
 
+function pruneConnectionAttemptBudgets(now: number): void {
+  for (const [ip, budget] of connectionAttemptsByIp) {
+    if (now - budget.windowStartedAt >= RATE_WINDOW_MS) {
+      connectionAttemptsByIp.delete(ip);
+    }
+  }
+}
+
 const sweepTimer = setInterval(() => {
   const now = Date.now();
   const hubChanged = sweepHubConnections(now);
   sweepGameConnections(now);
+  pruneConnectionAttemptBudgets(now);
   pruneRecentCorrespondents(now);
+  pruneRetainedSessions();
   if (hubChanged) {
     broadcastHubUpdate();
   }
@@ -1452,6 +1736,7 @@ const sweepTimer = setInterval(() => {
     pending_hub_leaves: pendingHubLeaves.size,
     session_to_player: sessionToPlayer.size,
     player_to_session: playerToSession.size,
+    session_last_used_at: retentionTimeline.size,
     recent_correspondent_sessions: recentCorrespondents.size,
   });
 }, 15_000);

@@ -8,100 +8,181 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
-use crate::channel_state::types::{ReadableMove, StateUpdateProgram, ValidationInfo};
+use crate::channel_state::types::{ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, PublicKey,
-    Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
+    Puzzle, PuzzleHash, Spend, Timeout,
 };
 use crate::referee::my_turn::MyTurnReferee;
 use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
-    canonical_atom_from_usize, curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails,
-    GameMoveStateInfo, GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution,
-    ParsedRefereeSolution, RefereeFixedContext, RefereePuzzleArgs, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult, ValidationInfoHash,
+    curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
+    GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution, ParsedRefereeSolution,
+    RefereeFixedContext, RefereePuzzleArgs, TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    ValidationInfoHash,
 };
 
-pub(crate) fn game_move_details_for_state(
+/// Build move details from a validator transition, using the same next-infohash
+/// formula as `referee.clsp`: nil if the next validator hash is nil, otherwise
+/// `sha256(next_validator_hash, shatree(new_state))`.
+pub(crate) fn game_move_details_from_transition(
     allocator: &mut AllocEncoder,
-    basic: GameMoveStateInfo,
-    terminal: bool,
-    validation_program: StateUpdateProgram,
-    pre_move_state: Rc<Program>,
+    mut basic: GameMoveStateInfo,
+    next_validator_hash: Option<Hash>,
+    new_state: &Program,
 ) -> GameMoveDetails {
-    if terminal {
-        return GameMoveDetails {
-            basic,
-            validation_info_hash: ValidationInfoHash::None,
-            validation_program_hash: None,
-        };
+    if next_validator_hash.is_none() {
+        basic.max_move_size = 0;
     }
-
-    let validation_info_hash =
-        ValidationInfo::new_state_update(allocator, validation_program.clone(), pre_move_state)
-            .hash()
-            .clone();
-    let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
     GameMoveDetails {
         basic,
-        validation_info_hash: ValidationInfoHash::Hash(validation_info_hash),
-        validation_program_hash: Some(validation_program_hash),
+        validation_info_hash: ValidationInfoHash::from_next_validator(
+            allocator,
+            next_validator_hash.as_ref(),
+            new_state,
+        ),
+        validation_program_hash: next_validator_hash,
+    }
+}
+
+pub(crate) fn nil_move_details(mut basic: GameMoveStateInfo) -> GameMoveDetails {
+    basic.max_move_size = 0;
+    GameMoveDetails {
+        basic,
+        validation_info_hash: ValidationInfoHash::None,
+        validation_program_hash: None,
     }
 }
 
 #[cfg(test)]
 mod peer_move_reconstruction_tests {
     use super::*;
+    use crate::channel_state::types::StateUpdateProgram;
 
     fn basic() -> GameMoveStateInfo {
         GameMoveStateInfo {
             move_made: b"move".to_vec(),
             mover_share: Amount::new(7),
             max_move_size: 12,
-            max_move_size_raw: vec![12],
         }
     }
 
     #[test]
-    fn non_terminal_peer_move_reconstructs_local_commitments() {
+    fn continuing_transition_hashes_next_validator_and_new_state() {
         let mut allocator = AllocEncoder::new();
-        let state = Rc::new(Program::from_bytes(&[0x80]));
-        let validation_program =
-            StateUpdateProgram::new(&mut allocator, "peer move test", state.clone());
+        let new_state = Rc::new(Program::nil());
+        let next_validator = StateUpdateProgram::new(
+            &mut allocator,
+            "peer move test",
+            Rc::new(Program::from_bytes(&[0x01]).expect("quoted atom")),
+        );
+        let next_hash = next_validator.hash().clone();
 
-        let details = game_move_details_for_state(
+        let details = game_move_details_from_transition(
             &mut allocator,
             basic(),
-            false,
-            validation_program.clone(),
-            state.clone(),
+            Some(next_hash.clone()),
+            &new_state,
         );
-        let expected_info =
-            ValidationInfo::new_state_update(&mut allocator, validation_program.clone(), state);
+        let expected =
+            ValidationInfoHash::from_next_validator(&mut allocator, Some(&next_hash), &new_state);
 
-        assert_eq!(
-            details.validation_info_hash,
-            ValidationInfoHash::Hash(expected_info.hash().clone())
-        );
-        assert_eq!(
-            details.validation_program_hash,
-            Some(validation_program.sha256tree(&mut allocator).hash().clone())
-        );
+        assert_eq!(details.validation_info_hash, expected);
+        assert_eq!(details.validation_program_hash, Some(next_hash));
+        assert!(details.validation_info_hash.is_some());
     }
 
     #[test]
-    fn terminal_peer_move_reconstructs_nil_commitments() {
+    fn nil_next_validator_reconstructs_nil_infohash() {
         let mut allocator = AllocEncoder::new();
-        let state = Rc::new(Program::from_bytes(&[0x80]));
-        let validation_program =
-            StateUpdateProgram::new(&mut allocator, "peer move test", state.clone());
+        let new_state = Rc::new(Program::nil());
 
-        let details =
-            game_move_details_for_state(&mut allocator, basic(), true, validation_program, state);
+        let details = game_move_details_from_transition(&mut allocator, basic(), None, &new_state);
 
         assert_eq!(details.validation_info_hash, ValidationInfoHash::None);
         assert_eq!(details.validation_program_hash, None);
+        assert_eq!(details.basic.max_move_size, 0);
+    }
+}
+
+#[cfg(test)]
+mod apply_prepared_move_tests {
+    use super::*;
+
+    use crate::channel_state::game_handler::GameHandler;
+    use crate::channel_state::types::ValidationProgramRegistry;
+    use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+    use crate::common::load_clvm::read_binary_puzzle;
+    use crate::common::types::{GameID, PrivateKey, ProgramRef, Sha256tree};
+
+    fn identity(allocator: &mut AllocEncoder, byte: u8) -> ChiaIdentity {
+        let private_key = PrivateKey::from_bytes(&[byte; 32]).expect("private key");
+        ChiaIdentity::new(allocator, private_key).expect("identity")
+    }
+
+    #[test]
+    fn current_validator_runs_for_terminal_handler_result() {
+        let mut allocator = AllocEncoder::new();
+        let my_identity = identity(&mut allocator, 1);
+        let their_identity = identity(&mut allocator, 2);
+        let referee_puzzle =
+            read_binary_puzzle(&mut allocator, "clsp/referee/onchain/referee.clvm.bin")
+                .expect("referee puzzle");
+        let referee_puzzle_hash = referee_puzzle.sha256tree(&mut allocator);
+        let nil = Rc::new(Program::nil());
+        let rejecting_validator = Rc::new(
+            Program::from_bytes(&[0xff, 0x08, 0x80]).expect("serialized rejecting validator"),
+        );
+        let validation_programs =
+            ValidationProgramRegistry::new(&mut allocator, &[rejecting_validator])
+                .expect("validator registry");
+        let start = Rc::new(GameStartInfo {
+            amount: Amount::new(30),
+            game_handler: GameHandler::MyTurnHandler(ProgramRef::new(nil.clone())),
+            player_a_contribution: Amount::new(10),
+            player_b_contribution: Amount::new(20),
+            my_contribution_this_game: Amount::new(10),
+            their_contribution_this_game: Amount::new(20),
+            validation_programs,
+            initial_state: ProgramRef::new(nil.clone()),
+            initial_move: vec![],
+            initial_max_move_size: 32,
+            initial_mover_share: Amount::default(),
+            game_id: GameID(1),
+            timeout: Timeout::new(15),
+        });
+        let their_reward_signature =
+            sign_reward_payout(&their_identity.private_key, &my_identity.puzzle_hash);
+        let (referee, _) = MyTurnReferee::new(
+            &mut allocator,
+            referee_puzzle,
+            referee_puzzle_hash,
+            &start,
+            my_identity.clone(),
+            &their_identity.public_key,
+            &their_identity.puzzle_hash,
+            &their_reward_signature,
+            &my_identity.puzzle_hash,
+            1,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .expect("my-turn referee");
+
+        let prepared = PreparedMove {
+            move_bytes: vec![0x42],
+            mover_share: Amount::default(),
+            waiting_handler: None,
+            message_parser: None,
+        };
+
+        assert!(
+            referee
+                .apply_prepared_move(&mut allocator, prepared, 1)
+                .is_err(),
+            "the registry-selected current validator must run before a terminal transition"
+        );
     }
 }
 
@@ -128,7 +209,6 @@ pub(crate) fn referee_initial_setup(
     let initial_move = GameMoveStateInfo {
         mover_share: game_start_info.initial_mover_share.clone(),
         move_made: game_start_info.initial_move.clone(),
-        max_move_size_raw: canonical_atom_from_usize(game_start_info.initial_max_move_size),
         max_move_size: u32::try_from(game_start_info.initial_max_move_size)
             .map_err(|_| Error::StrErr("initial max move size exceeds u32".to_string()))?,
     };
@@ -137,6 +217,7 @@ pub(crate) fn referee_initial_setup(
     let fixed = Rc::new(RefereeFixedContext {
         referee_coin_puzzle,
         referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
+        validation_programs: game_start_info.validation_programs.clone(),
         their_referee_pubkey: their_pubkey.clone(),
         their_reward_payout_signature: their_reward_payout_signature.clone(),
         my_reward_payout_signature: sign_reward_payout(
@@ -152,7 +233,7 @@ pub(crate) fn referee_initial_setup(
         agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
     });
 
-    let ip = game_start_info.initial_validation_program.clone();
+    let ip = game_start_info.initial_validation_program();
     let vi_hash =
         ValidationInfo::new_state_update(allocator, ip.clone(), game_start_info.initial_state.p());
     let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
@@ -402,8 +483,8 @@ impl Referee {
     pub fn peer_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
-        basic: &GameMoveStateInfo,
-        terminal: bool,
+        move_made: &[u8],
+        mover_share: Amount,
         state_number: usize,
     ) -> Result<(Option<Rc<Referee>>, TheirTurnMoveResult), Error> {
         let (new_self, result) = match self {
@@ -413,7 +494,7 @@ impl Referee {
                 ));
             }
             Referee::TheirTurn(t) => {
-                t.peer_move_off_chain(allocator, basic, terminal, state_number)?
+                t.peer_move_off_chain(allocator, move_made, mover_share, state_number)?
             }
         };
 

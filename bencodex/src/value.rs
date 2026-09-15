@@ -1,9 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::Error;
-
-const MAX_PARSE_DEPTH: usize = 512;
-const MAX_PARSE_VALUES: usize = 100_000;
+use crate::{parse_integer, parse_length, Error, Limits};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -23,10 +20,15 @@ pub fn encode(value: &Value) -> Result<Vec<u8>, Error> {
 }
 
 pub fn parse(input: &[u8]) -> Result<Value, Error> {
+    parse_with_limits(input, Limits::default())
+}
+
+pub fn parse_with_limits(input: &[u8], limits: Limits) -> Result<Value, Error> {
     let mut parser = Parser {
         input,
         offset: 0,
         values: 0,
+        limits,
     };
     let value = parser.value(0)?;
     if parser.offset != input.len() {
@@ -102,6 +104,7 @@ struct Parser<'a> {
     input: &'a [u8],
     offset: usize,
     values: usize,
+    limits: Limits,
 }
 
 impl Parser<'_> {
@@ -116,13 +119,13 @@ impl Parser<'_> {
     }
 
     fn value(&mut self, depth: usize) -> Result<Value, Error> {
-        if depth > MAX_PARSE_DEPTH {
+        if depth > self.limits.max_depth {
             return Err(Error::InvalidData(
                 "maximum value nesting depth exceeded".to_string(),
             ));
         }
         self.values += 1;
-        if self.values > MAX_PARSE_VALUES {
+        if self.values > self.limits.max_values {
             return Err(Error::InvalidData(
                 "maximum value count exceeded".to_string(),
             ));
@@ -154,17 +157,7 @@ impl Parser<'_> {
         self.offset += 1;
         let text = std::str::from_utf8(digits)
             .map_err(|_| Error::InvalidData("non-utf8 integer".to_string()))?;
-        if text.is_empty()
-            || text == "-0"
-            || text.starts_with("-0")
-            || (text.starts_with('0') && text.len() > 1)
-            || (text.starts_with('-') && text.len() == 1)
-        {
-            return Err(Error::InvalidData("invalid integer encoding".to_string()));
-        }
-        text.parse::<i128>()
-            .map(Value::Integer)
-            .map_err(|_| Error::InvalidData(format!("cannot parse integer: {text}")))
+        parse_integer(text).map(Value::Integer)
     }
 
     fn sized(&mut self) -> Result<Vec<u8>, Error> {
@@ -177,23 +170,8 @@ impl Parser<'_> {
 
     fn sized_after_first(&mut self, _first: u8) -> Result<Vec<u8>, Error> {
         let start = self.offset - 1;
-        while self.peek()? != b':' {
-            if !self.take()?.is_ascii_digit() {
-                return Err(Error::InvalidData("invalid string length".to_string()));
-            }
-        }
-        let end = self.offset;
-        self.offset += 1;
-        let digits = &self.input[start..end];
-        if digits.len() > 1 && digits[0] == b'0' {
-            return Err(Error::InvalidData(
-                "non-canonical string length".to_string(),
-            ));
-        }
-        let length = std::str::from_utf8(digits)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .ok_or_else(|| Error::InvalidData("invalid string length".to_string()))?;
+        let (length, prefix_length) = parse_length(&self.input[start..])?;
+        self.offset = start + prefix_length;
         let end = self.offset.checked_add(length).ok_or(Error::Eof)?;
         let bytes = self.input.get(self.offset..end).ok_or(Error::Eof)?.to_vec();
         self.offset = end;
@@ -263,13 +241,14 @@ mod tests {
 
     #[test]
     fn parse_rejects_excessive_depth_and_value_count() {
-        let mut nested = vec![b'l'; MAX_PARSE_DEPTH + 2];
-        nested.extend(std::iter::repeat_n(b'e', MAX_PARSE_DEPTH + 2));
+        let limits = Limits::default();
+        let mut nested = vec![b'l'; limits.max_depth + 2];
+        nested.extend(std::iter::repeat_n(b'e', limits.max_depth + 2));
         assert!(parse(&nested).is_err());
 
-        let mut wide = Vec::with_capacity(MAX_PARSE_VALUES * 2 + 2);
+        let mut wide = Vec::with_capacity(limits.max_values * 2 + 2);
         wide.push(b'l');
-        for _ in 0..=MAX_PARSE_VALUES {
+        for _ in 0..=limits.max_values {
             wide.extend_from_slice(b"0:");
         }
         wide.push(b'e');

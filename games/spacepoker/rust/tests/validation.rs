@@ -449,6 +449,16 @@ fn run_step_and_check(
     match spec.expected {
         MoveCode::ClvmException => {
             assert!(result.is_err(), "expected CLVM exception but got Ok");
+            assert_referee_slash_rejected(
+                allocator,
+                &info.puzzle,
+                &spec.move_bytes,
+                last.next_max_move_size,
+                spec.mover_share,
+                last.state,
+                spec.evidence.as_deref(),
+                NodePtr::NIL,
+            );
             None
         }
         expected => {
@@ -1221,7 +1231,7 @@ fn test_spacepoker_end_valid_move_bad_evidence_denies_slash() {
             &move_bytes,
             AMOUNT / 2,
             Some(&[0x0F]),
-            MoveCode::MakeMove,
+            MoveCode::ClvmException,
             false,
             "end",
         ),
@@ -1247,7 +1257,7 @@ fn test_spacepoker_end_valid_move_out_of_range_evidence_denies_slash() {
             &move_bytes,
             AMOUNT / 2,
             Some(&[0x8F]),
-            MoveCode::MakeMove,
+            MoveCode::ClvmException,
             false,
             "end",
         ),

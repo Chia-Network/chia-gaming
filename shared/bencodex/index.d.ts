@@ -13,8 +13,16 @@ export class BencodexError extends Error {
   constructor(message: string);
 }
 
+export interface BencodexDecodeLimits {
+  readonly maxDepth: number;
+  readonly maxValues: number;
+}
+
 export function encode(value: BencodexValue): Uint8Array;
-export function decode(bytes: Uint8Array | ArrayBuffer): BencodexValue;
+export function decode(
+  bytes: Uint8Array | ArrayBuffer,
+  limits?: BencodexDecodeLimits,
+): BencodexValue;
 export function isDictionary(value: BencodexValue): value is Map<BencodexKey, BencodexValue>;
 export function getText(map: Map<BencodexKey, BencodexValue>, key: string): string | undefined;
 export function getBoolean(map: Map<BencodexKey, BencodexValue>, key: string): boolean | undefined;
