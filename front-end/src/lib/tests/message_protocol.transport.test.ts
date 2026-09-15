@@ -154,6 +154,34 @@ describe('in-order delivery', () => {
     expect(delivered).toBe(101);
   });
 
+  it('keeps the active event budget when work is flushed explicitly', async () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    let delivered = 0;
+    blob.getObservable().subscribe((event) => {
+      if (event.type !== 'notification' || !event.data.ActionFailed) return;
+      delivered += 1;
+      if (delivered < 101) {
+        blob.processResult({
+          ...wasmResult(),
+          disposition: { kind: 'active' },
+          events: [{ Notification: { ActionFailed: { reason: String(delivered) } } }],
+        });
+      }
+    });
+
+    blob.processResult({
+      ...wasmResult(),
+      disposition: { kind: 'active' },
+      events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
+    });
+    blob.flushDeferredWork();
+    expect(delivered).toBe(100);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(delivered).toBe(101);
+  });
+
   it('stops active delivery when an observer retires the controller', async () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);

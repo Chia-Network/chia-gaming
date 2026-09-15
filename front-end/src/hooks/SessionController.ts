@@ -1117,14 +1117,14 @@ export class SessionController implements PollingGameSession {
    * `processResult()` calls append to this FIFO rather than schedule a second
    * task. Terminal results retain their separate queue-clearing flush path.
    */
-  private drainActiveEventsToQuiescence(): void {
+  private drainActiveEventsToQuiescence(eventBudget: number = ACTIVE_DRAIN_EVENT_BUDGET): void {
     try {
       let drained = 0;
       while (
         this.eventQueue.length > 0 &&
         !this.protocolStopped &&
         !this.retired &&
-        drained < ACTIVE_DRAIN_EVENT_BUDGET
+        drained < eventBudget
       ) {
         this.drainOneEvent();
         drained += 1;
@@ -1156,9 +1156,15 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
     }
-    this.drainScheduled = false;
-    while (this.eventQueue.length > 0) {
-      this.drainOneEvent();
+    if (this.protocolStopped || this.retired) {
+      this.drainScheduled = false;
+      while (this.eventQueue.length > 0) {
+        this.drainOneEvent();
+      }
+    } else {
+      this.drainActiveEventsToQuiescence(
+        Math.max(ACTIVE_DRAIN_EVENT_BUDGET, this.eventQueue.length),
+      );
     }
 
     if (this.durabilityFlushTimer) {
