@@ -381,6 +381,8 @@ pub(in super::super) fn run_script(
                         ()
                     }
                     SimScriptAction::WaitForChannel(_) => {}
+                    SimScriptAction::WaitForProposal(_, _) => {}
+                    SimScriptAction::WaitForMoveApplied(_, _) => {}
                     SimScriptAction::CorruptStateNumber(who, new_sn) => {
                         harness.corrupt_state_number(*who, *new_sn)?;
                         ()
@@ -427,7 +429,7 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                        harness.mutate_last_proposal(*who, |wire| {
                             wire.members[0].game_id = GameID(wire.members[0].game_id.0 ^ 1);
                             Ok(())
                         })?;
@@ -455,12 +457,13 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
-                            wire.start.parameters = if package_key == "calpoker" {
-                                ProposalParameters::Integer(1)
-                            } else {
-                                ProposalParameters::Null
-                            };
+                        let invalid_parameters = if package_key == "calpoker" {
+                            ProposalParameters::Integer(1)
+                        } else {
+                            ProposalParameters::Null
+                        };
+                        harness.mutate_last_proposal(*who, move |wire| {
+                            wire.start.parameters = invalid_parameters;
                             Ok(())
                         })?;
                         ()
@@ -485,7 +488,7 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                        harness.mutate_last_proposal(*who, |wire| {
                             wire.members[0].player_a_contribution =
                                 wire.members[0].player_a_contribution.clone() + Amount::new(1);
                             Ok(())
@@ -512,7 +515,7 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                        harness.mutate_last_proposal(*who, |wire| {
                             wire.members[0].initial_validation_info_hash =
                                 Hash::from_bytes([0x5a; 32]);
                             Ok(())
@@ -541,7 +544,7 @@ pub(in super::super) fn run_script(
                                 parameters,
                             }],
                         )?;
-                        harness.mutate_last_proposal(allocator, *who, |wire| {
+                        harness.mutate_last_proposal(*who, |wire| {
                             wire.start.timeout = Timeout::new(0);
                             Ok(())
                         })?;

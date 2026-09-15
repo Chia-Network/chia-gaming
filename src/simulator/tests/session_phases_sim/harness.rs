@@ -5,6 +5,9 @@ use super::*;
 
 const MAX_QUIESCENCE_ROUNDS: usize = 8;
 
+type ProposalMutation =
+    Box<dyn FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>>;
+
 #[derive(Default, Debug)]
 pub(super) struct DrainProgress {
     events: usize,
@@ -44,6 +47,7 @@ pub(super) struct SimulationHarness {
     nerf_transactions_for: u8,
     nerf_messages_for: u8,
     tamper_next_batch_signature: [bool; 2],
+    pending_proposal_mutations: [Option<ProposalMutation>; 2],
     nerfed_tx_backlog: Vec<SpendBundle>,
     timing_enabled: bool,
     step_started: std::time::Instant,
@@ -71,6 +75,7 @@ impl SimulationHarness {
             nerf_transactions_for: 0,
             nerf_messages_for: 0,
             tamper_next_batch_signature: [false, false],
+            pending_proposal_mutations: [None, None],
             nerfed_tx_backlog: Vec::new(),
             timing_enabled: std::env::var("SIM_TIMING").is_ok(),
             step_started: std::time::Instant::now(),
@@ -152,6 +157,30 @@ impl SimulationHarness {
                 }
             }
             ActionReadiness::ChannelReady { player } => self.local_uis[player].channel_created,
+            ActionReadiness::ProposalExists { player, game_id } => self.cradles[player]
+                .proposal_contributions_for_testing()
+                .is_ok_and(|proposals| proposals.iter().any(|(id, _, _)| id == &game_id)),
+            ActionReadiness::ProposalKnown { player, game_id } => {
+                self.cradles[player]
+                    .proposal_contributions_for_testing()
+                    .is_ok_and(|proposals| proposals.iter().any(|(id, _, _)| id == &game_id))
+                    || self.local_uis[player].game_accepted_ids.contains(&game_id)
+                    || self.local_uis[player]
+                        .accepted_proposal_ids
+                        .contains(&game_id)
+            }
+            ActionReadiness::MoveApplied { player, game_id } => self.local_uis[player]
+                .notifications
+                .iter()
+                .any(|notification| {
+                    matches!(
+                        notification,
+                        GameNotification::LocalActionApplied {
+                            id,
+                            action: LocalActionKind::MakeMove,
+                        } if id == &game_id
+                    )
+                }),
             ActionReadiness::NerfedTransactionAvailable => !self.nerfed_tx_backlog.is_empty(),
             ActionReadiness::AfterGame { game_id } => self
                 .local_uis
@@ -353,7 +382,9 @@ impl SimulationHarness {
         proposals: &[GameProposal],
     ) -> Result<(), Error> {
         let ids = self.cradles[player].propose_games(allocator, proposals)?;
-        self.local_uis[player].proposed_game_ids.extend(ids);
+        self.local_uis[player]
+            .proposed_game_ids
+            .extend(ids.iter().copied());
         Ok(())
     }
 
@@ -676,38 +707,16 @@ impl SimulationHarness {
 
     pub(super) fn mutate_last_proposal(
         &mut self,
-        allocator: &mut AllocEncoder,
         player: usize,
-        mutation: impl FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>,
+        mutation: impl FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>
+            + 'static,
     ) -> Result<(), Error> {
-        self.cradles[player].flush_pending(allocator)?;
-        let mut mutation = Some(mutation);
-        self.cradles[player].replace_last_message(|message| {
-            let PeerMessage::Batch {
-                actions,
-                signatures,
-            } = message
-            else {
-                return Err(Error::StrErr(format!(
-                    "proposal sabotage expected Batch, got {message:?}"
-                )));
-            };
-            let mut actions = actions.clone();
-            let proposal = actions.iter_mut().find_map(|action| match action {
-                BatchAction::ProposeGroup(wire) => Some(wire),
-                _ => None,
-            });
-            let Some(proposal) = proposal else {
-                return Err(Error::StrErr(
-                    "proposal sabotage found no ProposeGroup".to_string(),
-                ));
-            };
-            mutation.take().expect("mutation called once")(proposal)?;
-            Ok(PeerMessage::Batch {
-                actions,
-                signatures: signatures.clone(),
-            })
-        })
+        game_assert!(
+            self.pending_proposal_mutations[player].is_none(),
+            "proposal mutation already pending for player {player}"
+        );
+        self.pending_proposal_mutations[player] = Some(Box::new(mutation));
+        Ok(())
     }
 
     pub(super) fn drain_to_quiescence(
@@ -807,25 +816,39 @@ impl SimulationHarness {
                         {
                             continue;
                         }
-                        let delivered_msg = if self.tamper_next_batch_signature[player_index] {
-                            let peer_message =
+                        let should_decode = self.pending_proposal_mutations[player_index].is_some()
+                            || self.tamper_next_batch_signature[player_index];
+                        let delivered_msg = if should_decode {
+                            let mut peer_message =
                                 crate::session_phases::peer_wire::decode_peer_message(msg)?;
                             if let PeerMessage::Batch {
                                 actions,
-                                mut signatures,
-                            } = peer_message
+                                signatures,
+                            } = &mut peer_message
                             {
-                                signatures.channel_half_sig = Default::default();
-                                self.tamper_next_batch_signature[player_index] = false;
-                                crate::session_phases::peer_wire::encode_peer_message(
-                                    &PeerMessage::Batch {
-                                        actions,
-                                        signatures,
-                                    },
-                                )?
-                            } else {
-                                msg.clone()
+                                if self.pending_proposal_mutations[player_index].is_some()
+                                    && actions.iter().any(|action| {
+                                        matches!(action, BatchAction::ProposeGroup(_))
+                                    })
+                                {
+                                    let mutation = self.pending_proposal_mutations[player_index]
+                                        .take()
+                                        .expect("proposal mutation checked as pending");
+                                    let proposal = actions
+                                        .iter_mut()
+                                        .find_map(|action| match action {
+                                            BatchAction::ProposeGroup(wire) => Some(wire),
+                                            _ => None,
+                                        })
+                                        .expect("proposal action checked as present");
+                                    mutation(proposal)?;
+                                }
+                                if self.tamper_next_batch_signature[player_index] {
+                                    signatures.channel_half_sig = Default::default();
+                                    self.tamper_next_batch_signature[player_index] = false;
+                                }
                             }
+                            crate::session_phases::peer_wire::encode_peer_message(&peer_message)?
                         } else {
                             msg.clone()
                         };

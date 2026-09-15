@@ -425,6 +425,7 @@ mod sim_tests {
                         true,
                     ),
                     SimScriptAction::WaitBlocks(1, 0),
+                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
                 ];
                 let move_count = moves.len();
                 let outcome = run_krunk_container_with_action_list_with_success_predicate(

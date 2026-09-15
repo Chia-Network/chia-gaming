@@ -5015,6 +5015,68 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
 
+    res.push(("test_genesis_unroll_is_preempted_by_state_one", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::WaitForChannel(0),
+            SimScriptAction::ForceUnroll(0),
+            SimScriptAction::WaitBlocks(120, 0),
+        ];
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        assert!(
+            outcome.local_uis[1]
+                .notifications
+                .iter()
+                .any(|notification| {
+                    matches!(
+                        notification,
+                        GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                            state: ChannelStatus::Unrolling,
+                            unrolling_state_number: Some(0),
+                            preempting_state_number: Some(1),
+                            ..
+                        })
+                    )
+                }),
+            "receiver should preempt the initiator's state 0 with state 1: {:?}",
+            outcome.local_uis[1].notifications,
+        );
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i]
+                    .notifications
+                    .iter()
+                    .any(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                                state: ChannelStatus::ResolvedUnrolled,
+                                ..
+                            })
+                        )
+                    }),
+                "player {i} should resolve the preempted genesis unroll"
+            );
+            assert!(
+                !outcome.local_uis[i]
+                    .notifications
+                    .iter()
+                    .any(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                                state: ChannelStatus::Failed,
+                                ..
+                            })
+                        )
+                    }),
+                "player {i} should not fail the channel"
+            );
+        }
+    }));
+
     res.push((
         "test_post_handshake_bob_nerfed_alice_unrolls",
         &|| {
@@ -5819,6 +5881,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // on both sides.
             let moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::WaitForProposal(1, GameID(1)),
                 SimScriptAction::CleanShutdown(1),
             ];
 

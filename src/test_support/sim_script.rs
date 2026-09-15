@@ -177,6 +177,9 @@ mod sim_tests {
         GameCanMove { player: usize, game_id: GameID },
         AcceptProposal { player: usize, game_id: GameID },
         ChannelReady { player: usize },
+        ProposalExists { player: usize, game_id: GameID },
+        ProposalKnown { player: usize, game_id: GameID },
+        MoveApplied { player: usize, game_id: GameID },
         NerfedTransactionAvailable,
         AfterGame { game_id: GameID },
     }
@@ -244,6 +247,10 @@ mod sim_tests {
         CleanShutdown(usize),
         /// Wait until a player has observed channel creation.
         WaitForChannel(usize),
+        /// Wait until a player has stored a proposal.
+        WaitForProposal(usize, GameID),
+        /// Wait until a player's queued move has actually applied.
+        WaitForMoveApplied(usize, GameID),
         /// Corrupt a player's state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
@@ -340,6 +347,12 @@ mod sim_tests {
                 SimScriptAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
                 SimScriptAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
                 SimScriptAction::WaitForChannel(p) => write!(formatter, "WaitForChannel({p})"),
+                SimScriptAction::WaitForProposal(p, g) => {
+                    write!(formatter, "WaitForProposal({p},{g:?})")
+                }
+                SimScriptAction::WaitForMoveApplied(p, g) => {
+                    write!(formatter, "WaitForMoveApplied({p},{g:?})")
+                }
                 SimScriptAction::CorruptStateNumber(p, sn) => {
                     write!(formatter, "CorruptStateNumber({p},{sn})")
                 }
@@ -430,6 +443,22 @@ mod sim_tests {
                     post_action_drain: PostActionDrain::None,
                     expects_on_chain_transition: false,
                 },
+                Self::WaitForProposal(player, game_id) => ActionSchedule {
+                    readiness: ActionReadiness::ProposalExists {
+                        player: *player,
+                        game_id: *game_id,
+                    },
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
+                Self::WaitForMoveApplied(player, game_id) => ActionSchedule {
+                    readiness: ActionReadiness::MoveApplied {
+                        player: *player,
+                        game_id: *game_id,
+                    },
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
                 Self::GoOnChain(_) => ActionSchedule {
                     readiness: ActionReadiness::Immediate,
                     post_action_drain: PostActionDrain::OnChain,
@@ -438,7 +467,6 @@ mod sim_tests {
                 Self::Cheat(_, _, _)
                 | Self::AcceptSettlement(_, _)
                 | Self::CleanShutdown(_)
-                | Self::CancelProposal(_, _)
                 | Self::InjectRawMessage(_, _)
                 | Self::SelfAcceptProposal(_, _)
                 | Self::WrongParityProposal(_)
@@ -447,6 +475,14 @@ mod sim_tests {
                 | Self::InvalidProposalValidationInfoHash(_)
                 | Self::InvalidProposalTimeout(_) => ActionSchedule {
                     readiness: ActionReadiness::Immediate,
+                    post_action_drain: PostActionDrain::OnChain,
+                    expects_on_chain_transition: false,
+                },
+                Self::CancelProposal(player, game_id) => ActionSchedule {
+                    readiness: ActionReadiness::ProposalKnown {
+                        player: *player,
+                        game_id: *game_id,
+                    },
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
                 },
@@ -669,6 +705,22 @@ mod sim_tests {
                 PostActionDrain::None,
                 false,
             );
+            let proposal = schedule(
+                ActionReadiness::ProposalExists {
+                    player: 1,
+                    game_id: gid,
+                },
+                PostActionDrain::None,
+                false,
+            );
+            let move_applied = schedule(
+                ActionReadiness::MoveApplied {
+                    player: 1,
+                    game_id: gid,
+                },
+                PostActionDrain::None,
+                false,
+            );
             let nerfed_transaction = schedule(
                 ActionReadiness::NerfedTransactionAvailable,
                 PostActionDrain::None,
@@ -753,6 +805,8 @@ mod sim_tests {
                 (SimScriptAction::AcceptSettlement(1, gid), immediate_drain),
                 (SimScriptAction::CleanShutdown(1), immediate_drain),
                 (SimScriptAction::WaitForChannel(1), channel_no_drain),
+                (SimScriptAction::WaitForProposal(1, gid), proposal),
+                (SimScriptAction::WaitForMoveApplied(1, gid), move_applied),
                 (
                     SimScriptAction::CorruptStateNumber(1, 9),
                     immediate_no_drain,
@@ -773,7 +827,17 @@ mod sim_tests {
                 (SimScriptAction::NerfMessages(1), immediate_no_drain),
                 (SimScriptAction::UnNerfMessages, immediate_no_drain),
                 (SimScriptAction::AcceptProposal(1, gid), accept),
-                (SimScriptAction::CancelProposal(1, gid), immediate_drain),
+                (
+                    SimScriptAction::CancelProposal(1, gid),
+                    schedule(
+                        ActionReadiness::ProposalKnown {
+                            player: 1,
+                            game_id: gid,
+                        },
+                        PostActionDrain::OnChain,
+                        false,
+                    ),
+                ),
                 (SimScriptAction::SaveUnrollSnapshot(1), immediate_no_drain),
                 (SimScriptAction::ForceStaleUnroll(1), transition_no_drain),
                 (

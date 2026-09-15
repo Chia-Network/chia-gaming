@@ -97,9 +97,10 @@ causes a spend to a more up-to-date state. This prevents a player from trying
 to unroll to a stale (advantageous-to-them) state.
 
 The key insight: every off-chain move produces a new mutually-signed unroll
-commitment with an incremented sequence number. Both players always hold the
-latest signed state. If either player tries to cheat by publishing an old state,
-the other can preempt with the newer one.
+commitment with an incremented sequence number. Each player holds the latest
+state received from the opponent, while the sender retains the preceding
+fully-signed state until the next pass. If either player publishes an old state,
+the other can preempt with the newer opposite-parity state they received.
 
 ---
 
@@ -174,6 +175,12 @@ publish a very old unroll and immediately preempt it with a less-old-but-still-
 stale state of the same parity — one they can fully sign — effectively rolling
 back to a favorable earlier state. The parity constraint means you cannot both
 publish and preempt; only your opponent can preempt your unroll.
+
+The handshake establishes this invariant immediately. The receiver's D message
+gives the initiator the fully signed even state 0. The initiator's E message
+gives the receiver the fully signed odd state 1 with the same opening payout.
+The receiver then starts off-chain play with the potato and sends even state 2
+in the first ordinary Batch.
 
 **Unroll state tracking.** The code tracks `latest_sent_unroll` (the most
 recent unroll we sent the opponent) and `latest_received_unroll` (the most
@@ -426,19 +433,19 @@ side's combined bundle.
 
 #### State machine
 
-Initiator (`have_potato = true`):
+Initiator (`have_potato = false` after E):
 
 ```
 WaitingForStart → SentA → WaitingForLauncher → SentC → WaitingForOffer → Finished
-   (send A)       (recv B, NeedLauncherCoinId)   (recv D, verify/store peer signatures,
+   (send A)       (recv B, NeedLauncherCoinId)   (recv D, store signed state 0, advance to state 1,
                  provide_launcher → send C)       NeedCoinSpend, provide_coin_spend → send E)
 ```
 
-Receiver (`have_potato = false`):
+Receiver (`have_potato = true` after E):
 
 ```
 WaitingForA → SentB → SentD → WaitingForCompletion → Finished
- (recv A,     (recv C, verify launcher coin, send D)   (recv E, verify/store peer signatures,
+ (recv A,     (recv C, verify launcher coin, send D)   (recv E, verify/store signed state 1,
   send B)                                              NeedCoinSpend, provide_coin_spend → send F)
 ```
 

@@ -602,7 +602,8 @@ Receiver -> Initiator: HandshakeD(HandshakePayloadD)
 ```
 
 These are the receiver's state-zero channel and unroll half-signatures. The
-initiator verifies and stores both before continuing.
+initiator verifies and stores both, giving it the fully signed state-zero
+unroll. It then advances the unchanged opening state to state one before E.
 
 ### 7.6 Handshake E
 
@@ -617,9 +618,11 @@ Initiator -> Receiver: HandshakeE(HandshakePayloadE)
 
 `bundle` is the initiator's partial channel-funding transaction: the initiator
 wallet spend(s) plus the launcher spend. `signatures` contains the initiator's
-state-zero half-signatures. The receiver verifies and stores the signatures
-before completing its local funding work. The receiver must not treat this
-bundle as a finished funding transaction.
+state-one half-signatures. State one has the same opening payout as state zero;
+only its sequence number and resulting unroll puzzle hash differ. The receiver
+verifies and stores the signatures, giving it the fully signed state-one
+unroll, before completing its local funding work. The receiver must not treat
+this bundle as a finished funding transaction.
 
 ### 7.7 Handshake F
 
@@ -649,8 +652,10 @@ wire protocol. F and activation may be observed in either order, but transition
 requires both the role's handshake work and that local observation to be
 complete. After activation:
 
-- the initiator begins with the potato;
-- the receiver begins without it; and
+- the receiver begins with the potato and a fully signed state-one unroll;
+- the initiator begins without it and retains the fully signed state-zero
+  unroll;
+- the receiver's first ordinary Batch advances to even state two; and
 - the off-chain phase ignores a late Handshake F.
 
 In the initiator's finished handshake state, duplicate Handshake F messages are
@@ -1012,10 +1017,10 @@ field is untrusted input.
 
 The handshake has two fixed roles:
 
-- **Initiator** sends handshake messages A, C, and E and initially holds the
-  potato.
-- **Receiver** sends handshake messages B, D, and F and initially does not hold
-  the potato.
+- **Initiator** sends handshake messages A, C, and E and enters off-chain play
+  without the potato.
+- **Receiver** sends handshake messages B, D, and F and enters off-chain play
+  with the potato.
 
 These roles remain fixed for the lifetime of the channel. They are also called
 the first and second player in internal state.

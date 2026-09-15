@@ -80,7 +80,7 @@ impl HandshakeReceiverPhase {
     pub fn new(phi: OffChainPhaseInit) -> Self {
         HandshakeReceiverPhase {
             state: ReceiverState::WaitingForA,
-            have_potato: PotatoState::Absent,
+            have_potato: PotatoState::Present,
             channel_state: None,
             channel_finished_transaction: None,
             launcher_coin: None,
@@ -408,12 +408,11 @@ impl HandshakeReceiverPhase {
 
                 let spend_info = {
                     let ch = self.channel_state_mut()?;
-                    ch.verify_and_store_initial_peer_signatures(env, signatures)
-                        .map_err(|e| {
-                            Error::StrErr(format!(
-                                "receiver step E: verify/store initial peer signatures failed: {e}"
-                            ))
-                        })?
+                    ch.received_empty_potato(env, signatures).map_err(|e| {
+                        Error::StrErr(format!(
+                            "receiver step E: verify state 1 signatures failed: {e}"
+                        ))
+                    })?
                 };
                 self.last_channel_coin_spend_info = Some(spend_info);
                 if self.last_height > 0 {

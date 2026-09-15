@@ -321,6 +321,13 @@ Preemption is **immediate** — no timelock. This is by design: the preempting
 player gets first-mover advantage because they're correcting an out-of-date
 unroll. Timeouts require waiting for `unroll_timeout` blocks.
 
+The handshake establishes two different fully signed unrolls with the same
+opening payout. Handshake D gives the initiator even state 0; handshake E gives
+the receiver odd state 1 and the potato. If the initiator later publishes the
+retained genesis unroll, the receiver can immediately preempt it with state 1
+under the ordinary opposite-parity rule. The receiver's first normal Batch
+advances to even state 2.
+
 ### After Preemption or Timeout
 
 (See the **Parity rule** in the [Unroll Coin](OVERVIEW.md#unroll-coin) section for why only the

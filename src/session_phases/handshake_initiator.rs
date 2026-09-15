@@ -87,7 +87,7 @@ impl HandshakeInitiatorPhase {
     pub fn new(phi: OffChainPhaseInit) -> Self {
         HandshakeInitiatorPhase {
             state: InitiatorState::WaitingForStart,
-            have_potato: PotatoState::Present,
+            have_potato: PotatoState::Absent,
             channel_state: None,
             channel_initiation_transaction: None,
             launcher_coin: None,
@@ -420,10 +420,6 @@ impl HandshakeInitiatorPhase {
                     )));
                 };
 
-                let our_sigs = {
-                    let ch = self.channel_state()?;
-                    ch.get_initial_signatures()?
-                };
                 let spend_info = {
                     let ch = self.channel_state_mut()?;
                     ch.verify_and_store_initial_peer_signatures(env, &msg.signatures)
@@ -434,6 +430,14 @@ impl HandshakeInitiatorPhase {
                         })?
                 };
                 self.last_channel_coin_spend_info = Some(spend_info);
+                let our_sigs = {
+                    let ch = self.channel_state_mut()?;
+                    ch.send_empty_potato(env).map_err(|e| {
+                        Error::StrErr(format!(
+                            "initiator step D: create state 1 signatures failed: {e}"
+                        ))
+                    })?
+                };
                 if self.last_height > 0 {
                     let coin_spend_request = self.build_alice_coin_spend_request()?;
                     self.channel_deadline = self.compute_not_valid_after_height();
