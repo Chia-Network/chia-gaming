@@ -1,5 +1,6 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { Program } from 'clvm-lib';
 import {
   KrunkHandler,
   canDraftKrunkGuess,
@@ -134,7 +135,7 @@ describe('Krunk automatic moves', () => {
     );
   });
 
-  it('uses an empty retry checkpoint while preserving accepted queued guesses', () => {
+  it('submits the next guess while preserving accepted queued guesses', () => {
     const persisted = krunkStateCodec.encode({
       perPlayerStake: 100n,
       members: [
@@ -170,14 +171,8 @@ describe('Krunk automatic moves', () => {
     });
     act(() => hook!.submitNextQueuedGuess());
 
-    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
-      'state-changed',
-      'make-move',
-    ]);
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual(['make-move']);
     expect(snapshots[0].members[1]).toEqual(
-      expect.objectContaining({ guesses: [], queuedGuesses: [] }),
-    );
-    expect(snapshots[1].members[1]).toEqual(
       expect.objectContaining({
         handler: KrunkHandler.BobWaiting,
         myTurn: false,
@@ -187,7 +182,7 @@ describe('Krunk automatic moves', () => {
     );
   });
 
-  it('clears all remaining queued guesses from the rejection checkpoint', () => {
+  it('keeps later guesses in the submitted hand until rejection is resolved', () => {
     const persisted = krunkStateCodec.encode({
       perPlayerStake: 100n,
       members: [
@@ -223,19 +218,8 @@ describe('Krunk automatic moves', () => {
     });
     act(() => hook!.submitNextQueuedGuess());
 
-    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
-      'state-changed',
-      'make-move',
-    ]);
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual(['make-move']);
     expect(snapshots[0].members[1]).toEqual(
-      expect.objectContaining({
-        handler: KrunkHandler.BobGuess,
-        myTurn: true,
-        guesses: [],
-        queuedGuesses: [],
-      }),
-    );
-    expect(snapshots[1].members[1]).toEqual(
       expect.objectContaining({
         handler: KrunkHandler.BobWaiting,
         myTurn: false,
@@ -243,6 +227,88 @@ describe('Krunk automatic moves', () => {
         queuedGuesses: ['CRANE', 'SLATE'],
       }),
     );
+  });
+
+  it('keeps an early guess queued when activation-time submission is rejected', () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    const hand = testHand(
+      krunkStateCodec.encode({
+        perPlayerStake: 100n,
+        members: [
+          {
+            ...initialKrunkGameState('alice'),
+            handler: KrunkHandler.AliceWaiting,
+            myTurn: false,
+            secretWord: 'CRANE',
+          },
+          initialKrunkGameState('bob'),
+        ],
+      }),
+    );
+    let checkpoint = structuredClone(hand.getState());
+    const dispatch = jest.fn((intent: { type: string }) => {
+      if (intent.type === 'state-changed') {
+        checkpoint = structuredClone(hand.getState());
+      } else if (intent.type === 'make-move') {
+        checkpoint.members.forEach((member, memberIndex) => {
+          hand.updateGame(memberIndex, () => structuredClone(member));
+        });
+      }
+    });
+    const view: GameMountView<KrunkHand> = {
+      frozen: false,
+      hand,
+      port: { isChannelReady: () => true, dispatch },
+    };
+
+    act(() => {
+      renderer = create(React.createElement(Krunk, { view }));
+    });
+    for (const letter of ['S', 'L', 'A', 'T', 'E']) {
+      const key = renderer!.root
+        .findAllByType('button')
+        .find((button) => button.props.children === letter);
+      act(() => key!.props.onClick());
+    }
+    const guess = renderer!.root
+      .findAllByType('button')
+      .find((button) => button.props.children === 'Guess');
+    act(() => guess!.props.onClick());
+    expect(hand.getState().members[1].queuedGuesses).toEqual(['SLATE']);
+
+    hand.receive({
+      type: 'move-readable',
+      memberIndex: 1,
+      readable: Program.fromBytes(new Uint8Array()),
+      moverShare: 100n,
+    });
+    act(() => {
+      renderer!.update(React.createElement(Krunk, { view }));
+    });
+
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
+      'state-changed',
+      'make-move',
+    ]);
+    expect(hand.getState().members[1]).toMatchObject({
+      handler: KrunkHandler.BobWaiting,
+      queuedGuesses: ['SLATE'],
+      guesses: [],
+    });
+    act(() => renderer!.unmount());
+    renderer = null;
+    if (windowDescriptor) {
+      Object.defineProperty(globalThis, 'window', windowDescriptor);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
   });
 });
 
@@ -628,7 +694,7 @@ describe('Krunk draft continuity', () => {
         'Peer',
         100n,
       ),
-    ).toBe('We forfeited.');
+    ).toBe('Peer won 100 mojo!');
     expect(
       krunkTerminalStatus(
         {

@@ -152,6 +152,21 @@ describe('terminal session model', () => {
       outcome: 'settled_cleanly',
       myReward: '20',
     });
+
+    expect(
+      terminalInfoFromGameSettled(
+        {
+          id: '7',
+          outcome: 'forfeited_skipped_reveal',
+          our_share: '0',
+          coin_id: null,
+        },
+        null,
+      ),
+    ).toMatchObject({
+      label: 'Forfeited',
+      myReward: '0',
+    });
   });
 
   it('keeps cancelled/error GameStatus terminals separate from settlement', () => {

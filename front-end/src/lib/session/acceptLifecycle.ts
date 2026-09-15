@@ -17,6 +17,7 @@ import type {
 } from './saveEnvelope';
 import type { ChannelStatus } from '../../types/ChiaGaming';
 import type { SessionModel } from './types';
+import { PRE_ACTIVE_CHANNEL_STATES } from './selectors';
 
 export type AcceptPhase = 'idle' | 'accepting' | 'persistDraining' | 'liveMounting' | 'active';
 
@@ -26,6 +27,18 @@ export type StartFailureDisposition = 'abandon-peer-only' | 'cancel-attempt';
 
 /** Single setup copy for Accept session-pane covers. */
 export const ACCEPT_SETTING_UP_COPY = 'Setting up channel…';
+
+export function channelSetupCoverCopy(
+  handEverStarted: boolean,
+  status: Pick<SessionModel['channel']['status'], 'state' | 'advisory'>,
+): string | null {
+  if (status.state === 'Failed') {
+    return status.advisory?.trim() || 'Channel setup failed.';
+  }
+  return !handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(status.state)
+    ? ACCEPT_SETTING_UP_COPY
+    : null;
+}
 
 /**
  * Channel states whose dashboard action is still Cancel during Accept setup.

@@ -3,11 +3,17 @@ import { Button } from './button';
 
 const DEV_HUB = 'http://localhost:3003';
 
-function parseHubUrl(raw: string): string | null {
+export function parseHubUrl(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  const schemeLikePrefix = trimmed.match(/^[a-zA-Z][a-zA-Z\d+\-.]*:/);
+  const numericPort =
+    schemeLikePrefix !== null && /^\d+(?:[/?#]|$)/.test(trimmed.slice(schemeLikePrefix[0].length));
+  if (schemeLikePrefix !== null && !numericPort && !/^https?:\/\//i.test(trimmed)) {
+    return null;
+  }
   try {
-    const url = new URL(trimmed);
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     return url.origin;
   } catch {

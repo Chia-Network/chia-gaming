@@ -21,6 +21,7 @@ pub const CREATE_COIN_ATOM: [u8; 1] = [51];
 pub const CREATE_COIN_ANNOUNCEMENT_ATOM: [u8; 1] = [60];
 pub const ASSERT_COIN_ANNOUNCEMENT_ATOM: [u8; 1] = [61];
 pub const RESERVE_FEE_ATOM: [u8; 1] = [52];
+pub const ASSERT_CONCURRENT_SPEND_ATOM: [u8; 1] = [64];
 pub const ASSERT_HEIGHT_RELATIVE_ATOM: [u8; 1] = [82];
 
 pub const GROUP_ORDER: [u8; 32] = [

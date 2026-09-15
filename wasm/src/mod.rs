@@ -23,11 +23,10 @@ mod gaming_wasm {
     use chia_gaming::channel_state::types::ReadableMove;
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
-        convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend,
-        CoinString, CoinsetCoin, CoinsetSpendBundle,
-        CoinsetSpendRecord, GameID, GameType, Hash, PrivateKey, Program, ProgramRef, PublicKey,
-        Node, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
-        ToQuotedProgram,
+        complete_fee_offer_bundle, convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder,
+        Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
+        GameID, GameType, Hash, Node, PrivateKey, Program, ProgramRef, PublicKey, Puzzle,
+        PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
     };
     use clvm_traits::{ClvmEncoder, ToClvm};
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
@@ -714,6 +713,28 @@ mod gaming_wasm {
         let bundle = decode_offer_to_spend_bundle(offer_bech32)
             .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
         serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&bundle)?).into_js()
+    }
+
+    #[wasm_bindgen]
+    pub fn complete_fee_offer_to_coinset_org(
+        offer_bech32: &str,
+        fee: &str,
+        protocol_coin_id: &str,
+    ) -> Result<JsValue, JsValue> {
+        let fee = fee
+            .parse::<u64>()
+            .map_err(|e| JsValue::from_str(&format!("invalid fee amount: {e}")))?;
+        let coin_id_bytes = hex::decode(protocol_coin_id.strip_prefix("0x").unwrap_or(protocol_coin_id))
+            .map_err(|e| JsValue::from_str(&format!("invalid protocol coin id: {e}")))?;
+        let protocol_coin_id = CoinID::new(
+            Hash::from_slice(&coin_id_bytes)
+                .map_err(|e| JsValue::from_str(&format!("invalid protocol coin id: {e:?}")))?,
+        );
+        let maker_bundle = decode_offer_to_spend_bundle(offer_bech32)
+            .map_err(|e| JsValue::from_str(&format!("fee offer decode error: {e}")))?;
+        let completed = complete_fee_offer_bundle(maker_bundle, fee, &protocol_coin_id)
+            .map_err(|e| JsValue::from_str(&format!("fee offer completion error: {e:?}")))?;
+        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&completed)?).into_js()
     }
 
     #[wasm_bindgen]

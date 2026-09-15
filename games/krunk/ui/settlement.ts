@@ -10,7 +10,7 @@ export function krunkSettlementStatus(outcome: SettlementOutcome, opponentLabel:
       return `${opponentLabel} timed out.`;
     case 'forfeited_skipped_reveal':
     case 'forfeited_we_accepted':
-      return 'We forfeited.';
+      return `${opponentLabel} won.`;
     case 'lost':
       return 'We lost.';
     case 'attempt_to_move_failed':

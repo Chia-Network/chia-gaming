@@ -28,7 +28,7 @@ export function calpokerTimeoutBadge(
   outcome: SettlementOutcome,
   side: 'ours' | 'theirs',
   handCompleted = false,
-): 'winner' | 'timeout' | 'forfeit' | null {
+): 'winner' | 'timeout' | null {
   if (handCompleted && !isForfeitOutcome(outcome)) {
     return null;
   }
@@ -43,15 +43,15 @@ export function calpokerTimeoutBadge(
   const byUs = settlementByUs(outcome);
   if (byUs == null) return null;
   if (side === 'ours') {
-    if (byUs) return isForfeitOutcome(outcome) ? 'forfeit' : 'timeout';
+    if (byUs) return isForfeitOutcome(outcome) ? null : 'timeout';
     return 'winner';
   }
-  if (!byUs) return isForfeitOutcome(outcome) ? 'forfeit' : 'timeout';
+  if (!byUs) return isForfeitOutcome(outcome) ? null : 'timeout';
   return 'winner';
 }
 
 export function calpokerSettlementVerb(outcome: SettlementOutcome): string {
-  if (isForfeitOutcome(outcome)) return 'forfeited';
+  if (isForfeitOutcome(outcome)) return 'loses';
   if (outcome === 'lost') return 'loses';
   if (outcome === 'attempt_to_move_failed') return 'moved too late';
   if (

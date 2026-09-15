@@ -6,7 +6,6 @@ jest.mock('../../hooks/WalletConnectRpc', () => ({
     getCoinRecordsByNames: jest.fn(),
     getWallets: jest.fn(),
     pushTransactions: jest.fn(),
-    sendTransaction: jest.fn(),
     registerRemoteCoins: jest.fn(),
     selectCoins: jest.fn(),
     getFullNodePeerCount: jest.fn(async () => 1n),
@@ -64,7 +63,6 @@ const mockGetNextAddress = rpc.getNextAddress as jest.Mock;
 const mockGetCoinRecordsByNames = rpc.getCoinRecordsByNames as jest.Mock;
 const mockGetWallets = rpc.getWallets as jest.Mock;
 const mockPushTransactions = rpc.pushTransactions as jest.Mock;
-const mockSendTransaction = rpc.sendTransaction as jest.Mock;
 const mockRegisterRemoteCoins = rpc.registerRemoteCoins as jest.Mock;
 const mockSelectCoins = rpc.selectCoins as jest.Mock;
 const mockGetFullNodePeerCount = rpc.getFullNodePeerCount as jest.Mock;
@@ -111,7 +109,6 @@ describe('RealBlockchainInterface', () => {
     mockGetCoinRecordsByNames.mockReset();
     mockGetWallets.mockReset();
     mockPushTransactions.mockReset();
-    mockSendTransaction.mockReset();
     mockRegisterRemoteCoins.mockReset();
     mockSelectCoins.mockReset();
     mockGetFullNodePeerCount.mockReset();
@@ -248,6 +245,50 @@ describe('RealBlockchainInterface', () => {
       expect(blockchain.isReadyForPlay()).toBe(true);
       expect(ready).toEqual([true]);
       expect(mockGetFullNodePeerCount).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('assumes enough peers when an advertised peer-count method never responds', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      mockGetFullNodePeerCount.mockImplementation(() => new Promise(() => {}));
+
+      const blockchain = new RealBlockchainInterface();
+      blockchain.onPlayReadinessChange(() => {});
+
+      await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(blockchain.isReadyForPlay()).toBe(false);
+
+      jest.advanceTimersByTime(7_000);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(blockchain.isReadyForPlay()).toBe(true);
+      expect(mockGetFullNodePeerCount).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('assumes enough peers when the wallet rejects peer count as unsupported', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      mockGetFullNodePeerCount.mockRejectedValue(new Error('Method not found (code=-32601)'));
+
+      const blockchain = new RealBlockchainInterface();
+      blockchain.onPlayReadinessChange(() => {});
+
+      await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(blockchain.isReadyForPlay()).toBe(true);
+      expect(mockGetFullNodePeerCount).toHaveBeenCalledTimes(1);
     } finally {
       jest.useRealTimers();
     }
@@ -548,85 +589,75 @@ describe('RealBlockchainInterface', () => {
     ]);
   });
 
-  it('builds a wallet-signed fee spend bound with ASSERT_CONCURRENT_SPEND', async () => {
-    const puzzleHash = '11'.repeat(32);
-    // The wallet's address carries the network HRP (txch on testnet); createFeeSpend
-    // must forward it verbatim so send_transaction's address validation passes.
-    const address = encodePuzzleHashToBech32m(puzzleHash, 'txch');
+  it('builds a wallet-signed fee offer without using the wallet fee parameter', async () => {
     const blockchain = new RealBlockchainInterface();
-    blockchain.blockchainAddressData = { puzzleHash, address };
-    // The wallet returns the signed bundle over WalletConnect in camelCase,
-    // including nested coin fields. createFeeSpend must normalize this into the
-    // canonical snake_case coinset shape the aggregator/removal code consume.
-    const walletFeeBundle = {
-      coinSpends: [
+    const parentCoinInfo = '99'.repeat(32);
+    const puzzleHash = '88'.repeat(32);
+    const selectedCoinString = `${parentCoinInfo}${puzzleHash}03e8`;
+    const selectedCoinId = await coinIdFromBytes(toUint8(selectedCoinString));
+    const settlementPuzzleHash = 'cfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7';
+    const settlementCoinId = await coinIdFromBytes(
+      toUint8(`${selectedCoinId}${settlementPuzzleHash}0a`),
+    );
+    mockSelectCoins.mockResolvedValue({
+      coins: [
         {
-          coin: {
-            parentCoinInfo: `0x${'99'.repeat(32)}`,
-            puzzleHash: `0x${'88'.repeat(32)}`,
-            amount: 1000n,
-          },
-          puzzleReveal: '0x80',
-          solution: '0x80',
+          parentCoinInfo: `0x${parentCoinInfo}`,
+          puzzleHash: `0x${puzzleHash}`,
+          amount: 1000n,
         },
       ],
-      aggregatedSignature: '0xfee',
-    };
-    mockSendTransaction.mockResolvedValue({ transactions: [{ spendBundle: walletFeeBundle }] });
+    });
+    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
 
     const bindCoinId = 'ab'.repeat(32);
-    const result = await blockchain.createFeeSpend(10n, bindCoinId);
+    await expect(blockchain.createFeeOffer(10n, bindCoinId)).resolves.toBe('offer1signed');
 
-    expect(result).toEqual({
-      coin_spends: [
-        {
-          coin: {
-            parent_coin_info: `0x${'99'.repeat(32)}`,
-            puzzle_hash: `0x${'88'.repeat(32)}`,
-            amount: 1000n,
-          },
-          puzzle_reveal: '0x80',
-          solution: '0x80',
-        },
-      ],
-      aggregated_signature: '0xfee',
-    });
-    expect(mockSendTransaction).toHaveBeenCalledWith({
+    expect(mockSelectCoins).toHaveBeenCalledWith({
       walletId: 1n,
-      amount: 1n,
-      address,
-      fee: 10n,
-      push: false,
+      amount: 10n,
       allowUnsynced: true,
-      extraConditions: [{ opcode: 64n, args: { coin_id: `0x${bindCoinId}` } }],
+    });
+    expect(mockCreateOfferForIds).toHaveBeenCalledWith({
+      offer: { '1': -10n },
+      driverDict: {},
+      validateOnly: true,
+      allowUnsynced: true,
+      extraConditions: [
+        { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
+        { opcode: 64n, args: { coin_id: `0x${settlementCoinId}` } },
+        { opcode: 52n, args: { amount: 10n } },
+      ],
     });
   });
 
-  it('propagates the wallet error when it cannot build a fee spend', async () => {
-    const puzzleHash = '11'.repeat(32);
+  it('propagates the wallet error when it cannot build a fee offer', async () => {
     const blockchain = new RealBlockchainInterface();
-    blockchain.blockchainAddressData = {
-      puzzleHash,
-      address: encodePuzzleHashToBech32m(puzzleHash, 'txch'),
-    };
-    mockSendTransaction.mockRejectedValue(new Error('wallet not synced'));
-    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).rejects.toThrow(
+    mockSelectCoins.mockRejectedValue(new Error('wallet not synced'));
+    await expect(blockchain.createFeeOffer(10n, 'cd'.repeat(32))).rejects.toThrow(
       'wallet not synced',
     );
   });
 
-  it('returns null when the change address is not resolved yet', async () => {
+  it('rejects a multi-coin selection that cannot pin one sufficient parent', async () => {
     const blockchain = new RealBlockchainInterface();
-    blockchain.blockchainAddressData = { puzzleHash: '' };
-    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toBeNull();
-    expect(mockSendTransaction).not.toHaveBeenCalled();
+    mockSelectCoins.mockResolvedValue({
+      coins: [
+        { parentCoinInfo: '11'.repeat(32), puzzleHash: '22'.repeat(32), amount: 6n },
+        { parentCoinInfo: '33'.repeat(32), puzzleHash: '44'.repeat(32), amount: 5n },
+      ],
+    });
+    await expect(blockchain.createFeeOffer(10n, 'cd'.repeat(32))).rejects.toThrow(
+      'wallet has no single coin large enough',
+    );
+    expect(mockCreateOfferForIds).not.toHaveBeenCalled();
   });
 
   it('does not contact the wallet for a zero fee', async () => {
     const blockchain = new RealBlockchainInterface();
-    blockchain.blockchainAddressData = { puzzleHash: '11'.repeat(32) };
-    await expect(blockchain.createFeeSpend(0n, 'cd'.repeat(32))).resolves.toBeNull();
-    expect(mockSendTransaction).not.toHaveBeenCalled();
+    await expect(blockchain.createFeeOffer(0n, 'cd'.repeat(32))).resolves.toBeNull();
+    expect(mockSelectCoins).not.toHaveBeenCalled();
+    expect(mockCreateOfferForIds).not.toHaveBeenCalled();
   });
 
   it('uses the provided change puzzle hash in the transaction record', async () => {

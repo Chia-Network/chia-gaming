@@ -99,6 +99,15 @@ function krunkTerminalNotice(
       state.settlementOutcome === 'accept_settlement' ||
       state.settlementOutcome === 'we_accepted' ||
       state.settlementOutcome === 'settled_cleanly';
+    if (
+      state.settlementOutcome === 'forfeited_skipped_reveal' ||
+      state.settlementOutcome === 'forfeited_we_accepted'
+    ) {
+      return {
+        text: krunkWinnerMessage(opponentLabel, perPlayerStake),
+        kind: 'info',
+      };
+    }
     if (!clean) {
       return { text: krunkSettlementStatus(state.settlementOutcome, opponentLabel), kind: 'info' };
     }
@@ -357,7 +366,6 @@ export function useKrunkHand(
       return;
     const [word, ...queuedGuesses] = cur.queuedGuesses;
     const dequeued = { ...cur, queuedGuesses };
-    commitStateChange({ ...cur, queuedGuesses: [] });
     commitLocalAction(
       {
         ...dequeued,
@@ -367,7 +375,7 @@ export function useKrunkHand(
       },
       { type: 'make-move', readable: wordToProgram(word) },
     );
-  }, [commitLocalAction, commitStateChange]);
+  }, [commitLocalAction]);
 
   return {
     gameState,

@@ -14,7 +14,7 @@ interface HandDisplayProps {
   haloCardIds: string[];
   swapHiddenCardIds?: string[];
   onReorder?: (reorderedCards: CardValueSuit[]) => void;
-  timeoutBadge?: 'winner' | 'timeout' | 'forfeit' | null;
+  timeoutBadge?: 'winner' | 'timeout' | null;
 }
 
 export type { HandDisplayProps };

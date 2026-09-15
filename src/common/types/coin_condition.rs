@@ -5,11 +5,13 @@ use crate::utils::proper_list;
 
 use crate::common::constants::{
     AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, ASSERT_COIN_ANNOUNCEMENT_ATOM,
-    ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ANNOUNCEMENT_ATOM, CREATE_COIN_ATOM, RESERVE_FEE_ATOM,
+    ASSERT_CONCURRENT_SPEND_ATOM, ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ANNOUNCEMENT_ATOM,
+    CREATE_COIN_ATOM, RESERVE_FEE_ATOM,
 };
 
 use crate::common::types::{
-    u64_from_atom, AllocEncoder, Amount, Error, Hash, IntoErr, Program, PublicKey, PuzzleHash,
+    u64_from_atom, AllocEncoder, Amount, CoinID, Error, Hash, IntoErr, Program, PublicKey,
+    PuzzleHash,
 };
 
 pub fn chia_dialect() -> ChiaDialect {
@@ -26,6 +28,7 @@ pub enum CoinCondition {
     CreateCoinAnnouncement(Vec<u8>),
     AssertCoinAnnouncement(Vec<u8>),
     ReserveFee(Amount),
+    AssertConcurrentSpend(CoinID),
     AssertHeightRelative(u64),
 }
 
@@ -104,6 +107,13 @@ fn parse_condition(
             let val = u64_from_atom(&arg)
                 .ok_or_else(|| Error::StrErr("RESERVE_FEE value was not a u64 atom".to_string()))?;
             return Ok(Some(CoinCondition::ReserveFee(Amount::new(val))));
+        }
+        if *op == ASSERT_CONCURRENT_SPEND_ATOM {
+            let coin_id = Hash::from_slice(&arg)
+                .map_err(|e| Error::StrErr(format!("ASSERT_CONCURRENT_SPEND coin id: {e:?}")))?;
+            return Ok(Some(CoinCondition::AssertConcurrentSpend(CoinID::new(
+                coin_id,
+            ))));
         }
     }
 

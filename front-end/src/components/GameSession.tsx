@@ -28,7 +28,7 @@ import {
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
-import { ACCEPT_SETTING_UP_COPY } from '../lib/session/acceptLifecycle';
+import { channelSetupCoverCopy } from '../lib/session/acceptLifecycle';
 import {
   PRE_ACTIVE_CHANNEL_STATES,
   selectInertGameInterfaceForBetweenHandDialog,
@@ -733,6 +733,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   })();
 
   const handEverStarted = session.handKey > 0;
+  const setupCoverCopy = channelSetupCoverCopy(handEverStarted, session.channelStatus);
   const hasPersistedGameState = !!session.gameSpecificView.handState;
   const hasReviewPeerProposal = session.incomingProposalGroup?.disposition === 'incoming-review';
   const showBetweenHandOverlay =
@@ -856,9 +857,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           <SessionTransitionSurface />
         </div>
       ) : (
-        (!handEverStarted || PRE_ACTIVE_CHANNEL_STATES.has(session.channelStatus.state)) && (
+        setupCoverCopy !== null && (
           <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
-            <p className="text-canvas-text">{ACCEPT_SETTING_UP_COPY}</p>
+            <p className="text-canvas-text">{setupCoverCopy}</p>
           </div>
         )
       )}

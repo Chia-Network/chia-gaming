@@ -1,5 +1,6 @@
 import {
   ACCEPT_SETUP_CANCEL_CHANNEL_STATES,
+  channelSetupCoverCopy,
   persistFreshStartCheckpoint,
   shouldCompleteAcceptTransition,
   shouldSynthesizeSetupPending,
@@ -22,6 +23,29 @@ function modelWithChannelState(state: ChannelStatus): SessionModel {
 }
 
 describe('acceptLifecycle', () => {
+  describe('channelSetupCoverCopy', () => {
+    it('replaces setup progress with the failure advisory after channel expiry', () => {
+      expect(
+        channelSetupCoverCopy(false, {
+          state: 'Failed',
+          advisory: 'channel coin not confirmed in time',
+        }),
+      ).toBe('channel coin not confirmed in time');
+    });
+
+    it('uses explicit fallback copy when a setup failure has no advisory', () => {
+      expect(channelSetupCoverCopy(false, { state: 'Failed', advisory: null })).toBe(
+        'Channel setup failed.',
+      );
+    });
+
+    it('keeps setup progress while the channel remains pre-active', () => {
+      expect(channelSetupCoverCopy(false, { state: 'TransactionPending', advisory: null })).toBe(
+        'Setting up channel…',
+      );
+    });
+  });
+
   describe('startFailureDisposition', () => {
     it('abandons the peer attempt only when persist has not committed', () => {
       expect(startFailureDisposition(false)).toBe('abandon-peer-only');

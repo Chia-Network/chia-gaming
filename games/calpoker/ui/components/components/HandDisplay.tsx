@@ -718,8 +718,7 @@ function HandDisplay(props: HandDisplayProps) {
             Winner!
           </div>
         )}
-        {(timeoutBadge === 'timeout' || timeoutBadge === 'forfeit') &&
-          cardRightEdgeOffset !== null && (
+        {timeoutBadge === 'timeout' && cardRightEdgeOffset !== null && (
             <div
               className="absolute z-[110] -top-5 bg-canvas-solid text-canvas-on-canvas px-4 py-2 rounded-full font-bold text-base shadow-lg"
               style={{
@@ -730,7 +729,7 @@ function HandDisplay(props: HandDisplayProps) {
                 transform: `translateX(calc(-100% + ${cardRightEdgeOffset}px))`,
               }}
             >
-              {timeoutBadge === 'forfeit' ? 'Forfeit' : 'Timed Out'}
+              Timed Out
             </div>
           )}
 

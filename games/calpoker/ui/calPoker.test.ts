@@ -189,6 +189,9 @@ describe('Calpoker bigint domain helpers', () => {
     expect(calpokerTimeoutBadge('lost', 'theirs')).toBeNull();
     expect(isForfeitOutcome('forfeited_skipped_reveal')).toBe(true);
     expect(isForfeitOutcome('forfeited_we_accepted')).toBe(true);
+    expect(calpokerSettlementVerb('forfeited_skipped_reveal')).toBe('loses');
+    expect(calpokerTimeoutBadge('forfeited_skipped_reveal', 'ours')).toBeNull();
+    expect(calpokerTimeoutBadge('forfeited_skipped_reveal', 'theirs')).toBe('winner');
   });
 });
 
@@ -693,7 +696,10 @@ describe('Calpoker terminal hand projection', () => {
         gameState: 'final',
         winner: 'ai',
       });
-      expect(() => JSON.stringify(renderer!.toJSON())).not.toThrow();
+      const markup = JSON.stringify(renderer!.toJSON());
+      expect(markup).toContain('Bob wins');
+      expect(markup).toContain('Alice loses');
+      expect(markup.toLowerCase()).not.toContain('forfeit');
       expect(dispatch).not.toHaveBeenCalled();
       expect(makeMove).not.toHaveBeenCalled();
     } finally {
