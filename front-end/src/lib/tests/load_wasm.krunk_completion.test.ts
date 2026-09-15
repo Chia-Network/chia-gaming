@@ -186,7 +186,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     const ids = review.memberIds;
     assert.equal(ids.length, 2);
 
-    runtimes[1].dispatch({ type: 'accept-review' });
+    runtimes[1].dispatch({ type: 'accept-review', primaryId: review.primaryId });
     await exchangeAndPersist();
 
     for (const [index, groups] of acceptedGroups.entries()) {

@@ -330,7 +330,7 @@ export function useGameSession(
     composeProposalSent: compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: (handProposal) => dispatch({ type: 'submit-compose', handProposal }),
-    acceptReviewedProposal: () => dispatch({ type: 'accept-review' }),
+    acceptReviewedProposal: (primaryId) => dispatch({ type: 'accept-review', primaryId }),
     rejectReviewedProposal: () => dispatch({ type: 'reject-review' }),
     startCleanShutdown: () => dispatch({ type: 'start-clean-shutdown' }),
     cleanShutdownStarted: model.channel.cleanShutdownStarted,

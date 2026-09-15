@@ -206,7 +206,7 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
     .getState()
     .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
   assert.ok(review);
-  lanes[1].runtime.dispatch({ type: 'accept-review' });
+  lanes[1].runtime.dispatch({ type: 'accept-review', primaryId: review.primaryId });
   await exchange();
 
   const firstIds = [...lanes[0].runtime.getState().model.game.currentHandIds];

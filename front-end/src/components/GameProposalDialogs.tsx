@@ -142,7 +142,7 @@ export function ReviewProposalDialog({ session }: { session: UseGameSessionResul
             variant="solid"
             color="primary"
             size="sm"
-            onClick={session.acceptReviewedProposal}
+            onClick={() => session.acceptReviewedProposal(review.primaryId)}
           >
             Yes
           </Button>

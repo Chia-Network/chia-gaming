@@ -204,7 +204,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       incomingReviewCheckpoint,
       'incoming proposal review must survive reload',
     );
-    lanes[1].runtime.dispatch({ type: 'accept-review' });
+    lanes[1].runtime.dispatch({ type: 'accept-review', primaryId: review.primaryId });
     await exchange();
 
     const openingCheckpoints = [

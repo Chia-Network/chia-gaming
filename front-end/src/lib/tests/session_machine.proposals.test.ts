@@ -245,6 +245,52 @@ describe('session machine behavior sequences', () => {
     expect(state.model.betweenHand.mode).toBe('compose-proposal');
   });
 
+  it('does not accept a replacement proposal through a stale review click', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = send(state, {
+      type: 'upsert-proposal-group',
+      group: {
+        primaryId: '21',
+        memberIds: ['21'],
+        handProposal: CALPOKER_TERMS,
+        origin: 'peer',
+        disposition: 'incoming-review',
+      },
+    });
+    const renderedPrimaryId = '21';
+
+    state = send(state, { type: 'clear-proposals', ids: ['21'] });
+    state = send(state, {
+      type: 'upsert-proposal-group',
+      group: {
+        primaryId: '23',
+        memberIds: ['23'],
+        handProposal: { ...CALPOKER_TERMS, playerAContribution: 500n },
+        origin: 'peer',
+        disposition: 'incoming-review',
+      },
+    });
+
+    expect(
+      reduceSessionMachine(state, {
+        type: 'accept-review',
+        primaryId: renderedPrimaryId,
+      }).effects,
+    ).toEqual([]);
+    expect(
+      reduceSessionMachine(state, {
+        type: 'accept-review',
+        primaryId: '23',
+      }).effects,
+    ).toEqual([
+      {
+        type: 'controller-accept-proposal',
+        id: '23',
+        context: 'accept-review',
+      },
+    ]);
+  });
+
   it('orders proposal controller commands without mutating presentation', () => {
     const state = createSessionMachineState(createSessionModel());
 

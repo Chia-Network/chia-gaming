@@ -166,7 +166,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.ok(review, 'calpoker initial deal receiver must observe the real proposal');
     const gameId = review.memberIds[0];
 
-    runtimes[1].dispatch({ type: 'accept-review' });
+    runtimes[1].dispatch({ type: 'accept-review', primaryId: review.primaryId });
     await exchange();
     assert.deepEqual(hand(0).playerHand, []);
     assert.deepEqual(hand(1).playerHand, []);

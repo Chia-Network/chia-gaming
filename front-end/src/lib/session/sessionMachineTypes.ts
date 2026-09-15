@@ -174,7 +174,7 @@ export type SessionMachineEvent =
   | { type: 'reject-current-proposal' }
   | { type: 'open-compose' }
   | { type: 'submit-compose'; handProposal: HandProposal }
-  | { type: 'accept-review' }
+  | { type: 'accept-review'; primaryId: string }
   | { type: 'reject-review' }
   | { type: 'start-clean-shutdown' }
   | { type: 'go-on-chain' }

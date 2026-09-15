@@ -363,7 +363,7 @@ async function runSpacepokerReloadCompletion(poller: BlockchainPoller): Promise<
       .getState()
       .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
     assert.ok(review, 'Space Poker receiver must observe the real proposal');
-    lanes[1].runtime.dispatch({ type: 'accept-review' });
+    lanes[1].runtime.dispatch({ type: 'accept-review', primaryId: review.primaryId });
     await driver.exchange();
 
     await driver.startHand();
