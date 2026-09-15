@@ -316,7 +316,6 @@ impl OffChainPhase {
     pub fn from_completed_handshake(
         initiator: bool,
         channel_state: ChannelState,
-        have_potato: PotatoState,
         game_types: BTreeMap<GameType, ProgramRef>,
         private_keys: ChannelPrivateKeys,
         my_contribution: Amount,
@@ -328,6 +327,11 @@ impl OffChainPhase {
         last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
         last_height: u64,
     ) -> OffChainPhase {
+        let have_potato = if channel_state.have_potato() {
+            PotatoState::Present
+        } else {
+            PotatoState::Absent
+        };
         let game_types = if game_types.is_empty() {
             let mut allocator = AllocEncoder::new();
             crate::session_phases::game_collection::game_collection(&mut allocator)

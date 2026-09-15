@@ -305,7 +305,6 @@ mod move_authority_tests {
 
 #[derive(Serialize, Deserialize)]
 pub struct OffChainPhaseInit {
-    pub have_potato: bool,
     pub private_keys: ChannelPrivateKeys,
     pub game_types: BTreeMap<GameType, ProgramRef>,
     pub my_contribution: Amount,

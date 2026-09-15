@@ -200,7 +200,9 @@
             (x "their turn: wrong slash byte in state" smove slash-byte)
             (list
              (list count smove mshare)
-             (list slash-byte)
+             ; The first candidate deliberately does not slash. This keeps the
+             ; test game exercising ordered retries through later evidence.
+             (list 0 slash-byte)
              (curry SELF_PROG "myturn" (curry-args-incr curry-args))
              )
             )

@@ -149,7 +149,7 @@ mod gaming_wasm {
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsGameSessionConfig {
         rng_id: i32,
-        have_potato: bool,
+        is_initiator: bool,
         my_contribution: JsAmount,
         their_contribution: JsAmount,
         channel_timeout: i32,
@@ -160,7 +160,7 @@ mod gaming_wasm {
 
     struct GameConfigPartial {
         game_types: BTreeMap<GameType, ProgramRef>,
-        have_potato: bool,
+        is_initiator: bool,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
         my_contribution: Amount,
@@ -191,7 +191,7 @@ mod gaming_wasm {
 
         Ok(GameConfigPartial {
             game_types,
-            have_potato: jsconfig.have_potato,
+            is_initiator: jsconfig.is_initiator,
             channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
             unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
             my_contribution: jsconfig.my_contribution.amt.clone(),
@@ -280,7 +280,7 @@ mod gaming_wasm {
 
             let config = GameSessionConfig {
                 game_types: partial.game_types,
-                have_potato: partial.have_potato,
+                is_initiator: partial.is_initiator,
                 identity,
                 channel_timeout: partial.channel_timeout,
                 unroll_timeout: partial.unroll_timeout,

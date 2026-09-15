@@ -991,7 +991,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let cradle1 = GameSession::new_with_keys(
         GameSessionConfig {
             game_types: game_type_map.clone(),
-            have_potato: true,
+            is_initiator: true,
             identity: identities[0].clone(),
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
@@ -1005,7 +1005,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let cradle2 = GameSession::new_with_keys(
         GameSessionConfig {
             game_types: game_type_map.clone(),
-            have_potato: false,
+            is_initiator: false,
             identity: identities[1].clone(),
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),

@@ -833,6 +833,15 @@ pub fn test_debug_game_validation_move() {
         .1
         .do_move(&mut allocator, debug_games.0, Amount::default(), 0)
         .expect("ok");
+
+    let move3 = debug_games
+        .0
+        .do_move(&mut allocator, debug_games.1, Amount::default(), 7)
+        .expect("ok");
+    assert!(
+        move3.slash.is_some(),
+        "the second evidence candidate should be tried after the first fails"
+    );
 }
 
 #[cfg(test)]

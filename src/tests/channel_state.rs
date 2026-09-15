@@ -17,7 +17,7 @@ pub(crate) mod sim_tests {
     use clvm_traits::ToClvm;
 
     use crate::channel_state::types::HistoricalUnrollSpendInfo;
-    use crate::common::types::{CoinCondition, CoinID, GameID};
+    use crate::common::types::{Aggsig, CoinCondition, CoinID, GameID};
     use crate::test_support::sim_script::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
@@ -55,6 +55,9 @@ pub(crate) mod sim_tests {
             (*DEFAULT_UNROLL_TIME_LOCK).clone(),
         )
         .expect("should build");
+
+        assert!(!game.player(0).ch.have_potato());
+        assert!(!game.player(1).ch.have_potato());
 
         let state_zero_signatures = game
             .player(1)
@@ -194,6 +197,66 @@ pub(crate) mod sim_tests {
             .expect("state 1 should preempt genesis");
         assert!(!result.timeout);
         assert_eq!(result.unrolling_state_number, 0);
+    }
+
+    #[test]
+    fn receiver_genesis_failure_restores_pre_genesis_ownership() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([15; 32]);
+        let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+        let nil = allocator.allocator().nil();
+        let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
+        let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
+        let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
+        let mut env = ChannelEnv {
+            allocator: &mut allocator,
+            referee_coin_puzzle: ref_coin_puz,
+            referee_coin_puzzle_hash: ref_coin_ph,
+            unroll_puzzle,
+            standard_puzzle,
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        };
+
+        let game_id = GameID(42);
+        let launcher_coin = CoinID::default();
+        let mut game = ChannelHandlerGame::new(
+            &mut rng,
+            &mut env,
+            game_id,
+            &launcher_coin,
+            &[Amount::new(100), Amount::new(100)],
+            (*DEFAULT_UNROLL_TIME_LOCK).clone(),
+        )
+        .expect("should build");
+        assert!(!game.player(1).ch.have_potato());
+
+        let state_zero_signatures = game
+            .player(1)
+            .ch
+            .get_initial_signatures()
+            .expect("receiver state 0 signatures");
+        let genesis = game
+            .player(0)
+            .ch
+            .initialize_genesis_as_initiator(&mut env, &state_zero_signatures)
+            .expect("initiator establishes genesis states");
+        let mut invalid = genesis.state_one_signatures.clone();
+        invalid.channel_half_sig = Aggsig::default();
+
+        assert!(game
+            .player(1)
+            .ch
+            .initialize_genesis_as_receiver(&mut env, &invalid)
+            .is_err());
+        assert_eq!(game.player(1).ch.state_number(), 0);
+        assert!(!game.player(1).ch.have_potato());
+
+        game.player(1)
+            .ch
+            .initialize_genesis_as_receiver(&mut env, &genesis.state_one_signatures)
+            .expect("valid retry succeeds after rollback");
+        assert_eq!(game.player(1).ch.state_number(), 1);
+        assert!(game.player(1).ch.have_potato());
     }
 
     #[test]

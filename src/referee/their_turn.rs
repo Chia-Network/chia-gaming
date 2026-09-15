@@ -42,11 +42,6 @@ pub struct TheirTurnRefereeGameState {
     pub move_spend: Option<Rc<OnChainRefereeMoveData>>,
 }
 
-struct InspectedPeerMove {
-    details: GameMoveDetails,
-    transition: ParsedValidatorResult,
-}
-
 impl TheirTurnRefereeGameState {
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.create_this_coin.clone()
@@ -54,6 +49,100 @@ impl TheirTurnRefereeGameState {
 
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.spend_this_coin.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::channel_state::game_start_info::GameStartInfo;
+    use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+    use crate::common::load_clvm::read_binary_puzzle;
+    use crate::common::standard_coin::sign_reward_payout;
+    use crate::common::types::{GameID, Node, PrivateKey, Timeout};
+    use clvmr::NodePtr;
+
+    fn identity(allocator: &mut AllocEncoder, byte: u8) -> ChiaIdentity {
+        let private_key = PrivateKey::from_bytes(&[byte; 32]).expect("private key");
+        ChiaIdentity::new(allocator, private_key).expect("identity")
+    }
+
+    #[test]
+    fn peer_move_runs_committed_validation_after_parameter_inspection() {
+        let mut allocator = AllocEncoder::new();
+        let my_identity = identity(&mut allocator, 1);
+        let their_identity = identity(&mut allocator, 2);
+        let referee_puzzle =
+            read_binary_puzzle(&mut allocator, "clsp/referee/onchain/referee.clvm.bin")
+                .expect("referee puzzle");
+        let referee_puzzle_hash = referee_puzzle.sha256tree(&mut allocator);
+        let validator = read_binary_puzzle(
+            &mut allocator,
+            "clsp/test/committed_args_validator.clvm.bin",
+        )
+        .expect("committed-args validator")
+        .to_program();
+
+        let readable = allocator
+            .allocator()
+            .new_atom(b"readable")
+            .expect("readable atom");
+        let handler_output = (Node(readable), (Node(NodePtr::NIL), ()))
+            .to_clvm(&mut allocator)
+            .expect("handler output");
+        let quote = allocator
+            .allocator()
+            .new_atom(&[1])
+            .expect("quote operator");
+        let handler_node = allocator
+            .allocator()
+            .new_pair(quote, handler_output)
+            .expect("quoted handler");
+        let handler = Program::from_nodeptr(&allocator, handler_node).expect("handler program");
+
+        let initial_validator =
+            StateUpdateProgram::new(&mut allocator, "committed args validator", validator);
+        let nil = Rc::new(Program::from_bytes(&[0x80]));
+        let start = Rc::new(GameStartInfo {
+            amount: Amount::new(30),
+            game_handler: GameHandler::TheirTurnHandler(handler.into()),
+            player_a_contribution: Amount::new(10),
+            player_b_contribution: Amount::new(20),
+            my_contribution_this_game: Amount::new(10),
+            their_contribution_this_game: Amount::new(20),
+            initial_validation_program: initial_validator,
+            initial_state: ProgramRef::new(nil),
+            initial_move: vec![],
+            initial_max_move_size: 32,
+            initial_mover_share: Amount::default(),
+            game_id: GameID(1),
+            timeout: Timeout::new(15),
+        });
+        let their_reward_signature =
+            sign_reward_payout(&their_identity.private_key, &my_identity.puzzle_hash);
+        let (referee, _) = TheirTurnReferee::new(
+            &mut allocator,
+            referee_puzzle,
+            referee_puzzle_hash,
+            &start,
+            my_identity.clone(),
+            &their_identity.public_key,
+            &my_identity.puzzle_hash,
+            &their_reward_signature,
+            &my_identity.puzzle_hash,
+            1,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .expect("their-turn referee");
+
+        assert!(
+            referee
+                .peer_move_off_chain(&mut allocator, &[0x42], Amount::new(10), 2)
+                .is_err(),
+            "the committed-argument validator execution must not reuse inspection output"
+        );
     }
 }
 
@@ -337,7 +426,7 @@ impl TheirTurnReferee {
         basic: &GameMoveStateInfo,
         state: Rc<Program>,
         validation_program: StateUpdateProgram,
-    ) -> Result<InspectedPeerMove, Error> {
+    ) -> Result<GameMoveDetails, Error> {
         let placeholder = GameMoveDetails {
             basic: basic.clone(),
             validation_info_hash: ValidationInfoHash::None,
@@ -364,10 +453,7 @@ impl TheirTurnReferee {
             ),
             None => crate::referee::nil_move_details(derived_basic),
         };
-        Ok(InspectedPeerMove {
-            details,
-            transition,
-        })
+        Ok(details)
     }
 
     pub fn peer_move_off_chain(
@@ -383,14 +469,9 @@ impl TheirTurnReferee {
             mover_share,
             max_move_size: 0,
         };
-        let inspected =
+        let details =
             self.inspect_peer_move(allocator, &basic, state.clone(), validation_program)?;
-        self.their_turn_move_off_chain_with_inspection(
-            allocator,
-            &inspected.details,
-            state_number,
-            Some(inspected.transition),
-        )
+        self.their_turn_move_off_chain(allocator, &details, state_number)
     }
 
     pub fn their_turn_move_off_chain(
@@ -398,16 +479,6 @@ impl TheirTurnReferee {
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
-    ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
-        self.their_turn_move_off_chain_with_inspection(allocator, details, state_number, None)
-    }
-
-    fn their_turn_move_off_chain_with_inspection(
-        &self,
-        allocator: &mut AllocEncoder,
-        details: &GameMoveDetails,
-        state_number: usize,
-        inspected_transition: Option<ParsedValidatorResult>,
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
         let handler = self
             .get_game_handler()
@@ -443,15 +514,12 @@ impl TheirTurnReferee {
             return slash_move(details, Evidence::nil()?);
         }
 
-        let parsed = match inspected_transition {
-            Some(parsed) => parsed,
-            None => self.run_state_update_parsed(
-                allocator,
-                rc_puzzle_args.clone(),
-                state.clone(),
-                Evidence::nil()?,
-            )?,
-        };
+        let parsed = self.run_state_update_parsed(
+            allocator,
+            rc_puzzle_args.clone(),
+            state.clone(),
+            Evidence::nil()?,
+        )?;
         let new_state = parsed
             .new_state
             .unwrap_or_else(|| Rc::new(Program(vec![0x80])));

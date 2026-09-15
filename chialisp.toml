@@ -2,6 +2,7 @@
 unroll-puzzle = "clsp/unroll/unroll_puzzle.clsp"
 onchain-referee = "clsp/referee/onchain/referee.clsp"
 mock-validator = "clsp/test/mock_validator.clsp"
+committed-args-validator = "clsp/test/committed_args_validator.clsp"
 handcalc-micro = "clsp/test/test_handcalc_micro.clsp"
 make-cards = "clsp/test/test_make_cards.clsp"
 deep-compare = "clsp/test/deep_compare.clsp"

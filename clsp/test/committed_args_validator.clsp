@@ -1,0 +1,15 @@
+(include *standard-cl-23*)
+
+; Parameter inspection supplies nil INFOHASH_B. Once Rust has derived and
+; committed INFOHASH_B, this validator raises. The regression test verifies
+; that the committed-argument validation remains a distinct execution.
+(export
+    (mod_hash
+     (mover_pk waiter_pk timeout amount referee_hash nonce move max_move_size infohash_b mover_share infohash_a)
+     state
+     this_validation_program
+     evidence)
+    (if infohash_b
+        (x "committed validator execution")
+        (list 0x1111111111111111111111111111111111111111111111111111111111111111 "derived state" 32))
+)

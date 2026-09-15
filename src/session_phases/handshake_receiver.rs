@@ -25,9 +25,7 @@ use crate::session_phases::handshake::{
     MAX_QUEUED_PEER_MESSAGES,
 };
 use crate::session_phases::proposal::GameProposal;
-use crate::session_phases::types::{
-    OffChainPhaseInit, PeerMessage, PotatoState, SpendWalletReceiver,
-};
+use crate::session_phases::types::{OffChainPhaseInit, PeerMessage, SpendWalletReceiver};
 use crate::session_phases::OffChainPhase;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -43,7 +41,6 @@ enum ReceiverState {
 #[derive(Serialize, Deserialize)]
 pub struct HandshakeReceiverPhase {
     state: ReceiverState,
-    have_potato: PotatoState,
 
     channel_state: Option<ChannelState>,
     channel_finished_transaction: Option<SpendBundle>,
@@ -80,7 +77,6 @@ impl HandshakeReceiverPhase {
     pub fn new(phi: OffChainPhaseInit) -> Self {
         HandshakeReceiverPhase {
             state: ReceiverState::WaitingForA,
-            have_potato: PotatoState::Present,
             channel_state: None,
             channel_finished_transaction: None,
             launcher_coin: None,
@@ -119,7 +115,7 @@ impl HandshakeReceiverPhase {
     fn make_channel_state(
         &self,
         parent: CoinID,
-        start_potato: bool,
+        is_receiver: bool,
         msg: &HandshakePayloadB,
         env: &mut ChannelEnv<'_>,
     ) -> Result<(ChannelState, ChannelInitiationResult), Error> {
@@ -127,7 +123,7 @@ impl HandshakeReceiverPhase {
             env,
             self.private_keys.clone(),
             parent,
-            start_potato,
+            is_receiver,
             msg.channel_public_key.clone(),
             msg.unroll_public_key.clone(),
             msg.referee_pubkey.clone(),
@@ -212,7 +208,7 @@ impl HandshakeReceiverPhase {
         self.replacement.take().map(|ph| *ph)
     }
 
-    fn try_transition_to_potato(&mut self) {
+    fn try_transition_to_off_chain(&mut self) {
         if self.replacement.is_some() {
             return;
         }
@@ -232,7 +228,6 @@ impl HandshakeReceiverPhase {
             let ph = OffChainPhase::from_completed_handshake(
                 false,
                 ch,
-                std::mem::replace(&mut self.have_potato, PotatoState::Absent),
                 self.game_types.clone(),
                 self.private_keys.clone(),
                 self.my_contribution.clone(),
@@ -462,7 +457,7 @@ impl HandshakeReceiverPhase {
             }
         }
 
-        self.try_transition_to_potato();
+        self.try_transition_to_off_chain();
         Ok(effects)
     }
 
@@ -577,7 +572,7 @@ impl SpendWalletReceiver for HandshakeReceiverPhase {
                 ch.have_potato(),
             )));
         }
-        self.try_transition_to_potato();
+        self.try_transition_to_off_chain();
         Ok(Some(effects))
     }
 
@@ -751,7 +746,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
             self.channel_finished_transaction = Some(bundle.clone());
             let info = *info.clone();
             let result = self.try_send_step_f(info)?;
-            self.try_transition_to_potato();
+            self.try_transition_to_off_chain();
             return Ok(result);
         }
 
@@ -986,7 +981,6 @@ mod queued_message_tests {
     fn waiting_for_completion_phase() -> HandshakeReceiverPhase {
         let mut rng = ChaCha8Rng::from_seed([19; 32]);
         let mut phase = HandshakeReceiverPhase::new(OffChainPhaseInit {
-            have_potato: false,
             private_keys: rng.random(),
             game_types: BTreeMap::new(),
             my_contribution: Amount::new(100),

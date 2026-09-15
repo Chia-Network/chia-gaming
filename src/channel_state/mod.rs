@@ -623,7 +623,7 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         private_keys: ChannelPrivateKeys,
         launcher_coin_id: CoinID,
-        we_start_with_potato: bool,
+        is_receiver: bool,
         their_channel_pubkey: PublicKey,
         their_unroll_pubkey: PublicKey,
         their_referee_pubkey: PublicKey,
@@ -673,13 +673,13 @@ impl ChannelState {
             my_allocated_balance: Amount::default(),
             their_allocated_balance: Amount::default(),
 
-            have_potato: we_start_with_potato,
+            have_potato: false,
 
             cached_redo_actions: Vec::new(),
 
             state_number: 0,
-            my_next_nonce: if we_start_with_potato { 0 } else { 1 },
-            their_next_nonce: if we_start_with_potato { 1 } else { 0 },
+            my_next_nonce: if is_receiver { 0 } else { 1 },
+            their_next_nonce: if is_receiver { 1 } else { 0 },
 
             channel_coin_spend: CoinSpend {
                 coin: channel_coin_parent,
@@ -698,7 +698,7 @@ impl ChannelState {
         };
 
         myself.latest_sent_unroll.coin.state_number = 0;
-        myself.latest_sent_unroll.coin.started_with_potato = myself.have_potato;
+        myself.latest_sent_unroll.coin.started_with_potato = is_receiver;
 
         // Unroll puzzle knows its sequence number and knows the hashes of the
         // things to exit in the two different ways (one is a hash of a list of
@@ -1017,10 +1017,13 @@ impl ChannelState {
             0,
             "receiver genesis initialization must start at state 0"
         );
-        game_assert!(self.have_potato, "receiver must own the genesis potato");
+        game_assert!(
+            !self.have_potato,
+            "receiver must not own the potato before genesis completes"
+        );
         let snapshot = self.clone();
         let result = (|| {
-            let spend = self.receive_empty_potato_signatures(env, state_one_signatures)?;
+            let spend = self.verify_received_state_signatures(env, state_one_signatures)?;
             game_assert_eq!(
                 self.state_number,
                 1,
@@ -1039,6 +1042,14 @@ impl ChannelState {
     }
 
     fn receive_empty_potato_signatures(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        signatures: &StateUpdateSignatures,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        self.verify_received_state_signatures(env, signatures)
+    }
+
+    fn verify_received_state_signatures(
         &mut self,
         env: &mut ChannelEnv<'_>,
         signatures: &StateUpdateSignatures,

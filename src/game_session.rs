@@ -391,7 +391,7 @@ pub struct GameSession {
 #[derive(Debug, Clone)]
 pub struct GameSessionConfig {
     pub game_types: BTreeMap<GameType, ProgramRef>,
-    pub have_potato: bool,
+    pub is_initiator: bool,
     pub identity: ChiaIdentity,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
@@ -465,7 +465,7 @@ impl GameSession {
     pub fn new_with_keys(config: GameSessionConfig, private_keys: ChannelPrivateKeys) -> Self {
         GameSession {
             state: GameSessionState {
-                is_initiator: config.have_potato,
+                is_initiator: config.is_initiator,
                 current_height: 0,
                 identity: config.identity.clone(),
                 channel_puzzle_hash: None,
@@ -488,7 +488,6 @@ impl GameSession {
             },
             peer: {
                 let phi = OffChainPhaseInit {
-                    have_potato: config.have_potato,
                     private_keys,
                     game_types: config.game_types,
                     my_contribution: config.my_contribution.clone(),
@@ -497,7 +496,7 @@ impl GameSession {
                     unroll_timeout: config.unroll_timeout,
                     reward_puzzle_hash: config.reward_puzzle_hash,
                 };
-                if config.have_potato {
+                if config.is_initiator {
                     Box::new(HandshakeInitiatorPhase::new(phi)) as Box<dyn PeerLifecyclePhase>
                 } else {
                     Box::new(HandshakeReceiverPhase::new(phi)) as Box<dyn PeerLifecyclePhase>
@@ -1712,7 +1711,7 @@ mod sequencing_tests {
     }
 
     /// Stand-in for a handshake handler: `coin_created` builds a replacement
-    /// handler (mirroring `try_transition_to_potato`), while `coin_spent` is a
+    /// handler (mirroring `try_transition_to_off_chain`), while `coin_spent` is a
     /// no-op log -- it records into its own `Recorder` only so the test can
     /// prove the pre-transition handler never handles the spend.
     struct HandshakeLikeHandler {
@@ -1823,15 +1822,15 @@ mod genesis_challenge_tests {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([3u8; 32]);
         let genesis = Hash::from_bytes([0x11; 32]);
-        let make_config = |identity, have_potato, my, their| GameSessionConfig {
+        let make_config = |identity, is_initiator, my, their| GameSessionConfig {
             game_types: BTreeMap::new(),
-            have_potato,
+            is_initiator,
             identity,
             my_contribution: Amount::new(my),
             their_contribution: Amount::new(their),
             channel_timeout: Timeout::new(5),
             unroll_timeout: Timeout::new(15),
-            reward_puzzle_hash: PuzzleHash::from_bytes([if have_potato { 2 } else { 3 }; 32]),
+            reward_puzzle_hash: PuzzleHash::from_bytes([if is_initiator { 2 } else { 3 }; 32]),
             agg_sig_me_additional_data: genesis.clone(),
         };
         let initiator_identity =
@@ -1903,7 +1902,7 @@ mod genesis_challenge_tests {
         let testnet = Hash::from_bytes([0x11; 32]);
         let config = GameSessionConfig {
             game_types: crate::session_phases::game_collection::game_collection(&mut allocator),
-            have_potato: true,
+            is_initiator: true,
             identity,
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
@@ -1945,7 +1944,7 @@ mod genesis_challenge_tests {
         let mut session = GameSession::new_with_keys(
             GameSessionConfig {
                 game_types: BTreeMap::new(),
-                have_potato: false,
+                is_initiator: false,
                 identity,
                 my_contribution: Amount::new(100),
                 their_contribution: Amount::new(100),
