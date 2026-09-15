@@ -981,6 +981,15 @@ describe('wallet fee attachment on submission', () => {
         puzzle_reveal: '0x80',
         solution: '0x80',
       },
+      {
+        coin: {
+          parent_coin_info: `0x${'cc'.repeat(32)}`,
+          puzzle_hash: '0xeff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9',
+          amount: 0n,
+        },
+        puzzle_reveal: '0x80',
+        solution: '0x80',
+      },
     ],
     aggregated_signature: '0xproto',
   };
@@ -1022,8 +1031,10 @@ describe('wallet fee attachment on submission', () => {
     submitTransaction(blob, testSpendBundle('coin'));
     await transactionSubmitQueue(blob);
 
-    // Fee spend bound to the coin id of the protocol bundle's first coin spend.
-    const bindCoinId = await coinIdFromBytes(toUint8(`${'aa'.repeat(32)}${'bb'.repeat(32)}64`));
+    // Initial funding binds the fee to the launcher even when it is not first.
+    const bindCoinId = await coinIdFromBytes(
+      toUint8(`${'cc'.repeat(32)}eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9`),
+    );
     expect(createFeeOffer).toHaveBeenCalledWith(10n, bindCoinId);
     expect(aggregate).toHaveBeenCalledWith(jsonStringify([protocolBundle, feeSpend]));
     expect(spend).toHaveBeenCalledWith(

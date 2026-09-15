@@ -50,6 +50,9 @@ import {
   type ReliableMessageConsumer,
 } from '../services/PeerSession';
 
+const SINGLETON_LAUNCHER_PUZZLE_HASH =
+  'eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9';
+
 export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 
 export interface WasmFields {
@@ -800,12 +803,21 @@ export class SessionController implements PollingGameSession {
     this.kickSystem(1);
   }
 
-  // Coin id of the first coin the protocol bundle spends, used to bind a wallet
-  // fee spend via ASSERT_CONCURRENT_SPEND. Mirrors RealBlockchainInterface's
-  // coin-string construction so the two agree on coin ids.
+  // Prefer the singleton launcher during initial funding; otherwise use the
+  // first protocol spend. The fee wallet spend binds to this coin with
+  // ASSERT_CONCURRENT_SPEND.
   private async computeBindCoinId(protocolBundle: unknown): Promise<string | undefined> {
     const coinSpends = (protocolBundle as { coin_spends?: Array<{ coin?: unknown }> })?.coin_spends;
-    const coin = Array.isArray(coinSpends) ? (coinSpends[0]?.coin as any) : undefined;
+    const launcherSpend = Array.isArray(coinSpends)
+      ? coinSpends.find(
+          (spend) =>
+            normalizeHexString(String((spend.coin as any)?.puzzle_hash ?? '')) ===
+            SINGLETON_LAUNCHER_PUZZLE_HASH,
+        )
+      : undefined;
+    const coin = Array.isArray(coinSpends)
+      ? ((launcherSpend?.coin ?? coinSpends[0]?.coin) as any)
+      : undefined;
     if (!coin || coin.parent_coin_info === undefined || coin.puzzle_hash === undefined) {
       return undefined;
     }
