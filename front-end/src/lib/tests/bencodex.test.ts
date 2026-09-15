@@ -30,6 +30,13 @@ describe('local bencodex codec', () => {
     expectRoundTrip('hello', 'u5:hello');
   });
 
+  it('rejects non-canonical integer grammars', () => {
+    const encoder = new TextEncoder();
+    for (const encoded of ['i+12e', 'i 12e', 'i12 e', 'i 0x10e', 'i 0o17e', 'i 0b101e']) {
+      expect(() => decode(encoder.encode(encoded))).toThrow('invalid integer encoding');
+    }
+  });
+
   it('encodes byte arrays as byte strings', () => {
     const bytes = new TextEncoder().encode('spam');
     const encoded = encode(bytes);

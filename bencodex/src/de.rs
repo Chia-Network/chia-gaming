@@ -1,6 +1,6 @@
 use serde::de::{self, Deserialize, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 
-use crate::{Error, Limits};
+use crate::{parse_integer, Error, Limits};
 
 pub fn from_slice<'de, T: Deserialize<'de>>(input: &'de [u8]) -> Result<T, Error> {
     from_slice_with_limits(input, Limits::default())
@@ -90,12 +90,7 @@ impl<'de> Deserializer<'de> {
         let digits = &self.input[..end];
         let s = std::str::from_utf8(digits)
             .map_err(|_| Error::InvalidData("non-utf8 in integer".into()))?;
-        if s.starts_with("-0") || (s.starts_with('0') && s.len() > 1) {
-            return Err(Error::InvalidData("invalid integer encoding".into()));
-        }
-        let val: i128 = s
-            .parse()
-            .map_err(|_| Error::InvalidData(format!("cannot parse integer: {s}")))?;
+        let val = parse_integer(s)?;
         self.advance(end + 1);
         Ok(val)
     }

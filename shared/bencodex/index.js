@@ -151,7 +151,7 @@ class Decoder {
   readInteger() {
     const rawBytes = this.readUntil(0x65);
     const raw = textDecoder.decode(rawBytes);
-    if (raw === '' || raw === '-' || raw.startsWith('-0') || (raw.startsWith('0') && raw.length > 1)) {
+    if (!/^(?:0|-?[1-9][0-9]*)$/.test(raw)) {
       throw new BencodexError('invalid integer encoding');
     }
     try {

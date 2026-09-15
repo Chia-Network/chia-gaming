@@ -336,6 +336,21 @@ fn invalid_integer_negative_zero() {
 }
 
 #[test]
+fn non_decimal_integer_grammars_are_rejected_by_both_decoders() {
+    for input in [
+        b"i+12e".as_slice(),
+        b"i 12e".as_slice(),
+        b"i12 e".as_slice(),
+        b"i 0x10e".as_slice(),
+        b"i 0o17e".as_slice(),
+        b"i 0b101e".as_slice(),
+    ] {
+        assert!(parse(input).is_err(), "{input:?}");
+        assert!(from_slice::<i128>(input).is_err(), "{input:?}");
+    }
+}
+
+#[test]
 fn trailing_bytes_error() {
     assert!(from_slice::<u64>(b"i42eextra").is_err());
 }

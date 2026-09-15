@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::{Error, Limits};
+use crate::{parse_integer, Error, Limits};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -157,17 +157,7 @@ impl Parser<'_> {
         self.offset += 1;
         let text = std::str::from_utf8(digits)
             .map_err(|_| Error::InvalidData("non-utf8 integer".to_string()))?;
-        if text.is_empty()
-            || text == "-0"
-            || text.starts_with("-0")
-            || (text.starts_with('0') && text.len() > 1)
-            || (text.starts_with('-') && text.len() == 1)
-        {
-            return Err(Error::InvalidData("invalid integer encoding".to_string()));
-        }
-        text.parse::<i128>()
-            .map(Value::Integer)
-            .map_err(|_| Error::InvalidData(format!("cannot parse integer: {text}")))
+        parse_integer(text).map(Value::Integer)
     }
 
     fn sized(&mut self) -> Result<Vec<u8>, Error> {
