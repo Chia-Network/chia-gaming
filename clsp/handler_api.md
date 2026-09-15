@@ -153,9 +153,11 @@ bug by default. Referee-envelope violations such as `max_move_size` are checked
 before the handler; game-rule violations that survive that envelope must be
 handled as slashable validator outcomes/evidence, not handler crashes. Terminal
 their-turn handlers get the same nil-evidence precheck as non-terminal handlers:
-if nil evidence successfully slashes, the framework skips the handler. Inputs
-that survive that precheck are still peer-controlled and must be safe for the
-handler to process.
+if nil evidence successfully slashes, the framework skips the handler. If that
+run returns a valid payload, the handler gets that `new_state`. If it raises,
+the handler still runs with `state` nil and must use `pre_state` and `move`.
+Inputs that survive a successful slash precheck are still peer-controlled and
+must be safe for the handler to process.
 
 
 ## Message Parser

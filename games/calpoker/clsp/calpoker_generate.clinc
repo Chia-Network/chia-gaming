@@ -59,7 +59,7 @@
             (sha256 preimage)
             pokera
             pokerb
-            48
+            16
             0
             (curry calpoker_alice_handler_b preimage)
         )
@@ -277,8 +277,8 @@
 
 ; pre_state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards (17 bytes) + alice_card_selections (1 byte)
-; Computes final cards and hand values from pre_state + move directly
-; (terminal move: the on-chain validator is not run off-chain).
+; Computes final cards and hand values from pre_state + move.
+; Nil-evidence e.clsp raises (evidence is required), so `state` is nil.
 (defun calpoker_bob_handler_e (
         amount
         (bob_discards alice_cards bob_cards alice_commit)

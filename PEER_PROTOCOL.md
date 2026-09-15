@@ -873,36 +873,28 @@ An unknown or non-canonical group is a hard batch error.
 Move(GameID, PeerMove)
 
 PeerMove {
-  basic: GameMoveStateInfo,
-  terminal: Bool
+  basic: GameMoveStateInfo
 }
 
 GameMoveStateInfo {
   move_made: Bytes,
   mover_share: Amount,
-  max_move_size: u32,
-  max_move_size_raw: Bytes
+  max_move_size: u32
 }
 ```
 
 The receiver locates the live game, validates turn authority and the move using
 the locally held validation program and game handlers, and updates the referee
-state. Neither the validation info hash nor the bare validation-program hash is
-sent by the peer:
+state. It computes the next validation info hash the same way the on-chain
+referee does: nil if the validator's next-validator hash is nil, otherwise
+`sha256(next_validator_hash, shatree(new_state))`. Off-chain accept then curries
+a real referee with that infohash and slash-invokes it with nil evidence, then
+with each handler evidence candidate. If any invocation succeeds, the move is
+slashable and is rejected. This check also applies when the next-validator hash
+is nil. The signed unroll leaf is the new virtual coin's puzzle hash.
 
-- for a nonterminal move, the receiver computes the validation info hash from
-  its local validation program and pre-move state, and computes the program tree
-  hash locally;
-- for a terminal move, the receiver reconstructs the nil validation-info
-  commitment and no bare program hash.
-
-The `terminal` boolean is untrusted semantic input. After interpreting the move,
-the receiver requires it to agree with whether the local handler transition has
-a successor. A mismatch is a hard batch error. A valid move and the
-locally reconstructed commitments are part of the signed final channel state.
-
-`max_move_size_raw` preserves the exact CLVM atom bytes used when hashing the
-resulting puzzle. It accompanies the decoded numeric `max_move_size`.
+The receiver canonically encodes `max_move_size` when constructing the referee
+puzzle. When the next validation info hash is nil, `max_move_size` must be zero.
 
 If the game becomes terminal, the receiver queues a local
 `AcceptSettlement`.

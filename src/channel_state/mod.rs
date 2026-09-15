@@ -1412,11 +1412,10 @@ impl ChannelState {
     ) -> Result<MoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let state_number = self.state_number;
+        let pre_move_puzzle_hash = self.live_games[game_idx].last_referee_puzzle_hash.clone();
 
         let referee_result =
             self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
-
-        let match_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
 
         self.live_games[game_idx].last_referee_puzzle_hash =
             self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
@@ -1429,7 +1428,7 @@ impl ChannelState {
         self.push_cached_action(CachedRedoActions::CachedSendMove(Rc::new(CachedSendMove {
             state_number: self.state_number,
             game_id: *game_id,
-            match_puzzle_hash,
+            match_puzzle_hash: pre_move_puzzle_hash,
             puzzle_hash,
             amount,
             saved_post_move_referee: saved_referee,
@@ -1450,7 +1449,6 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
         basic: &GameMoveStateInfo,
-        terminal: bool,
     ) -> Result<ChannelMoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let game_amount = self.live_games[game_idx].get_amount();
@@ -1473,12 +1471,8 @@ impl ChannelState {
 
         let state_number = self.state_number;
 
-        let their_move_result = self.live_games[game_idx].internal_their_move(
-            env.allocator,
-            basic,
-            terminal,
-            state_number,
-        )?;
+        let their_move_result =
+            self.live_games[game_idx].internal_their_move(env.allocator, basic, state_number)?;
 
         if their_move_result.slash.is_some() {
             return Err(Error::StrErr(

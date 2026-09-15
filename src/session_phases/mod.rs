@@ -142,8 +142,8 @@ fn format_batch_action(action: &BatchAction) -> String {
         BatchAction::CancelProposalGroup(id) => format!("CancelProposalGroup id={id}"),
         BatchAction::Move(id, details) => {
             format!(
-                "Move id={id} mover_share={} max_move_size={} terminal={}",
-                details.basic.mover_share, details.basic.max_move_size, details.terminal,
+                "Move id={id} mover_share={} max_move_size={}",
+                details.basic.mover_share, details.basic.max_move_size,
             )
         }
         BatchAction::AcceptSettlement(id, amount) => {
@@ -153,20 +153,8 @@ fn format_batch_action(action: &BatchAction) -> String {
 }
 
 fn peer_move_from_result(move_result: MoveResult) -> Result<PeerMove, Error> {
-    let terminal = move_result.is_finished;
-    game_assert_eq!(
-        move_result.game_move.validation_info_hash.is_none(),
-        terminal,
-        "sender terminal flag disagrees with internal validation info hash"
-    );
-    game_assert_eq!(
-        move_result.game_move.validation_program_hash.is_none(),
-        terminal,
-        "sender terminal flag disagrees with internal validation program hash"
-    );
     Ok(PeerMove {
         basic: move_result.game_move.basic,
-        terminal,
     })
 }
 
@@ -811,7 +799,7 @@ impl OffChainPhase {
                 BatchAction::Move(game_id, game_move) => {
                     let move_result = {
                         let ch = self.channel_state_mut()?;
-                        ch.apply_received_move(env, game_id, &game_move.basic, game_move.terminal)?
+                        ch.apply_received_move(env, game_id, &game_move.basic)?
                     };
                     let finished = {
                         let ch = self.channel_state()?;

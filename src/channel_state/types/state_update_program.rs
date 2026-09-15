@@ -63,6 +63,10 @@ impl StateUpdateProgram {
     pub fn hash(&self) -> &Hash {
         &self.state_update_program_hash
     }
+
+    pub fn is_nil(&self) -> bool {
+        self.to_program().is_nil()
+    }
 }
 
 impl ToClvm<AllocEncoder> for StateUpdateProgram {

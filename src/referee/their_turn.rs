@@ -1,6 +1,8 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
+use clvm_traits::ToClvm;
+use clvmr::run_program;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_handler::{
@@ -11,15 +13,16 @@ use crate::channel_state::types::{Evidence, ReadableMove, StateUpdateProgram};
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
-    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend,
+    chia_dialect, u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend,
+    CoinString, Error, Hash, IntoErr, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
+    Sha256tree, Spend, MAX_BLOCK_COST_CLVM,
 };
 use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeGameState};
 use crate::referee::referee_initial_setup;
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
     OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSolution, ParsedRefereeSolution,
-    RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    ParsedValidatorResult, RefereePuzzleArgs, StateUpdateMoveArgs,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, RefereeFixedContext, SlashOutcome,
@@ -32,23 +35,11 @@ use crate::referee::Referee;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TheirTurnRefereeGameState {
     pub game_handler: Option<GameHandler>,
-    pub slash_validation_program: StateUpdateProgram,
-    pub slash_state: Rc<Program>,
     pub their_turn_validation_program: StateUpdateProgram,
     pub current_state: Rc<Program>,
     pub create_this_coin: Rc<RefereePuzzleArgs>,
     pub spend_this_coin: Rc<RefereePuzzleArgs>,
     pub move_spend: Option<Rc<OnChainRefereeMoveData>>,
-}
-
-// Unsigned evidence must make the validator return nil. Signed evidence comes
-// only from a trusted local handler's certified conditional proof; its non-nil
-// result carries the condition that the referee enforces on-chain.
-fn validator_result_authorizes_slash(
-    validation_result: &StateUpdateResult,
-    evidence: &Evidence,
-) -> bool {
-    validation_result.is_none() || evidence.signature().is_some()
 }
 
 impl TheirTurnRefereeGameState {
@@ -58,28 +49,6 @@ impl TheirTurnRefereeGameState {
 
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.spend_this_coin.clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validator_result_authorizes_slash;
-    use crate::channel_state::types::Evidence;
-    use crate::common::types::{Aggsig, Program};
-    use std::rc::Rc;
-
-    #[test]
-    fn unsigned_evidence_requires_nil_but_signed_evidence_is_conditional() {
-        let program = Rc::new(Program::from_bytes(&[0x80]));
-        let valid_result = Some(program.clone());
-        let slash_result = None;
-        let unsigned = Evidence::new(program.clone());
-        let signed = Evidence::with_signature(program, Aggsig::default());
-
-        assert!(!validator_result_authorizes_slash(&valid_result, &unsigned));
-        assert!(validator_result_authorizes_slash(&slash_result, &unsigned));
-        assert!(validator_result_authorizes_slash(&valid_result, &signed));
-        assert!(validator_result_authorizes_slash(&slash_result, &signed));
     }
 }
 
@@ -128,8 +97,6 @@ impl TheirTurnReferee {
 
         let state = Rc::new(TheirTurnRefereeGameState {
             game_handler: Some(game_start_info.game_handler.clone()),
-            slash_validation_program: game_start_info.initial_validation_program.clone(),
-            slash_state: game_start_info.initial_state.p(),
             their_turn_validation_program: game_start_info.initial_validation_program.clone(),
             current_state: game_start_info.initial_state.p(),
             create_this_coin: setup.ref_puzzle_args.clone(),
@@ -183,13 +150,6 @@ impl TheirTurnReferee {
         Ok((
             self.state.current_state.clone(),
             self.state.their_turn_validation_program.clone(),
-        ))
-    }
-
-    pub fn slash_infohash_inputs(&self) -> Option<(StateUpdateProgram, Rc<Program>)> {
-        Some((
-            self.state.slash_validation_program.clone(),
-            self.state.slash_state.clone(),
         ))
     }
 
@@ -293,39 +253,151 @@ impl TheirTurnReferee {
 
     /// Run the initial validator for a their turn move.  We must run the their turn validator
     /// first before we run the turn handler to provide a new state to the turn handler.
-    pub fn run_state_update(
+    fn run_state_update_parsed(
         &self,
         allocator: &mut AllocEncoder,
         puzzle_args: Rc<RefereePuzzleArgs>,
         state: Rc<Program>,
         evidence: Evidence,
-    ) -> Result<StateUpdateResult, Error> {
+    ) -> Result<ParsedValidatorResult, Error> {
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: puzzle_args.validation_program.clone(),
-            referee_args: Rc::new(puzzle_args.swap()),
+            referee_args: puzzle_args,
             state_update_args: StateUpdateMoveArgs {
                 state: state.clone(),
                 evidence: evidence.to_program(),
             },
         };
-        validator_move_args.run(allocator)
+        validator_move_args.run_parsed(allocator)
+    }
+
+    fn new_virtual_coin_args(
+        &self,
+        details: &GameMoveDetails,
+        validation_program: StateUpdateProgram,
+    ) -> Rc<RefereePuzzleArgs> {
+        let puzzle_args = self.spend_this_coin();
+        let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
+        Rc::new(RefereePuzzleArgs {
+            mover_pubkey: self.fixed.my_identity.public_key.clone(),
+            waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
+            game_move: details.clone(),
+            validation_program,
+            previous_validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
+            ..ref_puzzle_args.clone()
+        })
+    }
+
+    /// Curry a real referee with `new_coin_args` and invoke the slash path.
+    /// Success (conditions, no raise) means this evidence slashes the move.
+    fn referee_slash_succeeds(
+        &self,
+        allocator: &mut AllocEncoder,
+        new_coin_args: &RefereePuzzleArgs,
+        validation_program: StateUpdateProgram,
+        previous_state: Rc<Program>,
+        evidence: Evidence,
+    ) -> Result<bool, Error> {
+        let referee_clvm = self
+            .fixed
+            .referee_coin_puzzle
+            .to_clvm(allocator)
+            .into_gen()?;
+        let curried_args = new_coin_args.to_clvm(allocator).into_gen()?;
+        let solution = OnChainRefereeSolution::Slash(Rc::new(OnChainRefereeSlash {
+            validation_program,
+            state: previous_state,
+            evidence,
+            reward_puzzle_hash: self.fixed.reward_puzzle_hash.clone(),
+            signature: self.fixed.my_reward_payout_signature.clone(),
+        }));
+        let slash_args = solution.to_nodeptr(allocator, &self.fixed)?;
+        let args = allocator
+            .allocator()
+            .new_pair(curried_args, slash_args)
+            .into_gen()?;
+        Ok(run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            referee_clvm,
+            args,
+            MAX_BLOCK_COST_CLVM,
+        )
+        .is_ok())
+    }
+
+    fn extract_validator_transition(
+        &self,
+        allocator: &mut AllocEncoder,
+        basic: &GameMoveStateInfo,
+        state: Rc<Program>,
+        validation_program: StateUpdateProgram,
+        placeholder: ValidationInfoHash,
+    ) -> Result<ParsedValidatorResult, Error> {
+        let details = GameMoveDetails {
+            basic: basic.clone(),
+            validation_info_hash: placeholder,
+            validation_program_hash: None,
+        };
+        let extract_args = self.new_virtual_coin_args(&details, validation_program);
+        self.run_state_update_parsed(allocator, extract_args, state, Evidence::nil()?)
     }
 
     pub fn peer_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
         basic: &GameMoveStateInfo,
-        terminal: bool,
         state_number: usize,
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
-        let details = crate::referee::game_move_details_for_state(
+        let current_infohash = self
+            .spend_this_coin()
+            .game_move
+            .validation_info_hash
+            .clone();
+        // Extract (next_validator_hash, new_state). Continuing validators
+        // ignore VALIDATION_INFO_HASH; try the current coin's infohash first
+        // so games whose move bytes bind that field still parse. Terminal
+        // validators that require nil INFOHASH_B (Space Poker end) retry
+        // with nil.
+        let parsed = match self.extract_validator_transition(
             allocator,
-            basic.clone(),
-            terminal,
-            validation_program,
-            state,
-        );
+            basic,
+            state.clone(),
+            validation_program.clone(),
+            current_infohash.clone(),
+        ) {
+            Ok(parsed) if parsed.new_state.is_some() => parsed,
+            Ok(_) | Err(_) if current_infohash.is_some() => {
+                match self.extract_validator_transition(
+                    allocator,
+                    basic,
+                    state.clone(),
+                    validation_program,
+                    ValidationInfoHash::None,
+                ) {
+                    Ok(parsed) => parsed,
+                    Err(_) => ParsedValidatorResult {
+                        new_state: None,
+                        next_validator_hash: None,
+                    },
+                }
+            }
+            Ok(parsed) => parsed,
+            Err(_) => ParsedValidatorResult {
+                new_state: None,
+                next_validator_hash: None,
+            },
+        };
+        let details = match parsed.new_state {
+            Some(new_state) => crate::referee::game_move_details_from_transition(
+                allocator,
+                basic.clone(),
+                parsed.next_validator_hash,
+                &new_state,
+            ),
+            None => crate::referee::nil_move_details(basic.clone()),
+        };
         self.their_turn_move_off_chain(allocator, &details, state_number)
     }
 
@@ -339,75 +411,50 @@ impl TheirTurnReferee {
             .get_game_handler()
             .ok_or_else(|| Error::StrErr("received their move after our final move".to_string()))?;
 
-        // Run the validation program for the incoming move to get the new state.
-        let evidence = Evidence::nil()?;
         let puzzle_args = self.spend_this_coin();
-        let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let pre_state_nodeptr = state.to_nodeptr(allocator)?;
-        let prev_hash = puzzle_args.game_move.validation_info_hash.clone();
-        let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_pubkey: self.fixed.my_identity.public_key.clone(),
-            waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
-            game_move: details.clone(),
-            validation_program: validation_program.clone(),
-            previous_validation_info_hash: prev_hash.clone(),
-            ..ref_puzzle_args.clone()
-        });
-        let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_pubkey: self.fixed.my_identity.public_key.clone(),
-            waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
-            game_move: details.clone(),
-            validation_program: validation_program.clone(),
-            previous_validation_info_hash: prev_hash,
-            ..ref_puzzle_args.clone()
-        });
-        let is_terminal = details.validation_info_hash == ValidationInfoHash::None;
-        let new_state: Rc<Program> = if is_terminal {
-            if let Ok(None) = self.run_state_update(
-                allocator,
-                offchain_puzzle_args.clone(),
-                state.clone(),
-                evidence.clone(),
-            ) {
-                return Ok((
-                    None,
-                    TheirTurnMoveResult {
-                        puzzle_hash_for_unroll: None,
-                        readable_move: Program(vec![0x80]).into(),
-                        mover_share: details.basic.mover_share.clone(),
-                        message: vec![],
-                        slash: Some(Evidence::nil()?),
-                    },
-                ));
-            }
-            Program(vec![0x80]).into()
-        } else {
-            let state_update = self.run_state_update(
-                allocator,
-                offchain_puzzle_args.clone(),
-                state.clone(),
-                evidence,
-            )?;
-            match state_update {
-                Some(state) => state,
-                None => {
-                    return Ok((
-                        None,
-                        TheirTurnMoveResult {
-                            puzzle_hash_for_unroll: None,
-                            readable_move: Program(vec![0x80]).into(),
-                            mover_share: details.basic.mover_share.clone(),
-                            message: vec![],
-                            slash: Some(Evidence::nil()?),
-                        },
-                    ));
-                }
-            }
+        let rc_puzzle_args = self.new_virtual_coin_args(details, validation_program.clone());
+
+        let slash_move = |details: &GameMoveDetails,
+                          evidence: Evidence|
+         -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
+            Ok((
+                None,
+                TheirTurnMoveResult {
+                    puzzle_hash_for_unroll: None,
+                    readable_move: Program(vec![0x80]).into(),
+                    mover_share: details.basic.mover_share.clone(),
+                    message: vec![],
+                    slash: Some(evidence),
+                },
+            ))
+        };
+
+        if self.referee_slash_succeeds(
+            allocator,
+            rc_puzzle_args.as_ref(),
+            validation_program.clone(),
+            state.clone(),
+            Evidence::nil()?,
+        )? {
+            return slash_move(details, Evidence::nil()?);
+        }
+
+        let parsed = self.run_state_update_parsed(
+            allocator,
+            rc_puzzle_args.clone(),
+            state.clone(),
+            Evidence::nil()?,
+        );
+        let new_state = match parsed {
+            Ok(parsed) => parsed
+                .new_state
+                .unwrap_or_else(|| Rc::new(Program(vec![0x80]))),
+            Err(_) => Rc::new(Program(vec![0x80])),
         };
 
         let state_nodeptr = new_state.to_nodeptr(allocator)?;
-        let (_old_state, validation_program) = self.get_validation_program_for_their_move()?;
         let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
         let result = handler.call_their_turn_handler(
             allocator,
@@ -426,14 +473,6 @@ impl TheirTurnReferee {
             },
         )?;
 
-        if is_terminal != result.next_handler.is_none() {
-            return Err(Error::StrErr(format!(
-                "received move terminal={} disagrees with handler result terminal={}",
-                is_terminal,
-                result.next_handler.is_none(),
-            )));
-        }
-
         let new_self = self.accept_their_move(
             result.next_handler.clone(),
             new_state.clone(),
@@ -444,18 +483,13 @@ impl TheirTurnReferee {
         )?;
 
         for evidence in result.slash_evidence.iter() {
-            let slash_authorized = match self.run_state_update(
+            if self.referee_slash_succeeds(
                 allocator,
-                offchain_puzzle_args.clone(),
+                rc_puzzle_args.as_ref(),
+                validation_program.clone(),
                 state.clone(),
                 evidence.clone(),
-            ) {
-                Ok(validation_result) => {
-                    validator_result_authorizes_slash(&validation_result, evidence)
-                }
-                Err(_) => false,
-            };
-            if slash_authorized {
+            )? {
                 return Ok((
                     None,
                     TheirTurnMoveResult {
@@ -469,7 +503,7 @@ impl TheirTurnReferee {
             }
         }
 
-        let out_move = self.finish_their_turn(allocator, puzzle_args, &result)?;
+        let out_move = self.finish_their_turn(allocator, rc_puzzle_args, &result)?;
 
         Ok((Some(new_self), out_move))
     }
@@ -482,17 +516,17 @@ impl TheirTurnReferee {
         state_number: usize,
         parsed_solution: &ParsedRefereeSolution,
     ) -> Result<(Option<Referee>, TheirTurnCoinSpentResult), Error> {
-        let (new_move, vih_raw, ms_raw, mms_raw) = match parsed_solution {
+        let (new_move, vih_raw, ms_raw, max_move_size) = match parsed_solution {
             ParsedRefereeSolution::Move {
                 new_move,
                 validation_info_hash_raw,
                 new_mover_share_raw,
-                max_move_size_raw,
+                max_move_size,
             } => (
                 new_move,
                 validation_info_hash_raw,
                 new_mover_share_raw,
-                max_move_size_raw,
+                *max_move_size,
             ),
             _ => {
                 return Err(Error::StrErr(
@@ -523,21 +557,10 @@ impl TheirTurnReferee {
                 "mover share wasn't a properly sized atom".to_string(),
             ));
         };
-        let max_move_size_raw = mms_raw.clone();
-        let max_move_size = if let Some(mms) = u64_from_atom(&max_move_size_raw) {
-            u32::try_from(mms)
-                .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?
-        } else {
-            return Err(Error::StrErr(
-                "max move size wasn't a properly sized atom".to_string(),
-            ));
-        };
-
         let details = GameMoveDetails {
             basic: GameMoveStateInfo {
                 move_made: new_move.clone(),
                 mover_share: new_mover_share.clone(),
-                max_move_size_raw,
                 max_move_size,
             },
             validation_info_hash: validation_info_hash.clone(),
@@ -548,14 +571,8 @@ impl TheirTurnReferee {
             self.their_turn_move_off_chain(allocator, &details, state_number)?;
 
         if let Some(evidence) = &result.slash {
-            let (slash_validation_program, slash_state) =
-                if let Some(prev) = self.slash_infohash_inputs() {
-                    prev
-                } else {
-                    return Err(Error::StrErr(
-                        "slash: no previous validation info hash inputs available".to_string(),
-                    ));
-                };
+            let (slash_state, slash_validation_program) =
+                self.get_validation_program_for_their_move()?;
 
             if referee_coin_string.to_parts().is_none() {
                 return Err(Error::StrErr(

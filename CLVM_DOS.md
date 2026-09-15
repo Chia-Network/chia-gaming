@@ -138,29 +138,32 @@ itself. The defender has no incentive to make their own slash expensive.
 When a peer sends a move via the potato protocol (`BatchAction::Move`), the
 receiving side:
 
-1. **Deserializes** the peer-wire move, which contains basic move data and a
-   terminal boolean. The move data (`move_made`) is a `Vec<u8>` — a flat byte
-   string, not a CLVM tree. The Rust type system enforces this at
-   deserialization. The peer does not supply either validation hash: the
-   receiver reconstructs those internal commitments from its locally held
-   validation program and pre-move state.
+1. **Deserializes** the peer-wire move, which contains basic move data. The
+   move data (`move_made`) is a `Vec<u8>` — a flat byte string, not a CLVM
+   tree. The Rust type system enforces this at deserialization. The peer does
+   not supply a terminal flag or either validation hash: the receiver
+   reconstructs those internal commitments from the current validator's
+   `(next_validator_hash, new_state)` return, using the same formula as
+   the on-chain referee (`sha256(next_validator_hash, shatree(new_state))`,
+   or nil if the next-validator hash is nil).
 
 2. **Checks move length** against the locally-stored `max_move_size` for the
    current game state (`apply_received_move` in `channel_state/mod.rs`).
    The peer cannot influence this check — `max_move_size` comes from our own
    game state, not from the peer's message.
 
-3. **Runs the validation program** (`run_state_update` in
-   `referee/their_turn.rs`). This evaluates a CLVM program that we hold
-   locally (the current step's validation program), passing the peer's move
-   bytes as an atom argument. The program is ours; the peer only controls a
-   small bounded input.
+3. **Runs the current validator**, computes the next infohash from its
+   return value, then slash-invokes a curried referee (`referee/their_turn.rs`).
+   This evaluates a CLVM program that we hold locally (the current step's
+   validation program inside the referee), passing the peer's move bytes as
+   an atom argument. The program is ours; the peer only controls a small
+   bounded input.
 
 4. **Runs the game handler** (`call_their_turn_handler` in
    `channel_state/game_handler.rs`). Again, our locally-held handler
-   program, with the peer's move data as a bounded argument. The claimed
-   terminal bit must agree with whether this transition produces another
-   handler; disagreement is a peer protocol violation.
+   program, with the peer's move data as a bounded argument. Whether the
+   game continues is determined by this handler's successor, not by a peer
+   flag. Slash evidence is considered independently of that successor.
 
 The peer cannot send a CLVM program for us to evaluate. They send data, and
 we run our own programs against it.
@@ -171,10 +174,11 @@ peer input. A peer-triggered handler raise, expensive loop, or allocation blowup
 is a security bug by default because it can prevent the honest side from
 constructing or recording the slash path. Game-rule failures must be expressed
 as validator `SLASH` outcomes and handler evidence candidates, not handler
-crashes. The framework tries nil evidence before calling the handler, including
-for terminal moves; if that succeeds as a slash, the handler is skipped. Handler
+crashes. The framework tries nil evidence before calling the handler. A
+successful slash skips the handler; a valid payload is a soft non-slash and
+supplies `state`; a raise still calls the handler with nil `state`. Handler
 audits should focus on peer-controlled inputs that survive the generic envelope
-and nil-evidence precheck.
+and that nil-evidence slash precheck.
 
 ---
 

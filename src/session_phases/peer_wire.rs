@@ -379,32 +379,26 @@ fn move_state_to_value(value: &GameMoveStateInfo) -> Value {
         ("m", bytes(&value.move_made)),
         ("s", integer(value.mover_share.to_u64())),
         ("z", integer(u64::from(value.max_move_size))),
-        ("r", bytes(&value.max_move_size_raw)),
     ])
 }
 
 fn move_state_from_value(value: Value) -> Result<GameMoveStateInfo, Error> {
-    let mut map = expect_exact(value, ["m", "s", "z", "r"])?;
+    let mut map = expect_exact(value, ["m", "s", "z"])?;
     Ok(GameMoveStateInfo {
         move_made: expect_bytes(take(&mut map, "m")?)?,
         mover_share: Amount::new(expect_u64(take(&mut map, "s")?)?),
         max_move_size: expect_u32(take(&mut map, "z")?)?,
-        max_move_size_raw: expect_bytes(take(&mut map, "r")?)?,
     })
 }
 
 fn peer_move_to_value(value: &PeerMove) -> Value {
-    dict([
-        ("b", move_state_to_value(&value.basic)),
-        ("t", Value::Bool(value.terminal)),
-    ])
+    dict([("b", move_state_to_value(&value.basic))])
 }
 
 fn peer_move_from_value(value: Value) -> Result<PeerMove, Error> {
-    let mut map = expect_exact(value, ["b", "t"])?;
+    let mut map = expect_exact(value, ["b"])?;
     Ok(PeerMove {
         basic: move_state_from_value(take(&mut map, "b")?)?,
-        terminal: expect_bool(take(&mut map, "t")?)?,
     })
 }
 
@@ -753,9 +747,7 @@ mod tests {
                         move_made: vec![1],
                         mover_share: Amount::new(2),
                         max_move_size: 3,
-                        max_move_size_raw: vec![3],
                     },
-                    terminal: true,
                 },
             ),
             BatchAction::AcceptSettlement(GameID(4), Amount::new(5)),

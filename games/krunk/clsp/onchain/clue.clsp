@@ -63,15 +63,15 @@
                 (= alice_commit (sha256 (substr MOVE 0 16) revealed_word))
                 0
                 (if (l evidence)
-                    valid_terminal
+                    (x)
                     (= (strlen evidence) 1)
                     ; Slash only when the selected prior clue is wrong.
                     ; At reveal time bob_guesses has one extra latest
                     ; guess with no clue, so the lists are offset by one.
                     (if (not (>= evidence 0))
-                        valid_terminal
+                        (x)
                         (not (< evidence (len alice_clues)))
-                        valid_terminal
+                        (x)
                         (= (make_clue revealed_word
                                 (f (drop (+ evidence 1) bob_guesses)))
                             (f (drop evidence alice_clues)))
@@ -88,7 +88,7 @@
                             (list AGG_SIG_UNSAFE dict_pubkey evidence))
                         valid_terminal
                     )
-                    valid_terminal
+                    (x)
                 )
             )
         )

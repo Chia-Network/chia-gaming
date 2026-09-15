@@ -494,6 +494,15 @@ fn test_krunk_guess_slash_bob_out_of_dict() {
         49,
         "AGG_SIG_UNSAFE code"
     );
+    assert_successful_referee_slash(
+        &mut allocator,
+        &guess,
+        b"xyzzy",
+        0,
+        state,
+        evidence,
+        3,
+    );
 }
 
 fn test_krunk_guess_bad_range_doesnt_bracket() {
@@ -713,6 +722,13 @@ fn test_krunk_reveal_bad_range_doesnt_bracket() {
     );
 }
 
+fn range_excluding(allocator: &mut AllocEncoder, _word: &[u8]) -> NodePtr {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"death");
+    bytes.extend_from_slice(b"denom");
+    allocator.allocator().new_atom(&bytes).unwrap()
+}
+
 fn test_krunk_reveal_valid() {
     let mut allocator = AllocEncoder::new();
     let clue = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/clue.hex").unwrap();
@@ -746,6 +762,20 @@ fn test_krunk_reveal_valid() {
     reveal_move.extend_from_slice(word);
 
     let mover_share = BASE_UNIT * 100; // depth 1: base_unit * 100 = 200
+    assert!(
+        run_validator_step(
+            &mut allocator,
+            &clue,
+            &reveal_move,
+            21,
+            mover_share,
+            state,
+            NodePtr::NIL,
+        )
+        .is_err(),
+        "nil evidence must assert on an honest reveal, not return a valid payload"
+    );
+    let excluding = range_excluding(&mut allocator, word);
     let (code, result) = run_validator_step(
         &mut allocator,
         &clue,
@@ -753,7 +783,7 @@ fn test_krunk_reveal_valid() {
         21,
         mover_share,
         state,
-        NodePtr::NIL,
+        excluding,
     )
     .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
@@ -1034,6 +1064,7 @@ fn test_krunk_premature_reveal_concedes_scheduled_payout() {
     reveal_move.extend_from_slice(&salt);
     reveal_move.extend_from_slice(word);
 
+    let excluding = range_excluding(&mut allocator, word);
     let (code, result) = run_validator_step(
         &mut allocator,
         &clue,
@@ -1041,7 +1072,7 @@ fn test_krunk_premature_reveal_concedes_scheduled_payout() {
         21,
         BASE_UNIT * 100,
         state,
-        NodePtr::NIL,
+        excluding,
     )
     .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
@@ -1332,6 +1363,7 @@ fn test_reveal_payout_at_depth(depth: usize, expected_mover_share: i64) {
     reveal_move.extend_from_slice(&salt);
     reveal_move.extend_from_slice(word);
 
+    let excluding = range_excluding(&mut allocator, word);
     let (code, result) = run_validator_step(
         &mut allocator,
         &clue,
@@ -1339,7 +1371,7 @@ fn test_reveal_payout_at_depth(depth: usize, expected_mover_share: i64) {
         21,
         expected_mover_share,
         state,
-        NodePtr::NIL,
+        excluding,
     )
     .unwrap_or_else(|e| panic!("depth {depth} reveal failed: {e}"));
     assert_eq!(code, MoveCode::MakeMove, "depth {depth} should succeed");

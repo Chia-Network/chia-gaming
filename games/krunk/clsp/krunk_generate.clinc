@@ -71,7 +71,7 @@
                 move
                 val_commit
                 val_guess
-                32
+                5
                 0
                 (curry krunk_alice_handler_guess salt word DICT_TREE)
                 0

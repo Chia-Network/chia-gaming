@@ -209,8 +209,6 @@ mod sim_tests {
         FakeMove(usize, GameID, ReadableMove, Vec<u8>),
         /// Make a normal move, but tamper the outbound batch signatures.
         BadSignatureMove(usize, GameID, ReadableMove),
-        /// Make a normal move, but invert the peer wire terminal flag.
-        TerminalMismatchMove(usize, GameID, ReadableMove),
         /// Cheat (player, game_id, mover_share).
         Cheat(usize, GameID, Amount),
         /// Force-destroy a game coin (player, game_id).
@@ -300,9 +298,6 @@ mod sim_tests {
                 SimScriptAction::BadSignatureMove(p, g, n) => {
                     write!(formatter, "BadSignatureMove({p},{g:?},{n:?})")
                 }
-                SimScriptAction::TerminalMismatchMove(p, g, n) => {
-                    write!(formatter, "TerminalMismatchMove({p},{g:?},{n:?})")
-                }
                 SimScriptAction::Cheat(p, g, ms) => write!(formatter, "Cheat({p},{g:?},{ms:?})"),
                 SimScriptAction::ForceDestroyCoin(p, g) => {
                     write!(formatter, "ForceDestroyCoin({p},{g:?})")
@@ -389,8 +384,7 @@ mod sim_tests {
             match self {
                 Self::Move(player, game_id, _, _)
                 | Self::FakeMove(player, game_id, _, _)
-                | Self::BadSignatureMove(player, game_id, _)
-                | Self::TerminalMismatchMove(player, game_id, _) => ActionSchedule {
+                | Self::BadSignatureMove(player, game_id, _) => ActionSchedule {
                     readiness: ActionReadiness::GameCanMove {
                         player: *player,
                         game_id: *game_id,

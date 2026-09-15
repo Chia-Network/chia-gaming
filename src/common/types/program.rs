@@ -118,6 +118,10 @@ impl Program {
         &self.0
     }
 
+    pub fn is_nil(&self) -> bool {
+        self.0.is_empty() || self.0 == [0x80]
+    }
+
     pub fn to_hex(&self) -> String {
         hex::encode(&self.0)
     }

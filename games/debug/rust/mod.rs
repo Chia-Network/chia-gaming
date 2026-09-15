@@ -23,9 +23,7 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::types::{
-    canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, ValidationInfoHash,
-};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidationInfoHash};
 use crate::referee::types::{
     InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
@@ -351,28 +349,36 @@ impl BareDebugGameHandler {
         &self,
         allocator: &mut AllocEncoder,
         validation_program: StateUpdateProgram,
-        previous_validation_info_hash: ValidationInfoHash,
+        _previous_validation_info_hash: ValidationInfoHash,
         move_to_check: &[u8],
         mover_share: &Amount,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
-        let (mover_pk, waiter_pk) = self.get_mover_and_waiter_pubkey();
+        let (current_mover, current_waiter) = self.get_mover_and_waiter_pubkey();
+        let infohash_a = ValidationInfoHash::Hash(
+            ValidationInfo::new_state_update(
+                allocator,
+                validation_program.clone(),
+                self.state.p(),
+            )
+            .hash()
+            .clone(),
+        );
 
         let update_args = InternalStateUpdateArgs {
             referee_args: Rc::new(RefereePuzzleArgs {
                 nonce: self.nonce,
                 validation_program: validation_program.clone(),
-                previous_validation_info_hash,
+                previous_validation_info_hash: infohash_a,
                 referee_coin_puzzle_hash: self.mod_hash.clone(),
                 timeout: self.timeout.clone(),
-                mover_pubkey: mover_pk.clone(),
-                waiter_pubkey: waiter_pk.clone(),
+                mover_pubkey: current_waiter.clone(),
+                waiter_pubkey: current_mover.clone(),
                 amount: self.start.amount.clone(),
                 game_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         move_made: move_to_check.to_vec(),
                         mover_share: mover_share.clone(),
-                        max_move_size_raw: canonical_atom_from_usize(self.max_move_size),
                         max_move_size: u32::try_from(self.max_move_size)
                             .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?,
                     },
@@ -413,9 +419,15 @@ impl BareDebugGameHandler {
             (false, self.validation_program_queue[0].clone())
         };
 
-        let validation_info =
-            ValidationInfo::new_state_update(allocator, validation_program.clone(), self.state.p());
-
+        let incoming_state_validation_info_hash = Some(
+            ValidationInfo::new_state_update(
+                allocator,
+                validation_program.clone(),
+                self.state.p(),
+            )
+            .hash()
+            .clone(),
+        );
         let emove = ExhaustiveMoveInputs {
             alice_pubkey: self.alice_identity.public_key.clone(),
             bob_pubkey: self.bob_identity.public_key.clone(),
@@ -427,10 +439,7 @@ impl BareDebugGameHandler {
             nonce: self.nonce,
             timeout: self.timeout.clone(),
             validation_program: validation_program,
-            validation_info: validation_info,
-            incoming_state_validation_info_hash: self
-                .get_validation_info(allocator, 1)
-                .map(|v| v.hash().clone()),
+            incoming_state_validation_info_hash,
             slash: slash,
             opponent_mover_share: mover_share.clone(),
             previous_validation_info: self.get_validation_info(allocator, 1),
@@ -523,9 +532,6 @@ impl BareDebugGameHandler {
                                     basic: GameMoveStateInfo {
                                         move_made: move_to_check.clone(),
                                         mover_share: inputs.opponent_mover_share.clone(),
-                                        max_move_size_raw: canonical_atom_from_usize(
-                                            inputs.max_move_size,
-                                        ),
                                         max_move_size: u32::try_from(inputs.max_move_size).map_err(
                                             |_| {
                                                 Error::StrErr(
@@ -666,7 +672,6 @@ pub struct ExhaustiveMoveInputs {
     alice_pubkey: PublicKey,
     bob_pubkey: PublicKey,
     mod_hash: PuzzleHash,
-    validation_info: ValidationInfo,
     validation_program: StateUpdateProgram,
     incoming_state_validation_info_hash: Option<Hash>,
     timeout: Timeout,
@@ -759,27 +764,24 @@ impl ExhaustiveMoveInputs {
         let count_atom = at_least_one_byte(allocator, self.count as u64)?;
         let mut tail_bytes = self.move_tail(allocator)?;
         let args = (
-            mover_pk_ref.clone(),
+            waiter_pk_ref.cloned(),
             (
-                waiter_pk_ref.cloned(),
+                mover_pk_ref.clone(),
                 (
                     self.mod_hash.clone(),
                     (
-                        self.validation_info.hash(),
+                        self.incoming_state_validation_info_hash.clone(),
                         (
-                            self.incoming_state_validation_info_hash.clone(),
+                            pv_hash,
                             (
-                                pv_hash,
+                                Node(timeout_atom),
                                 (
-                                    Node(timeout_atom),
+                                    Node(amount_atom),
                                     (
-                                        Node(amount_atom),
+                                        Node(nonce_atom),
                                         (
-                                            Node(nonce_atom),
-                                            (
-                                                Node(max_move_size_atom),
-                                                (Node(mover_share_atom), (Node(count_atom), ())),
-                                            ),
+                                            Node(max_move_size_atom),
+                                            (Node(mover_share_atom), (Node(count_atom), ())),
                                         ),
                                     ),
                                 ),
@@ -793,7 +795,7 @@ impl ExhaustiveMoveInputs {
             .into_gen()?;
 
         let program_to_concat = Program::from_hex(
-            "ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ffff820bffff8217ff80",
+            "ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ffff820bff80",
         )?;
         let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
         let result_atom = run_program(allocator.allocator(), &chia_dialect(), pnode, args, 0)

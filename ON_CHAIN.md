@@ -773,21 +773,26 @@ referee arguments with real mover and waiter pubkeys, substitutes the incoming
 move and validation program, and uses the same state-update program that would
 be used by the on-chain referee when validating peer moves.
 
-When a move has a follow-on state, the state update is run off-chain first to
-validate the move and derive that state before the receiving player's
-their-turn handler interprets it. A terminal move is still a normal move, but
-it sets the next validation program to nil, so there is no follow-on state to
-derive for future moves. The their-turn handler still interprets the move and
+When a move has a follow-on state, the state update is run off-chain first
+with nil evidence. A returned valid payload is a soft non-slash: that
+`new_state` is passed to the their-turn handler. If the run **raises**, the
+handler still runs with `state` nil. A terminal move is still a normal move,
+but it sets the next validation program to nil, so there is no follow-on
+state for future moves. The their-turn handler still interprets the move and
 may provide slash evidence. Any evidence it provides is checked by running the
 normal state-update program with that evidence.
 
-The peer move message carries only a terminal boolean, not either validation
-hash. For a nonterminal move, the receiver reconstructs the validation info
-hash from its locally held validation program and pre-move state and computes
-the bare program hash locally. For a terminal move it reconstructs the nil
-validation-info commitment. The claimed terminal bit must agree with whether
-the local handler transition has a successor. These reconstructed internal
-values are what enter `RefereePuzzleArgs` and the signed unroll state.
+The peer move message does not carry a terminal flag or either validation
+hash. The receiver runs the current validator and computes the next validation
+info hash the same way the on-chain referee does: nil if the validator's
+next-validator program hash is nil, otherwise
+`sha256(next_validator_hash, shatree(new_state))`. Off-chain accept then
+curries a real referee with that infohash and slash-invokes it (nil evidence,
+then any handler evidence). If any invocation succeeds, the move is slashable
+and is rejected. These reconstructed internal values are what enter
+`RefereePuzzleArgs` and the signed unroll state — the signed leaf is the new
+virtual coin's puzzle hash. Slash evidence from the handler is checked
+regardless of whether the move is final.
 
 This keeps off-chain and on-chain validation semantics aligned. Some games may
 repeat a small amount of logic between their on-chain validator and off-chain
@@ -801,8 +806,10 @@ The terminology is easy to mix up:
 - A `validation_program_hash` is the tree hash of a validator program by
   itself.
 - A validation info hash is
-  `sha256(validation_program_hash, shatree(state))`. It commits to both the
-  validator program and the state that program validates.
+  `sha256(validator_hash, shatree(state))`. It commits to a validator
+  program and the state that program validates. For the next coin, the
+  referee computes `sha256(next_validator_hash, shatree(new_state))`, or
+  nil if the next-validator hash is nil.
 
 The referee coin stores validation info hashes, not bare program hashes. The
 current move's commitment is stored in `game_move.validation_info_hash`, and the

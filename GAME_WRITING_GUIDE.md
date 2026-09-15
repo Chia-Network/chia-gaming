@@ -309,7 +309,7 @@ returns its first my-turn handler:
     preimage (substr entropy 0 16)
     (list "calpoker_alice_handler_a"
           (sha256 preimage)
-          pokera pokerb 48 0
+          pokera pokerb 16 0
           (curry calpoker_alice_handler_b preimage))))
 
 (defun calpoker_bob_handler_a
@@ -353,10 +353,14 @@ Return a nonempty proper list for a valid move:
 ```
 
 Return nil when the move is illegal for that evidence and should slash.
-Terminal validators may return `(list 0)`. Check move shape before operations
-such as `substr`; malformed evidence for a valid move must not accidentally
-turn that move into a slash. California Poker's first validator is a compact
-example:
+`(list 0)` means the next validator hash is nil (no further moves). Check
+move shape before operations such as `substr`. A nil-evidence run that
+finds no slash should return a valid payload, including a next state when
+there is one. An assert is only for rejecting that slash attempt (for
+example required evidence that is missing or malformed). Do not return a
+valid payload just to keep extract from raising; that treats a failed slash
+as an honest move. Malformed evidence must not return nil and slash a valid
+move. California Poker's first validator is a compact example:
 
 ```clojure
 (export (mod_hash

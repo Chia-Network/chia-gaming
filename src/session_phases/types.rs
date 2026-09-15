@@ -93,7 +93,6 @@ pub trait FromLocalUI {
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct PeerMove {
     pub basic: GameMoveStateInfo,
-    pub terminal: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]

@@ -78,7 +78,6 @@
     (if WAITER_PUBKEY WAITER_PUBKEY (current-waiter-pubkey curry-args WAITER_PUBKEY))
     MOVER_PUBKEY
     MOD_HASH
-    INFOHASH_B
     INFOHASH_A
     pv_hash
     ;; Then variable length stuff
@@ -102,9 +101,7 @@
      (print (list "INFOHASH_A " INFOHASH_A) 0)
      (print (list "INFOHASH_B " INFOHASH_B) 0)
      (print (list "INFOHASH_C " "NONE YET") 0)
-     ;; check previous validation info hash
      (print (list "Previous infohash calculation: " (sha256 pv_hash (shatree state))) 0)
-     (print "did we have the right previous validation info hash" (not (= INFOHASH_B (sha256 pv_hash (shatree state)))))
      ;; if mover and waiter are the same then things are broken
      (print "ensure we didn't just send the same pubkey for mover and waiter" (= MOVER_PUBKEY WAITER_PUBKEY))
      ;; the evidence is the slash
@@ -125,7 +122,6 @@
       (validator-hash (curry-args-incr curry-args))
       (list (+ COUNT 1) slashable-move mover-share)
       512
-      (list "debug game: move with count" (+ COUNT 1) "slash hint" slashable-move "mover share" mover-share)
       )
      )
     )

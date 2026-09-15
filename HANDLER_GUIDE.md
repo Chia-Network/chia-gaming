@@ -142,9 +142,24 @@ default, not a normal parse failure. Generic referee-envelope checks such as
 `max_move_size` happen before the handler, so handlers may assume those bounds,
 but game-rule failures must be represented through validator/slash behavior and
 evidence candidates, not CLVM raises. The framework tries nil evidence before
-calling the handler, including for terminal moves; if that succeeds as a slash,
-the handler is skipped. Handlers are responsible for safely processing the
-peer-controlled moves that survive that precheck.
+calling the handler, including for terminal moves. That run has three
+outcomes:
+
+- **Slash** — nil, a misaligned payload, or extra slash conditions. The
+  handler is skipped.
+- **Soft non-slash** — a normal valid payload
+  `(next_validator_hash new_state max_move_size)`. The move is not slashable
+  with empty evidence. `new_state` is passed to the handler as `state`.
+- **Assert / raise** — the validator rejected this slash attempt (typical
+  when evidence is part of the contract and nil is not a legal selection).
+  That is not "the move is fine." The handler still runs, and `state` is
+  nil. Use `pre_state` and `move` if the handler needs an after-state.
+
+Nil evidence buying a valid terminal payload would give a failed slash the
+benefit of the doubt. Do not return `(list 0)` merely so extract succeeds.
+
+Handlers are responsible for safely processing the peer-controlled moves that
+survive the slash precheck.
 
 ### Parameters
 
@@ -156,21 +171,22 @@ peer-controlled moves that survive that precheck.
 |-----------|-------------|
 | `amount` | Total game pot |
 | `pre_state` | On-chain state BEFORE the opponent's move |
-| `state` | On-chain state AFTER the opponent's move |
+| `state` | After-state from a successful nil-evidence validator run, or nil if that run raised |
 | `move` | Opponent's move bytes |
 | `validation_program_hash` | Tree hash of the validation program for this move |
 | `mover_share` | Opponent's declared share of the pot |
 
 `validation_program_hash` is not the same thing as a validation info hash. The
 program hash identifies a validator program by itself. A validation info hash is
-the referee commitment `sha256(validation_program_hash, shatree(state))`, which
-binds a validator program to a particular state. Some existing handler code may
-still name this argument `validation_info_hash`, but the value passed to
-their-turn handlers is the raw validation program hash because the framework has
-the validation program available at that call site. Referee coins commit to the
-validation info hash instead. Neither hash is accepted from the peer move
-message: the framework computes both from its locally held validation program
-and pre-move state before invoking this handler.
+the referee commitment `sha256(next_validator_hash, shatree(new_state))`, which
+binds the *next* validator program to the state that program will validate.
+Some existing handler code may still name this argument `validation_info_hash`,
+but the value passed to their-turn handlers is the raw validation program hash
+of *this* move because the framework has the validation program available at
+that call site. Referee coins commit to the validation info hash instead.
+Neither hash is accepted from the peer move message: the framework computes
+the next infohash from the current validator's return value before invoking
+this handler.
 
 ### Return: Normal Move (2-4 elements)
 
@@ -187,14 +203,17 @@ and pre-move state before invoking this handler.
 - `evidence_list` contains potential slash evidence candidates. The handler
   does **not** need to verify that each piece of evidence actually triggers a
   slash -- just return everything that *might* work. The Rust framework
-  (`their_turn_move_off_chain`) tests each candidate against the validator;
-  the first one that produces a `SLASH` result wins. If none succeed, the
-  game continues normally -- evidence that doesn't work is silently discarded.
+  (`their_turn_move_off_chain`) tests each candidate by slash-invoking a
+  curried referee; the first one that succeeds as a slash wins. If none
+  succeed, the game continues normally -- evidence that doesn't work is
+  silently discarded.
   Nil evidence is always tried automatically by the framework *before*
-  calling the handler, so the handler never needs to include it. When the
-  handler is certain the move is fraudulent, it puts the evidence in the
-  list and can return junk for the other fields (`readable_move`,
-  `next_handler`, etc.) since they will never be used.
+  calling the handler, so the handler never needs to include it. Slash
+  evidence is independent of whether `next_handler` is nil: a final move
+  may still be slashed, and a continuing move may still be slashed. When
+  evidence actually produces a slash, the other fields are unused. If no
+  evidence slashes, `next_handler` is how the receiver learns whether the
+  game continues, so it must not be junk in that case.
 - `message` is optional (the fourth element may be absent). When present and
   non-empty, it is sent out-of-band to the opponent and parsed by their
   `message_parser`.
@@ -398,14 +417,21 @@ untagged result:
 (next_validation_program_hash new_state max_move_size)
 ```
 
-These three elements describe the new game state after the move. They are
-used in two places:
+These three elements describe the new game state after the move.
 
 - **On-chain**: The referee checks that these values match the commitments
   in the coin's curried state (infohash and max_move_size). If they align,
   the move is valid and the slash attempt fails.
-- **Off-chain**: The Rust code extracts `new_state` so the handler can
-  determine the next game state without duplicating that logic.
+- **Off-chain**: A successful nil-evidence run is a soft non-slash: the
+  framework takes `new_state` and passes it to the their-turn handler.
+  That is a convenience, not a requirement that every validator produce a
+  useful after-state. If the run **raises**, the handler still runs with
+  `state` nil and must recover anything it needs from `pre_state` and
+  `move`. CalPoker's terminal `e.clsp` does this: evidence is required to
+  finish the showdown check, so nil evidence asserts; Bob's handler
+  recomputes the readable from `pre_state` and the move. `(list 0)` means
+  the next validator hash is nil (no further moves), not "please don't
+  raise."
 
 Note: `mover_share` is **not** in the validator's return value. It is part
 of the referee's curried arguments and is checked separately by each
@@ -478,14 +504,17 @@ guess pays zero. If Alice reveals after an incorrect guess one through four,
 the reveal is valid only when it pays the same scheduled share as a correct
 guess at that depth. An underfunded concession, malformed reveal, or reveal
 that does not open Alice's commitment returns nil and is unconditionally
-slashable.
+slashable. Those move-only faults are slashable with nil evidence. Nil or
+malformed evidence after that **raises** (rejects the slash); it must not
+return the terminal payload, or empty evidence could slash a fair reveal via
+infohash/max_move_size misalignment.
 
 Evidence has two proof-specific forms:
 
 - A one-byte index selects a prior clue. If recomputing that clue from the
   revealed word proves Alice's clue wrong, the validator returns nil. A correct
-  clue or irrelevant index returns the ordinary aligned terminal result and
-  does not authorize a slash.
+  clue at a valid index returns the ordinary aligned terminal result and does
+  not authorize a slash. An out-of-range index raises.
 - A ten-byte `lower_bound || upper_bound` dictionary-gap proof conditionally
   slashes when the revealed word lies inside that range. The validator appends
   `(AGG_SIG_UNSAFE dict_pubkey evidence)`, so the referee slash succeeds only
@@ -517,9 +546,11 @@ can raise and make the illegal terminal move unslashable.
 
 The terminal validator therefore rejects a mover mask when bit 7 is set before
 selecting or evaluating cards, then separately requires exactly five set bits.
-The waiter's evidence mask follows the same range and popcount rules. Invalid
-evidence returns the ordinary aligned terminal result, denying that slash
-attempt without aborting the validator; an invalid committed mover mask returns
+The waiter's evidence mask follows the same range and popcount rules. Nil or
+invalid evidence **raises**, rejecting that slash attempt; it must not return
+the aligned terminal payload, or empty evidence could look like a successful
+slash when commitments are misaligned. A well-formed waiter mask that does not
+prove overclaim returns `(list 0)`. An invalid committed mover mask returns
 nil and is unconditionally slashable.
 
 ### How the On-Chain Referee Uses Validators
