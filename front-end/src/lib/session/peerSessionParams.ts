@@ -6,8 +6,10 @@
  * that could tear down a finished freeze or IndexedDB checkpoint.
  */
 
-export const MIN_TIMEOUT_BLOCKS = 3;
-export const MAX_TIMEOUT_BLOCKS = 30;
+import timeoutBounds from 'chia-gaming-protocol-constants';
+
+export const MIN_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.min;
+export const MAX_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.max;
 
 /** Canonical decimal bigint text: no sign, no hex, no leading zeros (`08`). */
 const DECIMAL_BIGINT_STRING = /^(0|[1-9]\d*)$/;

@@ -388,8 +388,13 @@ then addresses the credential response only to that hub origin. The same hub
 session ID is independently supplied to the game relay connection. It is never
 sent to a peer.
 
-The current hub retains the mapping from hub session ID to player ID only for
-the lifetime of the hub process.
+The current hub retains an inactive mapping from hub session ID to player ID
+for up to 24 hours, bounded to 10,000 retained sessions by default. The
+retention clock starts when the mapping loses its last lobby/game presence, not
+when it was created or last reconnected. TTL and capacity eviction retire the
+player ID, alias, challenges, and recent-correspondent edges together.
+Deployments may override these bounds with `HUB_RETAINED_SESSION_TTL_MS` and
+`HUB_MAX_RETAINED_SESSIONS`.
 
 ### 8.2 Registration
 
@@ -516,11 +521,12 @@ Current hub defaults use a ten-second accounting window:
 - at most 1,000 game-channel messages per connection per window;
 - at most 11 MiB of game-channel frame bytes per connection per window.
 
-Both WebSocket endpoints also default to an 11 MiB transport-level message
-limit. The WebSocket parser enforces this while reassembling a message and
-closes an oversized connection with code `1009`, before emitting the
-application-level `message` event. Deployments may override the transport
-ceiling with `HUB_MAX_WS_PAYLOAD_BYTES`.
+The WebSocket parser uses separate transport-level message limits: hub-control
+JSON defaults to 64 KiB, while game traffic defaults to 11 MiB. Each parser
+enforces its limit while reassembling a message and closes an oversized
+connection with code `1009`, before emitting the application-level `message`
+event. Deployments may override the ceilings independently with
+`HUB_CONTROL_MAX_WS_PAYLOAD_BYTES` and `GAME_MAX_WS_PAYLOAD_BYTES`.
 
 The reference hub also admits at most 22 MiB of outstanding encoded game data
 per destination WebSocket and 256 MiB across all game WebSockets. A relay that

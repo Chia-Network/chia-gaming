@@ -15,6 +15,7 @@ import {
   type BencodexKey,
   type BencodexValue,
 } from 'chia-gaming-bencodex';
+import timeoutBounds from 'chia-gaming-protocol-constants';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import { Hub } from './hubState';
@@ -127,6 +128,7 @@ const MAX_CONNECTION_ATTEMPTS_PER_WINDOW = readPositiveIntegerEnv(
 );
 // Rust accepts a 10 MiB peer payload; leave room for relay framing and control messages.
 const DEFAULT_GAME_BYTES_PER_WINDOW = 11 * 1024 * 1024;
+const DEFAULT_HUB_CONTROL_MAX_WS_PAYLOAD_BYTES = 64 * 1024;
 const HUB_RATE_LIMIT: RateLimit = {
   maxMessages: readPositiveIntegerEnv('HUB_MAX_MESSAGES_PER_WINDOW', 100),
   maxBytes: readPositiveIntegerEnv('HUB_MAX_BYTES_PER_WINDOW', 1_000_000),
@@ -135,8 +137,12 @@ const GAME_RATE_LIMIT: RateLimit = {
   maxMessages: readPositiveIntegerEnv('GAME_MAX_MESSAGES_PER_WINDOW', 1000),
   maxBytes: readPositiveIntegerEnv('GAME_MAX_BYTES_PER_WINDOW', DEFAULT_GAME_BYTES_PER_WINDOW),
 };
-const MAX_WS_PAYLOAD_BYTES = readPositiveIntegerEnv(
-  'HUB_MAX_WS_PAYLOAD_BYTES',
+const HUB_CONTROL_MAX_WS_PAYLOAD_BYTES = readPositiveIntegerEnv(
+  'HUB_CONTROL_MAX_WS_PAYLOAD_BYTES',
+  DEFAULT_HUB_CONTROL_MAX_WS_PAYLOAD_BYTES,
+);
+const GAME_MAX_WS_PAYLOAD_BYTES = readPositiveIntegerEnv(
+  'GAME_MAX_WS_PAYLOAD_BYTES',
   DEFAULT_GAME_BYTES_PER_WINDOW,
 );
 const MAX_GAME_OUTBOUND_BYTES_PER_CONNECTION = readPositiveIntegerEnv(
@@ -147,12 +153,21 @@ const MAX_TOTAL_GAME_OUTBOUND_BYTES = readPositiveIntegerEnv(
   'GAME_MAX_TOTAL_OUTBOUND_BYTES',
   256 * 1024 * 1024,
 );
-if (MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
-  throw new Error('HUB_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
+if (HUB_CONTROL_MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
+  throw new Error('HUB_CONTROL_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
+}
+if (GAME_MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
+  throw new Error('GAME_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
 }
 const TRUST_PROXY = readBooleanEnv('HUB_TRUST_PROXY', false);
-const hubWsServer = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES });
-const gameWsServer = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES });
+const hubWsServer = new WebSocketServer({
+  noServer: true,
+  maxPayload: HUB_CONTROL_MAX_WS_PAYLOAD_BYTES,
+});
+const gameWsServer = new WebSocketServer({
+  noServer: true,
+  maxPayload: GAME_MAX_WS_PAYLOAD_BYTES,
+});
 const connectionsByIp = new Map<string, number>();
 const connectionAttemptsByIp = new Map<string, ConnectionAttemptBudget>();
 let totalConnections = 0;
@@ -408,17 +423,6 @@ function markRetainedSessionInactive(playerId: string, now = Date.now()): void {
   sessionLastUsedAt.set(sessionId, now);
 }
 
-function evictRetainedSession(sessionId: string, playerId: string, reason: string): void {
-  sessionToPlayer.delete(sessionId);
-  playerToSession.delete(playerId);
-  sessionLastUsedAt.delete(sessionId);
-  knownAliases.delete(sessionId);
-  for (const peerSessionId of [...(recentCorrespondents.get(sessionId)?.keys() ?? [])]) {
-    removeCorrespondentEdge(sessionId, peerSessionId);
-  }
-  logHub('session_evicted', { player_id: playerId, reason });
-}
-
 function evictOldestInactiveSession(reason: string): boolean {
   let oldest: { sessionId: string; playerId: string; lastUsedAt: number } | null = null;
   for (const [sessionId, playerId] of sessionToPlayer) {
@@ -429,7 +433,11 @@ function evictOldestInactiveSession(reason: string): boolean {
     }
   }
   if (!oldest) return false;
-  evictRetainedSession(oldest.sessionId, oldest.playerId, reason);
+  retirePlayerArtifacts(oldest.playerId, {
+    sessionId: oldest.sessionId,
+    retireIdentity: true,
+    reason,
+  });
   return true;
 }
 
@@ -437,7 +445,7 @@ function pruneRetainedSessions(now: number): void {
   for (const [sessionId, playerId] of [...sessionToPlayer]) {
     if (retainedSessionIsActive(sessionId, playerId)) continue;
     if (now - (sessionLastUsedAt.get(sessionId) ?? 0) >= RETAINED_SESSION_TTL_MS) {
-      evictRetainedSession(sessionId, playerId, 'ttl');
+      retirePlayerArtifacts(playerId, { sessionId, retireIdentity: true, reason: 'ttl' });
     }
   }
 }
@@ -454,7 +462,7 @@ function ensureSession(sessionId: string): string | null {
       sessionLastUsedAt.set(sessionId, now);
       return existing;
     }
-    evictRetainedSession(sessionId, existing, 'ttl');
+    retirePlayerArtifacts(existing, { sessionId, retireIdentity: true, reason: 'ttl' });
   }
   if (sessionToPlayer.size >= MAX_RETAINED_SESSIONS) {
     pruneRetainedSessions(now);
@@ -803,8 +811,10 @@ function cancelPendingHubLeave(playerId: string): void {
 }
 
 function leaveHub(playerId: string): boolean {
-  const removed = hub.removePlayer(playerId);
-  markRetainedSessionInactive(playerId);
+  const removed = retirePlayerArtifacts(playerId, {
+    retireIdentity: false,
+    reason: 'hub_leave',
+  });
   if (removed) {
     broadcastHubUpdate();
     return true;
@@ -836,6 +846,55 @@ function cancelPlayerChallenges(playerId: string): void {
       notified_player: otherId,
     });
   }
+}
+
+interface PlayerRetirement {
+  sessionId?: string;
+  retireIdentity: boolean;
+  reason: string;
+  now?: number;
+}
+
+/**
+ * Synchronously retires every registry artifact owned by a player.
+ *
+ * Lobby departure keeps the retained identity available for reconnect. TTL and
+ * capacity eviction additionally remove the identity, alias, and correspondent
+ * graph. Challenge resolution notifications are emitted before references are
+ * discarded so connected counterparts cannot retain stale challenge UI.
+ */
+function retirePlayerArtifacts(playerId: string, retirement: PlayerRetirement): boolean {
+  const sessionId = retirement.sessionId ?? playerToSession.get(playerId);
+  if (retirement.retireIdentity) {
+    if (!sessionId || sessionToPlayer.get(sessionId) !== playerId) {
+      throw new Error(`cannot retire inconsistent retained session for ${playerId}`);
+    }
+    if (retainedSessionIsActive(sessionId, playerId)) {
+      throw new Error(`cannot evict active retained session for ${playerId}`);
+    }
+  }
+
+  cancelPlayerChallenges(playerId);
+  const removedPlayer = hub.removePlayer(playerId);
+
+  if (!retirement.retireIdentity) {
+    markRetainedSessionInactive(playerId, retirement.now);
+    return removedPlayer;
+  }
+
+  if (!sessionId) {
+    throw new Error(`cannot retire missing retained session for ${playerId}`);
+  }
+  cancelPendingHubLeave(playerId);
+  sessionToPlayer.delete(sessionId);
+  playerToSession.delete(playerId);
+  sessionLastUsedAt.delete(sessionId);
+  knownAliases.delete(sessionId);
+  for (const peerSessionId of [...(recentCorrespondents.get(sessionId)?.keys() ?? [])]) {
+    removeCorrespondentEdge(sessionId, peerSessionId);
+  }
+  logHub('session_evicted', { player_id: playerId, reason: retirement.reason });
+  return removedPlayer;
 }
 
 function applyPlayerBusy(playerId: string, busy: boolean): void {
@@ -945,8 +1004,8 @@ function validateAmount(raw: string | undefined): string | null {
   return null;
 }
 
-const MIN_TIMEOUT_BLOCKS = 3;
-const MAX_TIMEOUT_BLOCKS = 30;
+const MIN_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.min;
+const MAX_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.max;
 
 function validateTimeout(raw: string | undefined, label: string): string | null {
   if (raw === undefined) return null;
@@ -1616,9 +1675,13 @@ function sweepHubConnections(now: number): boolean {
     }
     hubConnections.delete(playerId);
     cancelPendingHubLeave(playerId);
-    cancelPlayerChallenges(playerId);
-    if (hub.removePlayer(playerId)) {
-      markRetainedSessionInactive(playerId, now);
+    if (
+      retirePlayerArtifacts(playerId, {
+        retireIdentity: false,
+        reason: 'hub_idle_timeout',
+        now,
+      })
+    ) {
       changed = true;
     }
   }

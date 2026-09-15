@@ -39,8 +39,9 @@ use crate::common::types::{
 use crate::referee::types::{GameMoveDetails, ParsedRefereeSolution, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
 
-pub const MIN_GAME_TIMEOUT_BLOCKS: u64 = 3;
-pub const MAX_GAME_TIMEOUT_BLOCKS: u64 = 100;
+pub use crate::common::protocol_timeout_bounds::{
+    MAX_GAME_TIMEOUT_BLOCKS, MIN_GAME_TIMEOUT_BLOCKS,
+};
 
 fn validate_game_timeout(game_timeout: u64) -> Result<(), Error> {
     if !(MIN_GAME_TIMEOUT_BLOCKS..=MAX_GAME_TIMEOUT_BLOCKS).contains(&game_timeout) {

@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useHubSocket, ChallengeReceived } from './useHubSocket';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
+import timeoutBounds from 'chia-gaming-protocol-constants';
 import { Button } from './button';
 
-const MIN_TIMEOUT_BLOCKS = 3;
-const MAX_TIMEOUT_BLOCKS = 30;
+const MIN_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.min;
+const MAX_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.max;
 const MOJOS_PER_XCH = 1_000_000_000_000n;
 const MOJO_DISPLAY_THRESHOLD = 1_000_000n;
 

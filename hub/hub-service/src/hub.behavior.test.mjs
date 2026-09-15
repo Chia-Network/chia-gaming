@@ -65,7 +65,8 @@ async function startHub(env = {}) {
         HUB_RATE_WINDOW_MS: '10000',
         HUB_MAX_MESSAGES_PER_WINDOW: '100',
         HUB_MAX_BYTES_PER_WINDOW: '1000000',
-        HUB_MAX_WS_PAYLOAD_BYTES: '11534336',
+        HUB_CONTROL_MAX_WS_PAYLOAD_BYTES: '65536',
+        GAME_MAX_WS_PAYLOAD_BYTES: '11534336',
         GAME_MAX_MESSAGES_PER_WINDOW: '1000',
         GAME_MAX_BYTES_PER_WINDOW: '11534336',
         GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION: '23068672',
@@ -645,6 +646,38 @@ test('challenge authority and availability come from bound sessions', async () =
   }
 });
 
+test('leaving the hub atomically cancels challenges and notifies counterparts', async () => {
+  const hub = await startHub();
+  try {
+    const alice = await joinHub(hub.origin, 'retire-challenge-alice', 'Alice');
+    const bob = await joinHub(hub.origin, 'retire-challenge-bob', 'Bob');
+    const aliceGame = await identifyGame(hub.origin, 'retire-challenge-alice');
+    const bobGame = await identifyGame(hub.origin, 'retire-challenge-bob');
+
+    sendJson(alice.ws, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+    });
+    const challenge = await nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
+    const resolved = nextJson(
+      bob.ws,
+      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === challenge.challenge_id,
+    );
+
+    sendJson(alice.ws, { type: 'leave' });
+    assert.equal((await resolved).accepted, false);
+
+    await closeWs(alice.ws);
+    await closeWs(bob.ws);
+    await closeWs(aliceGame);
+    await closeWs(bobGame);
+  } finally {
+    await hub.stop();
+  }
+});
+
 test('asymmetric buy-in amounts are perspective-corrected in advisory_start', async () => {
   const hub = await startHub();
   try {
@@ -797,8 +830,14 @@ test('same secret session_id keeps the same player_id across hub leave and rejoi
 test('retained session capacity evicts the oldest disconnected identity', async () => {
   const hub = await startHub({ HUB_MAX_RETAINED_SESSIONS: '2' });
   try {
-    const first = await identifyGameRegistered(hub.origin, 'retained-cap-first');
-    await closeWs(first.game);
+    const first = await joinHub(hub.origin, 'retained-cap-first', 'First Alias');
+    const left = nextJson(
+      first.ws,
+      (msg) => msg.type === 'hub_update' && !msg.players.some((player) => player.id === first.id),
+    );
+    sendJson(first.ws, { type: 'leave' });
+    await left;
+    await closeWs(first.ws);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     const second = await identifyGameRegistered(hub.origin, 'retained-cap-second');
@@ -810,8 +849,18 @@ test('retained session capacity evicts the oldest disconnected identity', async 
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     const firstAgain = await identifyGameRegistered(hub.origin, 'retained-cap-first');
-    assert.notEqual(firstAgain.playerId, first.playerId);
+    assert.notEqual(firstAgain.playerId, first.id);
+
+    const aliasProbe = await openWs(hub.origin, '/ws/hub');
+    sendJson(aliasProbe, {
+      type: 'get_alias',
+      session_id: sessionKey('retained-cap-first'),
+    });
+    const aliasResult = await nextJson(aliasProbe, (msg) => msg.type === 'alias_result');
+    assert.equal(aliasResult.alias, null);
+
     await closeWs(firstAgain.game);
+    await closeWs(aliasProbe);
   } finally {
     await hub.stop();
   }
@@ -839,7 +888,7 @@ test('retained session capacity does not evict an active identity', async () => 
   }
 });
 
-test('retained session TTL expires a disconnected identity', async () => {
+test('retained session TTL starts when the identity becomes inactive', async () => {
   const hub = await startHub({ HUB_RETAINED_SESSION_TTL_MS: '100' });
   try {
     const first = await identifyGameRegistered(hub.origin, 'retained-ttl');
@@ -1067,9 +1116,10 @@ test('hub message flood closes the connection with a distinct rate-limit code', 
   }
 });
 
-test('WebSocket payload limits reject oversized hub and game frames during reassembly', async () => {
+test('WebSocket parser ceilings independently bound hub control and game frames', async () => {
   const hub = await startHub({
-    HUB_MAX_WS_PAYLOAD_BYTES: '128',
+    HUB_CONTROL_MAX_WS_PAYLOAD_BYTES: '128',
+    GAME_MAX_WS_PAYLOAD_BYTES: '256',
     HUB_MAX_BYTES_PER_WINDOW: '1000',
     GAME_MAX_BYTES_PER_WINDOW: '1000',
   });
@@ -1080,8 +1130,16 @@ test('WebSocket payload limits reject oversized hub and game frames during reass
     assert.deepEqual(await hubClosed, { code: 1009, reason: '' });
 
     const gameWs = await openWs(hub.origin, '/ws/game');
-    const gameClosed = nextClose(gameWs);
     gameWs.send(Buffer.alloc(129));
+    sendGame(gameWs, {
+      type: 'identify',
+      session_id: sessionBytes('parser-ceiling-game'),
+      busy: false,
+    });
+    await nextGame(gameWs, (msg) => msg.type === 'registered');
+
+    const gameClosed = nextClose(gameWs);
+    gameWs.send(Buffer.alloc(257));
     assert.deepEqual(await gameClosed, { code: 1009, reason: '' });
   } finally {
     await hub.stop();

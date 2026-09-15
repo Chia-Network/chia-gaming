@@ -1,0 +1,10 @@
+{
+  "gameTimeoutBlocks": {
+    "min": 3,
+    "max": 100
+  },
+  "sessionTimeoutBlocks": {
+    "min": 3,
+    "max": 30
+  }
+}

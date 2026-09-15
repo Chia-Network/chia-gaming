@@ -514,6 +514,31 @@ pub fn register_one_package(
     fs::write(out_dir.join("game_package_test_funs.rs"), tests).unwrap();
 }
 
+fn generate_protocol_timeout_bounds(out_dir: &Path) {
+    let path = Path::new("shared/protocol-constants/constants.json");
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    let value: JsonValue = serde_json::from_str(&source)
+        .unwrap_or_else(|error| panic!("invalid {}: {error}", path.display()));
+    let bound = |group: &str, name: &str| {
+        value[group][name]
+            .as_u64()
+            .unwrap_or_else(|| panic!("{} missing unsigned integer {group}.{name}", path.display()))
+    };
+    let generated = format!(
+        "pub const MIN_GAME_TIMEOUT_BLOCKS: u64 = {};\n\
+         pub const MAX_GAME_TIMEOUT_BLOCKS: u64 = {};\n\
+         pub const MIN_SESSION_TIMEOUT_BLOCKS: u64 = {};\n\
+         pub const MAX_SESSION_TIMEOUT_BLOCKS: u64 = {};\n",
+        bound("gameTimeoutBlocks", "min"),
+        bound("gameTimeoutBlocks", "max"),
+        bound("sessionTimeoutBlocks", "min"),
+        bound("sessionTimeoutBlocks", "max"),
+    );
+    fs::write(out_dir.join("protocol_timeout_bounds.rs"), generated)
+        .expect("write generated protocol timeout bounds");
+}
+
 fn main() {
     let registry = load_registry();
     let mut seen = std::collections::BTreeSet::new();
@@ -528,9 +553,11 @@ fn main() {
     emit_rerun_directives(Path::new("games"));
     println!("cargo:rerun-if-changed=chialisp.toml");
     println!("cargo:rerun-if-changed=games/registry.json");
+    println!("cargo:rerun-if-changed=shared/protocol-constants/constants.json");
     println!("cargo:rerun-if-env-changed=CHIALISP_COMPILE");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    generate_protocol_timeout_bounds(&out_dir);
     let package_ids = if std::env::var("CHIALISP_COMPILE").is_ok() {
         compile_chialisp_with_large_stack(registry.clone());
         prepare_game_packages(&registry)

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "chia-gaming-bencodex": "workspace:*",
+    "chia-gaming-protocol-constants": "workspace:*",
     "cors": "2.8.5",
     "express": "5.1.0",
     "minimist": "1.2.8",

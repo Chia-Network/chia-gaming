@@ -1,0 +1,13 @@
+{
+  "name": "chia-gaming-protocol-constants",
+  "version": "0.1.0",
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.cjs"
+    },
+    "./constants.json": "./constants.json"
+  }
+}
