@@ -15,6 +15,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  logReloadLifecycle,
   SessionControllerAdapter,
   startSimulator,
 } from './load_wasm.harness';
@@ -478,9 +479,12 @@ it(
     try {
       const poller = await startSimulator(['cafe0005', 'dead0005']);
       if (!poller) return;
+      logReloadLifecycle('calpoker-start');
       await runCalpokerReloadAndAdvance(poller);
     } catch (error) {
       throw new Error(`[load_wasm reload injection failed]\n${String(error)}`, { cause: error });
+    } finally {
+      logReloadLifecycle('calpoker-end');
     }
   },
   120 * 1000,
@@ -499,12 +503,15 @@ it.each([
       const poller = await startSimulator([`a11ce00${suffix}`, `b0b7000${suffix}`]);
       reloadStallBreadcrumb(checkpoint, 'simulator-start-after');
       if (!poller) return;
+      logReloadLifecycle(`handshake-${checkpoint}-start`);
       await runHandshakeRoleReload(poller, checkpoint, suffix);
       reloadStallBreadcrumb(checkpoint, 'test-body-complete');
     } catch (error) {
       throw new Error(`[load_wasm handshake reload injection failed]\n${String(error)}`, {
         cause: error,
       });
+    } finally {
+      logReloadLifecycle(`handshake-${checkpoint}-end`);
     }
   },
   120 * 1000,

@@ -24,6 +24,8 @@ export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
 let presetFetcher: (key: string) => Promise<Uint8Array> = fetchDeployPreset;
 let loadPromise: Promise<WasmConnection> | null = null;
 
+export type WasmLoadDiagnostic = (stage: string) => void;
+
 type WasmLoaderTarget = {
   loadWasm?: (init: WasmInitFn, wasmConn: WasmConnection) => void;
   dispatchEvent(event: Event): boolean;
@@ -56,31 +58,41 @@ export function storeInitArgs(chia_gaming_init_ready: WasmInitFn, cg_ready: Wasm
   readyToInit.next(true);
 }
 
-async function runWasmLoad(): Promise<WasmConnection> {
+async function runWasmLoad(diagnostic?: WasmLoadDiagnostic): Promise<WasmConnection> {
+  diagnostic?.('run-load-enter');
   if (!chia_gaming_init || !cg) {
     throw new Error('wasm init args not set');
   }
   const initFn = chia_gaming_init;
   const wasmConn = cg;
 
+  diagnostic?.('preset-fetches-create-before');
   const presetFetches = Promise.all(
     PRESET_FILES.map(async (name) => ({
       name,
       content: await presetFetcher(name),
     })),
   );
+  diagnostic?.('preset-fetches-create-after');
 
+  diagnostic?.('init-presets-await-before');
   const [, presets] = await Promise.all([initFn({ module_or_path: WASM_URL }), presetFetches]);
+  diagnostic?.('init-presets-await-after');
 
   if (!logInitialized) {
     logInitialized = true;
+    diagnostic?.('wasm-init-before');
     wasmConn.init();
+    diagnostic?.('wasm-init-after');
   }
 
   for (const { name, content } of presets) {
+    diagnostic?.(`cache-file-before:${name}`);
     wasmConn.cache_file(name, content);
+    diagnostic?.(`cache-file-after:${name}`);
   }
 
+  diagnostic?.('run-load-return');
   return wasmConn;
 }
 
@@ -101,11 +113,13 @@ export function startWasmBootstrap(): void {
  * On failure, clears so a later getWasmConnection / Accept can retry.
  * Requires storeInitArgs to have run (or waits for it).
  */
-export function ensureWasmLoaded(): Promise<WasmConnection> {
+export function ensureWasmLoaded(diagnostic?: WasmLoadDiagnostic): Promise<WasmConnection> {
   if (!loadPromise) {
+    diagnostic?.('load-promise-create');
     loadPromise = (async () => {
       try {
         if (!chia_gaming_init || !cg) {
+          diagnostic?.('init-args-await-before');
           await new Promise<void>((resolve, reject) => {
             const sub = waitForReadyToInit.subscribe({
               next: () => {
@@ -118,13 +132,16 @@ export function ensureWasmLoaded(): Promise<WasmConnection> {
               },
             });
           });
+          diagnostic?.('init-args-await-after');
         }
-        return await runWasmLoad();
+        return await runWasmLoad(diagnostic);
       } catch (err) {
         loadPromise = null;
         throw err;
       }
     })();
+  } else {
+    diagnostic?.('load-promise-reuse');
   }
   return loadPromise;
 }
@@ -148,8 +165,10 @@ export class WasmStateInit {
     presetFetcher = fetchPreset;
   }
 
-  getWasmConnection(): Promise<WasmConnection> {
-    return ensureWasmLoaded().then((wasmConn) => {
+  getWasmConnection(diagnostic?: WasmLoadDiagnostic): Promise<WasmConnection> {
+    diagnostic?.('connection-await-before');
+    return ensureWasmLoaded(diagnostic).then((wasmConn) => {
+      diagnostic?.('connection-await-after');
       this.wasmConnection = wasmConn;
       return wasmConn;
     });

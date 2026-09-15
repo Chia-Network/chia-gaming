@@ -1,5 +1,6 @@
 import { SessionController } from './SessionController';
 import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
+import type { WasmLoadDiagnostic } from './WasmStateInit';
 import { PeerConnectionResult } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
 import {
@@ -106,19 +107,33 @@ export async function configSessionController(
   channelTimeout?: number,
   unrollTimeout?: number,
   rewardPuzzleHashOverride?: string,
+  diagnostic?: WasmLoadDiagnostic,
 ): Promise<SessionController> {
-  const wasmConnection = await wasmStateInit.getWasmConnection();
+  diagnostic?.('get-wasm-await-before');
+  const wasmConnection = await wasmStateInit.getWasmConnection(diagnostic);
+  diagnostic?.('get-wasm-await-after');
+  diagnostic?.('load-wasm-before');
   sc.loadWasm(wasmConnection);
+  diagnostic?.('load-wasm-after');
   const entropy = new Uint8Array(32);
+  diagnostic?.('entropy-before');
   crypto.getRandomValues(entropy);
+  diagnostic?.('entropy-after');
   const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
+  diagnostic?.('create-rng-before');
   const rngId = wasmConnection.create_rng(seedHex);
+  diagnostic?.(`create-rng-after:${rngId}`);
+  diagnostic?.('reward-address-await-before');
   const address = rewardPuzzleHashOverride
     ? { puzzleHash: rewardPuzzleHashOverride }
     : await blockchain.rpc.getAddress();
+  diagnostic?.('reward-address-await-after');
   sc.rewardPuzzleHash = address.puzzleHash;
+  diagnostic?.('emit-reward-address-before');
   sc.emitRewardAddress();
+  diagnostic?.('emit-reward-address-after');
   const theirContribution = sc.theirContribution;
+  diagnostic?.('create-game-before');
   const { game: cradle } = wasmStateInit.createGame(
     rngId,
     wasmConnection,
@@ -130,10 +145,17 @@ export async function configSessionController(
     channelTimeout,
     unrollTimeout,
   );
+  diagnostic?.(`create-game-after:${cradle.session}`);
+  diagnostic?.('set-game-session-before');
   sc.setGameSession(cradle);
+  diagnostic?.('set-game-session-after');
+  diagnostic?.('attach-blockchain-before');
   sc.attachBlockchain(blockchain);
+  diagnostic?.('attach-blockchain-after');
   log('[wasm] activateSpend');
+  diagnostic?.('activate-spend-before');
   sc.activateSpend();
+  diagnostic?.('activate-spend-after');
   log('[wasm] session controller configured (handshake)');
   return sc;
 }
