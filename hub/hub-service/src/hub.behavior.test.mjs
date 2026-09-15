@@ -314,6 +314,18 @@ test('HTTP responses prohibit referrer disclosure', async () => {
   }
 });
 
+test('malformed upgrade Host cannot kill the hub', async () => {
+  const hub = await startHub();
+  try {
+    const malformedHost = await openWs(hub.origin, '/ws/hub', { headers: { Host: '[' } });
+    await closeWs(malformedHost);
+    const valid = await openWs(hub.origin, '/ws/hub');
+    await closeWs(valid);
+  } finally {
+    await hub.stop();
+  }
+});
+
 test('hub-owned aliases update the game channel and cannot be set there', async () => {
   const hub = await startHub();
   try {

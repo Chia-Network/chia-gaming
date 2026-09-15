@@ -247,7 +247,13 @@ function handleUpgrade(
 }
 
 httpServer.on('upgrade', (req, socket, head) => {
-  const pathname = new URL(req.url!, `http://${req.headers.host}`).pathname;
+  let pathname: string;
+  try {
+    pathname = new URL(req.url ?? '', 'http://localhost').pathname;
+  } catch {
+    socket.destroy();
+    return;
+  }
   if (pathname === '/ws/hub') {
     handleUpgrade(hubWsServer, req, socket, head);
   } else if (pathname === '/ws/game') {
