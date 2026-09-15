@@ -1,5 +1,9 @@
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const DEFAULT_LIMITS = Object.freeze({
+  maxDepth: 512,
+  maxValues: 100_000,
+});
 
 class BencodexError extends Error {
   constructor(message) {
@@ -92,9 +96,18 @@ function encode(value) {
 }
 
 class Decoder {
-  constructor(input) {
+  constructor(input, limits) {
+    if (!Number.isSafeInteger(limits.maxDepth) || limits.maxDepth < 0) {
+      throw new BencodexError('maxDepth must be a non-negative safe integer');
+    }
+    if (!Number.isSafeInteger(limits.maxValues) || limits.maxValues < 0) {
+      throw new BencodexError('maxValues must be a non-negative safe integer');
+    }
     this.input = input instanceof Uint8Array ? input : new Uint8Array(input);
     this.offset = 0;
+    this.maxDepth = limits.maxDepth;
+    this.maxValues = limits.maxValues;
+    this.values = 0;
   }
 
   eof() {
@@ -161,7 +174,18 @@ class Decoder {
     }
   }
 
-  readValue() {
+  consumeValue(depth) {
+    if (depth > this.maxDepth) {
+      throw new BencodexError('maximum value nesting depth exceeded');
+    }
+    this.values++;
+    if (this.values > this.maxValues) {
+      throw new BencodexError('maximum value count exceeded');
+    }
+  }
+
+  readValue(depth = 0) {
+    this.consumeValue(depth);
     const tag = this.take();
     if (tag === 0x6e) return null;
     if (tag === 0x74) return true;
@@ -172,7 +196,7 @@ class Decoder {
     if (tag === 0x6c) {
       const items = [];
       while (this.peek() !== 0x65) {
-        items.push(this.readValue());
+        items.push(this.readValue(depth + 1));
       }
       this.offset++;
       return items;
@@ -180,12 +204,13 @@ class Decoder {
     if (tag === 0x64) {
       const items = new Map();
       while (this.peek() !== 0x65) {
+        this.consumeValue(depth + 1);
         const keyTag = this.take();
         let key;
         if (keyTag === 0x75) key = textDecoder.decode(this.readBytes());
         else if (keyTag >= 0x30 && keyTag <= 0x39) key = this.readBytes(true);
         else throw new BencodexError('dictionary key must be bytes or text');
-        items.set(key, this.readValue());
+        items.set(key, this.readValue(depth + 1));
       }
       this.offset++;
       return items;
@@ -194,8 +219,8 @@ class Decoder {
   }
 }
 
-function decode(bytes) {
-  const decoder = new Decoder(bytes);
+function decode(bytes, limits = DEFAULT_LIMITS) {
+  const decoder = new Decoder(bytes, limits);
   const value = decoder.readValue();
   if (!decoder.eof()) throw new BencodexError('trailing bytes after value');
   return value;

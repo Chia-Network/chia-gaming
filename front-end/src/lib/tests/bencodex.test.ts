@@ -37,6 +37,31 @@ describe('local bencodex codec', () => {
     }
   });
 
+  it('enforces configurable nesting and value budgets', () => {
+    const encoder = new TextEncoder();
+    const limits = { maxDepth: 2, maxValues: 3 };
+
+    expect(decode(encoder.encode('llnee'), limits)).toEqual([[null]]);
+    expect(() => decode(encoder.encode('lllneee'), limits)).toThrow(
+      'maximum value nesting depth exceeded',
+    );
+    expect(decode(encoder.encode('du1:ai1ee'), limits)).toEqual(new Map([['a', 1n]]));
+    expect(() => decode(encoder.encode('du1:ai1ee'), { ...limits, maxValues: 2 })).toThrow(
+      'maximum value count exceeded',
+    );
+  });
+
+  it('rejects hostile inputs at the default Rust decoder budgets', () => {
+    const encoder = new TextEncoder();
+    const deeplyNested = `${'l'.repeat(513)}n${'e'.repeat(513)}`;
+    const tooManyValues = `l${'n'.repeat(100_000)}e`;
+
+    expect(() => decode(encoder.encode(deeplyNested))).toThrow(
+      'maximum value nesting depth exceeded',
+    );
+    expect(() => decode(encoder.encode(tooManyValues))).toThrow('maximum value count exceeded');
+  });
+
   it('encodes byte arrays as byte strings', () => {
     const bytes = new TextEncoder().encode('spam');
     const encoded = encode(bytes);
