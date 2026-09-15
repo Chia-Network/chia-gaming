@@ -816,15 +816,21 @@ test('retained session capacity does not evict an active identity', async () => 
 });
 
 test('retained session TTL expires a disconnected identity', async () => {
-  const hub = await startHub({ HUB_RETAINED_SESSION_TTL_MS: '20' });
+  const hub = await startHub({ HUB_RETAINED_SESSION_TTL_MS: '100' });
   try {
     const first = await identifyGameRegistered(hub.origin, 'retained-ttl');
+    await new Promise((resolve) => setTimeout(resolve, 120));
     await closeWs(first.game);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const second = await identifyGameRegistered(hub.origin, 'retained-ttl');
-    assert.notEqual(second.playerId, first.playerId);
-    await closeWs(second.game);
+    const beforeExpiry = await identifyGameRegistered(hub.origin, 'retained-ttl');
+    assert.equal(beforeExpiry.playerId, first.playerId);
+    await closeWs(beforeExpiry.game);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const afterExpiry = await identifyGameRegistered(hub.origin, 'retained-ttl');
+    assert.notEqual(afterExpiry.playerId, first.playerId);
+    await closeWs(afterExpiry.game);
   } finally {
     await hub.stop();
   }

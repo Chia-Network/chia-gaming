@@ -385,6 +385,13 @@ function retainedSessionIsActive(sessionId: string, playerId: string): boolean {
   );
 }
 
+function markRetainedSessionInactive(playerId: string, now = Date.now()): void {
+  const sessionId = playerToSession.get(playerId);
+  if (!sessionId || retainedSessionIsActive(sessionId, playerId)) return;
+  sessionLastUsedAt.delete(sessionId);
+  sessionLastUsedAt.set(sessionId, now);
+}
+
 function evictRetainedSession(sessionId: string, playerId: string, reason: string): void {
   sessionToPlayer.delete(sessionId);
   playerToSession.delete(playerId);
@@ -677,6 +684,7 @@ function unbindGameConnection(ws: WebSocket): void {
     player_id: meta.playerId,
   });
   notifyRecentCorrespondents(meta.sessionId, meta.playerId, 'peer_unavailable');
+  markRetainedSessionInactive(meta.playerId);
 }
 
 function replayPendingChallengesToPlayer(playerId: string): void {
@@ -736,7 +744,9 @@ function cancelPendingHubLeave(playerId: string): void {
 }
 
 function leaveHub(playerId: string): boolean {
-  if (hub.removePlayer(playerId)) {
+  const removed = hub.removePlayer(playerId);
+  markRetainedSessionInactive(playerId);
+  if (removed) {
     broadcastHubUpdate();
     return true;
   }
@@ -1545,6 +1555,7 @@ function sweepHubConnections(now: number): boolean {
     cancelPendingHubLeave(playerId);
     cancelPlayerChallenges(playerId);
     if (hub.removePlayer(playerId)) {
+      markRetainedSessionInactive(playerId, now);
       changed = true;
     }
   }

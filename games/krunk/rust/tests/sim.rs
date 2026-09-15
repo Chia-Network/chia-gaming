@@ -518,6 +518,60 @@ mod sim_tests {
             );
         }));
 
+        res.push(("test_krunk_failed_only_drain_returns_requested_potato", &|| {
+            let mut allocator = AllocEncoder::new();
+            let game_1_commit = word_program(&mut allocator, b"CRANE");
+            let request_potato = crate::session_phases::peer_wire::encode_peer_message(
+                &PeerMessage::RequestPotato(()),
+            )
+            .expect("serialize request");
+            let moves = vec![
+                SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::NerfMessages(1),
+                SimScriptAction::InjectRawMessage(1, request_potato),
+                SimScriptAction::AcceptSettlement(1, GameID(999)),
+                SimScriptAction::UnNerfMessages,
+                SimScriptAction::Move(
+                    0,
+                    GameID(1),
+                    ReadableMove::from_program(Rc::new(game_1_commit)),
+                    true,
+                ),
+                SimScriptAction::WaitBlocks(1, 0),
+            ];
+            let move_count = moves.len();
+
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&krunk_ran_all_the_moves_predicate(move_count)),
+                None,
+            )
+            .expect("a failed sole queued action should still return a requested potato");
+
+            assert_stayed_off_chain(&outcome, "failed-only drain potato return");
+            assert!(outcome.local_uis[1].notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ActionFailed {
+                    id: Some(GameID(999)),
+                    action: Some(FailedGameAction::AcceptSettlement),
+                    ..
+                }
+            )));
+            let received_index = outcome.logs[1]
+                .iter()
+                .rposition(|line| line.starts_with("[recv]"))
+                .expect("player 1 should receive the potato-bearing move");
+            assert!(
+                outcome.logs[1][received_index + 1..]
+                    .iter()
+                    .any(|line| line.starts_with("[send]")),
+                "player 1 should return an empty potato after dropping its only failed action: {:?}",
+                outcome.logs[1]
+            );
+        }));
+
         res.push(("test_krunk_rejection_is_immediate_before_potato", &|| {
             let mut allocator = AllocEncoder::new();
             let invalid_word = word_program(&mut allocator, b"XXXXX");

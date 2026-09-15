@@ -503,9 +503,10 @@ impl OffChainPhase {
                         action: Some(action),
                         reason: format!("{error:?}"),
                     }));
-                    return Ok(effects);
+                    self.drain_queue_into_batch(env)?
+                } else {
+                    return Err(error);
                 }
-                return Err(error);
             }
         };
         effects.extend(batch_effects);
