@@ -177,6 +177,7 @@ mod sim_tests {
         GameCanMove { player: usize, game_id: GameID },
         AcceptProposal { player: usize, game_id: GameID },
         ChannelReady { player: usize },
+        NerfedTransactionAvailable,
         AfterGame { game_id: GameID },
     }
 
@@ -218,6 +219,8 @@ mod sim_tests {
         /// Stop nerfing transactions. If true, replay the backlog to the
         /// simulator; if false, discard it.
         UnNerfTransactions(bool),
+        /// Replace the unsigned argument in a queued clean-shutdown solution.
+        MutateNerfedShutdownSolution,
         /// Stop reporting watched coin state changes for a player.
         BlockCoinReports(usize),
         /// Resume coin reports. If true, replay the backlog to the player.
@@ -239,6 +242,8 @@ mod sim_tests {
         AcceptSettlement(usize, GameID),
         /// Shut down
         CleanShutdown(usize),
+        /// Wait until a player has observed channel creation.
+        WaitForChannel(usize),
         /// Corrupt a player's state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
@@ -306,6 +311,9 @@ mod sim_tests {
                 SimScriptAction::UnNerfTransactions(r) => {
                     write!(formatter, "UnNerfTransactions({r})")
                 }
+                SimScriptAction::MutateNerfedShutdownSolution => {
+                    write!(formatter, "MutateNerfedShutdownSolution")
+                }
                 SimScriptAction::UnNerfTransactionsFor(p) => {
                     write!(formatter, "UnNerfTransactionsFor({p})")
                 }
@@ -331,6 +339,7 @@ mod sim_tests {
                 }
                 SimScriptAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
                 SimScriptAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
+                SimScriptAction::WaitForChannel(p) => write!(formatter, "WaitForChannel({p})"),
                 SimScriptAction::CorruptStateNumber(p, sn) => {
                     write!(formatter, "CorruptStateNumber({p},{sn})")
                 }
@@ -416,6 +425,11 @@ mod sim_tests {
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
                 },
+                Self::WaitForChannel(player) => ActionSchedule {
+                    readiness: ActionReadiness::ChannelReady { player: *player },
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
                 Self::GoOnChain(_) => ActionSchedule {
                     readiness: ActionReadiness::Immediate,
                     post_action_drain: PostActionDrain::OnChain,
@@ -455,6 +469,11 @@ mod sim_tests {
                 | Self::UnNerfMessages
                 | Self::SaveUnrollSnapshot(_) => ActionSchedule {
                     readiness: ActionReadiness::Immediate,
+                    post_action_drain: PostActionDrain::None,
+                    expects_on_chain_transition: false,
+                },
+                Self::MutateNerfedShutdownSolution => ActionSchedule {
+                    readiness: ActionReadiness::NerfedTransactionAvailable,
                     post_action_drain: PostActionDrain::None,
                     expects_on_chain_transition: false,
                 },
@@ -645,6 +664,16 @@ mod sim_tests {
                 PostActionDrain::OnChain,
                 false,
             );
+            let channel_no_drain = schedule(
+                ActionReadiness::ChannelReady { player: 1 },
+                PostActionDrain::None,
+                false,
+            );
+            let nerfed_transaction = schedule(
+                ActionReadiness::NerfedTransactionAvailable,
+                PostActionDrain::None,
+                false,
+            );
             let after_game = schedule(
                 ActionReadiness::AfterGame { game_id: gid },
                 PostActionDrain::OnChain,
@@ -673,6 +702,10 @@ mod sim_tests {
                 (
                     SimScriptAction::UnNerfTransactions(true),
                     immediate_no_drain,
+                ),
+                (
+                    SimScriptAction::MutateNerfedShutdownSolution,
+                    nerfed_transaction,
                 ),
                 (SimScriptAction::BlockCoinReports(1), immediate_no_drain),
                 (
@@ -719,6 +752,7 @@ mod sim_tests {
                 (SimScriptAction::WaitBlocks(3, 1), immediate_no_drain),
                 (SimScriptAction::AcceptSettlement(1, gid), immediate_drain),
                 (SimScriptAction::CleanShutdown(1), immediate_drain),
+                (SimScriptAction::WaitForChannel(1), channel_no_drain),
                 (
                     SimScriptAction::CorruptStateNumber(1, 9),
                     immediate_no_drain,

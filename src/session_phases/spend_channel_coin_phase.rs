@@ -10,7 +10,8 @@ use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove
 use crate::channel_state::ChannelState;
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout, MAX_BLOCK_COST_CLVM,
+    IntoErr, Node, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout,
+    MAX_BLOCK_COST_CLVM,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
@@ -28,6 +29,30 @@ use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{
     validate_new_move_action, GameAction, PotatoState, SpendWalletReceiver,
 };
+use crate::utils::non_nil;
+
+fn delegated_path_puzzle_hash(
+    allocator: &mut crate::common::types::AllocEncoder,
+    solution: &Program,
+) -> Result<Option<PuzzleHash>, Error> {
+    let solution_node = solution.to_nodeptr(allocator)?;
+    let clvmr::allocator::SExp::Pair(original_public_key, rest) =
+        allocator.allocator().sexp(solution_node)
+    else {
+        return Err(Error::StrErr(
+            "standard coin solution is not a list".to_string(),
+        ));
+    };
+    if non_nil(allocator.allocator(), original_public_key) {
+        return Ok(None);
+    }
+    let clvmr::allocator::SExp::Pair(delegated_puzzle, _) = allocator.allocator().sexp(rest) else {
+        return Err(Error::StrErr(
+            "standard coin solution has no delegated puzzle".to_string(),
+        ));
+    };
+    Ok(Some(Node(delegated_puzzle).sha256tree(allocator)))
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 enum SpendChannelCoinState {
@@ -151,8 +176,8 @@ impl SpendChannelCoinPhase {
 
     /// Create a handler for the clean shutdown path.  The handler watches the
     /// channel coin spend and checks whether the clean shutdown transaction
-    /// or an unroll landed.  We store the exact solution we expect on-chain so
-    /// detection is a direct comparison.
+    /// or an unroll landed. We retain the expected solution so detection can
+    /// compare the signature-bound delegated puzzle.
     pub fn new_for_clean_shutdown(
         channel_state: Option<ChannelState>,
         channel_coin: CoinString,
@@ -580,10 +605,17 @@ impl SpendChannelCoinPhase {
 
         let mut effects = Vec::new();
 
-        // Clean shutdown detection: compare the on-chain solution directly
-        // to the one we co-signed.
+        // The standard-coin signature binds the delegated puzzle, not the
+        // outer solution argument supplied to that puzzle.
         if let Some(ref expected_solution) = self.expected_clean_shutdown_solution {
-            if *solution == *expected_solution.pref() {
+            let expected_hash = delegated_path_puzzle_hash(
+                env.allocator,
+                expected_solution.pref(),
+            )?
+            .ok_or_else(|| {
+                Error::StrErr("clean shutdown did not use delegated puzzle path".to_string())
+            })?;
+            if delegated_path_puzzle_hash(env.allocator, solution)? == Some(expected_hash) {
                 effects.push(Effect::Log("[clean-end] clean shutdown landed".to_string()));
                 {
                     let ch = self.base.channel_state_mut()?;
@@ -1490,10 +1522,30 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::types::AllocEncoder;
+    use crate::common::standard_coin::{solution_for_conditions, solution_for_delegated_puzzle};
+    use crate::common::types::{AllocEncoder, ToQuotedProgram};
 
     fn test_coin() -> CoinString {
         CoinString::from_bytes(&[1; 65])
+    }
+
+    #[test]
+    fn clean_shutdown_classification_ignores_unsigned_solution_argument() {
+        let mut allocator = AllocEncoder::new();
+        let conditions = ().to_clvm(&mut allocator).into_gen().unwrap();
+        let delegated_puzzle = conditions.to_quoted_program(&mut allocator).unwrap();
+        let expected = solution_for_conditions(&mut allocator, conditions).unwrap();
+        let one = 1.to_clvm(&mut allocator).into_gen().unwrap();
+        let equivalent =
+            solution_for_delegated_puzzle(&mut allocator, delegated_puzzle, one).unwrap();
+        let expected_program = Program::from_nodeptr(&mut allocator, expected).unwrap();
+        let equivalent_program = Program::from_nodeptr(&mut allocator, equivalent).unwrap();
+
+        assert_ne!(expected_program, equivalent_program);
+        assert_eq!(
+            delegated_path_puzzle_hash(&mut allocator, &expected_program).unwrap(),
+            delegated_path_puzzle_hash(&mut allocator, &equivalent_program).unwrap(),
+        );
     }
 
     fn legacy_base() -> ChannelStateBase {

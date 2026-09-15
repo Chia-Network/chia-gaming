@@ -152,6 +152,7 @@ impl SimulationHarness {
                 }
             }
             ActionReadiness::ChannelReady { player } => self.local_uis[player].channel_created,
+            ActionReadiness::NerfedTransactionAvailable => !self.nerfed_tx_backlog.is_empty(),
             ActionReadiness::AfterGame { game_id } => self
                 .local_uis
                 .iter()
@@ -530,6 +531,40 @@ impl SimulationHarness {
                 continue;
             }
             self.simulator.push_transactions(allocator, &tx.spends)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn mutate_nerfed_shutdown_solution(
+        &mut self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<(), Error> {
+        game_assert!(
+            !self.nerfed_tx_backlog.is_empty(),
+            "no nerfed shutdown transaction"
+        );
+        for tx in &mut self.nerfed_tx_backlog {
+            for coin_spend in &mut tx.spends {
+                let spend = &mut coin_spend.bundle;
+                let solution_node = spend.solution.p().to_nodeptr(allocator)?;
+                let elements =
+                    crate::utils::proper_list(allocator.allocator(), solution_node, true)
+                        .filter(|elements| elements.len() == 3)
+                        .ok_or_else(|| {
+                            Error::StrErr(
+                                "clean shutdown standard solution must contain three items"
+                                    .to_string(),
+                            )
+                        })?;
+                let delegated_puzzle = Program::from_nodeptr(allocator, elements[1])?;
+                let one = 1.to_clvm(allocator).into_gen()?;
+                let modified = crate::common::standard_coin::solution_for_delegated_puzzle(
+                    allocator,
+                    delegated_puzzle,
+                    one,
+                )?;
+                spend.solution = Program::from_nodeptr(allocator, modified)?.into();
+            }
         }
         Ok(())
     }

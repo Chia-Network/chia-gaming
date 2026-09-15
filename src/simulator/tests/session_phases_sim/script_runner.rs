@@ -340,6 +340,10 @@ pub(in super::super) fn run_script(
                         harness.unnerf_transactions(allocator, *replay)?;
                         ()
                     }
+                    SimScriptAction::MutateNerfedShutdownSolution => {
+                        harness.mutate_nerfed_shutdown_solution(allocator)?;
+                        ()
+                    }
                     SimScriptAction::BlockCoinReports(who) => {
                         harness.block_coin_reports(*who);
                         ()
@@ -376,6 +380,7 @@ pub(in super::super) fn run_script(
                         }
                         ()
                     }
+                    SimScriptAction::WaitForChannel(_) => {}
                     SimScriptAction::CorruptStateNumber(who, new_sn) => {
                         harness.corrupt_state_number(*who, *new_sn)?;
                         ()

@@ -2202,6 +2202,42 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         }
     }));
 
+    res.push(("test_clean_shutdown_equivalent_solution", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::WaitForChannel(0),
+            SimScriptAction::NerfTransactions(0),
+            SimScriptAction::NerfTransactions(1),
+            SimScriptAction::CleanShutdown(1),
+            SimScriptAction::MutateNerfedShutdownSolution,
+            SimScriptAction::UnNerfTransactions(true),
+        ];
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i].clean_shutdown_complete,
+                "player {i} should classify the equivalent spend as ResolvedClean"
+            );
+            assert!(
+                !outcome.local_uis[i]
+                    .notifications
+                    .iter()
+                    .any(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                                state: ChannelStatus::Failed,
+                                ..
+                            })
+                        )
+                    }),
+                "player {i} should not report the equivalent spend as failed"
+            );
+        }
+    }));
+
     res.push((
         "sim_test_with_peer_container_piss_off_peer_complete",
         &|| {

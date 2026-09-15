@@ -267,17 +267,18 @@ channel coin, so only one can land on-chain.
 
 Because of this, the system never blindly trusts that the clean shutdown
 landed. When `SpendChannelCoinPhase` is created for the clean shutdown
-path, it stores the exact on-chain solution (`ProgramRef`) that was
-co-signed for the shutdown.  When the channel coin spend is detected, the
-handler compares the on-chain solution directly against the stored one:
+path, it stores the expected standard-coin solution (`ProgramRef`) that was
+co-signed for the shutdown. When the channel coin spend is detected, the
+handler compares the tree hash of the delegated puzzle against the stored
+one. This is the value covered by `AGG_SIG_ME`; the outer solution argument
+applied to that puzzle is not signed.
 
-1. **Clean shutdown landed:** The on-chain solution matches the expected
-   solution byte-for-byte.  The handler emits `ChannelStatus` with state
-   `ResolvedClean`.
-2. **An unroll landed instead:** The solution does not match.  The handler
-   runs the puzzle to extract conditions, then matches `CREATE_COIN` puzzle
-   hashes against the `unroll_puzzle_hash_map` to identify which unroll
-   state landed.  Since no games are active, the unroll creates only reward
+1. **Clean shutdown landed:** The delegated-puzzle tree hash matches the
+   expected hash. The handler emits `ChannelStatus` with state `ResolvedClean`.
+2. **An unroll landed instead:** The delegated-puzzle hash does not match. The
+   handler runs the puzzle to extract conditions, then matches `CREATE_COIN`
+   puzzle hashes against the `unroll_puzzle_hash_map` to identify which unroll
+   state landed. Since no games are active, the unroll creates only reward
    coins; `finish_on_chain_transition` finds an empty game map and
    transitions to `OnChainPhase`. The outcome is the same correct
    balances, just with more on-chain transactions.
