@@ -1535,6 +1535,7 @@ impl OffChainPhase {
     /// Build a channel-coin-to-unroll spend bundle regardless of current
     /// handshake state.  Used by test infrastructure to simulate a malicious
     /// peer that submits an unroll after agreeing to clean shutdown.
+    #[cfg(test)]
     pub fn force_unroll_spend(&self, env: &mut ChannelEnv<'_>) -> Result<SpendBundle, Error> {
         let saved = self.last_channel_coin_spend_info.as_ref().ok_or_else(|| {
             Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
