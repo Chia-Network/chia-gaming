@@ -12,6 +12,7 @@ import {
 } from '../gameRegistry';
 import { PRODUCTION_PACKAGE_KEYS } from '../../generated/gamePresets';
 import { proposalGroupFromProposalMade } from '../session/incomingProposal';
+import { MAX_GAME_TIMEOUT_BLOCKS, MIN_GAME_TIMEOUT_BLOCKS } from '../session/gameTimeout';
 import type { HandProposal } from '../session/types';
 
 const SPACE_PROPOSAL: HandProposal = {
@@ -152,5 +153,29 @@ describe('game package proposal adapters', () => {
     expect(proposalGroupFromProposalMade({ ...base, sender_is_player_a: 1 })).toBeNull();
     expect(proposalGroupFromProposalMade({ ...base, parameters: '10' })).toBeNull();
     expect(proposalGroupFromProposalMade({ ...base, parameters: Uint8Array.of(10) })).toBeNull();
+  });
+
+  it('accepts only bounded peer game timeouts', () => {
+    const base = {
+      id: 4n,
+      group_ids: [4n],
+      player_a_contribution: '30',
+      player_b_contribution: '30',
+      sender_is_player_a: true,
+      game_type: protocolIdForCatalog('calpoker'),
+      parameters: null,
+    };
+    for (const timeout of [MIN_GAME_TIMEOUT_BLOCKS, MAX_GAME_TIMEOUT_BLOCKS]) {
+      expect(
+        proposalGroupFromProposalMade({ ...base, timeout: timeout.toString() }),
+      ).not.toBeNull();
+    }
+    for (const timeout of [
+      MIN_GAME_TIMEOUT_BLOCKS - 1n,
+      MAX_GAME_TIMEOUT_BLOCKS + 1n,
+      4_294_967_296n,
+    ]) {
+      expect(proposalGroupFromProposalMade({ ...base, timeout: timeout.toString() })).toBeNull();
+    }
   });
 });

@@ -2,6 +2,7 @@ import type { ProposalMadePayload } from '../../types/ChiaGaming';
 import { catalogGameTypeFromWire } from '../gameIdentities';
 import { isProposalParameterValue, packageFor } from '../gameRegistry';
 import { parseAmount } from '../wasm/parseAmount';
+import { isValidGameTimeoutBlocks } from './gameTimeout';
 import type { ProposalGroupModel } from './types';
 
 export function proposalGroupFromProposalMade(
@@ -23,7 +24,7 @@ export function proposalGroupFromProposalMade(
     !playerA ||
     !playerB ||
     !gameType ||
-    timeout <= 0n ||
+    !isValidGameTimeoutBlocks(timeout) ||
     typeof payload.sender_is_player_a !== 'boolean' ||
     !isProposalParameterValue(payload.parameters) ||
     payload.id == null ||

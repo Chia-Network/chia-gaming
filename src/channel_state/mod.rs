@@ -39,6 +39,32 @@ use crate::common::types::{
 use crate::referee::types::{GameMoveDetails, ParsedRefereeSolution, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
 
+pub const MIN_GAME_TIMEOUT_BLOCKS: u64 = 3;
+pub const MAX_GAME_TIMEOUT_BLOCKS: u64 = 100;
+
+fn validate_game_timeout(game_timeout: u64) -> Result<(), Error> {
+    if !(MIN_GAME_TIMEOUT_BLOCKS..=MAX_GAME_TIMEOUT_BLOCKS).contains(&game_timeout) {
+        return Err(Error::StrErr(format!(
+            "proposal game_timeout {game_timeout} outside [{MIN_GAME_TIMEOUT_BLOCKS}, {MAX_GAME_TIMEOUT_BLOCKS}]",
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod game_timeout_tests {
+    use super::{validate_game_timeout, MAX_GAME_TIMEOUT_BLOCKS, MIN_GAME_TIMEOUT_BLOCKS};
+
+    #[test]
+    fn proposal_game_timeout_accepts_only_bounded_values() {
+        assert!(validate_game_timeout(MIN_GAME_TIMEOUT_BLOCKS).is_ok());
+        assert!(validate_game_timeout(MAX_GAME_TIMEOUT_BLOCKS).is_ok());
+        assert!(validate_game_timeout(MIN_GAME_TIMEOUT_BLOCKS - 1).is_err());
+        assert!(validate_game_timeout(MAX_GAME_TIMEOUT_BLOCKS + 1).is_err());
+        assert!(validate_game_timeout(u64::MAX).is_err());
+    }
+}
+
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
 ///
@@ -1064,12 +1090,7 @@ impl ChannelState {
             )));
         }
 
-        if start_info.timeout.to_u64() == 0 {
-            return Err(Error::StrErr(format!(
-                "proposal game_timeout must be positive, got {}",
-                start_info.timeout.to_u64(),
-            )));
-        }
+        validate_game_timeout(start_info.timeout.to_u64())?;
 
         // 4.9: Limit on outstanding proposal count.
         const MAX_PROPOSALS: usize = 100;

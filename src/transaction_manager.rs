@@ -594,7 +594,18 @@ impl<C: ManagedGameSession> TransactionManager<C> {
     fn evaluate_mature_timeout_claims(&mut self, height: u64) -> Result<(), Error> {
         let mut to_submit: Vec<(SpendBundle, Option<TimeoutClaimSemantic>)> = Vec::new();
         for (coin, watched) in self.watched_coins.iter_mut() {
-            let ripe = matches!(watched.birthday, Some(b) if b + watched.timeout_blocks.to_u64() <= height);
+            let ripe = match watched.birthday {
+                Some(birthday) => birthday
+                    .checked_add(watched.timeout_blocks.to_u64())
+                    .ok_or_else(|| {
+                        Error::StrErr(format!(
+                            "timeout maturity overflow for coin {coin:?}: birthday {birthday} + timeout {}",
+                            watched.timeout_blocks.to_u64()
+                        ))
+                    })?
+                    <= height,
+                None => false,
+            };
             if ripe
                 && !watched.claim_submitted
                 && watched.spent_confirmed_at.is_none()
@@ -1756,6 +1767,35 @@ mod tests {
             mgr.cradle().submitted_timeout_claims,
             vec![TimeoutClaimSemantic::GameOpponentTurn { id: game_id }]
         );
+    }
+
+    #[test]
+    fn timeout_maturity_overflow_is_rejected() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(12);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![watch_event_with_spend(
+            &coin,
+            u64::MAX,
+            test_bundle("overflowing-timeout-claim"),
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        let error = mgr
+            .report_coin_states(
+                &mut allocator,
+                10,
+                &[CoinStateRecord {
+                    coin,
+                    created_height: Some(10),
+                    spent_height: None,
+                }],
+            )
+            .expect_err("overflowing timeout maturity must fail");
+
+        assert!(error.to_string().contains("timeout maturity overflow"));
+        assert!(mgr.drain_submissions().unwrap().is_empty());
     }
 
     #[test]

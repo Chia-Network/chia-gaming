@@ -7,6 +7,11 @@ import {
   packageFor,
   REGISTERED_GAMES,
 } from '../lib/gameRegistry';
+import {
+  isValidGameTimeoutBlocks,
+  MAX_GAME_TIMEOUT_BLOCKS,
+  MIN_GAME_TIMEOUT_BLOCKS,
+} from '../lib/session/gameTimeout';
 import { proposalContributionForOrigin } from '../lib/session/proposalOrigin';
 import { Button } from './button';
 
@@ -20,7 +25,7 @@ export function ComposeProposalDialog({
   const compose = session.composeDraftState;
   const pkg = packageFor(compose.selectedGame);
   const formRef = useRef<RegisteredGameProposalFormHandle>(null);
-  const canSubmit = !session.composeProposalSent && compose.gameTimeout > 0n;
+  const canSubmit = !session.composeProposalSent && isValidGameTimeoutBlocks(compose.gameTimeout);
   const initialProposal =
     session.lastHandProposal?.gameType === compose.selectedGame ? session.lastHandProposal : null;
   const initialParameters = initialProposal
@@ -89,7 +94,8 @@ export function ComposeProposalDialog({
           <label className="text-xs font-medium text-canvas-text">Timeout (blocks)</label>
           <input
             type="number"
-            min={1}
+            min={MIN_GAME_TIMEOUT_BLOCKS.toString()}
+            max={MAX_GAME_TIMEOUT_BLOCKS.toString()}
             className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
             value={compose.gameTimeout.toString()}
             disabled={session.composeProposalSent}

@@ -68,8 +68,9 @@ absurdly high nonce.
 - **Amount consistency:** Each local factory member's amount is derived from its
 player A plus player B contributions; no independent amount is accepted from
 the peer.
-- **Game timeout:** The proposal's `timeout` must be positive. The UX defaults
-  to 15 blocks, but peers can propose different positive game timeouts.
+- **Game timeout:** The proposal's `timeout` must be between 3 and 100
+  blocks inclusive. The UX defaults to 15 blocks, but peers can propose
+  different values within that safe range.
 - **Proposal count limit:** The total number of outstanding proposals must not
 exceed `MAX_PROPOSALS` (100). Prevents a peer from flooding proposals to
 exhaust memory or starve resources.
