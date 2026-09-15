@@ -136,12 +136,10 @@ shim; that is what lets the renderer stay sealed inside `app.asar`, where the
 integrity-validation fuse still covers it, instead of being unpacked beside it.
 Cross-site asset requests are rejected using Chromium Fetch Metadata, with the
 Cloud Wallet's top-level `/oauth/callback` navigation as the sole exception.
-Successful reads are cached and simultaneous requests for the same asset are
-coalesced; at most four distinct uncached files are read concurrently. Packaged
-renderer asset bytes are immutable for the lifetime of the process. Static
-assets receive matching immutable cache headers, while HTML receives
-`Cache-Control: no-store` because each document response carries the current
-hub-specific CSP.
+Each request performs a stateless ASAR-safe filesystem read; Chromium owns
+response caching and request coalescing. Static assets receive immutable cache
+headers, while HTML receives `Cache-Control: no-store` because each document
+response carries the current hub-specific CSP.
 
 ### Content Security Policy
 

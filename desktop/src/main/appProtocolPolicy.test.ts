@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { appAssetCacheControl, isAppSchemeRequestAllowed, readAsset } from './appProtocolPolicy.ts';
+import { appAssetCacheControl, isAppSchemeRequestAllowed } from './appProtocolPolicy.ts';
 
 function request(
   url: string,
@@ -86,20 +86,5 @@ describe('app protocol policy', () => {
       true,
     );
     assert.equal(isAppSchemeRequestAllowed(request('chiagaming://app/index.js', {})), false);
-  });
-
-  it('does not retain asset bodies between reads', async () => {
-    let readCount = 0;
-    const read = async () => {
-      readCount += 1;
-      return Uint8Array.of(readCount);
-    };
-
-    const first = new Uint8Array(await readAsset(read, '/same.wasm'));
-    const second = new Uint8Array(await readAsset(read, '/same.wasm'));
-
-    assert.equal(readCount, 2);
-    assert.deepEqual([...first], [1]);
-    assert.deepEqual([...second], [2]);
   });
 });

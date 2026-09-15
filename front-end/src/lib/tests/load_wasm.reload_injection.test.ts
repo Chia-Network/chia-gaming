@@ -5,7 +5,6 @@ import { useCalpokerHand, type UseCalpokerHandResult } from '@games/calpoker/ui/
 import type { GameIntent, LiveGamePort } from '@games/host';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
 import {
@@ -487,17 +486,17 @@ it(
       signalDelayedEntered = resolve;
     });
     const immediateBehavior = {
-      registerUser: async (uniqueId: string, balance?: bigint) => {
+      registerUser: async (uniqueId: string) => {
         calls[0].push(uniqueId);
-        return fakeBlockchainInfo.registerUser(uniqueId, balance);
+        return '01'.repeat(32);
       },
     };
     const delayedBehavior = {
-      registerUser: async (uniqueId: string, balance?: bigint) => {
+      registerUser: async (uniqueId: string) => {
         calls[1].push(uniqueId);
         signalDelayedEntered();
         await delayedRegistration;
-        return fakeBlockchainInfo.registerUser(uniqueId, balance);
+        return '02'.repeat(32);
       },
     };
 

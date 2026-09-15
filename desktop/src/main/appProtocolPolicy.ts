@@ -50,10 +50,3 @@ export function isAppSchemeRequestAllowed(request: AppSchemeRequest): boolean {
   }
   return isDocumentNavigation(request, url.pathname);
 }
-
-type AssetRead = (filePath: string) => Promise<Uint8Array>;
-
-export async function readAsset(read: AssetRead, filePath: string): Promise<ArrayBuffer> {
-  const file = await read(filePath);
-  return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
-}

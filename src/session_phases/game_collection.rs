@@ -31,7 +31,7 @@ pub fn register_package(
     if games.is_empty() {
         panic!("package {key} factory returned no games");
     }
-    let id = GameType::from_hash(games[0].initial_validation_program_hash.clone());
+    let id = GameType::from_hash(games[0].initial_validation_program_hash().clone());
     if factories.contains_key(&id) {
         panic!("package {key} duplicate first-validator hash {id}");
     }

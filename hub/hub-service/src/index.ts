@@ -19,6 +19,7 @@ import timeoutBounds from 'chia-gaming-protocol-constants';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import { Hub } from './hubState';
+import { deadlineReached, RetentionTimeline } from './retentionTimeline';
 import type { Challenge } from './types/hub';
 
 const hub = new Hub();
@@ -296,7 +297,7 @@ const wsGameMeta = new WeakMap<WebSocket, GameConnMeta>();
 const pendingHubLeaves = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionToPlayer = new Map<string, string>();
 const playerToSession = new Map<string, string>();
-const sessionLastUsedAt = new Map<string, number>();
+const retentionTimeline = new RetentionTimeline();
 const knownAliases = new Map<string, string>();
 const recentCorrespondents = new Map<string, Map<string, number>>();
 const wsLastActivity = new WeakMap<WebSocket, number>();
@@ -304,42 +305,6 @@ const wsIds = new WeakMap<WebSocket, number>();
 const wsKeepaliveTimers = new WeakMap<WebSocket, ReturnType<typeof setInterval>>();
 const rateBudgets = new WeakMap<WebSocket, RateBudget>();
 let nextWsId = 1;
-
-let retentionClockNow = Date.now;
-const testRetentionClockStart = process.env.HUB_TEST_RETENTION_CLOCK_MS;
-if (testRetentionClockStart !== undefined) {
-  if (process.env.NODE_ENV !== 'test' || !process.send) {
-    throw new Error('HUB_TEST_RETENTION_CLOCK_MS requires NODE_ENV=test and an IPC parent');
-  }
-  const parsedStart = Number(testRetentionClockStart);
-  if (!Number.isSafeInteger(parsedStart) || parsedStart < 0) {
-    throw new Error('HUB_TEST_RETENTION_CLOCK_MS must be a non-negative safe integer');
-  }
-  let testNow = parsedStart;
-  retentionClockNow = () => testNow;
-  process.on('message', (message: unknown) => {
-    if (
-      !message ||
-      typeof message !== 'object' ||
-      (message as { type?: unknown }).type !== 'advance_retention_clock'
-    ) {
-      return;
-    }
-    const milliseconds = (message as { milliseconds?: unknown }).milliseconds;
-    if (
-      typeof milliseconds !== 'number' ||
-      !Number.isSafeInteger(milliseconds) ||
-      milliseconds < 0
-    ) {
-      throw new Error('retention clock advance must be a non-negative safe integer');
-    }
-    testNow += milliseconds;
-    if (!Number.isSafeInteger(testNow)) {
-      throw new Error('retention test clock exceeded the safe integer range');
-    }
-    process.send?.({ type: 'retention_clock_advanced', now: testNow });
-  });
-}
 
 function wsId(ws: WebSocket): number {
   const existing = wsIds.get(ws);
@@ -444,30 +409,22 @@ function randomPublicId(): string {
   return id;
 }
 
-function retainedSessionIsActive(sessionId: string, playerId: string): boolean {
-  return (
-    hub.players[playerId] !== undefined ||
-    hubConnections.has(playerId) ||
-    gameConnections.has(sessionId)
-  );
+function retainedSessionHasPresence(sessionId: string, playerId: string): boolean {
+  return hub.players[playerId] !== undefined || gameConnections.has(sessionId);
 }
 
-function markRetainedSessionInactive(playerId: string, now = retentionClockNow()): void {
+function markRetainedSessionInactive(playerId: string, now = Date.now()): void {
   const sessionId = playerToSession.get(playerId);
-  if (!sessionId || retainedSessionIsActive(sessionId, playerId)) return;
-  sessionLastUsedAt.delete(sessionId);
-  sessionLastUsedAt.set(sessionId, now);
+  if (!sessionId || retainedSessionHasPresence(sessionId, playerId)) return;
+  retentionTimeline.touch(sessionId, now);
 }
 
 function evictOldestInactiveSession(reason: string): boolean {
-  let oldest: { sessionId: string; playerId: string; lastUsedAt: number } | null = null;
-  for (const [sessionId, playerId] of sessionToPlayer) {
-    if (retainedSessionIsActive(sessionId, playerId)) continue;
-    const lastUsedAt = sessionLastUsedAt.get(sessionId) ?? 0;
-    if (!oldest || lastUsedAt < oldest.lastUsedAt) {
-      oldest = { sessionId, playerId, lastUsedAt };
-    }
-  }
+  const oldest = retentionTimeline.oldest(
+    [...sessionToPlayer]
+      .filter(([sessionId, playerId]) => !retainedSessionHasPresence(sessionId, playerId))
+      .map(([sessionId, playerId]) => ({ sessionId, playerId })),
+  );
   if (!oldest) return false;
   retirePlayerArtifacts(oldest.playerId, {
     sessionId: oldest.sessionId,
@@ -477,31 +434,29 @@ function evictOldestInactiveSession(reason: string): boolean {
   return true;
 }
 
-function pruneRetainedSessions(now: number): void {
+function pruneRetainedSessions(): void {
   for (const [sessionId, playerId] of [...sessionToPlayer]) {
-    if (retainedSessionIsActive(sessionId, playerId)) continue;
-    if (now - (sessionLastUsedAt.get(sessionId) ?? 0) >= RETAINED_SESSION_TTL_MS) {
+    if (retainedSessionHasPresence(sessionId, playerId)) continue;
+    if (retentionTimeline.isExpired(sessionId, RETAINED_SESSION_TTL_MS)) {
       retirePlayerArtifacts(playerId, { sessionId, retireIdentity: true, reason: 'ttl' });
     }
   }
 }
 
 function ensureSession(sessionId: string): string | null {
-  const now = retentionClockNow();
   const existing = sessionToPlayer.get(sessionId);
   if (existing) {
     const expired =
-      !retainedSessionIsActive(sessionId, existing) &&
-      now - (sessionLastUsedAt.get(sessionId) ?? 0) >= RETAINED_SESSION_TTL_MS;
+      !retainedSessionHasPresence(sessionId, existing) &&
+      retentionTimeline.isExpired(sessionId, RETAINED_SESSION_TTL_MS);
     if (!expired) {
-      sessionLastUsedAt.delete(sessionId);
-      sessionLastUsedAt.set(sessionId, now);
+      retentionTimeline.touch(sessionId);
       return existing;
     }
     retirePlayerArtifacts(existing, { sessionId, retireIdentity: true, reason: 'ttl' });
   }
   if (sessionToPlayer.size >= MAX_RETAINED_SESSIONS) {
-    pruneRetainedSessions(now);
+    pruneRetainedSessions();
     if (sessionToPlayer.size >= MAX_RETAINED_SESSIONS && !evictOldestInactiveSession('capacity')) {
       return null;
     }
@@ -509,7 +464,7 @@ function ensureSession(sessionId: string): string | null {
   const playerId = randomPublicId();
   sessionToPlayer.set(sessionId, playerId);
   playerToSession.set(playerId, sessionId);
-  sessionLastUsedAt.set(sessionId, now);
+  retentionTimeline.touch(sessionId);
   logHub('session_created', { player_id: playerId });
   return playerId;
 }
@@ -735,7 +690,7 @@ function trimCorrespondents(sessionId: string): void {
   }
 }
 
-function rememberCorrespondence(a: string, b: string, now = retentionClockNow()): void {
+function rememberCorrespondence(a: string, b: string, now = Date.now()): void {
   if (a === b) return;
   const aPeers = recentCorrespondents.get(a) ?? new Map<string, number>();
   const bPeers = recentCorrespondents.get(b) ?? new Map<string, number>();
@@ -750,7 +705,7 @@ function rememberCorrespondence(a: string, b: string, now = retentionClockNow())
 function pruneRecentCorrespondents(now: number): void {
   for (const [sessionId, peers] of [...recentCorrespondents]) {
     for (const [peerSessionId, lastRelayedAt] of [...peers]) {
-      if (now - lastRelayedAt > RECENT_CORRESPONDENT_TTL_MS) {
+      if (deadlineReached(lastRelayedAt, RECENT_CORRESPONDENT_TTL_MS, now)) {
         removeCorrespondentEdge(sessionId, peerSessionId);
       }
     }
@@ -764,9 +719,9 @@ function notifyRecentCorrespondents(
 ): void {
   const peers = recentCorrespondents.get(sessionId);
   if (!peers) return;
-  const now = retentionClockNow();
+  const now = Date.now();
   for (const [peerSessionId, lastRelayedAt] of [...peers]) {
-    if (now - lastRelayedAt > RECENT_CORRESPONDENT_TTL_MS) {
+    if (deadlineReached(lastRelayedAt, RECENT_CORRESPONDENT_TTL_MS, now)) {
       removeCorrespondentEdge(sessionId, peerSessionId);
       continue;
     }
@@ -905,7 +860,7 @@ function retirePlayerArtifacts(playerId: string, retirement: PlayerRetirement): 
     if (!sessionId || sessionToPlayer.get(sessionId) !== playerId) {
       throw new Error(`cannot retire inconsistent retained session for ${playerId}`);
     }
-    if (retainedSessionIsActive(sessionId, playerId)) {
+    if (retainedSessionHasPresence(sessionId, playerId)) {
       throw new Error(`cannot evict active retained session for ${playerId}`);
     }
   }
@@ -924,7 +879,7 @@ function retirePlayerArtifacts(playerId: string, retirement: PlayerRetirement): 
   cancelPendingHubLeave(playerId);
   sessionToPlayer.delete(sessionId);
   playerToSession.delete(playerId);
-  sessionLastUsedAt.delete(sessionId);
+  retentionTimeline.delete(sessionId);
   knownAliases.delete(sessionId);
   for (const peerSessionId of [...(recentCorrespondents.get(sessionId)?.keys() ?? [])]) {
     removeCorrespondentEdge(sessionId, peerSessionId);
@@ -1026,6 +981,10 @@ function onHubLeave(ws: WebSocket, _msg: Extract<HubInboundMessage, { type: 'lea
   logHub('hub_leave', { player_id: playerId });
   cancelPendingHubLeave(playerId);
   leaveHub(playerId);
+  if (hubConnections.get(playerId) === ws) {
+    hubConnections.delete(playerId);
+  }
+  wsHubMeta.delete(ws);
 }
 
 function getHubSenderId(ws: WebSocket): string | undefined {
@@ -1761,12 +1720,11 @@ function pruneConnectionAttemptBudgets(now: number): void {
 
 const sweepTimer = setInterval(() => {
   const now = Date.now();
-  const retentionNow = retentionClockNow();
   const hubChanged = sweepHubConnections(now);
   sweepGameConnections(now);
   pruneConnectionAttemptBudgets(now);
-  pruneRecentCorrespondents(retentionNow);
-  pruneRetainedSessions(retentionNow);
+  pruneRecentCorrespondents(now);
+  pruneRetainedSessions();
   if (hubChanged) {
     broadcastHubUpdate();
   }
@@ -1778,7 +1736,7 @@ const sweepTimer = setInterval(() => {
     pending_hub_leaves: pendingHubLeaves.size,
     session_to_player: sessionToPlayer.size,
     player_to_session: playerToSession.size,
-    session_last_used_at: sessionLastUsedAt.size,
+    session_last_used_at: retentionTimeline.size,
     recent_correspondent_sessions: recentCorrespondents.size,
   });
 }, 15_000);

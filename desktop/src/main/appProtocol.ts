@@ -7,7 +7,6 @@ import {
   appAssetCacheControl,
   isAppSchemeRequestAllowed,
   isOAuthCallbackPath,
-  readAsset,
 } from './appProtocolPolicy';
 import { APP_HOST, APP_ORIGIN, APP_SCHEME } from './appUrl';
 import { log } from './log';
@@ -118,7 +117,8 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
     // inside app.asar where the integrity-validation fuse still covers it.
     let body: ArrayBuffer;
     try {
-      body = await readAsset(readFile, filePath);
+      const file = await readFile(filePath);
+      body = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'EISDIR') {

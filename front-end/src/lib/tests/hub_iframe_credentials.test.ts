@@ -1,5 +1,8 @@
 import { webcrypto } from 'node:crypto';
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { hubSessionFromParentMessage } from '../../../../hub/hub-frontend/src/iframeAuth';
+import { HubIframe } from '../../components/HubIframe';
 import { installHubIframeAuthentication } from '../../services/hubIframeAuthentication';
 import { canonicalHubOrigin, deriveHubSessionId } from '../../services/hubSessionCredential';
 
@@ -78,7 +81,20 @@ describe('hub iframe credentials', () => {
     ).toBeNull();
   });
 
-  it('sends credentials to the iframe at its canonical origin on load and initial retry', () => {
+  it('renders the iframe without credentials or referrer leakage', () => {
+    const sessionId = 'ab'.repeat(16);
+    let renderer: ReactTestRenderer | undefined;
+    act(() => {
+      renderer = create(React.createElement(HubIframe, { iframeUrl: 'https://hub.example/' }));
+    });
+    const iframe = renderer!.root.findByType('iframe');
+
+    expect(iframe.props.src).toBe('https://hub.example/');
+    expect(iframe.props.referrerPolicy).toBe('no-referrer');
+    expect(JSON.stringify(iframe.props)).not.toContain(sessionId);
+  });
+
+  it('sends credentials to the iframe at its canonical origin on load and fallback retry', () => {
     jest.useFakeTimers();
     const harness = createParentHarness();
     installHubIframeAuthentication({
@@ -97,7 +113,7 @@ describe('hub iframe credentials', () => {
       },
     ]);
 
-    jest.advanceTimersByTime(150);
+    jest.runOnlyPendingTimers();
     expect(harness.posts).toHaveLength(2);
     expect(harness.posts[1]).toEqual(harness.posts[0]);
   });

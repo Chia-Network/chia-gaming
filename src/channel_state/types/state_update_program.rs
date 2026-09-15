@@ -94,6 +94,11 @@ impl ValidationProgramRegistry {
         let mut by_hash = HashMap::with_capacity(programs.len());
         let mut initial_hash = None;
         for (index, program) in programs.iter().enumerate() {
+            if program.is_nil() {
+                return Err(Error::StrErr(format!(
+                    "factory validation program at index {index} is nil"
+                )));
+            }
             let hash = program.sha256tree(allocator).hash().clone();
             let state_update_program = StateUpdateProgram::new_hash(
                 program.clone(),
@@ -122,6 +127,10 @@ impl ValidationProgramRegistry {
 
     pub fn initial(&self) -> StateUpdateProgram {
         self.programs[&self.initial_hash].clone()
+    }
+
+    pub fn initial_hash(&self) -> &Hash {
+        &self.initial_hash
     }
 
     pub fn resolve(&self, hash: &Hash) -> Result<StateUpdateProgram, Error> {
@@ -185,5 +194,8 @@ mod tests {
         let second_hash = second.sha256tree(&mut allocator).hash().clone();
         assert_eq!(registry.resolve(&second_hash).unwrap().to_program(), second);
         assert!(registry.resolve(&Hash::from_bytes([0x55; 32])).is_err());
+        assert!(
+            ValidationProgramRegistry::new(&mut allocator, &[Rc::new(Program::nil())]).is_err()
+        );
     }
 }

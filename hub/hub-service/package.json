@@ -1,5 +1,6 @@
 {
   "name": "chia-gaming-hub-service",
+  "type": "module",
   "main": "dist/index.js",
   "packageManager": "pnpm@10.33.0",
   "scripts": {

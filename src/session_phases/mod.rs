@@ -261,7 +261,7 @@ impl OffChainPhase {
         let games = game::Game::run_factory(env.allocator, factory.clone().into(), &arguments)?;
         let first_hash = games
             .first()
-            .map(|g| g.initial_validation_program_hash.clone())
+            .map(|g| g.initial_validation_program_hash().clone())
             .ok_or_else(|| Error::StrErr("proposal factory returned no games".to_string()))?;
         if &first_hash != start.game_type.hash() {
             return Err(Error::StrErr(format!(
@@ -292,7 +292,7 @@ impl OffChainPhase {
                 || member.player_b_contribution != factory_game.player_b_contribution
                 || member.player_a_goes_first != factory_game.player_a_goes_first
                 || member.initial_validation_program_hash
-                    != factory_game.initial_validation_program_hash
+                    != *factory_game.initial_validation_program_hash()
                 || member.initial_validation_info_hash
                     != factory_game.initial_validation_info_hash(allocator)
                 || member.initial_move != factory_game.initial_move
@@ -1642,7 +1642,7 @@ impl FromLocalUI for OffChainPhase {
                     player_a_contribution: game.player_a_contribution.clone(),
                     player_b_contribution: game.player_b_contribution.clone(),
                     player_a_goes_first: game.player_a_goes_first,
-                    initial_validation_program_hash: game.initial_validation_program_hash.clone(),
+                    initial_validation_program_hash: game.initial_validation_program_hash().clone(),
                     initial_validation_info_hash: game.initial_validation_info_hash(env.allocator),
                     initial_move: game.initial_move.clone(),
                     initial_max_move_size: u32::try_from(game.initial_max_move_size).map_err(

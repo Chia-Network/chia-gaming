@@ -32,6 +32,7 @@ import {
 import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
 import { deriveHubSessionId } from '../services/hubSessionCredential';
 import { installHubIframeAuthentication } from '../services/hubIframeAuthentication';
+import { HubIframe } from './HubIframe';
 import {
   PeerSession,
   decodePeerAppMessage,
@@ -4661,14 +4662,7 @@ const Shell = () => {
                     {hubConnectionError}
                   </p>
                 )}
-                <iframe
-                  id="hub-iframe"
-                  className="bg-canvas-bg-subtle"
-                  style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
-                  sandbox="allow-scripts allow-same-origin"
-                  referrerPolicy="no-referrer"
-                  src={iframeUrl}
-                />
+                <HubIframe iframeUrl={iframeUrl} />
               </>
             ) : (
               <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />

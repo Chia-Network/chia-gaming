@@ -353,8 +353,10 @@ Proposal construction starts from exactly one group request:
 the result. Both peers run the same registered deterministic factory. Its output
 is a non-empty ordered list of canonical 10-field records containing
 player-A/player-B contributions, `player_a_goes_first`, the initial state
-fields, fixed my-turn and their-turn handlers, and the initial validator. The
-host derives the amount from the contributions and hashes the validator locally.
+fields, fixed my-turn and their-turn handlers, and a nonempty validator
+registry. The registry's first program is initially current; later programs are
+selected by tree hash. The host derives the amount from the contributions and
+uses the first validator's hash as the protocol identity.
 
 The result remains in stable A/B orientation. The proposal-wide
 `sender_is_player_a` maps sender/receiver and local/opponent perspectives onto
@@ -371,7 +373,7 @@ Atomicity is enforced at three boundaries:
    checked when the receiver chooses to accept.
 2. **Receive:** Re-run the factory and require `ProposeGroup`'s ordered retained
    member commitments and cardinality to match exactly; raw state, handlers,
-   validation program, derived amount, and a separate group ID are not sent.
+   validator registry, derived amount, and a separate group ID are not sent.
 3. **Accept/cancel:** Expand any member ID to the complete group. Acceptance
    repeats the aggregate balance preflight before queueing one
    `AcceptProposalGroup` with the canonical first-member ID. The receiver

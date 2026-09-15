@@ -208,6 +208,50 @@ fn proper_list(allocator: &Allocator, mut node: NodePtr) -> Option<Vec<NodePtr>>
     }
 }
 
+fn validate_factory_records(
+    allocator: &Allocator,
+    key: &str,
+    records: &[NodePtr],
+) -> Result<NodePtr, String> {
+    let mut first_validator = None;
+    for (record_index, record) in records.iter().enumerate() {
+        let fields = proper_list(allocator, *record)
+            .ok_or_else(|| format!("factory {key} game {record_index} is not a proper list"))?;
+        if fields.len() != 10 {
+            return Err(format!(
+                "factory {key} game {record_index} has {} fields, expected 10",
+                fields.len()
+            ));
+        }
+        let validators = proper_list(allocator, fields[9]).ok_or_else(|| {
+            format!("factory {key} game {record_index} validators are not a proper list")
+        })?;
+        if validators.is_empty() {
+            return Err(format!(
+                "factory {key} game {record_index} returned no validators"
+            ));
+        }
+        let mut hashes = std::collections::BTreeSet::new();
+        for (validator_index, validator) in validators.iter().enumerate() {
+            if *validator == NodePtr::NIL {
+                return Err(format!(
+                    "factory {key} game {record_index} validator {validator_index} is nil"
+                ));
+            }
+            let hash = clvm_utils::tree_hash(allocator, *validator).to_bytes();
+            if !hashes.insert(hash) {
+                return Err(format!(
+                    "factory {key} game {record_index} validator {validator_index} is duplicated"
+                ));
+            }
+        }
+        if first_validator.is_none() {
+            first_validator = validators.first().copied();
+        }
+    }
+    first_validator.ok_or_else(|| format!("factory {key} returned no games"))
+}
+
 fn list_from_nodes(allocator: &mut Allocator, nodes: &[NodePtr]) -> Result<NodePtr, String> {
     let mut tail = NodePtr::NIL;
     for node in nodes.iter().rev() {
@@ -307,23 +351,8 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
         .1;
         let records = proper_list(&allocator, factory_result)
             .ok_or_else(|| format!("factory {key} did not return a proper list"))?;
-        let first = records
-            .first()
-            .ok_or_else(|| format!("factory {key} returned no games"))?;
-        let fields = proper_list(&allocator, *first)
-            .ok_or_else(|| format!("factory {key} first game is not a proper list"))?;
-        if fields.len() != 10 {
-            return Err(format!(
-                "factory {key} first game has {} fields, expected 10",
-                fields.len()
-            ));
-        }
-        let validators = proper_list(&allocator, fields[9])
-            .ok_or_else(|| format!("factory {key} validators are not a proper list"))?;
-        let initial_validator = validators
-            .first()
-            .ok_or_else(|| format!("factory {key} returned no validators"))?;
-        let id = clvm_utils::tree_hash(&allocator, *initial_validator).to_bytes();
+        let initial_validator = validate_factory_records(&allocator, key, &records)?;
+        let id = clvm_utils::tree_hash(&allocator, initial_validator).to_bytes();
 
         package_ids.insert(key.clone(), id);
         manifest.push(serde_json::json!({

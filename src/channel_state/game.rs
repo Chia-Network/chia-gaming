@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
@@ -24,7 +23,6 @@ pub struct FactoryGame {
     pub player_b_contribution: Amount,
     pub amount: Amount,
     pub player_a_goes_first: bool,
-    pub initial_validation_program_hash: Hash,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_state: Rc<Program>,
@@ -37,6 +35,10 @@ pub struct FactoryGame {
 impl FactoryGame {
     pub fn initial_validation_program(&self) -> StateUpdateProgram {
         self.validation_programs.initial()
+    }
+
+    pub fn initial_validation_program_hash(&self) -> &Hash {
+        self.validation_programs.initial_hash()
     }
 
     pub fn initial_validation_info_hash(&self, allocator: &mut AllocEncoder) -> Hash {
@@ -172,30 +174,10 @@ impl Game {
                         "proposal factory game {index} validation programs are not a proper list"
                     ))
                 })?;
-            if validation_program_nodes.is_empty() {
-                return Err(Error::StrErr(format!(
-                    "proposal factory game {index} returned no validation programs"
-                )));
-            }
             let mut validation_programs = Vec::with_capacity(validation_program_nodes.len());
-            let mut validation_program_hashes = HashSet::new();
-            for (validator_index, node) in validation_program_nodes.into_iter().enumerate() {
-                let program = Rc::new(Program::from_nodeptr(allocator, node)?);
-                if program.is_nil() {
-                    return Err(Error::StrErr(format!(
-                        "proposal factory game {index} validation program {validator_index} is nil"
-                    )));
-                }
-                let hash = program.sha256tree(allocator).hash().clone();
-                if !validation_program_hashes.insert(hash) {
-                    return Err(Error::StrErr(format!(
-                        "proposal factory game {index} has duplicate validation program {validator_index}"
-                    )));
-                }
-                validation_programs.push(program);
+            for node in validation_program_nodes {
+                validation_programs.push(Rc::new(Program::from_nodeptr(allocator, node)?));
             }
-            let initial_validation_program_hash =
-                validation_programs[0].sha256tree(allocator).hash().clone();
             let validation_programs =
                 ValidationProgramRegistry::new(allocator, &validation_programs)?;
             let initial_mover_share = atom_from_clvm(allocator, fields[6])
@@ -217,7 +199,6 @@ impl Game {
                 player_b_contribution,
                 amount,
                 player_a_goes_first,
-                initial_validation_program_hash,
                 initial_move: atom_from_clvm(allocator, fields[3])
                     .ok_or_else(|| {
                         Error::StrErr(format!(
@@ -337,7 +318,7 @@ mod atomic_factory_tests {
         let factory = quoted_factory(&mut allocator, 0, validators);
 
         let games = Game::run_factory(&mut allocator, factory, &Program::nil()).unwrap();
-        assert_eq!(games[0].initial_validation_program_hash, expected);
+        assert_eq!(games[0].initial_validation_program_hash(), &expected);
         assert_eq!(games[0].validation_programs.len(), 2);
     }
 
@@ -347,7 +328,6 @@ mod atomic_factory_tests {
             player_b_contribution: Amount::new(20),
             amount: Amount::new(30),
             player_a_goes_first,
-            initial_validation_program_hash: Hash::default(),
             initial_move: vec![],
             initial_max_move_size: 32,
             initial_state: Rc::new(Program::nil()),
