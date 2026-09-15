@@ -62,7 +62,9 @@
                 (= MOVER_SHARE (reveal_mover_share base_unit bob_guesses revealed_word))
                 (= alice_commit (sha256 (substr MOVE 0 16) revealed_word))
                 0
-                (if (l evidence)
+                (if (not evidence)
+                    valid_terminal
+                    (l evidence)
                     (x)
                     (= (strlen evidence) 1)
                     ; Slash only when the selected prior clue is wrong.

@@ -873,13 +873,8 @@ An unknown or non-canonical group is a hard batch error.
 Move(GameID, PeerMove)
 
 PeerMove {
-  basic: GameMoveStateInfo
-}
-
-GameMoveStateInfo {
   move_made: Bytes,
-  mover_share: Amount,
-  max_move_size: u32
+  mover_share: Amount
 }
 ```
 
@@ -893,8 +888,10 @@ with each handler evidence candidate. If any invocation succeeds, the move is
 slashable and is rejected. This check also applies when the next-validator hash
 is nil. The signed unroll leaf is the new virtual coin's puzzle hash.
 
-The receiver canonically encodes `max_move_size` when constructing the referee
-puzzle. When the next validation info hash is nil, `max_move_size` must be zero.
+The peer does not supply the next `max_move_size`. The receiver takes it from
+the nil-evidence validator result and canonically encodes it when constructing
+the referee puzzle. A validator must not require evidence to return its
+transition. When the next validation info hash is nil, `max_move_size` is zero.
 
 If the game becomes terminal, the receiver queues a local
 `AcceptSettlement`.

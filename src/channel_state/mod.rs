@@ -36,9 +36,7 @@ use crate::common::types::{
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
     PuzzleHash, Sha256tree, Spend, Timeout,
 };
-use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, ParsedRefereeSolution, TheirTurnCoinSpentResult,
-};
+use crate::referee::types::{GameMoveDetails, ParsedRefereeSolution, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -1448,31 +1446,36 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
-        basic: &GameMoveStateInfo,
+        move_made: &[u8],
+        mover_share: Amount,
     ) -> Result<ChannelMoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let game_amount = self.live_games[game_idx].get_amount();
-        if basic.mover_share > game_amount {
+        if mover_share > game_amount {
             return Err(Error::StrErr(format!(
                 "received move with mover_share {} exceeding game amount {}",
-                basic.mover_share.to_u64(),
+                mover_share.to_u64(),
                 game_amount.to_u64(),
             )));
         }
 
         let max_move_size = self.live_games[game_idx].get_max_move_size();
-        if basic.move_made.len() > max_move_size {
+        if move_made.len() > max_move_size {
             return Err(Error::StrErr(format!(
                 "received move of {} bytes exceeds max_move_size {}",
-                basic.move_made.len(),
+                move_made.len(),
                 max_move_size,
             )));
         }
 
         let state_number = self.state_number;
 
-        let their_move_result =
-            self.live_games[game_idx].internal_their_move(env.allocator, basic, state_number)?;
+        let their_move_result = self.live_games[game_idx].internal_their_move(
+            env.allocator,
+            move_made,
+            mover_share,
+            state_number,
+        )?;
 
         if their_move_result.slash.is_some() {
             return Err(Error::StrErr(

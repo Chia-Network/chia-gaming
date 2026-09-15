@@ -142,21 +142,19 @@ default, not a normal parse failure. Generic referee-envelope checks such as
 `max_move_size` happen before the handler, so handlers may assume those bounds,
 but game-rule failures must be represented through validator/slash behavior and
 evidence candidates, not CLVM raises. The framework tries nil evidence before
-calling the handler, including for terminal moves. That run has three
-outcomes:
+calling the handler, including for terminal moves. Nil evidence is the
+non-accusatory inspection mode and must return one of two outcomes:
 
 - **Slash** — nil, a misaligned payload, or extra slash conditions. The
   handler is skipped.
 - **Soft non-slash** — a normal valid payload
   `(next_validator_hash new_state max_move_size)`. The move is not slashable
   with empty evidence. `new_state` is passed to the handler as `state`.
-- **Assert / raise** — the validator rejected this slash attempt (typical
-  when evidence is part of the contract and nil is not a legal selection).
-  That is not "the move is fine." The handler still runs, and `state` is
-  nil. Use `pre_state` and `move` if the handler needs an after-state.
 
-Nil evidence buying a valid terminal payload would give a failed slash the
-benefit of the doubt. Do not return `(list 0)` merely so extract succeeds.
+An assert in inspection mode is a hard validator error. Off chain, the peer
+move cannot be accepted and the game must go on chain; while processing an
+observed on-chain move, the error is propagated. Terminal validators return
+`(list 0)` when the move is valid but no evidence was supplied.
 
 Handlers are responsible for safely processing the peer-controlled moves that
 survive the slash precheck.
@@ -171,7 +169,7 @@ survive the slash precheck.
 |-----------|-------------|
 | `amount` | Total game pot |
 | `pre_state` | On-chain state BEFORE the opponent's move |
-| `state` | After-state from a successful nil-evidence validator run, or nil if that run raised |
+| `state` | After-state from the successful nil-evidence validator run; nil for a terminal result |
 | `move` | Opponent's move bytes |
 | `validation_program_hash` | Tree hash of the validation program for this move |
 | `mover_share` | Opponent's declared share of the pot |
@@ -423,15 +421,10 @@ These three elements describe the new game state after the move.
   in the coin's curried state (infohash and max_move_size). If they align,
   the move is valid and the slash attempt fails.
 - **Off-chain**: A successful nil-evidence run is a soft non-slash: the
-  framework takes `new_state` and passes it to the their-turn handler.
-  That is a convenience, not a requirement that every validator produce a
-  useful after-state. If the run **raises**, the handler still runs with
-  `state` nil and must recover anything it needs from `pre_state` and
-  `move`. CalPoker's terminal `e.clsp` does this: evidence is required to
-  finish the showdown check, so nil evidence asserts; Bob's handler
-  recomputes the readable from `pre_state` and the move. `(list 0)` means
-  the next validator hash is nil (no further moves), not "please don't
-  raise."
+  framework takes `new_state` and `max_move_size` from it before calling the
+  their-turn handler. Every structurally valid move must return a payload with
+  nil evidence. `(list 0)` is the valid terminal payload: the next validator
+  hash is nil, there is no after-state, and the next max move size is zero.
 
 Note: `mover_share` is **not** in the validator's return value. It is part
 of the referee's curried arguments and is checked separately by each
@@ -505,9 +498,9 @@ the reveal is valid only when it pays the same scheduled share as a correct
 guess at that depth. An underfunded concession, malformed reveal, or reveal
 that does not open Alice's commitment returns nil and is unconditionally
 slashable. Those move-only faults are slashable with nil evidence. Nil or
-malformed evidence after that **raises** (rejects the slash); it must not
-return the terminal payload, or empty evidence could slash a fair reveal via
-infohash/max_move_size misalignment.
+missing evidence after that returns the aligned terminal payload and simply
+skips evidence-dependent slashing. Malformed non-nil evidence may raise to
+reject that slash attempt.
 
 Evidence has two proof-specific forms:
 
@@ -546,12 +539,11 @@ can raise and make the illegal terminal move unslashable.
 
 The terminal validator therefore rejects a mover mask when bit 7 is set before
 selecting or evaluating cards, then separately requires exactly five set bits.
-The waiter's evidence mask follows the same range and popcount rules. Nil or
-invalid evidence **raises**, rejecting that slash attempt; it must not return
-the aligned terminal payload, or empty evidence could look like a successful
-slash when commitments are misaligned. A well-formed waiter mask that does not
-prove overclaim returns `(list 0)`. An invalid committed mover mask returns
-nil and is unconditionally slashable.
+The waiter's evidence mask follows the same range and popcount rules. Nil
+evidence returns `(list 0)` without comparing hands. Invalid non-nil evidence
+raises, rejecting that slash attempt. A well-formed waiter mask that does not
+prove overclaim also returns `(list 0)`. An invalid committed mover mask
+returns nil and is unconditionally slashable.
 
 ### How the On-Chain Referee Uses Validators
 
@@ -591,10 +583,12 @@ Validators have a two-sided security contract:
   next-state commitments.
 - Every invalid slash attempt against a valid move must fail. The validator may
   fail that slash by returning the valid move payload or, for malformed
-  evidence, by raising so the slash transaction cannot be mined. Evidence
-  assertions are only safe after the move itself has already been classified as
-  valid; otherwise malformed evidence could mask a malicious move by causing an
-  exception instead of a slash.
+  non-nil evidence, by raising so the slash transaction cannot be mined. Nil
+  evidence must never raise: it is also used off chain to extract the
+  transition and next max move size. Evidence assertions are only safe after
+  the move itself has already been classified as valid; otherwise malformed
+  evidence could mask a malicious move by causing an exception instead of a
+  slash.
 
 In practice, validators should cheaply classify move shape before any
 length-sensitive `substr`, hand-evaluation helper, or evidence processing.

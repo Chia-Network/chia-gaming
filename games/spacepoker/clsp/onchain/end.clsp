@@ -32,33 +32,34 @@
                     (mover_cards waiter_cards mover_boost waiter_boost)
                         (make_all_cards (substr MOVE 0 16) waiter_preimage)
                     mover_selected (pull_from_bitfield mover_cards mover_bitfield)
-                    ; Evidence is the waiter's card selection bitfield. Nil or
-                    ; malformed evidence rejects this slash attempt (raise).
-                    ; A well-formed mask that does not prove overclaim returns
-                    ; the aligned terminal payload.
-                    (if_any_fail
-                        (not (l evidence))
-                        (= (strlen evidence) 1)
-                        (not (logand evidence 0x80))
-                        (= (popcount evidence) 5)
-                        (x)
-                        (assign
-                            waiter_selected (pull_from_bitfield waiter_cards evidence)
-                            fair_share (assign result (deep_compare
-                                    (space_hand_eval mover_selected mover_boost)
-                                    (space_hand_eval waiter_selected waiter_boost))
-                                (if (not result)
-                                    (/ AMOUNT 2)
-                                    (= result 1)
-                                    (- (/ AMOUNT 2) half_pot)
-                                    (+ (/ AMOUNT 2) half_pot)
+                    ; Nil evidence inspects the transition without attempting
+                    ; a slash. Non-nil evidence is the waiter's selection.
+                    (if (not evidence)
+                        (list 0)
+                        (if_any_fail
+                            (not (l evidence))
+                            (= (strlen evidence) 1)
+                            (not (logand evidence 0x80))
+                            (= (popcount evidence) 5)
+                            (x)
+                            (assign
+                                waiter_selected (pull_from_bitfield waiter_cards evidence)
+                                fair_share (assign result (deep_compare
+                                        (space_hand_eval mover_selected mover_boost)
+                                        (space_hand_eval waiter_selected waiter_boost))
+                                    (if (not result)
+                                        (/ AMOUNT 2)
+                                        (= result 1)
+                                        (- (/ AMOUNT 2) half_pot)
+                                        (+ (/ AMOUNT 2) half_pot)
+                                    )
                                 )
-                            )
-                            ; The move creates a coin with roles swapped, so
-                            ; MOVER_SHARE is the previous waiter's share.
-                            (if (< MOVER_SHARE fair_share)
-                                0
-                                (list 0)
+                                ; The move creates a coin with roles swapped,
+                                ; so MOVER_SHARE is the previous waiter's share.
+                                (if (< MOVER_SHARE fair_share)
+                                    0
+                                    (list 0)
+                                )
                             )
                         )
                     )

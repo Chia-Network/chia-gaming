@@ -1417,18 +1417,17 @@ fn test_calpoker_e_bob_loss_zero_make_move() {
 }
 
 #[test]
-fn test_calpoker_e_nil_evidence_exception() {
+fn test_calpoker_e_nil_evidence_returns_terminal_transition() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    // Nil evidence always causes exception now (no on-chain/off-chain distinction)
     run_step_and_check(
         &mut a,
         &lib,
         &after,
-        &make_step(&e_move(&td), 100, None, MoveCode::ClvmException, false, "e"),
+        &make_step(&e_move(&td), 100, None, MoveCode::MakeMove, false, "e"),
     );
 }
 
@@ -1451,8 +1450,8 @@ fn test_calpoker_e_bad_evidence_exception() {
 }
 
 /// An honest last move must not be slashable just because the slasher
-/// omitted Bob's card-selection evidence. The validator raises on nil
-/// evidence; the referee slash spend must fail, not pay the slasher.
+/// omitted Bob's card-selection evidence. Nil evidence returns the aligned
+/// terminal transition, so the referee slash spend must fail.
 #[test]
 fn test_calpoker_e_nil_evidence_does_not_slash_honest_move() {
     let mut a = AllocEncoder::new();
@@ -1809,8 +1808,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_calpoker_e_bob_loss_zero_make_move,
         ),
         (
-            "test_calpoker_e_nil_evidence_exception",
-            &test_calpoker_e_nil_evidence_exception,
+            "test_calpoker_e_nil_evidence_returns_terminal_transition",
+            &test_calpoker_e_nil_evidence_returns_terminal_transition,
         ),
         (
             "test_calpoker_e_bad_evidence_exception",

@@ -402,7 +402,8 @@ impl Referee {
     pub fn peer_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
-        basic: &GameMoveStateInfo,
+        move_made: &[u8],
+        mover_share: Amount,
         state_number: usize,
     ) -> Result<(Option<Rc<Referee>>, TheirTurnMoveResult), Error> {
         let (new_self, result) = match self {
@@ -411,7 +412,9 @@ impl Referee {
                     "peer_move_off_chain called on MyTurn referee".to_string(),
                 ));
             }
-            Referee::TheirTurn(t) => t.peer_move_off_chain(allocator, basic, state_number)?,
+            Referee::TheirTurn(t) => {
+                t.peer_move_off_chain(allocator, move_made, mover_share, state_number)?
+            }
         };
 
         Ok((

@@ -762,18 +762,22 @@ fn test_krunk_reveal_valid() {
     reveal_move.extend_from_slice(word);
 
     let mover_share = BASE_UNIT * 100; // depth 1: base_unit * 100 = 200
-    assert!(
-        run_validator_step(
-            &mut allocator,
-            &clue,
-            &reveal_move,
-            21,
-            mover_share,
-            state,
-            NodePtr::NIL,
-        )
-        .is_err(),
-        "nil evidence must assert on an honest reveal, not return a valid payload"
+    let (nil_code, nil_result) = run_validator_step(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        21,
+        mover_share,
+        state,
+        NodePtr::NIL,
+    )
+    .expect("nil evidence must return the terminal transition");
+    assert_eq!(nil_code, MoveCode::MakeMove);
+    assert_eq!(
+        proper_list(allocator.allocator(), nil_result, true)
+            .unwrap()
+            .len(),
+        3
     );
     let excluding = range_excluding(&mut allocator, word);
     let (code, result) = run_validator_step(

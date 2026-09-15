@@ -221,6 +221,7 @@ pub type StateUpdateResult = Option<Rc<Program>>;
 pub struct ParsedValidatorResult {
     pub new_state: StateUpdateResult,
     pub next_validator_hash: Option<Hash>,
+    pub next_max_move_size: u32,
 }
 
 pub fn parse_validator_result(
@@ -237,6 +238,7 @@ pub fn parse_validator_result(
         return Ok(ParsedValidatorResult {
             new_state: None,
             next_validator_hash: None,
+            next_max_move_size: 0,
         });
     }
 
@@ -247,9 +249,22 @@ pub fn parse_validator_result(
         Some(Hash::from_nodeptr(allocator, lst[0])?)
     };
     let state_node = if lst.len() > 1 { lst[1] } else { NodePtr::NIL };
+    let next_max_move_size = if lst.len() > 2 {
+        let clvmr::allocator::SExp::Atom = allocator.allocator().sexp(lst[2]) else {
+            return Err(Error::StrErr(
+                "validator max move size is not an atom".to_string(),
+            ));
+        };
+        u64_from_atom(allocator.allocator().atom(lst[2]).as_ref())
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| Error::StrErr("validator max move size exceeds u32".to_string()))?
+    } else {
+        0
+    };
     Ok(ParsedValidatorResult {
         new_state: Some(Rc::new(Program::from_nodeptr(allocator, state_node)?)),
         next_validator_hash,
+        next_max_move_size,
     })
 }
 

@@ -1205,7 +1205,7 @@ fn test_spacepoker_end_valid_move_nil_evidence_denies_slash() {
             &move_bytes,
             AMOUNT / 2,
             None,
-            MoveCode::ClvmException,
+            MoveCode::MakeMove,
             false,
             "end",
         ),

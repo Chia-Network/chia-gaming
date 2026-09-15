@@ -473,7 +473,7 @@ impl SimulationHarness {
             let Some(move_action) = move_action else {
                 return Err(Error::StrErr("FakeMove found no Move action".to_string()));
             };
-            move_action.basic.move_made.extend_from_slice(move_data);
+            move_action.move_made.extend_from_slice(move_data);
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),

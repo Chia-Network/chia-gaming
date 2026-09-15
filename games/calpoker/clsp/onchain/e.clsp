@@ -56,12 +56,15 @@
                 alice_card_selections alice_final_cards))
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
-                (does_alice_claim_small_enough
-                    alice_hand_value
-                    bob_card_selections
-                    bob_final_cards
-                    MOVER_SHARE
-                    AMOUNT
+                (if (not bob_card_selections)
+                    (list 0)
+                    (does_alice_claim_small_enough
+                        alice_hand_value
+                        bob_card_selections
+                        bob_final_cards
+                        MOVER_SHARE
+                        AMOUNT
+                    )
                 )
                 0
                 (list 0)

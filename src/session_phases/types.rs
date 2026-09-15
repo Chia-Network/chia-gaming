@@ -13,7 +13,6 @@ use crate::common::types::Program;
 use crate::common::types::{
     Aggsig, Amount, Error, GameID, GameType, Hash, ProgramRef, PuzzleHash, Timeout,
 };
-use crate::referee::types::GameMoveStateInfo;
 use crate::session_phases::effects::Effect;
 use crate::session_phases::handshake::{
     HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
@@ -92,7 +91,8 @@ pub trait FromLocalUI {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct PeerMove {
-    pub basic: GameMoveStateInfo,
+    pub move_made: Vec<u8>,
+    pub mover_share: Amount,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]

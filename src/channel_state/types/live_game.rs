@@ -9,8 +9,7 @@ use crate::common::types::{
     Timeout,
 };
 use crate::referee::types::{
-    GameMoveStateInfo, GameMoveWireData, ParsedRefereeSolution, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult,
+    GameMoveWireData, ParsedRefereeSolution, TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 use crate::referee::Referee;
 
@@ -129,7 +128,8 @@ impl LiveGame {
     pub fn internal_their_move(
         &mut self,
         allocator: &mut AllocEncoder,
-        basic: &GameMoveStateInfo,
+        move_made: &[u8],
+        mover_share: Amount,
         state_number: usize,
     ) -> Result<TheirTurnMoveResult, Error> {
         if self.referee_maker.is_my_turn() {
@@ -137,9 +137,12 @@ impl LiveGame {
                 "received opponent move but it is our turn".to_string(),
             ));
         }
-        let (new_ref, their_move_result) =
-            self.referee_maker
-                .peer_move_off_chain(allocator, basic, state_number)?;
+        let (new_ref, their_move_result) = self.referee_maker.peer_move_off_chain(
+            allocator,
+            move_made,
+            mover_share,
+            state_number,
+        )?;
         if let Some(r) = new_ref {
             if their_move_result.puzzle_hash_for_unroll.is_some() {
                 let new_ph = r.outcome_referee_puzzle_hash(allocator)?;

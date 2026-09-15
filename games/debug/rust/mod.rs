@@ -759,7 +759,6 @@ impl ExhaustiveMoveInputs {
         assert_ne!(self.amount, Amount::default());
         let amount_atom = at_least_one_byte(allocator, self.amount.to_u64())?;
         let nonce_atom = at_least_one_byte(allocator, self.nonce)?;
-        let max_move_size_atom = at_least_one_byte(allocator, self.max_move_size as u64)?;
         let mover_share_atom = at_least_one_byte(allocator, self.opponent_mover_share.to_u64())?;
         let count_atom = at_least_one_byte(allocator, self.count as u64)?;
         let mut tail_bytes = self.move_tail(allocator)?;
@@ -779,10 +778,7 @@ impl ExhaustiveMoveInputs {
                                     Node(amount_atom),
                                     (
                                         Node(nonce_atom),
-                                        (
-                                            Node(max_move_size_atom),
-                                            (Node(mover_share_atom), (Node(count_atom), ())),
-                                        ),
+                                        (Node(mover_share_atom), (Node(count_atom), ())),
                                     ),
                                 ),
                             ),
@@ -795,7 +791,7 @@ impl ExhaustiveMoveInputs {
             .into_gen()?;
 
         let program_to_concat = Program::from_hex(
-            "ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ffff820bff80",
+            "ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ff80",
         )?;
         let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
         let result_atom = run_program(allocator.allocator(), &chia_dialect(), pnode, args, 0)

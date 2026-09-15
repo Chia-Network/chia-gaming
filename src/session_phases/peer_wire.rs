@@ -7,7 +7,6 @@ use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, PublicKey,
     Puzzle, PuzzleHash, Spend, SpendBundle, Timeout,
 };
-use crate::referee::types::GameMoveStateInfo;
 use crate::session_phases::handshake::{
     HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
 };
@@ -374,31 +373,22 @@ fn proposal_group_from_value(value: Value) -> Result<WireProposalGroup, Error> {
     })
 }
 
-fn move_state_to_value(value: &GameMoveStateInfo) -> Value {
-    dict([
-        ("m", bytes(&value.move_made)),
-        ("s", integer(value.mover_share.to_u64())),
-        ("z", integer(u64::from(value.max_move_size))),
-    ])
-}
-
-fn move_state_from_value(value: Value) -> Result<GameMoveStateInfo, Error> {
-    let mut map = expect_exact(value, ["m", "s", "z"])?;
-    Ok(GameMoveStateInfo {
-        move_made: expect_bytes(take(&mut map, "m")?)?,
-        mover_share: Amount::new(expect_u64(take(&mut map, "s")?)?),
-        max_move_size: expect_u32(take(&mut map, "z")?)?,
-    })
-}
-
 fn peer_move_to_value(value: &PeerMove) -> Value {
-    dict([("b", move_state_to_value(&value.basic))])
+    dict([(
+        "b",
+        dict([
+            ("m", bytes(&value.move_made)),
+            ("s", integer(value.mover_share.to_u64())),
+        ]),
+    )])
 }
 
 fn peer_move_from_value(value: Value) -> Result<PeerMove, Error> {
     let mut map = expect_exact(value, ["b"])?;
+    let mut basic = expect_exact(take(&mut map, "b")?, ["m", "s"])?;
     Ok(PeerMove {
-        basic: move_state_from_value(take(&mut map, "b")?)?,
+        move_made: expect_bytes(take(&mut basic, "m")?)?,
+        mover_share: Amount::new(expect_u64(take(&mut basic, "s")?)?),
     })
 }
 
@@ -702,6 +692,18 @@ mod tests {
     }
 
     #[test]
+    fn peer_move_wire_contains_only_move_and_share() {
+        let peer_move = PeerMove {
+            move_made: vec![1, 2],
+            mover_share: Amount::new(3),
+        };
+        assert_eq!(
+            peer_move_to_value(&peer_move),
+            dict([("b", dict([("m", bytes(&[1, 2])), ("s", integer(3))]),)])
+        );
+    }
+
+    #[test]
     fn every_peer_message_and_batch_action_round_trips() {
         let identity = HandshakePayloadB {
             capabilities: local_capabilities(),
@@ -743,11 +745,8 @@ mod tests {
             BatchAction::Move(
                 GameID(3),
                 PeerMove {
-                    basic: GameMoveStateInfo {
-                        move_made: vec![1],
-                        mover_share: Amount::new(2),
-                        max_move_size: 3,
-                    },
+                    move_made: vec![1],
+                    mover_share: Amount::new(2),
                 },
             ),
             BatchAction::AcceptSettlement(GameID(4), Amount::new(5)),

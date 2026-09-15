@@ -141,10 +141,7 @@ fn format_batch_action(action: &BatchAction) -> String {
         BatchAction::AcceptProposalGroup(id) => format!("AcceptProposalGroup id={id}"),
         BatchAction::CancelProposalGroup(id) => format!("CancelProposalGroup id={id}"),
         BatchAction::Move(id, details) => {
-            format!(
-                "Move id={id} mover_share={} max_move_size={}",
-                details.basic.mover_share, details.basic.max_move_size,
-            )
+            format!("Move id={id} mover_share={}", details.mover_share)
         }
         BatchAction::AcceptSettlement(id, amount) => {
             format!("AcceptSettlement id={id} amt={amount}")
@@ -154,7 +151,8 @@ fn format_batch_action(action: &BatchAction) -> String {
 
 fn peer_move_from_result(move_result: MoveResult) -> Result<PeerMove, Error> {
     Ok(PeerMove {
-        basic: move_result.game_move.basic,
+        move_made: move_result.game_move.basic.move_made,
+        mover_share: move_result.game_move.basic.mover_share,
     })
 }
 
@@ -799,7 +797,12 @@ impl OffChainPhase {
                 BatchAction::Move(game_id, game_move) => {
                     let move_result = {
                         let ch = self.channel_state_mut()?;
-                        ch.apply_received_move(env, game_id, &game_move.basic)?
+                        ch.apply_received_move(
+                            env,
+                            game_id,
+                            &game_move.move_made,
+                            game_move.mover_share.clone(),
+                        )?
                     };
                     let finished = {
                         let ch = self.channel_state()?;

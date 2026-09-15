@@ -458,6 +458,7 @@ impl MyTurnReferee {
                         ParsedValidatorResult {
                             new_state: Some(state_to_update.clone()),
                             next_validator_hash: None,
+                            next_max_move_size: 0,
                         }
                     } else {
                         return Err(e);

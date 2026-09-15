@@ -346,57 +346,65 @@ impl TheirTurnReferee {
     pub fn peer_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
-        basic: &GameMoveStateInfo,
+        move_made: &[u8],
+        mover_share: Amount,
         state_number: usize,
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
+        let basic = GameMoveStateInfo {
+            move_made: move_made.to_vec(),
+            mover_share,
+            max_move_size: 0,
+        };
         let current_infohash = self
             .spend_this_coin()
             .game_move
             .validation_info_hash
             .clone();
-        // Extract (next_validator_hash, new_state). Continuing validators
-        // ignore VALIDATION_INFO_HASH; try the current coin's infohash first
-        // so games whose move bytes bind that field still parse. Terminal
-        // validators that require nil INFOHASH_B (Space Poker end) retry
-        // with nil.
+        // Extract (next_validator_hash, new_state, next_max_move_size).
+        // Continuing validators ignore VALIDATION_INFO_HASH; try the current
+        // coin's infohash first. Terminal validators that require nil
+        // INFOHASH_B (Space Poker end) retry with nil.
         let parsed = match self.extract_validator_transition(
             allocator,
-            basic,
+            &basic,
             state.clone(),
             validation_program.clone(),
             current_infohash.clone(),
         ) {
             Ok(parsed) if parsed.new_state.is_some() => parsed,
-            Ok(_) | Err(_) if current_infohash.is_some() => {
-                match self.extract_validator_transition(
+            Ok(_) | Err(_) if current_infohash.is_some() => self
+                .extract_validator_transition(
                     allocator,
-                    basic,
+                    &basic,
                     state.clone(),
                     validation_program,
                     ValidationInfoHash::None,
-                ) {
-                    Ok(parsed) => parsed,
-                    Err(_) => ParsedValidatorResult {
-                        new_state: None,
-                        next_validator_hash: None,
-                    },
-                }
-            }
+                )
+                .map_err(|e| {
+                    Error::StrErr(format!(
+                        "validator failed with nil evidence; go on chain: {e}"
+                    ))
+                })?,
             Ok(parsed) => parsed,
-            Err(_) => ParsedValidatorResult {
-                new_state: None,
-                next_validator_hash: None,
-            },
+            Err(e) => {
+                return Err(Error::StrErr(format!(
+                    "validator failed with nil evidence; go on chain: {e}"
+                )));
+            }
+        };
+        let derived_basic = GameMoveStateInfo {
+            max_move_size: parsed.next_max_move_size,
+            ..basic
         };
         let details = match parsed.new_state {
             Some(new_state) => crate::referee::game_move_details_from_transition(
                 allocator,
-                basic.clone(),
+                derived_basic,
                 parsed.next_validator_hash,
                 &new_state,
             ),
-            None => crate::referee::nil_move_details(basic.clone()),
+            None => crate::referee::nil_move_details(derived_basic),
         };
         self.their_turn_move_off_chain(allocator, &details, state_number)
     }
@@ -446,13 +454,10 @@ impl TheirTurnReferee {
             rc_puzzle_args.clone(),
             state.clone(),
             Evidence::nil()?,
-        );
-        let new_state = match parsed {
-            Ok(parsed) => parsed
-                .new_state
-                .unwrap_or_else(|| Rc::new(Program(vec![0x80]))),
-            Err(_) => Rc::new(Program(vec![0x80])),
-        };
+        )?;
+        let new_state = parsed
+            .new_state
+            .unwrap_or_else(|| Rc::new(Program(vec![0x80])));
 
         let state_nodeptr = new_state.to_nodeptr(allocator)?;
         let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
