@@ -295,13 +295,16 @@ Local actions (moves, proposals, shutdown) queued in `game_action_queue` are
 drained by `flush_pending_actions`. Unlike peer errors, local action failures
 indicate programming bugs — the queue was populated by our own UI/logic.
 
-Rather than implementing transactional rollback (expensive and masks the bug),
-the cradle catches `flush_pending_actions` errors and emits them as
+The cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
-The JS-side game action methods (`proposeGame`, `acceptProposal`,
-`cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM
-throws and surface them through the UI error dialog. This makes local bugs
-immediately visible and diagnosable without adding rollback complexity.
+When receiving a valid peer batch also triggers a local queue drain, that drain
+has a narrower transaction boundary: an attributed local failure restores the
+post-receive channel and queue snapshots, removes only the failed action, and
+leaves earlier valid actions queued for retry. This preserves the accepted peer
+state without retaining an unsent partial local mutation. The JS-side game
+action methods (`proposeGame`, `acceptProposal`, `cancel_proposal`, `makeMove`,
+`acceptSettlement`, `cheat`) also catch WASM throws and surface them through
+the UI error dialog.
 
 ---
 
@@ -328,7 +331,9 @@ The invariant is therefore:
   invalid peer data.
 - **Local queue drain errors are internal/local problems.**
   `drain_queue_into_batch` processes user/UI actions queued through local APIs.
-  Those errors are not a normal peer-message recovery path.
+  Those errors are not a normal peer-message recovery path. An attributed
+  failure during the post-receive drain rolls back only that local drain and
+  removes the failed action; it does not reject the valid peer batch.
 
 Fields updated after successful signature verification, such as `have_potato`
 and `last_channel_coin_spend_info`, are outside the rollback problem because

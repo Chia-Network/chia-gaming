@@ -76,8 +76,8 @@ mod sim_tests {
     use super::*;
 
     use crate::session_phases::effects::{
-        ChannelStatus, ChannelStatusSnapshot, GameNotification, GameStatusKind, LocalActionKind,
-        SettlementOutcome,
+        ChannelStatus, ChannelStatusSnapshot, FailedGameAction, GameNotification, GameStatusKind,
+        LocalActionKind, SettlementOutcome,
     };
     use crate::session_phases::types::PeerMessage;
     use crate::simulator::tests::session_phases_sim::{
@@ -457,6 +457,66 @@ mod sim_tests {
                 );
             },
         ));
+
+        res.push(("test_krunk_mid_drain_failure_rolls_back_local_actions", &|| {
+            let mut allocator = AllocEncoder::new();
+            let game_1_commit = word_program(&mut allocator, b"CRANE");
+            let game_3_commit = word_program(&mut allocator, b"CRANE");
+            let moves = vec![
+                SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::NerfMessages(1),
+                SimScriptAction::Move(
+                    1,
+                    GameID(3),
+                    ReadableMove::from_program(Rc::new(game_3_commit)),
+                    true,
+                ),
+                SimScriptAction::AcceptSettlement(1, GameID(999)),
+                SimScriptAction::UnNerfMessages,
+                SimScriptAction::Move(
+                    0,
+                    GameID(1),
+                    ReadableMove::from_program(Rc::new(game_1_commit)),
+                    true,
+                ),
+                SimScriptAction::WaitBlocks(1, 0),
+            ];
+            let move_count = moves.len();
+
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&krunk_ran_all_the_moves_predicate(move_count)),
+                None,
+            )
+            .expect("mid-drain failure should preserve the received batch");
+
+            assert_stayed_off_chain(&outcome, "mid-drain rollback");
+            let notifications = &outcome.local_uis[1].notifications;
+            assert!(notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ActionFailed {
+                    id: Some(GameID(999)),
+                    action: Some(FailedGameAction::AcceptSettlement),
+                    ..
+                }
+            )), "expected queued settlement failure, got: {notifications:?}");
+            assert_eq!(
+                notifications
+                    .iter()
+                    .filter(|notification| matches!(
+                        notification,
+                        GameNotification::LocalActionApplied {
+                            id: GameID(3),
+                            action: LocalActionKind::MakeMove,
+                        }
+                    ))
+                    .count(),
+                1,
+                "the valid action before the failure must be retried exactly once"
+            );
+        }));
 
         res.push(("test_krunk_rejection_is_immediate_before_potato", &|| {
             let mut allocator = AllocEncoder::new();

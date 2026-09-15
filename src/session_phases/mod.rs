@@ -480,10 +480,24 @@ impl OffChainPhase {
             self.game_action_queue.push_back(GameAction::CleanShutdown);
         }
 
+        let drain_channel_snapshot = self.channel_state.clone();
+        let drain_queue_snapshot = self.game_action_queue.clone();
         let (sent, batch_effects) = match self.drain_queue_into_batch(env) {
             Ok(result) => result,
             Err(error) => {
                 if let Some((id, action)) = self.take_failed_queued_action() {
+                    let failed_index = drain_queue_snapshot
+                        .iter()
+                        .position(|queued| failed_game_action_context(queued) == Some((id, action)))
+                        .ok_or_else(|| {
+                            Error::StrErr(
+                                "failed queued action missing from local drain snapshot"
+                                    .to_string(),
+                            )
+                        })?;
+                    self.channel_state = drain_channel_snapshot;
+                    self.game_action_queue = drain_queue_snapshot;
+                    self.game_action_queue.remove(failed_index);
                     effects.push(Effect::Notify(GameNotification::ActionFailed {
                         id: Some(id),
                         action: Some(action),
