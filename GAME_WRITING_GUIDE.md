@@ -355,12 +355,14 @@ Return a nonempty proper list for a valid move:
 Return nil when the move is illegal for that evidence and should slash.
 `(list 0)` means the next validator hash is nil (no further moves). Check
 move shape before operations such as `substr`. A nil-evidence run that
-finds no slash should return a valid payload, including a next state when
-there is one. An assert is only for rejecting that slash attempt (for
-example required evidence that is missing or malformed). Do not return a
-valid payload just to keep extract from raising; that treats a failed slash
-as an honest move. Malformed evidence must not return nil and slash a valid
-move. California Poker's first validator is a compact example:
+finds no slash must return a valid payload, including a next state when
+there is one, because the receiver uses that run to derive the transition
+and next max move size. Evidence is never required for this inspection run.
+Unrecognized evidence should normally return the valid payload and skip that
+slashing opportunity. If malformed non-nil evidence raises instead, it must
+only do so after the move itself is known to be valid. Malformed evidence must
+never return nil and slash a valid move. California Poker's first validator is
+a compact example:
 
 ```clojure
 (export (mod_hash

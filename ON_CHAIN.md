@@ -670,9 +670,11 @@ The referee puzzle (`referee.clsp`) accepts three types of solutions:
   fails to mine — this is why validators must classify malicious moves as
   slashable before any evidence-sensitive code can raise (see `CLVM_DOS.md`,
   "Game-Specific Responsibilities")
-  - Validator raises are acceptable only for invalid slash attempts, such as
-  malformed evidence against an otherwise valid move. A malicious move itself
-  must be classified as slashable before evidence-sensitive code can raise.
+  - Nil evidence must return the aligned transition for a valid move because it
+  is also used off chain to derive that transition. Unrecognized evidence
+  normally returns the same transition and skips that slashing opportunity.
+  A malicious move itself must be classified as slashable before any
+  evidence-sensitive code can raise.
   - Requires `AGG_SIG_UNSAFE MOVER_PUBKEY ("x" || mover_payout_ph)` — the same
   pre-signed payout authorization used by timeouts, so no additional signing
   is needed at slash time

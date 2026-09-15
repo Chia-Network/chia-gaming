@@ -269,11 +269,11 @@ evaluation. Individual games must uphold their part:
 - **Validation programs must separate malicious moves from invalid slashes.**
   Any move the referee can accept optimistically must be slashable if it is
   malformed or dishonest, and the validator must report that without raising.
-  Invalid slash attempts against valid moves must fail, either by returning the
-  valid payload or, for malformed evidence, by raising so the slash transaction
-  cannot be mined. Evidence checks that can raise must therefore happen only
-  after move-shape and move-validity checks have already decided the move is
-  not slashable.
+  Nil evidence is also the off-chain transition-inspection mode, so it must
+  return the valid payload when the move itself is valid. Unrecognized non-nil
+  evidence should normally do the same and skip that slashing opportunity. Any
+  evidence check that can raise must happen only after move-shape and
+  move-validity checks have already decided the move is not slashable.
 
 - **`max_move_size` should be tight.** Games should set `max_move_size` to
   the smallest value that accommodates legitimate moves for that step.

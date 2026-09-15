@@ -62,18 +62,14 @@
                 (= MOVER_SHARE (reveal_mover_share base_unit bob_guesses revealed_word))
                 (= alice_commit (sha256 (substr MOVE 0 16) revealed_word))
                 0
-                (if (not evidence)
+                (if (l evidence)
                     valid_terminal
-                    (l evidence)
-                    (x)
                     (= (strlen evidence) 1)
                     ; Slash only when the selected prior clue is wrong.
                     ; At reveal time bob_guesses has one extra latest
                     ; guess with no clue, so the lists are offset by one.
-                    (if (not (>= evidence 0))
-                        (x)
-                        (not (< evidence (len alice_clues)))
-                        (x)
+                    (if (not (and (>= evidence 0) (< evidence (len alice_clues))))
+                        valid_terminal
                         (= (make_clue revealed_word
                                 (f (drop (+ evidence 1) bob_guesses)))
                             (f (drop evidence alice_clues)))
@@ -90,7 +86,7 @@
                             (list AGG_SIG_UNSAFE dict_pubkey evidence))
                         valid_terminal
                     )
-                    (x)
+                    valid_terminal
                 )
             )
         )

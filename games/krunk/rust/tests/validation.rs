@@ -804,6 +804,23 @@ fn test_krunk_reveal_valid() {
         state,
     );
     let oob_index = allocator.allocator().new_atom(&[0x05]).unwrap();
+    let (oob_code, oob_result) = run_validator_step(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        21,
+        mover_share,
+        state,
+        oob_index,
+    )
+    .expect("an out-of-range evidence index should be ignored");
+    assert_eq!(oob_code, MoveCode::MakeMove);
+    assert_eq!(
+        proper_list(allocator.allocator(), oob_result, true)
+            .unwrap()
+            .len(),
+        3
+    );
     assert_referee_slash_rejected(
         &mut allocator,
         &clue,

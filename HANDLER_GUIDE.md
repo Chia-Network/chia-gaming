@@ -497,17 +497,16 @@ guess pays zero. If Alice reveals after an incorrect guess one through four,
 the reveal is valid only when it pays the same scheduled share as a correct
 guess at that depth. An underfunded concession, malformed reveal, or reveal
 that does not open Alice's commitment returns nil and is unconditionally
-slashable. Those move-only faults are slashable with nil evidence. Nil or
-missing evidence after that returns the aligned terminal payload and simply
-skips evidence-dependent slashing. Malformed non-nil evidence may raise to
-reject that slash attempt.
+slashable. Those move-only faults are slashable with nil evidence. Unrecognized
+evidence returns the aligned terminal payload and simply skips
+evidence-dependent slashing.
 
 Evidence has two proof-specific forms:
 
 - A one-byte index selects a prior clue. If recomputing that clue from the
   revealed word proves Alice's clue wrong, the validator returns nil. A correct
-  clue at a valid index returns the ordinary aligned terminal result and does
-  not authorize a slash. An out-of-range index raises.
+  clue or an out-of-range index returns the ordinary aligned terminal result
+  and does not authorize a slash.
 - A ten-byte `lower_bound || upper_bound` dictionary-gap proof conditionally
   slashes when the revealed word lies inside that range. The validator appends
   `(AGG_SIG_UNSAFE dict_pubkey evidence)`, so the referee slash succeeds only
