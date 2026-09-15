@@ -30,40 +30,6 @@ import {
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 describe('WASM command persistence', () => {
-  it('does not feed reliable persistence back into the controller durability queue', async () => {
-    const { blob } = createReadyBlob();
-    setActiveBlob(blob);
-    const durabilityBefore = (blob as any).durabilityFlushPromise;
-
-    blob.deliverMessage(1n, enc('trigger'));
-    await (blob as any).reliableTransport.flushPending();
-
-    expect((blob as any).durabilityFlushPromise).toBe(durabilityBefore);
-  });
-
-  it('flushes scheduled controller durability without yielding to its timer', async () => {
-    jest.useFakeTimers();
-    const outbound = enc('scheduled-controller-outbound');
-    const { blob, sentMessages } = createReadyBlob();
-    setActiveBlob(blob);
-    const save = jest.fn(() => {
-      expect(sentMessages).toEqual([]);
-    });
-    blob.onSaveNeeded = save;
-    const controller = blob as any;
-    controller.pendingOutboundSends.push({ msgno: 1n, msg: outbound });
-    controller.markNeedsImmediateDurability();
-
-    try {
-      await blob.flushPendingWork();
-
-      expect(save).toHaveBeenCalledTimes(1);
-      expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
   it('debounces successful eventless mutations and ignores read-only polling', async () => {
     jest.useFakeTimers();
     const { blob, cradle } = createReadyBlob();

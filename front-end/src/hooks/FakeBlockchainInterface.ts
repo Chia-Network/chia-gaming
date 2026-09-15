@@ -28,15 +28,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private ws: any | null = null;
   private wsUrl: string;
   private nextId = 0;
-  private pending = new Map<
-    number,
-    {
-      method: string;
-      diagnostic?: (stage: string) => void;
-      resolve: (v: any) => void;
-      reject: (e: any) => void;
-    }
-  >();
+  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
   private token = '';
   private uniqueId = '';
   private initialBalance: bigint | undefined;
@@ -152,13 +144,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           const p = this.pending.get(id);
           if (p) {
             this.pending.delete(id);
-            p.diagnostic?.(`sim-rpc-response-enter method=${p.method} id=${id}`);
             if (data.error) {
               p.reject(new Error(data.error));
             } else {
               p.resolve(data.result);
             }
-            p.diagnostic?.(`sim-rpc-response-exit method=${p.method} id=${id}`);
           }
         }
       };
@@ -225,19 +215,14 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  private sendRequest(
-    method: string,
-    params?: any,
-    diagnostic?: (stage: string) => void,
-  ): Promise<any> {
+  private sendRequest(method: string, params?: any): Promise<any> {
     if (!this.ws || this.ws.readyState !== 1) {
       return Promise.reject(new Error('not connected'));
     }
     const id = this.nextId++;
     const msg = jsonStringify({ id, method, params: params ?? {} });
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { method, diagnostic, resolve, reject });
-      diagnostic?.(`sim-rpc-send method=${method} id=${id}`);
+      this.pending.set(id, { resolve, reject });
       this.ws!.send(msg);
     });
   }
@@ -340,16 +325,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     await this.sendRequest('register_remote_coins', { coinIds: names });
   }
 
-  async registerUser(
-    name: string,
-    balance?: bigint,
-    diagnostic?: (stage: string) => void,
-  ): Promise<string> {
+  async registerUser(name: string, balance?: bigint): Promise<string> {
     log(`[sim-blockchain] registerUser: name=${name} balance=${balance ?? 'default'}`);
     this.uniqueId = name;
     const params: any = { name };
     if (balance !== undefined) params.balance = balance;
-    const result = await this.sendRequest('register', params, diagnostic);
+    const result = await this.sendRequest('register', params);
     this.token = result;
     log('[sim-blockchain] registerUser: complete');
     return result;

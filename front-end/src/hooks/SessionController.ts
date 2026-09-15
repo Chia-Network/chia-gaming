@@ -174,8 +174,6 @@ export class SessionController implements PollingGameSession {
   perGameAmount: bigint;
   rewardPuzzleHash: string | null;
   wc: WasmConnection | undefined;
-  sendMessage: (msgno: bigint, msg: Uint8Array) => boolean;
-  sendAck: (ackMsgno: bigint) => boolean;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
   private transactionPublishNerfPolicy:
@@ -233,16 +231,7 @@ export class SessionController implements PollingGameSession {
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private transactionSubmitQueue: Promise<void> = Promise.resolve();
   private beforeUnloadHandler: (() => void) | null = null;
-  private durabilityFlushScheduled = false;
-  private durabilityFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  private needsImmediateDurability = false;
-  private pendingOutboundSends: Array<{ msgno: bigint; msg: Uint8Array }> = [];
-  private pendingAcks: bigint[] = [];
-  private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
-  private reloadStallDiagnostic: ((stage: string) => void) | null = null;
-  private reloadStallDiagnosticCount = 0;
-  private reloadStallEffectSequence = 0;
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: {
@@ -265,7 +254,6 @@ export class SessionController implements PollingGameSession {
     myContribution: bigint,
     theirContribution: bigint,
     peer_conn: PeerConnectionResult,
-    reloadStallDiagnostic?: (stage: string) => void,
   ) {
     const { sendMessage, sendAck } = peer_conn;
     this.receivePolicy = peer_conn.receivePolicy ?? DEFAULT_SESSION_RECEIVE_POLICY;
@@ -308,10 +296,7 @@ export class SessionController implements PollingGameSession {
     };
     this.reliableTransport.attachConsumer(this.reliableConsumer);
     this.uniqueId = uniqueId;
-    this.reloadStallDiagnostic = reloadStallDiagnostic ?? null;
     this.pairingToken = '';
-    this.sendMessage = (msgno, msg) => sendMessage(Number(msgno), msg);
-    this.sendAck = (ackMsgno) => sendAck(Number(ackMsgno));
     this.myContribution = myContribution;
     this.theirContribution = theirContribution;
     this.perGameAmount = 0n;
@@ -435,19 +420,14 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
-    this.cleanupInternal(true);
+    this.cleanupInternal();
   }
 
-  /**
-   * Release a terminal controller after its durability boundary was awaited.
-   * Unlike ordinary abandonment/navigation cleanup, this cannot start another
-   * unawaited durability operation.
-   */
   cleanupAfterTerminalFlush() {
-    this.cleanupInternal(false);
+    this.cleanupInternal();
   }
 
-  private cleanupInternal(flushDurability: boolean) {
+  private cleanupInternal() {
     const retainRejectedTransport = this.reliableState.disposition === 'outbound-reject';
     this.retired = true;
     this.cleanShutdownCalled = true;
@@ -458,11 +438,8 @@ export class SessionController implements PollingGameSession {
     this.terminalHandoff = null;
     this.eventQueue = [];
     this.heldProposalNotifications = [];
-    if (!retainRejectedTransport) this.pendingOutboundSends = [];
-    this.pendingAcks = [];
     if (!retainRejectedTransport) this.unackedMessages = [];
     this.reorderQueue.clear();
-    this.needsImmediateDurability = false;
     this.storedMessages = [];
     if (!retainRejectedTransport) this.reliableTransport.clearRuntime();
     this.rxjsMessageSingleton.complete();
@@ -480,14 +457,6 @@ export class SessionController implements PollingGameSession {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
     }
-    if (this.durabilityFlushTimer) {
-      clearTimeout(this.durabilityFlushTimer);
-      this.durabilityFlushTimer = null;
-    }
-    if (flushDurability) {
-      void this.flushDurabilityAndSend();
-    }
-    this.durabilityFlushScheduled = false;
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
@@ -681,19 +650,9 @@ export class SessionController implements PollingGameSession {
       throw new Error('activateSpend called without cradle');
     }
     const result = this.cradle.start_handshake();
-    this.traceReloadStall(
-      `activate-result events=${result.events.length} watches=${result.watchCoins.length} unwatch=${result.unwatchCoins.length}`,
-    );
     this.processResult(result);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
-    this.traceReloadStall(`activate-return queue=${this.eventQueue.length}`);
-  }
-
-  private traceReloadStall(stage: string): void {
-    if (!this.reloadStallDiagnostic || this.reloadStallDiagnosticCount >= 80) return;
-    this.reloadStallDiagnosticCount += 1;
-    this.reloadStallDiagnostic(stage);
   }
 
   private flushPendingCoinStates() {
@@ -985,9 +944,6 @@ export class SessionController implements PollingGameSession {
 
     const disposition = result.disposition;
     const terminal = disposition.kind === 'terminal';
-    this.traceReloadStall(
-      `process-result kind=${disposition.kind} events=${result.events.length} queue-before=${this.eventQueue.length}`,
-    );
     if (terminal) {
       this.stopProtocolWork();
     }
@@ -1019,9 +975,6 @@ export class SessionController implements PollingGameSession {
       return;
     }
     this.scheduleDrain();
-    this.traceReloadStall(
-      `process-result-return queue=${this.eventQueue.length} drain=${this.drainScheduled}`,
-    );
   }
 
   queueHostMessage(
@@ -1109,23 +1062,14 @@ export class SessionController implements PollingGameSession {
     // facts from an earlier manager drain remain authoritative, however, and
     // may be the only terminal notification emitted for that accepted game.
     this.eventQueue = this.eventQueue.filter((event) => this.isQueuedGameTerminalEvent(event));
-    this.pendingOutboundSends = [];
-    this.pendingAcks = [];
     this.unackedMessages = [];
     this.storedMessages = [];
     this.reorderQueue.clear();
-    this.needsImmediateDurability = false;
-    if (this.durabilityFlushTimer) {
-      clearTimeout(this.durabilityFlushTimer);
-      this.durabilityFlushTimer = null;
-    }
-    this.durabilityFlushScheduled = false;
   }
 
   private scheduleDrain(): void {
     if (this.drainScheduled || this.eventQueue.length === 0) return;
     this.drainScheduled = true;
-    this.traceReloadStall(`drain-scheduled queue=${this.eventQueue.length}`);
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
       this.drainActiveEventsToQuiescence();
@@ -1140,10 +1084,6 @@ export class SessionController implements PollingGameSession {
    * task. Terminal results retain their separate queue-clearing flush path.
    */
   private drainActiveEventsToQuiescence(eventBudget: number = ACTIVE_DRAIN_EVENT_BUDGET): void {
-    const initialQueueLength = this.eventQueue.length;
-    if (initialQueueLength > 0) {
-      this.traceReloadStall(`drain-enter queue=${initialQueueLength} budget=${eventBudget}`);
-    }
     let drained = 0;
     try {
       while (
@@ -1161,9 +1101,6 @@ export class SessionController implements PollingGameSession {
     if (this.eventQueue.length > 0 && !this.protocolStopped && !this.retired) {
       this.scheduleDrain();
     }
-    if (initialQueueLength > 0 || drained > 0) {
-      this.traceReloadStall(`drain-exit drained=${drained} queue=${this.eventQueue.length}`);
-    }
   }
 
   private drainOneEvent(): void {
@@ -1180,7 +1117,7 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  private drainDeferredEvents(): void {
+  flushDeferredWork(): void {
     if (this.drainTimer) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
@@ -1197,43 +1134,21 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  flushDeferredWork(): void {
-    this.drainDeferredEvents();
-    if (this.durabilityFlushTimer) {
-      clearTimeout(this.durabilityFlushTimer);
-      this.durabilityFlushTimer = null;
-    }
-    this.durabilityFlushScheduled = false;
-    void this.flushDurabilityAndSend();
-  }
-
   async flushPendingWork(): Promise<void> {
     for (let i = 0; i < 100; i += 1) {
       this.flushDeferredWork();
       const effects = [...this.pendingEffects];
       await Promise.allSettled(effects);
       await this.transactionSubmitQueue;
-      await this.durabilityFlushPromise;
       await this.reliableTransport.flushPending();
       this.flushDeferredWork();
       if (
         this.pendingEffects.size === 0 &&
         this.eventQueue.length === 0 &&
         !this.drainScheduled &&
-        !this.durabilityFlushScheduled &&
-        this.pendingOutboundSends.length === 0 &&
-        this.pendingAcks.length === 0 &&
         !this.reliableTransport.hasPendingDurability()
       ) {
         return;
-      }
-      // A durability pass may have deferred itself while the event queue was
-      // non-empty. Ensure another pass is scheduled before yielding.
-      if (
-        (this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0) &&
-        !this.durabilityFlushScheduled
-      ) {
-        this.scheduleDurabilityFlush();
       }
     }
     throw new Error('SessionController pending work did not settle');
@@ -1254,7 +1169,6 @@ export class SessionController implements PollingGameSession {
   }
 
   private dispatchEvent(event: GameSessionEvent): void {
-    this.traceReloadStall(`dispatch=${Object.keys(event as object)[0] ?? 'empty'}`);
     if ('OutboundMessage' in event) {
       if (this.protocolStopped || this.onChain) return;
       this.reliableTransport.allocateOutbound(event.OutboundMessage);
@@ -1326,15 +1240,8 @@ export class SessionController implements PollingGameSession {
   }
 
   private trackEffect(effect: Promise<void>): void {
-    const sequence = ++this.reloadStallEffectSequence;
-    this.traceReloadStall(
-      `effect-start sequence=${sequence} pending=${this.pendingEffects.size + 1}`,
-    );
     const tracked = effect.finally(() => {
       this.pendingEffects.delete(tracked);
-      this.traceReloadStall(
-        `effect-settle sequence=${sequence} pending=${this.pendingEffects.size}`,
-      );
     });
     this.pendingEffects.add(tracked);
   }
@@ -1465,7 +1372,6 @@ export class SessionController implements PollingGameSession {
   }
 
   private deliverHeight(peak: bigint) {
-    this.traceReloadStall(`chain-height-enter peak=${peak}`);
     log(`[wasm] height-only observation height=${peak}`);
     if (!this.cradle) {
       throw new Error('deliverHeight called without cradle');
@@ -1473,7 +1379,6 @@ export class SessionController implements PollingGameSession {
     try {
       this.processResult(this.cradle.report_height(peak));
       if (this.resubmitNeedsCoinSnapshot === false) this.resubmitAfterFreshChainSync();
-      this.traceReloadStall(`chain-height-return peak=${peak}`);
     } catch (e) {
       diagStack('report_height failed', e);
       log(`[wasm] report_height failed: ${String(e)}`);
@@ -1481,7 +1386,6 @@ export class SessionController implements PollingGameSession {
   }
 
   private deliverCoinStates(peak: bigint, records: CoinStateRecord[]) {
-    this.traceReloadStall(`chain-coins-enter peak=${peak} records=${records.length}`);
     log(`[wasm] coin states height=${peak} coins=${records.length}`);
     if (!this.cradle) {
       throw new Error('deliverCoinStates called without cradle');
@@ -1491,7 +1395,6 @@ export class SessionController implements PollingGameSession {
       this.processResult(result);
       this.resubmitNeedsCoinSnapshot = false;
       this.resubmitAfterFreshChainSync();
-      this.traceReloadStall(`chain-coins-return peak=${peak}`);
     } catch (e) {
       diagStack('report_coin_states failed', e);
       log(`[wasm] report_coin_states failed: ${String(e)}`);
@@ -1529,76 +1432,35 @@ export class SessionController implements PollingGameSession {
     this.saveTimer = timer;
   }
 
-  flushPendingSave(): Promise<void> {
+  async flushPendingSave(): Promise<void> {
     // Rust intentionally omits transient cradle events from serialization.
     // Move every event into its durable JS representation (message counters,
     // unacked messages, notifications) before taking the lifecycle snapshot.
     this.flushDeferredWork();
 
-    let saveRequest: Promise<void> = Promise.resolve();
+    let saveRequested = false;
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
-      if (!this.reliableTransport.hasPendingDurability()) {
-        saveRequest = Promise.resolve(this.onSaveNeeded?.());
-        void saveRequest.catch(() => {});
-      }
+      saveRequested = true;
     }
 
-    // Always flush the outer persistence debounce as well: React may have
-    // queued a full-session save without SessionController's timer being set.
-    // onSaveNeeded is required to update `cached` synchronously before returning
-    // its Promise so this flush snapshots the new cradle, not a pre-save state.
-    const persistence = flushSessionSave();
-    const durability = this.flushDurabilityAndSend();
-    const reliable = this.reliableTransport.flushPending();
-    return Promise.all([saveRequest, persistence, durability, reliable]).then(() => {});
-  }
-
-  private markNeedsImmediateDurability() {
-    if (this.protocolStopped) return;
-    this.needsImmediateDurability = true;
-    this.scheduleDurabilityFlush();
-  }
-
-  private scheduleDurabilityFlush() {
-    if (this.protocolStopped) return;
-    if (this.durabilityFlushScheduled) return;
-    this.durabilityFlushScheduled = true;
-    const timer = setTimeout(() => {
-      this.durabilityFlushTimer = null;
-      this.durabilityFlushScheduled = false;
-      this.traceReloadStall(
-        `durability-timer-enter queue=${this.eventQueue.length} drain=${this.drainScheduled}`,
-      );
-      if (this.drainScheduled || this.eventQueue.length > 0) {
-        this.traceReloadStall('durability-timer-reschedule');
-        this.scheduleDurabilityFlush();
-        return;
-      }
-      this.traceReloadStall('durability-flush-call-before');
-      void this.flushDurabilityAndSend().then(
-        () => this.traceReloadStall('durability-flush-call-after'),
-        () => this.traceReloadStall('durability-flush-call-rejected'),
-      );
-    }, 0);
-    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
-    this.durabilityFlushTimer = timer;
-  }
-
-  private flushDurabilityAndSend(): Promise<void> {
-    this.durabilityFlushPromise = this.durabilityFlushPromise
-      .then(
-        () => this.performDurabilityFlushAndSend(),
-        () => this.performDurabilityFlushAndSend(),
-      )
-      .then(() => this.reliableTransport.flushPending());
-    void this.durabilityFlushPromise.catch(() => {});
-    return this.durabilityFlushPromise;
+    if (this.reliableTransport.hasPendingDurability()) {
+      await this.reliableTransport.flushPending();
+    } else if (saveRequested) {
+      const saveRequest = Promise.resolve(this.onSaveNeeded?.());
+      void saveRequest.catch(() => {});
+      await flushSessionSave();
+      await saveRequest;
+      return;
+    }
+    // React may have queued a full-session save without this controller's
+    // debounce being set.
+    await flushSessionSave();
   }
 
   private async persistReliableBoundary(): Promise<void> {
-    this.drainDeferredEvents();
+    this.flushDeferredWork();
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
@@ -1633,123 +1495,6 @@ export class SessionController implements PollingGameSession {
         this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
       }
       throw error;
-    }
-  }
-
-  private async performDurabilityFlushAndSend(): Promise<void> {
-    this.traceReloadStall(
-      `durability-perform-enter immediate=${this.needsImmediateDurability} outbound=${this.pendingOutboundSends.length} acks=${this.pendingAcks.length}`,
-    );
-    if (this.protocolStopped) return;
-    if (
-      !this.needsImmediateDurability &&
-      this.pendingOutboundSends.length === 0 &&
-      this.pendingAcks.length === 0
-    ) {
-      return;
-    }
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
-    if (this.needsImmediateDurability) {
-      const outboundCount = this.pendingOutboundSends.length;
-      const ackCount = this.pendingAcks.length;
-      if (!this.onSaveNeeded) {
-        throw new Error(
-          'Session persistence callback is unavailable at a protocol delivery boundary',
-        );
-      }
-      try {
-        this.traceReloadStall('durability-save-call-before');
-        const saveRequest = Promise.resolve(this.onSaveNeeded());
-        this.traceReloadStall('durability-save-call-after');
-        void saveRequest.catch(() => {});
-        // onSaveNeeded must update the in-memory session synchronously before
-        // returning its Promise (see flushPendingSave). Flushing first then
-        // persists that snapshot; awaiting the Promise only waits for the
-        // outer debounce settlement.
-        this.traceReloadStall('durability-session-flush-before');
-        await flushSessionSave();
-        this.traceReloadStall('durability-session-flush-after');
-        await saveRequest;
-        this.traceReloadStall('durability-save-await-after');
-      } catch (error) {
-        const detail = extractErrorMessage(error);
-        const warning = `Session storage failed: ${detail}. Protocol messages remain queued until storage succeeds.`;
-        if (this.durabilityWarning !== warning) {
-          this.durabilityWarning = warning;
-          this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
-        }
-        throw error;
-      }
-
-      if (this.protocolStopped) return;
-      const outbound = this.pendingOutboundSends.splice(0, outboundCount);
-      const acks = this.pendingAcks.splice(0, ackCount);
-      const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
-      const failedAcks: bigint[] = [];
-      this.traceReloadStall(
-        `durability-send-before outbound=${outbound.length} acks=${acks.length}`,
-      );
-      for (const item of outbound) {
-        if (!this.sendMessage(item.msgno, item.msg)) {
-          failedOutbound.push(item);
-        } else {
-          this.noteTerminalHandoffSent(item.msgno);
-        }
-      }
-      for (const ack of acks) {
-        if (!this.sendAck(ack)) {
-          failedAcks.push(ack);
-        }
-      }
-      this.traceReloadStall(
-        `durability-send-after failed-outbound=${failedOutbound.length} failed-acks=${failedAcks.length}`,
-      );
-      if (failedOutbound.length > 0 || failedAcks.length > 0) {
-        log(
-          `[wasm] hub send failed after durability: outbound=${failedOutbound.length} acks=${failedAcks.length}; left queued`,
-        );
-        this.pendingOutboundSends = [...failedOutbound, ...this.pendingOutboundSends];
-        this.pendingAcks = [...failedAcks, ...this.pendingAcks];
-        // Leave needsImmediateDurability set but do not reschedule: WS is likely
-        // closed; retry on the next natural flush trigger.
-        this.needsImmediateDurability = true;
-      } else {
-        this.needsImmediateDurability =
-          this.pendingOutboundSends.length > 0 || this.pendingAcks.length > 0;
-        if (this.needsImmediateDurability) {
-          this.scheduleDurabilityFlush();
-        }
-      }
-      return;
-    }
-
-    if (this.protocolStopped) return;
-    const outbound = this.pendingOutboundSends.splice(0, this.pendingOutboundSends.length);
-    const acks = this.pendingAcks.splice(0, this.pendingAcks.length);
-    const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
-    const failedAcks: bigint[] = [];
-    for (const item of outbound) {
-      if (!this.sendMessage(item.msgno, item.msg)) {
-        failedOutbound.push(item);
-      } else {
-        this.noteTerminalHandoffSent(item.msgno);
-      }
-    }
-    for (const ack of acks) {
-      if (!this.sendAck(ack)) {
-        failedAcks.push(ack);
-      }
-    }
-    if (failedOutbound.length > 0 || failedAcks.length > 0) {
-      log(
-        `[wasm] hub send failed: outbound=${failedOutbound.length} acks=${failedAcks.length}; left queued`,
-      );
-      this.pendingOutboundSends = [...failedOutbound, ...this.pendingOutboundSends];
-      this.pendingAcks = [...failedAcks, ...this.pendingAcks];
-      this.needsImmediateDurability = true;
     }
   }
 

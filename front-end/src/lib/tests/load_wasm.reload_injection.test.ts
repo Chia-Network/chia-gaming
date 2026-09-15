@@ -5,7 +5,6 @@ import { useCalpokerHand, type UseCalpokerHandResult } from '@games/calpoker/ui/
 import type { GameIntent, LiveGamePort } from '@games/host';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
 import {
@@ -16,7 +15,6 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
-  logReloadLifecycle,
   SessionControllerAdapter,
   startSimulator,
 } from './load_wasm.harness';
@@ -27,12 +25,6 @@ import {
 } from './reload_injection.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
-
-function reloadStallBreadcrumb(checkpoint: string, stage: string): void {
-  process.stderr.write(
-    `DBG_RELOAD_STALL ${new Date().toISOString()} pid=${process.pid} checkpoint=${checkpoint} stage=${stage}\n`,
-  );
-}
 
 async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<void> {
   const adapters = await createActivePair(poller, 5);
@@ -396,13 +388,11 @@ async function runHandshakeRoleReload(
   checkpoint: HandshakeReloadCheckpoint,
   suffix: number,
 ): Promise<void> {
-  reloadStallBreadcrumb(checkpoint, 'run-role-enter');
   const adapters = [
     addActiveCradle(new SessionControllerAdapter()),
     addActiveCradle(new SessionControllerAdapter()),
   ] as [SessionControllerAdapter, SessionControllerAdapter];
-  reloadStallBreadcrumb(checkpoint, 'controllers-init-before');
-  const controllerPromises = [
+  const controllers = await Promise.all([
     initSessionController(
       poller,
       `a11ce00${suffix}`,
@@ -417,32 +407,16 @@ async function runHandshakeRoleReload(
       adapters[1].peerConnection,
       new WasmStateInit(fetchPreset),
     ),
-  ] as const;
-  controllerPromises.forEach((promise, index) => {
-    void promise.then(
-      () => {
-        reloadStallBreadcrumb(checkpoint, `controller-promise-${index}-settled`);
-        setTimeout(() => reloadStallBreadcrumb(checkpoint, `controller-promise-${index}-timer`), 0);
-      },
-      () => reloadStallBreadcrumb(checkpoint, `controller-promise-${index}-rejected`),
-    );
-  });
-  const controllers = await Promise.all(controllerPromises);
-  reloadStallBreadcrumb(checkpoint, 'controllers-init-after');
+  ]);
   controllers.forEach((controller, index) => {
     controller.pairingToken = `reload-handshake-${suffix}-${index}`;
     controller.perGameAmount = 100n;
     controller.onSaveNeeded = () => Promise.resolve();
-    reloadStallBreadcrumb(checkpoint, `set-blob-${index}-before`);
     adapters[index].set_blob(controller);
-    reloadStallBreadcrumb(checkpoint, `set-blob-${index}-after`);
   });
-  reloadStallBreadcrumb(checkpoint, 'initial-flush-before');
   await flushWrapperDrain(adapters);
-  reloadStallBreadcrumb(checkpoint, 'initial-flush-after');
 
   const deliverNext = async (sender: 0 | 1): Promise<void> => {
-    reloadStallBreadcrumb(checkpoint, `deliver-${sender}-before`);
     const outbound = adapters[sender].outbound_messages();
     assert.ok(
       outbound.length > 0,
@@ -453,7 +427,6 @@ async function runHandshakeRoleReload(
     await flushWrapperDrain(adapters);
     adapters[sender].blob?.receiveAck(BigInt(next.msgno));
     await flushWrapperDrain(adapters);
-    reloadStallBreadcrumb(checkpoint, `deliver-${sender}-after`);
   };
 
   if (checkpoint === 'initiator-sent-c' || checkpoint === 'receiver-sent-d') {
@@ -465,18 +438,13 @@ async function runHandshakeRoleReload(
   }
 
   const target = checkpoint.startsWith('initiator') ? 0 : 1;
-  reloadStallBreadcrumb(checkpoint, 'reload-setup-before');
   let lane = laneForHandshakeAdapter(adapters[target]);
   const before = lane.controller.getProtocolStatePretty();
   assert.ok(before?.includes(checkpoint.startsWith('initiator') ? 'Initiator' : 'Receiver'));
-  reloadStallBreadcrumb(checkpoint, 'reload-injection-before');
   lane = (await injectSessionReload(lane, poller)).lane;
-  reloadStallBreadcrumb(checkpoint, 'reload-injection-after');
   assert.equal(lane.controller.getRestoreStatus(), 'restored');
   assert.equal(lane.controller.getProtocolStatePretty(), before);
-  reloadStallBreadcrumb(checkpoint, 'handshake-driver-before');
   await action_with_messages(poller, adapters[0], adapters[1]);
-  reloadStallBreadcrumb(checkpoint, 'handshake-driver-after');
   assert.equal(
     lane.controller.lastChannelStatus?.state,
     'Active',
@@ -490,61 +458,9 @@ it(
     try {
       const poller = await startSimulator(['cafe0005', 'dead0005']);
       if (!poller) return;
-      logReloadLifecycle('calpoker-start');
       await runCalpokerReloadAndAdvance(poller);
     } catch (error) {
       throw new Error(`[load_wasm reload injection failed]\n${String(error)}`, { cause: error });
-    } finally {
-      logReloadLifecycle('calpoker-end');
-    }
-  },
-  120 * 1000,
-);
-
-it(
-  'lets a timer run after activating one controller while another registration awaits',
-  async () => {
-    const poller = await startSimulator(['a11ce010', 'b0b70010']);
-    if (!poller) return;
-    const adapter = addActiveCradle(new SessionControllerAdapter());
-    let finishRegistration!: () => void;
-    const registrationGate = new Promise<void>((resolve) => {
-      finishRegistration = resolve;
-    });
-    const originalRegisterUser = fakeBlockchainInfo.registerUser;
-    let registrationSettled = false;
-    let pendingRegistration: Promise<string> | null = null;
-    fakeBlockchainInfo.registerUser = async function (name, balance) {
-      const rewardPuzzleHash = await originalRegisterUser.call(this, name, balance);
-      if (name === 'b0b70010') await registrationGate;
-      return rewardPuzzleHash;
-    };
-    try {
-      pendingRegistration = fakeBlockchainInfo.registerUser('b0b70010');
-      void pendingRegistration.then(() => {
-        registrationSettled = true;
-      });
-
-      const controller = await initSessionController(
-        poller,
-        'a11ce010',
-        true,
-        adapter.peerConnection,
-        new WasmStateInit(fetchPreset),
-      );
-      controller.onSaveNeeded = () => Promise.resolve();
-      adapter.set_blob(controller);
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      assert.equal(
-        registrationSettled,
-        false,
-        'activation must yield to timers while the second registerUser call remains pending',
-      );
-    } finally {
-      finishRegistration();
-      fakeBlockchainInfo.registerUser = originalRegisterUser;
-      if (pendingRegistration) await pendingRegistration;
     }
   },
   120 * 1000,
@@ -559,19 +475,13 @@ it.each([
   'restores the real %s handshake checkpoint and reaches Active',
   async (checkpoint, suffix) => {
     try {
-      reloadStallBreadcrumb(checkpoint, 'simulator-start-before');
       const poller = await startSimulator([`a11ce00${suffix}`, `b0b7000${suffix}`]);
-      reloadStallBreadcrumb(checkpoint, 'simulator-start-after');
       if (!poller) return;
-      logReloadLifecycle(`handshake-${checkpoint}-start`);
       await runHandshakeRoleReload(poller, checkpoint, suffix);
-      reloadStallBreadcrumb(checkpoint, 'test-body-complete');
     } catch (error) {
       throw new Error(`[load_wasm handshake reload injection failed]\n${String(error)}`, {
         cause: error,
       });
-    } finally {
-      logReloadLifecycle(`handshake-${checkpoint}-end`);
     }
   },
   120 * 1000,

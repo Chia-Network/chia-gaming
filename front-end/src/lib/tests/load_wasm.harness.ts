@@ -91,40 +91,7 @@ afterAll(async () => {
 
 const activeSubscriptions: Subscription[] = [];
 const activeCradles: SessionControllerAdapter[] = [];
-const initializingControllers = new Set<string>();
 let testPoller: BlockchainPoller | null = null;
-
-function reloadStallDiagnostic(uniqueId: string, stage: string): void {
-  process.stderr.write(
-    `DBG_RELOAD_STALL ${new Date().toISOString()} pid=${process.pid} controller=${uniqueId} stage=${stage}\n`,
-  );
-}
-
-export function logReloadLifecycle(stage: string): void {
-  const poller = testPoller as unknown as {
-    sessions?: Set<unknown>;
-    sessionCoins?: Map<unknown, unknown>;
-    registeredNames?: Set<string>;
-  } | null;
-  const controllers = activeCradles
-    .map((adapter, index) => {
-      const controller = adapter.blob;
-      return controller
-        ? `${index}:${controller.uniqueId}/wasm=${!!controller.wc}/cradle=${controller.cradle?.session ?? 'none'}`
-        : `${index}:no-controller`;
-    })
-    .join(',');
-  process.stderr.write(
-    `DBG_RELOAD_STALL ${new Date().toISOString()} pid=${process.pid} lifecycle=${stage}` +
-      ` cradles=${activeCradles.length} controllers=${activeCradles.filter((c) => !!c.blob).length}` +
-      ` initializing=${initializingControllers.size}[${[...initializingControllers].join(',')}]` +
-      ` subscriptions=${activeSubscriptions.length}` +
-      ` pollerSessions=${poller?.sessions?.size ?? 'none'}` +
-      ` pollerCoinSets=${poller?.sessionCoins?.size ?? 'none'}` +
-      ` registeredCoins=${poller?.registeredNames?.size ?? 'none'}` +
-      ` tracked=[${controllers}]\n`,
-  );
-}
 
 export function addActiveSubscription(sub: Subscription): Subscription {
   activeSubscriptions.push(sub);
@@ -251,7 +218,6 @@ function debugCradleState(cradle: SessionControllerAdapter): string {
     `queue=${blob.eventQueue?.length}`,
     `drain=${blob.drainScheduled}`,
     `launcher=${blob.launcherProvided}`,
-    `pendingSends=${blob.pendingOutboundSends?.length}`,
   ].join('/');
 }
 
@@ -517,42 +483,27 @@ export async function initSessionController(
   myContribution = 100n,
   theirContribution = 100n,
 ) {
-  initializingControllers.add(uniqueId);
-  const diagnostic = (stage: string) => reloadStallDiagnostic(uniqueId, stage);
-  try {
-    diagnostic('register-user-await-before');
-    const rewardPuzzleHash = await fakeBlockchainInfo.registerUser(uniqueId, undefined, diagnostic);
-    diagnostic('register-user-await-after');
-    diagnostic('controller-constructor-before');
-    const gameObject = new SessionController(
-      blockchain,
-      uniqueId,
-      myContribution,
-      theirContribution,
-      peer_conn,
-      diagnostic,
-    );
-    diagnostic('controller-constructor-after');
+  const rewardPuzzleHash = await fakeBlockchainInfo.registerUser(uniqueId);
+  const gameObject = new SessionController(
+    blockchain,
+    uniqueId,
+    myContribution,
+    theirContribution,
+    peer_conn,
+  );
 
-    diagnostic('config-controller-await-before');
-    await configSessionController(
-      gameObject,
-      iStarted,
-      wasmStateInit,
-      blockchain,
-      uniqueId,
-      undefined,
-      undefined,
-      rewardPuzzleHash,
-      diagnostic,
-    );
-    diagnostic('config-controller-await-after');
+  await configSessionController(
+    gameObject,
+    iStarted,
+    wasmStateInit,
+    blockchain,
+    uniqueId,
+    undefined,
+    undefined,
+    rewardPuzzleHash,
+  );
 
-    return gameObject;
-  } finally {
-    initializingControllers.delete(uniqueId);
-    diagnostic('init-controller-exit');
-  }
+  return gameObject;
 }
 
 function sleepMs(ms: number): Promise<void> {
