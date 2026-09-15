@@ -193,10 +193,11 @@ is actually choosing.
   get an empty preload so they cannot see `__chiaHub`. Every other `window.open`
   is denied. About-window links still use `shell.openExternal` for the project
   URL only.
-- `will-frame-navigate` keeps the player window's top frame on `chiagaming://app`,
-  allows Cloud Wallet popups to reach `cloudWalletOrigins` and to return to the
-  app for `/oauth/callback`, and restricts sub-frames to the frame allowlist. It
-  is used in preference to `will-navigate`, which only sees the top frame.
+- `will-frame-navigate` keeps the player window's top frame on
+  `chiagaming://app/index.html`, allows Cloud Wallet popups to reach
+  `cloudWalletOrigins` and to return to the app for `/oauth/callback`, and
+  restricts sub-frames to the frame allowlist. It is used in preference to
+  `will-navigate`, which only sees the top frame.
 - `will-attach-webview` is blocked, on top of `webviewTag: false`.
 - Permission requests and checks are denied except `clipboard-sanitized-write`
   from the app origin, which is what `navigator.clipboard.writeText` needs to

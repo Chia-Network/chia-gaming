@@ -3,8 +3,11 @@ import path from 'node:path';
 
 import { protocol } from 'electron';
 
+import { APP_HOST, APP_ORIGIN, APP_SCHEME } from './appUrl';
 import { log } from './log';
 import type { PolicyRef } from './networkPolicy';
+
+export { APP_ORIGIN, isAppUrl } from './appUrl';
 
 /**
  * The renderer is served from a custom scheme rather than `file://`.
@@ -14,28 +17,6 @@ import type { PolicyRef } from './networkPolicy';
  * relative asset URLs behave exactly as they do in the browser deploy — with
  * `webSecurity` left on and no `file://` privileges granted to anything.
  */
-const APP_SCHEME = 'chiagaming';
-const APP_HOST = 'app';
-export const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
-
-/**
- * True for URLs this app serves itself.
- *
- * Matched on scheme and host rather than compared against `APP_ORIGIN`, because
- * `URL.origin` is unusable for a scheme the URL standard does not consider
- * special: Node's parser reports the origin as `"null"`, and Chromium
- * serialises it as `chiagaming://app/` with a trailing slash. Neither form ever
- * equals `APP_ORIGIN`, so comparing origins silently denies the app itself.
- */
-export function isAppUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === `${APP_SCHEME}:` && url.host === APP_HOST;
-  } catch {
-    return false;
-  }
-}
-
 const MIME_TYPES = new Map<string, string>([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
