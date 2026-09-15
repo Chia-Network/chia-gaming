@@ -473,6 +473,7 @@ mod sim_tests {
                     true,
                 ),
                 SimScriptAction::AcceptSettlement(1, GameID(999)),
+                SimScriptAction::AcceptSettlement(1, GameID(998)),
                 SimScriptAction::UnNerfMessages,
                 SimScriptAction::Move(
                     0,
@@ -502,6 +503,14 @@ mod sim_tests {
                     ..
                 }
             )), "expected queued settlement failure, got: {notifications:?}");
+            assert!(notifications.iter().any(|notification| matches!(
+                notification,
+                GameNotification::ActionFailed {
+                    id: Some(GameID(998)),
+                    action: Some(FailedGameAction::AcceptSettlement),
+                    ..
+                }
+            )), "expected second queued settlement failure, got: {notifications:?}");
             assert_eq!(
                 notifications
                     .iter()
