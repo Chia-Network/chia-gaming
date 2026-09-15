@@ -296,8 +296,7 @@ mod atomic_factory_tests {
         let validators = list_from_nodes(&mut allocator, &[validator]);
         let factory = quoted_factory(&mut allocator, 11, validators);
 
-        let error = match Game::run_factory(&mut allocator, factory, &Program::from_bytes(&[0x80]))
-        {
+        let error = match Game::run_factory(&mut allocator, factory, &Program::nil()) {
             Ok(_) => panic!("factory accepted mover share above amount"),
             Err(error) => error,
         };
@@ -313,32 +312,19 @@ mod atomic_factory_tests {
         let mut allocator = AllocEncoder::new();
 
         let empty_factory = quoted_factory(&mut allocator, 0, NodePtr::NIL);
-        assert!(
-            Game::run_factory(&mut allocator, empty_factory, &Program::from_bytes(&[0x80]))
-                .is_err()
-        );
+        assert!(Game::run_factory(&mut allocator, empty_factory, &Program::nil()).is_err());
 
         let validator = allocator.allocator().one();
         let duplicate = list_from_nodes(&mut allocator, &[validator, validator]);
         let duplicate_factory = quoted_factory(&mut allocator, 0, duplicate);
-        assert!(Game::run_factory(
-            &mut allocator,
-            duplicate_factory,
-            &Program::from_bytes(&[0x80])
-        )
-        .is_err());
+        assert!(Game::run_factory(&mut allocator, duplicate_factory, &Program::nil()).is_err());
 
         let improper = allocator
             .allocator()
             .new_pair(validator, validator)
             .unwrap();
         let improper_factory = quoted_factory(&mut allocator, 0, improper);
-        assert!(Game::run_factory(
-            &mut allocator,
-            improper_factory,
-            &Program::from_bytes(&[0x80])
-        )
-        .is_err());
+        assert!(Game::run_factory(&mut allocator, improper_factory, &Program::nil()).is_err());
     }
 
     #[test]
@@ -350,8 +336,7 @@ mod atomic_factory_tests {
         let validators = list_from_nodes(&mut allocator, &[first, second]);
         let factory = quoted_factory(&mut allocator, 0, validators);
 
-        let games =
-            Game::run_factory(&mut allocator, factory, &Program::from_bytes(&[0x80])).unwrap();
+        let games = Game::run_factory(&mut allocator, factory, &Program::nil()).unwrap();
         assert_eq!(games[0].initial_validation_program_hash, expected);
         assert_eq!(games[0].validation_programs.len(), 2);
     }
@@ -365,13 +350,15 @@ mod atomic_factory_tests {
             initial_validation_program_hash: Hash::default(),
             initial_move: vec![],
             initial_max_move_size: 32,
-            initial_state: Rc::new(Program::from_bytes(&[0x80])),
+            initial_state: Rc::new(Program::nil()),
             initial_mover_share: 0,
-            my_turn_handler: Program::from_bytes(&[0x80]),
-            their_turn_handler: Program::from_bytes(&[0x80]),
+            my_turn_handler: Program::nil(),
+            their_turn_handler: Program::nil(),
             validation_programs: ValidationProgramRegistry::new(
                 &mut AllocEncoder::new(),
-                &[Rc::new(Program::from_bytes(&[0x01]))],
+                &[Rc::new(
+                    Program::from_bytes(&[0x01]).expect("serialized validator"),
+                )],
             )
             .expect("validator registry"),
         }

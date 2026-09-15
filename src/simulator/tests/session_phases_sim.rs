@@ -1699,7 +1699,9 @@ pub fn setup_debug_test(
         } else {
             assert_eq!(
                 the_move.slash,
-                Some(Rc::new(Program::from_bytes(&[do_move.slash])))
+                Some(Rc::new(
+                    Program::from_bytes(&[do_move.slash]).expect("serialized slash evidence"),
+                ))
             );
         }
 

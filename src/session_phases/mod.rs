@@ -1097,8 +1097,7 @@ impl OffChainPhase {
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
                     if let Some(true) = game_is_my_turn {
                         ch.enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
-                        let readable_move =
-                            ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
+                        let readable_move = ReadableMove::from_program(Rc::new(Program::nil()));
                         let prepared = ch.prepare_move(env, &game_id, &readable_move, entropy)?;
                         let move_result = ch.send_move_no_finalize(env, &game_id, prepared)?;
                         batch_actions.push(BatchAction::Move(

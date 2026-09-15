@@ -107,7 +107,7 @@ mod tests {
         let validation_programs =
             ValidationProgramRegistry::new(&mut allocator, &[initial_validator.to_program()])
                 .expect("validator registry");
-        let nil = Rc::new(Program::from_bytes(&[0x80]));
+        let nil = Rc::new(Program::nil());
         let start = Rc::new(GameStartInfo {
             amount: Amount::new(30),
             game_handler: GameHandler::TheirTurnHandler(handler.into()),
@@ -506,7 +506,7 @@ impl TheirTurnReferee {
                 None,
                 TheirTurnMoveResult {
                     puzzle_hash_for_unroll: None,
-                    readable_move: Program(vec![0x80]).into(),
+                    readable_move: Program::nil().into(),
                     mover_share: details.basic.mover_share.clone(),
                     message: vec![],
                     slash: Some(evidence),
@@ -533,7 +533,7 @@ impl TheirTurnReferee {
         let new_state = parsed
             .new_state
             .clone()
-            .unwrap_or_else(|| Rc::new(Program(vec![0x80])));
+            .unwrap_or_else(|| Rc::new(Program::nil()));
         let next_validation_program = parsed
             .next_validator_hash
             .as_ref()

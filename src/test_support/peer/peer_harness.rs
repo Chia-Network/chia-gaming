@@ -325,7 +325,7 @@ fn build_dummy_wallet_bundle_for_request(
             coin,
             bundle: Spend {
                 puzzle,
-                solution: Program::from_bytes(&[0x80]).into(),
+                solution: Program::nil().into(),
                 signature,
             },
         }],

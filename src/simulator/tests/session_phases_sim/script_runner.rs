@@ -221,7 +221,7 @@ pub(in super::super) fn run_script(
                             _ => 15,
                         };
                         let parameters = if package_key == "calpoker" || package_key == "krunk" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else if package_key == "debug" {
@@ -409,7 +409,7 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::WrongParityProposal(who) => {
                         let parameters = if package_key == "calpoker" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else {
@@ -437,7 +437,7 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::InvalidProposalParameters(who) => {
                         let parameters = if package_key == "calpoker" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else {
@@ -497,7 +497,7 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::InvalidProposalValidationInfoHash(who) => {
                         let parameters = if package_key == "calpoker" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else {
                             extras.clone()
                         };
@@ -524,7 +524,7 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::InvalidProposalTimeout(who) => {
                         let parameters = if package_key == "calpoker" {
-                            Program::from_bytes(&[0x80])
+                            Program::nil()
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else {

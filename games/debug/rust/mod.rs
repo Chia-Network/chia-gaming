@@ -541,7 +541,7 @@ impl BareDebugGameHandler {
                 )
             }
             None => {
-                return Ok(Some(Rc::new(Program(vec![0x80]))));
+                return Ok(Some(Rc::new(Program::nil())));
             }
         };
 

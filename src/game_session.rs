@@ -412,8 +412,9 @@ pub struct GameSessionConfig {
 /// coins with an empty solution (no outputs), their value becomes deficit.
 fn claim_settlement_coins(allocator: &mut AllocEncoder, bundle: SpendBundle) -> SpendBundle {
     let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
-    let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT);
-    let empty_solution: ProgramRef = Program::from_bytes(&[0x80]).into();
+    let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT)
+        .expect("valid settlement puzzle constant");
+    let empty_solution: ProgramRef = Program::nil().into();
 
     let mut claim_spends = Vec::new();
 

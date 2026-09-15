@@ -71,11 +71,11 @@ mod peer_move_reconstruction_tests {
     #[test]
     fn continuing_transition_hashes_next_validator_and_new_state() {
         let mut allocator = AllocEncoder::new();
-        let new_state = Rc::new(Program::from_bytes(&[0x80]));
+        let new_state = Rc::new(Program::nil());
         let next_validator = StateUpdateProgram::new(
             &mut allocator,
             "peer move test",
-            Rc::new(Program::from_bytes(&[0x01])),
+            Rc::new(Program::from_bytes(&[0x01]).expect("quoted atom")),
         );
         let next_hash = next_validator.hash().clone();
 
@@ -96,7 +96,7 @@ mod peer_move_reconstruction_tests {
     #[test]
     fn nil_next_validator_reconstructs_nil_infohash() {
         let mut allocator = AllocEncoder::new();
-        let new_state = Rc::new(Program::from_bytes(&[0x80]));
+        let new_state = Rc::new(Program::nil());
 
         let details = game_move_details_from_transition(&mut allocator, basic(), None, &new_state);
 
@@ -130,8 +130,10 @@ mod apply_prepared_move_tests {
             read_binary_puzzle(&mut allocator, "clsp/referee/onchain/referee.clvm.bin")
                 .expect("referee puzzle");
         let referee_puzzle_hash = referee_puzzle.sha256tree(&mut allocator);
-        let nil = Rc::new(Program::from_bytes(&[0x80]));
-        let rejecting_validator = Rc::new(Program::from_bytes(&[0xff, 0x08, 0x80]));
+        let nil = Rc::new(Program::nil());
+        let rejecting_validator = Rc::new(
+            Program::from_bytes(&[0xff, 0x08, 0x80]).expect("serialized rejecting validator"),
+        );
         let validation_programs =
             ValidationProgramRegistry::new(&mut allocator, &[rejecting_validator])
                 .expect("validator registry");

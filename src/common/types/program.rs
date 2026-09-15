@@ -1,8 +1,10 @@
+use std::io::Cursor;
+
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use clvmr::allocator::{NodePtr, SExp};
-use clvmr::serde::node_from_bytes;
+use clvmr::serde::{node_from_bytes, node_from_stream};
 use clvmr::Allocator;
 
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
@@ -35,7 +37,7 @@ impl<X: ToClvm<AllocEncoder>> Sha256tree for X {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct Program(pub Vec<u8>);
+pub struct Program(Vec<u8>);
 
 impl Serialize for Program {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -59,14 +61,14 @@ impl<'de> Visitor<'de> for ProgramVisitor {
     where
         E: de::Error,
     {
-        Ok(Program(v.to_vec()))
+        Program::from_bytes(v).map_err(E::custom)
     }
 
     fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Program(v))
+        Program::from_bytes(&v).map_err(E::custom)
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -77,7 +79,7 @@ impl<'de> Visitor<'de> for ProgramVisitor {
         while let Some(b) = seq.next_element::<u8>()? {
             bytes.push(b);
         }
-        Ok(Program(bytes))
+        Program::from_bytes(&bytes).map_err(<A::Error as de::Error>::custom)
     }
 }
 
@@ -97,6 +99,10 @@ impl std::fmt::Debug for Program {
 }
 
 impl Program {
+    pub fn nil() -> Program {
+        Program(vec![0x80])
+    }
+
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         clvmr::serde::node_from_bytes(allocator.allocator(), &self.0).into_gen()
     }
@@ -107,11 +113,19 @@ impl Program {
 
     pub fn from_hex(s: &str) -> Result<Program, Error> {
         let bytes = hex::decode(s.trim()).into_gen()?;
-        Ok(Program::from_bytes(&bytes))
+        Program::from_bytes(&bytes)
     }
 
-    pub fn from_bytes(by: &[u8]) -> Program {
-        Program(by.to_vec())
+    pub fn from_bytes(by: &[u8]) -> Result<Program, Error> {
+        let mut allocator = Allocator::new();
+        let mut cursor = Cursor::new(by);
+        node_from_stream(&mut allocator, &mut cursor).into_gen()?;
+        if cursor.position() != by.len() as u64 {
+            return Err(Error::StrErr(
+                "trailing bytes after serialized CLVM".to_string(),
+            ));
+        }
+        Ok(Program(by.to_vec()))
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -119,7 +133,7 @@ impl Program {
     }
 
     pub fn is_nil(&self) -> bool {
-        self.0.is_empty() || self.0 == [0x80]
+        self.0 == [0x80]
     }
 
     pub fn to_hex(&self) -> String {
@@ -156,13 +170,55 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Program {
 
 #[cfg(test)]
 mod tests {
+    use serde::{Serialize, Serializer};
+
     use super::Program;
+
+    struct RawBytes(Vec<u8>);
+
+    impl Serialize for RawBytes {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_bytes(&self.0)
+        }
+    }
 
     #[test]
     fn program_round_trips() {
-        let p = Program::from_bytes(&[0xff, 0x01, 0x80]);
+        let p = Program::from_bytes(&[0xff, 0x01, 0x80]).expect("valid program");
         let bytes = bencodex::to_vec(&p).expect("should serialize");
         let back: Program = bencodex::from_slice(&bytes).expect("should deserialize");
         assert_eq!(back.0, p.0);
+    }
+
+    #[test]
+    fn rejects_empty_bytes() {
+        assert!(Program::from_bytes(&[]).is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_and_trailing_bytes() {
+        assert!(Program::from_bytes(&[0xff]).is_err());
+        assert!(Program::from_bytes(&[0x80, 0x80]).is_err());
+    }
+
+    #[test]
+    fn canonical_nil_is_nil() {
+        assert!(Program::from_bytes(&[0x80])
+            .expect("canonical nil")
+            .is_nil());
+    }
+
+    #[test]
+    fn invalid_empty_value_cannot_be_recognized_as_nil() {
+        assert!(Program::from_bytes(&[]).is_err());
+    }
+
+    #[test]
+    fn bencodex_rejects_invalid_program_bytes() {
+        let encoded = bencodex::to_vec(&RawBytes(vec![0x80, 0x80])).expect("should encode bytes");
+        assert!(bencodex::from_slice::<Program>(&encoded).is_err());
     }
 }

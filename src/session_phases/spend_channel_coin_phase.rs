@@ -1639,7 +1639,7 @@ mod tests {
         let clean_shutdown = SpendChannelCoinPhase::new_for_clean_shutdown(
             None,
             test_coin(),
-            Program::from_bytes(&[0x80]).into(),
+            Program::nil().into(),
             VecDeque::new(),
             PotatoState::Present,
             Timeout::new(10),

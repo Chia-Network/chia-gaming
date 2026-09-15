@@ -500,8 +500,8 @@ fn coin_spend_from_value(value: Value) -> Result<CoinSpend, Error> {
     Ok(CoinSpend {
         coin,
         bundle: Spend {
-            puzzle: Puzzle::from_bytes(&expect_bytes(take(&mut bundle, "p")?)?),
-            solution: Program::from_bytes(&expect_bytes(take(&mut bundle, "s")?)?).into(),
+            puzzle: Puzzle::from_bytes(&expect_bytes(take(&mut bundle, "p")?)?)?,
+            solution: Program::from_bytes(&expect_bytes(take(&mut bundle, "s")?)?)?.into(),
             signature: Aggsig::default(),
         },
     })
@@ -808,8 +808,8 @@ mod tests {
         let spend = |signature| CoinSpend {
             coin: CoinString::from_bytes(&[1]),
             bundle: Spend {
-                puzzle: Puzzle::from_bytes(&[0x80]),
-                solution: Program::from_bytes(&[0x80]).into(),
+                puzzle: Program::nil().into(),
+                solution: Program::nil().into(),
                 signature,
             },
         };

@@ -988,7 +988,7 @@ mod tests {
                 coin: input.clone(),
                 bundle: Spend {
                     puzzle: Puzzle::from(puzzle),
-                    solution: Program::from_bytes(&[0x80]).into(),
+                    solution: Program::nil().into(),
                     signature: Default::default(),
                 },
             }],

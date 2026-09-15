@@ -168,9 +168,9 @@ mod tests {
     #[test]
     fn registry_resolves_programs_and_rejects_unknown_hashes() {
         let mut allocator = AllocEncoder::new();
-        let first = Rc::new(Program::from_bytes(&[0x01]));
-        let second = Rc::new(Program::from_bytes(&[0x02]));
-        let third = Rc::new(Program::from_bytes(&[0x03]));
+        let first = Rc::new(Program::from_bytes(&[0x01]).expect("quoted atom"));
+        let second = Rc::new(Program::from_bytes(&[0x02]).expect("apply operator"));
+        let third = Rc::new(Program::from_bytes(&[0x03]).expect("if operator"));
         let registry = ValidationProgramRegistry::new(
             &mut allocator,
             &[first.clone(), second.clone(), third.clone()],

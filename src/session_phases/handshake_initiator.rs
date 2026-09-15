@@ -250,7 +250,8 @@ impl HandshakeInitiatorPhase {
         Ok(CoinSpend {
             coin: launcher_coin,
             bundle: Spend {
-                puzzle: Puzzle::from_bytes(&crate::common::constants::SINGLETON_LAUNCHER),
+                puzzle: Puzzle::from_bytes(&crate::common::constants::SINGLETON_LAUNCHER)
+                    .expect("valid singleton launcher constant"),
                 solution: launcher_solution_program.into(),
                 signature: Aggsig::default(),
             },
@@ -1081,7 +1082,7 @@ mod finished_message_tests {
             coin,
             bundle: Spend {
                 puzzle,
-                solution: Program::from_bytes(&[0x80]).into(),
+                solution: Program::nil().into(),
                 signature,
             },
         }
