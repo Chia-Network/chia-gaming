@@ -94,8 +94,7 @@ describe('hub iframe credentials', () => {
     expect(JSON.stringify(iframe.props)).not.toContain(sessionId);
   });
 
-  it('sends credentials to the iframe at its canonical origin on load and fallback retry', () => {
-    jest.useFakeTimers();
+  it('waits for the iframe load before sending credentials to its canonical origin', () => {
     const harness = createParentHarness();
     installHubIframeAuthentication({
       iframe: harness.iframe,
@@ -104,6 +103,7 @@ describe('hub iframe credentials', () => {
       messageTarget: harness.messageTarget,
     });
 
+    expect(harness.posts).toEqual([]);
     harness.dispatchLoad();
     expect(harness.posts).toEqual([
       {
@@ -112,10 +112,6 @@ describe('hub iframe credentials', () => {
         targetOrigin: 'https://hub.example',
       },
     ]);
-
-    jest.runOnlyPendingTimers();
-    expect(harness.posts).toHaveLength(2);
-    expect(harness.posts[1]).toEqual(harness.posts[0]);
   });
 
   it('responds only to well-formed requests from the iframe at the canonical origin', () => {
@@ -152,8 +148,7 @@ describe('hub iframe credentials', () => {
     expect(harness.posts).toHaveLength(1);
   });
 
-  it('removes listeners and cancels the initial retry during cleanup', () => {
-    jest.useFakeTimers();
+  it('removes listeners during cleanup', () => {
     const harness = createParentHarness();
     const cleanup = installHubIframeAuthentication({
       iframe: harness.iframe,
@@ -172,7 +167,6 @@ describe('hub iframe credentials', () => {
         type: 'hub-auth-request',
       }),
     );
-    jest.advanceTimersByTime(150);
     expect(harness.posts).toEqual([]);
   });
 

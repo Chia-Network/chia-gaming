@@ -89,7 +89,7 @@ export function getRequiredNamespaces(): ProposalTypes.RequiredNamespaces {
 export function getOptionalNamespaces(): ProposalTypes.OptionalNamespaces {
   return {
     chia: {
-      methods: [ChiaMethod.GetFullNodePeerCount],
+      methods: Object.values(ChiaMethod),
       chains: [getChainId()],
       events: [],
     },

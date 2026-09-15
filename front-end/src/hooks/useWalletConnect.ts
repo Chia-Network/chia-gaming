@@ -302,7 +302,6 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        requiredNamespaces: getRequiredNamespaces(),
         optionalNamespaces: getOptionalNamespaces(),
       });
 

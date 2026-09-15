@@ -67,8 +67,8 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
   const autoJoinedRef = useRef(false);
   useEffect(() => {
     if (!aliasLoaded || autoJoinedRef.current) return;
+    autoJoinedRef.current = true;
     if (savedAlias) {
-      autoJoinedRef.current = true;
       setMyAlias(savedAlias);
       setAliasConfirmed(true);
       joinHub(savedAlias);
