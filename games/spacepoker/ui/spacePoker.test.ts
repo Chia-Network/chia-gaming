@@ -113,6 +113,15 @@ describe('Space Poker terminal UX', () => {
     expect(spacePokerTerminalCommentary('settled', null, 'opponent_timed_out')).toBe(
       'Opponent timed out.',
     );
+    expect(
+      spacePokerTerminalCommentary(
+        'settled',
+        null,
+        'forfeited_skipped_reveal',
+        'Peer',
+        '12 MOJO',
+      ),
+    ).toBe('You folded. Peer won 12 MOJO.');
     expect(spacePokerTerminalBanners('won-by-opponent-failure', null)).toEqual({
       player: 'win',
       opponent: null,

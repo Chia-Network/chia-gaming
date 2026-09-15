@@ -250,6 +250,50 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
+  it('assumes enough peers when an advertised peer-count method never responds', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      mockGetFullNodePeerCount.mockImplementation(() => new Promise(() => {}));
+
+      const blockchain = new RealBlockchainInterface();
+      blockchain.onPlayReadinessChange(() => {});
+
+      await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(blockchain.isReadyForPlay()).toBe(false);
+
+      jest.advanceTimersByTime(7_000);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(blockchain.isReadyForPlay()).toBe(true);
+      expect(mockGetFullNodePeerCount).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('assumes enough peers when the wallet rejects peer count as unsupported', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      mockGetFullNodePeerCount.mockRejectedValue(new Error('Method not found (code=-32601)'));
+
+      const blockchain = new RealBlockchainInterface();
+      blockchain.onPlayReadinessChange(() => {});
+
+      await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(blockchain.isReadyForPlay()).toBe(true);
+      expect(mockGetFullNodePeerCount).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('stays not-ready for play while no full node peer is present', async () => {
     jest.useFakeTimers();
     try {

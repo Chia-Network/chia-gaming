@@ -7,9 +7,9 @@ const SETTLEMENT_LABELS: Record<SettlementOutcome, string> = {
   accept_settlement: 'Accepted',
   settled_cleanly: 'Settled cleanly',
   opponent_timed_out: 'Opponent timed out',
-  forfeited_skipped_reveal: 'Forfeited',
+  forfeited_skipped_reveal: 'Opponent won',
   lost: 'Lost',
-  forfeited_we_accepted: 'Forfeited',
+  forfeited_we_accepted: 'Opponent won',
   we_accepted: 'Accepted',
   attempt_to_move_failed: 'Attempt to move failed',
   timed_out_waiting_for_our_move: 'Timed out waiting for our move',
@@ -97,7 +97,16 @@ export function spacePokerTerminalCommentary(
   terminalState: SpTerminalState,
   showdownResult: bigint | null,
   terminalOutcome: SettlementOutcome | null,
+  opponentLabel = 'The opponent',
+  potLabel?: string,
 ): string {
+  const opponentWonAfterFold = `You folded. ${opponentLabel} won${potLabel ? ` ${potLabel}` : ' the hand'}.`;
+  if (
+    terminalOutcome === 'forfeited_skipped_reveal' ||
+    terminalOutcome === 'forfeited_we_accepted'
+  ) {
+    return opponentWonAfterFold;
+  }
   if (terminalState === 'conceded-by-opponent') {
     return 'You revealed first and the opponent conceded.';
   }
@@ -105,7 +114,7 @@ export function spacePokerTerminalCommentary(
     return 'The opponent revealed first and you conceded.';
   }
   if (terminalState === 'folded-by-opponent') return 'The opponent folded. You won the hand.';
-  if (terminalState === 'folded-by-you') return 'You folded. The opponent won the hand.';
+  if (terminalState === 'folded-by-you') return opponentWonAfterFold;
   if (terminalState === 'won-by-opponent-failure') {
     return "The opponent's final action failed. You won the hand.";
   }

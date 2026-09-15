@@ -23,6 +23,7 @@ import { jsonStringify } from '../util/jsonSafe';
 
 const PUSH_RETRY_DELAY = 30000;
 const PEER_READINESS_POLL_MS = 5000;
+const PEER_READINESS_RPC_TIMEOUT_MS = 7_000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
@@ -785,9 +786,22 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private startPeerReadinessPoll() {
     const epoch = ++this.peerPollEpoch;
     const check = async () => {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
       try {
-        const peerCount = await rpc.getFullNodePeerCount({});
+        const peerCount = await Promise.race([
+          rpc.getFullNodePeerCount({}),
+          new Promise<null>((resolve) => {
+            timeout = setTimeout(() => resolve(null), PEER_READINESS_RPC_TIMEOUT_MS);
+          }),
+        ]);
         if (epoch !== this.peerPollEpoch) return;
+        if (peerCount === null) {
+          log(
+            '[wc-blockchain] full node peer count unsupported (request timed out); assuming ready',
+          );
+          this.setReadyForPlay(true);
+          return;
+        }
         log(`[wc-blockchain] full node peer poll peerCount=${peerCount}`);
         if (peerCount > 0n) {
           this.setReadyForPlay(true);
@@ -795,7 +809,20 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         }
       } catch (e) {
         if (epoch !== this.peerPollEpoch) return;
+        const errorText = String(e).toLowerCase();
+        if (
+          errorText.includes('-32601') ||
+          errorText.includes('method not found') ||
+          errorText.includes('unsupported method') ||
+          errorText.includes('method unsupported')
+        ) {
+          log('[wc-blockchain] full node peer count unsupported; assuming ready');
+          this.setReadyForPlay(true);
+          return;
+        }
         log(`[wc-blockchain] full node peer poll error: ${String(e)}`);
+      } finally {
+        if (timeout !== null) clearTimeout(timeout);
       }
       if (epoch !== this.peerPollEpoch) return;
       this.setReadyForPlay(false);

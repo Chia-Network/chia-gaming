@@ -694,7 +694,7 @@ describe('Krunk draft continuity', () => {
         'Peer',
         100n,
       ),
-    ).toBe('We forfeited.');
+    ).toBe('Peer won 100 mojo!');
     expect(
       krunkTerminalStatus(
         {

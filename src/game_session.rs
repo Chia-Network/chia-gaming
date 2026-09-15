@@ -35,6 +35,14 @@ use crate::session_phases::types::{
     ToLocalUI, WalletSpendInterface,
 };
 
+/// Allow the coin-state index to catch up with a transaction included just
+/// before its absolute expiry height.
+pub const CHANNEL_EXPIRY_BUFFER: u64 = 6;
+
+fn channel_creation_expiry_reached(height: u64, expiry: u64) -> bool {
+    height >= expiry.saturating_add(CHANNEL_EXPIRY_BUFFER)
+}
+
 #[cfg(test)]
 use crate::session_phases::OffChainPhase;
 
@@ -940,7 +948,7 @@ impl GameSession {
         let Some(expiry) = self.state.channel_creation_expiry else {
             return;
         };
-        if height < expiry {
+        if !channel_creation_expiry_reached(height, expiry) {
             return;
         }
         self.state.channel_expired = true;
@@ -1669,6 +1677,20 @@ mod sequencing_tests {
                 Some(UnrollInitiator::Opponent),
                 Some(ChannelSemanticPhase::FinishingWaitingTimeout),
             ),
+        ));
+    }
+
+    #[test]
+    fn channel_creation_expiry_waits_for_coin_state_index_buffer() {
+        let expiry = 100;
+        assert!(!channel_creation_expiry_reached(expiry, expiry));
+        assert!(!channel_creation_expiry_reached(
+            expiry + CHANNEL_EXPIRY_BUFFER - 1,
+            expiry,
+        ));
+        assert!(channel_creation_expiry_reached(
+            expiry + CHANNEL_EXPIRY_BUFFER,
+            expiry,
         ));
     }
 

@@ -513,7 +513,7 @@ describe('canonical feature gameplay reducers', () => {
     });
   });
 
-  it('preserves an opponent on-chain reveal and appends a local flag on all-in forfeit', () => {
+  it('projects an all-in forfeit as a normal local fold', () => {
     const outcome = {
       result: 1n,
       playerHandCards: [2n, 3n, 4n, 5n, 6n],
@@ -539,14 +539,14 @@ describe('canonical feature gameplay reducers', () => {
     );
 
     expect(settled).toMatchObject({
-      terminalState: 'conceded-by-you',
+      terminalState: 'folded-by-you',
       playerHoleCards: [8n, 9n],
       opponentHoleCards: [10n, 11n],
       communityCards: [2n, 3n, 4n, 5n, 6n],
-      outcome,
+      outcome: null,
       handHistory: [
         { player: 'opponent', action: 'reveal' },
-        { player: 'you', action: 'concede' },
+        { player: 'you', action: 'fold' },
       ],
     });
   });

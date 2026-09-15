@@ -99,6 +99,15 @@ function krunkTerminalNotice(
       state.settlementOutcome === 'accept_settlement' ||
       state.settlementOutcome === 'we_accepted' ||
       state.settlementOutcome === 'settled_cleanly';
+    if (
+      state.settlementOutcome === 'forfeited_skipped_reveal' ||
+      state.settlementOutcome === 'forfeited_we_accepted'
+    ) {
+      return {
+        text: krunkWinnerMessage(opponentLabel, perPlayerStake),
+        kind: 'info',
+      };
+    }
     if (!clean) {
       return { text: krunkSettlementStatus(state.settlementOutcome, opponentLabel), kind: 'info' };
     }

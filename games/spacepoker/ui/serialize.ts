@@ -259,7 +259,10 @@ function appendHistory(current: SpacepokerHandState, entry: SpHandEntry): Spacep
   return { ...current, handHistory: [...current.handHistory, entry] };
 }
 
-function withLocalConcession(current: SpacepokerHandState): SpacepokerHandState {
+function withLocalTerminalAction(
+  current: SpacepokerHandState,
+  action: 'fold' | 'concede',
+): SpacepokerHandState {
   const last = current.handHistory[current.handHistory.length - 1];
   const replacesTerminalAction =
     last?.player === 'you' &&
@@ -267,12 +270,12 @@ function withLocalConcession(current: SpacepokerHandState): SpacepokerHandState 
       last.action === 'concede' ||
       last.action === 'reveal' ||
       last.action === 'failed');
-  if (last?.player === 'you' && last.action === 'concede') return current;
+  if (last?.player === 'you' && last.action === action) return current;
   return {
     ...current,
     handHistory: replacesTerminalAction
-      ? [...current.handHistory.slice(0, -1), { player: 'you', action: 'concede' }]
-      : [...current.handHistory, { player: 'you', action: 'concede' }],
+      ? [...current.handHistory.slice(0, -1), { player: 'you', action }]
+      : [...current.handHistory, { player: 'you', action }],
   };
 }
 
@@ -285,12 +288,20 @@ function reduceSpacepokerSettlementStateCore(
   outcome: SettlementOutcome,
 ): SpacepokerHandState {
   const voluntary = outcome === 'accept_settlement' || outcome === 'we_accepted';
-  if (isForfeitOutcome(outcome) && current.outcome !== null) {
-    return withLocalConcession({
-      ...current,
-      gameState: { handler: 5n, myTurn: false, N: 1n },
-      terminalState: 'conceded-by-you',
-    });
+  if (isForfeitOutcome(outcome)) {
+    return withLocalTerminalAction(
+      {
+        ...current,
+        gameState: {
+          handler: 6n,
+          myTurn: false,
+          N: current.gameState.N >= 1n ? current.gameState.N : 1n,
+        },
+        outcome: null,
+        terminalState: 'folded-by-you',
+      },
+      'fold',
+    );
   }
   if (outcome === 'opponent_timed_out' && current.terminalState === 'none') {
     if (current.outcome !== null && current.outcome.result > 0n) {

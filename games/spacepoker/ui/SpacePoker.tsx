@@ -136,6 +136,8 @@ export default function SpacePoker({
     sp.terminalState,
     showdownOutcome?.result ?? null,
     sp.terminalOutcome,
+    view.opponentName ?? 'Opponent',
+    sp.displayMode === 'units' ? `${sp.pot} units` : sp.formatBet(sp.pot),
   );
   const footerStatus =
     terminalCommentary || spacePokerFooterStatus(handler, turnLine) || 'Updating hand…';

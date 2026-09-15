@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use crate::common::types::{
     AllocEncoder, CoinCondition, CoinID, CoinString, Error, SpendBundle, Timeout,
 };
-use crate::game_session::{CoinObservation, DrainResult, GameSession};
+use crate::game_session::{CoinObservation, DrainResult, GameSession, CHANNEL_EXPIRY_BUFFER};
 use crate::session_phases::effects::{
     GameSessionEvent, GameSessionEventQueue, TimeoutClaimSemantic,
 };
@@ -299,10 +299,6 @@ pub struct TransactionManager<C> {
 /// Default confirmation depth.  Chosen to be far deeper than any plausible
 /// Chia reorg.
 pub const DEFAULT_CONFIRMATION_DEPTH: u64 = 32;
-
-/// Extra blocks after an absolute transaction expiry before a reorg replay is
-/// no longer viable.
-pub const CHANNEL_EXPIRY_BUFFER: u64 = 6;
 
 /// Upper bound on any height reported to the manager.  Real Chia heights are in
 /// the single-digit millions and grow ~1.6M/year, so this is absurdly generous
@@ -877,7 +873,8 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 if !tx.spent_coin_ids.contains(&parent) {
                     return true;
                 }
-                if matches!(tx.expiry, Some(e) if height >= e + CHANNEL_EXPIRY_BUFFER) {
+                if matches!(tx.expiry, Some(e) if height >= e.saturating_add(CHANNEL_EXPIRY_BUFFER))
+                {
                     return false;
                 }
                 resubmit = Some((tx.bundle.clone(), tx.expiry));
