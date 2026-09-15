@@ -97,6 +97,11 @@ interface RateBudget {
   bytes: number;
 }
 
+interface ConnectionAttemptBudget {
+  windowStartedAt: number;
+  attempts: number;
+}
+
 const HUB_DISCONNECT_GRACE_MS = 3000;
 const CONNECTION_TTL_MS = 60_000;
 const PLAYER_ID_BYTES = 16;
@@ -109,7 +114,12 @@ const RECENT_CORRESPONDENT_TTL_MS = readPositiveIntegerEnv(
 const MAX_RECENT_CORRESPONDENTS = readPositiveIntegerEnv('GAME_MAX_RECENT_CORRESPONDENTS', 16);
 const MAX_TOTAL_CONNECTIONS = readPositiveIntegerEnv('HUB_MAX_TOTAL_CONNECTIONS', 2000);
 const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_IP', 8);
+const MAX_PLAYERS = readPositiveIntegerEnv('HUB_MAX_PLAYERS', 1000);
 const RATE_WINDOW_MS = readPositiveIntegerEnv('HUB_RATE_WINDOW_MS', 10_000);
+const MAX_CONNECTION_ATTEMPTS_PER_WINDOW = readPositiveIntegerEnv(
+  'HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW',
+  100,
+);
 // Rust accepts a 10 MiB peer payload; leave room for relay framing and control messages.
 const DEFAULT_GAME_BYTES_PER_WINDOW = 11 * 1024 * 1024;
 const HUB_RATE_LIMIT: RateLimit = {
@@ -124,6 +134,7 @@ const TRUST_PROXY = readBooleanEnv('HUB_TRUST_PROXY', false);
 const hubWsServer = new WebSocketServer({ noServer: true });
 const gameWsServer = new WebSocketServer({ noServer: true });
 const connectionsByIp = new Map<string, number>();
+const connectionAttemptsByIp = new Map<string, ConnectionAttemptBudget>();
 let totalConnections = 0;
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
@@ -182,6 +193,17 @@ function trackConnection(ws: WebSocket, ip: string): void {
   });
 }
 
+function isConnectionAttemptRateLimited(ip: string): boolean {
+  const now = Date.now();
+  let budget = connectionAttemptsByIp.get(ip);
+  if (!budget || now - budget.windowStartedAt >= RATE_WINDOW_MS) {
+    budget = { windowStartedAt: now, attempts: 0 };
+    connectionAttemptsByIp.set(ip, budget);
+  }
+  budget.attempts += 1;
+  return budget.attempts > MAX_CONNECTION_ATTEMPTS_PER_WINDOW;
+}
+
 function handleUpgrade(
   wsServer: WebSocketServer,
   req: IncomingMessage,
@@ -190,11 +212,17 @@ function handleUpgrade(
 ): void {
   const ip = clientIp(req);
   const ipConnections = connectionsByIp.get(ip) ?? 0;
-  if (totalConnections >= MAX_TOTAL_CONNECTIONS || ipConnections >= MAX_CONNECTIONS_PER_IP) {
+  const attemptRateLimited = isConnectionAttemptRateLimited(ip);
+  if (
+    attemptRateLimited ||
+    totalConnections >= MAX_TOTAL_CONNECTIONS ||
+    ipConnections >= MAX_CONNECTIONS_PER_IP
+  ) {
     logHubVerbose('ws_upgrade_rejected_connection_limit', {
       ip,
       total_connections: totalConnections,
       ip_connections: ipConnections,
+      attempt_rate_limited: attemptRateLimited,
     });
     rejectUpgrade(socket);
     return;
@@ -370,13 +398,21 @@ if (args.dir) {
   app.use(express.static(args.dir));
 }
 
-function sendWs(ws: WebSocket, type: string, payload: unknown): void {
+function sendSerializedWs(ws: WebSocket, type: string, serialized: string): void {
   if (ws.readyState !== WebSocket.OPEN) {
     logHub('send_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
     return;
   }
-  ws.send(JSON.stringify({ type, ...((payload as Record<string, unknown>) ?? {}) }));
+  ws.send(serialized);
   logHubVerbose('send_ws_ok', { ws_id: wsId(ws), type });
+}
+
+function sendWs(ws: WebSocket, type: string, payload: unknown): void {
+  sendSerializedWs(
+    ws,
+    type,
+    JSON.stringify({ type, ...((payload as Record<string, unknown>) ?? {}) }),
+  );
 }
 
 function definedBencodexFields(payload: unknown): Record<string, BencodexValue> {
@@ -603,8 +639,14 @@ function sendGameEvent(playerId: string, type: GameOutboundType, payload: unknow
 
 function broadcastHubUpdate(): void {
   const players = hub.getPlayers();
-  for (const [playerId] of hubConnections) {
-    sendHubEvent(playerId, 'hub_update', { players });
+  const serialized = JSON.stringify({ type: 'hub_update', players });
+  for (const [playerId, ws] of hubConnections) {
+    logHubVerbose('send_hub_event', {
+      player_id: playerId,
+      ws_id: wsId(ws),
+      type: 'hub_update',
+    });
+    sendSerializedWs(ws, 'hub_update', serialized);
   }
 }
 
@@ -670,8 +712,11 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
     sendWs(ws, 'error', { error: 'Missing hub session.' });
     return;
   }
+  if (wsHubMeta.has(ws)) {
+    sendWs(ws, 'error', { error: 'This hub socket has already joined.' });
+    return;
+  }
 
-  const playerId = ensureSession(session_id);
   const suppliedAlias = alias === undefined ? undefined : normalizeAlias(alias);
   if (alias !== undefined && !suppliedAlias) {
     sendWs(ws, 'error', { error: `Alias must be 1-${MAX_ALIAS_BYTES} UTF-8 bytes.` });
@@ -683,6 +728,16 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
     return;
   }
 
+  const existingPlayerId = sessionToPlayer.get(session_id);
+  if (
+    (!existingPlayerId || !hub.players[existingPlayerId]) &&
+    Object.keys(hub.players).length >= MAX_PLAYERS
+  ) {
+    sendWs(ws, 'error', { error: 'The hub player limit has been reached.' });
+    return;
+  }
+
+  const playerId = existingPlayerId ?? ensureSession(session_id);
   wsHubMeta.set(ws, { playerId, sessionId: session_id });
   cancelPendingHubLeave(playerId);
   const previous = hubConnections.get(playerId);
@@ -1044,6 +1099,11 @@ function onSetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'set_
 // --- Game channel handlers ---
 
 function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'identify' }>): void {
+  if (wsGameMeta.has(ws)) {
+    logHub('identify_drop_already_identified', { ws_id: wsId(ws) });
+    ws.close(4003, 'already_identified');
+    return;
+  }
   const playerId = ensureSession(msg.session_id);
   logHub('identify', {
     ws_id: wsId(ws),
@@ -1423,10 +1483,19 @@ function sweepGameConnections(now: number): void {
   }
 }
 
+function pruneConnectionAttemptBudgets(now: number): void {
+  for (const [ip, budget] of connectionAttemptsByIp) {
+    if (now - budget.windowStartedAt >= RATE_WINDOW_MS) {
+      connectionAttemptsByIp.delete(ip);
+    }
+  }
+}
+
 const sweepTimer = setInterval(() => {
   const now = Date.now();
   const hubChanged = sweepHubConnections(now);
   sweepGameConnections(now);
+  pruneConnectionAttemptBudgets(now);
   pruneRecentCorrespondents(now);
   if (hubChanged) {
     broadcastHubUpdate();

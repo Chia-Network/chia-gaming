@@ -57,6 +57,8 @@ async function startHub(env = {}) {
         PORT: String(port),
         HUB_MAX_TOTAL_CONNECTIONS: '2000',
         HUB_MAX_CONNECTIONS_PER_IP: '8',
+        HUB_MAX_PLAYERS: '1000',
+        HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW: '100',
         HUB_TRUST_PROXY: '0',
         HUB_RATE_WINDOW_MS: '10000',
         HUB_MAX_MESSAGES_PER_WINDOW: '100',
@@ -342,6 +344,22 @@ test('post-identification game controls use the bound socket session', async () 
 
     assert.equal((await closed).type, 'closed');
     await closeWs(game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('one game socket cannot identify more than one player', async () => {
+  const hub = await startHub();
+  try {
+    const game = await identifyGame(hub.origin, 'single-game-socket-first-player');
+    const closed = nextClose(game);
+    sendGame(game, {
+      type: 'identify',
+      session_id: sessionBytes('single-game-socket-second-player'),
+      busy: false,
+    });
+    assert.deepEqual(await closed, { code: 4003, reason: 'already_identified' });
   } finally {
     await hub.stop();
   }
@@ -725,6 +743,65 @@ test('same secret session_id keeps the same player_id across hub leave and rejoi
   }
 });
 
+test('one hub socket cannot join more than one player', async () => {
+  const hub = await startHub();
+  try {
+    const ws = await openWs(hub.origin, '/ws/hub');
+    const joinedPromise = nextJson(ws, (msg) => msg.type === 'joined');
+    const firstUpdatePromise = nextJson(ws, (msg) => msg.type === 'hub_update');
+    sendJson(ws, {
+      type: 'join',
+      session_id: sessionKey('single-socket-first-player'),
+      alias: 'Alice',
+    });
+    const joined = await joinedPromise;
+    await firstUpdatePromise;
+
+    const errorPromise = nextJson(ws, (msg) => msg.type === 'error');
+    sendJson(ws, {
+      type: 'join',
+      session_id: sessionKey('single-socket-second-player'),
+      alias: 'Mallory',
+    });
+    assert.match((await errorPromise).error, /already joined/);
+
+    const updatePromise = nextJson(ws, (msg) => msg.type === 'hub_update');
+    sendJson(ws, { type: 'change_alias', newAlias: 'Alice Again' });
+    const update = await updatePromise;
+    assert.deepEqual(update.players, [{ id: joined.id, alias: 'Alice Again', status: 'waiting' }]);
+
+    await closeWs(ws);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('hub player cap rejects new players while allowing reconnects', async () => {
+  const hub = await startHub({ HUB_MAX_PLAYERS: '2' });
+  try {
+    const alice = await joinHub(hub.origin, 'player-cap-alice', 'Alice');
+    const bob = await joinHub(hub.origin, 'player-cap-bob', 'Bob');
+    const rejected = await openWs(hub.origin, '/ws/hub');
+    const errorPromise = nextJson(rejected, (msg) => msg.type === 'error');
+    sendJson(rejected, {
+      type: 'join',
+      session_id: sessionKey('player-cap-carol'),
+      alias: 'Carol',
+    });
+    assert.match((await errorPromise).error, /player limit/);
+
+    await closeWs(alice.ws);
+    const reconnected = await joinHub(hub.origin, 'player-cap-alice', 'Alice');
+    assert.equal(reconnected.id, alice.id);
+
+    await closeWs(reconnected.ws);
+    await closeWs(bob.ws);
+    await closeWs(rejected);
+  } finally {
+    await hub.stop();
+  }
+});
+
 test('identify ignores client-supplied player_id and assigns from the secret', async () => {
   const hub = await startHub();
   try {
@@ -817,6 +894,24 @@ test('per-IP connection cap ignores forwarded addresses from untrusted clients',
     );
 
     await closeWs(first);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('per-IP connection attempt limit rejects reconnect churn', async () => {
+  const hub = await startHub({
+    HUB_MAX_TOTAL_CONNECTIONS: '10',
+    HUB_MAX_CONNECTIONS_PER_IP: '10',
+    HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW: '2',
+  });
+  try {
+    const first = await openWs(hub.origin, '/ws/hub');
+    await closeWs(first);
+    const second = await openWs(hub.origin, '/ws/hub');
+    await closeWs(second);
+
+    await assert.rejects(openWs(hub.origin, '/ws/hub'), /Unexpected server response: 503/);
   } finally {
     await hub.stop();
   }
@@ -927,13 +1022,8 @@ test('closing a stale replaced game socket does not notify correspondents', asyn
       reason: 'replaced_by_new_connection',
     });
 
-    const barrier = nextGame(sender.game, (msg) => msg.type === 'registered');
-    sendGame(sender.game, {
-      type: 'identify',
-      session_id: sessionBytes('replace-sender'),
-      busy: false,
-    });
-    await barrier;
+    const barrier = await identifyGame(hub.origin, 'replace-close-barrier');
+    await closeWs(barrier);
     assert.deepEqual(unavailablePlayers, []);
     sender.game.off('message', recordUnavailable);
 
