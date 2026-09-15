@@ -21,6 +21,7 @@ use crate::referee::types::{
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeFixedContext, StateUpdateResult,
+    ValidationInfoHash,
 };
 use crate::referee::Referee;
 
@@ -415,7 +416,6 @@ impl MyTurnReferee {
         let result = Rc::new(result);
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
-        let incoming = result.incoming_move_state_update_program.clone();
         let outgoing = result.outgoing_move_state_update_program.clone();
         let basic = GameMoveStateInfo {
             move_made: result.move_bytes.clone(),
@@ -424,68 +424,62 @@ impl MyTurnReferee {
                 .map_err(|_| Error::StrErr("max move size exceeds u32".to_string()))?,
         };
         let prev_hash = ref_puzzle_args.game_move.validation_info_hash.clone();
-        // Terminal moves (nil incoming validator) commit a nil next infohash.
-        // The outgoing validator may raise on nil evidence — CalPoker `e.clsp`
-        // requires the waiter's 5-card selections — so extraction is skipped.
-        let (game_move_details, new_state_following_my_move) = if incoming.is_nil() {
-            (
-                crate::referee::nil_move_details(basic),
-                state_to_update.clone(),
-            )
+        let placeholder_info_hash = if result.incoming_move_state_update_program.is_nil() {
+            ValidationInfoHash::None
         } else {
-            let placeholder = GameMoveDetails {
-                basic: basic.clone(),
-                validation_info_hash: prev_hash.clone(),
-                validation_program_hash: None,
-            };
-            let extract_args = Rc::new(RefereePuzzleArgs {
-                mover_pubkey: self.fixed.their_referee_pubkey.clone(),
-                waiter_pubkey: self.fixed.my_identity.public_key.clone(),
-                game_move: placeholder,
-                validation_program: outgoing.clone(),
-                previous_validation_info_hash: prev_hash.clone(),
-                ..ref_puzzle_args.clone()
-            });
-            let parsed = match self.run_validator_for_my_move_parsed(
-                allocator,
-                extract_args,
-                state_to_update.clone(),
-                Evidence::nil()?,
-            ) {
-                Ok(parsed) => parsed,
-                Err(e) => {
-                    if self.enable_cheating.is_some() {
-                        ParsedValidatorResult {
-                            new_state: Some(state_to_update.clone()),
-                            next_validator_hash: None,
-                            next_max_move_size: 0,
-                        }
-                    } else {
-                        return Err(e);
-                    }
-                }
-            };
-            if parsed.new_state.is_none() && self.enable_cheating.is_none() {
-                return Err(Error::StrErr(format!(
-                    "pre-send validation rejected our move: nonce={}, move_len={}, mover_share={:?}, state={:?}",
-                    args.nonce,
-                    result.move_bytes.len(),
-                    result.mover_share,
-                    state_to_update,
-                )));
-            }
-            let new_state_from_validator = parsed
-                .new_state
-                .clone()
-                .unwrap_or_else(|| state_to_update.clone());
-            let details = crate::referee::game_move_details_from_transition(
-                allocator,
-                basic,
-                parsed.next_validator_hash,
-                &new_state_from_validator,
-            );
-            (details, new_state_from_validator)
+            prev_hash.clone()
         };
+        let placeholder = GameMoveDetails {
+            basic: basic.clone(),
+            validation_info_hash: placeholder_info_hash,
+            validation_program_hash: None,
+        };
+        let extract_args = Rc::new(RefereePuzzleArgs {
+            mover_pubkey: self.fixed.their_referee_pubkey.clone(),
+            waiter_pubkey: self.fixed.my_identity.public_key.clone(),
+            game_move: placeholder,
+            validation_program: outgoing.clone(),
+            previous_validation_info_hash: prev_hash.clone(),
+            ..ref_puzzle_args.clone()
+        });
+        let parsed = match self.run_validator_for_my_move_parsed(
+            allocator,
+            extract_args,
+            state_to_update.clone(),
+            Evidence::nil()?,
+        ) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                if self.enable_cheating.is_some() {
+                    ParsedValidatorResult {
+                        new_state: Some(state_to_update.clone()),
+                        next_validator_hash: None,
+                        next_max_move_size: 0,
+                    }
+                } else {
+                    return Err(e);
+                }
+            }
+        };
+        if parsed.new_state.is_none() && self.enable_cheating.is_none() {
+            return Err(Error::StrErr(format!(
+                "pre-send validation rejected our move: nonce={}, move_len={}, mover_share={:?}, state={:?}",
+                args.nonce,
+                result.move_bytes.len(),
+                result.mover_share,
+                state_to_update,
+            )));
+        }
+        let new_state_following_my_move = parsed
+            .new_state
+            .clone()
+            .unwrap_or_else(|| state_to_update.clone());
+        let game_move_details = crate::referee::game_move_details_from_transition(
+            allocator,
+            basic,
+            parsed.next_validator_hash,
+            &new_state_following_my_move,
+        );
 
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.their_referee_pubkey.clone(),

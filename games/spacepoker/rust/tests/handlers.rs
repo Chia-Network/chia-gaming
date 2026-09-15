@@ -381,25 +381,25 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
         }
 
         let is_terminal = my_turn.their_turn_handler == NodePtr::NIL;
+        let (code, validator_result) = run_validator(
+            allocator,
+            my_turn.validator_for_my_move_hash,
+            my_turn.move_bytes_node,
+            original_mover_share,
+            my_turn.max_move_size,
+            state,
+            my_turn.validator_for_my_move,
+            NodePtr::NIL,
+        );
+        assert_eq!(
+            code,
+            MoveCode::MakeMove,
+            "step {step_idx}: validator rejected our move (player={})",
+            if is_alice { "alice" } else { "bob" }
+        );
         let new_state = if is_terminal {
             state
         } else {
-            let (code, validator_result) = run_validator(
-                allocator,
-                my_turn.validator_for_my_move_hash,
-                my_turn.move_bytes_node,
-                original_mover_share,
-                my_turn.max_move_size,
-                state,
-                my_turn.validator_for_my_move,
-                NodePtr::NIL,
-            );
-            assert_eq!(
-                code,
-                MoveCode::MakeMove,
-                "step {step_idx}: validator rejected our move (player={})",
-                if is_alice { "alice" } else { "bob" }
-            );
             let validator_items =
                 proper_list(allocator.allocator(), validator_result, true).unwrap();
             validator_items[1]
