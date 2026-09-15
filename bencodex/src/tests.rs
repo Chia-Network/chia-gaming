@@ -351,6 +351,30 @@ fn non_decimal_integer_grammars_are_rejected_by_both_decoders() {
 }
 
 #[test]
+fn noncanonical_string_lengths_are_rejected_by_both_decoders() {
+    assert!(parse(b"01:x").is_err());
+    assert!(from_slice::<serde_bytes::ByteBuf>(b"01:x").is_err());
+    assert!(parse(b"u01:x").is_err());
+    assert!(from_slice::<String>(b"u01:x").is_err());
+}
+
+#[test]
+fn noncanonical_dictionary_order_is_rejected_by_both_decoders() {
+    use std::collections::BTreeMap;
+
+    for input in [
+        b"du1:bi1eu1:ai2ee".as_slice(),
+        b"du1:ai1eu1:ai2ee".as_slice(),
+    ] {
+        assert!(parse(input).is_err(), "{input:?}");
+        assert!(
+            from_slice::<BTreeMap<String, i128>>(input).is_err(),
+            "{input:?}"
+        );
+    }
+}
+
+#[test]
 fn trailing_bytes_error() {
     assert!(from_slice::<u64>(b"i42eextra").is_err());
 }

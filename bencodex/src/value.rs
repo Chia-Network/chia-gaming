@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::{parse_integer, Error, Limits};
+use crate::{parse_integer, parse_length, Error, Limits};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -170,23 +170,8 @@ impl Parser<'_> {
 
     fn sized_after_first(&mut self, _first: u8) -> Result<Vec<u8>, Error> {
         let start = self.offset - 1;
-        while self.peek()? != b':' {
-            if !self.take()?.is_ascii_digit() {
-                return Err(Error::InvalidData("invalid string length".to_string()));
-            }
-        }
-        let end = self.offset;
-        self.offset += 1;
-        let digits = &self.input[start..end];
-        if digits.len() > 1 && digits[0] == b'0' {
-            return Err(Error::InvalidData(
-                "non-canonical string length".to_string(),
-            ));
-        }
-        let length = std::str::from_utf8(digits)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .ok_or_else(|| Error::InvalidData("invalid string length".to_string()))?;
+        let (length, prefix_length) = parse_length(&self.input[start..])?;
+        self.offset = start + prefix_length;
         let end = self.offset.checked_add(length).ok_or(Error::Eof)?;
         let bytes = self.input.get(self.offset..end).ok_or(Error::Eof)?.to_vec();
         self.offset = end;

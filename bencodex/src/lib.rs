@@ -41,5 +41,26 @@ pub(crate) fn parse_integer(text: &str) -> Result<i128, Error> {
         .map_err(|_| Error::InvalidData(format!("cannot parse integer: {text}")))
 }
 
+pub(crate) fn parse_length(input: &[u8]) -> Result<(usize, usize), Error> {
+    let colon = input
+        .iter()
+        .position(|&byte| byte == b':')
+        .ok_or_else(|| Error::InvalidData("missing ':' in string length".to_string()))?;
+    let digits = &input[..colon];
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return Err(Error::InvalidData("invalid string length".to_string()));
+    }
+    if digits.len() > 1 && digits[0] == b'0' {
+        return Err(Error::InvalidData(
+            "non-canonical string length".to_string(),
+        ));
+    }
+    let length = std::str::from_utf8(digits)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or_else(|| Error::InvalidData("invalid string length".to_string()))?;
+    Ok((length, colon + 1))
+}
+
 #[cfg(test)]
 mod tests;

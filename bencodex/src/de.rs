@@ -1,6 +1,6 @@
 use serde::de::{self, Deserialize, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 
-use crate::{parse_integer, Error, Limits};
+use crate::{parse_integer, parse_length, Error, Limits};
 
 pub fn from_slice<'de, T: Deserialize<'de>>(input: &'de [u8]) -> Result<T, Error> {
     from_slice_with_limits(input, Limits::default())
@@ -96,17 +96,7 @@ impl<'de> Deserializer<'de> {
     }
 
     fn parse_bytestring(&mut self) -> Result<&'de [u8], Error> {
-        let colon = self
-            .input
-            .iter()
-            .position(|&b| b == b':')
-            .ok_or_else(|| Error::InvalidData("missing ':' in bytestring".into()))?;
-        let len_str = std::str::from_utf8(&self.input[..colon])
-            .map_err(|_| Error::InvalidData("non-utf8 in bytestring length".into()))?;
-        let len: usize = len_str
-            .parse()
-            .map_err(|_| Error::InvalidData(format!("bad bytestring length: {len_str}")))?;
-        let start = colon + 1;
+        let (len, start) = parse_length(self.input)?;
         let end = start.checked_add(len).ok_or(Error::Eof)?;
         if self.input.len() < end {
             return Err(Error::Eof);
@@ -122,6 +112,33 @@ impl<'de> Deserializer<'de> {
         std::str::from_utf8(bytes)
             .map_err(|_| Error::InvalidData("invalid utf-8 in unicode string".into()))
     }
+
+    fn peek_canonical_key(&self) -> Result<CanonicalKey<'de>, Error> {
+        let (kind, length_input, tag_length) = match self.peek()? {
+            b'u' => (1, &self.input[1..], 1),
+            b'0'..=b'9' => (0, self.input, 0),
+            _ => {
+                return Err(Error::InvalidData(
+                    "dictionary keys must be bytes or text".to_string(),
+                ));
+            }
+        };
+        let (length, prefix_length) = parse_length(length_input)?;
+        let start = tag_length + prefix_length;
+        let end = start.checked_add(length).ok_or(Error::Eof)?;
+        let bytes = self.input.get(start..end).ok_or(Error::Eof)?;
+        if kind == 1 {
+            std::str::from_utf8(bytes)
+                .map_err(|_| Error::InvalidData("invalid utf-8 text".to_string()))?;
+        }
+        Ok(CanonicalKey { kind, bytes })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct CanonicalKey<'de> {
+    kind: u8,
+    bytes: &'de [u8],
 }
 
 impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
@@ -168,7 +185,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             b'd' => {
                 self.begin_container()?;
                 self.advance(1);
-                let result = visitor.visit_map(DictAccess { de: self });
+                let result = visitor.visit_map(DictAccess {
+                    de: self,
+                    previous_key: None,
+                });
                 self.end_container();
                 let result = result?;
                 self.consume_end()?;
@@ -348,7 +368,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         if self.peek()? == b'd' {
             self.begin_container()?;
             self.advance(1);
-            let result = visitor.visit_map(DictAccess { de: self });
+            let result = visitor.visit_map(DictAccess {
+                de: self,
+                previous_key: None,
+            });
             self.end_container();
             let result = result?;
             self.consume_end()?;
@@ -465,6 +488,7 @@ impl<'de> SeqAccess<'de> for BytesSeqAccess<'de> {
 
 struct DictAccess<'a, 'de> {
     de: &'a mut Deserializer<'de>,
+    previous_key: Option<CanonicalKey<'de>>,
 }
 
 impl<'a, 'de> MapAccess<'de> for DictAccess<'a, 'de> {
@@ -477,6 +501,16 @@ impl<'a, 'de> MapAccess<'de> for DictAccess<'a, 'de> {
         if self.de.peek()? == b'e' {
             return Ok(None);
         }
+        let key = self.de.peek_canonical_key()?;
+        if self
+            .previous_key
+            .is_some_and(|previous_key| previous_key >= key)
+        {
+            return Err(Error::InvalidData(
+                "dictionary keys are not in canonical order".to_string(),
+            ));
+        }
+        self.previous_key = Some(key);
         seed.deserialize(&mut *self.de).map(Some)
     }
 
@@ -585,7 +619,10 @@ impl<'a, 'de> de::VariantAccess<'de> for DictVariantValue<'a, 'de> {
         if self.de.peek()? == b'd' {
             self.de.begin_container()?;
             self.de.advance(1);
-            let result = visitor.visit_map(DictAccess { de: self.de });
+            let result = visitor.visit_map(DictAccess {
+                de: self.de,
+                previous_key: None,
+            });
             self.de.end_container();
             let result = result?;
             self.de.consume_end()?;
