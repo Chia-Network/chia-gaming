@@ -8,6 +8,7 @@ import { log } from './log';
 import { isPlayerMainWebContents } from './mainWindow';
 import { isNavigationAllowed } from './navigationPolicy';
 import { originOfUrl, type PolicyRef } from './networkPolicy';
+import { installWebContentsTransportSecurity } from './transportSecurity';
 
 /**
  * `navigator.clipboard.writeText` is gated on this permission in Electron, and
@@ -71,6 +72,8 @@ function popupWebPreferences(): WebPreferences {
 
 export function installWebContentsSecurity(policy: PolicyRef): void {
   app.on('web-contents-created', (_event, contents) => {
+    installWebContentsTransportSecurity(contents);
+
     contents.setWindowOpenHandler((details) => {
       const origin = originOfUrl(details.url);
       if (origin !== null && policy.current.allowedPopupOrigins.has(origin)) {

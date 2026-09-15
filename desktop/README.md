@@ -167,6 +167,12 @@ the WalletConnect endpoints `sign-client` actually reaches: the `.com` and
 `.org` relays, the Verify API, and `pulse.walletconnect.org`. Requests on
 `chiagaming://` are answered from disk and never touch the network stack.
 
+Chromium transports that do not pass through `onBeforeRequest` are restricted
+separately. WebTransport is disabled before Chromium starts. Every web contents
+uses Electron's `disable_non_proxied_udp` WebRTC IP policy, which suppresses
+local host candidates and direct UDP rather than pretending WebRTC is covered
+by the origin allowlist.
+
 ### Hub trust
 
 A hub is third-party infrastructure the player is meant to choose, so the
