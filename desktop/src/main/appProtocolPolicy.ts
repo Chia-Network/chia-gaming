@@ -40,6 +40,9 @@ export function isAppSchemeRequestAllowed(request: AppSchemeRequest): boolean {
   if (fetchSite === 'cross-site') {
     return isOAuthCallbackPath(url.pathname) && isDocumentNavigation(request, url.pathname);
   }
+  if (fetchSite !== null) {
+    return false;
+  }
 
   const origin = request.headers.get('origin');
   if (origin) {
@@ -48,5 +51,7 @@ export function isAppSchemeRequestAllowed(request: AppSchemeRequest): boolean {
   if (request.referrer && request.referrer !== 'about:client') {
     return isAppUrl(request.referrer);
   }
-  return isDocumentNavigation(request, url.pathname);
+  // Electron omits initiator metadata from protocol.handle requests made by
+  // the app document, including stylesheet and fetch requests.
+  return true;
 }

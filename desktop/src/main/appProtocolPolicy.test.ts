@@ -85,6 +85,7 @@ describe('app protocol policy', () => {
       ),
       true,
     );
-    assert.equal(isAppSchemeRequestAllowed(request('chiagaming://app/index.js', {})), false);
+    assert.equal(isAppSchemeRequestAllowed(request('chiagaming://app/index.html', {})), true);
+    assert.equal(isAppSchemeRequestAllowed(request('chiagaming://app/index.js', {})), true);
   });
 });
