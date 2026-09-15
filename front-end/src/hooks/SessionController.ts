@@ -1564,11 +1564,19 @@ export class SessionController implements PollingGameSession {
     const timer = setTimeout(() => {
       this.durabilityFlushTimer = null;
       this.durabilityFlushScheduled = false;
+      this.traceReloadStall(
+        `durability-timer-enter queue=${this.eventQueue.length} drain=${this.drainScheduled}`,
+      );
       if (this.drainScheduled || this.eventQueue.length > 0) {
+        this.traceReloadStall('durability-timer-reschedule');
         this.scheduleDurabilityFlush();
         return;
       }
-      void this.flushDurabilityAndSend();
+      this.traceReloadStall('durability-flush-call-before');
+      void this.flushDurabilityAndSend().then(
+        () => this.traceReloadStall('durability-flush-call-after'),
+        () => this.traceReloadStall('durability-flush-call-rejected'),
+      );
     }, 0);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
     this.durabilityFlushTimer = timer;
@@ -1625,6 +1633,9 @@ export class SessionController implements PollingGameSession {
   }
 
   private async performDurabilityFlushAndSend(): Promise<void> {
+    this.traceReloadStall(
+      `durability-perform-enter immediate=${this.needsImmediateDurability} outbound=${this.pendingOutboundSends.length} acks=${this.pendingAcks.length}`,
+    );
     if (this.protocolStopped) return;
     if (
       !this.needsImmediateDurability &&
@@ -1646,14 +1657,19 @@ export class SessionController implements PollingGameSession {
         );
       }
       try {
+        this.traceReloadStall('durability-save-call-before');
         const saveRequest = Promise.resolve(this.onSaveNeeded());
+        this.traceReloadStall('durability-save-call-after');
         void saveRequest.catch(() => {});
         // onSaveNeeded must update the in-memory session synchronously before
         // returning its Promise (see flushPendingSave). Flushing first then
         // persists that snapshot; awaiting the Promise only waits for the
         // outer debounce settlement.
+        this.traceReloadStall('durability-session-flush-before');
         await flushSessionSave();
+        this.traceReloadStall('durability-session-flush-after');
         await saveRequest;
+        this.traceReloadStall('durability-save-await-after');
       } catch (error) {
         const detail = extractErrorMessage(error);
         const warning = `Session storage failed: ${detail}. Protocol messages remain queued until storage succeeds.`;
@@ -1669,6 +1685,9 @@ export class SessionController implements PollingGameSession {
       const acks = this.pendingAcks.splice(0, ackCount);
       const failedOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
       const failedAcks: bigint[] = [];
+      this.traceReloadStall(
+        `durability-send-before outbound=${outbound.length} acks=${acks.length}`,
+      );
       for (const item of outbound) {
         if (!this.sendMessage(item.msgno, item.msg)) {
           failedOutbound.push(item);
@@ -1681,6 +1700,9 @@ export class SessionController implements PollingGameSession {
           failedAcks.push(ack);
         }
       }
+      this.traceReloadStall(
+        `durability-send-after failed-outbound=${failedOutbound.length} failed-acks=${failedAcks.length}`,
+      );
       if (failedOutbound.length > 0 || failedAcks.length > 0) {
         log(
           `[wasm] hub send failed after durability: outbound=${failedOutbound.length} acks=${failedAcks.length}; left queued`,

@@ -521,7 +521,7 @@ export async function initSessionController(
   const diagnostic = (stage: string) => reloadStallDiagnostic(uniqueId, stage);
   try {
     diagnostic('register-user-await-before');
-    const rewardPuzzleHash = await fakeBlockchainInfo.registerUser(uniqueId);
+    const rewardPuzzleHash = await fakeBlockchainInfo.registerUser(uniqueId, undefined, diagnostic);
     diagnostic('register-user-await-after');
     diagnostic('controller-constructor-before');
     const gameObject = new SessionController(

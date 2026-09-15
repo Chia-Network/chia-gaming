@@ -178,12 +178,12 @@ jobs:
               cd "${GW}"
 
               (
-                  sleep 90
+                  sleep 30
                   if kill -0 "${JEST_PID}" 2>/dev/null; then
                       echo "=== $(date -u +%H:%M:%SZ) requesting Node report from Jest pid ${JEST_PID} ==="
                       kill -USR2 "${JEST_PID}" 2>/dev/null || true
                   fi
-                  sleep "$((budget_secs - 90))"
+                  sleep "$((budget_secs - 30))"
                   if kill -0 "${JEST_PID}" 2>/dev/null; then
                       echo "=== $(date -u +%H:%M:%SZ) terminating stalled Jest pid ${JEST_PID} ==="
                       kill "${JEST_PID}" 2>/dev/null || true
@@ -229,14 +229,10 @@ jobs:
                   *) file_timeout_secs=150 ;;
               esac
               echo "=== $(date -u +%H:%M:%SZ) ${spec} (${file_timeout_secs}s) ==="
-              if [[ "${spec}" == *reload_injection* ]]; then
-                  run_reload_jest \
-                      "${file_timeout_secs}" \
-                      "${spec}" \
-                      "${spec#front-end/}"
-              else
-                  timeout --kill-after=10s "${file_timeout_secs}s" stdbuf -oL -eL pnpm --filter chia-gaming-fe exec jest --runInBand --silent=false --verbose --useStderr --ci --forceExit -- "${spec#front-end/}"
-              fi
+              run_reload_jest \
+                  "${file_timeout_secs}" \
+                  "${spec}" \
+                  "${spec#front-end/}"
           done
 
       - name: Archive Node diagnostic reports
