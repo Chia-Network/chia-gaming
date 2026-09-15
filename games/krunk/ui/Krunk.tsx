@@ -537,8 +537,8 @@ const Krunk: React.FC<KrunkProps> = ({
     bobInHand &&
     canQueueKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
 
-  // Persist the dequeue before attempting the move so a rejected word cannot
-  // be restored from the action checkpoint and submitted in a retry loop.
+  // Submit queued input when protocol authority advances to Bob's guess turn.
+  // The durable queued hand remains the rollback checkpoint until Rust accepts.
   useEffect(() => {
     if (!interactive) return;
     if (!isBobGuessPhase || guessQueue.length === 0) return;

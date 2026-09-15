@@ -357,7 +357,6 @@ export function useKrunkHand(
       return;
     const [word, ...queuedGuesses] = cur.queuedGuesses;
     const dequeued = { ...cur, queuedGuesses };
-    commitStateChange({ ...cur, queuedGuesses: [] });
     commitLocalAction(
       {
         ...dequeued,
@@ -367,7 +366,7 @@ export function useKrunkHand(
       },
       { type: 'make-move', readable: wordToProgram(word) },
     );
-  }, [commitLocalAction, commitStateChange]);
+  }, [commitLocalAction]);
 
   return {
     gameState,
