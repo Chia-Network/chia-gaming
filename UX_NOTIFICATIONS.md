@@ -34,7 +34,7 @@ enrichment, settlement, and whole-group removal therefore update the owning
 instance or group atomically. Version-20 saves persist only `gameInstances` plus
 `lastDisplayedGameId` for protocol presentation. There are no aggregate
 current-game presentation fields and no migration from older records:
-incompatible alpha records are discarded.
+incompatible records are discarded.
 
 **Important naming note:** this document sometimes uses conceptual UX labels
 like "OpponentMoved" for readability. The canonical wire model in Rust is

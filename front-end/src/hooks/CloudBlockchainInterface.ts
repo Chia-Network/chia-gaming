@@ -57,7 +57,7 @@ const SR_POLL_MS = 1500;
 
 /**
  * Broadcast statuses the Cloud Wallet API returns for an accepted spend. Any
- * other status is treated as a rejection (fail fast for alpha); if the API uses
+ * other status is treated as a rejection (fail fast during early beta); if the API uses
  * a word not listed here, the thrown "rejected: status=..." message names it so
  * the allowlist can be corrected.
  */
