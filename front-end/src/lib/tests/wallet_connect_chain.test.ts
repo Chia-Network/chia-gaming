@@ -62,12 +62,12 @@ describe('WalletConnect chain id follows the network preference', () => {
     expect(getChainId()).toBe('chia:mainnet');
   });
 
-  it('requests peer count as optional and keeps it out of required methods', () => {
+  it('proposes every method as optional while retaining required-method validation', () => {
     expect(getRequiredNamespaces().chia.methods).toEqual(
       Object.values(ChiaMethod).filter((method) => method !== ChiaMethod.GetFullNodePeerCount),
     );
     expect(getOptionalNamespaces().chia).toEqual({
-      methods: [ChiaMethod.GetFullNodePeerCount],
+      methods: Object.values(ChiaMethod),
       chains: ['chia:mainnet'],
       events: [],
     });

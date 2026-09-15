@@ -18,8 +18,6 @@ type HubIframeAuthenticationOptions = {
   messageTarget?: MessageTarget;
 };
 
-const INITIAL_CREDENTIAL_DELAY_MS = 150;
-
 export function installHubIframeAuthentication({
   iframe,
   iframeUrl,
@@ -44,10 +42,8 @@ export function installHubIframeAuthentication({
 
   iframe.addEventListener('load', sendCredentials);
   messageTarget.addEventListener('message', handleMessage);
-  const initialSend = setTimeout(sendCredentials, INITIAL_CREDENTIAL_DELAY_MS);
 
   return () => {
-    clearTimeout(initialSend);
     iframe.removeEventListener('load', sendCredentials);
     messageTarget.removeEventListener('message', handleMessage);
   };

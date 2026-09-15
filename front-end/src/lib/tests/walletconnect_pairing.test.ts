@@ -67,9 +67,6 @@ describe('WalletConnect pairing teardown', () => {
     const { uri } = await walletConnectState.startConnect();
     expect(uri).toContain('wc:abc123def@2');
     expect(mockClient.connect).toHaveBeenCalledWith({
-      requiredNamespaces: {
-        chia: { methods: [], chains: ['chia:mainnet'], events: [] },
-      },
       optionalNamespaces: {
         chia: {
           methods: ['chia_getFullNodePeerCount'],
