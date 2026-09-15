@@ -30,6 +30,7 @@ import {
   CoinOfInterestEntry,
 } from '../types/ChiaGaming';
 import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
+import { deriveHubSessionId } from '../services/hubSessionCredential';
 import {
   PeerSession,
   decodePeerAppMessage,
@@ -2091,17 +2092,33 @@ const Shell = () => {
 
   const [hubOrigin, setHubOrigin] = useState<string | null>(null);
   const [hubConnectionError, setHubConnectionError] = useState<string | null>(null);
+  const hubConnectAttemptRef = useRef(0);
+  const invalidateHubConnectAttempts = useCallback(() => {
+    hubConnectAttemptRef.current++;
+  }, []);
 
   // Connect to a hub by origin URL. Creates the hub iframe + game relay WebSocket.
   const connectToHub = useCallback(
-    (origin: string, options: { resetSession?: boolean } = {}) => {
+    async (origin: string, options: { resetSession?: boolean } = {}) => {
+      const connectAttempt = ++hubConnectAttemptRef.current;
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
       setHubConnectionError(null);
       if (options.resetSession) {
         clearSessionId();
       }
-      const hubSessionId = getSessionId();
+      let hubSessionId: string;
+      try {
+        hubSessionId = await deriveHubSessionId(getSessionId(), origin);
+      } catch (error) {
+        if (connectAttempt !== hubConnectAttemptRef.current) return;
+        setHubConnectionError(
+          error instanceof Error ? error.message : 'Failed to derive hub session credential',
+        );
+        setHubLiveness('disconnected');
+        return;
+      }
+      if (connectAttempt !== hubConnectAttemptRef.current) return;
       setSessionId(hubSessionId);
 
       setHubOrigin(origin);
@@ -2651,10 +2668,11 @@ const Shell = () => {
     }
     return () => {
       cancelled = true;
+      invalidateHubConnectAttempts();
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
     };
-  }, [bootState.kind, connectToHub]);
+  }, [bootState.kind, connectToHub, invalidateHubConnectAttempts]);
 
   // Shared connection completion
   const completeConnection = useCallback(
@@ -3718,6 +3736,7 @@ const Shell = () => {
   );
 
   const doDisconnectHub = useCallback(() => {
+    invalidateHubConnectAttempts();
     cancelPendingMatchmaking({ preserveHub: false });
     hubConnRef.current?.disconnect();
     hubConnRef.current = null;
@@ -3727,7 +3746,7 @@ const Shell = () => {
     setIframeUrl('about:blank');
     setHubLiveness(null);
     markPeerInactive();
-  }, [cancelPendingMatchmaking, markPeerInactive]);
+  }, [cancelPendingMatchmaking, invalidateHubConnectAttempts, markPeerInactive]);
 
   const doDisconnectWallet = useCallback(async () => {
     stopBalancePolling();

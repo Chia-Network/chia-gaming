@@ -114,7 +114,7 @@ dictionaries are ignored. Implementations do not accept the old descriptive
 The following named wire types are used below:
 
 - `PlayerID`: exactly 16 opaque bytes;
-- `SessionID`: exactly 16 secret bytes;
+- `SessionID`: exactly 16 secret bytes, scoped to one canonical hub origin;
 - `Alias`: non-empty UTF-8 text of at most 128 bytes.
 
 ## 5. Addressed relay messages
@@ -169,6 +169,11 @@ Sent once whenever a game WebSocket opens.
 
 `session_id` is required. `busy` reports whether the player application is
 currently unavailable for matchmaking.
+
+The player derives a distinct `SessionID` for each canonical HTTP(S) hub origin.
+The URL path, query, fragment, host casing, and default port do not create new
+credential scopes. A hub that learns its own bearer credential cannot replay it
+at a different origin.
 
 The hub assigns or recovers the player ID, binds this connection, and replies
 with `registered`. Alias ownership remains on the hub's internal interface.
