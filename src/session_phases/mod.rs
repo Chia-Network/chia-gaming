@@ -506,7 +506,7 @@ impl OffChainPhase {
                         queue_index,
                         action: failed_action,
                         source,
-                    } = failure;
+                    } = *failure;
                     let Some((failed_index, failed_action)) =
                         queue_index.zip(failed_action.as_ref())
                     else {
@@ -1039,7 +1039,7 @@ impl OffChainPhase {
     fn drain_queue_into_batch(
         &mut self,
         env: &mut ChannelEnv<'_>,
-    ) -> Result<(bool, Vec<Effect>), DrainQueueFailure> {
+    ) -> Result<(bool, Vec<Effect>), Box<DrainQueueFailure>> {
         let mut current_action = None;
         let result = self.drain_queue_into_batch_inner(env, &mut current_action);
         result.map_err(|source| {
@@ -1047,11 +1047,11 @@ impl OffChainPhase {
                 Some((index, action)) => (Some(index), Some(action)),
                 None => (None, None),
             };
-            DrainQueueFailure {
+            Box::new(DrainQueueFailure {
                 queue_index,
                 action,
                 source,
-            }
+            })
         })
     }
 
