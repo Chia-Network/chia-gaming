@@ -838,13 +838,21 @@ export class SessionController implements PollingGameSession {
       // spend falls back to a zero-fee submission rather than blocking the spend.
       let bundleToSubmit: unknown = protocolBundle;
       let appliedFee = 0n;
-      if (fee > 0n && protocolBundle && this.wc && blockchain.rpc.createFeeSpend) {
+      if (fee > 0n && protocolBundle && this.wc && blockchain.rpc.createFeeOffer) {
         const bindCoinId = await this.computeBindCoinId(protocolBundle);
+        let feeOffer: string | null = null;
         let feeSpend: unknown = null;
         let feeSpendError: string | undefined;
         if (bindCoinId) {
           try {
-            feeSpend = await blockchain.rpc.createFeeSpend(fee, bindCoinId);
+            feeOffer = await blockchain.rpc.createFeeOffer(fee, bindCoinId);
+            if (feeOffer) {
+              feeSpend = this.wc.complete_fee_offer_to_coinset_org(
+                feeOffer,
+                fee.toString(),
+                bindCoinId,
+              );
+            }
           } catch (e) {
             feeSpendError = extractErrorMessage(e);
           }
@@ -855,11 +863,10 @@ export class SessionController implements PollingGameSession {
           );
           appliedFee = fee;
         } else {
-          // The wallet couldn't produce a signed fee spend. Submitting without a
-          // fee keeps the game progressing, but the user must know their
-          // configured fee was dropped, and why (the real reason from the wallet
-          // when available, rather than a blanket "insufficient balance" guess).
-          const reason = feeSpendError ?? 'the wallet could not build a signed fee spend';
+          // The wallet couldn't produce or complete a signed fee offer.
+          // Submitting without a fee keeps the game progressing, but the user
+          // must know their configured fee was dropped and why.
+          const reason = feeSpendError ?? 'the wallet could not build a signed fee offer';
           const warning =
             `Configured fee was not applied: ${reason}. ` +
             'The transaction was submitted without a fee.';

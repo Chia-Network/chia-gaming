@@ -3,11 +3,14 @@ import { Button } from './button';
 
 const DEV_HUB = 'http://localhost:3003';
 
-function parseHubUrl(raw: string): string | null {
+export function parseHubUrl(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed) && !/^https?:\/\//i.test(trimmed)) {
+    return null;
+  }
   try {
-    const url = new URL(trimmed);
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     return url.origin;
   } catch {

@@ -12,6 +12,15 @@
     <div id="root"></div>
     <script>
       (function () {
+        if (window.top !== window) {
+          document.getElementById('root').innerHTML =
+            '<main style="box-sizing:border-box;max-width:40rem;margin:4rem auto;padding:0 1.5rem;font-family:system-ui,sans-serif;line-height:1.5;color:#b91c1c">' +
+            '<h1 style="font-size:1.25rem">This is a player URL, not a hub URL</h1>' +
+            '<p>The Chia Gaming player cannot run inside the hub frame. Go back and enter the hub address instead (for example, <code>https://hub.example.com</code>).</p>' +
+            '</main>';
+          return;
+        }
+
         fetch('/build-meta.json')
           .then(function (r) {
             return r.json();

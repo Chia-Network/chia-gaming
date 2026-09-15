@@ -123,11 +123,11 @@ export class BlockchainPoller {
           () => adapter.spend(blob, spendBundle, changePuzzleHash, source, fee),
           true,
         ),
-      createFeeSpend: adapter.createFeeSpend
+      createFeeOffer: adapter.createFeeOffer
         ? (fee, concurrentSpendCoinId) =>
             this.enqueueRpc(
-              'createFeeSpend',
-              () => adapter.createFeeSpend!(fee, concurrentSpendCoinId),
+              'createFeeOffer',
+              () => adapter.createFeeOffer!(fee, concurrentSpendCoinId),
               true,
             )
         : undefined,

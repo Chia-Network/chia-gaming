@@ -241,6 +241,11 @@ export interface WasmConnection {
   convert_spend_to_coinset_org: (spend: string) => unknown;
   aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
+  complete_fee_offer_to_coinset_org: (
+    offer: string,
+    fee: string,
+    protocol_coin_id: string,
+  ) => unknown;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
     puzzle_hash: string,
@@ -521,13 +526,11 @@ export interface InternalBlockchainInterface {
     source?: string,
     fee?: bigint,
   ): Promise<string>;
-  // Build a standalone, wallet-signed fee-paying spend bundle bound to the
-  // given coin via ASSERT_CONCURRENT_SPEND. Returns null when no fee spend is
-  // needed or the wallet address is not resolved yet. Throws when the wallet
-  // fails to produce the spend (unsynced, insufficient funds, RPC error) so the
-  // caller can surface the real reason instead of silently dropping the fee.
-  // Undefined on backends (e.g. the simulator) that do not support wallet fees.
-  createFeeSpend?(fee: bigint, concurrentSpendCoinId: string): Promise<unknown | null>;
+  // Build a signed, validate-only XCH offer whose settlement output is exactly
+  // the fee and whose maker spend reserves that fee and asserts a concurrent
+  // protocol spend. The host completes the offer output into an ephemeral burn
+  // spend before aggregation. Undefined on backends that do not support fees.
+  createFeeOffer?(fee: bigint, concurrentSpendCoinId: string): Promise<string | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

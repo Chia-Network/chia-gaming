@@ -17,12 +17,7 @@ import {
 } from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
 import { ChiaMethod } from '../constants/wallet-connect';
-import {
-  CoinsetCoin,
-  CoinsetCoinSpend,
-  TransactionRecord,
-  WalletSpendBundle,
-} from '../types/rpc/PushTransactions';
+import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 import { jsonStringify } from '../util/jsonSafe';
 
@@ -218,63 +213,6 @@ async function rootRemovalsFromSpendBundle(spendBundle: WalletSpendBundle): Prom
   );
 }
 
-function firstDefined<T>(source: Record<string, unknown>, ...keys: string[]): T | undefined {
-  for (const key of keys) {
-    const value = source[key];
-    if (value !== undefined && value !== null) return value as T;
-  }
-  return undefined;
-}
-
-// The wallet returns spend bundles over WalletConnect in camelCase
-// (`spendBundle`, `coinSpends`, `coin.parentCoinInfo`, `aggregatedSignature`),
-// but the WASM aggregator and our removal derivation both consume the coinset
-// snake_case shape. Normalize the wallet's bundle into that canonical shape once
-// here, accepting either casing, so nothing downstream has to care.
-function normalizeWalletSpendBundle(raw: unknown): WalletSpendBundle | null {
-  if (raw === null || typeof raw !== 'object') return null;
-  const bundle = raw as Record<string, unknown>;
-  const coinSpendsRaw = firstDefined<unknown[]>(bundle, 'coin_spends', 'coinSpends');
-  const aggregatedSignature = firstDefined<string>(
-    bundle,
-    'aggregated_signature',
-    'aggregatedSignature',
-  );
-  if (!Array.isArray(coinSpendsRaw) || typeof aggregatedSignature !== 'string') return null;
-
-  const coinSpends: CoinsetCoinSpend[] = [];
-  for (const entry of coinSpendsRaw) {
-    if (entry === null || typeof entry !== 'object') return null;
-    const cs = entry as Record<string, unknown>;
-    const coinRaw = cs.coin as Record<string, unknown> | undefined;
-    if (coinRaw === null || typeof coinRaw !== 'object') return null;
-    const parentCoinInfo = firstDefined<string>(coinRaw!, 'parent_coin_info', 'parentCoinInfo');
-    const puzzleHash = firstDefined<string>(coinRaw!, 'puzzle_hash', 'puzzleHash');
-    const amount = coinRaw!.amount;
-    const puzzleReveal = firstDefined<string>(cs, 'puzzle_reveal', 'puzzleReveal');
-    const solution = cs.solution as string | undefined;
-    if (
-      typeof parentCoinInfo !== 'string' ||
-      typeof puzzleHash !== 'string' ||
-      (typeof amount !== 'bigint' && typeof amount !== 'number') ||
-      typeof puzzleReveal !== 'string' ||
-      typeof solution !== 'string'
-    ) {
-      return null;
-    }
-    coinSpends.push({
-      coin: {
-        parent_coin_info: parentCoinInfo,
-        puzzle_hash: puzzleHash,
-        amount: typeof amount === 'bigint' ? amount : BigInt(amount),
-      },
-      puzzle_reveal: puzzleReveal,
-      solution,
-    });
-  }
-  return { coin_spends: coinSpends, aggregated_signature: aggregatedSignature };
-}
-
 export class RealBlockchainInterface implements InternalBlockchainInterface {
   readonly requestGapMs = WC_INTER_REQUEST_MS;
   blockchainAddressData: BlockchainInboundAddressResult;
@@ -449,55 +387,69 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async createFeeSpend(
-    fee: bigint,
-    concurrentSpendCoinId: string,
-  ): Promise<WalletSpendBundle | null> {
+  async createFeeOffer(fee: bigint, concurrentSpendCoinId: string): Promise<string | null> {
     if (fee <= 0n) return null;
-    const { puzzleHash: changePuzzleHash, address: changeAddress } = this.blockchainAddressData;
-    if (!changePuzzleHash || !changeAddress) {
-      log('[wc-blockchain] createFeeSpend skipped: no change address yet');
-      return null;
-    }
-    const coinId = concurrentSpendCoinId.startsWith('0x')
+    const protocolCoinId = concurrentSpendCoinId.startsWith('0x')
       ? concurrentSpendCoinId
       : `0x${normalizeHexString(concurrentSpendCoinId)}`;
     try {
-      // push=false so the wallet signs the fee spend (auto_sign_txs) but does
-      // not broadcast it. We aggregate it into the protocol bundle ourselves and
-      // push the combined bundle. ASSERT_CONCURRENT_SPEND binds this fee spend to
-      // a coin our protocol bundle spends, so it can never be mined on its own.
-      // Use the wallet's own address string verbatim: send_transaction validates
-      // the address HRP against its network, so a re-encoded mainnet (xch) prefix
-      // would be rejected on testnet (txch), unlike the inert to_address on push.
-      const response = await rpc.sendTransaction({
+      // WalletConnect does not expose push=false or extra_conditions on
+      // send_transaction. A validate-only offer does expose both signing and
+      // arbitrary conditions without broadcasting. We create a fee-sized
+      // nil-puzzle output and require it to be spent alongside the protocol
+      // coin; WASM appends that no-output spend before aggregation.
+      // Pin one wallet coin so the nil-puzzle output's coin id is known before
+      // the wallet signs ASSERT_CONCURRENT_SPEND for that output.
+      const requiredAmount = fee + 1n;
+      const selection = await rpc.selectCoins({
         walletId: 1n,
-        amount: 1n,
-        address: changeAddress,
-        fee,
-        push: false,
+        amount: requiredAmount,
         allowUnsynced: true,
-        extraConditions: [{ opcode: 64n, args: { coin_id: coinId } }],
       });
-      const record =
-        (response as any)?.transactions?.[0] ?? (response as any)?.transaction ?? undefined;
-      // The wallet returns camelCase over WalletConnect; normalize into the
-      // canonical snake_case coinset shape the aggregator and removal code use.
-      const rawBundle = record?.spendBundle ?? record?.spend_bundle;
-      const spendBundle = normalizeWalletSpendBundle(rawBundle);
-      if (!spendBundle) {
-        throw new Error('wallet returned no signed spend bundle for the fee');
+      const selected = selection?.coins?.find((coin) => BigInt(coin.amount) >= requiredAmount);
+      const selectedCoin = selected
+        ? `${normalizeHexString(selected.parentCoinInfo)}${normalizeHexString(selected.puzzleHash)}${encodeU64AsClvmHex(BigInt(selected.amount))}`
+        : null;
+      if (!selectedCoin) {
+        throw new Error(`wallet has no single coin large enough for fee ${fee}`);
+      }
+      const selectedCoinId = await coinIdFromBytes(toUint8(selectedCoin));
+      // Tree hash of the CLVM nil atom is sha256(0x01).
+      const nilPuzzleHash = await coinIdFromBytes(Uint8Array.of(1));
+      const feeCoinId = await coinIdFromBytes(
+        toUint8(`${selectedCoinId}${nilPuzzleHash}${encodeU64AsClvmHex(fee)}`),
+      );
+
+      const response = await rpc.createOfferForIds({
+        offer: { '1': -1n },
+        driverDict: {},
+        validateOnly: true,
+        fee,
+        coinIds: [`0x${selectedCoinId}`],
+        allowUnsynced: true,
+        extraConditions: [
+          {
+            opcode: 51n,
+            args: { puzzle_hash: `0x${nilPuzzleHash}`, amount: fee, memos: null },
+          },
+          { opcode: 64n, args: { coin_id: protocolCoinId } },
+          { opcode: 64n, args: { coin_id: `0x${feeCoinId}` } },
+        ],
+      });
+      const offer = (response as any)?.offer;
+      if (typeof offer !== 'string' || !offer.startsWith('offer')) {
+        throw new Error('wallet returned no signed offer for the fee');
       }
       log(
-        `[wc-blockchain] createFeeSpend ok fee=${fee} bind=${coinId} coinSpends=${spendBundle.coin_spends.length}`,
+        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} output=0x${feeCoinId}`,
       );
-      return spendBundle;
+      return offer;
     } catch (e) {
       // Propagate the real reason (RPC error, missing signed bundle) so the
       // caller's user-facing warning is accurate rather than always blaming
       // insufficient balance.
       const text = collectErrorText(e);
-      log(`[wc-blockchain] createFeeSpend failed: ${text}`);
+      log(`[wc-blockchain] createFeeOffer failed: ${text}`);
       throw e instanceof Error ? e : new Error(text);
     }
   }
