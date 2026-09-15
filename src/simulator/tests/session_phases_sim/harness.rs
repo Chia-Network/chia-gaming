@@ -8,6 +8,49 @@ const MAX_QUIESCENCE_ROUNDS: usize = 8;
 type ProposalMutation =
     Box<dyn FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MoveReadinessBoundary {
+    action_index: usize,
+    player: usize,
+    game_id: GameID,
+    applied_count: usize,
+}
+
+impl MoveReadinessBoundary {
+    fn capture(
+        action_index: usize,
+        player: usize,
+        game_id: GameID,
+        ui: &LocalTestUIReceiver,
+    ) -> Self {
+        Self {
+            action_index,
+            player,
+            game_id,
+            applied_count: move_application_count(ui, game_id),
+        }
+    }
+
+    fn is_satisfied(&self, ui: &LocalTestUIReceiver) -> bool {
+        move_application_count(ui, self.game_id) > self.applied_count
+    }
+}
+
+fn move_application_count(ui: &LocalTestUIReceiver, game_id: GameID) -> usize {
+    ui.notifications
+        .iter()
+        .filter(|notification| {
+            matches!(
+                notification,
+                GameNotification::LocalActionApplied {
+                    id,
+                    action: LocalActionKind::MakeMove,
+                } if id == &game_id
+            )
+        })
+        .count()
+}
+
 #[derive(Default, Debug)]
 pub(super) struct DrainProgress {
     events: usize,
@@ -55,6 +98,7 @@ pub(super) struct SimulationHarness {
     num_steps: usize,
     host_watched_coins: [HashSet<CoinString>; 2],
     host_events: [Vec<HostBoundaryEvent>; 2],
+    move_readiness_boundary: Option<MoveReadinessBoundary>,
 }
 
 impl SimulationHarness {
@@ -83,6 +127,7 @@ impl SimulationHarness {
             num_steps: 0,
             host_watched_coins: [HashSet::new(), HashSet::new()],
             host_events: [Vec::new(), Vec::new()],
+            move_readiness_boundary: None,
         }
     }
 
@@ -126,7 +171,34 @@ impl SimulationHarness {
             .is_some_and(|predicate| predicate(move_number, &self.cradles))
     }
 
-    pub(super) fn readiness_satisfied(&self, readiness: ActionReadiness) -> bool {
+    pub(super) fn establish_readiness_boundary(
+        &mut self,
+        action_index: usize,
+        readiness: ActionReadiness,
+    ) {
+        let ActionReadiness::MoveApplied { player, game_id } = readiness else {
+            self.move_readiness_boundary = None;
+            return;
+        };
+        if self
+            .move_readiness_boundary
+            .is_some_and(|boundary| boundary.action_index == action_index)
+        {
+            return;
+        }
+        self.move_readiness_boundary = Some(MoveReadinessBoundary::capture(
+            action_index,
+            player,
+            game_id,
+            &self.local_uis[player],
+        ));
+    }
+
+    pub(super) fn readiness_satisfied(
+        &self,
+        action_index: usize,
+        readiness: ActionReadiness,
+    ) -> bool {
         match readiness {
             ActionReadiness::Immediate => true,
             ActionReadiness::GameCanMove { player, game_id } => {
@@ -169,18 +241,17 @@ impl SimulationHarness {
                         .accepted_proposal_ids
                         .contains(&game_id)
             }
-            ActionReadiness::MoveApplied { player, game_id } => self.local_uis[player]
-                .notifications
-                .iter()
-                .any(|notification| {
-                    matches!(
-                        notification,
-                        GameNotification::LocalActionApplied {
-                            id,
-                            action: LocalActionKind::MakeMove,
-                        } if id == &game_id
-                    )
-                }),
+            ActionReadiness::MoveApplied { player, game_id } => {
+                let boundary = self
+                    .move_readiness_boundary
+                    .expect("move readiness boundary must be established before evaluation");
+                assert_eq!(
+                    (boundary.action_index, boundary.player, boundary.game_id),
+                    (action_index, player, game_id),
+                    "move readiness boundary does not match current action"
+                );
+                boundary.is_satisfied(&self.local_uis[player])
+            }
             ActionReadiness::NerfedTransactionAvailable => !self.nerfed_tx_backlog.is_empty(),
             ActionReadiness::AfterGame { game_id } => self
                 .local_uis
@@ -1034,8 +1105,33 @@ mod tests {
 
     #[test]
     fn harness_readiness_boundary_accepts_only_predicate_data() {
-        let _predicate_only_api: fn(&SimulationHarness, ActionReadiness) -> bool =
+        let _predicate_only_api: fn(&SimulationHarness, usize, ActionReadiness) -> bool =
             SimulationHarness::readiness_satisfied;
+    }
+
+    #[test]
+    fn repeated_move_wait_requires_an_application_after_its_boundary() {
+        let game_id = GameID(1);
+        let mut ui = LocalTestUIReceiver::default();
+        ui.notifications.push(GameNotification::LocalActionApplied {
+            id: game_id,
+            action: LocalActionKind::MakeMove,
+        });
+
+        let boundary = MoveReadinessBoundary::capture(7, 0, game_id, &ui);
+        assert!(
+            !boundary.is_satisfied(&ui),
+            "an application preceding this wait must not satisfy it"
+        );
+
+        ui.notifications.push(GameNotification::LocalActionApplied {
+            id: game_id,
+            action: LocalActionKind::MakeMove,
+        });
+        assert!(
+            boundary.is_satisfied(&ui),
+            "the next application after the wait boundary must satisfy it"
+        );
     }
 
     #[test]

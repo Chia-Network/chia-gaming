@@ -144,6 +144,9 @@ pub(in super::super) fn run_script(
         .any(|action| action.schedule().expects_on_chain_transition);
 
     while !matches!(ending, Some(0)) {
+        if let Some(action) = moves_input.get(move_number) {
+            harness.establish_readiness_boundary(move_number, action.schedule().readiness);
+        }
         harness.begin_step(move_number, moves_input.get(move_number));
         let (_progress, early_success) = harness.pump_block(
             allocator,
@@ -190,10 +193,10 @@ pub(in super::super) fn run_script(
         }
         if harness.wait_active() {
             harness.advance_wait(allocator)?;
-        } else if moves_input
-            .get(move_number)
-            .is_some_and(|action| harness.readiness_satisfied(action.schedule().readiness))
-        {
+        } else if moves_input.get(move_number).is_some_and(|action| {
+            harness.establish_readiness_boundary(move_number, action.schedule().readiness);
+            harness.readiness_satisfied(move_number, action.schedule().readiness)
+        }) {
             if move_number < moves_input.len() {
                 let ga = &moves_input[move_number];
                 let schedule = ga.schedule();
@@ -557,6 +560,10 @@ pub(in super::super) fn run_script(
 
                 if advance_script {
                     move_number += 1;
+                    if let Some(action) = moves_input.get(move_number) {
+                        harness
+                            .establish_readiness_boundary(move_number, action.schedule().readiness);
+                    }
                 }
                 if schedule.post_action_drain == PostActionDrain::OnChain && harness.any_on_chain()
                 {

@@ -459,6 +459,55 @@ mod sim_tests {
             },
         ));
 
+        res.push((
+            "test_repeated_move_wait_requires_new_application",
+            &|| {
+                let mut allocator = AllocEncoder::new();
+                let request_potato = crate::session_phases::peer_wire::encode_peer_message(
+                    &PeerMessage::RequestPotato(()),
+                )
+                .expect("serialize request");
+                let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+                let moves = vec![
+                    SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                    SimScriptAction::AcceptProposal(1, GameID(1)),
+                    game_moves[0].clone(),
+                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
+                    game_moves[1].clone(),
+                    // Give away the potato before Alice's second move so its
+                    // application occurs after the second wait boundary.
+                    SimScriptAction::InjectRawMessage(0, request_potato),
+                    game_moves[2].clone(),
+                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
+                ];
+                let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&krunk_ran_all_the_moves_predicate(moves.len())),
+                    None,
+                )
+                .expect("each move wait should observe its own application");
+
+                let applications = outcome.local_uis[0]
+                    .notifications
+                    .iter()
+                    .filter(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::LocalActionApplied {
+                                id: GameID(1),
+                                action: LocalActionKind::MakeMove,
+                            }
+                        )
+                    })
+                    .count();
+                assert_eq!(
+                    applications, 2,
+                    "the second wait must not reuse Alice's first application"
+                );
+            },
+        ));
+
         res.push(("test_krunk_mid_drain_failure_rolls_back_local_actions", &|| {
             let mut allocator = AllocEncoder::new();
             let game_1_commit = word_program(&mut allocator, b"CRANE");
