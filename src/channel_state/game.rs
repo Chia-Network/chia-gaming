@@ -10,7 +10,7 @@ use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{StateUpdateProgram, ValidationInfo, ValidationProgramRegistry};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    GameID, Hash, IntoErr, Program, Puzzle, Sha256tree, Timeout, MAX_BLOCK_COST_CLVM,
+    GameID, Hash, IntoErr, Program, Puzzle, Timeout, MAX_BLOCK_COST_CLVM,
 };
 
 /// One canonical game returned by a proposal factory.
@@ -228,7 +228,7 @@ impl Game {
 #[cfg(test)]
 mod atomic_factory_tests {
     use super::*;
-    use crate::common::types::Node;
+    use crate::common::types::{Node, Sha256tree};
     use clvmr::NodePtr;
 
     fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
