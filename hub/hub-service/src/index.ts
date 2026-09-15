@@ -139,6 +139,14 @@ const MAX_WS_PAYLOAD_BYTES = readPositiveIntegerEnv(
   'HUB_MAX_WS_PAYLOAD_BYTES',
   DEFAULT_GAME_BYTES_PER_WINDOW,
 );
+const MAX_GAME_OUTBOUND_BYTES_PER_CONNECTION = readPositiveIntegerEnv(
+  'GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION',
+  2 * DEFAULT_GAME_BYTES_PER_WINDOW,
+);
+const MAX_TOTAL_GAME_OUTBOUND_BYTES = readPositiveIntegerEnv(
+  'GAME_MAX_TOTAL_OUTBOUND_BYTES',
+  256 * 1024 * 1024,
+);
 if (MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
   throw new Error('HUB_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
 }
@@ -148,6 +156,8 @@ const gameWsServer = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PA
 const connectionsByIp = new Map<string, number>();
 const connectionAttemptsByIp = new Map<string, ConnectionAttemptBudget>();
 let totalConnections = 0;
+const queuedGameBytes = new WeakMap<WebSocket, number>();
+let totalQueuedGameBytes = 0;
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -569,13 +579,55 @@ function encodeGameOutbound(type: GameOutboundType, payload: unknown): Uint8Arra
   }
 }
 
-function sendGameWs(ws: WebSocket, type: GameOutboundType, payload: unknown): void {
+function sendGameWs(ws: WebSocket, type: GameOutboundType, payload: unknown): boolean {
   if (ws.readyState !== WebSocket.OPEN) {
     logHub('send_game_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
-    return;
+    return false;
   }
-  ws.send(encodeGameOutbound(type, payload));
+  const encoded = encodeGameOutbound(type, payload);
+  const trackedBytes = queuedGameBytes.get(ws) ?? 0;
+  const destinationBytes = Math.max(trackedBytes, ws.bufferedAmount);
+  if (
+    destinationBytes + encoded.byteLength > MAX_GAME_OUTBOUND_BYTES_PER_CONNECTION ||
+    totalQueuedGameBytes + encoded.byteLength > MAX_TOTAL_GAME_OUTBOUND_BYTES
+  ) {
+    logHub('send_game_ws_drop_backpressure', {
+      ws_id: wsId(ws),
+      type,
+      message_bytes: encoded.byteLength,
+      destination_bytes: destinationBytes,
+      total_queued_bytes: totalQueuedGameBytes,
+    });
+    return false;
+  }
+
+  queuedGameBytes.set(ws, trackedBytes + encoded.byteLength);
+  totalQueuedGameBytes += encoded.byteLength;
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    const remaining = (queuedGameBytes.get(ws) ?? encoded.byteLength) - encoded.byteLength;
+    if (remaining > 0) {
+      queuedGameBytes.set(ws, remaining);
+    } else {
+      queuedGameBytes.delete(ws);
+    }
+    totalQueuedGameBytes = Math.max(0, totalQueuedGameBytes - encoded.byteLength);
+  };
+  try {
+    ws.send(encoded, (error) => {
+      release();
+      if (error) {
+        logHub('send_game_ws_error', { ws_id: wsId(ws), type, error: error.message });
+      }
+    });
+  } catch (error) {
+    release();
+    throw error;
+  }
   logHubVerbose('send_game_ws_ok', { ws_id: wsId(ws), type });
+  return true;
 }
 
 function sendHubEvent(playerId: string, type: string, payload: unknown): void {
@@ -1279,11 +1331,15 @@ function onGameRelay(ws: WebSocket, targetId: string, payload: Uint8Array): void
   }
 
   const fromAlias = aliasForPlayer(meta.playerId);
-  sendGameWs(targetWs, 'relay', {
+  const delivered = sendGameWs(targetWs, 'relay', {
     from: playerIdToWire(meta.playerId),
     alias: fromAlias,
     payload,
   });
+  if (!delivered) {
+    sendGameWs(ws, 'delivery_failure', { to: playerIdToWire(targetId) });
+    return;
+  }
   logHubVerbose('game_relay', {
     from: meta.playerId,
     to: targetId,

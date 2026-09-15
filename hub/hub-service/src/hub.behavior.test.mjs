@@ -68,6 +68,8 @@ async function startHub(env = {}) {
         HUB_MAX_WS_PAYLOAD_BYTES: '11534336',
         GAME_MAX_MESSAGES_PER_WINDOW: '1000',
         GAME_MAX_BYTES_PER_WINDOW: '11534336',
+        GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION: '23068672',
+        GAME_MAX_TOTAL_OUTBOUND_BYTES: '268435456',
         ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1101,6 +1103,58 @@ test('game relay dictionaries are limited by their encoded byte budget', async (
     ws.send(frame);
 
     assert.deepEqual(await closed, { code: 4008, reason: 'rate_limited' });
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('relay delivery fails before exceeding a destination outbound budget', async () => {
+  const hub = await startHub({
+    GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION: '128',
+    GAME_MAX_TOTAL_OUTBOUND_BYTES: '1048576',
+  });
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'destination-budget-sender');
+    const receiver = await identifyGameRegistered(hub.origin, 'destination-budget-receiver');
+    const failed = nextGame(sender.game, (msg) => msg.type === 'delivery_failure');
+    const unexpectedRelay = nextGame(receiver.game, (msg) => msg.type === 'relay', 100);
+
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(receiver.playerId),
+      payload: Buffer.alloc(256),
+    });
+
+    assert.deepEqual((await failed).to, playerBytes(receiver.playerId));
+    await assert.rejects(unexpectedRelay, /timed out/);
+    await closeWs(sender.game);
+    await closeWs(receiver.game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('relay delivery fails before exceeding the global outbound budget', async () => {
+  const hub = await startHub({
+    GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION: '1048576',
+    GAME_MAX_TOTAL_OUTBOUND_BYTES: '128',
+  });
+  try {
+    const sender = await identifyGameRegistered(hub.origin, 'global-budget-sender');
+    const receiver = await identifyGameRegistered(hub.origin, 'global-budget-receiver');
+    const failed = nextGame(sender.game, (msg) => msg.type === 'delivery_failure');
+    const unexpectedRelay = nextGame(receiver.game, (msg) => msg.type === 'relay', 100);
+
+    sendGame(sender.game, {
+      type: 'relay',
+      to: playerBytes(receiver.playerId),
+      payload: Buffer.alloc(256),
+    });
+
+    assert.deepEqual((await failed).to, playerBytes(receiver.playerId));
+    await assert.rejects(unexpectedRelay, /timed out/);
+    await closeWs(sender.game);
+    await closeWs(receiver.game);
   } finally {
     await hub.stop();
   }

@@ -288,6 +288,8 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 | `HUB_MAX_WS_PAYLOAD_BYTES`   | no       | Transport-level message ceiling enforced during WebSocket reassembly (default `11534336`)                |
 | `GAME_MAX_MESSAGES_PER_WINDOW` | no     | Maximum game-relay messages per connection per window (default `1000`)                                  |
 | `GAME_MAX_BYTES_PER_WINDOW`  | no       | Maximum game-relay bytes per connection per window (default `11534336`)                                 |
+| `GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION` | no | Maximum encoded game bytes queued to one WebSocket (default `23068672`)                         |
+| `GAME_MAX_TOTAL_OUTBOUND_BYTES` | no    | Maximum encoded game bytes queued across all WebSockets (default `268435456`)                            |
 | `GAME_MAX_RECENT_CORRESPONDENTS` | no  | Maximum recent relay correspondents retained per hub session (default `16`)                              |
 | `GAME_RECENT_CORRESPONDENT_TTL_MS` | no | Sliding lifetime for recent-correspondent reconnect hints (default `1800000`)                            |
 | `HUB_TRUST_PROXY`            | no       | Set to `1` only when direct access is blocked and a trusted proxy sets `X-Forwarded-For` (default `0`) |
@@ -358,6 +360,11 @@ the control channel, while `GAME_MAX_*_PER_WINDOW` apply to the game relay.
 Exceeding either budget closes the connection with WebSocket code `4008` and
 reason `rate_limited`. Tune these limits together so the byte budget permits the
 largest valid frame expected by the deployment.
+- **Outbound relay backpressure.** The hub rejects a relay with
+  `delivery_failure` before either its destination queue exceeds
+  `GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION` or aggregate outstanding sends
+  exceed `GAME_MAX_TOTAL_OUTBOUND_BYTES`. Keep the per-connection limit above
+  the largest encoded relay frame.
 - **Caching rules.** Only root URLs (`index.html`, `build-meta.json`,
 favicon, etc.) stay stable across rebuilds; each deploy mints a new
 `/app/<nonce>/` tree. Configure your production web server (nginx,
