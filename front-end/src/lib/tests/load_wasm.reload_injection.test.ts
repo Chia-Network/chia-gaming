@@ -26,6 +26,12 @@ import {
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
+function reloadStallBreadcrumb(checkpoint: string, stage: string): void {
+  process.stderr.write(
+    `DBG_RELOAD_STALL ${new Date().toISOString()} pid=${process.pid} checkpoint=${checkpoint} stage=${stage}\n`,
+  );
+}
+
 async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<void> {
   const adapters = await createActivePair(poller, 5);
   const handProposal: HandProposal = {
@@ -388,10 +394,12 @@ async function runHandshakeRoleReload(
   checkpoint: HandshakeReloadCheckpoint,
   suffix: number,
 ): Promise<void> {
+  reloadStallBreadcrumb(checkpoint, 'run-role-enter');
   const adapters = [
     addActiveCradle(new SessionControllerAdapter()),
     addActiveCradle(new SessionControllerAdapter()),
   ] as [SessionControllerAdapter, SessionControllerAdapter];
+  reloadStallBreadcrumb(checkpoint, 'controllers-init-before');
   const controllers = await Promise.all([
     initSessionController(
       poller,
@@ -408,15 +416,21 @@ async function runHandshakeRoleReload(
       new WasmStateInit(fetchPreset),
     ),
   ]);
+  reloadStallBreadcrumb(checkpoint, 'controllers-init-after');
   controllers.forEach((controller, index) => {
     controller.pairingToken = `reload-handshake-${suffix}-${index}`;
     controller.perGameAmount = 100n;
     controller.onSaveNeeded = () => Promise.resolve();
+    reloadStallBreadcrumb(checkpoint, `set-blob-${index}-before`);
     adapters[index].set_blob(controller);
+    reloadStallBreadcrumb(checkpoint, `set-blob-${index}-after`);
   });
+  reloadStallBreadcrumb(checkpoint, 'initial-flush-before');
   await flushWrapperDrain(adapters);
+  reloadStallBreadcrumb(checkpoint, 'initial-flush-after');
 
   const deliverNext = async (sender: 0 | 1): Promise<void> => {
+    reloadStallBreadcrumb(checkpoint, `deliver-${sender}-before`);
     const outbound = adapters[sender].outbound_messages();
     assert.ok(
       outbound.length > 0,
@@ -427,6 +441,7 @@ async function runHandshakeRoleReload(
     await flushWrapperDrain(adapters);
     adapters[sender].blob?.receiveAck(BigInt(next.msgno));
     await flushWrapperDrain(adapters);
+    reloadStallBreadcrumb(checkpoint, `deliver-${sender}-after`);
   };
 
   if (checkpoint === 'initiator-sent-c' || checkpoint === 'receiver-sent-d') {
@@ -438,13 +453,18 @@ async function runHandshakeRoleReload(
   }
 
   const target = checkpoint.startsWith('initiator') ? 0 : 1;
+  reloadStallBreadcrumb(checkpoint, 'reload-setup-before');
   let lane = laneForHandshakeAdapter(adapters[target]);
   const before = lane.controller.getProtocolStatePretty();
   assert.ok(before?.includes(checkpoint.startsWith('initiator') ? 'Initiator' : 'Receiver'));
+  reloadStallBreadcrumb(checkpoint, 'reload-injection-before');
   lane = (await injectSessionReload(lane, poller)).lane;
+  reloadStallBreadcrumb(checkpoint, 'reload-injection-after');
   assert.equal(lane.controller.getRestoreStatus(), 'restored');
   assert.equal(lane.controller.getProtocolStatePretty(), before);
+  reloadStallBreadcrumb(checkpoint, 'handshake-driver-before');
   await action_with_messages(poller, adapters[0], adapters[1]);
+  reloadStallBreadcrumb(checkpoint, 'handshake-driver-after');
   assert.equal(
     lane.controller.lastChannelStatus?.state,
     'Active',
@@ -475,9 +495,12 @@ it.each([
   'restores the real %s handshake checkpoint and reaches Active',
   async (checkpoint, suffix) => {
     try {
+      reloadStallBreadcrumb(checkpoint, 'simulator-start-before');
       const poller = await startSimulator([`a11ce00${suffix}`, `b0b7000${suffix}`]);
+      reloadStallBreadcrumb(checkpoint, 'simulator-start-after');
       if (!poller) return;
       await runHandshakeRoleReload(poller, checkpoint, suffix);
+      reloadStallBreadcrumb(checkpoint, 'test-body-complete');
     } catch (error) {
       throw new Error(`[load_wasm handshake reload injection failed]\n${String(error)}`, {
         cause: error,
