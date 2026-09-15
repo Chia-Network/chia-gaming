@@ -462,6 +462,7 @@ app.use(
 );
 
 app.use((req, res, next) => {
+  res.set('Referrer-Policy', 'no-referrer');
   // Nonce /app/* URLs change every rebuild; only root shell/meta are stable.
   const p = req.path;
   let cc: string;

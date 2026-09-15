@@ -372,15 +372,16 @@ It proves only that this WebSocket path recently carried a hub frame.
 
 A new player application generates 16 cryptographically random bytes and
 encodes them as 32 lowercase hexadecimal characters. It persists this value and
-reuses it across reconnects and hub selections. The URL and reference
-implementation use that hexadecimal representation; `identify.session_id`
-decodes it and sends the original 16 bytes.
+reuses it across reconnects and hub selections. The reference implementation
+uses that hexadecimal representation; `identify.session_id` decodes it and
+sends the original 16 bytes.
 
-The hub HTML is opened at
-`<hub-origin>/?session=<hub-session-id>&uniqueId=<local-player-id>`. The same hub
+The hub HTML is opened at `<hub-origin>/` without credentials in the URL. Once
+loaded, it requests the hub session ID from the embedding player application
+with `postMessage`. The player verifies the requesting iframe window and origin,
+then addresses the credential response only to that hub origin. The same hub
 session ID is independently supplied to the game relay connection. It is never
-sent to a peer. The meaning and use of the URL inside the hub HTML are otherwise
-out of scope.
+sent to a peer.
 
 The current hub retains the mapping from hub session ID to player ID only for
 the lifetime of the hub process.

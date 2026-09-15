@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { useHubSocket, ChallengeReceived } from './useHubSocket';
-import { getSearchParams } from './util';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
 import { Button } from './button';
 
@@ -38,11 +37,7 @@ function formatAmount(mojoStr: string): string {
   return `${whole.toLocaleString()}.${fracStr} XCH`;
 }
 
-const HubScreen = () => {
-  const params = getSearchParams();
-  const uniqueId = params.uniqueId || '';
-  const sessionId = params.session || '';
-
+const HubScreen = ({ sessionId }: { sessionId: string }) => {
   const [myAlias, setMyAlias] = useState('');
   const [aliasConfirmed, setAliasConfirmed] = useState(false);
   const [editingAlias, setEditingAlias] = useState(false);
@@ -66,7 +61,7 @@ const HubScreen = () => {
     cancelChallenge,
     setHubAlias,
     publicId,
-  } = useHubSocket(window.location.origin, uniqueId, sessionId);
+  } = useHubSocket(window.location.origin, sessionId);
 
   const autoJoinedRef = useRef(false);
   useEffect(() => {

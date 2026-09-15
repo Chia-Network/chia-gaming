@@ -304,6 +304,16 @@ async function identifyGameRegistered(origin, sessionId) {
   return { game, playerId: playerId(registered.player_id) };
 }
 
+test('HTTP responses prohibit referrer disclosure', async () => {
+  const hub = await startHub();
+  try {
+    const response = await fetch(hub.origin);
+    assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  } finally {
+    await hub.stop();
+  }
+});
+
 test('hub-owned aliases update the game channel and cannot be set there', async () => {
   const hub = await startHub();
   try {

@@ -677,7 +677,7 @@ const Shell = () => {
   const uniqueId = getPlayerId();
   // Do not mint hub sessionId here — boot must hydrate IndexedDB first
   // when a saved-session marker is present, or a remint poisons preferences.
-  const [, setSessionId] = useState(() => loadState().identity.sessionId ?? '');
+  const [sessionId, setSessionId] = useState(() => loadState().identity.sessionId ?? '');
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
@@ -2106,8 +2106,7 @@ const Shell = () => {
 
       setHubOrigin(origin);
       saveHubUrl(origin);
-      const hubUrl = `${origin}/?session=${hubSessionId}&uniqueId=${uniqueId}`;
-      setIframeUrl(hubUrl);
+      setIframeUrl(new URL('/', origin).toString());
 
       setHubLiveness('reconnecting');
 
@@ -2551,7 +2550,6 @@ const Shell = () => {
         });
     },
     [
-      uniqueId,
       syncPeerLiveness,
       markPeerInactive,
       markPeerDead,
@@ -3196,6 +3194,33 @@ const Shell = () => {
   );
 
   useThemeSyncToIframe({ iframeId: 'hub-iframe', frameOrigin: hubOrigin, frameUrl: iframeUrl });
+
+  useEffect(() => {
+    if (hubOrigin === null || !sessionId || iframeUrl === 'about:blank') return;
+    const iframe = document.getElementById('hub-iframe') as HTMLIFrameElement | null;
+    if (iframe === null) return;
+    const targetOrigin = new URL(iframeUrl).origin;
+    const sendCredentials = () => {
+      iframe.contentWindow?.postMessage({ type: 'hub-auth', sessionId }, targetOrigin);
+    };
+    const handleMessage = (event: MessageEvent) => {
+      if (
+        event.source === iframe.contentWindow &&
+        event.origin === targetOrigin &&
+        event.data?.type === 'hub-auth-request'
+      ) {
+        sendCredentials();
+      }
+    };
+    iframe.addEventListener('load', sendCredentials);
+    window.addEventListener('message', handleMessage);
+    const initialSend = setTimeout(sendCredentials, 150);
+    return () => {
+      clearTimeout(initialSend);
+      iframe.removeEventListener('load', sendCredentials);
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [hubOrigin, iframeUrl, sessionId]);
 
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
@@ -4641,6 +4666,7 @@ const Shell = () => {
                   className="bg-canvas-bg-subtle"
                   style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
                   sandbox="allow-scripts allow-same-origin"
+                  referrerPolicy="no-referrer"
                   src={iframeUrl}
                 />
               </>
