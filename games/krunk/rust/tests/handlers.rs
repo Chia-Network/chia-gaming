@@ -1033,6 +1033,11 @@ fn test_krunk_multi_guess_game() {
         5,
         "bob should return all plausible clue evidence indices"
     );
+    assert_eq!(
+        allocator.allocator().atom(evidence_items[0]).as_ref(),
+        &[0x00],
+        "clue index zero must be encoded as a one-byte atom, not nil"
+    );
 }
 
 fn test_krunk_5_wrong_guesses_alice_wins() {

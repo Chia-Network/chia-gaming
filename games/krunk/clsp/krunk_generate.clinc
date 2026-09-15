@@ -166,7 +166,7 @@
     )
 )
 
-(defconst KRUNK_EVIDENCE_INDICES (li 0 1 2 3 4))
+(defconst KRUNK_EVIDENCE_INDICES (li (q . 0x00) 1 2 3 4))
 
 (defun krunk_bob_handler_clue (DICT_TREE amount pre_state state move validation_info_hash mover_share)
     (if (= (strlen move) 1)

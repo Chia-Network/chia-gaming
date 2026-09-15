@@ -1212,7 +1212,7 @@ fn test_krunk_reveal_bad_commit() {
 
 // --- Reveal path: evidence slash (wrong clue) ---
 
-fn test_krunk_reveal_wrong_clue_slash() {
+fn test_krunk_reveal_wrong_clue_at_index_zero_slashes() {
     let mut allocator = AllocEncoder::new();
     let clue = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/clue.hex").unwrap();
     let dict_pubkey = make_dict_pubkey(&mut allocator);
@@ -1221,18 +1221,13 @@ fn test_krunk_reveal_wrong_clue_slash() {
     let salt = [0x77; 16];
     let commit = make_commit_for(&salt, word);
 
-    // Reveal-time state: latest guess has no clue yet, so clues are offset by
-    // one from guesses. Evidence index 1 checks the prior "crane" guess.
-    let bob_guesses = words_to_list(&mut allocator, &[b"crane", b"slate", b"crane"]);
+    // The latest "world" guess has no clue yet. Evidence index 0 checks the
+    // prior "crane" guess, whose correct clue for revealed word "crane" is
+    // 0x72. Alice supplied 0x01 instead.
+    let bob_guesses = words_to_list(&mut allocator, &[b"world", b"crane"]);
     let wrong_clue = allocator.allocator().new_atom(&[0x01]).unwrap();
-    let some_clue = allocator.allocator().new_atom(&[0x42]).unwrap();
     let a = allocator.allocator();
-    // alice_clues[0] = some_clue (for latest guess "slate")
-    // alice_clues[1] = wrong_clue (for earlier guess "crane")
-    let alice_clues = {
-        let t = a.new_pair(wrong_clue, NodePtr::NIL).unwrap();
-        a.new_pair(some_clue, t).unwrap()
-    };
+    let alice_clues = a.new_pair(wrong_clue, NodePtr::NIL).unwrap();
     let state = make_state_with_guesses(
         &mut allocator,
         dict_pubkey,
@@ -1245,17 +1240,15 @@ fn test_krunk_reveal_wrong_clue_slash() {
     reveal_move.extend_from_slice(&salt);
     reveal_move.extend_from_slice(word);
 
-    // Evidence = index 1 (second prior clue is wrong).
-    // make_clue("crane", bob_guesses[2]) = make_clue("crane", "crane") = 0x72
-    // alice_clues[1] = 0x01 ≠ 0x72 → slash succeeds
-    let evidence = allocator.allocator().new_atom(&[0x01]).unwrap();
+    // This must be the one-byte encoding of zero, not CLVM nil.
+    let evidence = allocator.allocator().new_atom(&[0x00]).unwrap();
 
     let result = run_validator_step(
         &mut allocator,
         &clue,
         &reveal_move,
         21,
-        BASE_UNIT * 20,
+        BASE_UNIT * 100,
         state,
         evidence,
     );
@@ -1273,7 +1266,7 @@ fn test_krunk_reveal_wrong_clue_slash() {
         &mut allocator,
         &clue,
         &reveal_move,
-        BASE_UNIT * 20,
+        BASE_UNIT * 100,
         state,
         evidence,
         2,
@@ -1505,8 +1498,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_krunk_reveal_bad_commit,
         ),
         (
-            "test_krunk_reveal_wrong_clue_slash",
-            &test_krunk_reveal_wrong_clue_slash,
+            "test_krunk_reveal_wrong_clue_at_index_zero_slashes",
+            &test_krunk_reveal_wrong_clue_at_index_zero_slashes,
         ),
         (
             "test_krunk_reveal_correct_clue_no_slash",

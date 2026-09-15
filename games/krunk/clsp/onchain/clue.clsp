@@ -68,13 +68,17 @@
                     ; Slash only when the selected prior clue is wrong.
                     ; At reveal time bob_guesses has one extra latest
                     ; guess with no clue, so the lists are offset by one.
-                    (if (not (and (>= evidence 0) (< evidence (len alice_clues))))
-                        valid_terminal
-                        (= (make_clue revealed_word
-                                (f (drop (+ evidence 1) bob_guesses)))
-                            (f (drop evidence alice_clues)))
-                        valid_terminal
-                        0
+                    (assign
+                        evidence_index (+ evidence 0)
+                        (if (not (and (>= evidence_index 0)
+                                (< evidence_index (len alice_clues))))
+                            valid_terminal
+                            (= (make_clue revealed_word
+                                    (f (drop (+ evidence_index 1) bob_guesses)))
+                                (f (drop evidence_index alice_clues)))
+                            valid_terminal
+                            0
+                        )
                     )
                     (= (strlen evidence) 10)
                     ; A signed dictionary-gap range containing the
