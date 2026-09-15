@@ -310,6 +310,26 @@ fn test_valid_validator_results_are_not_slash_candidates() {
 
     let next_hash = allocator.allocator().new_atom(&[0x44; 32]).unwrap();
     let state = allocator.allocator().new_atom(b"next state").unwrap();
+    let without_max_move_size = list_from_nodes(&mut allocator, &[next_hash, state]);
+    let without_max_parsed = parse_validator_result(&mut allocator, without_max_move_size).unwrap();
+    assert_eq!(
+        without_max_parsed.next_max_move_size, 0,
+        "a missing max move size mirrors CLVM nil"
+    );
+    assert_eq!(
+        without_max_parsed.next_validator_hash.map(|h| h.0),
+        Some([0x44; 32])
+    );
+    let parsed_state = without_max_parsed
+        .new_state
+        .unwrap()
+        .to_nodeptr(&mut allocator)
+        .unwrap();
+    assert_eq!(
+        allocator.allocator().atom(parsed_state).as_ref(),
+        b"next state"
+    );
+
     let max_move_size = 5_i64.to_clvm(&mut allocator).unwrap();
     let nonterminal = list_from_nodes(&mut allocator, &[next_hash, state, max_move_size]);
     let nonterminal_parsed = parse_validator_result(&mut allocator, nonterminal).unwrap();

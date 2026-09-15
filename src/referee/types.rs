@@ -242,7 +242,10 @@ pub fn parse_validator_result(
         });
     }
 
-    // Terminal validators may return just (list 0) -- next_validator_hash=nil with no state.
+    // Mirror referee.clsp destructuring of
+    // (next_validator_hash new_state max_move_size . extra_conditions):
+    // omitted positional fields are nil, and trailing slash conditions do not
+    // change the transition fields extracted here.
     let next_validator_hash = if Program::from_nodeptr(allocator, lst[0])?.is_nil() {
         None
     } else {
