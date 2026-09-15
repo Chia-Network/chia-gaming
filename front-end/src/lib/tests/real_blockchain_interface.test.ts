@@ -578,7 +578,6 @@ describe('RealBlockchainInterface', () => {
       offer: { '1': -10n },
       driverDict: {},
       validateOnly: true,
-      coinIds: [`0x${selectedCoinId}`],
       allowUnsynced: true,
       extraConditions: [
         { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },

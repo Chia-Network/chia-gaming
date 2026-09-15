@@ -398,8 +398,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       // arbitrary conditions without broadcasting. The fee is the offer's
       // settlement output, not the wallet RPC's fee parameter. WASM spends
       // that output through a nil-puzzle child before aggregation.
-      // Pin one wallet coin so the settlement output's coin id is known before
-      // the wallet signs ASSERT_CONCURRENT_SPEND for that output.
+      // Preselect so the settlement output's coin id is known before the wallet
+      // signs ASSERT_CONCURRENT_SPEND for that output. Chia 2.7.4 does not
+      // support coin_ids on create_offer_for_ids, so WASM verifies that the
+      // offer's actual output matches this prediction before submission.
       const requiredAmount = fee;
       const selection = await rpc.selectCoins({
         walletId: 1n,
@@ -424,7 +426,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         offer: { '1': -fee },
         driverDict: {},
         validateOnly: true,
-        coinIds: [`0x${selectedCoinId}`],
         allowUnsynced: true,
         extraConditions: [
           { opcode: 64n, args: { coin_id: protocolCoinId } },
