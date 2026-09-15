@@ -356,9 +356,9 @@ resumable-session marker, and tab/reset coordination keys, inside the same-origi
 trust model described above.
 
 The current and only legal envelope schema is `chia-gaming-session` version
-`23`. Because the project is
-still alpha, every other version is deleted wholesale without decoding or
-migration. A decoded v23 record must also satisfy the complete phase-owned
+`23`. Early-beta compatibility is best-effort, and every other version is
+currently deleted wholesale without decoding or migration. A decoded v23
+record must also satisfy the complete phase-owned
 envelope contract (keyed game membership, generic game-state envelope agreement,
 terminal data, and frozen terminal coin list); malformed v23 records are
 deleted rather than partially restored. The boot marker is retained after an
@@ -539,8 +539,8 @@ settled. The current v21 envelope makes
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
 sidecar.
-Under the alpha no-migration policy, all incompatible
-records are deleted rather than translated from aggregate current-game fields.
+This schema does not migrate incompatible records from aggregate current-game
+fields; they are deleted instead.
 
 Rejecting an incoming proposal returns the model to compose as soon as the
 cancel command succeeds. There is no `expectingCounterProposal` flag or timer.
