@@ -530,6 +530,7 @@ export async function initSessionController(
       myContribution,
       theirContribution,
       peer_conn,
+      diagnostic,
     );
     diagnostic('controller-constructor-after');
 

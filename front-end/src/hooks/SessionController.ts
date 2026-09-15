@@ -240,6 +240,9 @@ export class SessionController implements PollingGameSession {
   private pendingAcks: bigint[] = [];
   private durabilityFlushPromise: Promise<void> = Promise.resolve();
   private pendingEffects = new Set<Promise<void>>();
+  private reloadStallDiagnostic: ((stage: string) => void) | null = null;
+  private reloadStallDiagnosticCount = 0;
+  private reloadStallEffectSequence = 0;
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: {
@@ -262,6 +265,7 @@ export class SessionController implements PollingGameSession {
     myContribution: bigint,
     theirContribution: bigint,
     peer_conn: PeerConnectionResult,
+    reloadStallDiagnostic?: (stage: string) => void,
   ) {
     const { sendMessage, sendAck } = peer_conn;
     this.receivePolicy = peer_conn.receivePolicy ?? DEFAULT_SESSION_RECEIVE_POLICY;
@@ -304,6 +308,7 @@ export class SessionController implements PollingGameSession {
     };
     this.reliableTransport.attachConsumer(this.reliableConsumer);
     this.uniqueId = uniqueId;
+    this.reloadStallDiagnostic = reloadStallDiagnostic ?? null;
     this.pairingToken = '';
     this.sendMessage = (msgno, msg) => sendMessage(Number(msgno), msg);
     this.sendAck = (ackMsgno) => sendAck(Number(ackMsgno));
@@ -676,9 +681,19 @@ export class SessionController implements PollingGameSession {
       throw new Error('activateSpend called without cradle');
     }
     const result = this.cradle.start_handshake();
+    this.traceReloadStall(
+      `activate-result events=${result.events.length} watches=${result.watchCoins.length} unwatch=${result.unwatchCoins.length}`,
+    );
     this.processResult(result);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
+    this.traceReloadStall(`activate-return queue=${this.eventQueue.length}`);
+  }
+
+  private traceReloadStall(stage: string): void {
+    if (!this.reloadStallDiagnostic || this.reloadStallDiagnosticCount >= 80) return;
+    this.reloadStallDiagnosticCount += 1;
+    this.reloadStallDiagnostic(stage);
   }
 
   private flushPendingCoinStates() {
@@ -970,6 +985,9 @@ export class SessionController implements PollingGameSession {
 
     const disposition = result.disposition;
     const terminal = disposition.kind === 'terminal';
+    this.traceReloadStall(
+      `process-result kind=${disposition.kind} events=${result.events.length} queue-before=${this.eventQueue.length}`,
+    );
     if (terminal) {
       this.stopProtocolWork();
     }
@@ -1001,6 +1019,9 @@ export class SessionController implements PollingGameSession {
       return;
     }
     this.scheduleDrain();
+    this.traceReloadStall(
+      `process-result-return queue=${this.eventQueue.length} drain=${this.drainScheduled}`,
+    );
   }
 
   queueHostMessage(
@@ -1104,6 +1125,7 @@ export class SessionController implements PollingGameSession {
   private scheduleDrain(): void {
     if (this.drainScheduled || this.eventQueue.length === 0) return;
     this.drainScheduled = true;
+    this.traceReloadStall(`drain-scheduled queue=${this.eventQueue.length}`);
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
       this.drainActiveEventsToQuiescence();
@@ -1118,8 +1140,12 @@ export class SessionController implements PollingGameSession {
    * task. Terminal results retain their separate queue-clearing flush path.
    */
   private drainActiveEventsToQuiescence(eventBudget: number = ACTIVE_DRAIN_EVENT_BUDGET): void {
+    const initialQueueLength = this.eventQueue.length;
+    if (initialQueueLength > 0) {
+      this.traceReloadStall(`drain-enter queue=${initialQueueLength} budget=${eventBudget}`);
+    }
+    let drained = 0;
     try {
-      let drained = 0;
       while (
         this.eventQueue.length > 0 &&
         !this.protocolStopped &&
@@ -1134,6 +1160,9 @@ export class SessionController implements PollingGameSession {
     }
     if (this.eventQueue.length > 0 && !this.protocolStopped && !this.retired) {
       this.scheduleDrain();
+    }
+    if (initialQueueLength > 0 || drained > 0) {
+      this.traceReloadStall(`drain-exit drained=${drained} queue=${this.eventQueue.length}`);
     }
   }
 
@@ -1221,6 +1250,7 @@ export class SessionController implements PollingGameSession {
   }
 
   private dispatchEvent(event: GameSessionEvent): void {
+    this.traceReloadStall(`dispatch=${Object.keys(event as object)[0] ?? 'empty'}`);
     if ('OutboundMessage' in event) {
       if (this.protocolStopped || this.onChain) return;
       this.reliableTransport.allocateOutbound(event.OutboundMessage);
@@ -1292,8 +1322,15 @@ export class SessionController implements PollingGameSession {
   }
 
   private trackEffect(effect: Promise<void>): void {
+    const sequence = ++this.reloadStallEffectSequence;
+    this.traceReloadStall(
+      `effect-start sequence=${sequence} pending=${this.pendingEffects.size + 1}`,
+    );
     const tracked = effect.finally(() => {
       this.pendingEffects.delete(tracked);
+      this.traceReloadStall(
+        `effect-settle sequence=${sequence} pending=${this.pendingEffects.size}`,
+      );
     });
     this.pendingEffects.add(tracked);
   }
@@ -1424,6 +1461,7 @@ export class SessionController implements PollingGameSession {
   }
 
   private deliverHeight(peak: bigint) {
+    this.traceReloadStall(`chain-height-enter peak=${peak}`);
     log(`[wasm] height-only observation height=${peak}`);
     if (!this.cradle) {
       throw new Error('deliverHeight called without cradle');
@@ -1431,6 +1469,7 @@ export class SessionController implements PollingGameSession {
     try {
       this.processResult(this.cradle.report_height(peak));
       if (this.resubmitNeedsCoinSnapshot === false) this.resubmitAfterFreshChainSync();
+      this.traceReloadStall(`chain-height-return peak=${peak}`);
     } catch (e) {
       diagStack('report_height failed', e);
       log(`[wasm] report_height failed: ${String(e)}`);
@@ -1438,6 +1477,7 @@ export class SessionController implements PollingGameSession {
   }
 
   private deliverCoinStates(peak: bigint, records: CoinStateRecord[]) {
+    this.traceReloadStall(`chain-coins-enter peak=${peak} records=${records.length}`);
     log(`[wasm] coin states height=${peak} coins=${records.length}`);
     if (!this.cradle) {
       throw new Error('deliverCoinStates called without cradle');
@@ -1447,6 +1487,7 @@ export class SessionController implements PollingGameSession {
       this.processResult(result);
       this.resubmitNeedsCoinSnapshot = false;
       this.resubmitAfterFreshChainSync();
+      this.traceReloadStall(`chain-coins-return peak=${peak}`);
     } catch (e) {
       diagStack('report_coin_states failed', e);
       log(`[wasm] report_coin_states failed: ${String(e)}`);

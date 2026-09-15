@@ -5,6 +5,7 @@ import { useCalpokerHand, type UseCalpokerHandResult } from '@games/calpoker/ui/
 import type { GameIntent, LiveGamePort } from '@games/host';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
 import {
@@ -401,7 +402,7 @@ async function runHandshakeRoleReload(
     addActiveCradle(new SessionControllerAdapter()),
   ] as [SessionControllerAdapter, SessionControllerAdapter];
   reloadStallBreadcrumb(checkpoint, 'controllers-init-before');
-  const controllers = await Promise.all([
+  const controllerPromises = [
     initSessionController(
       poller,
       `a11ce00${suffix}`,
@@ -416,7 +417,17 @@ async function runHandshakeRoleReload(
       adapters[1].peerConnection,
       new WasmStateInit(fetchPreset),
     ),
-  ]);
+  ] as const;
+  controllerPromises.forEach((promise, index) => {
+    void promise.then(
+      () => {
+        reloadStallBreadcrumb(checkpoint, `controller-promise-${index}-settled`);
+        setTimeout(() => reloadStallBreadcrumb(checkpoint, `controller-promise-${index}-timer`), 0);
+      },
+      () => reloadStallBreadcrumb(checkpoint, `controller-promise-${index}-rejected`),
+    );
+  });
+  const controllers = await Promise.all(controllerPromises);
   reloadStallBreadcrumb(checkpoint, 'controllers-init-after');
   controllers.forEach((controller, index) => {
     controller.pairingToken = `reload-handshake-${suffix}-${index}`;
@@ -485,6 +496,55 @@ it(
       throw new Error(`[load_wasm reload injection failed]\n${String(error)}`, { cause: error });
     } finally {
       logReloadLifecycle('calpoker-end');
+    }
+  },
+  120 * 1000,
+);
+
+it(
+  'lets a timer run after activating one controller while another registration awaits',
+  async () => {
+    const poller = await startSimulator(['a11ce010', 'b0b70010']);
+    if (!poller) return;
+    const adapter = addActiveCradle(new SessionControllerAdapter());
+    let finishRegistration!: () => void;
+    const registrationGate = new Promise<void>((resolve) => {
+      finishRegistration = resolve;
+    });
+    const originalRegisterUser = fakeBlockchainInfo.registerUser;
+    let registrationSettled = false;
+    let pendingRegistration: Promise<string> | null = null;
+    fakeBlockchainInfo.registerUser = async function (name, balance) {
+      const rewardPuzzleHash = await originalRegisterUser.call(this, name, balance);
+      if (name === 'b0b70010') await registrationGate;
+      return rewardPuzzleHash;
+    };
+    try {
+      pendingRegistration = fakeBlockchainInfo.registerUser('b0b70010');
+      void pendingRegistration.then(() => {
+        registrationSettled = true;
+      });
+
+      const controller = await initSessionController(
+        poller,
+        'a11ce010',
+        true,
+        adapter.peerConnection,
+        new WasmStateInit(fetchPreset),
+      );
+      controller.onSaveNeeded = () => Promise.resolve();
+      adapter.set_blob(controller);
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        registrationSettled,
+        false,
+        'activation must yield to timers while the second registerUser call remains pending',
+      );
+    } finally {
+      finishRegistration();
+      fakeBlockchainInfo.registerUser = originalRegisterUser;
+      if (pendingRegistration) await pendingRegistration;
     }
   },
   120 * 1000,
