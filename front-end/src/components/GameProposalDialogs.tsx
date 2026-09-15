@@ -128,7 +128,7 @@ export function ReviewProposalDialog({ session }: { session: UseGameSessionResul
   if (!review) return null;
   return (
     <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4">
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 text-center">
         <p className="text-sm text-canvas-text-contrast">Do you want to accept this hand?</p>
         <p className="text-xs text-canvas-text">
           Game: {gameDisplayName(review.handProposal.gameType)}
