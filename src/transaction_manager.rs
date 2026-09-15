@@ -597,13 +597,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             let ripe = match watched.birthday {
                 Some(birthday) => birthday
                     .checked_add(watched.timeout_blocks.to_u64())
-                    .ok_or_else(|| {
-                        Error::StrErr(format!(
-                            "timeout maturity overflow for coin {coin:?}: birthday {birthday} + timeout {}",
-                            watched.timeout_blocks.to_u64()
-                        ))
-                    })?
-                    <= height,
+                    .is_some_and(|maturity_height| maturity_height <= height),
                 None => false,
             };
             if ripe
@@ -1770,32 +1764,41 @@ mod tests {
     }
 
     #[test]
-    fn timeout_maturity_overflow_is_rejected() {
+    fn timeout_maturity_overflow_stays_unripe_without_blocking_other_claims() {
         let mut allocator = AllocEncoder::new();
-        let coin = test_coin(12);
+        let overflow_coin = test_coin(12);
+        let valid_coin = test_coin(13);
         let mut mock = MockGameSession::default();
-        mock.queue_drain(vec![watch_event_with_spend(
-            &coin,
-            u64::MAX,
-            test_bundle("overflowing-timeout-claim"),
-        )]);
+        mock.queue_drain(vec![
+            watch_event_with_spend(
+                &overflow_coin,
+                u64::MAX,
+                test_bundle("overflowing-timeout-claim"),
+            ),
+            watch_event_with_spend(&valid_coin, 5, test_bundle("valid-timeout-claim")),
+        ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("register");
 
-        let error = mgr
-            .report_coin_states(
-                &mut allocator,
-                10,
-                &[CoinStateRecord {
-                    coin,
+        mgr.report_coin_states(
+            &mut allocator,
+            15,
+            &[
+                CoinStateRecord {
+                    coin: overflow_coin,
                     created_height: Some(10),
                     spent_height: None,
-                }],
-            )
-            .expect_err("overflowing timeout maturity must fail");
+                },
+                CoinStateRecord {
+                    coin: valid_coin,
+                    created_height: Some(10),
+                    spent_height: None,
+                },
+            ],
+        )
+        .expect("overflowing maturity must not poison observation");
 
-        assert!(error.to_string().contains("timeout maturity overflow"));
-        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
     }
 
     #[test]
