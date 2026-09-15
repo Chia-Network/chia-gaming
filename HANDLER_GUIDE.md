@@ -497,21 +497,20 @@ guess pays zero. If Alice reveals after an incorrect guess one through four,
 the reveal is valid only when it pays the same scheduled share as a correct
 guess at that depth. An underfunded concession, malformed reveal, or reveal
 that does not open Alice's commitment returns nil and is unconditionally
-slashable. Those move-only faults are slashable with nil evidence. Unrecognized
-evidence returns the aligned terminal payload and simply skips
-evidence-dependent slashing.
+slashable. Those move-only faults are slashable with nil evidence. Unsupported
+non-nil evidence lengths return the same terminal result as nil.
 
 Evidence has two proof-specific forms:
 
 - A one-byte index selects a prior clue. If recomputing that clue from the
   revealed word proves Alice's clue wrong, the validator returns nil. A correct
-  clue or an out-of-range index returns the ordinary aligned terminal result
-  and does not authorize a slash.
+  clue returns the ordinary aligned terminal result; an out-of-range index
+  raises and cannot authorize a slash.
 - A ten-byte `lower_bound || upper_bound` dictionary-gap proof conditionally
   slashes when the revealed word lies inside that range. The validator appends
   `(AGG_SIG_UNSAFE dict_pubkey evidence)`, so the referee slash succeeds only
   when the blockchain verifies the range signature. A range that does not
-  contain the word authorizes nothing.
+  contain the word raises and cannot authorize a slash.
 
 The dictionary handler obtains both the range and its precomputed aggregate
 signature from the signed dictionary tree. In a handler `evidence_list`, signed
@@ -580,14 +579,14 @@ Validators have a two-sided security contract:
   slash-triggering result, without raising. This includes malformed lengths,
   bad popcounts, bad preimage reveals, wrong mover shares, and invalid
   next-state commitments.
-- Every invalid slash attempt against a valid move must fail. The validator may
-  fail that slash by returning the valid move payload or, for malformed
-  non-nil evidence, by raising so the slash transaction cannot be mined. Nil
-  evidence must never raise: it is also used off chain to extract the
-  transition and next max move size. Evidence assertions are only safe after
-  the move itself has already been classified as valid; otherwise malformed
-  evidence could mask a malicious move by causing an exception instead of a
-  slash.
+- Every invalid slash attempt against a valid move must fail. Non-nil evidence
+  either proves its specific accusation or fails to slash. A validator may
+  reject unusable evidence by raising or may treat it like nil and return the
+  valid payload. Nil evidence must never raise: it is also used off chain to
+  extract the transition and next max move size. Evidence assertions are only
+  safe after the move itself has already been classified as valid; otherwise
+  malformed evidence could mask a malicious move by causing an exception
+  instead of a slash.
 
 In practice, validators should cheaply classify move shape before any
 length-sensitive `substr`, hand-evaluation helper, or evidence processing.

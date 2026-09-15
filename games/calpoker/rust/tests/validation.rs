@@ -1445,7 +1445,15 @@ fn test_calpoker_e_bad_evidence_exception() {
         &mut a,
         &lib,
         &after,
-        &make_step(&m, 100, Some(&[0xFF]), MoveCode::ClvmException, false, "e"),
+        &make_step(
+            &m,
+            100,
+            // Numerically valid five-card bitfield, but not a one-byte encoding.
+            Some(&[0x00, 0x1F]),
+            MoveCode::ClvmException,
+            false,
+            "e",
+        ),
     );
 }
 

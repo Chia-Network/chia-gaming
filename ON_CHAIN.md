@@ -671,10 +671,10 @@ The referee puzzle (`referee.clsp`) accepts three types of solutions:
   slashable before any evidence-sensitive code can raise (see `CLVM_DOS.md`,
   "Game-Specific Responsibilities")
   - Nil evidence must return the aligned transition for a valid move because it
-  is also used off chain to derive that transition. Unrecognized evidence
-  normally returns the same transition and skips that slashing opportunity.
-  A malicious move itself must be classified as slashable before any
-  evidence-sensitive code can raise.
+  is also used off chain to derive that transition. Non-nil evidence either
+  proves its specific accusation or fails to slash; unusable evidence may raise
+  or be treated like nil. A malicious move itself must be classified as
+  slashable before any evidence-sensitive code can raise.
   - Requires `AGG_SIG_UNSAFE MOVER_PUBKEY ("x" || mover_payout_ph)` — the same
   pre-signed payout authorization used by timeouts, so no additional signing
   is needed at slash time

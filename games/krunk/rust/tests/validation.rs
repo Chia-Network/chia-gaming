@@ -694,7 +694,7 @@ fn test_krunk_reveal_bad_range_doesnt_bracket() {
     evidence_bytes.extend_from_slice(b"denom");
     let evidence = allocator.allocator().new_atom(&evidence_bytes).unwrap();
 
-    let (code, result) = run_validator_step(
+    let result = run_validator_step(
         &mut allocator,
         &clue,
         &reveal_move,
@@ -702,15 +702,10 @@ fn test_krunk_reveal_bad_range_doesnt_bracket() {
         BASE_UNIT * 100,
         state,
         evidence,
-    )
-    .unwrap();
-    assert_eq!(code, MoveCode::MakeMove);
-    assert_eq!(
-        proper_list(allocator.allocator(), result, true)
-            .unwrap()
-            .len(),
-        3,
-        "irrelevant range evidence should not authorize a slash"
+    );
+    assert!(
+        result.is_err(),
+        "a range that does not contain the word should fail the slash attempt"
     );
     assert_referee_slash_rejected(
         &mut allocator,
@@ -720,13 +715,6 @@ fn test_krunk_reveal_bad_range_doesnt_bracket() {
         state,
         evidence,
     );
-}
-
-fn range_excluding(allocator: &mut AllocEncoder, _word: &[u8]) -> NodePtr {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"death");
-    bytes.extend_from_slice(b"denom");
-    allocator.allocator().new_atom(&bytes).unwrap()
 }
 
 fn test_krunk_reveal_valid() {
@@ -777,25 +765,8 @@ fn test_krunk_reveal_valid() {
         proper_list(allocator.allocator(), nil_result, true)
             .unwrap()
             .len(),
-        3
+        1
     );
-    let excluding = range_excluding(&mut allocator, word);
-    let (code, result) = run_validator_step(
-        &mut allocator,
-        &clue,
-        &reveal_move,
-        21,
-        mover_share,
-        state,
-        excluding,
-    )
-    .unwrap();
-    assert_eq!(code, MoveCode::MakeMove);
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 3, "valid reveal returns terminal (0 0 0)");
-    assert_eq!(int_from_atom(&mut allocator, items[0]), 0);
-    assert_eq!(int_from_atom(&mut allocator, items[1]), 0);
-    assert_eq!(int_from_atom(&mut allocator, items[2]), 0);
     assert_false_slash_with_common_evidence(
         &mut allocator,
         &clue,
@@ -804,7 +775,7 @@ fn test_krunk_reveal_valid() {
         state,
     );
     let oob_index = allocator.allocator().new_atom(&[0x05]).unwrap();
-    let (oob_code, oob_result) = run_validator_step(
+    let oob_result = run_validator_step(
         &mut allocator,
         &clue,
         &reveal_move,
@@ -812,14 +783,28 @@ fn test_krunk_reveal_valid() {
         mover_share,
         state,
         oob_index,
+    );
+    assert!(
+        oob_result.is_err(),
+        "an out-of-range evidence index should fail the slash attempt"
+    );
+    let malformed_evidence = allocator.allocator().new_atom(&[0x00, 0x01]).unwrap();
+    let (unsupported_code, unsupported_result) = run_validator_step(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        21,
+        mover_share,
+        state,
+        malformed_evidence,
     )
-    .expect("an out-of-range evidence index should be ignored");
-    assert_eq!(oob_code, MoveCode::MakeMove);
+    .expect("an unsupported evidence length should behave like nil evidence");
+    assert_eq!(unsupported_code, MoveCode::MakeMove);
     assert_eq!(
-        proper_list(allocator.allocator(), oob_result, true)
+        proper_list(allocator.allocator(), unsupported_result, true)
             .unwrap()
             .len(),
-        3
+        1
     );
     assert_referee_slash_rejected(
         &mut allocator,
@@ -1085,7 +1070,6 @@ fn test_krunk_premature_reveal_concedes_scheduled_payout() {
     reveal_move.extend_from_slice(&salt);
     reveal_move.extend_from_slice(word);
 
-    let excluding = range_excluding(&mut allocator, word);
     let (code, result) = run_validator_step(
         &mut allocator,
         &clue,
@@ -1093,7 +1077,7 @@ fn test_krunk_premature_reveal_concedes_scheduled_payout() {
         21,
         BASE_UNIT * 100,
         state,
-        excluding,
+        NodePtr::NIL,
     )
     .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
@@ -1101,7 +1085,7 @@ fn test_krunk_premature_reveal_concedes_scheduled_payout() {
         proper_list(allocator.allocator(), result, true)
             .unwrap()
             .len(),
-        3,
+        1,
         "a correctly funded premature reveal should be accepted as terminal"
     );
     assert_referee_slash_rejected(
@@ -1322,7 +1306,7 @@ fn test_krunk_reveal_correct_clue_no_slash() {
         proper_list(allocator.allocator(), result, true)
             .unwrap()
             .len(),
-        3,
+        1,
         "correct-clue evidence should not authorize a slash"
     );
     assert_referee_slash_rejected(
@@ -1377,7 +1361,6 @@ fn test_reveal_payout_at_depth(depth: usize, expected_mover_share: i64) {
     reveal_move.extend_from_slice(&salt);
     reveal_move.extend_from_slice(word);
 
-    let excluding = range_excluding(&mut allocator, word);
     let (code, result) = run_validator_step(
         &mut allocator,
         &clue,
@@ -1385,15 +1368,15 @@ fn test_reveal_payout_at_depth(depth: usize, expected_mover_share: i64) {
         21,
         expected_mover_share,
         state,
-        excluding,
+        NodePtr::NIL,
     )
     .unwrap_or_else(|e| panic!("depth {depth} reveal failed: {e}"));
     assert_eq!(code, MoveCode::MakeMove, "depth {depth} should succeed");
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(
         items.len(),
-        3,
-        "depth {depth} should return terminal (0 0 0)"
+        1,
+        "depth {depth} should return terminal (0)"
     );
     assert_false_slash_with_common_evidence(
         &mut allocator,

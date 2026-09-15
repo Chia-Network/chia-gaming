@@ -209,9 +209,11 @@ exceptions, while invalid slash attempts against valid moves must fail. Check
 move length/shape before `substr` or expensive helpers, return nil for any
 malicious move shape or rule violation, and return the valid transition when
 nil evidence supplies no proof. The host uses that nil-evidence run to derive
-the transition and next max move size. Unrecognized non-nil evidence should
-normally return the same valid transition; if it raises, evidence processing
-must occur only after the move itself is known to be valid.
+the transition and next max move size. Non-nil evidence either proves its
+specific accusation or fails to slash. A validator may reject unusable evidence
+by raising or may treat it like nil and return the valid transition. Evidence
+processing that can raise must occur only after the move itself is known to be
+valid.
 
 Move-path enforcement: the on-chain referee does NOT re-run the validator
 when a move is submitted. It trusts the submitted values and advances the

@@ -19,23 +19,20 @@
     (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
     previous_validation_program evidence)
 
-    (if evidence
-        (assert
-            (= (strlen evidence) 10)
-            (>= MOVE (substr evidence 0 5))
-            (<= MOVE (substr evidence 5 10))
-            (list clue_hash
-                (li dict_pubkey base_unit (c MOVE bob_guesses) alice_clues alice_commit clue_hash)
-                21
-                (list AGG_SIG_UNSAFE dict_pubkey evidence))
-        )
-        (if_any_fail
-            (= (strlen MOVE) 5)
-            (= MOVER_SHARE 0)
-            0
-            (list clue_hash
-                (li dict_pubkey base_unit (c MOVE bob_guesses) alice_clues alice_commit clue_hash)
-                21)
+    (if_any_fail
+        (= (strlen MOVE) 5)
+        (= MOVER_SHARE 0)
+        0
+        (li clue_hash
+            (li dict_pubkey base_unit (c MOVE bob_guesses) alice_clues alice_commit clue_hash)
+            21 &rest
+            (if (not evidence) 0
+                (assert
+                    (>= MOVE (substr evidence 0 5))
+                    (<= MOVE (substr evidence 5 10))
+                    (li (li AGG_SIG_UNSAFE dict_pubkey evidence))
+                )
+            )
         )
     )
 )

@@ -6,6 +6,7 @@
 (import std.relops)
 (import std.popcount)
 (import std.if_any_fail)
+(import std.assert)
 (import std.and)
 (import std.or)
 
@@ -39,9 +40,9 @@
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
         (bob_discards alice_cards bob_cards alice_commit) previous_validation_program bob_card_selections)
     (if (or
-            (not (= (strlen MOVE) 18))
-            (not (= (popcount (substr MOVE 16 17)) 4))
-            (not (= (popcount (substr MOVE 17 18)) 5))
+            (!= (strlen MOVE) 18)
+            (!= (popcount (substr MOVE 16 17)) 4)
+            (!= (popcount (substr MOVE 17 18)) 5)
         )
         0
 
@@ -56,14 +57,17 @@
                 alice_card_selections alice_final_cards))
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
-                (if (not bob_card_selections)
-                    (list 0)
-                    (does_alice_claim_small_enough
-                        alice_hand_value
-                        bob_card_selections
-                        bob_final_cards
-                        MOVER_SHARE
-                        AMOUNT
+                (or
+                    (not bob_card_selections)
+                    (assert
+                        (= (strlen bob_card_selections) 1)
+                        (does_alice_claim_small_enough
+                            alice_hand_value
+                            bob_card_selections
+                            bob_final_cards
+                            MOVER_SHARE
+                            AMOUNT
+                        )
                     )
                 )
                 0

@@ -358,11 +358,12 @@ move shape before operations such as `substr`. A nil-evidence run that
 finds no slash must return a valid payload, including a next state when
 there is one, because the receiver uses that run to derive the transition
 and next max move size. Evidence is never required for this inspection run.
-Unrecognized evidence should normally return the valid payload and skip that
-slashing opportunity. If malformed non-nil evidence raises instead, it must
-only do so after the move itself is known to be valid. Malformed evidence must
-never return nil and slash a valid move. California Poker's first validator is
-a compact example:
+Non-nil evidence either proves the validator's specific accusation or fails to
+slash. A validator may reject unusable evidence by raising or may treat it like
+nil and return the valid payload. Evidence processing that can raise must occur
+only after the move itself is known to be valid. Evidence must never
+accidentally return nil and slash a valid move. California Poker's first
+validator is a compact example:
 
 ```clojure
 (export (mod_hash
