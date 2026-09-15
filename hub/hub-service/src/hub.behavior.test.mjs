@@ -65,6 +65,7 @@ async function startHub(env = {}) {
         HUB_RATE_WINDOW_MS: '10000',
         HUB_MAX_MESSAGES_PER_WINDOW: '100',
         HUB_MAX_BYTES_PER_WINDOW: '1000000',
+        HUB_MAX_WS_PAYLOAD_BYTES: '11534336',
         GAME_MAX_MESSAGES_PER_WINDOW: '1000',
         GAME_MAX_BYTES_PER_WINDOW: '11534336',
         ...env,
@@ -1031,6 +1032,27 @@ test('hub message flood closes the connection with a distinct rate-limit code', 
     sendJson(ws, { type: 'keepalive' });
 
     assert.deepEqual(await closed, { code: 4008, reason: 'rate_limited' });
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('WebSocket payload limits reject oversized hub and game frames during reassembly', async () => {
+  const hub = await startHub({
+    HUB_MAX_WS_PAYLOAD_BYTES: '128',
+    HUB_MAX_BYTES_PER_WINDOW: '1000',
+    GAME_MAX_BYTES_PER_WINDOW: '1000',
+  });
+  try {
+    const hubWs = await openWs(hub.origin, '/ws/hub');
+    const hubClosed = nextClose(hubWs);
+    hubWs.send('x'.repeat(129));
+    assert.deepEqual(await hubClosed, { code: 1009, reason: '' });
+
+    const gameWs = await openWs(hub.origin, '/ws/game');
+    const gameClosed = nextClose(gameWs);
+    gameWs.send(Buffer.alloc(129));
+    assert.deepEqual(await gameClosed, { code: 1009, reason: '' });
   } finally {
     await hub.stop();
   }

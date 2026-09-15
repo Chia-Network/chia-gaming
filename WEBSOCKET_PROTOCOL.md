@@ -495,7 +495,8 @@ frame. It uses close code `4002` and reason `idle_timeout`.
 Other current close codes are:
 
 - `4001`, `replaced_by_new_connection`;
-- `4008`, `rate_limited`; and
+- `4008`, `rate_limited`;
+- `1009`, oversized WebSocket message; and
 - `1001`, `server_shutdown`.
 
 Peer keepalives are different: they are opaque addressed payloads carried
@@ -509,15 +510,22 @@ Current hub defaults use a ten-second accounting window:
 - at most 1,000 game-channel messages per connection per window;
 - at most 11 MiB of game-channel frame bytes per connection per window.
 
+Both WebSocket endpoints also default to an 11 MiB transport-level message
+limit. The WebSocket parser enforces this while reassembling a message and
+closes an oversized connection with code `1009`, before emitting the
+application-level `message` event. Deployments may override the transport
+ceiling with `HUB_MAX_WS_PAYLOAD_BYTES`.
+
 Deployments may override these values. Exceeding a per-connection rate budget
 closes the connection with code `4008`. The hub may also enforce local
 connection caps. Rejection at that stage uses HTTP status
 `503 Service Unavailable`; no WebSocket connection is established. Limits
 involving the hub HTML's internal connections are out of scope.
 
-The rate budget is not an end-to-end peer message size declaration. The current
-peer receive policy separately defaults to a 10 MiB authoritative peer-message
-body limit.
+The transport limit and rate budget are not end-to-end peer message size
+declarations. The current peer receive policy separately defaults to a 10 MiB
+authoritative peer-message body limit; the transport ceiling leaves room for
+the relay envelope around that body.
 
 ## 11. Terminology and trust
 

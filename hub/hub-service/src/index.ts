@@ -135,9 +135,16 @@ const GAME_RATE_LIMIT: RateLimit = {
   maxMessages: readPositiveIntegerEnv('GAME_MAX_MESSAGES_PER_WINDOW', 1000),
   maxBytes: readPositiveIntegerEnv('GAME_MAX_BYTES_PER_WINDOW', DEFAULT_GAME_BYTES_PER_WINDOW),
 };
+const MAX_WS_PAYLOAD_BYTES = readPositiveIntegerEnv(
+  'HUB_MAX_WS_PAYLOAD_BYTES',
+  DEFAULT_GAME_BYTES_PER_WINDOW,
+);
+if (MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
+  throw new Error('HUB_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
+}
 const TRUST_PROXY = readBooleanEnv('HUB_TRUST_PROXY', false);
-const hubWsServer = new WebSocketServer({ noServer: true });
-const gameWsServer = new WebSocketServer({ noServer: true });
+const hubWsServer = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES });
+const gameWsServer = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES });
 const connectionsByIp = new Map<string, number>();
 const connectionAttemptsByIp = new Map<string, ConnectionAttemptBudget>();
 let totalConnections = 0;

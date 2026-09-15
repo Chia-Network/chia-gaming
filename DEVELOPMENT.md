@@ -285,6 +285,7 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 | `HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW` | no | Maximum WebSocket upgrade attempts per client IP per rate window (default `100`)                 |
 | `HUB_MAX_MESSAGES_PER_WINDOW` | no      | Maximum control-channel messages per connection per window (default `100`)                              |
 | `HUB_MAX_BYTES_PER_WINDOW`   | no       | Maximum control-channel bytes per connection per window (default `1000000`)                             |
+| `HUB_MAX_WS_PAYLOAD_BYTES`   | no       | Transport-level message ceiling enforced during WebSocket reassembly (default `11534336`)                |
 | `GAME_MAX_MESSAGES_PER_WINDOW` | no     | Maximum game-relay messages per connection per window (default `1000`)                                  |
 | `GAME_MAX_BYTES_PER_WINDOW`  | no       | Maximum game-relay bytes per connection per window (default `11534336`)                                 |
 | `GAME_MAX_RECENT_CORRESPONDENTS` | no  | Maximum recent relay correspondents retained per hub session (default `16`)                              |
