@@ -305,6 +305,42 @@ const wsKeepaliveTimers = new WeakMap<WebSocket, ReturnType<typeof setInterval>>
 const rateBudgets = new WeakMap<WebSocket, RateBudget>();
 let nextWsId = 1;
 
+let retentionClockNow = Date.now;
+const testRetentionClockStart = process.env.HUB_TEST_RETENTION_CLOCK_MS;
+if (testRetentionClockStart !== undefined) {
+  if (process.env.NODE_ENV !== 'test' || !process.send) {
+    throw new Error('HUB_TEST_RETENTION_CLOCK_MS requires NODE_ENV=test and an IPC parent');
+  }
+  const parsedStart = Number(testRetentionClockStart);
+  if (!Number.isSafeInteger(parsedStart) || parsedStart < 0) {
+    throw new Error('HUB_TEST_RETENTION_CLOCK_MS must be a non-negative safe integer');
+  }
+  let testNow = parsedStart;
+  retentionClockNow = () => testNow;
+  process.on('message', (message: unknown) => {
+    if (
+      !message ||
+      typeof message !== 'object' ||
+      (message as { type?: unknown }).type !== 'advance_retention_clock'
+    ) {
+      return;
+    }
+    const milliseconds = (message as { milliseconds?: unknown }).milliseconds;
+    if (
+      typeof milliseconds !== 'number' ||
+      !Number.isSafeInteger(milliseconds) ||
+      milliseconds < 0
+    ) {
+      throw new Error('retention clock advance must be a non-negative safe integer');
+    }
+    testNow += milliseconds;
+    if (!Number.isSafeInteger(testNow)) {
+      throw new Error('retention test clock exceeded the safe integer range');
+    }
+    process.send?.({ type: 'retention_clock_advanced', now: testNow });
+  });
+}
+
 function wsId(ws: WebSocket): number {
   const existing = wsIds.get(ws);
   if (existing) return existing;
@@ -416,7 +452,7 @@ function retainedSessionIsActive(sessionId: string, playerId: string): boolean {
   );
 }
 
-function markRetainedSessionInactive(playerId: string, now = Date.now()): void {
+function markRetainedSessionInactive(playerId: string, now = retentionClockNow()): void {
   const sessionId = playerToSession.get(playerId);
   if (!sessionId || retainedSessionIsActive(sessionId, playerId)) return;
   sessionLastUsedAt.delete(sessionId);
@@ -451,7 +487,7 @@ function pruneRetainedSessions(now: number): void {
 }
 
 function ensureSession(sessionId: string): string | null {
-  const now = Date.now();
+  const now = retentionClockNow();
   const existing = sessionToPlayer.get(sessionId);
   if (existing) {
     const expired =
@@ -699,7 +735,7 @@ function trimCorrespondents(sessionId: string): void {
   }
 }
 
-function rememberCorrespondence(a: string, b: string, now = Date.now()): void {
+function rememberCorrespondence(a: string, b: string, now = retentionClockNow()): void {
   if (a === b) return;
   const aPeers = recentCorrespondents.get(a) ?? new Map<string, number>();
   const bPeers = recentCorrespondents.get(b) ?? new Map<string, number>();
@@ -728,7 +764,7 @@ function notifyRecentCorrespondents(
 ): void {
   const peers = recentCorrespondents.get(sessionId);
   if (!peers) return;
-  const now = Date.now();
+  const now = retentionClockNow();
   for (const [peerSessionId, lastRelayedAt] of [...peers]) {
     if (now - lastRelayedAt > RECENT_CORRESPONDENT_TTL_MS) {
       removeCorrespondentEdge(sessionId, peerSessionId);
@@ -1725,11 +1761,12 @@ function pruneConnectionAttemptBudgets(now: number): void {
 
 const sweepTimer = setInterval(() => {
   const now = Date.now();
+  const retentionNow = retentionClockNow();
   const hubChanged = sweepHubConnections(now);
   sweepGameConnections(now);
   pruneConnectionAttemptBudgets(now);
-  pruneRecentCorrespondents(now);
-  pruneRetainedSessions(now);
+  pruneRecentCorrespondents(retentionNow);
+  pruneRetainedSessions(retentionNow);
   if (hubChanged) {
     broadcastHubUpdate();
   }

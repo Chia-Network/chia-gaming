@@ -73,7 +73,7 @@ async function startHub(env = {}) {
         GAME_MAX_TOTAL_OUTBOUND_BYTES: '268435456',
         ...env,
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     },
   );
   let output = '';
@@ -97,9 +97,35 @@ async function startHub(env = {}) {
   });
   return {
     origin: `http://127.0.0.1:${port}`,
+    advanceRetentionClock: async (milliseconds) => {
+      assert.ok(
+        env.HUB_TEST_RETENTION_CLOCK_MS !== undefined,
+        'hub was not started with a test retention clock',
+      );
+      await new Promise((resolve, reject) => {
+        const onMessage = (message) => {
+          if (message?.type !== 'retention_clock_advanced') return;
+          child.off('error', onError);
+          resolve(undefined);
+        };
+        const onError = (error) => {
+          child.off('message', onMessage);
+          reject(error);
+        };
+        child.on('message', onMessage);
+        child.once('error', onError);
+        child.send({ type: 'advance_retention_clock', milliseconds }, (error) => {
+          if (!error) return;
+          child.off('message', onMessage);
+          child.off('error', onError);
+          reject(error);
+        });
+      });
+    },
     stop: async () => {
       if (child.exitCode !== null) return;
       child.kill('SIGTERM');
+      if (child.connected) child.disconnect();
       await new Promise((resolve) => child.once('exit', resolve));
     },
   };
@@ -828,7 +854,11 @@ test('same secret session_id keeps the same player_id across hub leave and rejoi
 });
 
 test('retained session capacity evicts the oldest disconnected identity', async () => {
-  const hub = await startHub({ HUB_MAX_RETAINED_SESSIONS: '2' });
+  const hub = await startHub({
+    NODE_ENV: 'test',
+    HUB_TEST_RETENTION_CLOCK_MS: '1000',
+    HUB_MAX_RETAINED_SESSIONS: '2',
+  });
   try {
     const first = await joinHub(hub.origin, 'retained-cap-first', 'First Alias');
     const left = nextJson(
@@ -838,15 +868,14 @@ test('retained session capacity evicts the oldest disconnected identity', async 
     sendJson(first.ws, { type: 'leave' });
     await left;
     await closeWs(first.ws);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await hub.advanceRetentionClock(1);
 
     const second = await identifyGameRegistered(hub.origin, 'retained-cap-second');
     await closeWs(second.game);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await hub.advanceRetentionClock(1);
 
     const third = await identifyGameRegistered(hub.origin, 'retained-cap-third');
     await closeWs(third.game);
-    await new Promise((resolve) => setTimeout(resolve, 20));
 
     const firstAgain = await identifyGameRegistered(hub.origin, 'retained-cap-first');
     assert.notEqual(firstAgain.playerId, first.id);
@@ -889,17 +918,21 @@ test('retained session capacity does not evict an active identity', async () => 
 });
 
 test('retained session TTL starts when the identity becomes inactive', async () => {
-  const hub = await startHub({ HUB_RETAINED_SESSION_TTL_MS: '100' });
+  const hub = await startHub({
+    NODE_ENV: 'test',
+    HUB_TEST_RETENTION_CLOCK_MS: '1000',
+    HUB_RETAINED_SESSION_TTL_MS: '100',
+  });
   try {
     const first = await identifyGameRegistered(hub.origin, 'retained-ttl');
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await hub.advanceRetentionClock(120);
     await closeWs(first.game);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await hub.advanceRetentionClock(99);
 
     const beforeExpiry = await identifyGameRegistered(hub.origin, 'retained-ttl');
     assert.equal(beforeExpiry.playerId, first.playerId);
     await closeWs(beforeExpiry.game);
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await hub.advanceRetentionClock(100);
 
     const afterExpiry = await identifyGameRegistered(hub.origin, 'retained-ttl');
     assert.notEqual(afterExpiry.playerId, first.playerId);
@@ -1324,7 +1357,11 @@ test('closing the current game socket with client-supplied code 4001 notifies co
 });
 
 test('recent correspondent tracking evicts the oldest route at its configured cap', async () => {
-  const hub = await startHub({ GAME_MAX_RECENT_CORRESPONDENTS: '1' });
+  const hub = await startHub({
+    NODE_ENV: 'test',
+    HUB_TEST_RETENTION_CLOCK_MS: '1000',
+    GAME_MAX_RECENT_CORRESPONDENTS: '1',
+  });
   try {
     const sender = await identifyGameRegistered(hub.origin, 'cap-sender');
     const first = await identifyGameRegistered(hub.origin, 'cap-first');
@@ -1337,6 +1374,7 @@ test('recent correspondent tracking evicts the oldest route at its configured ca
       payload: Buffer.from('first'),
     });
     await firstRelay;
+    await hub.advanceRetentionClock(1);
 
     const secondRelay = nextGame(second.game, (msg) => msg.type === 'relay');
     sendGame(sender.game, {
@@ -1365,7 +1403,11 @@ test('recent correspondent tracking evicts the oldest route at its configured ca
 });
 
 test('recent correspondent hints expire after the configured TTL', async () => {
-  const hub = await startHub({ GAME_RECENT_CORRESPONDENT_TTL_MS: '20' });
+  const hub = await startHub({
+    NODE_ENV: 'test',
+    HUB_TEST_RETENTION_CLOCK_MS: '1000',
+    GAME_RECENT_CORRESPONDENT_TTL_MS: '20',
+  });
   try {
     const sender = await identifyGameRegistered(hub.origin, 'ttl-sender');
     const receiver = await identifyGameRegistered(hub.origin, 'ttl-receiver');
@@ -1377,7 +1419,7 @@ test('recent correspondent hints expire after the configured TTL', async () => {
     });
     await relayed;
     await closeWs(receiver.game);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await hub.advanceRetentionClock(21);
 
     const expiredHint = nextGame(sender.game, (msg) => msg.type === 'peer_available', 100);
     const reconnected = await identifyGameRegistered(hub.origin, 'ttl-receiver');
