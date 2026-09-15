@@ -284,8 +284,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
-  // Play readiness: use a verified full-node peer when the wallet supports the
-  // optional count RPC; otherwise connectivity is sufficient.
+  // Play readiness: use a verified full-node peer when the wallet can answer
+  // the optional count RPC; otherwise connectivity is sufficient. A granted
+  // namespace is not proof of support — only an answer is.
   private readyForPlay = false;
   private peerPollTimer: ReturnType<typeof setTimeout> | null = null;
   private peerPollEpoch = 0;
@@ -836,19 +837,25 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private startPeerReadinessPoll() {
     const epoch = ++this.peerPollEpoch;
     const check = async () => {
+      let peerCount: bigint;
       try {
-        const peerCount = await rpc.getFullNodePeerCount({});
-        if (epoch !== this.peerPollEpoch) return;
-        log(`[wc-blockchain] full node peer poll peerCount=${peerCount}`);
-        if (peerCount > 0n) {
-          this.setReadyForPlay(true);
-          return;
-        }
+        peerCount = await rpc.getFullNodePeerCount({});
       } catch (e) {
         if (epoch !== this.peerPollEpoch) return;
-        log(`[wc-blockchain] full node peer poll error: ${String(e)}`);
+        // A granted method the wallet cannot answer tells us nothing about
+        // peers, which is the same position as a wallet that never granted it:
+        // connectivity is sufficient. Holding busy here would strand the player
+        // as permanently unavailable in the lobby.
+        log(`[wc-blockchain] full node peer count unanswered, assuming ready: ${String(e)}`);
+        this.setReadyForPlay(true);
+        return;
       }
       if (epoch !== this.peerPollEpoch) return;
+      log(`[wc-blockchain] full node peer poll peerCount=${peerCount}`);
+      if (peerCount > 0n) {
+        this.setReadyForPlay(true);
+        return;
+      }
       this.setReadyForPlay(false);
       this.peerPollTimer = setTimeout(check, PEER_READINESS_POLL_MS);
     };

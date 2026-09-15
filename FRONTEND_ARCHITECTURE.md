@@ -97,6 +97,9 @@ the backend behind `InternalBlockchainInterface.isReadyForPlay()` /
 `onPlayReadinessChange()`: the simulator and Cloud Wallet are ready whenever
 connected. WalletConnect polls privately for a verified full-node peer when
 the wallet grants that optional RPC; otherwise connectivity implies readiness.
+A granted namespace is not proof the wallet implements the method, so only a
+wallet that answers with zero peers holds readiness back — a call that errors
+falls back to connectivity rather than advertising busy forever.
 The app still connects to the hub normally while a backend
 is not ready; it just advertises busy. Shell mirrors the backend's readiness into
 `blockchainReadyRef` via `onPlayReadinessChange`, and a wallet disconnect clears

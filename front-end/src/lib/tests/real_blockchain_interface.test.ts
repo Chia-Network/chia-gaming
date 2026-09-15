@@ -253,6 +253,38 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
+  it('assumes enough peers when a granted peer-count method cannot be answered', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      // Sessions negotiated while the method was required (and wallets that
+      // approve optional namespaces they do not implement) grant it anyway.
+      mockGetFullNodePeerCount.mockRejectedValue(
+        new Error('WalletConnect RPC chia_getFullNodePeerCount failed: Unsupported method'),
+      );
+
+      const blockchain = new RealBlockchainInterface();
+      const ready: boolean[] = [];
+      blockchain.onPlayReadinessChange((r) => ready.push(r));
+
+      await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(mockGetFullNodePeerCount).toHaveBeenCalled();
+      expect(blockchain.isReadyForPlay()).toBe(true);
+      expect(ready).toEqual([true]);
+
+      // An unanswerable grant must not leave a retry loop holding busy.
+      jest.advanceTimersByTime(60_000);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(blockchain.isReadyForPlay()).toBe(true);
+      expect(ready).toEqual([true]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('stays not-ready for play while no full node peer is present', async () => {
     jest.useFakeTimers();
     try {
