@@ -744,8 +744,11 @@ const MAX_TIMEOUT_BLOCKS = 30;
 
 function validateTimeout(raw: string | undefined, label: string): string | null {
   if (raw === undefined) return null;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < MIN_TIMEOUT_BLOCKS || n > MAX_TIMEOUT_BLOCKS) {
+  if (!/^[0-9]{1,3}$/.test(raw)) {
+    return `${label} must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.`;
+  }
+  const n = BigInt(raw);
+  if (n < BigInt(MIN_TIMEOUT_BLOCKS) || n > BigInt(MAX_TIMEOUT_BLOCKS)) {
     return `${label} must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.`;
   }
   return null;
@@ -826,22 +829,6 @@ function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'cha
     sendWs(ws, 'error', { error: unrollTimeoutErr });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
-  }
-
-  const MIN_TIMEOUT_BLOCKS = 3;
-  const MAX_TIMEOUT_BLOCKS = 30;
-  for (const field of ['channel_timeout', 'unroll_timeout'] as const) {
-    const raw = msg[field];
-    if (raw !== undefined) {
-      const val = Number(raw);
-      if (!Number.isInteger(val) || val < MIN_TIMEOUT_BLOCKS || val > MAX_TIMEOUT_BLOCKS) {
-        sendWs(ws, 'error', {
-          error: `Invalid ${field}: must be an integer between ${MIN_TIMEOUT_BLOCKS} and ${MAX_TIMEOUT_BLOCKS}.`,
-        });
-        sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
-        return;
-      }
-    }
   }
 
   const challenge = hub.createChallenge(

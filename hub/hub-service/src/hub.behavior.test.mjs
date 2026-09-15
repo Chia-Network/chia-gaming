@@ -634,6 +634,25 @@ test('challenges with out-of-range timeouts are rejected by the server', async (
     assert.match(err1.error, /Channel timeout/);
     await resolvedPromise1;
 
+    for (const [field, value] of [
+      ['channel_timeout', '3.0'],
+      ['channel_timeout', '1e1'],
+      ['unroll_timeout', '30.0'],
+    ]) {
+      const errPromise = nextJson(alice.ws, (msg) => msg.type === 'error');
+      const resolvedPromise = nextJson(alice.ws, (msg) => msg.type === 'challenge_resolved');
+      sendJson(alice.ws, {
+        type: 'challenge',
+        target_id: bob.id,
+        challenger_amount: '100',
+        target_amount: '100',
+        [field]: value,
+      });
+      const err = await errPromise;
+      assert.match(err.error, /timeout/i);
+      await resolvedPromise;
+    }
+
     // channel_timeout too high (above max of 30)
     const errPromise2 = nextJson(alice.ws, (msg) => msg.type === 'error');
     const resolvedPromise2 = nextJson(alice.ws, (msg) => msg.type === 'challenge_resolved');
