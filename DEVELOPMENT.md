@@ -278,7 +278,11 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 | `PORT`                       | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                              |
 | `HUB_MAX_TOTAL_CONNECTIONS`  | no       | Maximum combined hub and game WebSocket connections (default `2000`)                                   |
 | `HUB_MAX_CONNECTIONS_PER_IP` | no       | Maximum combined WebSocket connections per client IP (default `8`)                                     |
+| `HUB_MAX_PLAYERS`            | no       | Maximum players concurrently present in the hub roster (default `1000`)                                |
+| `HUB_MAX_RETAINED_SESSIONS`  | no       | Maximum active and reconnectable session identities retained in memory (default `10000`)                |
+| `HUB_RETAINED_SESSION_TTL_MS` | no      | Lifetime of a disconnected reconnectable session identity (default `86400000`)                          |
 | `HUB_RATE_WINDOW_MS`         | no       | Window used by both per-connection message and byte budgets (default `10000`)                           |
+| `HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW` | no | Maximum WebSocket upgrade attempts per client IP per rate window (default `100`)                 |
 | `HUB_MAX_MESSAGES_PER_WINDOW` | no      | Maximum control-channel messages per connection per window (default `100`)                              |
 | `HUB_MAX_BYTES_PER_WINDOW`   | no       | Maximum control-channel bytes per connection per window (default `1000000`)                             |
 | `GAME_MAX_MESSAGES_PER_WINDOW` | no     | Maximum game-relay messages per connection per window (default `1000`)                                  |

@@ -115,6 +115,11 @@ const MAX_RECENT_CORRESPONDENTS = readPositiveIntegerEnv('GAME_MAX_RECENT_CORRES
 const MAX_TOTAL_CONNECTIONS = readPositiveIntegerEnv('HUB_MAX_TOTAL_CONNECTIONS', 2000);
 const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_IP', 8);
 const MAX_PLAYERS = readPositiveIntegerEnv('HUB_MAX_PLAYERS', 1000);
+const MAX_RETAINED_SESSIONS = readPositiveIntegerEnv('HUB_MAX_RETAINED_SESSIONS', 10_000);
+const RETAINED_SESSION_TTL_MS = readPositiveIntegerEnv(
+  'HUB_RETAINED_SESSION_TTL_MS',
+  24 * 60 * 60_000,
+);
 const RATE_WINDOW_MS = readPositiveIntegerEnv('HUB_RATE_WINDOW_MS', 10_000);
 const MAX_CONNECTION_ATTEMPTS_PER_WINDOW = readPositiveIntegerEnv(
   'HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW',
@@ -253,6 +258,7 @@ const wsGameMeta = new WeakMap<WebSocket, GameConnMeta>();
 const pendingHubLeaves = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionToPlayer = new Map<string, string>();
 const playerToSession = new Map<string, string>();
+const sessionLastUsedAt = new Map<string, number>();
 const knownAliases = new Map<string, string>();
 const recentCorrespondents = new Map<string, Map<string, number>>();
 const wsLastActivity = new WeakMap<WebSocket, number>();
@@ -349,6 +355,13 @@ function sessionIdFromWire(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('hex');
 }
 
+function sessionIdFromHub(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^[0-9a-f]{32}$/i.test(value)) {
+    return null;
+  }
+  return value.toLowerCase();
+}
+
 function randomPublicId(): string {
   let id: string;
   do {
@@ -357,15 +370,73 @@ function randomPublicId(): string {
   return id;
 }
 
-function ensureSession(sessionId: string): string {
+function retainedSessionIsActive(sessionId: string, playerId: string): boolean {
+  return (
+    hub.players[playerId] !== undefined ||
+    hubConnections.has(playerId) ||
+    gameConnections.has(sessionId)
+  );
+}
+
+function evictRetainedSession(sessionId: string, playerId: string, reason: string): void {
+  sessionToPlayer.delete(sessionId);
+  playerToSession.delete(playerId);
+  sessionLastUsedAt.delete(sessionId);
+  knownAliases.delete(sessionId);
+  for (const peerSessionId of [...(recentCorrespondents.get(sessionId)?.keys() ?? [])]) {
+    removeCorrespondentEdge(sessionId, peerSessionId);
+  }
+  logHub('session_evicted', { player_id: playerId, reason });
+}
+
+function evictOldestInactiveSession(reason: string): boolean {
+  let oldest: { sessionId: string; playerId: string; lastUsedAt: number } | null = null;
+  for (const [sessionId, playerId] of sessionToPlayer) {
+    if (retainedSessionIsActive(sessionId, playerId)) continue;
+    const lastUsedAt = sessionLastUsedAt.get(sessionId) ?? 0;
+    if (!oldest || lastUsedAt < oldest.lastUsedAt) {
+      oldest = { sessionId, playerId, lastUsedAt };
+    }
+  }
+  if (!oldest) return false;
+  evictRetainedSession(oldest.sessionId, oldest.playerId, reason);
+  return true;
+}
+
+function pruneRetainedSessions(now: number): void {
+  for (const [sessionId, playerId] of [...sessionToPlayer]) {
+    if (retainedSessionIsActive(sessionId, playerId)) continue;
+    if (now - (sessionLastUsedAt.get(sessionId) ?? 0) >= RETAINED_SESSION_TTL_MS) {
+      evictRetainedSession(sessionId, playerId, 'ttl');
+    }
+  }
+}
+
+function ensureSession(sessionId: string): string | null {
+  const now = Date.now();
   const existing = sessionToPlayer.get(sessionId);
-  if (existing) return existing;
-  // Mapping is intentionally retained for the hub process lifetime —
-  // disconnect / leaveHub must not mint a new public id for the same secret.
+  if (existing) {
+    const expired =
+      !retainedSessionIsActive(sessionId, existing) &&
+      now - (sessionLastUsedAt.get(sessionId) ?? 0) >= RETAINED_SESSION_TTL_MS;
+    if (!expired) {
+      sessionLastUsedAt.delete(sessionId);
+      sessionLastUsedAt.set(sessionId, now);
+      return existing;
+    }
+    evictRetainedSession(sessionId, existing, 'ttl');
+  }
+  if (sessionToPlayer.size >= MAX_RETAINED_SESSIONS) {
+    pruneRetainedSessions(now);
+    if (sessionToPlayer.size >= MAX_RETAINED_SESSIONS && !evictOldestInactiveSession('capacity')) {
+      return null;
+    }
+  }
   const playerId = randomPublicId();
   sessionToPlayer.set(sessionId, playerId);
   playerToSession.set(playerId, sessionId);
-  logHub('session_created', { player_id: playerId, session_id: sessionId });
+  sessionLastUsedAt.set(sessionId, now);
+  logHub('session_created', { player_id: playerId });
   return playerId;
 }
 
@@ -596,7 +667,7 @@ function unbindGameConnection(ws: WebSocket): void {
   gameConnections.delete(meta.sessionId);
   logHub('game_connection_removed', {
     ws_id: wsId(ws),
-    session_id: meta.sessionId,
+    player_id: meta.playerId,
   });
   notifyRecentCorrespondents(meta.sessionId, meta.playerId, 'peer_unavailable');
 }
@@ -625,12 +696,11 @@ function sendGameEvent(playerId: string, type: GameOutboundType, payload: unknow
   }
   const ws = gameConnections.get(sessionId);
   if (!ws) {
-    logHub('send_game_event_drop_missing_ws', { player_id: playerId, session_id: sessionId, type });
+    logHub('send_game_event_drop_missing_ws', { player_id: playerId, type });
     return;
   }
   logHubVerbose('send_game_event', {
     player_id: playerId,
-    session_id: sessionId,
     ws_id: wsId(ws),
     type,
   });
@@ -707,9 +777,9 @@ function applyPlayerBusy(playerId: string, busy: boolean): void {
 
 function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join' }>): void {
   const { alias, session_id } = msg;
-  logHub('hub_join', { ws_id: wsId(ws), session_id: session_id ?? null, alias: alias ?? null });
-  if (!session_id) {
-    sendWs(ws, 'error', { error: 'Missing hub session.' });
+  const sessionId = sessionIdFromHub(session_id);
+  if (!sessionId) {
+    sendWs(ws, 'error', { error: 'Invalid hub session.' });
     return;
   }
   if (wsHubMeta.has(ws)) {
@@ -722,13 +792,14 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
     sendWs(ws, 'error', { error: `Alias must be 1-${MAX_ALIAS_BYTES} UTF-8 bytes.` });
     return;
   }
-  const resolvedAlias = suppliedAlias ?? knownAliases.get(session_id);
+  logHub('hub_join', { ws_id: wsId(ws), alias: suppliedAlias ?? null });
+  const resolvedAlias = suppliedAlias ?? knownAliases.get(sessionId);
   if (!resolvedAlias) {
     sendWs(ws, 'error', { error: 'Missing lobby alias.' });
     return;
   }
 
-  const existingPlayerId = sessionToPlayer.get(session_id);
+  const existingPlayerId = sessionToPlayer.get(sessionId);
   if (
     (!existingPlayerId || !hub.players[existingPlayerId]) &&
     Object.keys(hub.players).length >= MAX_PLAYERS
@@ -737,8 +808,12 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
     return;
   }
 
-  const playerId = existingPlayerId ?? ensureSession(session_id);
-  wsHubMeta.set(ws, { playerId, sessionId: session_id });
+  const playerId = ensureSession(sessionId);
+  if (!playerId) {
+    sendWs(ws, 'error', { error: 'The retained session limit has been reached.' });
+    return;
+  }
+  wsHubMeta.set(ws, { playerId, sessionId });
   cancelPendingHubLeave(playerId);
   const previous = hubConnections.get(playerId);
   if (previous && previous !== ws) {
@@ -757,13 +832,13 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
   } else {
     hub.players[playerId].alias = resolvedAlias;
   }
-  setKnownAlias(session_id, playerId, resolvedAlias);
+  setKnownAlias(sessionId, playerId, resolvedAlias);
   sendWs(ws, 'joined', { id: playerId, alias: resolvedAlias });
   broadcastHubUpdate();
   replayPendingChallengesToPlayer(playerId);
 
   // If the game channel was already identified, apply busy status
-  const gameWs = gameConnections.get(session_id);
+  const gameWs = gameConnections.get(sessionId);
   if (gameWs) {
     const meta = wsGameMeta.get(gameWs);
     if (meta) meta.playerId = playerId;
@@ -1066,20 +1141,32 @@ function onChangeAlias(
 }
 
 function onGetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'get_alias' }>): void {
-  const sessionId = msg.session_id;
-  const alias = sessionId ? (knownAliases.get(sessionId) ?? null) : null;
+  const sessionId = sessionIdFromHub(msg.session_id);
+  if (!sessionId) {
+    sendWs(ws, 'error', { error: 'Invalid hub session.' });
+    return;
+  }
+  const alias = knownAliases.get(sessionId) ?? null;
   logHubVerbose('get_alias', {
     ws_id: wsId(ws),
-    session_id: sessionId ?? null,
     found: alias !== null,
   });
   sendWs(ws, 'alias_result', { alias });
 }
 
 function onSetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'set_alias' }>): void {
-  const sessionId = msg.session_id ?? wsHubMeta.get(ws)?.sessionId;
-  if (!sessionId) return;
+  const boundSessionId = wsHubMeta.get(ws)?.sessionId;
+  const sessionId =
+    msg.session_id === undefined ? boundSessionId : sessionIdFromHub(msg.session_id);
+  if (!sessionId) {
+    sendWs(ws, 'error', { error: 'Invalid hub session.' });
+    return;
+  }
   const playerId = sessionToPlayer.get(sessionId);
+  if (!playerId) {
+    sendWs(ws, 'error', { error: 'Unknown hub session.' });
+    return;
+  }
   const alias = normalizeAlias(msg.alias);
   if (!alias) {
     sendWs(ws, 'error', { error: `Alias must be 1-${MAX_ALIAS_BYTES} UTF-8 bytes.` });
@@ -1087,12 +1174,11 @@ function onSetAlias(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'set_
   }
   logHub('set_alias', {
     ws_id: wsId(ws),
-    session_id: sessionId,
-    player_id: playerId ?? null,
+    player_id: playerId,
     alias,
   });
   setKnownAlias(sessionId, playerId, alias);
-  if (playerId && hub.players[playerId]) broadcastHubUpdate();
+  if (hub.players[playerId]) broadcastHubUpdate();
   sendWs(ws, 'alias_result', { alias });
 }
 
@@ -1105,16 +1191,20 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
     return;
   }
   const playerId = ensureSession(msg.session_id);
+  if (!playerId) {
+    logHub('identify_rejected_session_limit', { ws_id: wsId(ws) });
+    ws.close(4009, 'session_limit');
+    return;
+  }
   logHub('identify', {
     ws_id: wsId(ws),
-    session_id: msg.session_id,
     player_id: playerId,
   });
   const previousGameConn = gameConnections.get(msg.session_id);
   if (previousGameConn && previousGameConn !== ws) {
     logHub('game_connection_replaced', {
       ws_id: wsId(previousGameConn),
-      session_id: msg.session_id,
+      player_id: playerId,
     });
     try {
       previousGameConn.close(4001, 'replaced_by_new_connection');
@@ -1137,7 +1227,6 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
   notifyRecentCorrespondents(msg.session_id, playerId, 'peer_available');
   logHub('identify_registered', {
     ws_id: wsId(ws),
-    session_id: msg.session_id,
     player_id: playerId,
   });
 }
@@ -1468,7 +1557,6 @@ function sweepGameConnections(now: number): void {
     const meta = ws ? wsGameMeta.get(ws) : undefined;
     const playerId = meta?.playerId;
     logHub('game_sweep_expired', {
-      session_id: sessionId,
       player_id: playerId ?? null,
       ws_id: ws ? wsId(ws) : null,
     });
@@ -1497,6 +1585,7 @@ const sweepTimer = setInterval(() => {
   sweepGameConnections(now);
   pruneConnectionAttemptBudgets(now);
   pruneRecentCorrespondents(now);
+  pruneRetainedSessions(now);
   if (hubChanged) {
     broadcastHubUpdate();
   }
@@ -1508,6 +1597,7 @@ const sweepTimer = setInterval(() => {
     pending_hub_leaves: pendingHubLeaves.size,
     session_to_player: sessionToPlayer.size,
     player_to_session: playerToSession.size,
+    session_last_used_at: sessionLastUsedAt.size,
     recent_correspondent_sessions: recentCorrespondents.size,
   });
 }, 15_000);

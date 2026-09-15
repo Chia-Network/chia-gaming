@@ -58,6 +58,8 @@ async function startHub(env = {}) {
         HUB_MAX_TOTAL_CONNECTIONS: '2000',
         HUB_MAX_CONNECTIONS_PER_IP: '8',
         HUB_MAX_PLAYERS: '1000',
+        HUB_MAX_RETAINED_SESSIONS: '10000',
+        HUB_RETAINED_SESSION_TTL_MS: '86400000',
         HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW: '100',
         HUB_TRUST_PROXY: '0',
         HUB_RATE_WINDOW_MS: '10000',
@@ -475,16 +477,40 @@ test('game messages reject text and wrong-width binary identifiers', async () =>
   }
 });
 
+test('hub messages reject session ids that are not exactly 16-byte hex', async () => {
+  const hub = await startHub();
+  try {
+    const ws = await openWs(hub.origin, '/ws/hub');
+    for (const sessionId of ['a'.repeat(31), 'g'.repeat(32), 'a'.repeat(34)]) {
+      const errorPromise = nextJson(ws, (msg) => msg.type === 'error');
+      sendJson(ws, { type: 'join', session_id: sessionId, alias: 'Alice' });
+      assert.match((await errorPromise).error, /invalid hub session/i);
+    }
+
+    const joinedPromise = nextJson(ws, (msg) => msg.type === 'joined');
+    sendJson(ws, {
+      type: 'join',
+      session_id: sessionKey('valid-after-invalid-hub-sessions'),
+      alias: 'Alice',
+    });
+    await joinedPromise;
+    await closeWs(ws);
+  } finally {
+    await hub.stop();
+  }
+});
+
 test('public hub updates never include the secret nonce', async () => {
   const hub = await startHub();
   try {
     const secret = 'secret-nonce-public-update-test';
+    const sessionId = sessionKey(secret);
     const ws = await openWs(hub.origin, '/ws/hub');
     const joinedPromise = nextJson(ws, (msg) => msg.type === 'joined');
     const updatePromise = nextJson(ws, (msg) => msg.type === 'hub_update');
-    sendJson(ws, { type: 'join', session_id: secret, alias: 'Alice' });
+    sendJson(ws, { type: 'join', session_id: sessionId, alias: 'Alice' });
     const [{ id }, update] = await Promise.all([joinedPromise, updatePromise]);
-    assert.equal(JSON.stringify(update).includes(secret), false);
+    assert.equal(JSON.stringify(update).includes(sessionId), false);
     assert.equal(
       update.players.some((player) => player.id === id),
       true,
@@ -738,6 +764,83 @@ test('same secret session_id keeps the same player_id across hub leave and rejoi
     const second = await joinHub(hub.origin, sessionId, 'Alice');
     assert.equal(second.id, first.id);
     await closeWs(second.ws);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('retained session capacity evicts the oldest disconnected identity', async () => {
+  const hub = await startHub({ HUB_MAX_RETAINED_SESSIONS: '2' });
+  try {
+    const first = await identifyGameRegistered(hub.origin, 'retained-cap-first');
+    await closeWs(first.game);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const second = await identifyGameRegistered(hub.origin, 'retained-cap-second');
+    await closeWs(second.game);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const third = await identifyGameRegistered(hub.origin, 'retained-cap-third');
+    await closeWs(third.game);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const firstAgain = await identifyGameRegistered(hub.origin, 'retained-cap-first');
+    assert.notEqual(firstAgain.playerId, first.playerId);
+    await closeWs(firstAgain.game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('retained session capacity does not evict an active identity', async () => {
+  const hub = await startHub({ HUB_MAX_RETAINED_SESSIONS: '1' });
+  try {
+    const active = await joinHub(hub.origin, 'retained-active', 'Alice');
+    const rejected = await openWs(hub.origin, '/ws/hub');
+    const errorPromise = nextJson(rejected, (msg) => msg.type === 'error');
+    sendJson(rejected, {
+      type: 'join',
+      session_id: sessionKey('retained-rejected'),
+      alias: 'Bob',
+    });
+    assert.match((await errorPromise).error, /retained session limit/i);
+
+    const replacement = await joinHub(hub.origin, 'retained-active', 'Alice Reloaded');
+    assert.equal(replacement.id, active.id);
+    await closeWs(replacement.ws);
+    await closeWs(rejected);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('retained session TTL expires a disconnected identity', async () => {
+  const hub = await startHub({ HUB_RETAINED_SESSION_TTL_MS: '20' });
+  try {
+    const first = await identifyGameRegistered(hub.origin, 'retained-ttl');
+    await closeWs(first.game);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const second = await identifyGameRegistered(hub.origin, 'retained-ttl');
+    assert.notEqual(second.playerId, first.playerId);
+    await closeWs(second.game);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('set_alias cannot allocate storage for an unknown session', async () => {
+  const hub = await startHub();
+  try {
+    const ws = await openWs(hub.origin, '/ws/hub');
+    const errorPromise = nextJson(ws, (msg) => msg.type === 'error');
+    sendJson(ws, {
+      type: 'set_alias',
+      session_id: sessionKey('unknown-alias-session'),
+      alias: 'Mallory',
+    });
+    assert.match((await errorPromise).error, /unknown hub session/i);
+    await closeWs(ws);
   } finally {
     await hub.stop();
   }
