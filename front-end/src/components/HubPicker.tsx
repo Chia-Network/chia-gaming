@@ -6,7 +6,10 @@ const DEV_HUB = 'http://localhost:3003';
 export function parseHubUrl(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed) && !/^https?:\/\//i.test(trimmed)) {
+  const schemeLikePrefix = trimmed.match(/^[a-zA-Z][a-zA-Z\d+\-.]*:/);
+  const numericPort =
+    schemeLikePrefix !== null && /^\d+(?:[/?#]|$)/.test(trimmed.slice(schemeLikePrefix[0].length));
+  if (schemeLikePrefix !== null && !numericPort && !/^https?:\/\//i.test(trimmed)) {
     return null;
   }
   try {
