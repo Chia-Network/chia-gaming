@@ -395,12 +395,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     try {
       // WalletConnect does not expose push=false or extra_conditions on
       // send_transaction. A validate-only offer does expose both signing and
-      // arbitrary conditions without broadcasting. We create a fee-sized
-      // nil-puzzle output and require it to be spent alongside the protocol
-      // coin; WASM appends that no-output spend before aggregation.
-      // Pin one wallet coin so the nil-puzzle output's coin id is known before
+      // arbitrary conditions without broadcasting. The fee is the offer's
+      // settlement output, not the wallet RPC's fee parameter. WASM spends
+      // that output through a nil-puzzle child before aggregation.
+      // Pin one wallet coin so the settlement output's coin id is known before
       // the wallet signs ASSERT_CONCURRENT_SPEND for that output.
-      const requiredAmount = fee + 1n;
+      const requiredAmount = fee;
       const selection = await rpc.selectCoins({
         walletId: 1n,
         amount: requiredAmount,
@@ -414,26 +414,22 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error(`wallet has no single coin large enough for fee ${fee}`);
       }
       const selectedCoinId = await coinIdFromBytes(toUint8(selectedCoin));
-      // Tree hash of the CLVM nil atom is sha256(0x01).
-      const nilPuzzleHash = await coinIdFromBytes(Uint8Array.of(1));
-      const feeCoinId = await coinIdFromBytes(
-        toUint8(`${selectedCoinId}${nilPuzzleHash}${encodeU64AsClvmHex(fee)}`),
+      const settlementPuzzleHash =
+        'cfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7';
+      const settlementCoinId = await coinIdFromBytes(
+        toUint8(`${selectedCoinId}${settlementPuzzleHash}${encodeU64AsClvmHex(fee)}`),
       );
 
       const response = await rpc.createOfferForIds({
-        offer: { '1': -1n },
+        offer: { '1': -fee },
         driverDict: {},
         validateOnly: true,
-        fee,
         coinIds: [`0x${selectedCoinId}`],
         allowUnsynced: true,
         extraConditions: [
-          {
-            opcode: 51n,
-            args: { puzzle_hash: `0x${nilPuzzleHash}`, amount: fee, memos: null },
-          },
           { opcode: 64n, args: { coin_id: protocolCoinId } },
-          { opcode: 64n, args: { coin_id: `0x${feeCoinId}` } },
+          { opcode: 64n, args: { coin_id: `0x${settlementCoinId}` } },
+          { opcode: 52n, args: { amount: fee } },
         ],
       });
       const offer = (response as any)?.offer;
@@ -441,7 +437,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('wallet returned no signed offer for the fee');
       }
       log(
-        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} output=0x${feeCoinId}`,
+        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} output=0x${settlementCoinId}`,
       );
       return offer;
     } catch (e) {

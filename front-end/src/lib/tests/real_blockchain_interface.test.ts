@@ -545,14 +545,16 @@ describe('RealBlockchainInterface', () => {
     ]);
   });
 
-  it('builds a wallet-signed fee offer bound to the protocol and nil output spends', async () => {
+  it('builds a wallet-signed fee offer without using the wallet fee parameter', async () => {
     const blockchain = new RealBlockchainInterface();
     const parentCoinInfo = '99'.repeat(32);
     const puzzleHash = '88'.repeat(32);
     const selectedCoinString = `${parentCoinInfo}${puzzleHash}03e8`;
     const selectedCoinId = await coinIdFromBytes(toUint8(selectedCoinString));
-    const nilPuzzleHash = await coinIdFromBytes(Uint8Array.of(1));
-    const feeCoinId = await coinIdFromBytes(toUint8(`${selectedCoinId}${nilPuzzleHash}0a`));
+    const settlementPuzzleHash = 'cfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7';
+    const settlementCoinId = await coinIdFromBytes(
+      toUint8(`${selectedCoinId}${settlementPuzzleHash}0a`),
+    );
     mockSelectCoins.mockResolvedValue({
       coins: [
         {
@@ -569,23 +571,19 @@ describe('RealBlockchainInterface', () => {
 
     expect(mockSelectCoins).toHaveBeenCalledWith({
       walletId: 1n,
-      amount: 11n,
+      amount: 10n,
       allowUnsynced: true,
     });
     expect(mockCreateOfferForIds).toHaveBeenCalledWith({
-      offer: { '1': -1n },
+      offer: { '1': -10n },
       driverDict: {},
       validateOnly: true,
-      fee: 10n,
       coinIds: [`0x${selectedCoinId}`],
       allowUnsynced: true,
       extraConditions: [
-        {
-          opcode: 51n,
-          args: { puzzle_hash: `0x${nilPuzzleHash}`, amount: 10n, memos: null },
-        },
         { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
-        { opcode: 64n, args: { coin_id: `0x${feeCoinId}` } },
+        { opcode: 64n, args: { coin_id: `0x${settlementCoinId}` } },
+        { opcode: 52n, args: { amount: 10n } },
       ],
     });
   });

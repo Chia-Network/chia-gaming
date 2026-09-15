@@ -369,11 +369,10 @@ fn validation_consensus_constants(agg_sig_me_additional_data: &Hash) -> Consensu
 
 /// Complete a signed, validate-only XCH offer into a fee spend.
 ///
-/// The maker bundle must create exactly one nil-puzzle coin whose amount is
+/// The maker bundle must create exactly one settlement coin whose amount is
 /// `fee`, reserve that fee, and assert concurrent spends of both that output and
-/// `protocol_coin_id`. Spending the nil coin creates no outputs, so the
-/// completed bundle contributes exactly `fee` mojos to the aggregate bundle's
-/// input/output difference.
+/// `protocol_coin_id`. The settlement spend creates a fee-sized nil-puzzle
+/// child, which is then spent with no outputs.
 pub fn complete_fee_offer_bundle(
     mut maker_bundle: SpendBundle,
     fee: u64,
@@ -385,9 +384,8 @@ pub fn complete_fee_offer_bundle(
         ));
     }
 
-    let nil_puzzle = Puzzle::from(Program::nil());
-    let nil_puzzle_hash = nil_puzzle.sha256tree(&mut AllocEncoder::new());
-    let mut fee_coin = None;
+    let settlement_puzzle_hash = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+    let mut settlement_coin = None;
     let mut reserved_fee = 0_u64;
     let mut protocol_concurrent_assertions = 0_usize;
     let mut asserted_coin_ids = Vec::new();
@@ -402,16 +400,16 @@ pub fn complete_fee_offer_bundle(
         for condition in conditions {
             match condition {
                 CoinCondition::CreateCoin(puzzle_hash, amount)
-                    if puzzle_hash == nil_puzzle_hash && amount.to_u64() == fee =>
+                    if puzzle_hash == settlement_puzzle_hash && amount.to_u64() == fee =>
                 {
                     let candidate = CoinString::from_parts(
                         &coin_spend.coin.to_coin_id(),
-                        &nil_puzzle_hash,
+                        &settlement_puzzle_hash,
                         &Amount::new(fee),
                     );
-                    if fee_coin.replace(candidate).is_some() {
+                    if settlement_coin.replace(candidate).is_some() {
                         return Err(Error::StrErr(
-                            "fee offer created more than one matching nil-puzzle coin".to_string(),
+                            "fee offer created more than one matching settlement coin".to_string(),
                         ));
                     }
                 }
@@ -439,24 +437,50 @@ pub fn complete_fee_offer_bundle(
             "fee offer contained {protocol_concurrent_assertions} protocol ASSERT_CONCURRENT_SPEND conditions, expected 1"
         )));
     }
-    let fee_coin = fee_coin.ok_or_else(|| {
+    let settlement_coin = settlement_coin.ok_or_else(|| {
         Error::StrErr(format!(
-            "fee offer did not create a {fee}-mojo nil-puzzle coin"
+            "fee offer did not create a {fee}-mojo settlement coin"
         ))
     })?;
-    let fee_coin_id = fee_coin.to_coin_id();
-    let fee_coin_assertions = asserted_coin_ids
+    let settlement_coin_id = settlement_coin.to_coin_id();
+    let settlement_coin_assertions = asserted_coin_ids
         .iter()
-        .filter(|coin_id| **coin_id == fee_coin_id)
+        .filter(|coin_id| **coin_id == settlement_coin_id)
         .count();
-    if fee_coin_assertions != 1 {
+    if settlement_coin_assertions != 1 {
         return Err(Error::StrErr(format!(
-            "fee offer contained {fee_coin_assertions} fee-output ASSERT_CONCURRENT_SPEND conditions, expected 1"
+            "fee offer contained {settlement_coin_assertions} settlement-output ASSERT_CONCURRENT_SPEND conditions, expected 1"
         )));
     }
 
+    let nil_puzzle = Puzzle::from(Program::nil());
+    let nil_puzzle_hash = nil_puzzle.sha256tree(&mut allocator);
+    let payment = (nil_puzzle_hash.clone(), (Amount::new(fee), ()))
+        .to_clvm(&mut allocator)
+        .into_gen()?;
+    let notarized_payment = (Hash::from_bytes([0; 32]), (payment, ()))
+        .to_clvm(&mut allocator)
+        .into_gen()?;
+    let settlement_solution_node = vec![notarized_payment].to_clvm(&mut allocator).into_gen()?;
+    let settlement_solution = Program::from_nodeptr(&allocator, settlement_solution_node)?;
+    let nil_coin = CoinString::from_parts(&settlement_coin_id, &nil_puzzle_hash, &Amount::new(fee));
+    let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT)?;
+    if settlement_puzzle.sha256tree(&mut allocator) != settlement_puzzle_hash {
+        return Err(Error::StrErr(
+            "compiled settlement puzzle hash does not match its published hash".to_string(),
+        ));
+    }
+
     maker_bundle.spends.push(CoinSpend {
-        coin: fee_coin,
+        coin: settlement_coin,
+        bundle: Spend {
+            puzzle: settlement_puzzle,
+            solution: settlement_solution.into(),
+            signature: Aggsig::default(),
+        },
+    });
+    maker_bundle.spends.push(CoinSpend {
+        coin: nil_coin,
         bundle: Spend {
             puzzle: nil_puzzle,
             solution: Program::nil().into(),
@@ -601,24 +625,28 @@ mod consensus_validation_tests {
     }
 
     #[test]
-    fn completes_fee_offer_by_spending_asserted_nil_puzzle_output() {
+    fn completes_fee_offer_through_a_nil_puzzle_output() {
         let mut allocator = AllocEncoder::new();
         let protocol_coin_id = CoinID::new(Hash::from_bytes([0x33; 32]));
         let nil_puzzle: Puzzle = Program::nil().into();
         let nil_puzzle_hash = nil_puzzle.sha256tree(&mut allocator);
+        let settlement_puzzle_hash = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
         let maker_coin = CoinString::from_parts(
             &CoinID::new(Hash::from_bytes([0x11; 32])),
             &PuzzleHash::from_bytes([0x22; 32]),
             &Amount::new(1_000),
         );
         let fee = 10;
-        let fee_coin = CoinString::from_parts(
+        let settlement_coin = CoinString::from_parts(
             &maker_coin.to_coin_id(),
-            &nil_puzzle_hash,
+            &settlement_puzzle_hash,
             &Amount::new(fee),
         );
         let condition_nodes = vec![
-            (51_u8, (nil_puzzle_hash.clone(), (Amount::new(fee), ())))
+            (
+                51_u8,
+                (settlement_puzzle_hash.clone(), (Amount::new(fee), ())),
+            )
                 .to_clvm(&mut allocator)
                 .expect("CREATE_COIN"),
             (52_u8, (Amount::new(fee), ()))
@@ -627,9 +655,9 @@ mod consensus_validation_tests {
             (64_u8, (protocol_coin_id.clone(), ()))
                 .to_clvm(&mut allocator)
                 .expect("protocol ASSERT_CONCURRENT_SPEND"),
-            (64_u8, (fee_coin.to_coin_id(), ()))
+            (64_u8, (settlement_coin.to_coin_id(), ()))
                 .to_clvm(&mut allocator)
-                .expect("fee output ASSERT_CONCURRENT_SPEND"),
+                .expect("settlement output ASSERT_CONCURRENT_SPEND"),
         ];
         let conditions = condition_nodes
             .to_clvm(&mut allocator)
@@ -652,9 +680,15 @@ mod consensus_validation_tests {
 
         let completed =
             complete_fee_offer_bundle(maker_bundle, fee, &protocol_coin_id).expect("completion");
-        assert_eq!(completed.spends.len(), 2);
-        assert_eq!(completed.spends[1].coin, fee_coin);
-        assert_eq!(completed.spends[1].bundle.puzzle, nil_puzzle);
-        assert_eq!(completed.spends[1].bundle.solution, Program::nil().into());
+        let nil_coin = CoinString::from_parts(
+            &settlement_coin.to_coin_id(),
+            &nil_puzzle_hash,
+            &Amount::new(fee),
+        );
+        assert_eq!(completed.spends.len(), 3);
+        assert_eq!(completed.spends[1].coin, settlement_coin);
+        assert_eq!(completed.spends[2].coin, nil_coin);
+        assert_eq!(completed.spends[2].bundle.puzzle, nil_puzzle);
+        assert_eq!(completed.spends[2].bundle.solution, Program::nil().into());
     }
 }
