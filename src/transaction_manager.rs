@@ -118,8 +118,8 @@ pub struct WatchedCoin {
     pub spent_confirmed_at: Option<u64>,
     /// Whether the eager `timeout_spend` has already been queued for submission
     /// for the current birthday.  Re-armed when the birthday changes or is
-    /// cleared (e.g. by a reorg) so a reorg that rolls back the coin's creation
-    /// causes the claim to be resubmitted.
+    /// cleared, or when a complete snapshot shows a confirmed spend reverted to
+    /// live, so a reorg causes the claim to be resubmitted.
     pub claim_submitted: bool,
     /// The eagerly-built spend to submit once this coin reaches its relative
     /// timeout age.  Set by the handler at registration time; held here so the
@@ -717,6 +717,19 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             }
             let was_present = self.present_coins.contains(&rec.coin);
             if let Some(watched) = self.watched_coins.get_mut(&rec.coin) {
+                // A complete snapshot that explicitly shows a previously-spent
+                // coin live again proves that its spend was reorged out. Chia
+                // chooses peaks by weight, so the replacement tip may be equal
+                // or higher and cannot be detected from height alone.
+                if live && watched.spent_confirmed_at.take().is_some() {
+                    let was_claim_submitted = watched.claim_submitted;
+                    watched.claim_submitted = false;
+                    if was_claim_submitted {
+                        if let Some(semantic) = watched.timeout_claim_semantic {
+                            rearmed_timeout_claims.push(semantic);
+                        }
+                    }
+                }
                 if let Some(created_height) = rec.created_height {
                     if watched.birthday != Some(created_height) {
                         let was_claim_submitted = watched.claim_submitted;
@@ -1602,6 +1615,62 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 15, &live)
             .expect("recover maturity");
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn confirmed_timeout_spend_non_decreasing_reorg_rearms_and_resubmits() {
+        for replacement_height in [16, 17] {
+            let mut allocator = AllocEncoder::new();
+            let coin = test_coin(replacement_height as u8);
+            let mut mock = MockGameSession::default();
+            mock.queue_drain(vec![GameSessionEvent::WatchCoin {
+                coin_name: coin.to_coin_id(),
+                coin_string: coin.clone(),
+                timeout: Timeout::new(5),
+                spend: Some(test_bundle("non-decreasing-reorg")),
+                semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
+            }]);
+            let mut mgr = TransactionManager::new(mock);
+            mgr.flush_and_collect(&mut allocator).expect("register");
+            let live = [CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }];
+
+            mgr.report_coin_states(&mut allocator, 15, &live)
+                .expect("mature initial claim");
+            assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+            mgr.report_coin_states(
+                &mut allocator,
+                16,
+                &[CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(10),
+                    spent_height: Some(16),
+                }],
+            )
+            .expect("confirm timeout spend");
+
+            // A heavier replacement chain can restore the coin at the same or
+            // a greater height. The explicit spent-to-live transition re-arms
+            // the still-mature claim without relying on a height decrease.
+            mgr.report_coin_states(&mut allocator, replacement_height, &live)
+                .expect("replacement chain restores live coin");
+            assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, None);
+            assert_eq!(
+                mgr.cradle().rearmed_timeout_claims,
+                vec![TimeoutClaimSemantic::ChannelTimeoutFinish]
+            );
+            assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+
+            mgr.report_coin_states(&mut allocator, replacement_height + 1, &live)
+                .expect("ordinary next snapshot");
+            assert!(
+                mgr.drain_submissions().unwrap().is_empty(),
+                "re-armed claim must still submit only once"
+            );
+        }
     }
 
     #[test]
