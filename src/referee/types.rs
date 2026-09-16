@@ -179,42 +179,60 @@ pub enum ParsedRefereeSolution {
 
 impl ParsedRefereeSolution {
     /// Parse a referee solution using the same dispatch logic as `referee.clsp`:
-    /// - 2 elements -> Timeout
-    /// - 4+ elements, second element is a pair -> Slash
-    /// - 4 elements, second element is an atom -> Move
+    /// - exactly 2 elements -> Timeout
+    /// - otherwise, a pair in the second element -> Slash; do not traverse its tail
+    /// - otherwise, exactly 4 atom elements -> Move
     pub fn parse(allocator: &mut AllocEncoder, solution: &Program) -> Result<Self, Error> {
-        let node = solution.to_nodeptr(allocator)?;
-        let elements = proper_list(allocator.allocator(), node, true)
-            .ok_or_else(|| Error::StrErr("referee solution is not a proper list".to_string()))?;
+        let mut tail = solution.to_nodeptr(allocator)?;
+        let mut elements = Vec::with_capacity(4);
+        for _ in 0..2 {
+            let clvmr::allocator::SExp::Pair(first, rest) = allocator.allocator().sexp(tail) else {
+                return Err(Error::StrErr(
+                    "referee solution has fewer than 2 elements".to_string(),
+                ));
+            };
+            elements.push(first);
+            tail = rest;
+        }
 
-        if elements.len() == 2 {
+        if !crate::utils::non_nil(allocator.allocator(), tail) {
             return Ok(ParsedRefereeSolution::Timeout);
         }
 
-        if elements.len() < 4 {
-            return Err(Error::StrErr(format!(
-                "referee solution has unexpected length {}",
-                elements.len()
-            )));
+        if matches!(
+            allocator.allocator().sexp(elements[1]),
+            clvmr::allocator::SExp::Pair(_, _)
+        ) {
+            return Ok(ParsedRefereeSolution::Slash);
         }
 
-        match allocator.allocator().sexp(elements[1]) {
-            clvmr::allocator::SExp::Pair(_, _) => Ok(ParsedRefereeSolution::Slash),
-            clvmr::allocator::SExp::Atom => {
-                let mut get_atom = |idx: usize| allocator.allocator().atom(elements[idx]).to_vec();
-                let max_move_size = u64_from_atom(&get_atom(3))
-                    .and_then(|value| u32::try_from(value).ok())
-                    .ok_or_else(|| {
-                        Error::StrErr("max move size wasn't a properly sized atom".to_string())
-                    })?;
-                Ok(ParsedRefereeSolution::Move {
-                    new_move: get_atom(0),
-                    validation_info_hash_raw: get_atom(1),
-                    new_mover_share_raw: get_atom(2),
-                    max_move_size,
-                })
-            }
+        for _ in 2..4 {
+            let clvmr::allocator::SExp::Pair(first, rest) = allocator.allocator().sexp(tail) else {
+                return Err(Error::StrErr(
+                    "referee solution has fewer than 4 elements".to_string(),
+                ));
+            };
+            elements.push(first);
+            tail = rest;
         }
+
+        if crate::utils::non_nil(allocator.allocator(), tail) {
+            return Err(Error::StrErr(
+                "move referee solution has a trailing tail".to_string(),
+            ));
+        }
+        let mut get_atom = |idx: usize| allocator.allocator().atom(elements[idx]).to_vec();
+        let max_move_size = u64_from_atom(&get_atom(3))
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| {
+                Error::StrErr("max move size wasn't a properly sized atom".to_string())
+            })?;
+        Ok(ParsedRefereeSolution::Move {
+            new_move: get_atom(0),
+            validation_info_hash_raw: get_atom(1),
+            new_mover_share_raw: get_atom(2),
+            max_move_size,
+        })
     }
 }
 
@@ -245,9 +263,15 @@ pub fn parse_validator_result(
         });
     }
 
+    if lst.len() == 2 {
+        return Err(Error::StrErr(
+            "validator returned 2 elements; expected 1 (terminal) or at least 3".to_string(),
+        ));
+    }
+
     // Mirror referee.clsp destructuring of
     // (next_validator_hash new_state max_move_size . extra_conditions):
-    // omitted positional fields are nil, and trailing slash conditions do not
+    // a one-element list is terminal, and trailing slash conditions do not
     // change the transition fields extracted here.
     let next_validator_hash = if Program::from_nodeptr(allocator, lst[0])?.is_nil() {
         None

@@ -1,6 +1,6 @@
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Program, Puzzle, Sha256Input, Sha256tree};
-use crate::referee::types::parse_validator_result;
+use crate::referee::types::{parse_validator_result, ParsedRefereeSolution};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -311,23 +311,15 @@ fn test_valid_validator_results_are_not_slash_candidates() {
     let next_hash = allocator.allocator().new_atom(&[0x44; 32]).unwrap();
     let state = allocator.allocator().new_atom(b"next state").unwrap();
     let without_max_move_size = list_from_nodes(&mut allocator, &[next_hash, state]);
-    let without_max_parsed = parse_validator_result(&mut allocator, without_max_move_size).unwrap();
-    assert_eq!(
-        without_max_parsed.next_max_move_size, 0,
-        "a missing max move size mirrors CLVM nil"
-    );
-    assert_eq!(
-        without_max_parsed.next_validator_hash.map(|h| h.0),
-        Some([0x44; 32])
-    );
-    let parsed_state = without_max_parsed
-        .new_state
-        .unwrap()
-        .to_nodeptr(&mut allocator)
-        .unwrap();
-    assert_eq!(
-        allocator.allocator().atom(parsed_state).as_ref(),
-        b"next state"
+    let error = match parse_validator_result(&mut allocator, without_max_move_size) {
+        Ok(_) => panic!("a two-element result omits a required transition field"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("validator returned 2 elements; expected 1 (terminal) or at least 3"),
+        "unexpected parser error: {error}"
     );
 
     let max_move_size = 5_i64.to_clvm(&mut allocator).unwrap();
@@ -359,6 +351,50 @@ fn test_valid_validator_results_are_not_slash_candidates() {
     );
 }
 
+#[test]
+fn test_referee_solution_parser_matches_puzzle_tail_rules() {
+    let mut allocator = AllocEncoder::new();
+    let state = allocator.allocator().new_atom(b"state").unwrap();
+    let validation_program = allocator
+        .allocator()
+        .new_pair(NodePtr::NIL, NodePtr::NIL)
+        .unwrap();
+    let unexamined_tail = allocator.allocator().new_atom(b"tail").unwrap();
+    let program_and_rest = allocator
+        .allocator()
+        .new_pair(validation_program, unexamined_tail)
+        .unwrap();
+    let slash_node = allocator
+        .allocator()
+        .new_pair(state, program_and_rest)
+        .unwrap();
+    let slash_solution = Program::from_nodeptr(&mut allocator, slash_node).unwrap();
+
+    assert!(
+        matches!(
+            ParsedRefereeSolution::parse(&mut allocator, &slash_solution),
+            Ok(ParsedRefereeSolution::Slash)
+        ),
+        "slash classification must not traverse the untrusted argument tail"
+    );
+
+    let move_field = allocator.allocator().new_atom(b"move").unwrap();
+    let infohash = allocator.allocator().new_atom(&[0x66; 32]).unwrap();
+    let mover_share = 5_i64.to_clvm(&mut allocator).unwrap();
+    let max_move_size = 10_i64.to_clvm(&mut allocator).unwrap();
+    let extra = allocator.allocator().new_atom(b"extra").unwrap();
+    let move_with_tail = list_from_nodes(
+        &mut allocator,
+        &[move_field, infohash, mover_share, max_move_size, extra],
+    );
+    let move_solution = Program::from_nodeptr(&mut allocator, move_with_tail).unwrap();
+
+    assert!(
+        ParsedRefereeSolution::parse(&mut allocator, &move_solution).is_err(),
+        "the referee move branch rejects a trailing tail"
+    );
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_slash_succeeds_nil", &test_slash_succeeds_nil),
@@ -385,6 +421,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_valid_validator_results_are_not_slash_candidates",
             &test_valid_validator_results_are_not_slash_candidates,
+        ),
+        (
+            "test_referee_solution_parser_matches_puzzle_tail_rules",
+            &test_referee_solution_parser_matches_puzzle_tail_rules,
         ),
     ]
 }
