@@ -137,7 +137,7 @@ export function ReviewProposalDialog({ session }: { session: UseGameSessionResul
         <p className="text-xs text-canvas-text">
           Timeout: {String(review.handProposal.gameTimeout)} blocks
         </p>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center justify-center gap-3">
           <Button
             variant="solid"
             color="primary"
