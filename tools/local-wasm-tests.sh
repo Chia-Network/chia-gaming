@@ -51,6 +51,9 @@ cleanup() {
         kill "$HUB_TEST_PID" 2>/dev/null || true
         wait "$HUB_TEST_PID" 2>/dev/null || true
     fi
+    if [ -n "$SIM_READY_FILE" ]; then
+        rm -f "$SIM_READY_FILE"
+    fi
 }
 trap cleanup EXIT INT TERM
 
@@ -86,23 +89,43 @@ echo "=== Running hub-service tests ==="
 pnpm --filter chia-gaming-hub-service run test &
 HUB_TEST_PID=$!
 
-# Use a per-run port so a browser connected to the development simulator cannot
-# reconnect to the test simulator and submit transactions from unrelated state.
-SIM_PORT="${CHIA_GAMING_SIM_PORT:-$((20000 + $$ % 20000))}"
+# Let the kernel choose a collision-free port, then propagate the simulator's
+# reported address to every test client before Jest starts.
+SIM_PORT="${CHIA_GAMING_SIM_PORT:-0}"
+SIM_READY_FILE="$(mktemp "${TMPDIR:-/tmp}/chia-gaming-sim-ready.XXXXXX")"
+rm -f "$SIM_READY_FILE"
 export CHIA_GAMING_SIM_LISTEN_ADDR="[::]:$SIM_PORT"
-export CHIA_GAMING_SIM_URL="http://127.0.0.1:$SIM_PORT"
-export CHIA_GAMING_SIM_WS_URL="ws://127.0.0.1:$SIM_PORT/ws"
-
-# Kill any stale simulator on our selected port before starting a fresh one.
-lsof -ti:"$SIM_PORT" -sTCP:LISTEN | xargs kill 2>/dev/null || true
-sleep 0.5
+export CHIA_GAMING_SIM_READY_FILE="$SIM_READY_FILE"
 
 echo "=== Starting simulator ==="
 SIM_BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/chia-gaming-sim"
 RUST_LOG=error "$SIM_BIN" &
 SIM_PID=$!
 
-echo "=== Waiting for simulator ==="
+echo "=== Waiting for simulator address ==="
+for i in $(seq 1 30); do
+    if [ -s "$SIM_READY_FILE" ]; then
+        break
+    fi
+    if ! kill -0 "$SIM_PID" 2>/dev/null; then
+        echo "Simulator process died during startup"
+        exit 1
+    fi
+    sleep 1
+done
+if [ ! -s "$SIM_READY_FILE" ]; then
+    echo "Simulator did not report its bound address"
+    exit 1
+fi
+SIM_ADDR="$(cat "$SIM_READY_FILE")"
+SIM_PORT="${SIM_ADDR##*:}"
+case "$SIM_PORT" in
+    ''|*[!0-9]*|0) echo "Simulator reported invalid address: $SIM_ADDR"; exit 1 ;;
+esac
+export CHIA_GAMING_SIM_URL="http://127.0.0.1:$SIM_PORT"
+export CHIA_GAMING_SIM_WS_URL="ws://127.0.0.1:$SIM_PORT/ws"
+
+echo "=== Waiting for simulator on port $SIM_PORT ==="
 for i in $(seq 1 10); do
     if curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
         echo "Simulator ready"

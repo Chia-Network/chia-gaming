@@ -1624,6 +1624,10 @@ pub(crate) async fn run_service(
         connections: ConnectionTracker::default(),
     };
     let mut server_task = tokio::spawn(run_server(listener, state, service_shutdown_receiver));
+    if let Ok(ready_file) = std::env::var("CHIA_GAMING_SIM_READY_FILE") {
+        std::fs::write(&ready_file, listen_addr.to_string())
+            .map_err(|e| format!("failed to write simulator ready file {ready_file}: {e}"))?;
+    }
     if let Some(ready) = config.ready.take() {
         let _ = ready.send(listen_addr);
     }

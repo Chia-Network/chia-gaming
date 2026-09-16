@@ -95,9 +95,12 @@ jobs:
           set -u
           GW="${{ github.workspace }}"
           SIM_LOG="${GW}/sim.log"
+          SIM_READY_FILE="${GW}/sim-ready"
           # A missing simulator must be a hard failure here, never a silent skip.
           export LOAD_WASM_REQUIRE_SIM=1
-          rm -f "${SIM_LOG}"
+          rm -f "${SIM_LOG}" "${SIM_READY_FILE}"
+          export CHIA_GAMING_SIM_LISTEN_ADDR="[::]:0"
+          export CHIA_GAMING_SIM_READY_FILE="${SIM_READY_FILE}"
           SIM_PID=""
           WATCH_PID=""
 
@@ -114,6 +117,7 @@ jobs:
               if [ -n "${SIM_PID}" ]; then
                   kill "${SIM_PID}" 2>/dev/null || true
               fi
+              rm -f "${SIM_READY_FILE}"
               dump_logs
           }
           trap cleanup EXIT
@@ -123,8 +127,7 @@ jobs:
           SIM_PID=$!
 
           for i in $(seq 1 30); do
-              if curl -s http://localhost:5800/health >/dev/null 2>&1; then
-                  echo "Simulator ready"
+              if [ -s "${SIM_READY_FILE}" ]; then
                   break
               fi
               if ! kill -0 "$SIM_PID" 2>/dev/null; then
@@ -134,13 +137,33 @@ jobs:
               sleep 1
           done
 
-          if ! curl -s http://localhost:5800/health >/dev/null 2>&1; then
-              echo "Simulator failed to start within 30 seconds"
+          if [ ! -s "${SIM_READY_FILE}" ]; then
+              echo "Simulator did not report its bound address"
               exit 1
           fi
+          SIM_ADDR="$(cat "${SIM_READY_FILE}")"
+          SIM_PORT="${SIM_ADDR##*:}"
+          case "${SIM_PORT}" in
+              ''|*[!0-9]*|0)
+                  echo "Simulator reported invalid address: ${SIM_ADDR}"
+                  exit 1
+                  ;;
+          esac
           export CHIA_GAMING_TEST_SIMULATOR_OWNED=1
-          export CHIA_GAMING_SIM_URL=http://127.0.0.1:5800
-          export CHIA_GAMING_SIM_WS_URL=ws://127.0.0.1:5800/ws
+          export CHIA_GAMING_SIM_URL="http://127.0.0.1:${SIM_PORT}"
+          export CHIA_GAMING_SIM_WS_URL="ws://127.0.0.1:${SIM_PORT}/ws"
+
+          for i in $(seq 1 10); do
+              if curl -s "${CHIA_GAMING_SIM_URL}/health" >/dev/null 2>&1; then
+                  echo "Simulator ready on port ${SIM_PORT}"
+                  break
+              fi
+              sleep 1
+          done
+          if ! curl -s "${CHIA_GAMING_SIM_URL}/health" >/dev/null 2>&1; then
+              echo "Simulator failed health check on port ${SIM_PORT}"
+              exit 1
+          fi
 
           (
               while sleep 15; do
