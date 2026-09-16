@@ -907,7 +907,9 @@ virtual coin's puzzle hash.
 The peer does not supply the next `max_move_size`. The receiver takes it from
 the nil-evidence validator result and canonically encodes it when constructing
 the referee puzzle. A validator must not require evidence to return its
-transition. When the next validation info hash is nil, `max_move_size` is zero.
+transition. The on-chain referee independently requires the move solution's
+next `max_move_size` atom to be canonical, non-negative, and at most two bytes.
+When the next validation info hash is nil, `max_move_size` is zero.
 
 If the game becomes terminal, the receiver queues a local
 `AcceptSettlement`.
