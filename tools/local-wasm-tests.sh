@@ -115,6 +115,7 @@ if ! curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
     echo "Simulator failed to start"
     exit 1
 fi
+export CHIA_GAMING_TEST_SIMULATOR_OWNED=1
 
 echo "=== Running tests ==="
 if [[ "$(node --help)" == *"--no-experimental-webstorage"* ]]; then

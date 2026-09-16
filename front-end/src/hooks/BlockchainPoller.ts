@@ -144,6 +144,9 @@ export class BlockchainPoller {
           () => adapter.createOfferForIds(uniqueId, offer, extraConditions, coinIds, maxHeight),
           true,
         ),
+      cancelOffer: adapter.cancelOffer
+        ? (tradeId) => this.enqueueRpc('cancelOffer', () => adapter.cancelOffer!(tradeId), true)
+        : undefined,
       getCoinRecordsByNames: (names) =>
         this.enqueueRpc('getCoinRecordsByNames', () => adapter.getCoinRecordsByNames(names)),
       registerCoins: (names) =>

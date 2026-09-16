@@ -535,6 +535,14 @@ export async function isSimulatorAvailable(): Promise<boolean> {
 }
 
 export async function startSimulator(userIds: string[]): Promise<BlockchainPoller | null> {
+  if (process.env.CHIA_GAMING_TEST_SIMULATOR_OWNED !== '1') {
+    const msg = 'Simulator-backed tests require a test-owned simulator';
+    if (process.env.LOAD_WASM_REQUIRE_SIM) {
+      throw new Error(`[load_wasm] ${msg} (LOAD_WASM_REQUIRE_SIM set)`);
+    }
+    console.warn(msg, '- skipping load_wasm test. Run ./ct.sh for full suite.');
+    return null;
+  }
   if (!(await isSimulatorAvailable())) {
     const msg = `Simulator not running at ${BLOCKCHAIN_SERVICE_URL}`;
     if (process.env.LOAD_WASM_REQUIRE_SIM) {

@@ -289,6 +289,10 @@ async function createOfferForIds(data: CreateOfferForIdsRequest) {
   return await request<CreateOfferForIdsResponse>(ChiaMethod.CreateOfferForIds, data);
 }
 
+async function cancelOffer(data: { tradeId: string; secure: boolean; fee: bigint }) {
+  return await request<{ success: boolean }, typeof data>(ChiaMethod.CancelOffer, data);
+}
+
 async function pushTransactions(data: PushTransactionsRequest) {
   return await request<PushTransactionsResponse>(ChiaMethod.PushTransactions, data);
 }
@@ -320,6 +324,7 @@ export const rpc = {
   selectCoins,
   getHeightInfo,
   createOfferForIds,
+  cancelOffer,
   pushTransactions,
   createNewRemoteWallet,
   registerRemoteCoins,

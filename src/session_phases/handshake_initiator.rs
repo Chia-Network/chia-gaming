@@ -899,7 +899,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
                 if self.wallet_offer_mismatches >= MAX_WALLET_OFFER_MISMATCHES {
                     return Err(Error::Channel(format!(
                         "wallet failed to spend the committed launcher parent after \
-                         {MAX_WALLET_OFFER_MISMATCHES} validate-only offers: {validation_error}"
+                         {MAX_WALLET_OFFER_MISMATCHES} funding offers: {validation_error}"
                     )));
                 }
                 return Ok(vec![Effect::NeedCoinSpend(request)]);
@@ -1487,7 +1487,7 @@ mod finished_message_tests {
             } else {
                 let error = result.expect_err("third mismatch must fail");
                 assert!(format!("{error:?}").contains(
-                    "wallet failed to spend the committed launcher parent after 3 validate-only offers"
+                    "wallet failed to spend the committed launcher parent after 3 funding offers"
                 ));
             }
         }

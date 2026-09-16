@@ -745,15 +745,44 @@ export class SessionController implements PollingGameSession {
         return;
       }
 
-      if (typeof bundle === 'string' && bundle.startsWith('offer')) {
+      const persistedTradeId =
+        typeof bundle === 'object' &&
+        bundle !== null &&
+        typeof bundle.tradeId === 'string' &&
+        typeof bundle.offer === 'string'
+          ? bundle.tradeId
+          : undefined;
+      const offerString =
+        typeof bundle === 'string'
+          ? bundle
+          : persistedTradeId !== undefined
+            ? bundle.offer
+            : undefined;
+
+      if (typeof offerString === 'string' && offerString.startsWith('offer')) {
         console.warn(
           '[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path',
         );
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
+          if (persistedTradeId) {
+            await this.cancelRejectedFundingOffer(persistedTradeId);
+          }
           return;
         }
-        this.processResult(this.cradle.provide_offer_bech32(bundle));
+        let result: WasmResult;
+        try {
+          result = requireWasmResult(this.cradle.provide_offer_bech32(offerString));
+        } catch (error) {
+          if (persistedTradeId) {
+            await this.cancelRejectedFundingOffer(persistedTradeId);
+          }
+          throw error;
+        }
+        if (persistedTradeId && result.events.some((event) => 'NeedCoinSpend' in event)) {
+          await this.cancelRejectedFundingOffer(persistedTradeId);
+        }
+        this.processResult(result);
       } else {
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
@@ -775,6 +804,15 @@ export class SessionController implements PollingGameSession {
         this.processResult(this.cradle.wallet_callback_failed(msg));
       }
     }
+  }
+
+  private async cancelRejectedFundingOffer(tradeId: string): Promise<void> {
+    const cancelOffer = this.blockchain?.rpc.cancelOffer;
+    if (!cancelOffer) {
+      throw new Error('wallet cannot release the rejected persisted funding offer');
+    }
+    await cancelOffer(tradeId);
+    log(`[wasm] cancelled rejected persisted funding offer trade_id=${tradeId}`);
   }
 
   emitRewardAddress() {

@@ -138,6 +138,7 @@ jobs:
               echo "Simulator failed to start within 30 seconds"
               exit 1
           fi
+          export CHIA_GAMING_TEST_SIMULATOR_OWNED=1
 
           (
               while sleep 15; do

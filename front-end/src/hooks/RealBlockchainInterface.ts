@@ -586,6 +586,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
         log('[wc-blockchain] createOfferForIds returned bech32 offer string path');
+        if (!payload.validateOnly) {
+          const tradeId = (response as any)?.tradeRecord?.tradeId;
+          if (typeof tradeId !== 'string' || !tradeId) {
+            throw new Error('persisted createOfferForIds response missing trade ID');
+          }
+          return { offer: offerStr, tradeId };
+        }
         return offerStr;
       }
       log(`[wc-blockchain] createOfferForIds returned non-offer payload type=${typeof response}`);
@@ -621,6 +628,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         (parsedError as any)?.data?.structuredError?.message ??
         '';
       throw new Error(errorMsg || errorText || 'createOfferForIds failed', { cause: e });
+    }
+  }
+
+  async cancelOffer(tradeId: string): Promise<void> {
+    const response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });
+    if (!response.success) {
+      throw new Error(`wallet failed to cancel rejected offer ${tradeId}`);
     }
   }
 

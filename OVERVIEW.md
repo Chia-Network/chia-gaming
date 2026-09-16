@@ -439,7 +439,8 @@ ASSERT_BEFORE_HEIGHT_ABSOLUTE), and the wallet coin ID to use. The hosting
 layer refreshes coin selection, calls `createOfferForIds`, and feeds the returned
 `SpendBundle` back via `provide_coin_spend_bundle` on the split handler. The
 initiator offer is persisted so its removals remain reserved while the receiver
-builds its half; receiver and fee offers remain validate-only. Chia Wallet
+builds its half; a rejected initiator offer is cancelled off-chain before retry,
+while receiver and fee offers remain validate-only. Chia Wallet
 2.7.4's WalletConnect command does not expose its transaction-config
 coin-selection fields, so the library independently verifies that the initiator
 bundle applies every requested extra condition to the committed launcher parent
@@ -539,7 +540,8 @@ conditions (assertions and CREATE_COIN for the launcher). WalletConnect refreshe
 coin selection immediately before each call. The initiator call persists its
 offer temporarily so the wallet reserves those removals; the receiver call is
 validate-only. The initiator rejects its bundle unless the committed launcher
-parent emits every requested condition.
+parent emits every requested condition, and the host cancels a rejected
+persisted offer before requesting another.
 
 In the **simulator** these are implemented by `Simulator::select_coins` and
 the `create_offer_for_ids` HTTP endpoint (which calls

@@ -1,6 +1,7 @@
 jest.mock('../../hooks/WalletConnectRpc', () => ({
   rpc: {
     createOfferForIds: jest.fn(),
+    cancelOffer: jest.fn(),
     createNewRemoteWallet: jest.fn(),
     getNextAddress: jest.fn(),
     getCoinRecordsByNames: jest.fn(),
@@ -58,6 +59,7 @@ import { coinIdFromBytes, toUint8 } from '../../util';
 import { encodePuzzleHashToBech32m } from '../../util/bech32m';
 
 const mockCreateOfferForIds = rpc.createOfferForIds as jest.Mock;
+const mockCancelOffer = rpc.cancelOffer as jest.Mock;
 const mockCreateNewRemoteWallet = rpc.createNewRemoteWallet as jest.Mock;
 const mockGetNextAddress = rpc.getNextAddress as jest.Mock;
 const mockGetCoinRecordsByNames = rpc.getCoinRecordsByNames as jest.Mock;
@@ -104,6 +106,7 @@ describe('RealBlockchainInterface', () => {
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
     mockCreateOfferForIds.mockReset();
+    mockCancelOffer.mockReset();
     mockCreateNewRemoteWallet.mockReset();
     mockGetNextAddress.mockReset();
     mockGetCoinRecordsByNames.mockReset();
@@ -592,11 +595,14 @@ describe('RealBlockchainInterface', () => {
   it('persists initiator funding offers without unsupported coin-selection fields', async () => {
     const blockchain = new RealBlockchainInterface();
     const fundingCoinId = 'ab'.repeat(32);
-    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+    mockCreateOfferForIds.mockResolvedValue({
+      offer: 'offer1signed',
+      tradeRecord: { tradeId: 'trade-id' },
+    });
 
     await expect(
       blockchain.createOfferForIds('test', { '1': -100n }, undefined, [fundingCoinId]),
-    ).resolves.toBe('offer1signed');
+    ).resolves.toEqual({ offer: 'offer1signed', tradeId: 'trade-id' });
 
     expect(mockSelectCoins).toHaveBeenCalledWith({
       walletId: 1n,
@@ -612,6 +618,19 @@ describe('RealBlockchainInterface', () => {
       validateOnly: false,
       extraConditions: undefined,
       allowUnsynced: true,
+    });
+  });
+
+  it('cancels rejected persisted offers off-chain', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCancelOffer.mockResolvedValue({ success: true });
+
+    await blockchain.cancelOffer('trade-id');
+
+    expect(mockCancelOffer).toHaveBeenCalledWith({
+      tradeId: 'trade-id',
+      secure: false,
+      fee: 0n,
     });
   });
 

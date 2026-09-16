@@ -543,6 +543,7 @@ export interface InternalBlockchainInterface {
     coinIds?: string[],
     maxHeight?: bigint,
   ): Promise<any | null>;
+  cancelOffer?(tradeId: string): Promise<void>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;
