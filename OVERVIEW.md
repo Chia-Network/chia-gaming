@@ -436,13 +436,14 @@ contributing their share of the channel funding. The library emits
 `Effect::NeedCoinSpend(CoinSpendRequest)` containing the required amount,
 conditions (CREATE_COIN for the launcher, ASSERT_COIN_ANNOUNCEMENT,
 ASSERT_BEFORE_HEIGHT_ABSOLUTE), and the wallet coin ID to use. The hosting
-layer calls `createOfferForIds` in validate-only mode, pins that ID through the
-wallet's `includedCoinIds` and `primaryCoin` selection fields, and feeds the
-returned `SpendBundle` back via `provide_coin_spend_bundle` on the split
-handler. The library independently verifies that the bundle spends the
-committed launcher parent exactly once before appending the launcher
-`CoinSpend` and sending the combined bundle in E. Validate-only offer creation
-does not leave a persisted wallet trade record if this verification fails.
+layer calls `createOfferForIds` in validate-only mode and feeds the returned
+`SpendBundle` back via `provide_coin_spend_bundle` on the split handler. Chia
+Wallet 2.7.4's WalletConnect command does not expose its transaction-config
+coin-selection fields, so the library independently verifies that the bundle
+spends the committed launcher parent exactly once before appending the launcher
+`CoinSpend` and sending the combined bundle in E. A mismatched validate-only
+bundle is discarded and requested again, up to three total mismatches, without
+leaving a persisted wallet trade record or advancing the handshake.
 
 Between E and F, the receiver must similarly obtain a wallet `SpendBundle`
 contributing their share. The library emits `Effect::NeedCoinSpend` with the
@@ -531,11 +532,10 @@ The handshake requires interaction with the Chia wallet at three points:
 | `createOfferForIds(amount, conditions)` | After D (initiator) | Get a signed `SpendBundle` contributing the initiator's share of funding |
 | `createOfferForIds(amount, conditions)` | After E (receiver) | Get a signed `SpendBundle` contributing the receiver's share of funding |
 
-The `createOfferForIds` call takes the player's contribution amount, extra
-conditions (assertions and CREATE_COIN for the launcher), and an optional
-specific coin ID to include and make primary. It returns a signed offer bundle
-without persisting a trade record. The initiator rejects that bundle unless it
-actually spends the already committed launcher parent.
+The `createOfferForIds` call takes the player's contribution amount and extra
+conditions (assertions and CREATE_COIN for the launcher). It returns a signed
+offer bundle without persisting a trade record. The initiator rejects that
+bundle unless it actually spends the already committed launcher parent.
 
 In the **simulator** these are implemented by `Simulator::select_coins` and
 the `create_offer_for_ids` HTTP endpoint (which calls
@@ -546,8 +546,11 @@ they map to WalletConnect RPCs:
   amount.
 - `chia_createOfferForIds` — create a signed `SpendBundle` with the specified
   conditions and amount. The `extraConditions` parameter carries the
-  channel-specific assertions; `includedCoinIds` and `primaryCoin` pin the
-  spend through the wallet's supported coin-selection configuration.
+  channel-specific assertions. Chia Wallet 2.7.4 does not admit
+  `includedCoinIds` or `primaryCoin` through this WalletConnect command, so
+  exact funding-coin selection is enforced by post-return verification.
+  Mismatched validate-only bundles are discarded and retried up to a fixed
+  three-mismatch limit, after which the handshake fails and must restart.
 - `chia_pushTransactions` — broadcast the assembled funding `SpendBundle` to the
   network, wrapped in a `TransactionRecord` (both players submit the transaction
   they assembled locally).

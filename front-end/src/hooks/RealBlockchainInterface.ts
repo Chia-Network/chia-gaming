@@ -556,17 +556,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         }
         return condition;
       });
-      const includedCoinIds = coinIds?.map((coinId) =>
-        coinId.startsWith('0x') ? coinId : `0x${normalizeHexString(coinId)}`,
-      );
 
       const payload = {
         offer,
         driverDict: {},
         validateOnly: true,
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
-        includedCoinIds,
-        primaryCoin: includedCoinIds?.[0],
         allowUnsynced: true,
       };
       log(`[wc-blockchain] createOfferForIds payload: ${jsonStringify(payload)}`);

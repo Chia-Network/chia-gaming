@@ -589,7 +589,7 @@ describe('RealBlockchainInterface', () => {
     ]);
   });
 
-  it('pins validate-only funding offers through the supported coin selection fields', async () => {
+  it('uses validate-only without unsupported WalletConnect coin-selection fields', async () => {
     const blockchain = new RealBlockchainInterface();
     const fundingCoinId = 'ab'.repeat(32);
     mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
@@ -603,8 +603,6 @@ describe('RealBlockchainInterface', () => {
       driverDict: {},
       validateOnly: true,
       extraConditions: undefined,
-      includedCoinIds: [`0x${fundingCoinId}`],
-      primaryCoin: `0x${fundingCoinId}`,
       allowUnsynced: true,
     });
   });

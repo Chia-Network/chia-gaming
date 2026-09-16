@@ -33,6 +33,8 @@ use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{OffChainPhaseInit, PeerMessage, SpendWalletReceiver};
 use crate::session_phases::OffChainPhase;
 
+const MAX_WALLET_OFFER_MISMATCHES: u8 = 3;
+
 #[derive(Debug, Serialize, Deserialize)]
 enum InitiatorState {
     WaitingForStart,
@@ -81,6 +83,8 @@ pub struct HandshakeInitiatorPhase {
     last_height: u64,
     channel_deadline: Option<u64>,
     pending_coin_spend: bool,
+    #[serde(default)]
+    wallet_offer_mismatches: u8,
 
     waiting_to_start: bool,
     transaction_pushed: bool,
@@ -114,6 +118,7 @@ impl HandshakeInitiatorPhase {
             last_height: 0,
             channel_deadline: None,
             pending_coin_spend: false,
+            wallet_offer_mismatches: 0,
             waiting_to_start: true,
             transaction_pushed: false,
             funding_announcement: None,
@@ -846,7 +851,20 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
     ) -> Result<Vec<Effect>, Error> {
         let bundle = if matches!(self.state, InitiatorState::WaitingForOffer(_, _)) {
             let (launcher_parent, _, _) = self.get_launcher_coin()?.get_coin_string_parts()?;
-            validate_wallet_bundle_spends_coin(&wallet_bundle, &launcher_parent)?;
+            if let Err(validation_error) =
+                validate_wallet_bundle_spends_coin(&wallet_bundle, &launcher_parent)
+            {
+                self.wallet_offer_mismatches = self.wallet_offer_mismatches.saturating_add(1);
+                if self.wallet_offer_mismatches >= MAX_WALLET_OFFER_MISMATCHES {
+                    return Err(Error::Channel(format!(
+                        "wallet failed to spend the committed launcher parent after \
+                         {MAX_WALLET_OFFER_MISMATCHES} validate-only offers: {validation_error}"
+                    )));
+                }
+                return Ok(vec![Effect::NeedCoinSpend(
+                    self.build_alice_coin_spend_request()?,
+                )]);
+            }
             let launcher_spend = self.build_launcher_coin_spend(env)?;
             let mut spends = wallet_bundle.spends;
             spends.push(launcher_spend);
@@ -1047,7 +1065,9 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
 #[cfg(test)]
 mod finished_message_tests {
     use super::*;
-    use crate::common::constants::{ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT};
+    use crate::common::constants::{
+        ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT, SINGLETON_LAUNCHER_HASH,
+    };
     use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
     use crate::common::types::{Sha256Input, Sha256tree, ToQuotedProgram};
     use clvm_traits::ClvmEncoder;
@@ -1171,6 +1191,64 @@ mod finished_message_tests {
         phase
     }
 
+    fn waiting_for_offer_phase(
+        allocator: &mut crate::common::types::AllocEncoder,
+    ) -> (HandshakeInitiatorPhase, SpendBundle, CoinID) {
+        let conditions = ().to_clvm(allocator).expect("nil conditions");
+        let wallet_spend = spend_for_conditions(allocator, 7, conditions);
+        let launcher_parent = wallet_spend.coin.to_coin_id();
+        let launcher_coin = CoinString::from_parts(
+            &launcher_parent,
+            &PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
+            &Amount::default(),
+        );
+
+        let make_phase = |seed| {
+            let mut rng = ChaCha8Rng::from_seed([seed; 32]);
+            HandshakeInitiatorPhase::new(OffChainPhaseInit {
+                private_keys: rng.random(),
+                game_types: BTreeMap::new(),
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([seed; 32]),
+            })
+        };
+        let mut phase = make_phase(20);
+        let peer = make_phase(21);
+        let first_player_hs_info = phase.my_handshake_b();
+        let second_player_hs_info = peer.my_handshake_b();
+        let mut env = ChannelEnv::new(allocator).expect("env");
+        let (channel_state, _) = phase
+            .make_channel_state(
+                launcher_coin.to_coin_id(),
+                false,
+                &second_player_hs_info,
+                &mut env,
+            )
+            .expect("channel state");
+        phase.channel_state = Some(channel_state);
+        phase.launcher_coin = Some(launcher_coin);
+        phase.last_height = 10;
+        phase.state = InitiatorState::WaitingForOffer(
+            Box::new(HandshakeStepInfo {
+                first_player_hs_info,
+                second_player_hs_info,
+            }),
+            StateUpdateSignatures::default(),
+        );
+
+        (
+            phase,
+            SpendBundle {
+                name: None,
+                spends: vec![wallet_spend],
+            },
+            launcher_parent,
+        )
+    }
+
     fn encode_f(bundle: SpendBundle) -> Vec<u8> {
         crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::HandshakeF(
             HandshakePayloadF { bundle },
@@ -1248,6 +1326,72 @@ mod finished_message_tests {
             .expect_err("missing or duplicate launcher parent must fail");
             assert!(format!("{error:?}").contains("expected exactly once"));
         }
+    }
+
+    #[test]
+    fn wallet_offer_mismatch_retries_without_advancing_then_matching_offer_proceeds() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let (mut phase, matching_bundle, launcher_parent) = waiting_for_offer_phase(&mut allocator);
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+
+        let effects = phase
+            .provide_coin_spend_bundle(
+                &mut env,
+                SpendBundle {
+                    name: None,
+                    spends: vec![],
+                },
+            )
+            .expect("mismatch should retry");
+        let request = match effects.as_slice() {
+            [Effect::NeedCoinSpend(request)] => request,
+            _ => panic!("mismatch must emit one NeedCoinSpend"),
+        };
+        assert_eq!(request.coin_id.as_ref(), Some(&launcher_parent));
+        assert_eq!(phase.wallet_offer_mismatches, 1);
+        assert!(matches!(phase.state, InitiatorState::WaitingForOffer(_, _)));
+        assert!(phase.channel_initiation_transaction.is_none());
+
+        let effects = phase
+            .provide_coin_spend_bundle(&mut env, matching_bundle)
+            .expect("matching retry should proceed");
+        assert!(matches!(effects.as_slice(), [Effect::PeerHandshakeE(_)]));
+        assert!(matches!(phase.state, InitiatorState::Finished(_)));
+        assert!(phase.channel_initiation_transaction.is_some());
+    }
+
+    #[test]
+    fn wallet_offer_mismatch_exhaustion_fails_after_three_offers() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let (mut phase, _, launcher_parent) = waiting_for_offer_phase(&mut allocator);
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+
+        for attempt in 1..=MAX_WALLET_OFFER_MISMATCHES {
+            let result = phase.provide_coin_spend_bundle(
+                &mut env,
+                SpendBundle {
+                    name: None,
+                    spends: vec![],
+                },
+            );
+            if attempt < MAX_WALLET_OFFER_MISMATCHES {
+                let effects = result.expect("mismatch before limit should retry");
+                let request = match effects.as_slice() {
+                    [Effect::NeedCoinSpend(request)] => request,
+                    _ => panic!("mismatch must emit one NeedCoinSpend"),
+                };
+                assert_eq!(request.coin_id.as_ref(), Some(&launcher_parent));
+            } else {
+                let error = result.expect_err("third mismatch must fail");
+                assert!(format!("{error:?}").contains(
+                    "wallet failed to spend the committed launcher parent after 3 validate-only offers"
+                ));
+            }
+        }
+
+        assert_eq!(phase.wallet_offer_mismatches, MAX_WALLET_OFFER_MISMATCHES);
+        assert!(matches!(phase.state, InitiatorState::WaitingForOffer(_, _)));
+        assert!(phase.channel_initiation_transaction.is_none());
     }
 
     #[test]

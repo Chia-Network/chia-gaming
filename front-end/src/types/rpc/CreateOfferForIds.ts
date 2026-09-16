@@ -7,8 +7,6 @@ export interface CreateOfferForIdsRequest {
   disableJSONFormatting?: boolean;
   fee?: bigint;
   extraConditions?: Array<{ opcode: bigint; args: any }>;
-  includedCoinIds?: string[];
-  primaryCoin?: string;
   allowUnsynced?: boolean;
 }
 
