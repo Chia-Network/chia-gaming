@@ -22,6 +22,8 @@ const WALLET_CONNECT_FRAME_ORIGINS = [
 export type NetworkPolicy = {
   /** Origins the app may open network connections to. Everything else is cancelled. */
   allowedRequestOrigins: ReadonlySet<string>;
+  /** Origins whose framed documents receive desktop-enforced transport policy headers. */
+  hubOrigins: ReadonlySet<string>;
   /** Origins allowed to load as a sub-frame of the player document. */
   allowedFrameOrigins: ReadonlySet<string>;
   /**
@@ -30,6 +32,8 @@ export type NetworkPolicy = {
    */
   allowedPopupOrigins: ReadonlySet<string>;
   contentSecurityPolicy: string;
+  hubContentSecurityPolicy: string;
+  hubConnectionAllowlist: string;
 };
 
 /**
@@ -82,9 +86,10 @@ function buildContentSecurityPolicy(
 }
 
 export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
+  const uniqueHubOrigins = [...new Set(config.hubOrigins)].sort();
+  const hubRequestOrigins = [...uniqueHubOrigins, ...uniqueHubOrigins.map(webSocketOrigin)];
   const requestOrigins = [
-    ...config.hubOrigins,
-    ...config.hubOrigins.map(webSocketOrigin),
+    ...hubRequestOrigins,
     ...WALLET_CONNECT_REQUEST_ORIGINS,
     ...config.cloudWalletOrigins,
   ];
@@ -97,8 +102,30 @@ export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
 
   return {
     allowedRequestOrigins: new Set(uniqueRequestOrigins),
+    hubOrigins: new Set(uniqueHubOrigins),
     allowedFrameOrigins: new Set(uniqueFrameOrigins),
     allowedPopupOrigins: new Set(uniquePopupOrigins),
     contentSecurityPolicy: buildContentSecurityPolicy(uniqueRequestOrigins, uniqueFrameOrigins),
+    hubContentSecurityPolicy: `connect-src 'self' ${hubRequestOrigins.join(' ')}`,
+    hubConnectionAllowlist: `(response-origin ${uniqueHubOrigins
+      .map((origin) => JSON.stringify(origin))
+      .join(' ')});webrtc=block`,
   };
+}
+
+export function withHubTransportSecurityHeaders(
+  responseHeaders: Readonly<Record<string, string[]>>,
+  policy: NetworkPolicy,
+): Record<string, string[]> {
+  const result = Object.fromEntries(
+    Object.entries(responseHeaders).filter(
+      ([name]) => name.toLowerCase() !== 'connection-allowlist',
+    ),
+  );
+  const cspHeader =
+    Object.keys(result).find((name) => name.toLowerCase() === 'content-security-policy') ??
+    'Content-Security-Policy';
+  result[cspHeader] = [...(result[cspHeader] ?? []), policy.hubContentSecurityPolicy];
+  result['Connection-Allowlist'] = [policy.hubConnectionAllowlist];
+  return result;
 }

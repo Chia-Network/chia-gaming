@@ -174,10 +174,15 @@ the WalletConnect endpoints `sign-client` actually reaches: the `.com` and
 `chiagaming://` are answered from disk and never touch the network stack.
 
 Chromium transports that do not pass through `onBeforeRequest` are restricted
-separately. WebTransport is disabled before Chromium starts. Every web contents
-uses Electron's `disable_non_proxied_udp` WebRTC IP policy, which suppresses
-local host candidates and direct UDP rather than pretending WebRTC is covered
-by the origin allowlist.
+on each configured hub document itself. The main process replaces any
+hub-supplied `Connection-Allowlist` response header with one that permits the
+configured hub origins and sets `webrtc=block`. The desktop enables Chromium
+150's `ConnectionAllowlists` feature and its origin-trial override before
+startup, so the injected header rejects `RTCPeerConnection` construction
+without trusting a token from the hub. It also appends a `connect-src` CSP
+limited to those hubs and their WebSocket forms, which is the policy
+WebTransport enforces before opening QUIC. Every web contents additionally uses
+Electron's `disable_non_proxied_udp` WebRTC IP policy as defense in depth.
 
 ### Hub trust
 

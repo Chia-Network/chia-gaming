@@ -7,7 +7,7 @@ import { isAppUrl } from './appProtocol';
 import { log } from './log';
 import { isPlayerMainWebContents } from './mainWindow';
 import { isNavigationAllowed } from './navigationPolicy';
-import { originOfUrl, type PolicyRef } from './networkPolicy';
+import { originOfUrl, type PolicyRef, withHubTransportSecurityHeaders } from './networkPolicy';
 import { installWebContentsTransportSecurity } from './transportSecurity';
 
 /**
@@ -49,6 +49,27 @@ export function installSessionSecurity(target: Session, policy: PolicyRef): void
     log.warn(`blocked ${details.resourceType} request to ${details.url}`);
     callback({ cancel: true });
   });
+
+  target.webRequest.onHeadersReceived(
+    { urls: ['http://*/*', 'https://*/*'] },
+    (details, callback) => {
+      const origin = originOfUrl(details.url);
+      if (
+        details.resourceType !== 'subFrame' ||
+        origin === null ||
+        !policy.current.hubOrigins.has(origin)
+      ) {
+        callback({});
+        return;
+      }
+      callback({
+        responseHeaders: withHubTransportSecurityHeaders(
+          details.responseHeaders ?? {},
+          policy.current,
+        ),
+      });
+    },
+  );
 }
 
 function popupWebPreferences(): WebPreferences {
