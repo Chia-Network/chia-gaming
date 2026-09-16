@@ -898,8 +898,11 @@ invocation succeeds, the move is slashable and is rejected. Discovery,
 commitment checking, and evidence trials intentionally execute the validator
 separately. The peer and handlers never supply validator programs; a returned
 non-nil next hash is resolved in the receiver's factory registry. These checks
-also apply when the next-validator hash is nil. The signed unroll leaf is the
-new virtual coin's puzzle hash.
+also apply when the next-validator hash is nil. Only after every evidence
+candidate fails does the receiver require the handler continuation to agree
+with the returned next-validator hash; successful slash evidence takes
+precedence over that continuation invariant. The signed unroll leaf is the new
+virtual coin's puzzle hash.
 
 The peer does not supply the next `max_move_size`. The receiver takes it from
 the nil-evidence validator result and canonically encodes it when constructing

@@ -619,7 +619,10 @@ move, Rust runs the current validator with nil evidence and reads its
 
 - A non-nil hash is resolved by tree hash against the factory registry and the
   resolved program becomes current for the next move.
-- A nil hash is terminal and must agree with a nil next handler.
+- If no handler evidence succeeds as a slash, a nil hash is terminal and must
+  agree with a nil next handler; a non-nil hash must agree with a non-nil next
+  handler. Successful slash evidence takes precedence because the handler may
+  deliberately omit a continuation when requesting that terminal outcome.
 
 Only the first registry position is meaningful. All later entries are an
 unordered lookup set, so protocol correctness must never depend on their order.

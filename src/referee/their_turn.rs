@@ -559,21 +559,8 @@ impl TheirTurnReferee {
             },
         )?;
 
-        game_assert_eq!(
-            result.next_handler.is_some(),
-            next_validation_program.is_some(),
-            "their-turn handler continuation disagrees with validator transition"
-        );
-        let new_self = self.accept_their_move(
-            result.next_handler.clone(),
-            next_validation_program,
-            new_state.clone(),
-            puzzle_args.clone(),
-            rc_puzzle_args.clone(),
-            details,
-            state_number,
-        )?;
-
+        // A handler may omit its continuation because the accompanying
+        // evidence proves this move should terminate by slash instead.
         for evidence in result.slash_evidence.iter() {
             if self.referee_slash_succeeds(
                 allocator,
@@ -594,6 +581,21 @@ impl TheirTurnReferee {
                 ));
             }
         }
+
+        game_assert_eq!(
+            result.next_handler.is_some(),
+            next_validation_program.is_some(),
+            "their-turn handler continuation disagrees with validator transition"
+        );
+        let new_self = self.accept_their_move(
+            result.next_handler.clone(),
+            next_validation_program,
+            new_state.clone(),
+            puzzle_args.clone(),
+            rc_puzzle_args.clone(),
+            details,
+            state_number,
+        )?;
 
         let out_move = self.finish_their_turn(allocator, rc_puzzle_args, &result)?;
 
