@@ -134,12 +134,18 @@ directory and rejects anything that escapes it. It reads through Node's `fs`
 rather than `net.fetch(file://…)` because asar support is implemented as an `fs`
 shim; that is what lets the renderer stay sealed inside `app.asar`, where the
 integrity-validation fuse still covers it, instead of being unpacked beside it.
-Cross-site asset requests are rejected using Chromium Fetch Metadata, with the
-Cloud Wallet's top-level `/oauth/callback` navigation as the sole exception.
-Each request performs a stateless ASAR-safe filesystem read; Chromium owns
-response caching and request coalescing. Static assets receive immutable cache
-headers, while HTML receives `Cache-Control: no-store` because each document
-response carries the current hub-specific CSP.
+Requests positively identified as cross-site by Chromium Fetch Metadata are
+rejected, with the Cloud Wallet's top-level `/oauth/callback` navigation as the
+sole exception. Electron omits all initiator metadata from both app-owned
+custom-scheme subresources and deliberately unlabelled remote requests, so an
+empty metadata set is not treated as proof of origin. Hub documents instead
+receive a CSP whose web-only `default-src` prevents them from requesting the
+custom scheme. The protocol handler independently coalesces reads by resolved
+file path, retains successful immutable asset bodies, and permits at most four
+distinct ASAR filesystem reads at once. Query strings cannot bypass that bound
+or cache. Static assets also receive immutable browser cache headers, while HTML
+receives `Cache-Control: no-store` because each document response carries the
+current hub-specific CSP.
 
 ### Content Security Policy
 

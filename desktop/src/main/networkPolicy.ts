@@ -106,7 +106,10 @@ export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
     allowedFrameOrigins: new Set(uniqueFrameOrigins),
     allowedPopupOrigins: new Set(uniquePopupOrigins),
     contentSecurityPolicy: buildContentSecurityPolicy(uniqueRequestOrigins, uniqueFrameOrigins),
-    hubContentSecurityPolicy: `connect-src 'self' ${hubRequestOrigins.join(' ')}`,
+    hubContentSecurityPolicy: [
+      "default-src http: https: data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
+      `connect-src 'self' ${hubRequestOrigins.join(' ')}`,
+    ].join('; '),
     hubConnectionAllowlist: `(response-origin ${uniqueHubOrigins
       .map((origin) => JSON.stringify(origin))
       .join(' ')});webrtc=block`,

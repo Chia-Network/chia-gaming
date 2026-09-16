@@ -5,6 +5,7 @@ import { protocol } from 'electron';
 
 import {
   appAssetCacheControl,
+  BoundedAssetReader,
   isAppSchemeRequestAllowed,
   isOAuthCallbackPath,
 } from './appProtocolPolicy';
@@ -90,6 +91,7 @@ function resolveRequestedFile(rendererRoot: string, pathname: string): string | 
 
 export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
   log.info(`serving ${APP_ORIGIN} from ${rendererRoot}`);
+  const assets = new BoundedAssetReader(readFile);
 
   protocol.handle(APP_SCHEME, async (request) => {
     const url = new URL(request.url);
@@ -117,8 +119,7 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
     // inside app.asar where the integrity-validation fuse still covers it.
     let body: ArrayBuffer;
     try {
-      const file = await readFile(filePath);
-      body = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
+      body = await assets.readAsset(filePath);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'EISDIR') {

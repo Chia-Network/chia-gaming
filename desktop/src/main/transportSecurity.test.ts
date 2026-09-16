@@ -49,7 +49,7 @@ describe('desktop transport security', () => {
 
     assert.deepEqual(headers['content-security-policy'], [
       "default-src 'self'",
-      "connect-src 'self' https://hub.example wss://hub.example",
+      "default-src http: https: data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' https://hub.example wss://hub.example",
     ]);
     assert.deepEqual(headers['Connection-Allowlist'], [
       '(response-origin "https://hub.example");webrtc=block',
