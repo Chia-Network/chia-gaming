@@ -57,6 +57,7 @@ async function startHub(env = {}) {
         PORT: String(port),
         HUB_MAX_TOTAL_CONNECTIONS: '2000',
         HUB_MAX_CONNECTIONS_PER_IP: '8',
+        HUB_ALLOWED_PARENT_ORIGINS: 'chiagaming://app,https://player.example',
         HUB_MAX_PLAYERS: '1000',
         HUB_MAX_PENDING_CHALLENGES_PER_PLAYER: '8',
         HUB_MAX_CHALLENGES: '4000',
@@ -310,11 +311,19 @@ async function identifyGameRegistered(origin, sessionId) {
   return { game, playerId: playerId(registered.player_id) };
 }
 
-test('HTTP responses prohibit referrer disclosure', async () => {
+test('HTTP responses prohibit referrer disclosure and hostile framing', async () => {
   const hub = await startHub();
   try {
-    const response = await fetch(hub.origin);
+    const response = await fetch(`${hub.origin}/parent-origins.json`);
     assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(
+      response.headers.get('content-security-policy'),
+      'frame-ancestors chiagaming://app https://player.example',
+    );
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), {
+      origins: ['chiagaming://app', 'https://player.example'],
+    });
   } finally {
     await hub.stop();
   }

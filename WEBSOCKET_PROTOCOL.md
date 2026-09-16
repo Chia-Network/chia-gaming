@@ -388,6 +388,14 @@ then addresses the credential response only to that hub origin. The same hub
 session ID is independently supplied to the game relay connection. It is never
 sent to a peer.
 
+The hub reciprocally authenticates the embedding player origin. Its HTTP
+responses set `frame-ancestors` from `HUB_ALLOWED_PARENT_ORIGINS`, and the hub
+iframe fetches that same server-owned allowlist before accepting `hub-auth`.
+Both `event.source === window.parent` and an exact allowed `event.origin` are
+required. The default policy permits the desktop origin and local player
+development origins; a browser deployment must configure its public player
+origin explicitly.
+
 The current hub retains an inactive mapping from hub session ID to player ID
 for up to 24 hours, bounded to 10,000 retained sessions by default. The
 retention clock starts when the mapping loses its last lobby/game presence, not

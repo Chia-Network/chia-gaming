@@ -1,16 +1,24 @@
 import { webcrypto } from 'node:crypto';
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { hubSessionFromParentMessage } from '../../../../hub/hub-frontend/src/iframeAuth';
+import {
+  hubSessionFromParentMessage,
+  parentOriginsFromPayload,
+} from '../../../../hub/hub-frontend/src/iframeAuth';
 import { HubIframe } from '../../components/HubIframe';
 import { installHubIframeAuthentication } from '../../services/hubIframeAuthentication';
 import { canonicalHubOrigin, deriveHubSessionId } from '../../services/hubSessionCredential';
 
 type MessageHandler = (event: MessageEvent) => void;
 
-function childAuthMessage(source: unknown, sessionId: unknown): MessageEvent {
+function childAuthMessage(
+  source: unknown,
+  sessionId: unknown,
+  origin = 'https://player.example',
+): MessageEvent {
   return {
     source,
+    origin,
     data: { type: 'hub-auth', sessionId },
   } as unknown as MessageEvent;
 }
@@ -71,14 +79,37 @@ describe('hub iframe credentials', () => {
   it('accepts a canonical session only from the embedding parent', () => {
     const parent = {} as Window;
     const sessionId = 'ab'.repeat(16);
+    const allowedOrigins = new Set(['https://player.example']);
 
-    expect(hubSessionFromParentMessage(childAuthMessage(parent, sessionId), parent)).toBe(
-      sessionId,
-    );
-    expect(hubSessionFromParentMessage(childAuthMessage({}, sessionId), parent)).toBeNull();
     expect(
-      hubSessionFromParentMessage(childAuthMessage(parent, 'not-a-session'), parent),
+      hubSessionFromParentMessage(childAuthMessage(parent, sessionId), parent, allowedOrigins),
+    ).toBe(sessionId);
+    expect(
+      hubSessionFromParentMessage(childAuthMessage({}, sessionId), parent, allowedOrigins),
     ).toBeNull();
+    expect(
+      hubSessionFromParentMessage(
+        childAuthMessage(parent, sessionId, 'https://attacker.example'),
+        parent,
+        allowedOrigins,
+      ),
+    ).toBeNull();
+    expect(
+      hubSessionFromParentMessage(
+        childAuthMessage(parent, 'not-a-session'),
+        parent,
+        allowedOrigins,
+      ),
+    ).toBeNull();
+  });
+
+  it('accepts only a nonempty parent-origin policy list', () => {
+    expect(parentOriginsFromPayload({ origins: ['chiagaming://app'] })).toEqual(
+      new Set(['chiagaming://app']),
+    );
+    expect(parentOriginsFromPayload({ origins: [] })).toBeNull();
+    expect(parentOriginsFromPayload({ origins: [7] })).toBeNull();
+    expect(parentOriginsFromPayload(null)).toBeNull();
   });
 
   it('renders the iframe without credentials or referrer leakage', () => {

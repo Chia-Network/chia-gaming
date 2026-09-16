@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import HubScreen from './hub';
-import { hubSessionFromParentMessage } from './iframeAuth';
+import { hubSessionFromParentMessage, parentOriginsFromPayload } from './iframeAuth';
 
 // Only the embedding player app may drive the theme. The parent's origin
 // varies by deployment (and is a custom scheme in the desktop build), so the
@@ -22,13 +22,32 @@ function HubApp() {
 
   useEffect(() => {
     if (window.parent === window) return;
-    const handleMessage = (event: MessageEvent) => {
-      const receivedSessionId = hubSessionFromParentMessage(event, window.parent);
-      if (receivedSessionId !== null) setSessionId(receivedSessionId);
+    let active = true;
+    let handleMessage: ((event: MessageEvent) => void) | undefined;
+    const installAuthListener = async () => {
+      const response = await fetch('/parent-origins.json', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`parent origin policy returned ${response.status}`);
+      const allowedParentOrigins = parentOriginsFromPayload(await response.json());
+      if (allowedParentOrigins === null) throw new Error('invalid parent origin policy');
+      if (!active) return;
+      handleMessage = (event: MessageEvent) => {
+        const receivedSessionId = hubSessionFromParentMessage(
+          event,
+          window.parent,
+          allowedParentOrigins,
+        );
+        if (receivedSessionId !== null) setSessionId(receivedSessionId);
+      };
+      window.addEventListener('message', handleMessage);
+      window.parent.postMessage({ type: 'hub-auth-request' }, '*');
     };
-    window.addEventListener('message', handleMessage);
-    window.parent.postMessage({ type: 'hub-auth-request' }, '*');
-    return () => window.removeEventListener('message', handleMessage);
+    void installAuthListener().catch((error: unknown) => {
+      console.error(`Failed to load hub parent-origin policy: ${String(error)}`);
+    });
+    return () => {
+      active = false;
+      if (handleMessage) window.removeEventListener('message', handleMessage);
+    };
   }, []);
 
   return sessionId === null ? null : <HubScreen sessionId={sessionId} />;
