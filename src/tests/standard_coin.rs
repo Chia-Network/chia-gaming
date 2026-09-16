@@ -1,21 +1,22 @@
-use clvm_traits::{clvm_curried_args, ToClvm};
+use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm};
 use clvm_utils::CurriedProgram;
 use clvmr::{run_program, ChiaDialect};
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use crate::common::constants::{DEFAULT_HIDDEN_PUZZLE_HASH, ONE, TWO};
+use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, DEFAULT_HIDDEN_PUZZLE_HASH, ONE, TWO};
 use crate::common::load_clvm::hex_to_sexp;
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, calculate_synthetic_offset, calculate_synthetic_public_key,
     curry_and_treehash, get_standard_coin_puzzle, partial_signer, private_to_public_key,
     puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
-    puzzle_hash_for_synthetic_public_key, standard_solution_unsafe, unsafe_sign_partial,
+    puzzle_hash_for_synthetic_public_key, standard_solution_partial, standard_solution_unsafe,
+    unsafe_sign_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Node, PrivateKey, Program, PublicKey, PuzzleHash, Sha256Input,
-    Sha256tree, ToQuotedProgram,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Hash, Node, PrivateKey, Program,
+    PublicKey, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, ToQuotedProgram,
 };
 use crate::tests::constants::{
     EXPECTED_PUZZLE_HEX, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, KEY_PAIR_PRIVATE, KEY_PAIR_PUBLIC,
@@ -328,6 +329,68 @@ fn test_standard_puzzle_solution_maker() {
         .verify(&public_key, quoted_conditions_hash.bytes()));
 }
 
+#[test]
+fn test_standard_solution_partial_signs_explicit_agg_sig_me() {
+    let mut allocator = AllocEncoder::new();
+    let identity = ChiaIdentity::new(
+        &mut allocator,
+        PrivateKey::from_bytes(&[7; 32]).expect("private key"),
+    )
+    .expect("standard identity");
+    let coin = CoinString::from_parts(
+        &CoinID::new(Hash::from_bytes([8; 32])),
+        &identity.puzzle_hash,
+        &Amount::new(2),
+    );
+    let raw_message = b"explicit AGG_SIG_ME";
+    let message = Node(
+        allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(raw_message))
+            .expect("message atom"),
+    );
+    let conditions = (
+        (
+            51_u8,
+            (PuzzleHash::from_bytes([9; 32]), (Amount::new(1), ())),
+        ),
+        (
+            (
+                50_u8,
+                (identity.synthetic_public_key.clone(), (message, ())),
+            ),
+            (),
+        ),
+    )
+        .to_clvm(&mut allocator)
+        .expect("conditions");
+    let additional_data = Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA);
+    let spend_info = standard_solution_partial(
+        &mut allocator,
+        &identity.synthetic_private_key,
+        &coin.to_coin_id(),
+        conditions,
+        &identity.synthetic_public_key,
+        &additional_data,
+        false,
+    )
+    .expect("signed standard spend");
+    let bundle = SpendBundle {
+        name: None,
+        spends: vec![CoinSpend {
+            coin,
+            bundle: Spend {
+                puzzle: identity.puzzle,
+                solution: spend_info.solution,
+                signature: spend_info.signature,
+            },
+        }],
+    };
+
+    bundle
+        .validate_consensus(&additional_data, 1)
+        .expect("explicit AGG_SIG_ME signature");
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_puzzle_for_pk", &test_puzzle_for_pk),
@@ -356,6 +419,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_standard_puzzle_solution_maker",
             &test_standard_puzzle_solution_maker,
+        ),
+        (
+            "test_standard_solution_partial_signs_explicit_agg_sig_me",
+            &test_standard_solution_partial_signs_explicit_agg_sig_me,
         ),
     ]
 }

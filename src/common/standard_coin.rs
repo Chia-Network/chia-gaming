@@ -385,10 +385,8 @@ pub fn standard_solution_partial(
             }
             CoinCondition::CreateCoin(_, _) => {}
             CoinCondition::AggSigMe(pubkey, data) => {
-                let mut message = pubkey.bytes().to_vec();
-                message.extend_from_slice(data);
                 let extra_agg_sig_me_message =
-                    agg_sig_me_message(&message, parent_coin, agg_sig_me_additional_data);
+                    agg_sig_me_message(data, parent_coin, agg_sig_me_additional_data);
                 add_signature(
                     &mut aggregated_signature,
                     partial_signer(private_key, pubkey, &extra_agg_sig_me_message),
