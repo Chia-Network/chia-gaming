@@ -294,6 +294,14 @@ queued local actions are not allowed to leak out of a failed peer batch. The
 error then triggers go-on-chain (the peer sent a bad batch, so we dispute
 on-chain).
 
+Local queue draining is independently transactional wherever it runs. Before
+`drain_queue_into_batch` starts, it snapshots the channel state and action
+queue; any failure restores both before returning diagnostic context to its
+caller. The caller may then remove only the failed local action and either
+retry or notify the UI. This applies both while responding to a received batch
+and during the host's ordinary pending-action flush, so no unsent prefix of a
+failed drain remains applied locally.
+
 Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
 state — any failure is a protocol violation by the peer, not a benign race.

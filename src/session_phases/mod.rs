@@ -450,9 +450,23 @@ impl OffChainPhase {
         match self.drain_queue_into_batch(env) {
             Ok((_sent, effects)) => Ok(effects),
             Err(failure) => {
+                let DrainQueueFailure {
+                    queue_index,
+                    action,
+                    source,
+                } = *failure;
                 self.last_failed_queued_action =
-                    failure.action.as_ref().and_then(failed_game_action_context);
-                Err(failure.source)
+                    action.as_ref().and_then(failed_game_action_context);
+                if let Some(failed_index) = queue_index {
+                    if failed_index >= self.game_action_queue.len() {
+                        return Err(Error::StrErr(
+                            "failed queued action index exceeds restored local drain queue"
+                                .to_string(),
+                        ));
+                    }
+                    self.game_action_queue.remove(failed_index);
+                }
+                Err(source)
             }
         }
     }
@@ -497,8 +511,6 @@ impl OffChainPhase {
         }
 
         let (sent, batch_effects) = loop {
-            let drain_channel_snapshot = self.channel_state.clone();
-            let drain_queue_snapshot = self.game_action_queue.clone();
             match self.drain_queue_into_batch(env) {
                 Ok(result) => break result,
                 Err(failure) => {
@@ -515,13 +527,12 @@ impl OffChainPhase {
                     let Some((id, action)) = failed_game_action_context(failed_action) else {
                         return Err(source);
                     };
-                    if failed_index >= drain_queue_snapshot.len() {
+                    if failed_index >= self.game_action_queue.len() {
                         return Err(Error::StrErr(
-                            "failed queued action index exceeds local drain snapshot".to_string(),
+                            "failed queued action index exceeds restored local drain queue"
+                                .to_string(),
                         ));
                     }
-                    self.channel_state = drain_channel_snapshot;
-                    self.game_action_queue = drain_queue_snapshot;
                     self.game_action_queue.remove(failed_index);
                     effects.push(Effect::Notify(GameNotification::ActionFailed {
                         id: Some(id),
@@ -1040,9 +1051,13 @@ impl OffChainPhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
     ) -> Result<(bool, Vec<Effect>), Box<DrainQueueFailure>> {
+        let channel_snapshot = self.channel_state.clone();
+        let queue_snapshot = self.game_action_queue.clone();
         let mut current_action = None;
         let result = self.drain_queue_into_batch_inner(env, &mut current_action);
         result.map_err(|source| {
+            self.channel_state = channel_snapshot;
+            self.game_action_queue = queue_snapshot;
             let (queue_index, action) = match current_action {
                 Some((index, action)) => (Some(index), Some(action)),
                 None => (None, None),
