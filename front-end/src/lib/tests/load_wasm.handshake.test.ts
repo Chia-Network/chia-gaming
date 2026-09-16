@@ -66,6 +66,7 @@ it(
         peer_conn1,
         wasm_init1,
       );
+      wasm_blob1.getFee = () => 10n;
       wasm_blob1.onSaveNeeded = () => {
         const fields = wasm_blob1.getWasmFields();
         if (!fields) {
@@ -213,6 +214,12 @@ it(
       assertCradleRoundTrip('receiver-wallet-offer-complete-sent-f', wasm_blob2);
 
       await action_with_messages(poller, cradle1, cradle2);
+      for (const blob of [wasm_blob1, wasm_blob2]) {
+        const [channelCoin] = blob.getCoinsOfInterest();
+        assert.equal(channelCoin.label, 'Channel coin');
+        assert.match(channelCoin.id, /^[0-9a-f]{64}$/);
+        assert.match(channelCoin.parentId ?? '', /^[0-9a-f]{64}$/);
+      }
     } catch (e) {
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }

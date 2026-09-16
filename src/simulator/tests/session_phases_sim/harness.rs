@@ -978,7 +978,12 @@ impl SimulationHarness {
             }
 
             if player_index == 0 && need_launcher {
-                player.provide_launcher_coin(allocator, launcher_coin.clone())?;
+                player.provide_launcher_coin(
+                    allocator,
+                    launcher_coin.clone(),
+                    Amount::default(),
+                    None,
+                )?;
                 progress.callbacks += 1;
             }
             if let Some(req) = coin_spend_req {

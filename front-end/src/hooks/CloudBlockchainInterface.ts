@@ -70,6 +70,7 @@ const ACCEPTED_BROADCAST_STATUSES = new Set([
 ]);
 
 export class CloudBlockchainInterface implements InternalBlockchainInterface {
+  readonly fundingMode = 'direct' as const;
   blockchainAddressData: BlockchainInboundAddressResult = { puzzleHash: '' };
 
   private auth: CloudWalletAuthState | null = null;
@@ -95,15 +96,6 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       throw new Error('Cloud Wallet walletId is not set');
     }
     return this.auth.walletId;
-  }
-
-  /**
-   * Fee applied to the Cloud Wallet funding spend, in mojos. Read from the
-   * global preference at call time: this interface is a module-level singleton,
-   * so caching would miss later edits from the Wallet tab or connect modal.
-   */
-  private getFee(): bigint {
-    return getDefaultFee();
   }
 
   private async gql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
@@ -221,10 +213,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
     const walletId = this.requireWalletId();
-    // The funding spend pins this coin via coinIds, and the Cloud Wallet API
-    // rejects pinned coins whose total is below amount + fee (it supplements
-    // only the unpinned path). Pick a coin large enough to also cover the fee.
-    const requiredAmount = amount + this.getFee();
+    // The controller passes the exact amount required by the funding request,
+    // including any opening fee.
+    const requiredAmount = amount;
     const data = await this.gql<{
       coins: {
         edges: Array<{
@@ -271,7 +262,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       return null;
     }
     log(
-      `[cloud-blockchain] selectCoins amount=${amount} fee=${this.getFee()} required=${requiredAmount} coinStringLen=${coinString.length}`,
+      `[cloud-blockchain] selectCoins required=${requiredAmount} coinStringLen=${coinString.length}`,
     );
     return coinString;
   }
@@ -558,11 +549,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
     maxHeight?: bigint,
+    openingFee = 0n,
   ): Promise<any | null> {
     const walletId = this.requireWalletId();
     const amount = absAmountFromOffer(offer);
-    const conditions = conditionsForGraphql(extraConditions, maxHeight);
-    const fee = this.getFee();
+    const conditions = conditionsForGraphql(
+      extraConditions?.filter((condition) => condition.opcode !== 52n),
+      maxHeight,
+    );
+    const fee = openingFee;
 
     log(
       `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} fee=${fee} conditions=${jsonStringify(conditions)}`,

@@ -213,6 +213,7 @@ type GameSessionCreateConfig = WasmContract.GameSessionConfig;
 export interface CoinOfInterestEntry {
   label: string;
   id: string;
+  parentId?: string;
 }
 
 export interface WasmConnection {
@@ -228,7 +229,12 @@ export interface WasmConnection {
   // Blockchain
   set_funding_coin: (cid: number, coinstring: string) => WasmResult;
   start_handshake: (cid: number) => WasmResult;
-  provide_launcher_coin: (cid: number, hex_launcher_coin: string) => WasmResult;
+  provide_launcher_coin: (
+    cid: number,
+    hex_launcher_coin: string,
+    opening_fee: string,
+    offer_settlement_coin?: string,
+  ) => WasmResult;
   provide_coin_spend_bundle: (cid: number, bundle_json: string) => WasmResult;
   provide_offer_bech32: (cid: number, offer_bech32: string) => WasmResult;
   wallet_callback_failed: (cid: number, reason: string) => WasmResult;
@@ -398,8 +404,17 @@ export class ChiaGame {
     return this.wasm.start_handshake(this.session);
   }
 
-  provide_launcher_coin(hex_launcher_coin: string): WasmResult {
-    return this.wasm.provide_launcher_coin(this.session, hex_launcher_coin);
+  provide_launcher_coin(
+    hex_launcher_coin: string,
+    opening_fee: string,
+    offer_settlement_coin?: string,
+  ): WasmResult {
+    return this.wasm.provide_launcher_coin(
+      this.session,
+      hex_launcher_coin,
+      opening_fee,
+      offer_settlement_coin,
+    );
   }
 
   provide_coin_spend_bundle(bundle_json: string): WasmResult {
@@ -518,6 +533,7 @@ export interface ConnectionSetup {
 
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
+  fundingMode?: 'offer-settlement' | 'direct';
   getRegistrationScopeKey?(): string | undefined;
   spend(
     blob: string,
@@ -527,9 +543,10 @@ export interface InternalBlockchainInterface {
     fee?: bigint,
   ): Promise<string>;
   // Build a signed, validate-only XCH offer whose settlement output is exactly
-  // the fee and whose maker spend reserves that fee and asserts a concurrent
-  // protocol spend. The host completes the offer output into an ephemeral burn
-  // spend before aggregation. Undefined on backends that do not support fees.
+  // the fee and whose maker spend reserves that fee and asserts concurrent
+  // spends of the protocol coin and predicted nil burn coin. The host completes
+  // the offer output into that burn chain before aggregation. Undefined on
+  // backends that do not support fees.
   createFeeOffer?(fee: bigint, concurrentSpendCoinId: string): Promise<string | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
@@ -542,6 +559,7 @@ export interface InternalBlockchainInterface {
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
     maxHeight?: bigint,
+    openingFee?: bigint,
   ): Promise<any | null>;
   cancelOffer?(tradeId: string): Promise<void>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;

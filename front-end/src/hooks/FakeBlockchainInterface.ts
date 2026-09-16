@@ -22,6 +22,7 @@ function getWebSocketClass(): any {
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
+  readonly fundingMode = 'offer-settlement' as const;
   blockchainAddressData: BlockchainInboundAddressResult;
   deleted: boolean;
 
@@ -303,6 +304,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
     maxHeight?: bigint,
+    _openingFee?: bigint,
   ): Promise<any | null> {
     const params: any = { who: uniqueId, offer };
     const conditions = [...(extraConditions ?? [])];

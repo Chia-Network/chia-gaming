@@ -116,6 +116,7 @@ export class BlockchainPoller {
   private makeQueuedRpc(adapter: InternalBlockchainInterface): InternalBlockchainInterface {
     return {
       requestGapMs: adapter.requestGapMs,
+      fundingMode: adapter.fundingMode,
       getRegistrationScopeKey: () => adapter.getRegistrationScopeKey?.(),
       spend: (blob, spendBundle, changePuzzleHash, source, fee) =>
         this.enqueueRpc(
@@ -138,10 +139,18 @@ export class BlockchainPoller {
       selectCoins: (uniqueId, amount) =>
         this.enqueueRpc('selectCoins', () => adapter.selectCoins(uniqueId, amount), true),
       getHeightInfo: () => this.enqueueRpc('getHeightInfo', () => adapter.getHeightInfo()),
-      createOfferForIds: (uniqueId, offer, extraConditions, coinIds, maxHeight) =>
+      createOfferForIds: (uniqueId, offer, extraConditions, coinIds, maxHeight, openingFee) =>
         this.enqueueRpc(
           'createOfferForIds',
-          () => adapter.createOfferForIds(uniqueId, offer, extraConditions, coinIds, maxHeight),
+          () =>
+            adapter.createOfferForIds(
+              uniqueId,
+              offer,
+              extraConditions,
+              coinIds,
+              maxHeight,
+              openingFee,
+            ),
           true,
         ),
       cancelOffer: adapter.cancelOffer

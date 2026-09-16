@@ -687,19 +687,44 @@ export class SessionController implements PollingGameSession {
     this.launcherProvided = true;
 
     try {
-      const coin = await blockchain.rpc.selectCoins(this.uniqueId, this.myContribution);
+      const openingFee = this.getFee();
+      const requiredAmount = this.myContribution + openingFee;
+      if (requiredAmount > 0xffff_ffff_ffff_ffffn) {
+        throw new Error('contribution plus opening fee exceeds the Chia u64 amount range');
+      }
+      const coin = await blockchain.rpc.selectCoins(this.uniqueId, requiredAmount);
       if (!coin) {
         throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
       this.lastSelectCoinsValue = coin;
-      const { computeLauncherCoin } = await import('../util/launcher');
-      const { launcherCoinHex, launcherCoinId } = await computeLauncherCoin(coin);
+      const { computeLauncherCoin, computeOfferFundedLauncherCoin } = await import(
+        '../util/launcher'
+      );
+      const offerFunded = blockchain.rpc.fundingMode !== 'direct';
+      let settlementCoinHex: string | undefined;
+      let derived: { launcherCoinHex: string; launcherCoinId: string };
+      if (offerFunded) {
+        const offerDerived = await computeOfferFundedLauncherCoin(
+          coin,
+          this.myContribution,
+          openingFee,
+        );
+        settlementCoinHex = offerDerived.settlementCoinHex;
+        derived = offerDerived;
+      } else {
+        derived = await computeLauncherCoin(coin);
+      }
+      const { launcherCoinHex, launcherCoinId } = derived;
       this.lastLauncherCoinId = launcherCoinId;
       log(`[wasm] provide_launcher_coin id=${launcherCoinId}`);
       if (!this.cradle) {
         throw new Error('provide_launcher_coin called without cradle');
       }
-      const result = this.cradle.provide_launcher_coin(launcherCoinHex);
+      const result = this.cradle.provide_launcher_coin(
+        launcherCoinHex,
+        openingFee.toString(),
+        settlementCoinHex,
+      );
       this.processResult(result);
     } catch (e) {
       this.launcherProvided = false;
@@ -727,6 +752,7 @@ export class SessionController implements PollingGameSession {
       }));
       const coinIds = request.coin_id ? [request.coin_id] : undefined;
       const maxHeight = request.max_height === undefined ? undefined : BigInt(request.max_height);
+      const openingFee = BigInt(request.fee);
 
       const bundle = await blockchain.rpc.createOfferForIds(
         this.uniqueId,
@@ -734,6 +760,7 @@ export class SessionController implements PollingGameSession {
         extraConditions,
         coinIds,
         maxHeight,
+        openingFee,
       );
       if (!bundle) {
         const msg = 'Wallet createOfferForIds failed (returned null)';
@@ -907,7 +934,13 @@ export class SessionController implements PollingGameSession {
       // spend falls back to a zero-fee submission rather than blocking the spend.
       let bundleToSubmit: unknown = protocolBundle;
       let appliedFee = 0n;
-      if (fee > 0n && protocolBundle && this.wc && blockchain.rpc.createFeeOffer) {
+      if (
+        fee > 0n &&
+        tx.name !== 'channel-opening' &&
+        protocolBundle &&
+        this.wc &&
+        blockchain.rpc.createFeeOffer
+      ) {
         const bindCoinId = await this.computeBindCoinId(protocolBundle);
         let feeOffer: string | null = null;
         let feeSpend: unknown = null;

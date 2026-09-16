@@ -1936,6 +1936,8 @@ impl PeerLifecyclePhase for OffChainPhase {
         &mut self,
         _env: &mut ChannelEnv<'_>,
         _launcher_coin: CoinString,
+        _opening_fee: Amount,
+        _offer_settlement_coin: Option<CoinString>,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(
             self.phase_name(),

@@ -12,5 +12,5 @@ export interface CreateOfferForIdsRequest {
 
 export interface CreateOfferForIdsResponse {
   offer: string;
-  tradeRecord: TradeRecord;
+  tradeRecord?: TradeRecord;
 }

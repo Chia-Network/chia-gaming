@@ -370,9 +370,9 @@ fn validation_consensus_constants(agg_sig_me_additional_data: &Hash) -> Consensu
 /// Complete a signed, validate-only XCH offer into a fee spend.
 ///
 /// The maker bundle must create exactly one settlement coin whose amount is
-/// `fee`, reserve that fee, and assert concurrent spends of both that output and
-/// `protocol_coin_id`. The settlement spend creates a fee-sized nil-puzzle
-/// child, which is then spent with no outputs.
+/// `fee`, reserve that fee, and assert concurrent spends of both its fee-sized
+/// nil-puzzle descendant and `protocol_coin_id`. The settlement spend creates
+/// that nil child, which is then spent with no outputs.
 pub fn complete_fee_offer_bundle(
     mut maker_bundle: SpendBundle,
     fee: u64,
@@ -443,18 +443,20 @@ pub fn complete_fee_offer_bundle(
         ))
     })?;
     let settlement_coin_id = settlement_coin.to_coin_id();
-    let settlement_coin_assertions = asserted_coin_ids
+    let nil_puzzle = Puzzle::from(Program::nil());
+    let nil_puzzle_hash = nil_puzzle.sha256tree(&mut allocator);
+    let nil_coin = CoinString::from_parts(&settlement_coin_id, &nil_puzzle_hash, &Amount::new(fee));
+    let nil_coin_id = nil_coin.to_coin_id();
+    let nil_coin_assertions = asserted_coin_ids
         .iter()
-        .filter(|coin_id| **coin_id == settlement_coin_id)
+        .filter(|coin_id| **coin_id == nil_coin_id)
         .count();
-    if settlement_coin_assertions != 1 {
+    if nil_coin_assertions != 1 {
         return Err(Error::StrErr(format!(
-            "fee offer contained {settlement_coin_assertions} settlement-output ASSERT_CONCURRENT_SPEND conditions, expected 1"
+            "fee offer contained {nil_coin_assertions} nil-coin ASSERT_CONCURRENT_SPEND conditions, expected 1"
         )));
     }
 
-    let nil_puzzle = Puzzle::from(Program::nil());
-    let nil_puzzle_hash = nil_puzzle.sha256tree(&mut allocator);
     let payment = (nil_puzzle_hash.clone(), (Amount::new(fee), ()))
         .to_clvm(&mut allocator)
         .into_gen()?;
@@ -463,7 +465,6 @@ pub fn complete_fee_offer_bundle(
         .into_gen()?;
     let settlement_solution_node = vec![notarized_payment].to_clvm(&mut allocator).into_gen()?;
     let settlement_solution = Program::from_nodeptr(&allocator, settlement_solution_node)?;
-    let nil_coin = CoinString::from_parts(&settlement_coin_id, &nil_puzzle_hash, &Amount::new(fee));
     let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT)?;
     if settlement_puzzle.sha256tree(&mut allocator) != settlement_puzzle_hash {
         return Err(Error::StrErr(
@@ -642,6 +643,11 @@ mod consensus_validation_tests {
             &settlement_puzzle_hash,
             &Amount::new(fee),
         );
+        let nil_coin = CoinString::from_parts(
+            &settlement_coin.to_coin_id(),
+            &nil_puzzle_hash,
+            &Amount::new(fee),
+        );
         let condition_nodes = vec![
             (
                 51_u8,
@@ -655,9 +661,9 @@ mod consensus_validation_tests {
             (64_u8, (protocol_coin_id.clone(), ()))
                 .to_clvm(&mut allocator)
                 .expect("protocol ASSERT_CONCURRENT_SPEND"),
-            (64_u8, (settlement_coin.to_coin_id(), ()))
+            (64_u8, (nil_coin.to_coin_id(), ()))
                 .to_clvm(&mut allocator)
-                .expect("settlement output ASSERT_CONCURRENT_SPEND"),
+                .expect("nil coin ASSERT_CONCURRENT_SPEND"),
         ];
         let conditions = condition_nodes
             .to_clvm(&mut allocator)
@@ -680,11 +686,6 @@ mod consensus_validation_tests {
 
         let completed =
             complete_fee_offer_bundle(maker_bundle, fee, &protocol_coin_id).expect("completion");
-        let nil_coin = CoinString::from_parts(
-            &settlement_coin.to_coin_id(),
-            &nil_puzzle_hash,
-            &Amount::new(fee),
-        );
         assert_eq!(completed.spends.len(), 3);
         assert_eq!(completed.spends[1].coin, settlement_coin);
         assert_eq!(completed.spends[2].coin, nil_coin);

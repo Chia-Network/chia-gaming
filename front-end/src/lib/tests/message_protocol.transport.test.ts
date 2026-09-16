@@ -940,6 +940,35 @@ describe('bounded controller histories', () => {
 });
 
 describe('WASM wallet funding requests', () => {
+  it('derives and provides the offer settlement and positive launcher with the opening fee', async () => {
+    const walletCoin = `${'11'.repeat(32)}${'22'.repeat(32)}03e8`;
+    const selectCoins = jest.fn().mockResolvedValue(walletCoin);
+    const blockchain = new BlockchainPoller(
+      { ...mockRpc, fundingMode: 'offer-settlement', selectCoins },
+      60000,
+    );
+    const { blob, cradle } = createReadyBlob();
+    (cradle as unknown as { provide_launcher_coin: jest.Mock }).provide_launcher_coin = jest
+      .fn()
+      .mockReturnValue(wasmResult());
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+    blob.getFee = () => 10n;
+    (blob as unknown as { myContribution: bigint }).myContribution = 100n;
+
+    blob.processResult(wasmResult({ events: [{ NeedLauncherCoin: true }] }));
+    await blob.flushPendingWork();
+
+    const { computeOfferFundedLauncherCoin } = await import('../../util/launcher');
+    const expected = await computeOfferFundedLauncherCoin(walletCoin, 100n, 10n);
+    expect(selectCoins).toHaveBeenCalledWith('test', 110n);
+    expect(cradle.provide_launcher_coin).toHaveBeenCalledWith(
+      expected.launcherCoinHex,
+      '10',
+      expected.settlementCoinHex,
+    );
+  });
+
   it('forwards a typed NeedCoinSpend payload to createOfferForIds', async () => {
     const createOfferForIds = jest.fn().mockResolvedValue(testSpendBundle('coin-spend'));
     const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds }, 60000);
@@ -948,6 +977,7 @@ describe('WASM wallet funding requests', () => {
     blob.blockchain = blockchain;
     const request: NeedCoinSpendRequest = {
       amount: 100,
+      fee: '10',
       conditions: [{ opcode: 60, args: ['launcher'] }],
       coin_id: 'funding-coin',
       max_height: 123,
@@ -962,6 +992,7 @@ describe('WASM wallet funding requests', () => {
       [{ opcode: 60n, args: ['launcher'] }],
       ['funding-coin'],
       123n,
+      10n,
     );
     expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledWith(
       JSON.stringify(testSpendBundle('coin-spend')),
@@ -971,6 +1002,7 @@ describe('WASM wallet funding requests', () => {
   it('cancels a rejected persisted offer before creating its retry', async () => {
     const request: NeedCoinSpendRequest = {
       amount: 100,
+      fee: '0',
       conditions: [{ opcode: 60, args: ['launcher'] }],
       coin_id: 'funding-coin',
       max_height: 123,
@@ -1033,6 +1065,31 @@ describe('wallet fee attachment on submission', () => {
       aggregate_coinset_spend_bundles: aggregate,
     };
   }
+
+  it('does not attach a second fee spend to a channel-opening bundle', async () => {
+    const createFeeOffer = jest.fn();
+    const spend = jest.fn().mockResolvedValue('ok');
+    const aggregate = jest.fn();
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeOffer, spend }, 60000);
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+    blob.getFee = () => 10n;
+    attachWc(blob, aggregate);
+
+    submitTransaction(blob, { ...testSpendBundle('coin'), name: 'channel-opening' });
+    await transactionSubmitQueue(blob);
+
+    expect(createFeeOffer).not.toHaveBeenCalled();
+    expect(aggregate).not.toHaveBeenCalled();
+    expect(spend).toHaveBeenCalledWith(
+      expect.any(String),
+      protocolBundle,
+      '11'.repeat(32),
+      'submitTransaction',
+      undefined,
+    );
+  });
 
   it('aggregates a wallet fee spend into the submitted bundle', async () => {
     const feeSpend = {

@@ -376,7 +376,12 @@ where
                     &Amount::default(),
                 );
                 let mut env = ChannelEnv::new(allocator)?;
-                let follow_up = handlers[who].provide_launcher_coin(&mut env, launcher_coin)?;
+                let follow_up = handlers[who].provide_launcher_coin(
+                    &mut env,
+                    launcher_coin,
+                    Amount::default(),
+                    None,
+                )?;
                 pending.extend(follow_up);
             }
             Effect::NeedCoinSpend(req) => {

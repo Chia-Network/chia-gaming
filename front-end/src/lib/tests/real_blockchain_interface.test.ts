@@ -621,6 +621,19 @@ describe('RealBlockchainInterface', () => {
     });
   });
 
+  it('accepts a persisted 2.7.4 offer response without a trade ID', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+
+    await expect(
+      blockchain.createOfferForIds('test', { '1': -100n }, undefined, ['ab'.repeat(32)]),
+    ).resolves.toBe('offer1signed');
+
+    expect(mockCreateOfferForIds).toHaveBeenCalledWith(
+      expect.objectContaining({ validateOnly: false }),
+    );
+  });
+
   it('cancels rejected persisted offers off-chain', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({ success: true });
@@ -650,6 +663,39 @@ describe('RealBlockchainInterface', () => {
     );
   });
 
+  it('encodes RESERVE_FEE as a WalletConnect amount condition', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+
+    await blockchain.createOfferForIds(
+      'test',
+      { '1': -110n },
+      [{ opcode: 52n, args: ['0a'] }],
+      ['ab'.repeat(32)],
+    );
+
+    expect(mockCreateOfferForIds).toHaveBeenCalledWith(
+      expect.objectContaining({
+        offer: { '1': -110n },
+        extraConditions: [{ opcode: 52n, args: { amount: 10n } }],
+      }),
+    );
+  });
+
+  it('lets createOfferForIds decide after a preflight selection error', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockSelectCoins.mockRejectedValue(new Error('Internal error'));
+    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+
+    await expect(blockchain.createOfferForIds('test', { '1': -100n })).resolves.toBe(
+      'offer1signed',
+    );
+
+    expect(mockCreateOfferForIds).toHaveBeenCalledWith(
+      expect.objectContaining({ validateOnly: true }),
+    );
+  });
+
   it('builds a wallet-signed fee offer without using the wallet fee parameter', async () => {
     const blockchain = new RealBlockchainInterface();
     const parentCoinInfo = '99'.repeat(32);
@@ -660,6 +706,8 @@ describe('RealBlockchainInterface', () => {
     const settlementCoinId = await coinIdFromBytes(
       toUint8(`${selectedCoinId}${settlementPuzzleHash}0a`),
     );
+    const nilPuzzleHash = await coinIdFromBytes(toUint8('01'));
+    const nilCoinId = await coinIdFromBytes(toUint8(`${settlementCoinId}${nilPuzzleHash}0a`));
     mockSelectCoins.mockResolvedValue({
       coins: [
         {
@@ -686,7 +734,7 @@ describe('RealBlockchainInterface', () => {
       allowUnsynced: true,
       extraConditions: [
         { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
-        { opcode: 64n, args: { coin_id: `0x${settlementCoinId}` } },
+        { opcode: 64n, args: { coin_id: `0x${nilCoinId}` } },
         { opcode: 52n, args: { amount: 10n } },
       ],
     });

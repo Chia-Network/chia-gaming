@@ -71,7 +71,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 7;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 8;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -485,12 +485,29 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn provide_launcher_coin(cid: i32, hex_coinstring: &str) -> Result<JsValue, JsValue> {
+    pub fn provide_launcher_coin(
+        cid: i32,
+        hex_coinstring: &str,
+        opening_fee: &str,
+        offer_settlement_coin: Option<String>,
+    ) -> Result<JsValue, JsValue> {
         let coin = hex_to_coinstring(hex_coinstring).into_js()?;
+        let fee = opening_fee
+            .parse::<u64>()
+            .map(Amount::new)
+            .map_err(|e| JsValue::from_str(&format!("invalid opening fee: {e}")))?;
+        let settlement_coin = offer_settlement_coin
+            .as_deref()
+            .map(hex_to_coinstring)
+            .transpose()
+            .into_js()?;
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle
-                .cradle
-                .provide_launcher_coin(&mut cradle.allocator, coin)
+            cradle.cradle.provide_launcher_coin(
+                &mut cradle.allocator,
+                coin,
+                fee,
+                settlement_coin,
+            )
         })
     }
 
@@ -1023,9 +1040,11 @@ mod gaming_wasm {
     struct JsCoinOfInterest {
         label: String,
         id: String,
+        #[serde(rename = "parentId")]
+        parent_id: String,
     }
 
-    /// Labeled coin ids (hex) to show above the protocol state. 0-2 entries.
+    /// Labeled coin and parent ids (hex) to show above the protocol state.
     #[wasm_bindgen]
     pub fn coins_of_interest(cid: i32) -> Result<JsValue, JsValue> {
         let coins = with_game(cid, move |cradle: &mut JsGameSession| {
@@ -1033,7 +1052,11 @@ mod gaming_wasm {
         })?;
         let entries: Vec<JsCoinOfInterest> = coins
             .into_iter()
-            .map(|(label, id)| JsCoinOfInterest { label, id })
+            .map(|(label, id, parent_id)| JsCoinOfInterest {
+                label,
+                id,
+                parent_id,
+            })
             .collect();
         serde_wasm_bindgen::to_value(&entries).into_js()
     }
@@ -1178,6 +1201,7 @@ mod gaming_wasm {
         /// Decimal rather than a JS number: wallet amounts are u64 and must not
         /// cross the WASM boundary through IEEE-754.
         amount: String,
+        fee: String,
         conditions: Vec<JsRawCoinCondition>,
         coin_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1194,6 +1218,7 @@ mod gaming_wasm {
     fn coin_spend_request_to_js(req: &CoinSpendRequest) -> JsCoinSpendRequest {
         JsCoinSpendRequest {
             amount: req.amount.to_u64().to_string(),
+            fee: req.fee.to_u64().to_string(),
             conditions: req.conditions.iter().map(raw_condition_to_js).collect(),
             coin_id: req.coin_id.as_ref().map(|c| hex::encode(c.bytes())),
             max_height: req.max_height,

@@ -6,6 +6,7 @@ use crate::channel_state::types::{ChannelPrivateKeys, StateUpdateSignatures};
 use crate::channel_state::ChannelState;
 use crate::common::constants::{
     ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
+    RESERVE_FEE_ATOM,
 };
 use crate::common::standard_coin::verify_reward_payout_signature;
 use crate::common::types::{
@@ -150,7 +151,10 @@ pub fn combine_channel_funding_bundles(
     }
     let mut spends = initiator_bundle.spends.clone();
     spends.extend(receiver_acceptance.spends.iter().cloned());
-    Ok(SpendBundle { name: None, spends })
+    Ok(SpendBundle {
+        name: Some("channel-opening".to_string()),
+        spends,
+    })
 }
 
 /// Require the receiver's acceptance to be atomic with this channel launcher.
@@ -234,6 +238,8 @@ pub struct HandshakeStepInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinSpendRequest {
     pub amount: Amount,
+    #[serde(default)]
+    pub fee: Amount,
     pub conditions: Vec<RawCoinCondition>,
     pub coin_id: Option<CoinID>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,6 +264,7 @@ pub fn raw_coin_conditions_to_clvm(
             ASSERT_COIN_ANNOUNCEMENT | CREATE_COIN_ANNOUNCEMENT | ASSERT_BEFORE_HEIGHT_ABSOLUTE => {
                 1
             }
+            opcode if opcode == RESERVE_FEE_ATOM[0] as u32 => 1,
             opcode => {
                 return Err(Error::StrErr(format!(
                     "unsupported wallet condition opcode {opcode}"
@@ -306,6 +313,7 @@ mod tests {
 
     use crate::common::constants::{
         AGG_SIG_ME_ADDITIONAL_DATA, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT,
+        RESERVE_FEE_ATOM,
     };
     use crate::common::standard_coin::{private_to_public_key, sign_reward_payout};
     use crate::common::types::{
@@ -392,6 +400,10 @@ mod tests {
                 opcode: ASSERT_BEFORE_HEIGHT_ABSOLUTE,
                 args: vec![vec![99]],
             },
+            RawCoinCondition {
+                opcode: RESERVE_FEE_ATOM[0] as u32,
+                args: vec![vec![10]],
+            },
         ];
         let mut allocator = AllocEncoder::new();
         let simulator_nodes =
@@ -414,6 +426,7 @@ mod tests {
                 vec![vec![ASSERT_COIN_ANNOUNCEMENT as u8], vec![8; 32]],
                 vec![vec![CREATE_COIN_ANNOUNCEMENT as u8], b"created".to_vec()],
                 vec![vec![ASSERT_BEFORE_HEIGHT_ABSOLUTE as u8], vec![99]],
+                vec![vec![RESERVE_FEE_ATOM[0]], vec![10]],
                 vec![vec![ASSERT_BEFORE_HEIGHT_ABSOLUTE as u8], vec![100]],
             ]
         );

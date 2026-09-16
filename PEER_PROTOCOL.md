@@ -590,6 +590,10 @@ Initiator -> Receiver: HandshakeC(HandshakePayloadC)
 This commits the concrete launcher and therefore the future channel coin ID
 before either party sends state-zero signatures. The receiver requires the
 launcher's puzzle hash to be the standard singleton launcher puzzle hash.
+For offer-based wallet integrations, the launcher is a positive-value child of
+the initiator's predicted OFFER_MOD settlement coin. Direct-spend integrations
+may instead create the same peer-visible launcher as a zero-value wallet child.
+This private ancestry is not a new peer field.
 
 ### 7.5 Handshake D
 
@@ -617,7 +621,12 @@ Initiator -> Receiver: HandshakeE(HandshakePayloadE)
 ```
 
 `bundle` is the initiator's partial channel-funding transaction: the initiator
-wallet spend(s) plus the launcher spend. `signatures` contains the initiator's
+wallet spend(s), the settlement-to-launcher spend when using an offer-based
+wallet, and the launcher spend. The offer amount is the initiator contribution
+plus its locally configured opening fee. The wallet spend declares
+`RESERVE_FEE` and asserts the launcher coin announcement; the settlement spend
+creates the launcher for exactly the initiator contribution. `signatures`
+contains the initiator's
 state-one half-signatures. State one has the same opening payout as state zero;
 only its sequence number and resulting unroll puzzle hash differ. The receiver
 verifies and stores the signatures, giving it the fully signed state-one
@@ -634,8 +643,9 @@ HandshakePayloadF {
 Receiver -> Initiator: HandshakeF(HandshakePayloadF)
 ```
 
-`bundle` is the receiver's acceptance only: the receiver wallet spend(s) that
-bind to the launcher announcement. It must not repeat spends from E. Both
+`bundle` is the receiver's acceptance only: the receiver wallet spend(s) and
+the empty completion of its contribution settlement output, all bound to the
+launcher announcement. It must not repeat spends from E. Both
 endpoints combine the exact E and F halves they hold and run Chia consensus
 validation over that whole assembled bundle before submission. This shared
 validation checks all spends together, including aggregate signatures,
@@ -646,6 +656,19 @@ bundle-level aggregate signature in exactly one internal spend field; per-input
 signature fields are invalid. Both endpoints submit only their independently
 assembled and validated result; neither treats a peer payload as an
 already-combined transaction.
+
+The complete offer-based accounting is:
+
+```text
+initiator wallet -> OFFER_MOD(initiator contribution + fee)
+                 -> SINGLETON_LAUNCHER(initiator contribution)
+                 -> channel(total contributions)
+receiver wallet  -> OFFER_MOD(receiver contribution) -> no outputs
+```
+
+The aggregate input/output difference is exactly the initiator's declared
+`RESERVE_FEE`. The locally named `channel-opening` submission already contains
+that fee, so the host must not attach its ordinary separate fee offer.
 
 Channel activation is driven by a local channel-coin observation outside this
 wire protocol. F and activation may be observed in either order, but transition

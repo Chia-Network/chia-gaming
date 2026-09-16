@@ -401,6 +401,8 @@ describe('validateSessionSaveEnvelope', () => {
     undefined,
     [{ label: '', id: 'coin' }],
     [{ label: 'Coin', id: '' }],
+    [{ label: 'Coin', id: 'coin', parentId: '' }],
+    [{ label: 'Coin', id: 'coin', parentId: 7 }],
     [
       { label: 'Coin A', id: 'same' },
       { label: 'Coin B', id: 'same' },

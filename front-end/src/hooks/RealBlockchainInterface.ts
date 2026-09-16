@@ -27,6 +27,7 @@ const PEER_READINESS_RPC_TIMEOUT_MS = 7_000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
+const RESERVE_FEE = 52n;
 const CHANGE_ADDRESS_STORAGE_PREFIX = 'appState_wcChangeAddress:';
 const REMOTE_WALLET_STORAGE_PREFIX = 'appState_wcRemoteWalletId:';
 
@@ -215,6 +216,7 @@ async function rootRemovalsFromSpendBundle(spendBundle: WalletSpendBundle): Prom
 }
 
 export class RealBlockchainInterface implements InternalBlockchainInterface {
+  readonly fundingMode = 'offer-settlement' as const;
   readonly requestGapMs = WC_INTER_REQUEST_MS;
   blockchainAddressData: BlockchainInboundAddressResult;
 
@@ -399,8 +401,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       // arbitrary conditions without broadcasting. The fee is the offer's
       // settlement output, not the wallet RPC's fee parameter. WASM spends
       // that output through a nil-puzzle child before aggregation.
-      // Preselect so the settlement output's coin id is known before the wallet
-      // signs ASSERT_CONCURRENT_SPEND for that output. Chia 2.7.4 does not
+      // Preselect so the settlement and nil-child coin ids are known before the
+      // wallet signs ASSERT_CONCURRENT_SPEND for the burn coin. Chia 2.7.4 does not
       // support coin_ids on create_offer_for_ids, so WASM verifies that the
       // offer's actual output matches this prediction before submission.
       const requiredAmount = fee;
@@ -422,6 +424,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const settlementCoinId = await coinIdFromBytes(
         toUint8(`${selectedCoinId}${settlementPuzzleHash}${encodeU64AsClvmHex(fee)}`),
       );
+      const nilPuzzleHash = await coinIdFromBytes(new Uint8Array([1]));
+      const nilCoinId = await coinIdFromBytes(
+        toUint8(`${settlementCoinId}${nilPuzzleHash}${encodeU64AsClvmHex(fee)}`),
+      );
 
       const response = await rpc.createOfferForIds({
         offer: { '1': -fee },
@@ -430,7 +436,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         allowUnsynced: true,
         extraConditions: [
           { opcode: 64n, args: { coin_id: protocolCoinId } },
-          { opcode: 64n, args: { coin_id: `0x${settlementCoinId}` } },
+          { opcode: 64n, args: { coin_id: `0x${nilCoinId}` } },
           { opcode: 52n, args: { amount: fee } },
         ],
       });
@@ -439,7 +445,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('wallet returned no signed offer for the fee');
       }
       log(
-        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} output=0x${settlementCoinId}`,
+        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} burn=0x${nilCoinId}`,
       );
       return offer;
     } catch (e) {
@@ -512,15 +518,22 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
     maxHeight?: bigint,
+    _openingFee?: bigint,
   ): Promise<any | null> {
     try {
       for (const [walletId, amount] of Object.entries(offer)) {
         if (amount >= 0n) continue;
-        await rpc.selectCoins({
-          walletId: BigInt(walletId),
-          amount: -amount,
-          allowUnsynced: true,
-        });
+        try {
+          await rpc.selectCoins({
+            walletId: BigInt(walletId),
+            amount: -amount,
+            allowUnsynced: true,
+          });
+        } catch (error) {
+          log(
+            `[wc-blockchain] pre-offer selectCoins refresh failed; continuing with createOfferForIds: ${String(error)}`,
+          );
+        }
       }
 
       const conditions = [...(extraConditions ?? [])];
@@ -552,6 +565,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           return {
             opcode: condition.opcode,
             args: { msg },
+          };
+        }
+        if (condition.opcode === RESERVE_FEE) {
+          const [amountHex = ''] = args;
+          return {
+            opcode: condition.opcode,
+            args: { amount: decodeNonNegativeClvmIntHex(amountHex) },
           };
         }
         if (condition.opcode === ASSERT_BEFORE_HEIGHT_ABSOLUTE) {
@@ -588,10 +608,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         log('[wc-blockchain] createOfferForIds returned bech32 offer string path');
         if (!payload.validateOnly) {
           const tradeId = (response as any)?.tradeRecord?.tradeId;
-          if (typeof tradeId !== 'string' || !tradeId) {
-            throw new Error('persisted createOfferForIds response missing trade ID');
+          if (typeof tradeId === 'string' && tradeId) {
+            return { offer: offerStr, tradeId };
           }
-          return { offer: offerStr, tradeId };
+          log(
+            '[wc-blockchain] persisted createOfferForIds response omitted trade ID; rejected offers cannot be released automatically',
+          );
         }
         return offerStr;
       }

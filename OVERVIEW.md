@@ -109,10 +109,13 @@ the other can preempt with the newer opposite-parity state they received.
 ```
 Funding coins (one per player)
     │
-    ├── Alice's coin creates 0-value launcher child
+    ├── Alice's offer creates settlement child (contribution + fee)
     │       │
     │       ▼
-    │   Launcher Coin ── SINGLETON_LAUNCHER puzzle
+    │   Settlement Coin ── OFFER_MOD / SETTLEMENT_PAYMENT puzzle
+    │       │
+    │       ▼
+    │   Launcher Coin ── SINGLETON_LAUNCHER puzzle (Alice's contribution)
     │       │
     │       ▼  (launcher creates channel coin)
     └──▶ Channel Coin ── 2-of-2 multisig (aggregate channel keys)
@@ -132,8 +135,10 @@ Funding coins (one per player)
 
 ### Channel Coin
 
-- Created as a child of a **standard singleton launcher**.  The launcher's
-parent is a wallet coin selected by Alice during the handshake.  Both
+- Created as a child of a **standard singleton launcher**. For offer-based
+wallets, the launcher's parent is the settlement-payment coin created from a
+wallet coin selected by Alice; direct-spend wallets may create a zero-value
+launcher from that wallet coin instead. Both
 players' funding coins contribute to the launcher transaction, and both
 assert `ASSERT_COIN_ANNOUNCEMENT` on the launcher's output plus
 `ASSERT_BEFORE_HEIGHT_ABSOLUTE` as a timeout guard.
@@ -420,10 +425,12 @@ Handshake messages are not sent via `Batch`:
 
 #### Between-message wallet interactions
 
-Between B and C, the initiator must consult the wallet to select a coin
-that will serve as the launcher parent. The library emits
+Between B and C, the initiator snapshots its configured opening fee and asks
+the wallet to select a coin covering its contribution plus that fee. The
+library emits
 `Effect::NeedLauncherCoinId`; the hosting layer (WASM wrapper or simulator)
-calls `selectCoins`, computes the launcher coin, and feeds it back via
+calls `selectCoins`, computes the offer settlement coin and its positive-value
+launcher (or the direct wallet child for Cloud Wallet), and feeds them back via
 the split handler callback (`provide_launcher_coin` on the active
 `PeerLifecyclePhase` implementation).
 
@@ -434,17 +441,20 @@ launcher.
 Between D and E, the initiator must obtain a wallet `SpendBundle`
 contributing their share of the channel funding. The library emits
 `Effect::NeedCoinSpend(CoinSpendRequest)` containing the required amount,
-conditions (CREATE_COIN for the launcher, ASSERT_COIN_ANNOUNCEMENT,
-ASSERT_BEFORE_HEIGHT_ABSOLUTE), and the wallet coin ID to use. The hosting
+conditions (ASSERT_COIN_ANNOUNCEMENT, RESERVE_FEE when nonzero,
+ASSERT_BEFORE_HEIGHT_ABSOLUTE, and CREATE_COIN for direct-mode launchers), and
+the wallet coin ID to use. The hosting
 layer refreshes coin selection, calls `createOfferForIds`, and feeds the returned
 `SpendBundle` back via `provide_coin_spend_bundle` on the split handler. The
 initiator offer is persisted so its removals remain reserved while the receiver
-builds its half; a rejected initiator offer is cancelled off-chain before retry,
-while receiver and fee offers remain validate-only. Chia Wallet
-2.7.4's WalletConnect command does not expose its transaction-config
+builds its half, while receiver and fee offers remain validate-only. When the
+WalletConnect response includes a trade ID, the host cancels a rejected
+initiator offer off-chain before retry. Chia Wallet 2.7.4 may omit that ID, so
+automatic cancellation is best-effort. Its WalletConnect command also does not expose its transaction-config
 coin-selection fields, so the library independently verifies that the initiator
 bundle applies every requested extra condition to the committed launcher parent
-before appending the launcher `CoinSpend` and sending the combined bundle in E.
+before completing the settlement output into the launcher, appending the
+launcher `CoinSpend`, and sending the combined bundle in E.
 A mismatch is discarded and requested again, up to three total mismatches,
 without advancing the handshake.
 
@@ -531,17 +541,20 @@ The handshake requires interaction with the Chia wallet at three points:
 
 | Call | When | Purpose |
 |------|------|---------|
-| `selectCoins(amount)` | After B (initiator only) | Select a wallet coin whose ID becomes the launcher parent |
+| `selectCoins(amount + fee)` | After B (initiator only) | Select the wallet coin used to derive the settlement and launcher ancestry |
 | `createOfferForIds(amount, conditions)` | After D (initiator) | Get a signed `SpendBundle` contributing the initiator's share of funding |
 | `createOfferForIds(amount, conditions)` | After E (receiver) | Get a signed `SpendBundle` contributing the receiver's share of funding |
 
-The `createOfferForIds` call takes the player's contribution amount and extra
-conditions (assertions and CREATE_COIN for the launcher). WalletConnect refreshes
+For the initiator, the offer-based `createOfferForIds` call takes contribution
+plus opening fee; the receiver still offers only its contribution. Extra
+conditions carry the launcher assertion and explicit `RESERVE_FEE`.
+WalletConnect refreshes
 coin selection immediately before each call. The initiator call persists its
 offer temporarily so the wallet reserves those removals; the receiver call is
 validate-only. The initiator rejects its bundle unless the committed launcher
-parent emits every requested condition, and the host cancels a rejected
-persisted offer before requesting another.
+parent emits every requested condition. Before requesting another, the host
+cancels a rejected persisted offer when the wallet supplied its trade ID;
+Chia Wallet 2.7.4 responses that omit the ID cannot be cancelled automatically.
 
 In the **simulator** these are implemented by `Simulator::select_coins` and
 the `create_offer_for_ids` HTTP endpoint (which calls
@@ -563,19 +576,27 @@ they map to WalletConnect RPCs:
 
 #### Channel coin funding
 
-The channel coin is created via a **standard singleton launcher**. The funding
-transaction contains three spends:
+The channel coin is created via a **standard singleton launcher**. For
+offer-based wallets, the funding transaction contains five logical spends:
 
-1. **Initiator's wallet coin** — creates the 0-value launcher child and
-   asserts `ASSERT_COIN_ANNOUNCEMENT` (launcher announces the channel coin
-   creation) and `ASSERT_BEFORE_HEIGHT_ABSOLUTE` (timeout guard).
-2. **Receiver's wallet coin** — asserts the same announcement and height
-   conditions.
-3. **Launcher coin** — the standard launcher puzzle, whose solution is
+1. **Initiator's wallet coin** — creates an OFFER_MOD settlement coin worth
+   contribution plus fee, asserts the launcher announcement, declares
+   `RESERVE_FEE`, and applies the height guard.
+2. **Initiator settlement coin** — creates the standard launcher with the
+   initiator contribution.
+3. **Receiver's wallet coin** — creates its contribution settlement output
+   and asserts the same launcher announcement and height guard.
+4. **Receiver settlement coin** — is completed with no outputs so its value
+   funds the aggregate transaction.
+5. **Launcher coin** — the standard launcher puzzle, whose solution is
    `(channel_puzzle_hash, total_amount, ())`.
 
-This produces the channel coin as a child of the launcher, with the agreed
-puzzle hash and combined amount.
+The settlement inputs provide `our_contribution + fee + their_contribution`;
+the launcher creates a channel worth both contributions, leaving exactly the
+declared fee. Cloud Wallet's direct-spend API retains the equivalent existing
+path in which its signed wallet spend creates a zero-value launcher and
+provides the contribution and native fee as aggregate deficits. Opening
+bundles are marked so the submission layer does not attach another fee offer.
 
 **Key code:** `src/session_phases/handshake_initiator.rs`,
 `src/session_phases/handshake_receiver.rs`,

@@ -139,6 +139,8 @@ jobs:
               exit 1
           fi
           export CHIA_GAMING_TEST_SIMULATOR_OWNED=1
+          export CHIA_GAMING_SIM_URL=http://127.0.0.1:5800
+          export CHIA_GAMING_SIM_WS_URL=ws://127.0.0.1:5800/ws
 
           (
               while sleep 15; do

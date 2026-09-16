@@ -13,7 +13,7 @@ use crate::common::types::{
     Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash, Program,
     ProgramRef, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
 };
-use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
+use crate::game_session::{claim_settlement_coins, phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
     GameNotification, TimeoutClaimSemantic,
@@ -198,6 +198,7 @@ impl HandshakeReceiverPhase {
         }];
         Ok(CoinSpendRequest {
             amount: per_player,
+            fee: Amount::default(),
             conditions,
             coin_id: None,
             max_height: self.compute_not_valid_after_height(),
@@ -758,6 +759,8 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         &mut self,
         _env: &mut ChannelEnv<'_>,
         _launcher_coin: CoinString,
+        _opening_fee: Amount,
+        _offer_settlement_coin: Option<CoinString>,
     ) -> Result<Vec<Effect>, Error> {
         Err(Error::StrErr(
             "provide_launcher_coin: receiver does not provide launcher coin".to_string(),
@@ -768,6 +771,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         env: &mut ChannelEnv<'_>,
         bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error> {
+        let bundle = claim_settlement_coins(env.allocator, bundle);
         if let ReceiverState::WaitingForCompletion(_, alice_bundle) = &self.state {
             let alice_bundle = alice_bundle.clone();
             let announcement = self.funding_announcement.as_ref().ok_or_else(|| {

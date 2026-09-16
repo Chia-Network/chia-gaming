@@ -419,6 +419,10 @@ function formatBalanceValue(raw: string): string {
   }
 }
 
+function pasteableCoinId(id: string): string {
+  return `0x${id.replace(/^0x/i, '')}`;
+}
+
 function GameDashboard({
   view,
   balances,
@@ -537,12 +541,22 @@ function GameDashboard({
             {coins.length > 0 && (
               <div className="mb-2 flex flex-col gap-y-0.5 text-xs">
                 {coins.map((coin) => (
-                  <span key={`${coin.label}:${coin.id}`} className="flex min-w-0 flex-wrap gap-x-1">
-                    <span className="text-canvas-solid">{coin.label}:</span>
-                    <span className="break-all font-mono text-canvas-text-contrast select-text cursor-text">
-                      {coin.id}
+                  <div key={`${coin.label}:${coin.id}`} className="flex flex-col gap-y-0.5">
+                    <span className="flex min-w-0 flex-wrap gap-x-1">
+                      <span className="text-canvas-solid">{coin.label} ID:</span>
+                      <span className="break-all font-mono text-canvas-text-contrast select-all cursor-text">
+                        {pasteableCoinId(coin.id)}
+                      </span>
                     </span>
-                  </span>
+                    {coin.parentId && (
+                      <span className="flex min-w-0 flex-wrap gap-x-1">
+                        <span className="text-canvas-solid">{coin.label} parent ID:</span>
+                        <span className="break-all font-mono text-canvas-text-contrast select-all cursor-text">
+                          {pasteableCoinId(coin.parentId)}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                 ))}
               </div>
             )}

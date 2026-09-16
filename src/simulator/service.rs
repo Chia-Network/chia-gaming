@@ -501,16 +501,16 @@ impl GameRunner {
                     }
                     atom_conditions.push((ec.opcode, arg));
                 }
-                ASSERT_BEFORE_HEIGHT_ABSOLUTE => {
+                ASSERT_BEFORE_HEIGHT_ABSOLUTE | 52 => {
                     if ec.args.len() != 1 {
                         return Err(Error::StrErr(
-                            "ASSERT_BEFORE_HEIGHT_ABSOLUTE must have exactly one arg".to_string(),
+                            "integer extra condition must have exactly one arg".to_string(),
                         ));
                     }
                     let arg = check_for_hex(&ec.args[0])?;
                     if u64_from_atom(&arg).is_none() {
                         return Err(Error::StrErr(
-                            "ASSERT_BEFORE_HEIGHT_ABSOLUTE arg is not a valid CLVM int".to_string(),
+                            "integer extra condition arg is not a valid CLVM int".to_string(),
                         ));
                     }
                     atom_conditions.push((ec.opcode, arg));

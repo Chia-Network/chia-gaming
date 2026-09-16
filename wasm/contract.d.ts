@@ -29,6 +29,7 @@ export interface IChiaIdentity {
 
 export interface NeedCoinSpendRequest {
   amount: string;
+  fee: string;
   conditions: Array<{ opcode: bigint | number; args: string[] }>;
   coin_id?: string;
   max_height?: bigint | number;

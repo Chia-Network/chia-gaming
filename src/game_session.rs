@@ -16,8 +16,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, GameType,
-    Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle,
-    Timeout, ToQuotedProgram,
+    GetCoinStringParts, Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend,
+    SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::session_phases::effects::{
     apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
@@ -126,6 +126,8 @@ pub trait PeerLifecyclePhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
         launcher_coin: CoinString,
+        opening_fee: Amount,
+        offer_settlement_coin: Option<CoinString>,
     ) -> Result<Vec<Effect>, Error>;
     fn provide_coin_spend_bundle(
         &mut self,
@@ -418,7 +420,10 @@ pub struct GameSessionConfig {
 /// of creating a true deficit.  Channel funding needs deficit spends so the
 /// launcher's channel coin creation is covered.  By spending the settlement
 /// coins with an empty solution (no outputs), their value becomes deficit.
-fn claim_settlement_coins(allocator: &mut AllocEncoder, bundle: SpendBundle) -> SpendBundle {
+pub(crate) fn claim_settlement_coins(
+    allocator: &mut AllocEncoder,
+    bundle: SpendBundle,
+) -> SpendBundle {
     let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
     let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT)
         .expect("valid settlement puzzle constant");
@@ -619,11 +624,20 @@ impl GameSession {
     /// Labeled coin ids (hex) the dashboard shows above the protocol state so
     /// the user can look them up in a block explorer. Sourced from the active
     /// phase handler; an on-chain grouped hand can surface multiple entries.
-    pub fn coins_of_interest(&self) -> Vec<(String, String)> {
+    pub fn coins_of_interest(&self) -> Vec<(String, String, String)> {
         self.peer
             .coins_of_interest()
             .into_iter()
-            .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
+            .map(|(kind, coin)| {
+                let (parent_id, _, _) = coin
+                    .get_coin_string_parts()
+                    .expect("phase supplied an invalid coin of interest");
+                (
+                    kind.label().to_string(),
+                    coin.to_coin_id().to_string(),
+                    parent_id.to_string(),
+                )
+            })
             .collect()
     }
 
@@ -674,11 +688,18 @@ impl GameSession {
         &mut self,
         allocator: &mut AllocEncoder,
         launcher_coin: CoinString,
+        opening_fee: Amount,
+        offer_settlement_coin: Option<CoinString>,
     ) -> Result<(), Error> {
         let effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.provide_launcher_coin(&mut env, launcher_coin)?
+            self.peer.provide_launcher_coin(
+                &mut env,
+                launcher_coin,
+                opening_fee,
+                offer_settlement_coin,
+            )?
         };
         self.process_effects(effects, allocator)?;
         Ok(())
@@ -689,7 +710,6 @@ impl GameSession {
         allocator: &mut AllocEncoder,
         bundle: SpendBundle,
     ) -> Result<(), Error> {
-        let bundle = claim_settlement_coins(allocator, bundle);
         let effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
