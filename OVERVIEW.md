@@ -440,10 +440,11 @@ layer calls `createOfferForIds` in validate-only mode and feeds the returned
 `SpendBundle` back via `provide_coin_spend_bundle` on the split handler. Chia
 Wallet 2.7.4's WalletConnect command does not expose its transaction-config
 coin-selection fields, so the library independently verifies that the bundle
-spends the committed launcher parent exactly once before appending the launcher
-`CoinSpend` and sending the combined bundle in E. A mismatched validate-only
-bundle is discarded and requested again, up to three total mismatches, without
-leaving a persisted wallet trade record or advancing the handshake.
+applies every requested extra condition to the committed launcher parent before
+appending the launcher `CoinSpend` and sending the combined bundle in E. A
+mismatched validate-only bundle is discarded and requested again, up to three
+total mismatches, without leaving a persisted wallet trade record or advancing
+the handshake.
 
 Between E and F, the receiver must similarly obtain a wallet `SpendBundle`
 contributing their share. The library emits `Effect::NeedCoinSpend` with the
@@ -548,9 +549,10 @@ they map to WalletConnect RPCs:
   conditions and amount. The `extraConditions` parameter carries the
   channel-specific assertions. Chia Wallet 2.7.4 does not admit
   `includedCoinIds` or `primaryCoin` through this WalletConnect command, so
-  exact funding-coin selection is enforced by post-return verification.
-  Mismatched validate-only bundles are discarded and retried up to a fixed
-  three-mismatch limit, after which the handshake fails and must restart.
+  the client runs the committed coin's spend and verifies that it emits every
+  requested condition. Mismatched validate-only bundles are discarded and
+  retried up to a fixed three-mismatch limit, after which the handshake fails
+  and must restart.
 - `chia_pushTransactions` — broadcast the assembled funding `SpendBundle` to the
   network, wrapped in a `TransactionRecord` (both players submit the transaction
   they assembled locally).
