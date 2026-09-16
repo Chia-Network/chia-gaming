@@ -589,6 +589,26 @@ describe('RealBlockchainInterface', () => {
     ]);
   });
 
+  it('pins validate-only funding offers through the supported coin selection fields', async () => {
+    const blockchain = new RealBlockchainInterface();
+    const fundingCoinId = 'ab'.repeat(32);
+    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+
+    await expect(
+      blockchain.createOfferForIds('test', { '1': -100n }, undefined, [fundingCoinId]),
+    ).resolves.toBe('offer1signed');
+
+    expect(mockCreateOfferForIds).toHaveBeenCalledWith({
+      offer: { '1': -100n },
+      driverDict: {},
+      validateOnly: true,
+      extraConditions: undefined,
+      includedCoinIds: [`0x${fundingCoinId}`],
+      primaryCoin: `0x${fundingCoinId}`,
+      allowUnsynced: true,
+    });
+  });
+
   it('builds a wallet-signed fee offer without using the wallet fee parameter', async () => {
     const blockchain = new RealBlockchainInterface();
     const parentCoinInfo = '99'.repeat(32);

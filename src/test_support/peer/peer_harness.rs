@@ -1,19 +1,17 @@
 #[cfg(test)]
 use std::collections::{HashMap, VecDeque};
 
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::ToClvm;
 
 use crate::channel_state::types::ChannelEnv;
 #[cfg(test)]
 use crate::channel_state::types::{ChannelPrivateKeys, ReadableMove};
-use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
+use crate::common::standard_coin::{private_to_public_key, ChiaIdentity};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
 #[cfg(test)]
-use crate::common::types::{
-    GameID, Hash, Node, PrivateKey, Program, Puzzle, Sha256tree, Timeout, ToQuotedProgram,
-};
+use crate::common::types::{GameID, Hash, Node, PrivateKey, Timeout};
 #[cfg(test)]
 use crate::game_session::{MessagePeerQueue, MessagePipe, PeerLifecyclePhase};
 #[cfg(test)]
@@ -280,56 +278,79 @@ where
 }
 
 #[cfg(test)]
+const DUMMY_WALLET_COIN_AMOUNT: u64 = 200;
+
+#[cfg(test)]
+fn dummy_wallet_coin(
+    allocator: &mut AllocEncoder,
+    parent: &CoinID,
+) -> Result<(CoinString, ChiaIdentity), Error> {
+    let private_key = PrivateKey::from_bytes(&[3; 32]).expect("dummy wallet key");
+    let identity = ChiaIdentity::new(allocator, private_key)?;
+    let coin = CoinString::from_parts(
+        parent,
+        &identity.puzzle_hash,
+        &Amount::new(DUMMY_WALLET_COIN_AMOUNT),
+    );
+    Ok((coin, identity))
+}
+
+#[cfg(test)]
 fn build_dummy_wallet_bundle_for_request(
     allocator: &mut AllocEncoder,
     request: &crate::session_phases::handshake::CoinSpendRequest,
-) -> SpendBundle {
-    let parent = request
-        .coin_id
-        .clone()
-        .unwrap_or_else(|| CoinID::new(Hash::from_bytes([1; 32])));
-    let private_key = PrivateKey::from_bytes(&[3; 32]).expect("dummy wallet key");
-    let public_key = private_to_public_key(&private_key);
-    let raw_message = b"dummy wallet funding";
-    let message_node = Node(
-        allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(raw_message))
-            .expect("dummy signature message"),
-    );
+) -> Result<SpendBundle, Error> {
+    let parent = if request.coin_id.is_some() {
+        CoinID::default()
+    } else {
+        CoinID::new(Hash::from_bytes([1; 32]))
+    };
+    let (coin, identity) = dummy_wallet_coin(allocator, &parent)?;
+    if let Some(expected_coin_id) = request.coin_id.as_ref() {
+        game_assert_eq!(
+            coin.to_coin_id(),
+            *expected_coin_id,
+            "dummy wallet selected a coin other than the requested coin"
+        );
+    }
+    let settlement_puzzle_hash = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
     let mut conditions = vec![Node(
-        (50_u8, (public_key, (message_node, ())))
+        (
+            CREATE_COIN,
+            (settlement_puzzle_hash, (request.amount.clone(), ())),
+        )
             .to_clvm(allocator)
-            .expect("dummy AGG_SIG_ME condition"),
+            .into_gen()?,
     )];
-    conditions.extend(
-        raw_coin_conditions_to_clvm(allocator, &request.conditions, request.max_height)
-            .expect("dummy wallet request conditions"),
-    );
+    conditions.extend(raw_coin_conditions_to_clvm(
+        allocator,
+        &request.conditions,
+        request.max_height,
+    )?);
     let conditions = conditions
         .to_clvm(allocator)
-        .expect("dummy wallet conditions");
-    let puzzle: Puzzle = conditions
-        .to_quoted_program(allocator)
-        .expect("quote dummy wallet conditions")
-        .into();
-    let coin = CoinString::from_parts(&parent, &puzzle.sha256tree(allocator), &request.amount);
-    let signature = sign_agg_sig_me(
-        &private_key,
-        raw_message,
+        .map_err(|e| Error::StrErr(format!("dummy wallet conditions: {e:?}")))?;
+    let env = ChannelEnv::new(allocator)?;
+    let spend = standard_solution_partial(
+        env.allocator,
+        &identity.synthetic_private_key,
         &coin.to_coin_id(),
+        conditions,
+        &identity.synthetic_public_key,
         &Hash::from_bytes(crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA),
-    );
-    SpendBundle {
+        false,
+    )?;
+    Ok(SpendBundle {
         name: Some("dummy wallet coin spend request".to_string()),
         spends: vec![CoinSpend {
             coin,
             bundle: Spend {
-                puzzle,
-                solution: Program::nil().into(),
-                signature,
+                puzzle: identity.puzzle,
+                solution: spend.solution,
+                signature: spend.signature,
             },
         }],
-    }
+    })
 }
 
 #[cfg(test)]
@@ -348,8 +369,9 @@ where
     while let Some(effect) = pending.pop_front() {
         match effect {
             Effect::NeedLauncherCoinId => {
+                let (wallet_coin, _) = dummy_wallet_coin(allocator, &CoinID::default())?;
                 let launcher_coin = CoinString::from_parts(
-                    &CoinID::default(),
+                    &wallet_coin.to_coin_id(),
                     &PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
                     &Amount::default(),
                 );
@@ -358,7 +380,7 @@ where
                 pending.extend(follow_up);
             }
             Effect::NeedCoinSpend(req) => {
-                let bundle = build_dummy_wallet_bundle_for_request(allocator, &req);
+                let bundle = build_dummy_wallet_bundle_for_request(allocator, &req)?;
                 let mut env = ChannelEnv::new(allocator)?;
                 let follow_up = handlers[who].provide_coin_spend_bundle(&mut env, bundle)?;
                 pending.extend(follow_up);

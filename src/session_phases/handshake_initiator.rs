@@ -44,6 +44,23 @@ enum InitiatorState {
     Done,
 }
 
+fn validate_wallet_bundle_spends_coin(
+    wallet_bundle: &SpendBundle,
+    expected_coin_id: &CoinID,
+) -> Result<(), Error> {
+    let matching_spends = wallet_bundle
+        .spends
+        .iter()
+        .filter(|spend| spend.coin.to_coin_id() == *expected_coin_id)
+        .count();
+    if matching_spends != 1 {
+        return Err(Error::Channel(format!(
+            "wallet funding offer spent launcher parent {matching_spends} times; expected exactly once"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct HandshakeInitiatorPhase {
     state: InitiatorState,
@@ -828,6 +845,8 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         wallet_bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error> {
         let bundle = if matches!(self.state, InitiatorState::WaitingForOffer(_, _)) {
+            let (launcher_parent, _, _) = self.get_launcher_coin()?.get_coin_string_parts()?;
+            validate_wallet_bundle_spends_coin(&wallet_bundle, &launcher_parent)?;
             let launcher_spend = self.build_launcher_coin_spend(env)?;
             let mut spends = wallet_bundle.spends;
             spends.push(launcher_spend);
@@ -1203,6 +1222,32 @@ mod finished_message_tests {
             .process_message(&mut env, Rc::new(PeerMessage::HandshakeB(payload)))
             .expect_err("HandshakeB collision");
         assert!(format!("{error:?}").contains("public key collision"));
+    }
+
+    #[test]
+    fn wallet_funding_bundle_must_spend_launcher_parent_exactly_once() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let conditions = ().to_clvm(&mut allocator).expect("nil conditions");
+        let spend = spend_for_conditions(&mut allocator, 7, conditions);
+        let expected_coin_id = spend.coin.to_coin_id();
+
+        validate_wallet_bundle_spends_coin(
+            &SpendBundle {
+                name: None,
+                spends: vec![spend.clone()],
+            },
+            &expected_coin_id,
+        )
+        .expect("matching launcher parent");
+
+        for spends in [vec![], vec![spend.clone(), spend]] {
+            let error = validate_wallet_bundle_spends_coin(
+                &SpendBundle { name: None, spends },
+                &expected_coin_id,
+            )
+            .expect_err("missing or duplicate launcher parent must fail");
+            assert!(format!("{error:?}").contains("expected exactly once"));
+        }
     }
 
     #[test]

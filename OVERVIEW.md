@@ -436,9 +436,13 @@ contributing their share of the channel funding. The library emits
 `Effect::NeedCoinSpend(CoinSpendRequest)` containing the required amount,
 conditions (CREATE_COIN for the launcher, ASSERT_COIN_ANNOUNCEMENT,
 ASSERT_BEFORE_HEIGHT_ABSOLUTE), and the wallet coin ID to use. The hosting
-layer calls `createOfferForIds` to get a `SpendBundle` from the wallet, then
-feeds it back via `provide_coin_spend_bundle` on the split handler. The
-library appends the launcher `CoinSpend` and sends the combined bundle in E.
+layer calls `createOfferForIds` in validate-only mode, pins that ID through the
+wallet's `includedCoinIds` and `primaryCoin` selection fields, and feeds the
+returned `SpendBundle` back via `provide_coin_spend_bundle` on the split
+handler. The library independently verifies that the bundle spends the
+committed launcher parent exactly once before appending the launcher
+`CoinSpend` and sending the combined bundle in E. Validate-only offer creation
+does not leave a persisted wallet trade record if this verification fails.
 
 Between E and F, the receiver must similarly obtain a wallet `SpendBundle`
 contributing their share. The library emits `Effect::NeedCoinSpend` with the
@@ -528,9 +532,10 @@ The handshake requires interaction with the Chia wallet at three points:
 | `createOfferForIds(amount, conditions)` | After E (receiver) | Get a signed `SpendBundle` contributing the receiver's share of funding |
 
 The `createOfferForIds` call takes the player's contribution amount, extra
-conditions (assertions and CREATE_COIN for the launcher), and optionally a
-specific coin ID to spend. It returns a `SpendBundle` containing one wallet
-coin spend with the requested conditions.
+conditions (assertions and CREATE_COIN for the launcher), and an optional
+specific coin ID to include and make primary. It returns a signed offer bundle
+without persisting a trade record. The initiator rejects that bundle unless it
+actually spends the already committed launcher parent.
 
 In the **simulator** these are implemented by `Simulator::select_coins` and
 the `create_offer_for_ids` HTTP endpoint (which calls
@@ -541,8 +546,8 @@ they map to WalletConnect RPCs:
   amount.
 - `chia_createOfferForIds` — create a signed `SpendBundle` with the specified
   conditions and amount. The `extraConditions` parameter carries the
-  channel-specific assertions; `coinIds` optionally pins the spend to a
-  specific coin.
+  channel-specific assertions; `includedCoinIds` and `primaryCoin` pin the
+  spend through the wallet's supported coin-selection configuration.
 - `chia_pushTransactions` — broadcast the assembled funding `SpendBundle` to the
   network, wrapped in a `TransactionRecord` (both players submit the transaction
   they assembled locally).
