@@ -1080,6 +1080,42 @@ describe('wallet fee attachment on submission', () => {
     expect(errors[0]).toMatch(/fee was not applied/i);
   });
 
+  it('drops a fee offer that reuses a protocol input coin', async () => {
+    const feeSpend = {
+      coin_spends: [protocolBundle.coin_spends[0]],
+      aggregated_signature: '0xfee',
+    };
+    const createFeeOffer = jest.fn().mockResolvedValue('offer1signed');
+    const spend = jest.fn().mockResolvedValue('ok');
+    const aggregate = jest.fn();
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeOffer, spend }, 60000);
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+    blob.getFee = () => 10n;
+    attachWc(blob, aggregate, feeSpend);
+
+    const errors: string[] = [];
+    const subscription = blob.getObservable().subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+
+    submitTransaction(blob, testSpendBundle('coin'));
+    await transactionSubmitQueue(blob);
+    subscription.unsubscribe();
+
+    expect(aggregate).not.toHaveBeenCalled();
+    expect(spend).toHaveBeenCalledWith(
+      expect.any(String),
+      protocolBundle,
+      '11'.repeat(32),
+      'submitTransaction',
+      undefined,
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/reused protocol input coin/i);
+  });
+
   it('surfaces the real wallet error in the warning when the fee offer fails', async () => {
     const createFeeOffer = jest.fn().mockRejectedValue(new Error('Internal error (code=-32603)'));
     const spend = jest.fn().mockResolvedValue('ok');

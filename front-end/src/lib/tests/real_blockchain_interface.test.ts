@@ -589,7 +589,7 @@ describe('RealBlockchainInterface', () => {
     ]);
   });
 
-  it('uses validate-only without unsupported WalletConnect coin-selection fields', async () => {
+  it('persists initiator funding offers without unsupported coin-selection fields', async () => {
     const blockchain = new RealBlockchainInterface();
     const fundingCoinId = 'ab'.repeat(32);
     mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
@@ -598,13 +598,37 @@ describe('RealBlockchainInterface', () => {
       blockchain.createOfferForIds('test', { '1': -100n }, undefined, [fundingCoinId]),
     ).resolves.toBe('offer1signed');
 
+    expect(mockSelectCoins).toHaveBeenCalledWith({
+      walletId: 1n,
+      amount: 100n,
+      allowUnsynced: true,
+    });
+    expect(mockSelectCoins.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCreateOfferForIds.mock.invocationCallOrder[0],
+    );
     expect(mockCreateOfferForIds).toHaveBeenCalledWith({
       offer: { '1': -100n },
       driverDict: {},
-      validateOnly: true,
+      validateOnly: false,
       extraConditions: undefined,
       allowUnsynced: true,
     });
+  });
+
+  it('keeps receiver funding offers validate-only', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+
+    await blockchain.createOfferForIds('test', { '1': -100n });
+
+    expect(mockSelectCoins).toHaveBeenCalledWith({
+      walletId: 1n,
+      amount: 100n,
+      allowUnsynced: true,
+    });
+    expect(mockCreateOfferForIds).toHaveBeenCalledWith(
+      expect.objectContaining({ validateOnly: true }),
+    );
   });
 
   it('builds a wallet-signed fee offer without using the wallet fee parameter', async () => {

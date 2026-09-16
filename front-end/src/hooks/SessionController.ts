@@ -829,6 +829,25 @@ export class SessionController implements PollingGameSession {
     return coinIdFromBytes(toUint8(coinStringHex));
   }
 
+  private async spendCoinIds(bundle: unknown): Promise<Set<string>> {
+    const coinSpends = (bundle as { coin_spends?: Array<{ coin?: any }> })?.coin_spends;
+    if (!Array.isArray(coinSpends)) return new Set();
+    const ids = await Promise.all(
+      coinSpends.map(async ({ coin }) => {
+        if (!coin || coin.parent_coin_info === undefined || coin.puzzle_hash === undefined) {
+          return null;
+        }
+        const amount = typeof coin.amount === 'bigint' ? coin.amount : BigInt(coin.amount ?? 0);
+        const coinStringHex =
+          `${normalizeHexString(coin.parent_coin_info)}` +
+          `${normalizeHexString(coin.puzzle_hash)}` +
+          `${encodeU64AsClvmHex(amount)}`;
+        return coinIdFromBytes(toUint8(coinStringHex));
+      }),
+    );
+    return new Set(ids.filter((id): id is string => id !== null));
+  }
+
   private async submitTransactionNow(tx: SpendBundle) {
     const blockchain = this.blockchain;
     if (!blockchain) return;
@@ -864,6 +883,13 @@ export class SessionController implements PollingGameSession {
                 fee.toString(),
                 bindCoinId,
               );
+              const protocolCoinIds = await this.spendCoinIds(protocolBundle);
+              const feeCoinIds = await this.spendCoinIds(feeSpend);
+              const reusedCoinId = [...feeCoinIds].find((id) => protocolCoinIds.has(id));
+              if (reusedCoinId) {
+                feeSpend = null;
+                feeSpendError = `the fee wallet reused protocol input coin 0x${reusedCoinId}`;
+              }
             }
           } catch (e) {
             feeSpendError = extractErrorMessage(e);

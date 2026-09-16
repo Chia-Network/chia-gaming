@@ -514,6 +514,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     maxHeight?: bigint,
   ): Promise<any | null> {
     try {
+      for (const [walletId, amount] of Object.entries(offer)) {
+        if (amount >= 0n) continue;
+        await rpc.selectCoins({
+          walletId: BigInt(walletId),
+          amount: -amount,
+          allowUnsynced: true,
+        });
+      }
+
       const conditions = [...(extraConditions ?? [])];
       if (maxHeight !== undefined) {
         conditions.push({
@@ -560,7 +569,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const payload = {
         offer,
         driverDict: {},
-        validateOnly: true,
+        // The initiator supplies a committed coin ID. Persist that offer so the
+        // wallet reserves its removals while the receiver builds the other half.
+        // Chia 2.7.4 cannot request-pin the coin, so Rust still verifies it.
+        validateOnly: !coinIds?.length,
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
         allowUnsynced: true,
       };
