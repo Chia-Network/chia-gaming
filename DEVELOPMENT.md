@@ -276,7 +276,6 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 | `--dir`                      | yes      | Root directory to serve static hub files from                                                          |
 | `--verbose`                  | no       | Verbose logging                                                                                        |
 | `PORT`                       | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                              |
-| `HUB_ALLOWED_PARENT_ORIGINS` | no       | Comma-separated player origins allowed to frame and authenticate to the hub; production browser deployments must set their player origin |
 | `HUB_MAX_TOTAL_CONNECTIONS`  | no       | Maximum combined hub and game WebSocket connections (default `2000`)                                   |
 | `HUB_MAX_CONNECTIONS_PER_IP` | no       | Maximum combined WebSocket connections per client IP (default `8`)                                     |
 | `HUB_MAX_PLAYERS`            | no       | Maximum players concurrently present in the hub roster (default `1000`)                                |

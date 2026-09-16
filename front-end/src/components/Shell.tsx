@@ -127,7 +127,6 @@ import {
   type BlockchainPoller,
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
-import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import {
   deferredHubRemapEscalationAction,
   isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt,
@@ -3227,8 +3226,6 @@ const Shell = () => {
     },
     [setActiveTab, setHubAlert, setUnreadGame, setWalletAlert],
   );
-
-  useThemeSyncToIframe({ iframeId: 'hub-iframe', frameOrigin: hubOrigin, frameUrl: iframeUrl });
 
   useEffect(() => {
     if (hubOrigin === null || !sessionId || iframeUrl === 'about:blank') return;

@@ -370,7 +370,7 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
       )}
 
       {challengeSent && (
-        <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm flex items-center justify-between">
+        <div className="mb-4 p-3 rounded-lg bg-canvas-base border border-canvas-border text-canvas-text text-sm flex items-center justify-between">
           <span>Waiting for opponent to respond to your challenge...</span>
           <Button variant="solid" size="sm" onClick={cancelChallenge}>
             Cancel
@@ -378,13 +378,13 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
         </div>
       )}
       {reconnectBlocked ? (
-        <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm">
+        <div className="mb-4 p-3 rounded-lg bg-canvas-base border border-canvas-border text-canvas-text text-sm">
           This player is active in another tab/window. Close the other tab or use a separate browser
           profile for Alice/Bob.
         </div>
       ) : (
         isReconnecting && (
-          <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm">
+          <div className="mb-4 p-3 rounded-lg bg-canvas-base border border-canvas-border text-canvas-text text-sm">
             Reconnecting to hub...
           </div>
         )
@@ -478,7 +478,7 @@ function IncomingChallengeDialog({
 }) {
   const symmetric = challenge.challenger_amount === challenge.target_amount;
   return (
-    <div className="mb-4 p-4 rounded-lg theme-force-light bg-white border border-canvas-border">
+    <div className="mb-4 p-4 rounded-lg bg-canvas-base border border-canvas-border">
       <p className="text-canvas-text-contrast font-medium mb-2">
         <strong>{challenge.from_alias}</strong> challenges you
       </p>

@@ -1061,8 +1061,6 @@ The Shell is the top-level React component. It owns:
   a QR code for WalletConnect and a simulator option via `SimulatorSetupModal`
 - **Hub connection** — accepts the selected hub URL, creates the
   `HubConnection` client for the game channel, and sets up the hub iframe
-- **Theme sync** — pushes CSS variables and dark-mode class into the hub iframe
-  (`useThemeSyncToIframe`)
 - **Tab navigation** — five tabs: Wallet, Hub, Game, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 - **Session lifecycle and Accept presentation** — `useShellSessionState` fields
@@ -1414,10 +1412,9 @@ bytes.
 ### Hub Iframe (Hub)
 
 The hub iframe is **untrusted**. It is served by a hub and provides
-matchmaking UX. The only interaction between the player app and the iframe is:
+matchmaking UX. It owns a fixed visual palette distinct from the player. The
+only interaction between the player app and the iframe is:
 
-- **Theme sync** — the player app sends `postMessage` with CSS variables; the
-  iframe can request a sync via `postMessage` with `{ type: 'theme-request' }`
 - **Hub authentication** — the iframe requests its origin-scoped session
   credential with `postMessage`; the parent checks `event.source` and
   `event.origin`, then replies only to that source window and exact origin.

@@ -110,7 +110,6 @@ const SWEEP_INTERVAL_MS = 15_000;
 const PLAYER_ID_BYTES = 16;
 const SESSION_ID_BYTES = 16;
 const MAX_ALIAS_BYTES = 128;
-const ALLOWED_PARENT_ORIGINS = readAllowedParentOrigins();
 const RECENT_CORRESPONDENT_TTL_MS = readPositiveIntegerEnv(
   'GAME_RECENT_CORRESPONDENT_TTL_MS',
   30 * 60_000,
@@ -195,36 +194,6 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
     throw new Error(`${name} must be a safe integer`);
   }
   return value;
-}
-
-function readAllowedParentOrigins(): string[] {
-  const configured =
-    process.env.HUB_ALLOWED_PARENT_ORIGINS ??
-    'chiagaming://app,http://localhost:3002,http://127.0.0.1:3002';
-  const origins = [
-    ...new Set(
-      configured
-        .split(',')
-        .map((origin) => origin.trim())
-        .filter(Boolean),
-    ),
-  ];
-  if (origins.length === 0) {
-    throw new Error('HUB_ALLOWED_PARENT_ORIGINS must contain at least one origin');
-  }
-  for (const origin of origins) {
-    if (origin === 'chiagaming://app') continue;
-    let url: URL;
-    try {
-      url = new URL(origin);
-    } catch {
-      throw new Error(`HUB_ALLOWED_PARENT_ORIGINS contains an invalid origin: ${origin}`);
-    }
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.origin !== origin) {
-      throw new Error(`HUB_ALLOWED_PARENT_ORIGINS contains an invalid origin: ${origin}`);
-    }
-  }
-  return origins;
 }
 
 function readBooleanEnv(name: string, fallback: boolean): boolean {
@@ -517,7 +486,6 @@ app.use(
 
 app.use((req, res, next) => {
   res.set('Referrer-Policy', 'no-referrer');
-  res.set('Content-Security-Policy', `frame-ancestors ${ALLOWED_PARENT_ORIGINS.join(' ')}`);
   // Nonce /app/* URLs change every rebuild; only root shell/meta are stable.
   const p = req.path;
   let cc: string;
@@ -535,10 +503,6 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
-app.get('/parent-origins.json', (_req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json({ origins: ALLOWED_PARENT_ORIGINS });
-});
 if (args.dir) {
   app.use(express.static(args.dir));
 }

@@ -1,51 +1,50 @@
-@import "tailwindcss";
-@custom-variant dark (&:is(.dark *));
-/* LIGHT THEME */
-:root {
+@import 'tailwindcss';
 
+/* The hub owns a fixed blue/teal palette distinct from the embedding player. */
+:root {
   /* CANVAS */
- --canvas-base: #F9FAF8;
-  --canvas-bg-subtle: #ECEEE9;
-  --canvas-bg: #E5E8E3;
-  --canvas-bg-hover: #DBDED8;
-  --canvas-bg-active: #D1D4CE;
-  --canvas-line: #C7CAC4;
-  --canvas-border: #BABDB7;
-  --canvas-border-hover: #A0A39D;
-  --canvas-solid: #828580;
-  --canvas-solid-hover: #757874;
-  --canvas-text: #4F524D;
-  --canvas-text-contrast: #191A18;
+  --canvas-base: #f6f9fc;
+  --canvas-bg-subtle: #eaf1f8;
+  --canvas-bg: #dce7f2;
+  --canvas-bg-hover: #cddbea;
+  --canvas-bg-active: #bdcee1;
+  --canvas-line: #adc1d7;
+  --canvas-border: #94acc7;
+  --canvas-border-hover: #718eae;
+  --canvas-solid: #587695;
+  --canvas-solid-hover: #476583;
+  --canvas-text: #405873;
+  --canvas-text-contrast: #162a40;
   --canvas-on-canvas: #fff;
 
- /* PRIMARY */
-  --primary-base: #FDFBFB;
-  --primary-bg-subtle: #F5EDEF;
-  --primary-bg: #EBDFE2;
-  --primary-bg-hover: #E0D2D6;
-  --primary-bg-active: #D5C4CA;
-  --primary-line: #F59AB2;
-  --primary-border: #E6809C;
-  --primary-border-hover: #D05C80;
-  --primary-solid: #D93068;
-  --primary-solid-hover: #C82A5E;
-  --primary-text: #A82052;
-  --primary-text-contrast: #461028;
+  /* PRIMARY */
+  --primary-base: #f4fcfc;
+  --primary-bg-subtle: #e5f6f5;
+  --primary-bg: #d2eeec;
+  --primary-bg-hover: #bce3e0;
+  --primary-bg-active: #a4d7d3;
+  --primary-line: #7ac7c3;
+  --primary-border: #55b4b1;
+  --primary-border-hover: #269b99;
+  --primary-solid: #087f7d;
+  --primary-solid-hover: #066d6b;
+  --primary-text: #086f6d;
+  --primary-text-contrast: #103b3a;
   --primary-on-primary: #fff;
 
- /* SECONDARY */
-  --secondary-base: #FCFCFE;
-  --secondary-bg-subtle: #F7F9FC;
-  --secondary-bg: #EDF1F9;
-  --secondary-bg-hover: #E3E9F5;
-  --secondary-bg-active: #D9E0EF;
-  --secondary-line: #CDD6E8;
-  --secondary-border: #BCC8DE;
-  --secondary-border-hover: #A3B2D0;
-  --secondary-solid: #42506C;
-  --secondary-solid-hover: #33415C;
-  --secondary-text: #586784;
-  --secondary-text-contrast: #252C3B;
+  /* SECONDARY */
+  --secondary-base: #faf9fe;
+  --secondary-bg-subtle: #f1eefa;
+  --secondary-bg: #e7e1f5;
+  --secondary-bg-hover: #dad1ee;
+  --secondary-bg-active: #ccbfe5;
+  --secondary-line: #baa9db;
+  --secondary-border: #a38dce;
+  --secondary-border-hover: #8870ba;
+  --secondary-solid: #6650a4;
+  --secondary-solid-hover: #55418f;
+  --secondary-text: #5d4b89;
+  --secondary-text-contrast: #2d2444;
   --secondary-on-secondary: #fff;
 
   /* SUCCESS */
@@ -107,115 +106,6 @@
   --info-text: #006adc;
   --info-text-contrast: #00254d;
   --info-on-info: #ffffff;
-}
-/* DARK THEME */
-.dark {
-
-   /* CANVAS */
-  --canvas-base: #0D120F;
-  --canvas-bg-subtle: #151A17;
-  --canvas-bg: #1D2420;
-  --canvas-bg-hover: #222B25;
-  --canvas-bg-active: #28322C;
-  --canvas-line: #2F3B34;
-  --canvas-border: #3A4841;
-  --canvas-border-hover: #4E6157;
-  --canvas-solid: #5A6F62;
-  --canvas-solid-hover: #687C70;
-  --canvas-text: #A4B5AC;
-  --canvas-text-contrast: #EAEEE9;
-  --canvas-on-canvas: #FFF;
-
-  /* PRIMARY */
-  --primary-base: #15100F;
-  --primary-bg-subtle: #1D1518;
-  --primary-bg: #281C20;
-  --primary-bg-hover: #322428;
-  --primary-bg-active: #3C2C32;
-  --primary-line: #52243C;
-  --primary-border: #64304A;
-  --primary-border-hover: #7A3E5C;
-  --primary-solid: #D93068;
-  --primary-solid-hover: #E8487C;
-  --primary-text: #F0608E;
-  --primary-text-contrast: #FCD0E0;
-  --primary-on-primary: #fff;
-
-/* SECONDARY */
-  --secondary-base: #0E1117;
-  --secondary-bg-subtle: #161920;
-  --secondary-bg: #1E2532;
-  --secondary-bg-hover: #262F41;
-  --secondary-bg-active: #2F3A4F;
-  --secondary-line: #3A465E;
-  --secondary-border: #475572;
-  --secondary-border-hover: #5A6C8E;
-  --secondary-solid: #42506C;
-  --secondary-solid-hover: #354159;
-  --secondary-text: #A8B8D9;
-  --secondary-text-contrast: #E2EBFD;
-  --secondary-on-secondary: #fff;
-
-  /* SUCCESS */
-  --success-base: #0d1912;
-  --success-bg-subtle: #0c1f17;
-  --success-bg: #0f291e;
-  --success-bg-hover: #113123;
-  --success-bg-active: #133929;
-  --success-line: #164430;
-  --success-border: #1b543a;
-  --success-border-hover: #236e4a;
-  --success-solid: #30a46c;
-  --success-solid-hover: #3cb179;
-  --success-text: #4cc38a;
-  --success-text-contrast: #e5fbeb;
-  --success-on-success: #ffffff;
-
-  /* WARNING */
-  --warning-base: #1f1300;
-  --warning-bg-subtle: #271700;
-  --warning-bg: #341c00;
-  --warning-bg-hover: #3f2200;
-  --warning-bg-active: #4a2900;
-  --warning-line: #573300;
-  --warning-border: #693f05;
-  --warning-border-hover: #824e00;
-  --warning-solid: #ffb224;
-  --warning-solid-hover: #ffcb47;
-  --warning-text: #f1a10d;
-  --warning-text-contrast: #fef3dd;
-  --warning-on-warning: #000000;
-
-  /* ALERT */
-  --alert-base: #1f1315;
-  --alert-bg-subtle: #291415;
-  --alert-bg: #3c181a;
-  --alert-bg-hover: #481a1d;
-  --alert-bg-active: #541b1f;
-  --alert-line: #671e22;
-  --alert-border: #822025;
-  --alert-border-hover: #aa2429;
-  --alert-solid: #e5484d;
-  --alert-solid-hover: #f2555a;
-  --alert-text: #ff6369;
-  --alert-text-contrast: #feecee;
-  --alert-on-alert: #ffffff;
-
-  /* INFO */
-  --info-base: #0f1720;
-  --info-bg-subtle: #0f1b2d;
-  --info-bg: #10243e;
-  --info-bg-hover: #102a4c;
-  --info-bg-active: #0f3058;
-  --info-line: #0d3868;
-  --info-border: #0a4481;
-  --info-border-hover: #0954a5;
-  --info-solid: #0091ff;
-  --info-solid-hover: #369eff;
-  --info-text: #52a9ff;
-  --info-text-contrast: #eaf6ff;
-  --info-on-info: #ffffff;
-
 }
 @theme inline {
   --color-canvas-base: var(--canvas-base);
@@ -315,74 +205,66 @@
   --color-info-text: var(--info-text);
   --color-info-text-contrast: var(--info-text-contrast);
   --color-info-on-info: var(--info-on-info);
-
 }
 /* tailwind import removed (using directives above) */
 
 /* Reset body and html to prevent scrollbar issues on root container */
-html, body {
-	margin: 0;
-	padding: 0;
-	width: 100%;
-	height: 100%;
-	overflow-x: hidden; /* Prevent outer scrollbar */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden; /* Prevent outer scrollbar */
 }
 
 #root {
-	margin: 0;
-	padding: 0;
-	width: 100%;
-	height: 100%;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
 }
 
 /* Component-level flip styles for HandDisplay (processed by Tailwind) */
 @layer components {
-	.flip-container {
-		perspective: 1000px;
-		width: 100%;
-		height: 100%;
-	}
+  .flip-container {
+    perspective: 1000px;
+    width: 100%;
+    height: 100%;
+  }
 
-	.flip-inner {
-		position: relative;
-		width: 100%;
-		height: 100%;
-		transition: transform 600ms ease-in-out;
-		transform-style: preserve-3d;
-	}
+  .flip-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transition: transform 600ms ease-in-out;
+    transform-style: preserve-3d;
+  }
 
-	.flip-inner.is-flipped {
-		transform: rotateY(180deg);
-	}
+  .flip-inner.is-flipped {
+    transform: rotateY(180deg);
+  }
 
-	.flip-front,
-	.flip-back {
-		position: absolute;
-		width: 100%;
-		height: 100%;
-		top: 0;
-		left: 0;
-		backface-visibility: hidden;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
+  .flip-front,
+  .flip-back {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    backface-visibility: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 
-	.flip-back {
-		background-color: #e5e7eb;
-		transform: rotateY(0deg);
-	}
+  .flip-back {
+    background-color: #e5e7eb;
+    transform: rotateY(0deg);
+  }
 
-	.flip-front {
-		background-color: white;
-		transform: rotateY(180deg);
-	}
-}
-
-/* Force light-mode canvas colors for elements on white backgrounds */
-.theme-force-light {
-  --canvas-border: #BABDB7;
-  --canvas-border-hover: #A0A39D;
-  --canvas-text: #4F524D;
-  --canvas-text-contrast: #191A18;
+  .flip-front {
+    background-color: white;
+    transform: rotateY(180deg);
+  }
 }
