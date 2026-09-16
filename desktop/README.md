@@ -143,9 +143,10 @@ receive a CSP whose web-only `default-src` prevents them from requesting the
 custom scheme. The protocol handler independently coalesces reads by resolved
 file path, retains successful immutable asset bodies, and permits at most four
 distinct ASAR filesystem reads at once. Query strings cannot bypass that bound
-or cache. Static assets also receive immutable browser cache headers, while HTML
-receives `Cache-Control: no-store` because each document response carries the
-current hub-specific CSP.
+or cache. Response extensions are normalized once for MIME, caching, and
+security-header decisions. HTML receives `Cache-Control: no-store`; other
+assets receive immutable browser cache headers. Both HTML and SVG responses
+receive the current CSP because either can act as a script-bearing document.
 
 ### Content Security Policy
 

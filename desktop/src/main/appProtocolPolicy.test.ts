@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  appAssetCacheControl,
+  appAssetResponsePolicy,
   BoundedAssetReader,
   isAppSchemeRequestAllowed,
 } from './appProtocolPolicy.ts';
@@ -16,10 +16,22 @@ function request(
 }
 
 describe('app protocol policy', () => {
-  it('does not cache documents as immutable assets', () => {
-    assert.equal(appAssetCacheControl('/renderer/index.html'), 'no-store');
-    assert.equal(appAssetCacheControl('/renderer/INDEX.HTML'), 'no-store');
-    assert.equal(appAssetCacheControl('/renderer/app.js'), 'public, max-age=31536000, immutable');
+  it('normalizes response policy and protects every active document type', () => {
+    assert.deepEqual(appAssetResponsePolicy('/renderer/INDEX.HTML'), {
+      extension: '.html',
+      cacheControl: 'no-store',
+      requiresContentSecurityPolicy: true,
+    });
+    assert.deepEqual(appAssetResponsePolicy('/renderer/icon.SVG'), {
+      extension: '.svg',
+      cacheControl: 'public, max-age=31536000, immutable',
+      requiresContentSecurityPolicy: true,
+    });
+    assert.deepEqual(appAssetResponsePolicy('/renderer/app.js'), {
+      extension: '.js',
+      cacheControl: 'public, max-age=31536000, immutable',
+      requiresContentSecurityPolicy: false,
+    });
   });
 
   it('allows app requests and only the OAuth cross-site navigation', () => {
