@@ -561,7 +561,7 @@ impl GameSession {
         self.peer
             .coins_of_interest()
             .into_iter()
-            .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
+            .map(|(kind, coin)| (kind.label(), coin.to_coin_id().to_string()))
             .collect()
     }
 

@@ -310,20 +310,20 @@ pub enum CoinOfInterest {
     Funding,
     Channel,
     Unroll,
-    UnrollPayout,
-    CurrentGame,
-    GamePayout,
+    UnrollChange,
+    CurrentGame(GameID),
+    GameReward(GameID),
 }
 
 impl CoinOfInterest {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            CoinOfInterest::Funding => "Funding coin",
-            CoinOfInterest::Channel => "Channel coin",
-            CoinOfInterest::Unroll => "Unroll coin",
-            CoinOfInterest::UnrollPayout => "Unroll payout coin",
-            CoinOfInterest::CurrentGame => "Current game coin",
-            CoinOfInterest::GamePayout => "Game payout coin",
+            CoinOfInterest::Funding => "Funding coin".to_string(),
+            CoinOfInterest::Channel => "Channel coin".to_string(),
+            CoinOfInterest::Unroll => "Unroll coin".to_string(),
+            CoinOfInterest::UnrollChange => "Unroll change coin".to_string(),
+            CoinOfInterest::CurrentGame(id) => format!("Game {id} coin"),
+            CoinOfInterest::GameReward(id) => format!("Game {id} reward coin"),
         }
     }
 }
@@ -576,9 +576,15 @@ mod tests {
     #[test]
     fn coin_of_interest_labels_describe_coin_provenance() {
         assert_eq!(CoinOfInterest::Funding.label(), "Funding coin");
-        assert_eq!(CoinOfInterest::UnrollPayout.label(), "Unroll payout coin");
-        assert_eq!(CoinOfInterest::CurrentGame.label(), "Current game coin");
-        assert_eq!(CoinOfInterest::GamePayout.label(), "Game payout coin");
+        assert_eq!(CoinOfInterest::UnrollChange.label(), "Unroll change coin");
+        assert_eq!(
+            CoinOfInterest::CurrentGame(GameID(7)).label(),
+            "Game 7 coin"
+        );
+        assert_eq!(
+            CoinOfInterest::GameReward(GameID(7)).label(),
+            "Game 7 reward coin"
+        );
     }
 
     #[test]

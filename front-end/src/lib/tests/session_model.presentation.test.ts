@@ -682,7 +682,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     });
   });
 
-  it('separates channel advisories from hand terminal details', () => {
+  it('stops showing hand state after the last game finishes', () => {
     const terminal = createSessionModel({
       channel: {
         status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' },
@@ -709,8 +709,9 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     });
     expect(selectGameDashboardView(terminal)).toMatchObject({
       channelDetail: null,
-      handStatusLabel: 'Ended',
-      handDetail: 'Forfeited',
+      handStatusLabel: 'No hand',
+      handDetail: null,
+      lifecycleRows: [],
     });
 
     const failed = createSessionModel({
@@ -992,6 +993,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     expect(selectGameDashboardView(model)).toMatchObject({
       handStatusLabel: 'Their turn',
       handDetail: null,
+      lifecycleRows: [{ id: 'guesser', label: 'Hand 2', statusLabel: 'Their turn', detail: null }],
     });
     expect(selectGameSessionView(model).gameTerminal).toEqual(INITIAL_GAME_TERMINAL_MODEL);
     expect(selectGameSpecificView(model)).toMatchObject({
@@ -1074,7 +1076,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     expect(partiallyResolvedGroup).toEqual([
       { label: 'Me', value: '85' },
       { label: 'Opp', value: '15' },
-      { label: 'Hand', value: '100' },
+      { label: 'Hand 2', value: '100' },
     ]);
 
     const bothResolved = selectStatusBarBalances(

@@ -333,14 +333,14 @@ function channelStatusDetail(model: SessionModel): string | null {
 }
 
 function selectHandStatus(model: SessionModel): HandStatus {
+  if (model.game.activeIds.length === 0) {
+    return 'none';
+  }
   const displayed = selectDisplayedGameInstance(model);
   const terminal = displayed?.terminal ?? INITIAL_GAME_TERMINAL_MODEL;
   const coin = displayed?.coin ?? DEFAULT_GAME_COIN_MODEL;
   if (terminal.type !== 'none' || coin.turnState === 'ended') {
     return 'ended';
-  }
-  if (model.game.activeIds.length === 0) {
-    return 'none';
   }
   // The unroll commitment can still be preempted while GoingOnChain or
   // Unrolling. Per-game coin/turn classifications are not authoritative until
@@ -380,6 +380,9 @@ function collapsedHandStatusLabel(model: SessionModel): string {
 }
 
 function collapsedHandDetail(model: SessionModel): string | null {
+  if (model.game.activeIds.length === 0) {
+    return null;
+  }
   const terminal = selectDisplayedGameInstance(model)?.terminal ?? INITIAL_GAME_TERMINAL_MODEL;
   if (terminal.type === 'none') {
     return null;
@@ -411,6 +414,9 @@ function selectLifecycleRows(model: SessionModel): GameDashboardViewModel['lifec
     const stored = model.game.instances[id];
     if (!stored) return [];
     const instance = gameInstanceView(stored);
+    if (instance.terminal.type !== 'none' || instance.coin.turnState === 'ended') {
+      return [];
+    }
     return [
       {
         id,
@@ -610,11 +616,12 @@ export function selectStatusBarBalances(
 
   const onChain = ON_CHAIN_CHANNEL_STATES.has(channel.state) && channel.state !== 'ResolvedClean';
   const displayedIds = onChain ? model.game.currentHandIds : model.game.activeIds;
-  const multiple = displayedIds.length > 1;
-  displayedIds.forEach((id, index) => {
+  const multiple = model.game.currentHandIds.length > 1;
+  displayedIds.forEach((id) => {
     const instance = model.game.instances[id];
     if (!instance) return;
-    const label = multiple ? `Hand ${index + 1}` : 'Hand';
+    const handIndex = model.game.currentHandIds.indexOf(id);
+    const label = multiple && handIndex >= 0 ? `Hand ${handIndex + 1}` : 'Hand';
     try {
       const amount = BigInt(instance.amount);
       if (amount < 0n) return;

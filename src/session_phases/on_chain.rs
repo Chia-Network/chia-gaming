@@ -2109,13 +2109,13 @@ impl PeerLifecyclePhase for OnChainPhase {
         let mut coins: Vec<(CoinOfInterest, CoinString)> = self
             .current_game_coins
             .iter()
-            .map(|(_, coin)| (CoinOfInterest::CurrentGame, coin.clone()))
+            .map(|(id, coin)| (CoinOfInterest::CurrentGame(*id), coin.clone()))
             .collect();
         if let Some(reward) = self.terminal_reward_coin.as_ref().filter(|coin| {
             coin.amount()
                 .is_some_and(|amount| amount > Amount::default())
         }) {
-            coins.push((CoinOfInterest::UnrollPayout, reward.clone()));
+            coins.push((CoinOfInterest::UnrollChange, reward.clone()));
         }
         coins.extend(
             self.game_payout_coins
@@ -2124,7 +2124,7 @@ impl PeerLifecyclePhase for OnChainPhase {
                     coin.amount()
                         .is_some_and(|amount| amount > Amount::default())
                 })
-                .map(|(_, coin)| (CoinOfInterest::GamePayout, coin.clone())),
+                .map(|(id, coin)| (CoinOfInterest::GameReward(*id), coin.clone())),
         );
         coins
     }
