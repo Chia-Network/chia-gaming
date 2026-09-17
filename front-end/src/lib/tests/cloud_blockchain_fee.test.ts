@@ -96,8 +96,7 @@ describe('CloudBlockchainInterface fee support', () => {
     return (call!.variables.input ?? {}) as Record<string, unknown>;
   }
 
-  it('createOfferForIds includes the fee in the mutation input when nonzero', async () => {
-    mockFee = 500n;
+  it('createOfferForIds directly creates the message-bound funding child', async () => {
     const calls = mockGraphql((query) => {
       if (query.includes('createSpendWithExtraConditions')) {
         return {
@@ -107,10 +106,24 @@ describe('CloudBlockchainInterface fee support', () => {
       return {};
     });
     const iface = new CloudBlockchainInterface();
-    await expect(iface.createOfferForIds('uid', { '1': -1000n })).rejects.toThrow(/popup/i);
+    const preLauncherPuzzleHash = 'ab'.repeat(32);
+    await expect(
+      iface.createOfferForIds(
+        'uid',
+        { '1': -1000n },
+        [{ opcode: 67n, args: ['10', '', preLauncherPuzzleHash] }],
+        undefined,
+        undefined,
+        500n,
+      ),
+    ).rejects.toThrow(/popup/i);
     const input = findSpendMutation(calls);
     expect(input.amount).toBe('1000');
-    expect(input.fee).toBe('500');
+    expect(input.fee).toBeUndefined();
+    expect(input.extraConditions).toEqual([
+      { opcode: '67', args: ['10', '', preLauncherPuzzleHash] },
+      { opcode: '51', args: [preLauncherPuzzleHash, '1000'] },
+    ]);
   });
 
   it('createOfferForIds omits the fee when zero', async () => {
@@ -130,8 +143,7 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(input.fee).toBeUndefined();
   });
 
-  it('selectCoins picks a coin large enough to cover amount + fee', async () => {
-    // Coin A covers the amount alone; coin B also covers the fee.
+  it('selectCoins treats the supplied amount as the exact requirement', async () => {
     const nodeA = { name: '11'.repeat(32), amount: '100', puzzleHash: 'bb'.repeat(32) };
     const nodeB = { name: '22'.repeat(32), amount: '150', puzzleHash: 'dd'.repeat(32) };
     const records = [
@@ -155,16 +167,12 @@ describe('CloudBlockchainInterface fee support', () => {
       return { coins: { edges: [{ node: nodeA }, { node: nodeB }] } };
     };
 
-    mockFee = 0n;
     mockGraphql(handler);
-    const zeroFeeCoin = await new CloudBlockchainInterface().selectCoins('uid', 100n);
-    // Smallest coin >= 100 with fee 0 is coin A (parent aa, ph bb).
-    expect(zeroFeeCoin?.startsWith('aa'.repeat(32) + 'bb'.repeat(32))).toBe(true);
+    const contributionCoin = await new CloudBlockchainInterface().selectCoins('uid', 100n);
+    expect(contributionCoin?.startsWith('aa'.repeat(32) + 'bb'.repeat(32))).toBe(true);
 
-    mockFee = 50n;
     mockGraphql(handler);
-    const feeCoin = await new CloudBlockchainInterface().selectCoins('uid', 100n);
-    // With required 150, coin A is too small; coin B (parent cc, ph dd) is picked.
+    const feeCoin = await new CloudBlockchainInterface().selectCoins('uid', 150n);
     expect(feeCoin?.startsWith('cc'.repeat(32) + 'dd'.repeat(32))).toBe(true);
   });
 

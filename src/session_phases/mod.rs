@@ -450,9 +450,23 @@ impl OffChainPhase {
         match self.drain_queue_into_batch(env) {
             Ok((_sent, effects)) => Ok(effects),
             Err(failure) => {
+                let DrainQueueFailure {
+                    queue_index,
+                    action,
+                    source,
+                } = *failure;
                 self.last_failed_queued_action =
-                    failure.action.as_ref().and_then(failed_game_action_context);
-                Err(failure.source)
+                    action.as_ref().and_then(failed_game_action_context);
+                if let Some(failed_index) = queue_index {
+                    if failed_index >= self.game_action_queue.len() {
+                        return Err(Error::StrErr(
+                            "failed queued action index exceeds restored local drain queue"
+                                .to_string(),
+                        ));
+                    }
+                    self.game_action_queue.remove(failed_index);
+                }
+                Err(source)
             }
         }
     }
@@ -497,8 +511,6 @@ impl OffChainPhase {
         }
 
         let (sent, batch_effects) = loop {
-            let drain_channel_snapshot = self.channel_state.clone();
-            let drain_queue_snapshot = self.game_action_queue.clone();
             match self.drain_queue_into_batch(env) {
                 Ok(result) => break result,
                 Err(failure) => {
@@ -515,13 +527,12 @@ impl OffChainPhase {
                     let Some((id, action)) = failed_game_action_context(failed_action) else {
                         return Err(source);
                     };
-                    if failed_index >= drain_queue_snapshot.len() {
+                    if failed_index >= self.game_action_queue.len() {
                         return Err(Error::StrErr(
-                            "failed queued action index exceeds local drain snapshot".to_string(),
+                            "failed queued action index exceeds restored local drain queue"
+                                .to_string(),
                         ));
                     }
-                    self.channel_state = drain_channel_snapshot;
-                    self.game_action_queue = drain_queue_snapshot;
                     self.game_action_queue.remove(failed_index);
                     effects.push(Effect::Notify(GameNotification::ActionFailed {
                         id: Some(id),
@@ -1040,9 +1051,13 @@ impl OffChainPhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
     ) -> Result<(bool, Vec<Effect>), Box<DrainQueueFailure>> {
+        let channel_snapshot = self.channel_state.clone();
+        let queue_snapshot = self.game_action_queue.clone();
         let mut current_action = None;
         let result = self.drain_queue_into_batch_inner(env, &mut current_action);
         result.map_err(|source| {
+            self.channel_state = channel_snapshot;
+            self.game_action_queue = queue_snapshot;
             let (queue_index, action) = match current_action {
                 Some((index, action)) => (Some(index), Some(action)),
                 None => (None, None),
@@ -1387,7 +1402,7 @@ impl OffChainPhase {
         }
 
         match msg_envelope.borrow() {
-            PeerMessage::HandshakeF(_) => {}
+            PeerMessage::HandshakeD(_) => {}
 
             PeerMessage::RequestPotato(_) => {
                 self.peer_wants_potato = true;
@@ -1890,7 +1905,7 @@ impl PeerLifecyclePhase for OffChainPhase {
         self.take_channel_spend_next_phase()
             .map(|h| h as Box<dyn PeerLifecyclePhase>)
     }
-    fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
+    fn new_block(&mut self, _env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error> {
         self.last_height = height;
         Ok(vec![])
     }
@@ -1900,7 +1915,11 @@ impl PeerLifecyclePhase for OffChainPhase {
     fn is_on_chain(&self) -> bool {
         false
     }
-    fn start_handshake(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Option<Effect>, Error> {
+    fn start_handshake(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _opening_fee: Amount,
+    ) -> Result<Option<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "start_handshake"))
     }
     fn channel_offer(
@@ -1916,16 +1935,6 @@ impl PeerLifecyclePhase for OffChainPhase {
         _bundle: &SpendBundle,
     ) -> Result<Option<Effect>, Error> {
         Ok(None)
-    }
-    fn provide_launcher_coin(
-        &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _launcher_coin: CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "provide_launcher_coin",
-        ))
     }
     fn provide_coin_spend_bundle(
         &mut self,

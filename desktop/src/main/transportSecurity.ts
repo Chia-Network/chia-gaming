@@ -1,5 +1,8 @@
 export const WEBRTC_IP_HANDLING_POLICY = 'disable_non_proxied_udp';
-export const DISABLED_TRANSPORT_FEATURE = 'WebTransport';
+export const CONNECTION_ALLOWLIST_FEATURES = [
+  'ConnectionAllowlists',
+  'OverrideConnectionAllowlistOriginTrial',
+];
 
 type ChromiumCommandLine = {
   getSwitchValue(name: string): string;
@@ -11,15 +14,17 @@ type WebRTCPolicyTarget = {
 };
 
 export function installProcessTransportSecurity(commandLine: ChromiumCommandLine): void {
-  const disabledFeatures = new Set(
+  const enabledFeatures = new Set(
     commandLine
-      .getSwitchValue('disable-features')
+      .getSwitchValue('enable-features')
       .split(',')
       .map((feature) => feature.trim())
       .filter(Boolean),
   );
-  disabledFeatures.add(DISABLED_TRANSPORT_FEATURE);
-  commandLine.appendSwitch('disable-features', [...disabledFeatures].join(','));
+  for (const feature of CONNECTION_ALLOWLIST_FEATURES) {
+    enabledFeatures.add(feature);
+  }
+  commandLine.appendSwitch('enable-features', [...enabledFeatures].join(','));
   commandLine.appendSwitch('force-webrtc-ip-handling-policy', WEBRTC_IP_HANDLING_POLICY);
 }
 

@@ -6,11 +6,12 @@ use crate::channel_state::types::{ChannelPrivateKeys, StateUpdateSignatures};
 use crate::channel_state::ChannelState;
 use crate::common::constants::{
     ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
+    RECEIVE_MESSAGE, RESERVE_FEE_ATOM, SEND_MESSAGE,
 };
 use crate::common::standard_coin::verify_reward_payout_signature;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, Hash, IntoErr, Node,
-    PublicKey, PuzzleHash, SpendBundle,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, Error, Hash, IntoErr, Node, PublicKey,
+    PuzzleHash, SpendBundle,
 };
 use serde::{Deserialize, Serialize};
 
@@ -110,24 +111,21 @@ pub fn validate_ab_payload(
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct HandshakePayloadC {
-    pub launcher_coin: CoinString,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct HandshakePayloadD {
+pub struct HandshakePayloadBWithGenesis {
+    pub identity: HandshakePayloadB,
+    pub channel_coin_grandparent: CoinID,
     pub signatures: StateUpdateSignatures,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct HandshakePayloadE {
+pub struct HandshakePayloadC {
     pub bundle: SpendBundle,
     pub signatures: StateUpdateSignatures,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct HandshakePayloadF {
-    /// Receiver wallet acceptance only. It must not repeat spends from E.
+pub struct HandshakePayloadD {
+    /// Receiver wallet acceptance and channel-ancestry completion.
     pub bundle: SpendBundle,
 }
 
@@ -150,11 +148,14 @@ pub fn combine_channel_funding_bundles(
     }
     let mut spends = initiator_bundle.spends.clone();
     spends.extend(receiver_acceptance.spends.iter().cloned());
-    Ok(SpendBundle { name: None, spends })
+    Ok(SpendBundle {
+        name: Some("channel-opening".to_string()),
+        spends,
+    })
 }
 
 /// Require the receiver's acceptance to be atomic with this channel launcher.
-pub fn receiver_acceptance_asserts_funding_announcement(
+pub fn contribution_bundle_asserts_funding_announcement(
     allocator: &mut AllocEncoder,
     acceptance: &SpendBundle,
     expected_announcement: &Hash,
@@ -178,7 +179,7 @@ pub fn receiver_acceptance_asserts_funding_announcement(
         }
     }
     Err(Error::StrErr(
-        "handshake F does not assert the launcher announcement".to_string(),
+        "handshake C does not assert the launcher announcement".to_string(),
     ))
 }
 
@@ -191,13 +192,13 @@ pub fn validate_assembled_channel_funding(
     agg_sig_me_additional_data: &Hash,
     height: u64,
 ) -> Result<SpendBundle, Error> {
-    require_concentrated_funding_signature(initiator_bundle, "handshake E")?;
-    require_concentrated_funding_signature(receiver_acceptance, "handshake F")?;
+    require_concentrated_funding_signature(initiator_bundle, "handshake C")?;
+    require_concentrated_funding_signature(receiver_acceptance, "handshake D")?;
     let combined = combine_channel_funding_bundles(initiator_bundle, receiver_acceptance)?;
     combined.validate_consensus(agg_sig_me_additional_data, height)?;
-    receiver_acceptance_asserts_funding_announcement(
+    contribution_bundle_asserts_funding_announcement(
         allocator,
-        receiver_acceptance,
+        initiator_bundle,
         expected_announcement,
     )?;
     Ok(combined)
@@ -234,6 +235,8 @@ pub struct HandshakeStepInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinSpendRequest {
     pub amount: Amount,
+    #[serde(default)]
+    pub fee: Amount,
     pub conditions: Vec<RawCoinCondition>,
     pub coin_id: Option<CoinID>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,6 +261,21 @@ pub fn raw_coin_conditions_to_clvm(
             ASSERT_COIN_ANNOUNCEMENT | CREATE_COIN_ANNOUNCEMENT | ASSERT_BEFORE_HEIGHT_ABSOLUTE => {
                 1
             }
+            opcode if opcode == RESERVE_FEE_ATOM[0] as u32 => 1,
+            SEND_MESSAGE => 2,
+            RECEIVE_MESSAGE => match condition
+                .args
+                .first()
+                .and_then(|mode| mode.as_slice().first())
+            {
+                Some(16) => 3,
+                Some(24) => 4,
+                _ => {
+                    return Err(Error::StrErr(
+                        "wallet RECEIVE_MESSAGE must use mode 16 or 24".to_string(),
+                    ))
+                }
+            },
             opcode => {
                 return Err(Error::StrErr(format!(
                     "unsupported wallet condition opcode {opcode}"
@@ -306,11 +324,12 @@ mod tests {
 
     use crate::common::constants::{
         AGG_SIG_ME_ADDITIONAL_DATA, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT,
+        RESERVE_FEE_ATOM,
     };
     use crate::common::standard_coin::{private_to_public_key, sign_reward_payout};
     use crate::common::types::{
-        AllocEncoder, CoinSpend, Hash, PrivateKey, Program, Puzzle, Sha256Input, Sha256tree, Spend,
-        ToQuotedProgram,
+        AllocEncoder, CoinSpend, CoinString, Hash, PrivateKey, Program, Puzzle, Sha256Input,
+        Sha256tree, Spend, ToQuotedProgram,
     };
     use crate::utils::proper_list;
 
@@ -323,6 +342,7 @@ mod tests {
             my_channel_coin_private_key: private_key(tags[0]),
             my_unroll_coin_private_key: private_key(tags[1]),
             my_referee_private_key: private_key(tags[2]),
+            my_pre_launcher_private_key: private_key(tags[2].wrapping_add(32)),
         }
     }
 
@@ -392,6 +412,10 @@ mod tests {
                 opcode: ASSERT_BEFORE_HEIGHT_ABSOLUTE,
                 args: vec![vec![99]],
             },
+            RawCoinCondition {
+                opcode: RESERVE_FEE_ATOM[0] as u32,
+                args: vec![vec![10]],
+            },
         ];
         let mut allocator = AllocEncoder::new();
         let simulator_nodes =
@@ -414,6 +438,7 @@ mod tests {
                 vec![vec![ASSERT_COIN_ANNOUNCEMENT as u8], vec![8; 32]],
                 vec![vec![CREATE_COIN_ANNOUNCEMENT as u8], b"created".to_vec()],
                 vec![vec![ASSERT_BEFORE_HEIGHT_ABSOLUTE as u8], vec![99]],
+                vec![vec![RESERVE_FEE_ATOM[0]], vec![10]],
                 vec![vec![ASSERT_BEFORE_HEIGHT_ABSOLUTE as u8], vec![100]],
             ]
         );

@@ -100,6 +100,7 @@
                 INFOHASH_B
                 (<= (strlen new_move) MAX_MOVE_SIZE)
                 (<= (strlen new_max_move_size) 2)
+                (>= new_max_move_size 0)
                 (= new_max_move_size (+ new_max_move_size 0))
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)

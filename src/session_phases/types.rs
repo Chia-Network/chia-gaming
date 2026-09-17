@@ -13,7 +13,7 @@ use crate::common::types::{
 };
 use crate::session_phases::effects::Effect;
 use crate::session_phases::handshake::{
-    HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
+    HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadC, HandshakePayloadD,
 };
 use crate::session_phases::proposal::GameProposal;
 
@@ -104,12 +104,10 @@ pub enum BatchAction {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub enum PeerMessage {
-    HandshakeA(HandshakePayloadB),
-    HandshakeB(HandshakePayloadB),
+    HandshakeA(Box<HandshakePayloadB>),
+    HandshakeB(Box<HandshakePayloadBWithGenesis>),
     HandshakeC(HandshakePayloadC),
     HandshakeD(HandshakePayloadD),
-    HandshakeE(HandshakePayloadE),
-    HandshakeF(HandshakePayloadF),
 
     Batch {
         actions: Vec<BatchAction>,
@@ -133,8 +131,6 @@ impl PeerMessage {
                 | PeerMessage::HandshakeB(_)
                 | PeerMessage::HandshakeC(_)
                 | PeerMessage::HandshakeD(_)
-                | PeerMessage::HandshakeE(_)
-                | PeerMessage::HandshakeF(_)
         )
     }
 }

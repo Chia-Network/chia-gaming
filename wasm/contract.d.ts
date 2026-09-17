@@ -29,6 +29,7 @@ export interface IChiaIdentity {
 
 export interface NeedCoinSpendRequest {
   amount: string;
+  fee: string;
   conditions: Array<{ opcode: bigint | number; args: string[] }>;
   coin_id?: string;
   max_height?: bigint | number;
@@ -227,8 +228,7 @@ export type GameSessionEvent =
   | { Log: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
-  | { NeedCoinSpend: NeedCoinSpendRequest }
-  | { NeedLauncherCoin: true };
+  | { NeedCoinSpend: NeedCoinSpendRequest };
 
 export interface WatchedCoinEntry {
   coin_name: string;

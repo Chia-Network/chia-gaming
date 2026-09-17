@@ -134,12 +134,19 @@ directory and rejects anything that escapes it. It reads through Node's `fs`
 rather than `net.fetch(file://…)` because asar support is implemented as an `fs`
 shim; that is what lets the renderer stay sealed inside `app.asar`, where the
 integrity-validation fuse still covers it, instead of being unpacked beside it.
-Cross-site asset requests are rejected using Chromium Fetch Metadata, with the
-Cloud Wallet's top-level `/oauth/callback` navigation as the sole exception.
-Each request performs a stateless ASAR-safe filesystem read; Chromium owns
-response caching and request coalescing. Static assets receive immutable cache
-headers, while HTML receives `Cache-Control: no-store` because each document
-response carries the current hub-specific CSP.
+Requests positively identified as cross-site by Chromium Fetch Metadata are
+rejected, with the Cloud Wallet's top-level `/oauth/callback` navigation as the
+sole exception. Electron omits all initiator metadata from both app-owned
+custom-scheme subresources and deliberately unlabelled remote requests, so an
+empty metadata set is not treated as proof of origin. Hub documents instead
+receive a CSP whose web-only `default-src` prevents them from requesting the
+custom scheme. The protocol handler independently coalesces reads by resolved
+file path, retains successful immutable asset bodies, and permits at most four
+distinct ASAR filesystem reads at once. Query strings cannot bypass that bound
+or cache. Response extensions are normalized once for MIME, caching, and
+security-header decisions. HTML receives `Cache-Control: no-store`; other
+assets receive immutable browser cache headers. Both HTML and SVG responses
+receive the current CSP because either can act as a script-bearing document.
 
 ### Content Security Policy
 
@@ -174,10 +181,15 @@ the WalletConnect endpoints `sign-client` actually reaches: the `.com` and
 `chiagaming://` are answered from disk and never touch the network stack.
 
 Chromium transports that do not pass through `onBeforeRequest` are restricted
-separately. WebTransport is disabled before Chromium starts. Every web contents
-uses Electron's `disable_non_proxied_udp` WebRTC IP policy, which suppresses
-local host candidates and direct UDP rather than pretending WebRTC is covered
-by the origin allowlist.
+on each configured hub document itself. The main process replaces any
+hub-supplied `Connection-Allowlist` response header with one that permits the
+configured hub origins and sets `webrtc=block`. The desktop enables Chromium
+150's `ConnectionAllowlists` feature and its origin-trial override before
+startup, so the injected header rejects `RTCPeerConnection` construction
+without trusting a token from the hub. It also appends a `connect-src` CSP
+limited to those hubs and their WebSocket forms, which is the policy
+WebTransport enforces before opening QUIC. Every web contents additionally uses
+Electron's `disable_non_proxied_udp` WebRTC IP policy as defense in depth.
 
 ### Hub trust
 

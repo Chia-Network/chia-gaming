@@ -8,9 +8,14 @@ import { canonicalHubOrigin, deriveHubSessionId } from '../../services/hubSessio
 
 type MessageHandler = (event: MessageEvent) => void;
 
-function childAuthMessage(source: unknown, sessionId: unknown): MessageEvent {
+function childAuthMessage(
+  source: unknown,
+  sessionId: unknown,
+  origin = 'https://player.example',
+): MessageEvent {
   return {
     source,
+    origin,
     data: { type: 'hub-auth', sessionId },
   } as unknown as MessageEvent;
 }
@@ -68,13 +73,19 @@ afterEach(() => {
 });
 
 describe('hub iframe credentials', () => {
-  it('accepts a canonical session only from the embedding parent', () => {
+  it('accepts a canonical session from the embedding parent at any origin', () => {
     const parent = {} as Window;
     const sessionId = 'ab'.repeat(16);
 
     expect(hubSessionFromParentMessage(childAuthMessage(parent, sessionId), parent)).toBe(
       sessionId,
     );
+    expect(
+      hubSessionFromParentMessage(
+        childAuthMessage(parent, sessionId, 'https://unlisted-player.example'),
+        parent,
+      ),
+    ).toBe(sessionId);
     expect(hubSessionFromParentMessage(childAuthMessage({}, sessionId), parent)).toBeNull();
     expect(
       hubSessionFromParentMessage(childAuthMessage(parent, 'not-a-session'), parent),

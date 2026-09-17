@@ -29,7 +29,7 @@ This document covers:
 - reliable session negotiation;
 - reliable peer framing;
 - Bencodex encoding;
-- the six-message channel handshake;
+- the four-message channel handshake;
 - potato ownership and batches;
 - game proposals, moves, settlements, and game messages; and
 - cooperative shutdown.
@@ -215,7 +215,7 @@ The compound types use compact field keys on the wire:
 - `StateUpdateSignatures`: `c` means `channel_half_sig` and `u` means
   `unroll_preempt_half_sig`.
 
-Handshake E/F funding bundles deliberately use a bundle-level signature wire
+Handshake C/D funding bundles deliberately use a bundle-level signature wire
 shape instead of serializing each internal `Spend.signature`:
 
 ```text
@@ -278,7 +278,7 @@ hub-to-player `relay.alias` field supplies untrusted presentation metadata.
 The peer session ID is not duplicated in this dictionary. The enclosing frame
 is authoritative. The receiver durably records an admitted pending proposal and
 the advanced receive counter before acknowledging message 1. If the proposal is
-accepted, Handshake A-F continue on the same session ID and counter sequence;
+accepted, Handshake A-D continue on the same session ID and counter sequence;
 acceptance does not create a new reliable transport.
 
 A receiver rejects the proposal without starting the peer protocol if:
@@ -457,11 +457,9 @@ The top-level message is one of:
 
 ```text
 HandshakeA(HandshakePayloadB)
-HandshakeB(HandshakePayloadB)
+HandshakeB(HandshakePayloadBWithGenesis)
 HandshakeC(HandshakePayloadC)
 HandshakeD(HandshakePayloadD)
-HandshakeE(HandshakePayloadE)
-HandshakeF(HandshakePayloadF)
 Batch {
   actions: List<BatchAction>,
   signatures: StateUpdateSignatures
@@ -483,11 +481,9 @@ The intentional externally tagged outer shapes are:
 
 ```text
 HandshakeA (`HA`): d u2:HA <HandshakePayloadB struct> e
-HandshakeB (`HB`): d u2:HB <HandshakePayloadB struct> e
+HandshakeB (`HB`): d u2:HB <HandshakePayloadBWithGenesis struct> e
 HandshakeC (`HC`): d u2:HC <HandshakePayloadC struct> e
 HandshakeD (`HD`): d u2:HD <HandshakePayloadD struct> e
-HandshakeE (`HE`): d u2:HE <HandshakePayloadE struct> e
-HandshakeF (`HF`): d u2:HF <HandshakePayloadF struct> e
 Batch (`B`): d u1:B <Batch fields struct> e
 CleanShutdown (`S`): d u1:S <CleanShutdown fields struct> e
 CleanShutdownComplete (`SF`): d u2:SF <CleanShutdownComplete fields struct> e
@@ -500,9 +496,10 @@ variant or an empty list.
 
 ## 7. Handshake messages
 
-### 7.1 Shared A/B payload
+### 7.1 Identity payload
 
-Messages A and B carry the same struct:
+Handshake A carries this identity struct; Handshake B embeds the receiver's
+copy of it:
 
 ```text
 HandshakePayloadB {
@@ -531,9 +528,10 @@ Handshake payload field keys are:
 - `up` means `unroll_key_pop`.
 - `mc` means `my_contribution`.
 - `tc` means `their_contribution`.
-- `lc` means `launcher_coin` in Handshake C.
-- `s` means `signatures` in Handshakes D and E.
-- `b` means `bundle` in Handshakes E and F.
+- `i` means receiver `identity` in Handshake B.
+- `g` means `channel_coin_grandparent` (the pre-launcher coin ID) in B.
+- `s` means `signatures` in Handshakes B and C.
+- `b` means `bundle` in Handshakes C and D.
 
 `capabilities` is a text-keyed version map. Both A and B must contain
 `"p": 1`, where `p` means `peer_protocol`. Any missing or different value is
@@ -566,89 +564,93 @@ The receiver:
 1. verifies both proofs of possession;
 2. verifies the reward payout signature;
 3. verifies the contribution orientation; and
-4. returns its own key material in Handshake B.
+4. requests its persisted, input-reserving funding offer;
+5. derives and signs its one-time pre-launcher spend; and
+6. returns its identity, ancestry, and state-zero signatures in B.
 
 ### 7.3 Handshake B
 
 ```text
-Receiver -> Initiator: HandshakeB(HandshakePayloadB)
+HandshakePayloadBWithGenesis {
+  identity: HandshakePayloadB,
+  channel_coin_grandparent: CoinID,
+  signatures: StateUpdateSignatures
+}
+
+Receiver -> Initiator: HandshakeB(HandshakePayloadBWithGenesis)
 ```
 
-The initiator performs the same key, reward, and contribution checks. It then
-obtains a launcher coin through its local wallet integration.
+Before B, the receiver's wallet offer creates an OFFER_MOD settlement coin of
+`receiver contribution + opening fee`. Its completion creates a standard
+pre-launcher coin of the same amount. The pre-launcher uses an independently
+generated, persisted one-time private key; it sends a mode-16 nil message from
+its puzzle hash to the wallet spend, reserves the opening fee, creates a
+zero-value standard singleton launcher, and requires that launcher to be spent.
+
+`channel_coin_grandparent` is the pre-launcher coin ID. It therefore commits
+the launcher and channel ancestry before state signatures are accepted.
+`signatures` contains the receiver's state-zero channel and unroll
+half-signatures.
 
 ### 7.4 Handshake C
 
 ```text
 HandshakePayloadC {
-  launcher_coin: CoinString
+  bundle: SpendBundle,
+  signatures: StateUpdateSignatures
 }
 
 Initiator -> Receiver: HandshakeC(HandshakePayloadC)
 ```
 
-This commits the concrete launcher and therefore the future channel coin ID
-before either party sends state-zero signatures. The receiver requires the
-launcher's puzzle hash to be the standard singleton launcher puzzle hash.
+The initiator validates B, constructs the channel coin from the committed
+pre-launcher ancestry, verifies state zero, advances to state one, and requests
+a persisted, input-reserving offer for `initiator contribution + opening fee`.
+
+The offer settlement output creates a quoted contribution coin of the same
+amount. The wallet spend receives that coin's mode-24 nil message, committed by
+sender puzzle hash and amount. The contribution coin sends the message,
+reserves the opening fee, and asserts the launcher announcement. `bundle`
+contains this completed initiator half; `signatures` contains the initiator's
+state-one half-signatures.
 
 ### 7.5 Handshake D
 
 ```text
 HandshakePayloadD {
-  signatures: StateUpdateSignatures
+  bundle: SpendBundle
 }
 
 Receiver -> Initiator: HandshakeD(HandshakePayloadD)
 ```
 
-These are the receiver's state-zero channel and unroll half-signatures. The
-initiator verifies and stores both, giving it the fully signed state-zero
-unroll. It then advances the unchanged opening state to state one before E.
+The receiver verifies and stores the state-one signatures, giving it the
+initial potato and making state two its next ordinary update. It combines C
+with its prebuilt receiver half, validates the complete spend bundle under
+Chia consensus, submits that local aggregate, and returns only its receiver
+half in D. The initiator independently combines and validates C and D before
+submission.
 
-### 7.6 Handshake E
-
-```text
-HandshakePayloadE {
-  bundle: SpendBundle,
-  signatures: StateUpdateSignatures
-}
-
-Initiator -> Receiver: HandshakeE(HandshakePayloadE)
-```
-
-`bundle` is the initiator's partial channel-funding transaction: the initiator
-wallet spend(s) plus the launcher spend. `signatures` contains the initiator's
-state-one half-signatures. State one has the same opening payout as state zero;
-only its sequence number and resulting unroll puzzle hash differ. The receiver
-verifies and stores the signatures, giving it the fully signed state-one
-unroll, before completing its local funding work. The receiver must not treat
-this bundle as a finished funding transaction.
-
-### 7.7 Handshake F
+The complete offer-based accounting is:
 
 ```text
-HandshakePayloadF {
-  bundle: SpendBundle
-}
-
-Receiver -> Initiator: HandshakeF(HandshakePayloadF)
+receiver wallet  -> OFFER_MOD(receiver contribution + fee)
+                 -> pre-launcher(receiver contribution + fee)
+                 -> SINGLETON_LAUNCHER(0)
+                 -> channel(total contributions)
+initiator wallet -> OFFER_MOD(initiator contribution + fee)
+                 -> quoted contribution coin(initiator contribution + fee)
+                 -> no outputs
 ```
 
-`bundle` is the receiver's acceptance only: the receiver wallet spend(s) that
-bind to the launcher announcement. It must not repeat spends from E. Both
-endpoints combine the exact E and F halves they hold and run Chia consensus
-validation over that whole assembled bundle before submission. This shared
-validation checks all spends together, including aggregate signatures,
-duplicate coin spends, and the receiver's announcement assertion against the
-announcement created by E. The protocol also requires F itself to assert the
-expected launcher announcement. Each nonempty E or F wallet half carries its
-bundle-level aggregate signature in exactly one internal spend field; per-input
-signature fields are invalid. Both endpoints submit only their independently
-assembled and validated result; neither treats a peer payload as an
-already-combined transaction.
+The aggregate input/output difference is exactly both declared opening fees.
+The locally named `channel-opening` submission already contains them, so the
+host must not attach its ordinary separate fee offer. A direct-spend wallet
+may create the pre-launcher or quoted contribution coin directly, omitting
+only the corresponding OFFER_MOD settlement hop.
 
 Channel activation is driven by a local channel-coin observation outside this
-wire protocol. F and activation may be observed in either order, but transition
+wire protocol. D and activation may be observed in either order, but transition
 requires both the role's handshake work and that local observation to be
 complete. After activation:
 
@@ -656,12 +658,10 @@ complete. After activation:
 - the initiator begins without it and retains the fully signed state-zero
   unroll;
 - the receiver's first ordinary Batch advances to even state two; and
-- the off-chain phase ignores a late Handshake F.
+- both sides process non-handshake messages queued during activation lag in
+  FIFO order.
 
-In the initiator's finished handshake state, duplicate Handshake F messages are
-accepted but ignored after the first funding-bundle submission.
-
-### 7.8 Handshake ordering
+### 7.6 Handshake ordering
 
 The legal wire order is:
 
@@ -671,18 +671,14 @@ Initiator                         Receiver
     |<------- HandshakeB -------------|
     |-------- HandshakeC ------------>|
     |<------- HandshakeD -------------|
-    |-------- HandshakeE ------------>|
-    |<------- HandshakeF -------------|
 ```
 
-Handshake processing is strict FIFO. Before E is sent or received, any peer
-message other than the exact next A-F step is a protocol error, including while
-waiting for a local wallet callback. After the initiator sends E, it accepts F
-immediately and queues only non-handshake messages that arrived during local
-activation lag. After the receiver receives E, it rejects every further A-F
-message and queues only non-handshake activation-lag messages. Those retained
-messages move to `OffChainPhase` in arrival order once local channel activation
-is observed.
+Handshake processing is strict FIFO. Before each side completes its
+role-specific work, any peer message other than the exact next A-D step is a
+protocol error, including while waiting for a local wallet callback. Finished
+handlers queue only non-handshake activation-lag messages; those retained
+messages move to `OffChainPhase` in arrival order once that endpoint observes
+the channel coin.
 
 ## 8. Potato protocol
 
@@ -898,13 +894,18 @@ invocation succeeds, the move is slashable and is rejected. Discovery,
 commitment checking, and evidence trials intentionally execute the validator
 separately. The peer and handlers never supply validator programs; a returned
 non-nil next hash is resolved in the receiver's factory registry. These checks
-also apply when the next-validator hash is nil. The signed unroll leaf is the
-new virtual coin's puzzle hash.
+also apply when the next-validator hash is nil. Only after every evidence
+candidate fails does the receiver require the handler continuation to agree
+with the returned next-validator hash; successful slash evidence takes
+precedence over that continuation invariant. The signed unroll leaf is the new
+virtual coin's puzzle hash.
 
 The peer does not supply the next `max_move_size`. The receiver takes it from
 the nil-evidence validator result and canonically encodes it when constructing
 the referee puzzle. A validator must not require evidence to return its
-transition. When the next validation info hash is nil, `max_move_size` is zero.
+transition. The on-chain referee independently requires the move solution's
+next `max_move_size` atom to be canonical, non-negative, and at most two bytes.
+When the next validation info hash is nil, `max_move_size` is zero.
 
 If the game becomes terminal, the receiver queues a local
 `AcceptSettlement`.
@@ -946,8 +947,9 @@ An unknown game, absent parser, or parser failure is a peer protocol error.
 Despite not carrying the potato, `Message` is not valid in every lifecycle
 state:
 
-- before E it is invalid at every handshake step and wallet-wait boundary;
-- after E it may be retained only as an activation-lag message and delivered
+- before role-specific handshake completion it is invalid at each handshake
+  step and wallet-wait boundary;
+- after role-specific completion it may be retained as an activation-lag message and delivered
   after handshake completion;
 - it is valid during ordinary off-chain play, regardless of potato ownership;
 - it is invalid while awaiting `CleanShutdownComplete`; and
@@ -1025,9 +1027,9 @@ field is untrusted input.
 
 The handshake has two fixed roles:
 
-- **Initiator** sends handshake messages A, C, and E and enters off-chain play
+- **Initiator** sends handshake messages A and C and enters off-chain play
   without the potato.
-- **Receiver** sends handshake messages B, D, and F and enters off-chain play
+- **Receiver** sends handshake messages B and D and enters off-chain play
   with the potato.
 
 These roles remain fixed for the lifetime of the channel. They are also called
@@ -1045,7 +1047,7 @@ Reliable session proposal (message 1 selects session_id)
     +-- reliable rejection -> cancel proposed session
     |
     v
-Handshake A-F
+Handshake A-D
     |
     | local channel-activation observation
     v

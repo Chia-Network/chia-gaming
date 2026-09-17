@@ -83,6 +83,22 @@ describe('WalletConnect RPC adapter', () => {
     });
   });
 
+  it('requests off-chain offer cancellation with wallet context', async () => {
+    requestMock.mockResolvedValueOnce({ success: true });
+
+    await rpc.cancelOffer({ tradeId: 'trade-id', secure: false, fee: 0n });
+
+    expect(requestMock.mock.calls[0][0].request).toEqual({
+      method: ChiaMethod.CancelOffer,
+      params: {
+        tradeId: 'trade-id',
+        secure: false,
+        fee: 0n,
+        fingerprint: 123,
+      },
+    });
+  });
+
   it('rejects WalletConnect error payloads with method context', async () => {
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
     requestMock.mockResolvedValueOnce({

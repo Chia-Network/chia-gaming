@@ -574,6 +574,15 @@ at element 3), the move was valid and the slash attempt fails (the spend
 aborts). If the validator hard-fails, the slash transaction never exists;
 that is also a valid way to reject a slash of an honest move.
 
+Slash-solution classification is deliberately less strict than move-solution
+parsing. The second solution element being a validation program is enough for
+an observer to identify a confirmed slash; it does not traverse or impose a
+local shape on the remaining arguments. A slash can reach the chain only when
+the previous move was actually slashable, so this permissiveness cannot be used
+to punish an honest mover. Rejecting a chain-accepted slash locally would only
+break bookkeeping for the player whose illegal move was already punished.
+Move solutions remain exact because they advance the referee state.
+
 Validators have a two-sided security contract:
 
 - Every malicious move that the referee move path can accept optimistically must
@@ -610,7 +619,10 @@ move, Rust runs the current validator with nil evidence and reads its
 
 - A non-nil hash is resolved by tree hash against the factory registry and the
   resolved program becomes current for the next move.
-- A nil hash is terminal and must agree with a nil next handler.
+- If no handler evidence succeeds as a slash, a nil hash is terminal and must
+  agree with a nil next handler; a non-nil hash must agree with a non-nil next
+  handler. Successful slash evidence takes precedence because the handler may
+  deliberately omit a continuation when requesting that terminal outcome.
 
 Only the first registry position is meaningful. All later entries are an
 unordered lookup set, so protocol correctness must never depend on their order.

@@ -104,6 +104,13 @@ submission, it keeps a retained copy for reload/reorg recovery and derives the
 output coins that transaction should create from its `CREATE_COIN` conditions.
 Those expected outputs are replay/conflict metadata only. They do not become host
 poll targets unless a protocol handler separately registers the coin as watched.
+After the wallet accepts the transaction, the host acknowledges that retained
+entry and stores the exact wallet-finalized aggregate bundle. A normal fresh-sync
+pass requeues only entries that have not been acknowledged, preventing a
+successful unroll submission from prompting for the same fee again. If an
+expected output later vanishes in a reorg, the manager clears the acknowledgement
+and explicitly requeues that finalized bundle unchanged; it does not ask the
+wallet to construct a new fee spend.
 
 The replay rule is deliberately narrow:
 
@@ -297,14 +304,15 @@ indicate programming bugs — the queue was populated by our own UI/logic.
 
 The cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
-When receiving a valid peer batch also triggers a local queue drain, that drain
-has a narrower transaction boundary: an attributed local failure restores the
-post-receive channel and queue snapshots, removes only the failed action, and
-leaves earlier valid actions queued for retry. This preserves the accepted peer
-state without retaining an unsent partial local mutation. The JS-side game
-action methods (`proposeGame`, `acceptProposal`, `cancel_proposal`, `makeMove`,
-`acceptSettlement`, `cheat`) also catch WASM throws and surface them through
-the UI error dialog.
+Every `drain_queue_into_batch` call has its own transaction boundary: a failure
+restores the channel and queue snapshots before returning diagnostic context.
+The caller removes only the failed action. A post-receive drain retries the
+remaining queue immediately; an ordinary pending-action flush reports
+`ActionFailed` and leaves earlier valid actions queued for a later retry. This
+preserves accepted peer state without retaining an unsent partial local
+mutation. The JS-side game action methods (`proposeGame`, `acceptProposal`,
+`cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM
+throws and surface them through the UI error dialog.
 
 ---
 
@@ -331,9 +339,10 @@ The invariant is therefore:
   invalid peer data.
 - **Local queue drain errors are internal/local problems.**
   `drain_queue_into_batch` processes user/UI actions queued through local APIs.
-  Those errors are not a normal peer-message recovery path. An attributed
-  failure during the post-receive drain rolls back only that local drain and
-  removes the failed action; it does not reject the valid peer batch.
+  Those errors are not a normal peer-message recovery path. Every failed drain
+  restores its own channel and queue snapshots before the caller removes the
+  attributed failed action. A post-receive failure therefore does not reject a
+  valid peer batch, while an ordinary flush cannot retain an unsent prefix.
 
 Fields updated after successful signature verification, such as `have_potato`
 and `last_channel_coin_spend_info`, are outside the rollback problem because

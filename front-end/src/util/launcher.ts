@@ -1,7 +1,23 @@
-import { toUint8, toHexString, normalizeCoinStringHex } from '../util';
+import { toUint8, toHexString, normalizeCoinStringHex, encodeU64AsClvmHex } from '../util';
 
 export const SINGLETON_LAUNCHER_PUZZLE_HASH =
   'eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9';
+export const SETTLEMENT_PAYMENT_PUZZLE_HASH =
+  'cfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7';
+
+function coinBytes(parentId: Uint8Array, puzzleHash: string, amount: bigint): Uint8Array {
+  const amountBytes = toUint8(encodeU64AsClvmHex(amount));
+  const bytes = new Uint8Array(64 + amountBytes.length);
+  bytes.set(parentId, 0);
+  bytes.set(toUint8(puzzleHash), 32);
+  bytes.set(amountBytes, 64);
+  return bytes;
+}
+
+async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
+  const owned = Uint8Array.from(bytes);
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', owned.buffer));
+}
 
 /**
  * Compute the hex coin string for the 0-value launcher coin that will be
@@ -34,4 +50,31 @@ export async function computeLauncherCoin(
   const launcherCoinId = toHexString(Array.from(new Uint8Array(launcherIdBuf)));
 
   return { launcherCoinHex, launcherCoinId };
+}
+
+export async function computeOfferFundedLauncherCoin(
+  walletCoinHex: string,
+  contribution: bigint,
+  fee: bigint,
+): Promise<{
+  settlementCoinHex: string;
+  launcherCoinHex: string;
+  launcherCoinId: string;
+}> {
+  if (contribution < 0n || fee < 0n || contribution + fee > 0xffff_ffff_ffff_ffffn) {
+    throw new Error('contribution plus fee is outside the Chia u64 amount range');
+  }
+  const walletCoinId = await sha256(toUint8(normalizeCoinStringHex(walletCoinHex)));
+  const settlementCoin = coinBytes(
+    walletCoinId,
+    SETTLEMENT_PAYMENT_PUZZLE_HASH,
+    contribution + fee,
+  );
+  const settlementCoinId = await sha256(settlementCoin);
+  const launcherCoin = coinBytes(settlementCoinId, SINGLETON_LAUNCHER_PUZZLE_HASH, contribution);
+  return {
+    settlementCoinHex: toHexString(settlementCoin),
+    launcherCoinHex: toHexString(launcherCoin),
+    launcherCoinId: toHexString(await sha256(launcherCoin)),
+  };
 }

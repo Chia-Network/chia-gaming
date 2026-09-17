@@ -594,6 +594,65 @@ it('routes a normally resolved on-chain snapshot through terminal persistence', 
   );
 });
 
+it('keeps a resolved unroll live while an on-chain game is still unresolved', async () => {
+  const save = jest.fn(async () => {});
+  const saveTerminal = jest.fn(async () => {});
+  const activeModel = createSessionModel({
+    ...model,
+    channel: { ...model.channel, status: { ...model.channel.status, state: 'ResolvedUnrolled' } },
+    game: {
+      ...model.game,
+      activeIds: ['game-1'],
+      instances: {
+        'game-1': {
+          id: 'game-1',
+          amount: '10',
+          coinHex: 'aa',
+          presentation: 'on-chain-their-turn',
+          terminal: { type: 'none' },
+        },
+      },
+    },
+  });
+  const controller = {
+    getWasmFields: () => ({
+      serializedGameSession: liveCradle,
+      gameSessionSchemaVersion: 3n,
+      pairingToken: 'live-token',
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      iStarted: true,
+      rewardPuzzleHash: '11'.repeat(32),
+      handState,
+      channelStatus: { state: 'ResolvedUnrolled' },
+      wasmNotificationHistory: [],
+      diagnosticLog: [],
+    }),
+  } as unknown as SessionController;
+
+  await persistSessionSnapshot({
+    controller,
+    getState: () => createSessionMachineState(activeModel),
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    save,
+    saveTerminal,
+  });
+
+  expect(saveTerminal).not.toHaveBeenCalled();
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      scope: 'live',
+      live: expect.objectContaining({ serializedGameSession: liveCradle }),
+      presentation: expect.objectContaining({
+        channelStatus: { state: 'ResolvedUnrolled' },
+        activeGameIds: ['game-1'],
+      }),
+    }),
+  );
+});
+
 it('persists live machine hand state instead of a former controller bundle value', async () => {
   const save = jest.fn(async () => {});
   const liveModel = createSessionModel({

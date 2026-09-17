@@ -143,6 +143,16 @@ pub(in super::super) fn run_script(
         .iter()
         .any(|action| action.schedule().expects_on_chain_transition);
 
+    for action in moves_input
+        .iter()
+        .take_while(|action| matches!(action, SimScriptAction::NerfTransactions(_)))
+    {
+        let SimScriptAction::NerfTransactions(player) = action else {
+            unreachable!();
+        };
+        harness.nerf_transactions(*player);
+    }
+
     while !matches!(ending, Some(0)) {
         if let Some(action) = moves_input.get(move_number) {
             harness.establish_readiness_boundary(move_number, action.schedule().readiness);

@@ -27,6 +27,22 @@ const PEER_READINESS_RPC_TIMEOUT_MS = 7_000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
+const RESERVE_FEE = 52n;
+const RECEIVE_MESSAGE = 67n;
+
+function serializeClvmAtomHex(atomHex: string): string {
+  const atom = normalizeHexString(atomHex);
+  if (atom.length === 0) return '80';
+  const byteLength = atom.length / 2;
+  if (!Number.isInteger(byteLength)) {
+    throw new Error(`CLVM atom has odd-length hex: ${atomHex}`);
+  }
+  if (byteLength === 1 && Number.parseInt(atom, 16) <= 0x7f) return atom;
+  if (byteLength < 0x40) {
+    return (0x80 | byteLength).toString(16).padStart(2, '0') + atom;
+  }
+  throw new Error(`CLVM message argument is too large: ${byteLength} bytes`);
+}
 const CHANGE_ADDRESS_STORAGE_PREFIX = 'appState_wcChangeAddress:';
 const REMOTE_WALLET_STORAGE_PREFIX = 'appState_wcRemoteWalletId:';
 
@@ -215,6 +231,7 @@ async function rootRemovalsFromSpendBundle(spendBundle: WalletSpendBundle): Prom
 }
 
 export class RealBlockchainInterface implements InternalBlockchainInterface {
+  readonly fundingMode = 'offer-settlement' as const;
   readonly requestGapMs = WC_INTER_REQUEST_MS;
   blockchainAddressData: BlockchainInboundAddressResult;
 
@@ -388,49 +405,38 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async createFeeOffer(fee: bigint, concurrentSpendCoinId: string): Promise<string | null> {
+  async createFeeOffer(
+    fee: bigint,
+    concurrentSpendCoinId: string,
+    paymentPuzzleHash: string,
+  ): Promise<string | null> {
     if (fee <= 0n) return null;
     const protocolCoinId = concurrentSpendCoinId.startsWith('0x')
       ? concurrentSpendCoinId
       : `0x${normalizeHexString(concurrentSpendCoinId)}`;
     try {
-      // WalletConnect does not expose push=false or extra_conditions on
-      // send_transaction. A validate-only offer does expose both signing and
-      // arbitrary conditions without broadcasting. The fee is the offer's
-      // settlement output, not the wallet RPC's fee parameter. WASM spends
-      // that output through a nil-puzzle child before aggregation.
-      // Preselect so the settlement output's coin id is known before the wallet
-      // signs ASSERT_CONCURRENT_SPEND for that output. Chia 2.7.4 does not
-      // support coin_ids on create_offer_for_ids, so WASM verifies that the
-      // offer's actual output matches this prediction before submission.
-      const requiredAmount = fee;
-      const selection = await rpc.selectCoins({
-        walletId: 1n,
-        amount: requiredAmount,
-        allowUnsynced: true,
-      });
-      const selected = selection?.coins?.find((coin) => BigInt(coin.amount) >= requiredAmount);
-      const selectedCoin = selected
-        ? `${normalizeHexString(selected.parentCoinInfo)}${normalizeHexString(selected.puzzleHash)}${encodeU64AsClvmHex(BigInt(selected.amount))}`
-        : null;
-      if (!selectedCoin) {
-        throw new Error(`wallet has no single coin large enough for fee ${fee}`);
-      }
-      const selectedCoinId = await coinIdFromBytes(toUint8(selectedCoin));
-      const settlementPuzzleHash =
-        'cfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7';
-      const settlementCoinId = await coinIdFromBytes(
-        toUint8(`${selectedCoinId}${settlementPuzzleHash}${encodeU64AsClvmHex(fee)}`),
-      );
-
       const response = await rpc.createOfferForIds({
         offer: { '1': -fee },
         driverDict: {},
-        validateOnly: true,
+        // Persist the offer so the wallet reserves its selected fee input
+        // until the aggregate transaction spends it. A validate-only offer can
+        // select the same still-unconfirmed coin for concurrent submissions.
+        validateOnly: false,
         allowUnsynced: true,
         extraConditions: [
-          { opcode: 64n, args: { coin_id: protocolCoinId } },
-          { opcode: 64n, args: { coin_id: `0x${settlementCoinId}` } },
+          {
+            opcode: RECEIVE_MESSAGE,
+            args: {
+              msg: '0x',
+              var_args: [
+                serializeClvmAtomHex(paymentPuzzleHash),
+                serializeClvmAtomHex(encodeU64AsClvmHex(fee)),
+              ],
+              mode_integer: '24',
+              sender: null,
+              receiver: null,
+            },
+          },
           { opcode: 52n, args: { amount: fee } },
         ],
       });
@@ -439,7 +445,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('wallet returned no signed offer for the fee');
       }
       log(
-        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} output=0x${settlementCoinId}`,
+        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} payment=${paymentPuzzleHash}`,
       );
       return offer;
     } catch (e) {
@@ -512,6 +518,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
     maxHeight?: bigint,
+    _openingFee?: bigint,
   ): Promise<any | null> {
     try {
       const conditions = [...(extraConditions ?? [])];
@@ -545,6 +552,26 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
             args: { msg },
           };
         }
+        if (condition.opcode === RESERVE_FEE) {
+          const [amountHex = ''] = args;
+          return {
+            opcode: condition.opcode,
+            args: { amount: decodeNonNegativeClvmIntHex(amountHex) },
+          };
+        }
+        if (condition.opcode === RECEIVE_MESSAGE) {
+          const [modeHex = '', msg = '', ...varArgs] = args;
+          return {
+            opcode: condition.opcode,
+            args: {
+              msg: `0x${normalizeHexString(msg)}`,
+              var_args: varArgs.map(serializeClvmAtomHex),
+              mode_integer: decodeNonNegativeClvmIntHex(modeHex).toString(),
+              sender: null,
+              receiver: null,
+            },
+          };
+        }
         if (condition.opcode === ASSERT_BEFORE_HEIGHT_ABSOLUTE) {
           const [heightHex = ''] = args;
           return {
@@ -560,8 +587,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const payload = {
         offer,
         driverDict: {},
+        // Persist handshake funding offers so the wallet reserves its selected
+        // inputs. This matters when both peers use the same wallet: the second
+        // request must not select the first request's still-unspent coin.
+        validateOnly: false,
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
-        coinIds,
         allowUnsynced: true,
       };
       log(`[wc-blockchain] createOfferForIds payload: ${jsonStringify(payload)}`);
@@ -574,6 +604,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
         log('[wc-blockchain] createOfferForIds returned bech32 offer string path');
+        if (!payload.validateOnly) {
+          const tradeId = (response as any)?.tradeRecord?.tradeId;
+          if (typeof tradeId === 'string' && tradeId) {
+            return { offer: offerStr, tradeId };
+          }
+          log(
+            '[wc-blockchain] persisted createOfferForIds response omitted trade ID; rejected offers cannot be released automatically',
+          );
+        }
         return offerStr;
       }
       log(`[wc-blockchain] createOfferForIds returned non-offer payload type=${typeof response}`);
@@ -609,6 +648,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         (parsedError as any)?.data?.structuredError?.message ??
         '';
       throw new Error(errorMsg || errorText || 'createOfferForIds failed', { cause: e });
+    }
+  }
+
+  async cancelOffer(tradeId: string): Promise<void> {
+    const response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });
+    if (!response.success) {
+      throw new Error(`wallet failed to cancel rejected offer ${tradeId}`);
     }
   }
 

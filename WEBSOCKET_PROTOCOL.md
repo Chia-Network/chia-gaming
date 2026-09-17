@@ -388,6 +388,11 @@ then addresses the credential response only to that hub origin. The same hub
 session ID is independently supplied to the game relay connection. It is never
 sent to a peer.
 
+The hub may be embedded by any player origin. It accepts `hub-auth` only when
+`event.source === window.parent`, so another window cannot supply the iframe's
+session credential. The player independently verifies the iframe window and
+hub origin before sending that credential.
+
 The current hub retains an inactive mapping from hub session ID to player ID
 for up to 24 hours, bounded to 10,000 retained sessions by default. The
 retention clock starts when the mapping loses its last lobby/game presence, not
@@ -395,6 +400,17 @@ when it was created or last reconnected. TTL and capacity eviction retire the
 player ID, alias, challenges, and recent-correspondent edges together.
 Deployments may override these bounds with `HUB_RETAINED_SESSION_TTL_MS` and
 `HUB_MAX_RETAINED_SESSIONS`.
+
+Pending lobby challenges are also bounded retained state. A player cannot
+challenge itself, repeat an unresolved challenge to the same target, or hold
+more than 8 outgoing challenges by default. The hub retains at most 4,000
+challenges globally, and unresolved challenges expire after 5 minutes; expiry
+removes the record and sends `challenge_resolved` with `accepted: false` to
+both players. The insertion and reconnect paths prune expired entries
+immediately, and the regular liveness sweep provides reclamation when no player
+traffic occurs. Deployments may override these limits with
+`HUB_MAX_PENDING_CHALLENGES_PER_PLAYER`, `HUB_MAX_CHALLENGES`, and
+`HUB_CHALLENGE_TTL_MS`.
 
 ### 8.2 Registration
 

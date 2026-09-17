@@ -1,13 +1,17 @@
 #![allow(non_snake_case)]
 
 use crate::channel_state::game_handler::{GameHandler, MyTurnInputs};
-use crate::channel_state::types::{Evidence, ReadableMove};
+use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::types::{Evidence, ReadableMove, ValidationProgramRegistry};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::load_clvm::read_hex_puzzle;
+use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, Error, Hash, Program, Puzzle, Sha256Input,
-    Sha256tree,
+    chia_dialect, Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program,
+    ProgramRef, Puzzle, Sha256Input, Sha256tree, Timeout,
 };
 use crate::games::krunk_dict_tree::build_signed_dict_tree_from_bytes;
+use crate::referee::Referee;
 use crate::utils::proper_list;
 
 use std::rc::Rc;
@@ -936,6 +940,91 @@ fn test_krunk_bob_invalid_guess_slash() {
     );
 }
 
+fn test_krunk_bob_invalid_guess_slashes_through_referee() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator, test_dictionary());
+    let validator_programs = setup
+        .validators
+        .iter()
+        .map(|program| {
+            Program::from_nodeptr(&allocator, *program)
+                .map(Rc::new)
+                .expect("validator program")
+        })
+        .collect::<Vec<_>>();
+    let validation_programs =
+        ValidationProgramRegistry::new(&mut allocator, &validator_programs)
+            .expect("validator registry");
+    let start = Rc::new(GameStartInfo {
+        amount: Amount::new(setup.proposal_amount as u64),
+        game_handler: GameHandler::MyTurnHandler(
+            Program::from_nodeptr(&allocator, setup.alice_handler)
+                .expect("alice handler")
+                .into(),
+        ),
+        player_a_contribution: Amount::new(setup.proposal_my_contribution as u64),
+        player_b_contribution: Amount::new(setup.proposal_their_contribution as u64),
+        my_contribution_this_game: Amount::new(setup.proposal_my_contribution as u64),
+        their_contribution_this_game: Amount::new(setup.proposal_their_contribution as u64),
+        validation_programs,
+        initial_state: ProgramRef::new(Rc::new(
+            Program::from_nodeptr(&allocator, setup.initial_state).expect("initial state"),
+        )),
+        initial_move: vec![],
+        initial_max_move_size: setup.initial_max_move_size as usize,
+        initial_mover_share: Amount::new(setup.initial_mover_share as u64),
+        game_id: GameID(1),
+        timeout: Timeout::new(15),
+    });
+    let my_private_key = PrivateKey::from_bytes(&[1; 32]).expect("my private key");
+    let their_private_key = PrivateKey::from_bytes(&[2; 32]).expect("their private key");
+    let my_identity = ChiaIdentity::new(&mut allocator, my_private_key).expect("my identity");
+    let their_identity =
+        ChiaIdentity::new(&mut allocator, their_private_key).expect("their identity");
+    let their_reward_signature =
+        sign_reward_payout(&their_identity.private_key, &my_identity.puzzle_hash);
+    let referee_puzzle =
+        read_hex_puzzle(&mut allocator, "clsp/referee/onchain/referee.hex").unwrap();
+    let referee_puzzle_hash = referee_puzzle.sha256tree(&mut allocator);
+    let (referee, _) = Referee::new(
+        &mut allocator,
+        referee_puzzle,
+        referee_puzzle_hash,
+        &start,
+        my_identity.clone(),
+        &their_identity.public_key,
+        &their_identity.puzzle_hash,
+        &their_reward_signature,
+        &my_identity.puzzle_hash,
+        1,
+        &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        1,
+    )
+    .expect("initial referee");
+
+    let word = atom(&mut allocator, b"crane");
+    let readable = ReadableMove::from_nodeptr(&allocator, word).expect("readable word");
+    let prepared = referee
+        .prepare_my_turn_move(
+            &mut allocator,
+            &readable,
+            Hash::from_bytes(sha256_bytes(b"alice_salt_seed2")),
+        )
+        .expect("prepare Alice commitment");
+    let (referee, _) = referee
+        .apply_prepared_move(&mut allocator, prepared, 2)
+        .expect("apply Alice commitment");
+
+    let (next_referee, result) = referee
+        .peer_move_off_chain(&mut allocator, b"xyzzy", Amount::default(), 3)
+        .expect("out-of-dictionary guess should produce a slash");
+    assert!(next_referee.is_none(), "a successful slash ends the game");
+    assert!(
+        result.slash.is_some(),
+        "signed dictionary evidence should slash before continuation agreement"
+    );
+}
+
 fn validator_hash_node(allocator: &mut AllocEncoder, puzzle: &Puzzle) -> NodePtr {
     let hash = puzzle.sha256tree(allocator);
     allocator.allocator().new_atom(hash.hash().bytes()).unwrap()
@@ -1601,6 +1690,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_krunk_bob_invalid_guess_slash",
             &test_krunk_bob_invalid_guess_slash,
+        ),
+        (
+            "test_krunk_bob_invalid_guess_slashes_through_referee",
+            &test_krunk_bob_invalid_guess_slashes_through_referee,
         ),
         ("test_krunk_multi_guess_game", &test_krunk_multi_guess_game),
         (

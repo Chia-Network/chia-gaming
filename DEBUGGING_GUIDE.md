@@ -5,11 +5,12 @@ to build, run tests, read output, and debug failures.
 
 ## Building and Running Tests
 
-### Use `./cb.sh` and `./ct.sh`
+### Use the repository build and test scripts
 
-**Always use `./ct.sh` to run tests. Never use `cargo test` directly.** The
-script handles feature flags (`--features sim-server`), output capture
-(`--nocapture`), log rotation, and wraparound test ordering.
+**Always use `./ct.sh` or `./ct-automation.sh` to run tests. Never use
+`cargo test` directly.** These scripts handle feature flags
+(`--features sim-server`), output capture (`--nocapture`), log rotation, and
+test ordering.
 
 - **`./cb.sh`** — Build the test binary without running tests. Passes extra
   args to cargo (e.g. `./cb.sh --release`). Uses the same compilation profile
@@ -23,6 +24,11 @@ script handles feature flags (`--features sim-server`), output capture
     `accept_finished`. Useful for isolating a single test's output.
   - If the argument doesn't match any test name, you get an error listing all
     available tests.
+- **`./ct-automation.sh`** — Run the complete `./ct.sh` suite with quiet
+  success output. This is the preferred full-suite command for automation and
+  LLM agents. It captures stdout and stderr together, prints only
+  `All tests passed` on success, and replays the complete captured log to
+  stderr on failure.
 
 ### Running tests directly (without scripts)
 
@@ -110,6 +116,11 @@ with a line like `All 195 tests passed in 8.19s`. A failing run prints
 
 All tests run to completion regardless of failures — a single panic does not
 abort the suite. This lets you see every broken test in one run.
+
+For automated or LLM-driven full-suite runs, use `./ct-automation.sh` instead
+of manually filtering this output. The wrapper suppresses a successful log but
+replays the complete unmodified log to stderr if any command fails, so failure
+diagnostics remain searchable.
 
 ### Pass/fail
 
@@ -283,20 +294,19 @@ them all.
 
 ## Mistakes to Avoid
 
-- **Don't use `cargo test` directly.** Use `./ct.sh`. The script handles
+- **Don't use `cargo test` directly.** Use `./ct.sh` while debugging or
+  `./ct-automation.sh` for an automated full-suite run. The scripts handle
   feature flags, output capture, and test ordering.
-- **Don't filter test output.** Don't use `head`, `tail`, `grep`, or any
-  truncation. Read the complete output — early output is build noise, but the
-  middle contains per-test diagnostics you'll need when something fails.
+- **Don't manually filter failure output.** Read the complete `./ct.sh` output,
+  or let `./ct-automation.sh` capture it and replay it on failure. The middle
+  can contain per-test diagnostics needed to find the cause.
 - **Don't run tests in the background.** Run `./ct.sh` and `./cb.sh` in the
   foreground and wait for them to finish. Background execution with sleep-based
   polling wastes time and makes output harder to capture.
-- **AI agents: always run `./cb.sh` and `./ct.sh` in the foreground** with a
-  high `block_until_ms` (120000 ms / 2 minutes). Never background these
-  commands. The Rust sim suite runs in well under 30 seconds (~8s); the
-  slowest step is the chialisp rebuild (~80s when `.clsp` sources change),
-  so 2 minutes is a safe ceiling. Both scripts print overall elapsed time
-  at completion.
+- **AI agents: use `./ct-automation.sh` for the final full-suite check.** Use
+  `./ct.sh -o test_name` for focused debugging when direct output is useful.
+  Give either command enough foreground time to finish; the automation wrapper
+  keeps successful runs concise and emits the full log on failure.
 - **Don't use `sleep` to wait for processes.** When waiting for a command to
   finish, set `block_until_ms` to a value higher than the expected runtime.
   The tool returns as soon as the process exits or the timeout elapses,

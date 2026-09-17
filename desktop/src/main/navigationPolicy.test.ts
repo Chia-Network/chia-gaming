@@ -6,9 +6,12 @@ import type { NetworkPolicy } from './networkPolicy.ts';
 
 const policy: NetworkPolicy = {
   allowedRequestOrigins: new Set(),
+  hubOrigins: new Set(['https://frames.example']),
   allowedFrameOrigins: new Set(['https://frames.example']),
   allowedPopupOrigins: new Set(['https://wallet.example']),
   contentSecurityPolicy: '',
+  hubContentSecurityPolicy: '',
+  hubConnectionAllowlist: '',
 };
 
 describe('desktop navigation policy', () => {

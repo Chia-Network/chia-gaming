@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { isAppUrl } from './appUrl.ts';
 
 const OAUTH_CALLBACK_PATH = '/oauth/callback';
@@ -25,10 +27,17 @@ export function isOAuthCallbackPath(pathname: string): boolean {
   return normalizeDocumentPath(pathname) === OAUTH_CALLBACK_PATH;
 }
 
-export function appAssetCacheControl(filePath: string): string {
-  return filePath.toLowerCase().endsWith('.html')
-    ? 'no-store'
-    : 'public, max-age=31536000, immutable';
+export function appAssetResponsePolicy(filePath: string): {
+  extension: string;
+  cacheControl: string;
+  requiresContentSecurityPolicy: boolean;
+} {
+  const extension = path.extname(filePath).toLowerCase();
+  return {
+    extension,
+    cacheControl: extension === '.html' ? 'no-store' : 'public, max-age=31536000, immutable',
+    requiresContentSecurityPolicy: extension === '.html' || extension === '.svg',
+  };
 }
 
 export function isAppSchemeRequestAllowed(request: AppSchemeRequest): boolean {
@@ -54,4 +63,55 @@ export function isAppSchemeRequestAllowed(request: AppSchemeRequest): boolean {
   // Electron omits initiator metadata from protocol.handle requests made by
   // the app document, including stylesheet and fetch requests.
   return true;
+}
+
+type AssetRead = (filePath: string) => Promise<Uint8Array>;
+
+export class BoundedAssetReader {
+  private readonly cache = new Map<string, Promise<ArrayBuffer>>();
+  private readonly waiters: Array<() => void> = [];
+  private readonly read: AssetRead;
+  private readonly maxConcurrentReads: number;
+  private activeReads = 0;
+
+  constructor(read: AssetRead, maxConcurrentReads = 4) {
+    this.read = read;
+    this.maxConcurrentReads = maxConcurrentReads;
+  }
+
+  readAsset(filePath: string): Promise<ArrayBuffer> {
+    const cached = this.cache.get(filePath);
+    if (cached) return cached;
+
+    const pending = this.readWithPermit(filePath).catch((error: unknown) => {
+      this.cache.delete(filePath);
+      throw error;
+    });
+    this.cache.set(filePath, pending);
+    return pending;
+  }
+
+  private async readWithPermit(filePath: string): Promise<ArrayBuffer> {
+    await this.acquirePermit();
+    try {
+      const file = await this.read(filePath);
+      return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
+    } finally {
+      this.releasePermit();
+    }
+  }
+
+  private async acquirePermit(): Promise<void> {
+    if (this.activeReads < this.maxConcurrentReads) {
+      this.activeReads += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+    this.activeReads += 1;
+  }
+
+  private releasePermit(): void {
+    this.activeReads -= 1;
+    this.waiters.shift()?.();
+  }
 }

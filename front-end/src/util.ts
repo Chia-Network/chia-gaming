@@ -136,8 +136,9 @@ export function formatMojos(mojos: bigint): string {
     const sign = mojos < 0n ? '-' : '';
     const whole = absMojos / trillion;
     const frac = absMojos % trillion;
-    const fracStr = frac.toString().padStart(12, '0').slice(0, 4);
-    return `${sign}${whole.toLocaleString()}.${fracStr} ${labels.xch}`;
+    const fracStr = frac.toString().padStart(12, '0').slice(0, 4).replace(/0+$/, '');
+    const decimal = fracStr ? `.${fracStr}` : '';
+    return `${sign}${whole.toLocaleString()}${decimal} ${labels.xch}`;
   }
   return `${mojos.toLocaleString()} ${labels.mojos}`;
 }

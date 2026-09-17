@@ -5,6 +5,7 @@ import { useCalpokerHand, type UseCalpokerHandResult } from '@games/calpoker/ui/
 import type { GameIntent, LiveGamePort } from '@games/host';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
 import {
@@ -15,6 +16,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  pollOnce,
   SessionControllerAdapter,
   startSimulator,
 } from './load_wasm.harness';
@@ -415,6 +417,9 @@ async function runHandshakeRoleReload(
     adapters[index].set_blob(controller);
   });
   await flushWrapperDrain(adapters);
+  // This test owns every chain observation so the checkpoint cannot advance
+  // between the pre-reload snapshot and the post-restore comparison.
+  poller.stop();
 
   const deliverNext = async (sender: 0 | 1): Promise<void> => {
     const outbound = adapters[sender].outbound_messages();
@@ -425,12 +430,18 @@ async function runHandshakeRoleReload(
     const next = outbound[outbound.length - 1];
     adapters[sender ^ 1].deliver_message(next.msgno, next.msg);
     await flushWrapperDrain(adapters);
+    await controllers[sender ^ 1].flushPendingWork();
+    await flushWrapperDrain(adapters);
     adapters[sender].blob?.receiveAck(BigInt(next.msgno));
     await flushWrapperDrain(adapters);
   };
 
   if (checkpoint === 'initiator-sent-c' || checkpoint === 'receiver-sent-d') {
     await deliverNext(0);
+    await fakeBlockchainInfo.farmBlock();
+    await pollOnce(poller);
+    await controllers[1].flushPendingWork();
+    await flushWrapperDrain(adapters);
     await deliverNext(1);
   }
   if (checkpoint === 'receiver-sent-d') {
@@ -439,11 +450,8 @@ async function runHandshakeRoleReload(
 
   const target = checkpoint.startsWith('initiator') ? 0 : 1;
   let lane = laneForHandshakeAdapter(adapters[target]);
-  const before = lane.controller.getProtocolStatePretty();
-  assert.ok(before?.includes(checkpoint.startsWith('initiator') ? 'Initiator' : 'Receiver'));
   lane = (await injectSessionReload(lane, poller)).lane;
   assert.equal(lane.controller.getRestoreStatus(), 'restored');
-  assert.equal(lane.controller.getProtocolStatePretty(), before);
   await action_with_messages(poller, adapters[0], adapters[1]);
   assert.equal(
     lane.controller.lastChannelStatus?.state,

@@ -85,11 +85,6 @@ function requireGameSessionEvent(event: unknown): void {
         throw new Error('cradle returned an invalid NeedCoinSpend event');
       }
       return;
-    case 'NeedLauncherCoin':
-      if (payload !== true) {
-        throw new Error('cradle returned an invalid NeedLauncherCoin event');
-      }
-      return;
     default:
       throw new Error(`cradle returned an unknown GameSessionEvent: ${key}`);
   }
@@ -213,6 +208,8 @@ type GameSessionCreateConfig = WasmContract.GameSessionConfig;
 export interface CoinOfInterestEntry {
   label: string;
   id: string;
+  game_id?: string;
+  game_coin_kind?: 'current' | 'reward';
 }
 
 export interface WasmConnection {
@@ -226,9 +223,7 @@ export interface WasmConnection {
   registered_game_packages: () => Array<{ key: string; id: string }>;
 
   // Blockchain
-  set_funding_coin: (cid: number, coinstring: string) => WasmResult;
-  start_handshake: (cid: number) => WasmResult;
-  provide_launcher_coin: (cid: number, hex_launcher_coin: string) => WasmResult;
+  start_handshake: (cid: number, opening_fee: string) => WasmResult;
   provide_coin_spend_bundle: (cid: number, bundle_json: string) => WasmResult;
   provide_offer_bech32: (cid: number, offer_bech32: string) => WasmResult;
   wallet_callback_failed: (cid: number, reason: string) => WasmResult;
@@ -237,10 +232,13 @@ export interface WasmConnection {
   report_height: (cid: number, height: bigint) => WasmResult;
   snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
   drain_submissions: (cid: number) => SpendBundle[];
+  acknowledge_submission: (cid: number, spend: string, finalizedBundleJson: string) => void;
+  submission_is_finalized: (cid: number, spend: string) => boolean;
   resubmit_submitted: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
   aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
+  fee_payment_puzzle_hash_for_coin: (protocol_coin_id: string) => string;
   complete_fee_offer_to_coinset_org: (
     offer: string,
     fee: string,
@@ -281,7 +279,6 @@ export interface WasmConnection {
   ) => WasmResult;
   deliver_message: (cid: number, inbound_message: Uint8Array) => WasmResult;
   get_identity: (cid: number) => IChiaIdentity;
-  protocol_state_pretty: (cid: number) => string;
   historical_unroll_count: (cid: number) => number | undefined;
   coins_of_interest: (cid: number) => CoinOfInterestEntry[];
   serialize_game_session: (cid: number) => Uint8Array;
@@ -315,10 +312,6 @@ export class ChiaGame {
 
   cancel_proposal(game_id: string): WasmResult {
     return this.wasm.cancel_proposal(this.session, game_id);
-  }
-
-  protocol_state_pretty(): string {
-    return this.wasm.protocol_state_pretty(this.session);
   }
 
   historical_unroll_count(): bigint | undefined {
@@ -390,16 +383,8 @@ export class ChiaGame {
     return this.wasm.deliver_message(this.session, msg);
   }
 
-  set_funding_coin(coin_string: string): WasmResult {
-    return this.wasm.set_funding_coin(this.session, coin_string);
-  }
-
-  start_handshake(): WasmResult {
-    return this.wasm.start_handshake(this.session);
-  }
-
-  provide_launcher_coin(hex_launcher_coin: string): WasmResult {
-    return this.wasm.provide_launcher_coin(this.session, hex_launcher_coin);
+  start_handshake(opening_fee: string): WasmResult {
+    return this.wasm.start_handshake(this.session, opening_fee);
   }
 
   provide_coin_spend_bundle(bundle_json: string): WasmResult {
@@ -436,6 +421,16 @@ export class ChiaGame {
   /** Spend bundles the manager captured and the host should submit. */
   drain_submissions(): SpendBundle[] {
     return this.wasm.drain_submissions(this.session);
+  }
+
+  /** Record that the wallet accepted a drained submission. */
+  acknowledge_submission(spend: string, finalizedBundleJson: string): void {
+    this.wasm.acknowledge_submission(this.session, spend, finalizedBundleJson);
+  }
+
+  /** Whether this bundle must be replayed without another wallet fee spend. */
+  submission_is_finalized(spend: string): boolean {
+    return this.wasm.submission_is_finalized(this.session, spend);
   }
 
   /** Re-queue all retained submissions for resubmission (call after reload). */
@@ -518,6 +513,7 @@ export interface ConnectionSetup {
 
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
+  fundingMode?: 'offer-settlement' | 'direct';
   getRegistrationScopeKey?(): string | undefined;
   spend(
     blob: string,
@@ -527,10 +523,15 @@ export interface InternalBlockchainInterface {
     fee?: bigint,
   ): Promise<string>;
   // Build a signed, validate-only XCH offer whose settlement output is exactly
-  // the fee and whose maker spend reserves that fee and asserts a concurrent
-  // protocol spend. The host completes the offer output into an ephemeral burn
-  // spend before aggregation. Undefined on backends that do not support fees.
-  createFeeOffer?(fee: bigint, concurrentSpendCoinId: string): Promise<string | null>;
+  // the fee and whose maker spend reserves that fee and asserts concurrent
+  // spends of the protocol coin and predicted nil burn coin. The host completes
+  // the offer output into that burn chain before aggregation. Undefined on
+  // backends that do not support fees.
+  createFeeOffer?(
+    fee: bigint,
+    concurrentSpendCoinId: string,
+    paymentPuzzleHash: string,
+  ): Promise<string | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
@@ -542,7 +543,9 @@ export interface InternalBlockchainInterface {
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
     maxHeight?: bigint,
+    openingFee?: bigint,
   ): Promise<any | null>;
+  cancelOffer?(tradeId: string): Promise<void>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;

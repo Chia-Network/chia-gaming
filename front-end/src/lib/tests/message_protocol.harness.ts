@@ -125,6 +125,8 @@ export function makeMockCradle(
     report_height: jest.fn(() => wasmResult()),
     snapshot_watched_coins: jest.fn(() => []),
     drain_submissions: jest.fn(() => []),
+    acknowledge_submission: jest.fn(),
+    submission_is_finalized: jest.fn(() => false),
     resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => wasmResult()),

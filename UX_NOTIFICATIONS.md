@@ -90,7 +90,7 @@ intercepts blockchain bookkeeping events before they reach JavaScript:
 `OutboundTransaction` entries are captured for `drain_submissions()`, and
 `WatchCoin` entries update the manager's watched-coin set and are returned as
 `result.watchCoins` polling deltas. The remaining events — wallet requests
-(`NeedCoinSpend`, `NeedLauncherCoin`), outbound peer messages, notifications,
+(`NeedCoinSpend`), outbound peer messages, notifications,
 logs, receive errors, and puzzle/solution requests — are returned to JS as
 `result.events`.
 
@@ -123,7 +123,6 @@ handlers:
 - `ReceiveError` — peer message decode failure
 - `CoinSolutionRequest` — fetch puzzle/solution from blockchain
 - `Log` — diagnostic output
-- `NeedLauncherCoin` — request the wallet to provide the launcher coin
 - `NeedCoinSpend` — request the wallet to create and sign a spend bundle
 
 `OutboundTransaction` and `WatchCoin` are intentionally absent from the JS event
@@ -339,23 +338,24 @@ of truth for those states. `Failed` and `ResolvedStale` can still produce
 error-style attention because they indicate adverse channel-level outcomes.
 
 Lifecycle rows are omitted entirely during off-chain play. Once the channel
-enters on-chain resolution, the dashboard shows one row per accepted game in
-the current hand (`Hand` for one game, `Hand 1`, `Hand 2`, etc. for multiple
-games). Each row uses that game's own turn or terminal state:
+enters on-chain resolution, the dashboard shows one row per still-active game
+in the current hand (`Hand` for one game, `Hand 1`, `Hand 2`, etc. for multiple
+games). The original ordinal is retained when a sibling finishes, so the
+remaining row stays identifiable as `Hand 1` or `Hand 2`. Finished games are
+removed from the status rows instead of leaving their last state displayed.
 
 | Hand label     | Meaning                                                                                                                                                                                   |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `No hand`      | No accepted hand is currently active or being displayed.                                                                                                                                  |
+| `No hand`      | No accepted hand is currently active.                                                                                                                                                      |
 | `Active`       | The channel is going on-chain/unrolling before a concrete game coin is being tracked.                                                                                                     |
 | `Your turn`    | A game coin is on-chain and the protocol says our side is the mover.                                                                                                                      |
 | `Their turn`   | A game coin is on-chain and the protocol says the opponent is the mover.                                                                                                                  |
 | `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path.                                                                                     |
-| `Ended`        | A `GameSettled` or non-settlement terminal (`EndedCancelled`, `EndedError`) has been observed. The collapsed bar adds a short hand detail from the settlement glossary label when useful. |
 
-Terminal hand details are derived from `GameSettled.outcome` via
+Terminal game results are still derived from `GameSettled.outcome` via
 `SETTLEMENT_OUTCOME_LABELS` in `front-end/src/lib/settlement.ts` (see
-[Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)). Full raw
-details remain available in the expanded dashboard rows.
+[Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)) for the mounted
+game result, but are no longer retained in the dashboard status rows.
 
 | Detail (examples)                                               | Meaning                                                   |
 | --------------------------------------------------------------- | --------------------------------------------------------- |
@@ -370,8 +370,8 @@ details remain available in the expanded dashboard rows.
 There is no session-level **Folded** label. Poker UIs may still say **Fold**
 locally when calling `accept_settlement`.
 
-All settlement details remain in the dashboard/session bar and the mounted
-game result. Settlements do not enqueue a second game-scoped pop-up.
+Settlement details remain in the mounted game result. Settlements do not
+enqueue a second game-scoped pop-up.
 
 ---
 

@@ -150,6 +150,14 @@ export function isBenignTransactionSubmitError(message: string): boolean {
   );
 }
 
+export function isAlreadySubmittedTransactionError(message: string): boolean {
+  return (
+    /ALREADY_INCLUDING_TRANSACTION/i.test(message) ||
+    /duplicate transaction/i.test(message) ||
+    /already in the mempool/i.test(message)
+  );
+}
+
 /**
  * Chia's mempool treats a fee below 5 mojos per cost unit as zero and, on a full
  * mempool, rejects the bundle outright rather than admitting it as free. This
@@ -219,9 +227,6 @@ export class SessionController implements PollingGameSession {
   // Null means blockchain attachment preceded asynchronous cradle restore, so
   // the restored manager has not yet told us whether a coin snapshot is needed.
   private resubmitNeedsCoinSnapshot: boolean | null = null;
-  launcherProvided: boolean;
-  private lastSelectCoinsValue: string | null = null;
-  private lastLauncherCoinId: string | null = null;
 
   wasmNotificationHistory: string[] = [];
   diagnosticLog: string[] = [];
@@ -233,6 +238,8 @@ export class SessionController implements PollingGameSession {
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private transactionSubmitQueue: Promise<void> = Promise.resolve();
+  private queuedTransactionKeys = new Set<string>();
+  private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
   private protocolStopped = false;
@@ -311,7 +318,6 @@ export class SessionController implements PollingGameSession {
     this.reloading = false;
     this.qualifyingEvents = 0;
     this.blockchain = blockchain;
-    this.launcherProvided = false;
     this.rxjsMessageSingleton = new Subject<WasmEvent>();
     this.rxjsEmitter = {
       next: (evt: WasmEvent) => {
@@ -652,7 +658,7 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) {
       throw new Error('activateSpend called without cradle');
     }
-    const result = this.cradle.start_handshake();
+    const result = this.cradle.start_handshake(this.getFee().toString());
     this.processResult(result);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
@@ -677,42 +683,6 @@ export class SessionController implements PollingGameSession {
     return this.cradle?.get_channel_puzzle_hash() ?? null;
   }
 
-  private async handleNeedLauncherCoin() {
-    if (this.launcherProvided) return;
-    const blockchain = this.blockchain;
-    if (!blockchain) {
-      this.rxjsEmitter?.next({ type: 'error', error: 'Blockchain is not connected' });
-      return;
-    }
-    this.launcherProvided = true;
-
-    try {
-      const coin = await blockchain.rpc.selectCoins(this.uniqueId, this.myContribution);
-      if (!coin) {
-        throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
-      }
-      this.lastSelectCoinsValue = coin;
-      const { computeLauncherCoin } = await import('../util/launcher');
-      const { launcherCoinHex, launcherCoinId } = await computeLauncherCoin(coin);
-      this.lastLauncherCoinId = launcherCoinId;
-      log(`[wasm] provide_launcher_coin id=${launcherCoinId}`);
-      if (!this.cradle) {
-        throw new Error('provide_launcher_coin called without cradle');
-      }
-      const result = this.cradle.provide_launcher_coin(launcherCoinHex);
-      this.processResult(result);
-    } catch (e) {
-      this.launcherProvided = false;
-      diagStack('handleNeedLauncherCoin error', e);
-      const msg = extractErrorMessage(e);
-      log(`[wasm] handleNeedLauncherCoin error: ${msg}`);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
-      if (this.cradle) {
-        this.processResult(this.cradle.wallet_callback_failed(msg));
-      }
-    }
-  }
-
   private async handleNeedCoinSpend(request: NeedCoinSpendRequest) {
     const blockchain = this.blockchain;
     if (!blockchain) {
@@ -727,6 +697,7 @@ export class SessionController implements PollingGameSession {
       }));
       const coinIds = request.coin_id ? [request.coin_id] : undefined;
       const maxHeight = request.max_height === undefined ? undefined : BigInt(request.max_height);
+      const openingFee = BigInt(request.fee);
 
       const bundle = await blockchain.rpc.createOfferForIds(
         this.uniqueId,
@@ -734,6 +705,7 @@ export class SessionController implements PollingGameSession {
         extraConditions,
         coinIds,
         maxHeight,
+        openingFee,
       );
       if (!bundle) {
         const msg = 'Wallet createOfferForIds failed (returned null)';
@@ -745,15 +717,42 @@ export class SessionController implements PollingGameSession {
         return;
       }
 
-      if (typeof bundle === 'string' && bundle.startsWith('offer')) {
-        console.warn(
-          '[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path',
-        );
+      const persistedTradeId =
+        typeof bundle === 'object' &&
+        bundle !== null &&
+        typeof bundle.tradeId === 'string' &&
+        typeof bundle.offer === 'string'
+          ? bundle.tradeId
+          : undefined;
+      const offerString =
+        typeof bundle === 'string'
+          ? bundle
+          : persistedTradeId !== undefined
+            ? bundle.offer
+            : undefined;
+
+      if (typeof offerString === 'string' && offerString.startsWith('offer')) {
+        log('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
+          if (persistedTradeId) {
+            await this.cancelRejectedFundingOffer(persistedTradeId);
+          }
           return;
         }
-        this.processResult(this.cradle.provide_offer_bech32(bundle));
+        let result: WasmResult;
+        try {
+          result = requireWasmResult(this.cradle.provide_offer_bech32(offerString));
+        } catch (error) {
+          if (persistedTradeId) {
+            await this.cancelRejectedFundingOffer(persistedTradeId);
+          }
+          throw error;
+        }
+        if (persistedTradeId && result.events.some((event) => 'NeedCoinSpend' in event)) {
+          await this.cancelRejectedFundingOffer(persistedTradeId);
+        }
+        this.processResult(result);
       } else {
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
@@ -775,6 +774,15 @@ export class SessionController implements PollingGameSession {
         this.processResult(this.cradle.wallet_callback_failed(msg));
       }
     }
+  }
+
+  private async cancelRejectedFundingOffer(tradeId: string): Promise<void> {
+    const cancelOffer = this.blockchain?.rpc.cancelOffer;
+    if (!cancelOffer) {
+      throw new Error('wallet cannot release the rejected persisted funding offer');
+    }
+    await cancelOffer(tradeId);
+    log(`[wasm] cancelled rejected persisted funding offer trade_id=${tradeId}`);
   }
 
   emitRewardAddress() {
@@ -829,41 +837,76 @@ export class SessionController implements PollingGameSession {
     return coinIdFromBytes(toUint8(coinStringHex));
   }
 
+  private async spendCoinIds(bundle: unknown): Promise<Set<string>> {
+    const coinSpends = (bundle as { coin_spends?: Array<{ coin?: any }> })?.coin_spends;
+    if (!Array.isArray(coinSpends)) return new Set();
+    const ids = await Promise.all(
+      coinSpends.map(async ({ coin }) => {
+        if (!coin || coin.parent_coin_info === undefined || coin.puzzle_hash === undefined) {
+          return null;
+        }
+        const amount = typeof coin.amount === 'bigint' ? coin.amount : BigInt(coin.amount ?? 0);
+        const coinStringHex =
+          `${normalizeHexString(coin.parent_coin_info)}` +
+          `${normalizeHexString(coin.puzzle_hash)}` +
+          `${encodeU64AsClvmHex(amount)}`;
+        return coinIdFromBytes(toUint8(coinStringHex));
+      }),
+    );
+    return new Set(ids.filter((id): id is string => id !== null));
+  }
+
   private async submitTransactionNow(tx: SpendBundle) {
     const blockchain = this.blockchain;
     if (!blockchain) return;
+    let blob: string | null = null;
+    let bundleToSubmit: unknown;
+    let walletSubmissionAttempted = false;
     try {
       // The blob/conversion/fee work used to run before the try, so a throw
       // here (e.g. from the wasm connection) rejected the submit queue
       // unhandled.  Keep it inside the try so every failure path is captured.
-      const blob = spend_bundle_to_clvm(tx);
+      blob = spend_bundle_to_clvm(tx);
       const protocolBundle = this.wc?.convert_spend_to_coinset_org(blob);
-      const fee = this.getFee();
+      const walletFinalized = this.cradle?.submission_is_finalized(blob) ?? false;
+      const fee = walletFinalized ? 0n : this.getFee();
       log(`[wasm] submitTransaction blobLen=${blob.length}`);
       if (!this.rewardPuzzleHash) {
         throw new Error('submitTransactionNow: rewardPuzzleHash is not set');
       }
 
-      // Build the fee spend per attempt (never baked into the Rust-retained
-      // bundle) and aggregate it into the protocol bundle so a single pushed
-      // bundle carries a signature covering both. Any failure to obtain the fee
-      // spend falls back to a zero-fee submission rather than blocking the spend.
-      let bundleToSubmit: unknown = protocolBundle;
+      // A reorg replay is already the exact wallet-finalized aggregate bundle.
+      // New protocol submissions may attach a fee spend once before broadcast.
+      bundleToSubmit = protocolBundle;
       let appliedFee = 0n;
-      if (fee > 0n && protocolBundle && this.wc && blockchain.rpc.createFeeOffer) {
+      if (
+        fee > 0n &&
+        tx.name !== 'channel-opening' &&
+        protocolBundle &&
+        this.wc &&
+        blockchain.rpc.createFeeOffer
+      ) {
         const bindCoinId = await this.computeBindCoinId(protocolBundle);
         let feeOffer: string | null = null;
         let feeSpend: unknown = null;
         let feeSpendError: string | undefined;
         if (bindCoinId) {
           try {
-            feeOffer = await blockchain.rpc.createFeeOffer(fee, bindCoinId);
+            const paymentPuzzleHash = this.wc.fee_payment_puzzle_hash_for_coin(bindCoinId);
+            feeOffer = await blockchain.rpc.createFeeOffer(fee, bindCoinId, paymentPuzzleHash);
             if (feeOffer) {
               feeSpend = this.wc.complete_fee_offer_to_coinset_org(
                 feeOffer,
                 fee.toString(),
                 bindCoinId,
               );
+              const protocolCoinIds = await this.spendCoinIds(protocolBundle);
+              const feeCoinIds = await this.spendCoinIds(feeSpend);
+              const reusedCoinId = [...feeCoinIds].find((id) => protocolCoinIds.has(id));
+              if (reusedCoinId) {
+                feeSpend = null;
+                feeSpendError = `the fee wallet reused protocol input coin 0x${reusedCoinId}`;
+              }
             }
           } catch (e) {
             feeSpendError = extractErrorMessage(e);
@@ -887,6 +930,7 @@ export class SessionController implements PollingGameSession {
         }
       }
 
+      walletSubmissionAttempted = true;
       await blockchain.rpc.spend(
         blob,
         bundleToSubmit,
@@ -894,9 +938,23 @@ export class SessionController implements PollingGameSession {
         'submitTransaction',
         appliedFee || undefined,
       );
+      if (this.cradle) {
+        this.cradle.acknowledge_submission(blob, jsonStringify(bundleToSubmit));
+        this.scheduleSave();
+      }
     } catch (e) {
       const message = extractErrorMessage(e);
       if (isBenignTransactionSubmitError(message)) {
+        if (
+          walletSubmissionAttempted &&
+          isAlreadySubmittedTransactionError(message) &&
+          blob !== null &&
+          bundleToSubmit !== undefined &&
+          this.cradle
+        ) {
+          this.cradle.acknowledge_submission(blob, jsonStringify(bundleToSubmit));
+          this.scheduleSave();
+        }
         log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
         return;
       }
@@ -914,6 +972,14 @@ export class SessionController implements PollingGameSession {
 
   private submitTransaction(tx: SpendBundle) {
     if (this.transactionPublishNerfed) return;
+    const transactionKey = jsonStringify(tx.spends);
+    if (this.queuedTransactionKeys.has(transactionKey)) {
+      log(
+        `[wasm] submitTransaction skipped duplicate queued transaction name=${tx.name ?? 'none'}`,
+      );
+      return;
+    }
+    this.queuedTransactionKeys.add(transactionKey);
     // Guard the chain with a diagnostic catch: an unhandled rejection escaping
     // this promise is invisible in CI except as a bare empty-message test
     // failure, which is exactly the symptom we are chasing.
@@ -931,6 +997,9 @@ export class SessionController implements PollingGameSession {
       })
       .catch((e) => {
         diagStack('transactionSubmitQueue rejected', e);
+      })
+      .finally(() => {
+        this.queuedTransactionKeys.delete(transactionKey);
       });
   }
 
@@ -950,6 +1019,8 @@ export class SessionController implements PollingGameSession {
       return;
     }
     for (const tx of bundles) {
+      const spentCoins = tx.spends.map((spend) => spend.coin.slice(0, 16)).join(',');
+      log(`[wasm] drained submission name=${tx.name ?? 'none'} spends=${spentCoins || 'none'}`);
       this.submitTransaction(tx);
     }
   }
@@ -1248,8 +1319,6 @@ export class SessionController implements PollingGameSession {
     } else if ('Log' in event) {
       this.diagnosticLog = appendRecent(this.diagnosticLog, event.Log, DIAGNOSTIC_LOG_LIMIT);
       this.rxjsEmitter?.next({ type: 'log', message: event.Log });
-    } else if ('NeedLauncherCoin' in event) {
-      this.trackEffect(this.handleNeedLauncherCoin());
     } else if ('NeedCoinSpend' in event) {
       this.trackEffect(this.handleNeedCoinSpend(event.NeedCoinSpend));
     } else {
@@ -1310,7 +1379,7 @@ export class SessionController implements PollingGameSession {
 
   private escalatePeerFailure(): void {
     if (!this.pendingPeerFailure || !this.cradle) return;
-    this.goOnChain();
+    this.goOnChain('peer-failure');
   }
 
   private deliverOrderedMessage(_msgno: bigint, msg: Uint8Array): void {
@@ -1423,6 +1492,7 @@ export class SessionController implements PollingGameSession {
   private resubmitAfterFreshChainSync() {
     if (!this.resubmitAfterChainSync || this.protocolStopped || !this.cradle) return;
     this.resubmitAfterChainSync = false;
+    log('[wasm] resubmit_submitted after fresh chain sync');
     this.cradle.resubmit_submitted();
     this.drainAndSubmitTransactions();
   }
@@ -1573,16 +1643,6 @@ export class SessionController implements PollingGameSession {
       myAlias: this.myAlias,
       opponentAlias: this.opponentAlias,
     };
-  }
-
-  getProtocolStatePretty(): string | null {
-    if (!this.cradle) return null;
-    try {
-      return this.cradle.protocol_state_pretty();
-    } catch (e) {
-      console.error('[wasm] getProtocolStatePretty failed:', e);
-      return null;
-    }
   }
 
   getCoinsOfInterest(): CoinOfInterestEntry[] {
@@ -1748,8 +1808,12 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  goOnChain(): boolean {
+  goOnChain(origin: 'dashboard' | 'peer-failure' | 'hub-remap' | 'direct' = 'direct'): boolean {
     if (!this.cradle) throw new Error('no cradle');
+    this.goOnChainSequence += 1;
+    log(
+      `[wasm] goOnChain invoked sequence=${this.goOnChainSequence} origin=${origin} alreadyOnChain=${this.onChain}`,
+    );
     try {
       const result = this.cradle.go_on_chain();
       const startedOnChain = result.actionSucceeded && result.disposition.kind === 'active';

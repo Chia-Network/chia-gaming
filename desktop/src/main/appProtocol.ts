@@ -4,7 +4,8 @@ import path from 'node:path';
 import { protocol } from 'electron';
 
 import {
-  appAssetCacheControl,
+  appAssetResponsePolicy,
+  BoundedAssetReader,
   isAppSchemeRequestAllowed,
   isOAuthCallbackPath,
 } from './appProtocolPolicy';
@@ -90,6 +91,7 @@ function resolveRequestedFile(rendererRoot: string, pathname: string): string | 
 
 export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
   log.info(`serving ${APP_ORIGIN} from ${rendererRoot}`);
+  const assets = new BoundedAssetReader(readFile);
 
   protocol.handle(APP_SCHEME, async (request) => {
     const url = new URL(request.url);
@@ -117,8 +119,7 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
     // inside app.asar where the integrity-validation fuse still covers it.
     let body: ArrayBuffer;
     try {
-      const file = await readFile(filePath);
-      body = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
+      body = await assets.readAsset(filePath);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'EISDIR') {
@@ -129,16 +130,16 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
       return textResponse('Internal error', 500);
     }
 
+    const responsePolicy = appAssetResponsePolicy(filePath);
     const headers = new Headers({
-      'content-type': MIME_TYPES.get(path.extname(filePath).toLowerCase()) ?? DEFAULT_MIME_TYPE,
+      'content-type': MIME_TYPES.get(responsePolicy.extension) ?? DEFAULT_MIME_TYPE,
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
-      'cache-control': appAssetCacheControl(filePath),
+      'cache-control': responsePolicy.cacheControl,
     });
-    // The CSP belongs on the document, which is the only thing that can host
-    // script. Read per document, so reloading is all it takes to apply a hub
-    // the user approved since this document was loaded.
-    if (filePath.endsWith('.html')) {
+    // Active documents get the current policy. Reading it per response means
+    // reloading is all it takes to apply a hub approved since the last load.
+    if (responsePolicy.requiresContentSecurityPolicy) {
       headers.set('content-security-policy', policy.current.contentSecurityPolicy);
     }
 

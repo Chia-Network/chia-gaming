@@ -16,6 +16,8 @@ pub struct ChannelPrivateKeys {
     pub my_channel_coin_private_key: PrivateKey,
     pub my_unroll_coin_private_key: PrivateKey,
     pub my_referee_private_key: PrivateKey,
+    /// Dedicated one-time key for the receiver's opening pre-launcher.
+    pub my_pre_launcher_private_key: PrivateKey,
 }
 
 impl Distribution<ChannelPrivateKeys> for StandardUniform {
@@ -23,10 +25,12 @@ impl Distribution<ChannelPrivateKeys> for StandardUniform {
         let my_channel_coin_private_key: PrivateKey = rng.random();
         let my_unroll_coin_private_key: PrivateKey = rng.random();
         let my_referee_private_key: PrivateKey = rng.random();
+        let my_pre_launcher_private_key: PrivateKey = rng.random();
         ChannelPrivateKeys {
             my_channel_coin_private_key,
             my_unroll_coin_private_key,
             my_referee_private_key,
+            my_pre_launcher_private_key,
         }
     }
 }

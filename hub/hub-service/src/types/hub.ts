@@ -15,4 +15,5 @@ export interface Challenge {
   target_amount: string;
   channel_timeout?: string;
   unroll_timeout?: string;
+  created_at: number;
 }

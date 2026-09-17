@@ -232,7 +232,10 @@ processing that can raise must occur only after the move itself is known to be
 valid. A nil next validator hash is terminal and must agree with a nil next
 handler from the unchanged their-turn handler output; a non-nil hash must
 resolve to a program in the factory registry and accompany a non-nil next
-handler. `mover_share` remains handler-owned and is not returned by validators.
+handler. This continuation agreement is checked only after every handler
+evidence candidate fails to slash: successful evidence is a terminal outcome
+and the handler may deliberately omit its continuation in that case.
+`mover_share` remains handler-owned and is not returned by validators.
 
 Move-path enforcement: the on-chain referee does NOT re-run the validator
 when a move is submitted. It trusts the submitted values and advances the

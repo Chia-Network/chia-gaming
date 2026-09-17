@@ -7,11 +7,10 @@ export interface CreateOfferForIdsRequest {
   disableJSONFormatting?: boolean;
   fee?: bigint;
   extraConditions?: Array<{ opcode: bigint; args: any }>;
-  coinIds?: string[];
   allowUnsynced?: boolean;
 }
 
 export interface CreateOfferForIdsResponse {
   offer: string;
-  tradeRecord: TradeRecord;
+  tradeRecord?: TradeRecord;
 }

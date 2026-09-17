@@ -403,7 +403,7 @@ are grouped under those phase-owned payloads:
 | `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
 | `blockchainType`                | `'simulator' \| 'walletconnect' \| 'cloud'?`                                                               | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
-| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `7`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
+| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `8`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
 | `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
@@ -660,6 +660,14 @@ projects channel / lifecycle labels and the primary action button
 (clean shutdown, go on-chain, abandon, etc.). `selectStatusBarBalances`
 projects the balance segments under those labels. Both read from the shared
 `SessionModel`; they are not a separate React-owned copy of channel state.
+The expanded dashboard lists the current coins of interest and updates the list
+whenever the live session model changes; it has no manual refresh control.
+Game-associated entries use the accepted group's stable hand ordinal rather
+than the private protocol game ID. A current game coin disappears when that
+hand settles because the coin has been spent, while a newly created reward coin
+can remain visible. During handshake this list includes the predicted channel
+coin and, once available, the local funding coin whose spend emitted the extra
+conditions. Coin parent IDs are protocol ancestry and are not displayed.
 
 During the short interval after the user accepts a session — before
 `GameSession` has reported its first live model, and also while a prior finished
@@ -861,7 +869,7 @@ player app wraps each body in the peer reliability header before handing it to
 - **Keepalive payload:** tag `0x03` followed by the same 16-byte `session_id`.
 
 The proposer selects the random session ID and sends `session_proposal` as data
-message 1. `session_reject`, Handshake A-F, batches, and shutdown messages
+message 1. `session_reject`, Handshake A-D, batches, and shutdown messages
 continue in the same sequence. Acceptance changes the ordered-body consumer
 from Shell negotiation to `SessionController`; it does not replace the
 transport. Host messages such as `session_reject` are recognized only after
@@ -1061,8 +1069,6 @@ The Shell is the top-level React component. It owns:
   a QR code for WalletConnect and a simulator option via `SimulatorSetupModal`
 - **Hub connection** — accepts the selected hub URL, creates the
   `HubConnection` client for the game channel, and sets up the hub iframe
-- **Theme sync** — pushes CSS variables and dark-mode class into the hub iframe
-  (`useThemeSyncToIframe`)
 - **Tab navigation** — five tabs: Wallet, Hub, Game, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 - **Session lifecycle and Accept presentation** — `useShellSessionState` fields
@@ -1141,12 +1147,12 @@ Shell manages wallet connections through two abstractions defined in
   endpoints at call time through `getCloudWallet*` getters, so UI-entered config
   takes effect without a rebuild.
 
-  Cloud Wallet carries the fee inside the funding spend itself: `createOfferForIds`
-  passes `fee` to the `createSpendWithExtraConditions` mutation (which adds
-  `RESERVE_FEE` and selects coins for `amount + fee`), and `selectCoins` requests
-  `amount + fee` so the pinned launcher-parent coin can cover both. It therefore
-  implements no `createFeeSpend`; `submitTransactionNow` skips the separate fee
-  spend for backends lacking that method and broadcasts with no fee parameter.
+  Cloud Wallet's `createSpendWithExtraConditions` path directly creates the
+  message-bound pre-launcher or contribution coin; it does not insert an
+  OFFER_MOD settlement coin. The protocol child has amount
+  `contribution + opening fee` and emits `RESERVE_FEE`, so the mutation does
+  not also declare a native wallet fee. Cloud Wallet implements no separate
+  `createFeeSpend`.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
@@ -1414,10 +1420,9 @@ bytes.
 ### Hub Iframe (Hub)
 
 The hub iframe is **untrusted**. It is served by a hub and provides
-matchmaking UX. The only interaction between the player app and the iframe is:
+matchmaking UX. It owns a fixed visual palette distinct from the player. The
+only interaction between the player app and the iframe is:
 
-- **Theme sync** — the player app sends `postMessage` with CSS variables; the
-  iframe can request a sync via `postMessage` with `{ type: 'theme-request' }`
 - **Hub authentication** — the iframe requests its origin-scoped session
   credential with `postMessage`; the parent checks `event.source` and
   `event.origin`, then replies only to that source window and exact origin.

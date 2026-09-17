@@ -1,6 +1,6 @@
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Program, Puzzle, Sha256Input, Sha256tree};
-use crate::referee::types::parse_validator_result;
+use crate::referee::types::{parse_validator_result, ParsedRefereeSolution};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -141,6 +141,68 @@ fn run_referee_slash_with_mock(
     }
 }
 
+fn run_referee_move_with_max_size(new_max_move_size: &[u8]) -> Result<NodePtr, String> {
+    let mut allocator = AllocEncoder::new();
+    let referee = load_referee_puzzle(&mut allocator);
+    let referee_clvm = referee.to_clvm(&mut allocator).expect("referee to clvm");
+    let referee_hash: [u8; 32] = *referee.sha256tree(&mut allocator).hash().bytes();
+
+    let mover_pk = allocator.allocator().new_atom(&[0x11; 48]).unwrap();
+    let waiter_pk = allocator.allocator().new_atom(&[0x22; 48]).unwrap();
+    let timeout = 10i64.to_clvm(&mut allocator).unwrap();
+    let amount = AMOUNT.to_clvm(&mut allocator).unwrap();
+    let mod_hash = hash_to_node(&mut allocator, &referee_hash);
+    let nonce = 1i64.to_clvm(&mut allocator).unwrap();
+    let previous_move = allocator.allocator().new_atom(&[0x44]).unwrap();
+    let previous_max_move_size = 5i64.to_clvm(&mut allocator).unwrap();
+    let previous_infohash = allocator.allocator().new_atom(&[0x55; 32]).unwrap();
+    let previous_mover_share = 0i64.to_clvm(&mut allocator).unwrap();
+    let previous_validation_info = allocator.allocator().new_atom(&[0x66; 32]).unwrap();
+    let curried_args = list_from_nodes(
+        &mut allocator,
+        &[
+            mover_pk,
+            waiter_pk,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            previous_move,
+            previous_max_move_size,
+            previous_infohash,
+            previous_mover_share,
+            previous_validation_info,
+        ],
+    );
+
+    let new_move = allocator.allocator().new_atom(&[0x77]).unwrap();
+    let new_infohash = allocator.allocator().new_atom(&[0x88; 32]).unwrap();
+    let new_mover_share = 0i64.to_clvm(&mut allocator).unwrap();
+    let new_max_move_size = allocator
+        .allocator()
+        .new_atom(new_max_move_size)
+        .expect("new max move size");
+    let move_args = list_from_nodes(
+        &mut allocator,
+        &[new_move, new_infohash, new_mover_share, new_max_move_size],
+    );
+    let args = allocator
+        .allocator()
+        .new_pair(curried_args, move_args)
+        .expect("build referee args");
+
+    match run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        referee_clvm,
+        args,
+        0,
+    ) {
+        Ok(reduction) => Ok(reduction.1),
+        Err(error) => Err(format!("CLVM error: {error:?}")),
+    }
+}
+
 /// Validator returns nil → unconditional slash, output = payout_conditions only
 #[test]
 fn test_slash_succeeds_nil() {
@@ -149,6 +211,18 @@ fn test_slash_succeeds_nil() {
     let output = result.expect("slash with nil validator_result should succeed");
     let items = proper_list(allocator.allocator(), output, true).unwrap();
     assert_eq!(items.len(), 2, "should have 2 payout conditions");
+}
+
+#[test]
+fn test_negative_new_max_move_size_is_rejected() {
+    assert!(
+        run_referee_move_with_max_size(&[0xff]).is_err(),
+        "canonical negative CLVM integers must not become max move sizes"
+    );
+    assert!(
+        run_referee_move_with_max_size(&[0x00, 0xff]).is_ok(),
+        "canonical positive max move sizes remain valid"
+    );
 }
 
 /// Validator returns (wrong_vh state mms) — values misaligned → unconditional slash
@@ -311,23 +385,15 @@ fn test_valid_validator_results_are_not_slash_candidates() {
     let next_hash = allocator.allocator().new_atom(&[0x44; 32]).unwrap();
     let state = allocator.allocator().new_atom(b"next state").unwrap();
     let without_max_move_size = list_from_nodes(&mut allocator, &[next_hash, state]);
-    let without_max_parsed = parse_validator_result(&mut allocator, without_max_move_size).unwrap();
-    assert_eq!(
-        without_max_parsed.next_max_move_size, 0,
-        "a missing max move size mirrors CLVM nil"
-    );
-    assert_eq!(
-        without_max_parsed.next_validator_hash.map(|h| h.0),
-        Some([0x44; 32])
-    );
-    let parsed_state = without_max_parsed
-        .new_state
-        .unwrap()
-        .to_nodeptr(&mut allocator)
-        .unwrap();
-    assert_eq!(
-        allocator.allocator().atom(parsed_state).as_ref(),
-        b"next state"
+    let error = match parse_validator_result(&mut allocator, without_max_move_size) {
+        Ok(_) => panic!("a two-element result omits a required transition field"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("validator returned 2 elements; expected 1 (terminal) or at least 3"),
+        "unexpected parser error: {error}"
     );
 
     let max_move_size = 5_i64.to_clvm(&mut allocator).unwrap();
@@ -359,9 +425,57 @@ fn test_valid_validator_results_are_not_slash_candidates() {
     );
 }
 
+#[test]
+fn test_referee_solution_parser_matches_puzzle_tail_rules() {
+    let mut allocator = AllocEncoder::new();
+    let state = allocator.allocator().new_atom(b"state").unwrap();
+    let validation_program = allocator
+        .allocator()
+        .new_pair(NodePtr::NIL, NodePtr::NIL)
+        .unwrap();
+    let unexamined_tail = allocator.allocator().new_atom(b"tail").unwrap();
+    let program_and_rest = allocator
+        .allocator()
+        .new_pair(validation_program, unexamined_tail)
+        .unwrap();
+    let slash_node = allocator
+        .allocator()
+        .new_pair(state, program_and_rest)
+        .unwrap();
+    let slash_solution = Program::from_nodeptr(&mut allocator, slash_node).unwrap();
+
+    assert!(
+        matches!(
+            ParsedRefereeSolution::parse(&mut allocator, &slash_solution),
+            Ok(ParsedRefereeSolution::Slash)
+        ),
+        "slash classification must not traverse the untrusted argument tail"
+    );
+
+    let move_field = allocator.allocator().new_atom(b"move").unwrap();
+    let infohash = allocator.allocator().new_atom(&[0x66; 32]).unwrap();
+    let mover_share = 5_i64.to_clvm(&mut allocator).unwrap();
+    let max_move_size = 10_i64.to_clvm(&mut allocator).unwrap();
+    let extra = allocator.allocator().new_atom(b"extra").unwrap();
+    let move_with_tail = list_from_nodes(
+        &mut allocator,
+        &[move_field, infohash, mover_share, max_move_size, extra],
+    );
+    let move_solution = Program::from_nodeptr(&mut allocator, move_with_tail).unwrap();
+
+    assert!(
+        ParsedRefereeSolution::parse(&mut allocator, &move_solution).is_err(),
+        "the referee move branch rejects a trailing tail"
+    );
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_slash_succeeds_nil", &test_slash_succeeds_nil),
+        (
+            "test_negative_new_max_move_size_is_rejected",
+            &test_negative_new_max_move_size_is_rejected,
+        ),
         (
             "test_slash_succeeds_misaligned_no_conditions",
             &test_slash_succeeds_misaligned_no_conditions,
@@ -385,6 +499,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_valid_validator_results_are_not_slash_candidates",
             &test_valid_validator_results_are_not_slash_candidates,
+        ),
+        (
+            "test_referee_solution_parser_matches_puzzle_tail_rules",
+            &test_referee_solution_parser_matches_puzzle_tail_rules,
         ),
     ]
 }

@@ -58,6 +58,9 @@ async function startHub(env = {}) {
         HUB_MAX_TOTAL_CONNECTIONS: '2000',
         HUB_MAX_CONNECTIONS_PER_IP: '8',
         HUB_MAX_PLAYERS: '1000',
+        HUB_MAX_PENDING_CHALLENGES_PER_PLAYER: '8',
+        HUB_MAX_CHALLENGES: '4000',
+        HUB_CHALLENGE_TTL_MS: '300000',
         HUB_MAX_RETAINED_SESSIONS: '10000',
         HUB_RETAINED_SESSION_TTL_MS: '86400000',
         HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW: '100',
@@ -307,11 +310,12 @@ async function identifyGameRegistered(origin, sessionId) {
   return { game, playerId: playerId(registered.player_id) };
 }
 
-test('HTTP responses prohibit referrer disclosure', async () => {
+test('HTTP responses prohibit referrer disclosure and permit arbitrary framing', async () => {
   const hub = await startHub();
   try {
-    const response = await fetch(hub.origin);
+    const response = await fetch(`${hub.origin}/`);
     assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+    assert.doesNotMatch(response.headers.get('content-security-policy') ?? '', /frame-ancestors/);
   } finally {
     await hub.stop();
   }
@@ -641,6 +645,111 @@ test('challenge authority and availability come from bound sessions', async () =
     await closeWs(aliceGame);
     await closeWs(bobGame);
     await closeWs(carolGame);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('challenge creation rejects self, duplicate, per-player, and global overflow', async () => {
+  const hub = await startHub({
+    HUB_MAX_PENDING_CHALLENGES_PER_PLAYER: '1',
+    HUB_MAX_CHALLENGES: '2',
+  });
+  try {
+    const alice = await joinHub(hub.origin, 'bounded-challenge-alice', 'Alice');
+    const bob = await joinHub(hub.origin, 'bounded-challenge-bob', 'Bob');
+    const carol = await joinHub(hub.origin, 'bounded-challenge-carol', 'Carol');
+    const aliceGame = await identifyGame(hub.origin, 'bounded-challenge-alice');
+    const bobGame = await identifyGame(hub.origin, 'bounded-challenge-bob');
+    const carolGame = await identifyGame(hub.origin, 'bounded-challenge-carol');
+    const challenge = (ws, target_id) =>
+      sendJson(ws, {
+        type: 'challenge',
+        target_id,
+        challenger_amount: '100',
+        target_amount: '100',
+      });
+
+    let errorPromise = nextJson(alice.ws, (msg) => msg.type === 'error');
+    challenge(alice.ws, alice.id);
+    assert.match((await errorPromise).error, /yourself/);
+
+    let receivedPromise = nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
+    challenge(alice.ws, bob.id);
+    await receivedPromise;
+
+    errorPromise = nextJson(alice.ws, (msg) => msg.type === 'error');
+    challenge(alice.ws, bob.id);
+    assert.match((await errorPromise).error, /already challenged/);
+
+    errorPromise = nextJson(alice.ws, (msg) => msg.type === 'error');
+    challenge(alice.ws, carol.id);
+    assert.match((await errorPromise).error, /Too many pending/);
+
+    receivedPromise = nextJson(alice.ws, (msg) => msg.type === 'challenge_received');
+    challenge(bob.ws, alice.id);
+    await receivedPromise;
+
+    errorPromise = nextJson(carol.ws, (msg) => msg.type === 'error');
+    challenge(carol.ws, bob.id);
+    assert.match((await errorPromise).error, /hub has too many pending/);
+
+    await closeWs(alice.ws);
+    await closeWs(bob.ws);
+    await closeWs(carol.ws);
+    await closeWs(aliceGame);
+    await closeWs(bobGame);
+    await closeWs(carolGame);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('expired challenges are resolved and stop consuming challenger capacity', async () => {
+  const hub = await startHub({
+    HUB_MAX_PENDING_CHALLENGES_PER_PLAYER: '1',
+    HUB_CHALLENGE_TTL_MS: '20',
+  });
+  try {
+    const alice = await joinHub(hub.origin, 'expiring-challenge-alice', 'Alice');
+    const bob = await joinHub(hub.origin, 'expiring-challenge-bob', 'Bob');
+    const aliceGame = await identifyGame(hub.origin, 'expiring-challenge-alice');
+    const bobGame = await identifyGame(hub.origin, 'expiring-challenge-bob');
+    const sendChallenge = () =>
+      sendJson(alice.ws, {
+        type: 'challenge',
+        target_id: bob.id,
+        challenger_amount: '100',
+        target_amount: '100',
+      });
+
+    let receivedPromise = nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
+    sendChallenge();
+    const first = await receivedPromise;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const aliceResolved = nextJson(
+      alice.ws,
+      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === first.challenge_id,
+    );
+    const bobResolved = nextJson(
+      bob.ws,
+      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === first.challenge_id,
+    );
+    receivedPromise = nextJson(
+      bob.ws,
+      (msg) => msg.type === 'challenge_received' && msg.challenge_id !== first.challenge_id,
+    );
+    sendChallenge();
+
+    assert.equal((await aliceResolved).accepted, false);
+    assert.equal((await bobResolved).accepted, false);
+    await receivedPromise;
+
+    await closeWs(alice.ws);
+    await closeWs(bob.ws);
+    await closeWs(aliceGame);
+    await closeWs(bobGame);
   } finally {
     await hub.stop();
   }

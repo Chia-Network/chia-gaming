@@ -436,6 +436,13 @@ export function validateTerminalCoins(value: unknown): void {
     const label = requireString(record.label, `terminal.coinsOfInterest[${index}].label`);
     const id = requireString(record.id, `terminal.coinsOfInterest[${index}].id`);
     if (!label || !id) throw new Error(`Garbled save: invalid terminal coin ${index}`);
+    if (record.parentId !== undefined) {
+      const parentId = requireString(
+        record.parentId,
+        `terminal.coinsOfInterest[${index}].parentId`,
+      );
+      if (!parentId) throw new Error(`Garbled save: invalid terminal coin parent ${index}`);
+    }
     if (coinIds.has(id)) throw new Error(`Garbled save: duplicate terminal coin ${id}`);
     coinIds.add(id);
   });

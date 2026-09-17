@@ -48,7 +48,12 @@ pub struct CoinStateRecord {
 /// retained so its outputs can be resubmitted if a reorg rolls them back.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SubmittedTx {
+    /// Protocol-authored submission retained for lifecycle/conflict tracking.
     bundle: SpendBundle,
+    /// Exact wallet-finalized bundle accepted for broadcast. Reorg replay uses
+    /// this unchanged, including its original fee spend.
+    #[serde(default)]
+    finalized_bundle: Option<SpendBundle>,
     /// Coin ids this transaction spends.  An output coin's parent is one of
     /// these, which is how a vanished output is matched back to its creator.
     spent_coin_ids: Vec<CoinID>,
@@ -92,6 +97,14 @@ fn expected_output_coins(bundle: &SpendBundle) -> Result<Vec<CoinString>, Error>
     Ok(out)
 }
 
+fn spent_coin_ids(bundle: &SpendBundle) -> Vec<CoinID> {
+    bundle
+        .spends
+        .iter()
+        .map(|spend| spend.coin.to_coin_id())
+        .collect()
+}
+
 /// Combine two optional expiry heights, keeping the tightest (smallest)
 /// constraint.  `None` means "no expiry" (effectively infinite), so it never
 /// wins against a concrete `Some`.
@@ -118,8 +131,8 @@ pub struct WatchedCoin {
     pub spent_confirmed_at: Option<u64>,
     /// Whether the eager `timeout_spend` has already been queued for submission
     /// for the current birthday.  Re-armed when the birthday changes or is
-    /// cleared (e.g. by a reorg) so a reorg that rolls back the coin's creation
-    /// causes the claim to be resubmitted.
+    /// cleared, or when a complete snapshot shows a confirmed spend reverted to
+    /// live, so a reorg causes the claim to be resubmitted.
     pub claim_submitted: bool,
     /// The eagerly-built spend to submit once this coin reaches its relative
     /// timeout age.  Set by the handler at registration time; held here so the
@@ -244,9 +257,9 @@ pub struct TransactionManager<C> {
     watched_coins: HashMap<CoinString, WatchedCoin>,
     /// Transactions the cradle asked to submit, awaiting the hosting layer.
     /// Each carries the optional absolute expiry height threaded from the
-    /// handler (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`), so it lands on the retained
-    /// `SubmittedTx` when drained.
-    pending_submissions: Vec<(SpendBundle, Option<u64>)>,
+    /// handler (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`) and whether the manager
+    /// explicitly requeued it for fresh-sync/reorg replay.
+    pending_submissions: Vec<(SpendBundle, Option<u64>, bool)>,
     /// Events for the hosting layer that were not intercepted by the manager.
     #[serde(skip)]
     pending_events: GameSessionEventQueue,
@@ -385,55 +398,116 @@ impl<C> TransactionManager<C> {
         // Parse before consuming the queue so a bad bundle does not drop peers.
         let mut new_outputs: Vec<Option<Vec<CoinString>>> =
             Vec::with_capacity(self.pending_submissions.len());
-        for (bundle, _) in self.pending_submissions.iter() {
-            let spent_coin_ids: Vec<CoinID> =
+        let mut emit = Vec::with_capacity(self.pending_submissions.len());
+        let mut seen_pending_spent_coin_ids = Vec::new();
+        for (bundle, _, replay) in self.pending_submissions.iter() {
+            let bundle_spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
-            if self
-                .submitted
-                .iter()
-                .any(|t| t.spent_coin_ids == spent_coin_ids)
-            {
+            if seen_pending_spent_coin_ids.contains(&bundle_spent_coin_ids) {
+                new_outputs.push(None);
+                emit.push(false);
+                continue;
+            }
+            seen_pending_spent_coin_ids.push(bundle_spent_coin_ids.clone());
+            let already_retained = self.submitted.iter().any(|tx| {
+                tx.spent_coin_ids == bundle_spent_coin_ids
+                    || tx
+                        .finalized_bundle
+                        .as_ref()
+                        .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
+            });
+            emit.push(*replay || !already_retained);
+            if already_retained {
                 new_outputs.push(None);
             } else {
                 new_outputs.push(Some(expected_output_coins(bundle)?));
             }
         }
         let out = std::mem::take(&mut self.pending_submissions);
-        for ((bundle, expiry), outputs) in out.iter().zip(new_outputs) {
-            let spent_coin_ids: Vec<CoinID> =
+        for ((bundle, expiry, _), outputs) in out.iter().zip(new_outputs) {
+            let bundle_spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
             // Don't double-track the same creating transaction across resubmits;
             // instead tighten the existing entry's expiry to the minimum of the
             // two (a `None` expiry means no constraint, so any `Some` wins).
-            if let Some(existing) = self
-                .submitted
-                .iter_mut()
-                .find(|t| t.spent_coin_ids == spent_coin_ids)
-            {
+            if let Some(existing) = self.submitted.iter_mut().find(|tx| {
+                tx.spent_coin_ids == bundle_spent_coin_ids
+                    || tx
+                        .finalized_bundle
+                        .as_ref()
+                        .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
+            }) {
                 existing.expiry = min_expiry(existing.expiry, *expiry);
             } else if let Some(outputs) = outputs {
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
-                    spent_coin_ids,
+                    finalized_bundle: None,
+                    spent_coin_ids: bundle_spent_coin_ids,
                     expected_output_coins: outputs,
                     landed: false,
                     expiry: *expiry,
                 });
             }
         }
-        Ok(out.into_iter().map(|(bundle, _)| bundle).collect())
+        Ok(out
+            .into_iter()
+            .zip(emit)
+            .filter_map(|((bundle, _, _), emit)| emit.then_some(bundle))
+            .collect())
+    }
+
+    /// Record that the hosting wallet accepted a drained transaction.
+    pub fn acknowledge_submission(
+        &mut self,
+        bundle: &SpendBundle,
+        finalized_bundle: SpendBundle,
+    ) -> Result<(), Error> {
+        let bundle_spent_coin_ids = spent_coin_ids(bundle);
+        let Some(submitted) = self.submitted.iter_mut().find(|tx| {
+            tx.spent_coin_ids == bundle_spent_coin_ids
+                || tx
+                    .finalized_bundle
+                    .as_ref()
+                    .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
+        }) else {
+            return Err(Error::StrErr(
+                "acknowledge_submission: transaction is not retained".to_string(),
+            ));
+        };
+        submitted.finalized_bundle = Some(finalized_bundle);
+        self.pending_submissions
+            .retain(|(pending, _, _)| spent_coin_ids(pending) != bundle_spent_coin_ids);
+        Ok(())
+    }
+
+    pub fn submission_is_finalized(&self, bundle: &SpendBundle) -> bool {
+        let bundle_spent_coin_ids = spent_coin_ids(bundle);
+        self.submitted.iter().any(|tx| {
+            tx.finalized_bundle.is_some()
+                && (tx.spent_coin_ids == bundle_spent_coin_ids
+                    || tx.finalized_bundle.as_ref().is_some_and(|finalized| {
+                        spent_coin_ids(finalized) == bundle_spent_coin_ids
+                    }))
+        })
     }
 
     /// Re-queue retained, unexpired submissions after the host has supplied a
-    /// fresh chain height. A transaction drained before reload may not have
-    /// reached the network; an absolute-expiry transaction cannot become valid
-    /// again and is discarded rather than repeatedly offered to the wallet.
+    /// fresh chain height. Wallet acknowledgement only proves the RPC accepted
+    /// the spend, not that it reached the mempool, so unlanded acknowledged
+    /// submissions replay their exact finalized bundle after reload. Landed
+    /// submissions are requeued only by explicit reorg recovery. An
+    /// absolute-expiry transaction cannot become valid again and is discarded.
     pub fn requeue_submitted(&mut self) {
         self.submitted
             .retain(|tx| !matches!(tx.expiry, Some(expiry) if self.last_height >= expiry));
-        for tx in self.submitted.iter() {
-            self.pending_submissions
-                .push((tx.bundle.clone(), tx.expiry));
+        for tx in self.submitted.iter().filter(|tx| !tx.landed) {
+            self.pending_submissions.push((
+                tx.finalized_bundle
+                    .clone()
+                    .unwrap_or_else(|| tx.bundle.clone()),
+                tx.expiry,
+                true,
+            ));
         }
     }
 
@@ -470,7 +544,7 @@ impl<C> TransactionManager<C> {
         for event in events {
             match event {
                 GameSessionEvent::OutboundTransaction(tx, expiry) => {
-                    self.pending_submissions.push((tx, expiry));
+                    self.pending_submissions.push((tx, expiry, false));
                 }
                 GameSessionEvent::WatchCoin {
                     coin_string,
@@ -611,7 +685,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             if let Some(semantic) = semantic {
                 self.cradle.session_timeout_claim_submitted(semantic)?;
             }
-            self.pending_submissions.push((spend, None));
+            self.pending_submissions.push((spend, None, true));
         }
         Ok(())
     }
@@ -717,6 +791,19 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             }
             let was_present = self.present_coins.contains(&rec.coin);
             if let Some(watched) = self.watched_coins.get_mut(&rec.coin) {
+                // A complete snapshot that explicitly shows a previously-spent
+                // coin live again proves that its spend was reorged out. Chia
+                // chooses peaks by weight, so the replacement tip may be equal
+                // or higher and cannot be detected from height alone.
+                if live && watched.spent_confirmed_at.take().is_some() {
+                    let was_claim_submitted = watched.claim_submitted;
+                    watched.claim_submitted = false;
+                    if was_claim_submitted {
+                        if let Some(semantic) = watched.timeout_claim_semantic {
+                            rearmed_timeout_claims.push(semantic);
+                        }
+                    }
+                }
                 if let Some(created_height) = rec.created_height {
                     if watched.birthday != Some(created_height) {
                         let was_claim_submitted = watched.claim_submitted;
@@ -869,7 +956,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             };
             // Find (and prune expired) the transaction that created this coin.
             let mut resubmit: Option<(SpendBundle, Option<u64>)> = None;
-            self.submitted.retain(|tx| {
+            self.submitted.retain_mut(|tx| {
                 if !tx.spent_coin_ids.contains(&parent) {
                     return true;
                 }
@@ -877,11 +964,17 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 {
                     return false;
                 }
-                resubmit = Some((tx.bundle.clone(), tx.expiry));
+                resubmit = Some((
+                    tx.finalized_bundle
+                        .clone()
+                        .unwrap_or_else(|| tx.bundle.clone()),
+                    tx.expiry,
+                ));
                 true
             });
             if let Some(submission) = resubmit {
-                self.pending_submissions.push(submission);
+                self.pending_submissions
+                    .push((submission.0, submission.1, true));
             }
         }
     }
@@ -1184,6 +1277,27 @@ mod tests {
         assert_eq!(subs[0].name.as_deref(), Some("tx-a"));
         // Draining empties the buffer.
         assert!(mgr.drain_submissions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn later_duplicate_submission_with_different_name_is_not_drained_again() {
+        let mut allocator = AllocEncoder::new();
+        let first = test_bundle("go on chain unroll");
+        let mut duplicate = first.clone();
+        duplicate.name = Some("impatience unroll".to_string());
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
+            first.clone(),
+            None,
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(mgr.drain_submissions().unwrap(), vec![first]);
+
+        mgr.pending_submissions.push((duplicate, None, false));
+        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.submitted.len(), 1);
     }
 
     #[test]
@@ -1605,6 +1719,62 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_timeout_spend_non_decreasing_reorg_rearms_and_resubmits() {
+        for replacement_height in [16, 17] {
+            let mut allocator = AllocEncoder::new();
+            let coin = test_coin(replacement_height as u8);
+            let mut mock = MockGameSession::default();
+            mock.queue_drain(vec![GameSessionEvent::WatchCoin {
+                coin_name: coin.to_coin_id(),
+                coin_string: coin.clone(),
+                timeout: Timeout::new(5),
+                spend: Some(test_bundle("non-decreasing-reorg")),
+                semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
+            }]);
+            let mut mgr = TransactionManager::new(mock);
+            mgr.flush_and_collect(&mut allocator).expect("register");
+            let live = [CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }];
+
+            mgr.report_coin_states(&mut allocator, 15, &live)
+                .expect("mature initial claim");
+            assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+            mgr.report_coin_states(
+                &mut allocator,
+                16,
+                &[CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(10),
+                    spent_height: Some(16),
+                }],
+            )
+            .expect("confirm timeout spend");
+
+            // A heavier replacement chain can restore the coin at the same or
+            // a greater height. The explicit spent-to-live transition re-arms
+            // the still-mature claim without relying on a height decrease.
+            mgr.report_coin_states(&mut allocator, replacement_height, &live)
+                .expect("replacement chain restores live coin");
+            assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, None);
+            assert_eq!(
+                mgr.cradle().rearmed_timeout_claims,
+                vec![TimeoutClaimSemantic::ChannelTimeoutFinish]
+            );
+            assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+
+            mgr.report_coin_states(&mut allocator, replacement_height + 1, &live)
+                .expect("ordinary next snapshot");
+            assert!(
+                mgr.drain_submissions().unwrap().is_empty(),
+                "re-armed claim must still submit only once"
+            );
+        }
+    }
+
+    #[test]
     fn restored_submitted_claim_reprojects_canonical_timeout_status() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(15);
@@ -1902,6 +2072,14 @@ mod tests {
         // The host submits the creating tx; the manager remembers it.
         let submitted = mgr.drain_submissions().unwrap();
         assert_eq!(submitted.len(), 1);
+        let mut finalized = submitted[0].clone();
+        finalized.name = Some("create-child-with-wallet-fee".to_string());
+        finalized.spends.push(CoinSpend {
+            coin: test_coin(99),
+            bundle: Spend::default(),
+        });
+        mgr.acknowledge_submission(&submitted[0], finalized.clone())
+            .unwrap();
 
         // Child confirms at height 10.
         mgr.report_coin_states(
@@ -1922,8 +2100,8 @@ mod tests {
             .expect("report");
         assert!(mgr.vanished_coins().contains(&child));
         let resubmitted = mgr.drain_submissions().unwrap();
-        assert_eq!(resubmitted.len(), 1);
-        assert_eq!(resubmitted[0].name.as_deref(), Some("create-child"));
+        assert_eq!(resubmitted, vec![finalized]);
+        assert_eq!(mgr.submitted.len(), 1);
     }
 
     #[test]
@@ -2339,11 +2517,38 @@ mod tests {
     }
 
     #[test]
+    fn acknowledged_submission_requeues_exact_finalized_bundle_after_fresh_sync() {
+        let mut allocator = AllocEncoder::new();
+        let bundle = test_bundle_spending_creating("tx-a", &test_coin(40), &test_coin(41));
+        let mut finalized = bundle.clone();
+        finalized.spends.push(CoinSpend {
+            coin: test_coin(42),
+            bundle: Spend::default(),
+        });
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
+            bundle.clone(),
+            None,
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+
+        assert_eq!(mgr.drain_submissions().unwrap(), vec![bundle.clone()]);
+        mgr.acknowledge_submission(&bundle, finalized.clone())
+            .unwrap();
+        assert!(mgr.submission_is_finalized(&bundle));
+        assert!(mgr.submission_is_finalized(&finalized));
+        mgr.requeue_submitted();
+
+        assert_eq!(mgr.drain_submissions().unwrap(), vec![finalized]);
+    }
+
+    #[test]
     fn restored_manager_requeues_retained_on_chain_submission() {
         let mut manager = TransactionManager::new(PersistableMockGameSession);
         manager
             .pending_submissions
-            .push((test_bundle("restored-on-chain-move"), None));
+            .push((test_bundle("restored-on-chain-move"), None, false));
         assert_eq!(manager.drain_submissions().unwrap().len(), 1);
 
         let encoded = bencodex::to_vec(&manager).expect("serialize manager");
@@ -2416,7 +2621,7 @@ mod tests {
     }
 
     #[test]
-    fn winning_spend_retains_submission_for_replay() {
+    fn landed_spend_is_not_requeued_on_reload_and_is_retained_until_buried() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(32);
         let child = CoinString::from_parts(
@@ -2435,8 +2640,8 @@ mod tests {
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // The input is spent and the retained tx's expected child appears.  That
-        // means this transaction won, so it stays retained for replay if a later
-        // reload or reorg needs it.
+        // means this transaction won, so it stays retained for explicit reorg
+        // recovery but an ordinary reload does not resubmit it.
         mgr.report_coin_states(
             &mut allocator,
             12,
@@ -2455,9 +2660,8 @@ mod tests {
         )
         .expect("report");
         mgr.requeue_submitted();
-        let replay = mgr.drain_submissions().unwrap();
-        assert_eq!(replay.len(), 1);
-        assert_eq!(replay[0].name.as_deref(), Some("spend-coin"));
+        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.submitted.len(), 1);
 
         // Once the spent input is buried deeply enough, the input coin is evicted
         // and the winning transaction no longer needs to be retained.
@@ -2465,6 +2669,7 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 12 + depth, &[])
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
+        assert!(mgr.submitted.is_empty());
         mgr.requeue_submitted();
         assert!(mgr.drain_submissions().unwrap().is_empty());
     }
