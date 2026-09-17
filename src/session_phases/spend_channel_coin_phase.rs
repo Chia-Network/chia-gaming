@@ -349,7 +349,13 @@ impl SpendChannelCoinPhase {
         let ch = self.base.channel_state()?;
         let bundle =
             build_channel_to_unroll_bundle(env, ch, &channel_coin, &saved, "impatience unroll")?;
-        Ok(vec![Effect::SpendTransaction(bundle, None)])
+        Ok(vec![Effect::SpendTransaction(
+            crate::session_phases::effects::TransactionSubmission::attach_to(
+                bundle,
+                None,
+                &channel_coin,
+            ),
+        )])
     }
 
     #[cfg(test)]
@@ -754,7 +760,13 @@ impl SpendChannelCoinPhase {
                     .channel_state()
                     .ok()
                     .and_then(|ch| ch.preempting_state_number_for(on_chain_state));
-                effects.push(Effect::SpendTransaction(bundle, None));
+                effects.push(Effect::SpendTransaction(
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        bundle,
+                        None,
+                        unroll_coin,
+                    ),
+                ));
                 effects.push(Effect::Log(format!(
                     "[unroll-preempt] state={on_chain_state} preempting={preempting_state_number:?}"
                 )));
@@ -788,7 +800,13 @@ impl SpendChannelCoinPhase {
                             coin: unroll_coin.clone(),
                             timeout: self.base.unroll_timeout.clone(),
                             name: Some("unroll"),
-                            spend: Some(spend),
+                            spend: Some(
+                                crate::session_phases::effects::TransactionSubmission::attach_to(
+                                    spend,
+                                    None,
+                                    unroll_coin,
+                                ),
+                            ),
                             semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
                         });
                     }
@@ -1078,14 +1096,17 @@ impl SpendChannelCoinPhase {
                 );
 
                 effects.push(Effect::SpendTransaction(
-                    SpendBundle {
-                        name: Some("on chain redo move".to_string()),
-                        spends: vec![CoinSpend {
-                            coin: coin.clone(),
-                            bundle: transaction,
-                        }],
-                    },
-                    None,
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        SpendBundle {
+                            name: Some("on chain redo move".to_string()),
+                            spends: vec![CoinSpend {
+                                coin: coin.clone(),
+                                bundle: transaction,
+                            }],
+                        },
+                        None,
+                        &coin,
+                    ),
                 ));
             }
         }

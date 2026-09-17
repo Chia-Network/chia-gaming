@@ -108,6 +108,8 @@ pub struct HandshakeInitiatorPhase {
     channel_initiation_transaction: Option<SpendBundle>,
     funding_coin: Option<CoinString>,
     #[serde(default)]
+    channel_watch_started: bool,
+    #[serde(default)]
     opening_fee: Amount,
 
     private_keys: ChannelPrivateKeys,
@@ -145,6 +147,7 @@ impl HandshakeInitiatorPhase {
             channel_state: None,
             channel_initiation_transaction: None,
             funding_coin: None,
+            channel_watch_started: false,
             opening_fee: Amount::default(),
             private_keys: phi.private_keys,
             game_types: phi.game_types,
@@ -188,7 +191,9 @@ impl HandshakeInitiatorPhase {
         let my_hs_info = self.my_handshake_b();
         self.state = InitiatorState::SentA(Box::new(my_hs_info.clone()));
 
-        Ok(Some(Effect::PeerHandshakeA(Box::new(my_hs_info))))
+        Ok(Some(Effect::SendPeer(PeerMessage::HandshakeA(Box::new(
+            my_hs_info,
+        )))))
     }
 
     fn make_channel_state(
@@ -253,10 +258,10 @@ impl HandshakeInitiatorPhase {
         our_sigs: StateUpdateSignatures,
     ) -> Result<Option<Effect>, Error> {
         if let Some(spend) = self.channel_initiation_transaction.clone() {
-            let send_effect = Effect::PeerHandshakeC(HandshakePayloadC {
+            let send_effect = Effect::SendPeer(PeerMessage::HandshakeC(HandshakePayloadC {
                 bundle: spend.clone(),
                 signatures: our_sigs,
-            });
+            }));
             self.state = InitiatorState::Finished(Box::new(HandshakeStepWithSpend { info, spend }));
             return Ok(Some(send_effect));
         }
@@ -480,13 +485,6 @@ impl HandshakeInitiatorPhase {
                     second_player_hs_info: msg.identity.clone(),
                 };
                 effects.push(Effect::ChannelPuzzleHash(channel_puzzle_hash));
-                effects.push(Effect::RegisterCoin {
-                    coin: self.channel_state()?.channel_coin().clone(),
-                    timeout: Timeout::new(1_000_000),
-                    name: Some("channel"),
-                    spend: None,
-                    semantic: None,
-                });
                 if self.last_height > 0 {
                     let coin_spend_request = self.build_alice_coin_spend_request(env)?;
                     self.channel_deadline = self.compute_not_valid_after_height();
@@ -524,7 +522,12 @@ impl HandshakeInitiatorPhase {
                             &env.agg_sig_me_additional_data,
                             self.last_height,
                         )?;
-                        effects.push(Effect::SpendTransaction(combined, self.channel_deadline));
+                        effects.push(Effect::SpendTransaction(
+                            crate::session_phases::effects::TransactionSubmission::already_paid(
+                                combined,
+                                self.channel_deadline,
+                            ),
+                        ));
                         self.transaction_pushed = true;
                     }
                 } else {
@@ -610,29 +613,34 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
     fn coin_created(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _coin: &CoinString,
+        coin: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
+        if self.funding_coin.as_ref() == Some(coin) {
+            return Ok(Some(vec![Effect::Log(format!(
+                "[initiator-handshake:funding-live] {}",
+                format_coin(coin),
+            ))]));
+        }
+        if self.funding_coin.is_none() && !self.channel_watch_started {
+            return Ok(None);
+        }
+
+        let channel_coin = self.channel_state()?.channel_coin().clone();
+        if *coin != channel_coin {
+            return Err(Error::StrErr(format!(
+                "initiator handshake observed unexpected coin creation: {}",
+                format_coin(coin),
+            )));
+        }
+        game_assert!(
+            self.channel_watch_started,
+            "initiator observed channel coin before funding spend started its watch"
+        );
         if !self.waiting_to_start {
             return Ok(None);
         }
 
-        let has_channel_coin = self
-            .channel_state()
-            .ok()
-            .map(|ch| ch.channel_coin())
-            .is_some();
-
-        if !has_channel_coin {
-            return Ok(None);
-        }
-
         self.waiting_to_start = false;
-
-        let channel_coin = self
-            .channel_state()
-            .ok()
-            .map(|ch| ch.channel_coin().clone())
-            .expect("has_channel_coin was true");
 
         let mut effects = Vec::new();
 
@@ -652,12 +660,42 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
     fn coin_spent(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        coin_id: &CoinString,
+        coin: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![Effect::Log(format!(
-            "[initiator-handshake:coin-spent] {}",
-            format_coin(coin_id),
-        ))])
+        if self.funding_coin.as_ref() == Some(coin) {
+            if self.channel_watch_started {
+                return Ok(vec![Effect::Log(format!(
+                    "[initiator-handshake:funding-spent-again] {}",
+                    format_coin(coin),
+                ))]);
+            }
+            self.channel_watch_started = true;
+            return Ok(vec![Effect::RegisterCoin {
+                coin: self.channel_state()?.channel_coin().clone(),
+                timeout: Timeout::new(1_000_000),
+                name: Some("channel"),
+                spend: None,
+                semantic: None,
+            }]);
+        }
+        if self.funding_coin.is_none() && !self.channel_watch_started {
+            return Ok(vec![Effect::Log(format!(
+                "[initiator-handshake:pre-watch-coin-spent] {}",
+                format_coin(coin),
+            ))]);
+        }
+
+        if self.channel_state()?.channel_coin() == coin {
+            return Ok(vec![Effect::Log(format!(
+                "[initiator-handshake:channel-spent] {}",
+                format_coin(coin),
+            ))]);
+        }
+
+        Err(Error::StrErr(format!(
+            "initiator handshake observed unexpected coin spend: {}",
+            format_coin(coin),
+        )))
     }
 
     fn coin_puzzle_and_solution(
@@ -840,14 +878,20 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         env: &mut ChannelEnv<'_>,
         wallet_bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
         let bundle = if matches!(self.state, InitiatorState::WaitingForOffer(_, _)) {
             let mut request = self.build_alice_coin_spend_request(env)?;
             request.max_height = self.channel_deadline;
-            self.funding_coin = Some(validate_wallet_bundle_applies_conditions(
-                env.allocator,
-                &wallet_bundle,
-                &request,
-            )?);
+            let funding_coin =
+                validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)?;
+            self.funding_coin = Some(funding_coin.clone());
+            effects.push(Effect::RegisterCoin {
+                coin: funding_coin,
+                timeout: Timeout::new(1_000_000),
+                name: Some("funding"),
+                spend: None,
+                semantic: None,
+            });
             let amount = self.contribution_amount()?;
             let (contribution_puzzle, contribution_ph) = self.contribution_puzzle(env)?;
             let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
@@ -941,8 +985,8 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
             wallet_bundle
         };
 
-        self.channel_offer(env, bundle)
-            .map(|effect| effect.into_iter().collect::<Vec<_>>())
+        effects.extend(self.channel_offer(env, bundle)?);
+        Ok(effects)
     }
     fn propose_games(
         &mut self,
@@ -1059,17 +1103,17 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        // While funding is pending, surface both the predicted channel coin and
-        // the local wallet coin that emitted the required extra conditions.
-        let mut coins = self
-            .channel_state
-            .as_ref()
-            .map(|ch| vec![(CoinOfInterest::Channel, ch.channel_coin().clone())])
-            .unwrap_or_default();
-        if let Some(funding_coin) = &self.funding_coin {
-            coins.push((CoinOfInterest::Funding, funding_coin.clone()));
+        if self.channel_watch_started {
+            return self
+                .channel_state
+                .as_ref()
+                .map(|ch| vec![(CoinOfInterest::Channel, ch.channel_coin().clone())])
+                .unwrap_or_default();
         }
-        coins
+        self.funding_coin
+            .as_ref()
+            .map(|coin| vec![(CoinOfInterest::Funding, coin.clone())])
+            .unwrap_or_default()
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         HandshakeInitiatorPhase::channel_state(self)
@@ -1373,14 +1417,18 @@ mod finished_message_tests {
         let submitted: Vec<_> = first
             .iter()
             .filter_map(|effect| match effect {
-                Effect::SpendTransaction(bundle, _) => Some(bundle),
+                Effect::SpendTransaction(submission) => Some(submission.clone()),
                 _ => None,
             })
             .collect();
         assert_eq!(submitted.len(), 1);
-        assert_eq!(submitted[0].spends.len(), 2);
-        assert_eq!(submitted[0].spends[0].coin, e_coin);
-        assert_eq!(submitted[0].spends[1].coin, f_coin);
+        assert_eq!(
+            submitted[0].fee_policy,
+            crate::session_phases::effects::FeePolicy::AlreadyPaid
+        );
+        assert_eq!(submitted[0].bundle.spends.len(), 2);
+        assert_eq!(submitted[0].bundle.spends[0].coin, e_coin);
+        assert_eq!(submitted[0].bundle.spends[1].coin, f_coin);
         assert!(second.is_empty());
         assert!(phase.transaction_pushed);
     }

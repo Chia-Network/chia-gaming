@@ -114,14 +114,17 @@ fn on_chain_move_submission_effects(
 ) -> Vec<Effect> {
     vec![
         Effect::SpendTransaction(
-            SpendBundle {
-                name: Some("on chain move".to_string()),
-                spends: vec![CoinSpend {
-                    coin: current_coin.clone(),
-                    bundle: transaction,
-                }],
-            },
-            None,
+            crate::session_phases::effects::TransactionSubmission::attach_to(
+                SpendBundle {
+                    name: Some("on chain move".to_string()),
+                    spends: vec![CoinSpend {
+                        coin: current_coin.clone(),
+                        bundle: transaction,
+                    }],
+                },
+                None,
+                current_coin,
+            ),
         ),
         Effect::Notify(GameNotification::LocalActionApplied {
             id: game_id,
@@ -689,10 +692,14 @@ impl OnChainPhase {
             let semantic =
                 Self::timeout_claim_semantic(game_id, our_turn, game_finished, claim.is_some());
             effects.push(Effect::RegisterCoin {
-                coin,
+                coin: coin.clone(),
                 timeout: gt,
                 name: Some("game coin"),
-                spend: claim,
+                spend: claim.map(|bundle| {
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        bundle, None, &coin,
+                    )
+                }),
                 semantic,
             });
         }
@@ -794,10 +801,14 @@ impl OnChainPhase {
                         claim.is_some(),
                     );
                     effects.push(Effect::RegisterCoin {
-                        coin: new_coin,
+                        coin: new_coin.clone(),
                         timeout: gt,
                         name: Some("our on-chain move confirmed"),
-                        spend: claim,
+                        spend: claim.map(|bundle| {
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                bundle, None, &new_coin,
+                            )
+                        }),
                         semantic,
                     });
                     effects.extend(self.process_queued_action(env)?);
@@ -1030,10 +1041,14 @@ impl OnChainPhase {
                             claim.is_some(),
                         );
                         effects.push(Effect::RegisterCoin {
-                            coin: new_coin,
+                            coin: new_coin.clone(),
                             timeout: gt,
                             name: Some("timeout-claim-armed game coin advanced by redo"),
-                            spend: claim,
+                            spend: claim.map(|bundle| {
+                                crate::session_phases::effects::TransactionSubmission::attach_to(
+                                    bundle, None, &new_coin,
+                                )
+                            }),
                             semantic,
                         });
                     }
@@ -1198,7 +1213,13 @@ impl OnChainPhase {
                         } else {
                             "expected spend - their turn"
                         }),
-                        spend: claim,
+                        spend: claim.map(|bundle| {
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                bundle,
+                                None,
+                                &new_coin_id,
+                            )
+                        }),
                         semantic,
                     });
                     if auto_settle {
@@ -1365,7 +1386,13 @@ impl OnChainPhase {
                         coin: new_coin_string.clone(),
                         timeout: gt,
                         name: Some("coin gives my turn"),
-                        spend: claim,
+                        spend: claim.map(|bundle| {
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                bundle,
+                                None,
+                                &new_coin_string,
+                            )
+                        }),
                         semantic,
                     });
                     if auto_settle {
@@ -1394,11 +1421,14 @@ impl OnChainPhase {
                             .map(|(_, _, amt)| amt.clone())
                             .unwrap_or_default();
                         effects.push(Effect::SpendTransaction(
-                            SpendBundle {
-                                name: Some("slash move".to_string()),
-                                spends: vec![*transaction.clone()],
-                            },
-                            None,
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                SpendBundle {
+                                    name: Some("slash move".to_string()),
+                                    spends: vec![*transaction.clone()],
+                                },
+                                None,
+                                &transaction.coin,
+                            ),
                         ));
                         let slash_coin = transaction.coin.clone();
                         let gt = old_definition.game_timeout.clone();
@@ -1744,7 +1774,13 @@ impl OnChainPhase {
                         coin: current_coin.clone(),
                         timeout: gt,
                         name: Some("timeout claim"),
-                        spend: Some(claim),
+                        spend: Some(
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                claim,
+                                None,
+                                &current_coin,
+                            ),
+                        ),
                         semantic: Some(TimeoutClaimSemantic::GameFinishTimeout { id: game_id }),
                     });
                 }
@@ -2213,7 +2249,7 @@ mod tests {
         assert!(matches!(
             effects.as_slice(),
             [
-                Effect::SpendTransaction(_, _),
+                Effect::SpendTransaction(_),
                 Effect::Notify(GameNotification::LocalActionApplied {
                     id: GameID(7),
                     action: LocalActionKind::MakeMove,

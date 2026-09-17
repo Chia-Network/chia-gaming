@@ -4,6 +4,12 @@ This document describes the architecture of the frontend JavaScript/TypeScript
 code. It reflects the current implementation unless explicitly marked as a future
 direction.
 
+This player is a security-sensitive application that constructs and submits
+transactions controlling real value. JavaScript/TypeScript is therefore treated
+as an integration and presentation environment, not as the authority for
+protocol or transaction correctness. Value-bearing rules, transaction intent,
+wallet-output validation, and durable protocol/retry state belong in Rust.
+
 For the backend/WASM architecture, see `OVERVIEW.md`. For the connectivity
 model (wallet, hub, peer, session interactions and rollover), see
 `CONNECTIVITY.md`.
@@ -314,6 +320,15 @@ The WASM module and its host JavaScript execute in the **same trust domain** —
 they are served from the same origin, run in the same process, and share the
 same memory. The WASM-to-JS boundary is not a security boundary.
 
+Sharing a security domain does not make the layers interchangeable. Browser
+JavaScript has a large, dynamic API surface and provider-specific failure modes.
+It should transport opaque values, adapt wallet/browser APIs, and render
+Rust-owned facts. Logic equivalent to backend business logic—especially
+authorization, protocol transitions, spend construction or validation, fee
+policy, and durable retry decisions—must remain in Rust unless an external API
+can only be invoked from JavaScript. In that case JavaScript reports a typed raw
+outcome and Rust retains the authoritative state.
+
 Private keys (channel, unroll, referee) are intentionally included in the
 serialized cradle state. Without them, a deserialized session cannot resume
 signing and the game would be unrecoverable after a page reload. Any
@@ -403,7 +418,7 @@ are grouped under those phase-owned payloads:
 | `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
 | `blockchainType`                | `'simulator' \| 'walletconnect' \| 'cloud'?`                                                               | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
-| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `8`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
+| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `12`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                 |
 | `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
@@ -495,6 +510,16 @@ the delay and flush immediately before sending. Game-owned local-only
 `state-changed` updates retain the existing outer persistence debounce.
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
+Each drained submission has a stable Rust identifier, expiry, and captured fee
+intent. Rust deduplicates only an exact canonical intent fingerprint; two
+different transactions that spend the same inputs retain different IDs.
+Rejection retires only its exact ID. The manager separately retains wallet
+delivery acknowledgement and chain finality. JavaScript makes one wallet call
+and reports a typed `acknowledged`, `unavailable`, or `rejected` result:
+acknowledgement ends ordinary app rebroadcast, while unavailability remains
+eligible for replay after fresh chain synchronization. Any detected reorg
+resets every retained, unexpired transaction to awaiting delivery and queues it
+once, including transactions the wallet previously acknowledged.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
 frontend does not persist a move journal or receive replay instructions.
 Following browser restore, an ordinary game effect may submit an automatic move
@@ -1166,14 +1191,31 @@ Shell manages wallet connections through two abstractions defined in
   floor-or-above are allowed. This is a floor below which a fee definitely cannot
   work, not a guarantee of inclusion. For ordinary WalletConnect submissions,
   `createFeeSpend` makes a validate-only offer whose wallet spend asserts the
-  known target coin is spent concurrently and reserves the fee. The host
-  completes its OFFER_MOD output into a spent nil-puzzle coin. Cloud Wallet
-  returns its direct amount-zero fee spend instead. The host aggregates either
-  backend's result with the protocol bundle. Both peers push the byte-identical
-  funding bundle, so the node de-dups the second arrival;
-  `isBenignTransactionSubmitError` recognizes that duplicate/
-  `ALREADY_INCLUDING_TRANSACTION` as harmless, and a fee-rate rejection is
-  rewritten by `rewriteFeeRateRejection` into an actionable message.
+  Rust-specified target coin is spent concurrently and reserves the fee. Cloud
+  Wallet returns its direct amount-zero fee spend instead. JavaScript passes
+  either tagged provider result opaquely to one Rust/WASM attachment operation.
+  Rust captures the configured amount, target, and explicit
+  `SubmitWithoutFee` attachment-failure policy when the intent is first emitted,
+  so retries cannot silently change fee policy. Rust completes WalletConnect's
+  OFFER_MOD output into a spent nil-puzzle coin; validates the exact reserve,
+  deficit, target assertion, signatures (including legitimate
+  `AGG_SIG_UNSAFE` pairs), and lack of protocol input overlap for either
+  provider; aggregates the bundles; and consensus-checks the result. If the
+  wallet source cannot be obtained or validated, the same Rust finalization
+  boundary deliberately returns the original fee-free bundle with a warning.
+  The host never chooses that fallback or derives fee policy or target coins
+  from bundle names, puzzle hashes, or spend ordering.
+
+  Wallet adapters make one submission attempt and return a typed outcome.
+  Structured success and a response identifying the exact same transaction as
+  already included are idempotent acknowledgement. An RPC that cannot complete
+  because the wallet connection, relayer, or request transport is unavailable
+  returns `unavailable`; an error response from the wallet returns `rejected`.
+  The WalletConnect RPC layer preserves this provenance, and adapters do not
+  infer retry policy from consensus, mempool, or coin-status text. Local
+  conversion or finalization errors also retain the Rust intent rather than
+  retiring it. No adapter owns a timer retry loop, so an unavailable submission
+  cannot block a later urgent transaction.
 
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single
@@ -1254,7 +1296,11 @@ host-side coordinator for chain observations. It separates three concerns:
    backend. That queue serializes both background polling and foreground wallet
    actions exposed through `blockchain.rpc`, applying the backend's requested
    inter-request gap. `AsyncPollingScheduler` runs the repeating height,
-   balance, and coin-sweep jobs by enqueueing them onto that same lane.
+   balance, and coin-sweep jobs by enqueueing them onto that same lane. On
+   disconnect, the queue abandons its current generation: queued jobs are
+   discarded and a new generation may run immediately even if an unabortable
+   provider promise from the old connection never resolves. Connection-epoch
+   checks discard any late old-generation result.
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
@@ -1265,6 +1311,12 @@ Coin polling reports raw height and coin-state observations upward every
 successful sweep. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those
 observations. The browser never decides that a watch has become terminal.
+
+During channel opening, each handshake role first registers its known local
+wallet funding input. Only after that input is observed spent does Rust replace
+the protocol's active interest with the predicted channel coin. A live funding
+observation cannot activate the channel, and the host does not query the
+predicted child before its parent spend has occurred.
 
 When WASM processing registers new watched coins, `SessionController` applies
 the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized

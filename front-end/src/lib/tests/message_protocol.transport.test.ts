@@ -24,7 +24,6 @@ import {
   wasmResult,
 } from './message_protocol.harness';
 import { jsonStringify } from '../../util/jsonSafe';
-import { coinIdFromBytes, toUint8 } from '../../util';
 import {
   protocolIdentitiesReady,
   setProtocolIds,
@@ -1044,30 +1043,34 @@ describe('wallet fee attachment on submission', () => {
     aggregated_signature: '0xproto',
   };
 
-  function attachWc(blob: SessionController, aggregate: jest.Mock, feeSpend?: unknown) {
-    (blob as unknown as { wc: unknown }).wc = {
-      convert_spend_to_coinset_org: () => protocolBundle,
-      complete_fee_offer_to_coinset_org: () => feeSpend,
-      aggregate_coinset_spend_bundles: aggregate,
-    };
+  const feeTarget = 'dd'.repeat(32);
+
+  function setFinalizer(blob: SessionController, finalize: jest.Mock) {
+    (blob as unknown as { cradle: { finalize_submission: jest.Mock } }).cradle.finalize_submission =
+      finalize;
   }
 
   it('does not attach a second fee spend to a channel-opening bundle', async () => {
     const createFeeSpend = jest.fn();
-    const spend = jest.fn().mockResolvedValue('ok');
-    const aggregate = jest.fn();
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const finalize = jest.fn().mockReturnValue({
+      protocol_bundle: testSpendBundle('coin'),
+      bundle: protocolBundle,
+      applied_fee: '0',
+      warning: null,
+    });
     const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
     blob.getFee = () => 10n;
-    attachWc(blob, aggregate);
+    setFinalizer(blob, finalize);
 
-    submitTransaction(blob, { ...testSpendBundle('coin'), name: 'channel-opening' });
+    submitTransaction(blob, { ...testSpendBundle('coin'), name: 'arbitrary-name' });
     await transactionSubmitQueue(blob);
 
     expect(createFeeSpend).not.toHaveBeenCalled();
-    expect(aggregate).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledWith(expect.any(String), undefined);
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       protocolBundle,
@@ -1078,40 +1081,30 @@ describe('wallet fee attachment on submission', () => {
   });
 
   it('aggregates a wallet fee spend into the submitted bundle', async () => {
-    const feeSpend = {
-      coin_spends: [
-        {
-          coin: {
-            parent_coin_info: `0x${'99'.repeat(32)}`,
-            puzzle_hash: `0x${'88'.repeat(32)}`,
-            amount: 1000n,
-          },
-          puzzle_reveal: '0x80',
-          solution: '0x80',
-        },
-      ],
-      aggregated_signature: '0xfee',
-    };
     const aggregated = { coin_spends: [], aggregated_signature: '0xcombined' };
     const createFeeSpend = jest.fn().mockResolvedValue({ kind: 'offer', offer: 'offer1signed' });
-    const spend = jest.fn().mockResolvedValue('ok');
-    const aggregate = jest.fn().mockReturnValue(aggregated);
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const finalize = jest.fn().mockReturnValue({
+      protocol_bundle: testSpendBundle('coin'),
+      bundle: aggregated,
+      applied_fee: '10',
+      warning: null,
+    });
     const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
     blob.getFee = () => 10n;
-    attachWc(blob, aggregate, feeSpend);
+    setFinalizer(blob, finalize);
 
-    submitTransaction(blob, testSpendBundle('coin'));
+    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
     await transactionSubmitQueue(blob);
 
-    // Initial funding binds the fee to the launcher even when it is not first.
-    const bindCoinId = await coinIdFromBytes(
-      toUint8(`${'cc'.repeat(32)}eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9`),
+    expect(createFeeSpend).toHaveBeenCalledWith(10n, feeTarget);
+    expect(finalize).toHaveBeenCalledWith(
+      expect.any(String),
+      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
     );
-    expect(createFeeSpend).toHaveBeenCalledWith(10n, bindCoinId);
-    expect(aggregate).toHaveBeenCalledWith(jsonStringify([protocolBundle, feeSpend]));
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       aggregated,
@@ -1138,19 +1131,27 @@ describe('wallet fee attachment on submission', () => {
     };
     const aggregated = { coin_spends: [], aggregated_signature: '0xcombined' };
     const createFeeSpend = jest.fn().mockResolvedValue({ kind: 'bundle', bundle: feeSpend });
-    const spend = jest.fn().mockResolvedValue('ok');
-    const aggregate = jest.fn().mockReturnValue(aggregated);
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const finalize = jest.fn().mockReturnValue({
+      protocol_bundle: testSpendBundle('coin'),
+      bundle: aggregated,
+      applied_fee: '10',
+      warning: null,
+    });
     const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
     blob.getFee = () => 10n;
-    attachWc(blob, aggregate);
+    setFinalizer(blob, finalize);
 
-    submitTransaction(blob, testSpendBundle('coin'));
+    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
     await transactionSubmitQueue(blob);
 
-    expect(aggregate).toHaveBeenCalledWith(jsonStringify([protocolBundle, feeSpend]));
+    expect(finalize).toHaveBeenCalledWith(
+      expect.any(String),
+      jsonStringify({ kind: 'bundle', bundle: feeSpend }),
+    );
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       aggregated,
@@ -1162,26 +1163,38 @@ describe('wallet fee attachment on submission', () => {
 
   it('submits with zero fee and warns the user when the wallet cannot build a fee offer', async () => {
     const createFeeSpend = jest.fn().mockResolvedValue(null);
-    const spend = jest.fn().mockResolvedValue('ok');
-    const aggregate = jest.fn();
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const finalize = jest.fn().mockImplementation((_id: string, feeSource: string) => {
+      expect(JSON.parse(feeSource)).toEqual({
+        kind: 'failure',
+        reason: 'the wallet could not build a signed fee source',
+      });
+      return {
+        protocol_bundle: testSpendBundle('coin'),
+        bundle: protocolBundle,
+        applied_fee: '0',
+        warning:
+          'Configured fee was not applied: the wallet could not build a signed fee source. The transaction will be attempted without a fee.',
+      };
+    });
     const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
     blob.getFee = () => 10n;
-    attachWc(blob, aggregate);
+    setFinalizer(blob, finalize);
 
     const errors: string[] = [];
     const subscription = blob.getObservable().subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
-    submitTransaction(blob, testSpendBundle('coin'));
+    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
     expect(createFeeSpend).toHaveBeenCalled();
-    expect(aggregate).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalled();
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       protocolBundle,
@@ -1194,31 +1207,36 @@ describe('wallet fee attachment on submission', () => {
     expect(errors[0]).toMatch(/fee was not applied/i);
   });
 
-  it('drops a fee offer that reuses a protocol input coin', async () => {
-    const feeSpend = {
-      coin_spends: [protocolBundle.coin_spends[0]],
-      aggregated_signature: '0xfee',
-    };
+  it('surfaces Rust fallback warning when a fee source reuses a protocol input coin', async () => {
     const createFeeSpend = jest.fn().mockResolvedValue({ kind: 'offer', offer: 'offer1signed' });
-    const spend = jest.fn().mockResolvedValue('ok');
-    const aggregate = jest.fn();
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const finalize = jest.fn().mockReturnValue({
+      protocol_bundle: testSpendBundle('coin'),
+      bundle: protocolBundle,
+      applied_fee: '0',
+      warning:
+        'Configured fee was not applied: fee bundle reuses protocol input coin. The transaction will be attempted without a fee.',
+    });
     const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
     blob.getFee = () => 10n;
-    attachWc(blob, aggregate, feeSpend);
+    setFinalizer(blob, finalize);
 
     const errors: string[] = [];
     const subscription = blob.getObservable().subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
-    submitTransaction(blob, testSpendBundle('coin'));
+    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
-    expect(aggregate).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledWith(
+      expect.any(String),
+      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
+    );
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       protocolBundle,
@@ -1227,31 +1245,39 @@ describe('wallet fee attachment on submission', () => {
       undefined,
     );
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/reused protocol input coin/i);
+    expect(errors[0]).toMatch(/reuses protocol input coin/i);
   });
 
   it('surfaces the real wallet error in the warning when the fee offer fails', async () => {
     const createFeeSpend = jest.fn().mockRejectedValue(new Error('Internal error (code=-32603)'));
-    const spend = jest.fn().mockResolvedValue('ok');
-    const aggregate = jest.fn();
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const finalize = jest.fn().mockImplementation((_id: string, feeSource: string) => {
+      const source = JSON.parse(feeSource);
+      return {
+        protocol_bundle: testSpendBundle('coin'),
+        bundle: protocolBundle,
+        applied_fee: '0',
+        warning: `Configured fee was not applied: ${source.reason}. The transaction will be attempted without a fee.`,
+      };
+    });
     const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
     blob.getFee = () => 10n;
-    attachWc(blob, aggregate);
+    setFinalizer(blob, finalize);
 
     const errors: string[] = [];
     const subscription = blob.getObservable().subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
-    submitTransaction(blob, testSpendBundle('coin'));
+    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
     expect(createFeeSpend).toHaveBeenCalled();
-    expect(aggregate).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalled();
     // Zero-fee fallback still submits the protocol bundle.
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),

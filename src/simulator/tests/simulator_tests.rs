@@ -826,7 +826,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 spend: None,
                 semantic: None,
             },
-            GameSessionEvent::OutboundTransaction(creating_tx.clone(), None),
+            GameSessionEvent::OutboundTransaction(
+                crate::session_phases::effects::TransactionSubmission::attach_to(
+                    creating_tx.clone(),
+                    None,
+                    &parent,
+                ),
+            ),
         ]);
         let mut mgr = TransactionManager::new(cradle);
         mgr.flush_and_collect(&mut allocator).expect("flush");
@@ -835,7 +841,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let subs = mgr.drain_submissions().unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(
-            s.push_transactions(&mut allocator, &tx_spends(&subs[0]))
+            s.push_transactions(&mut allocator, &tx_spends(&subs[0].bundle))
                 .expect("ok")
                 .code,
             1
@@ -866,7 +872,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let resubs = mgr.drain_submissions().unwrap();
         assert_eq!(resubs.len(), 1, "creating tx resubmitted");
         assert_eq!(
-            s.push_transactions(&mut allocator, &tx_spends(&resubs[0]))
+            s.push_transactions(&mut allocator, &tx_spends(&resubs[0].bundle))
                 .expect("ok")
                 .code,
             1,

@@ -343,18 +343,15 @@ impl PacketSender for GameSessionState {
 }
 
 impl WalletSpendInterface for GameSessionState {
-    fn spend_transaction_and_add_fee(
+    fn spend_transaction(
         &mut self,
-        bundle: &SpendBundle,
-        expiry: Option<u64>,
+        submission: &crate::session_phases::effects::TransactionSubmission,
     ) -> Result<(), Error> {
-        if expiry.is_some() {
-            self.channel_creation_expiry = expiry;
+        if submission.expiry.is_some() {
+            self.channel_creation_expiry = submission.expiry;
         }
-        self.events.push_back(GameSessionEvent::OutboundTransaction(
-            bundle.clone(),
-            expiry,
-        ));
+        self.events
+            .push_back(GameSessionEvent::OutboundTransaction(submission.clone()));
         Ok(())
     }
     fn register_coin(
@@ -362,7 +359,7 @@ impl WalletSpendInterface for GameSessionState {
         coin_id: &CoinString,
         timeout: &Timeout,
         _name: Option<&'static str>,
-        spend: Option<SpendBundle>,
+        spend: Option<crate::session_phases::effects::TransactionSubmission>,
         semantic: Option<TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         self.events.push_back(GameSessionEvent::WatchCoin {
@@ -1143,7 +1140,13 @@ impl GameSession {
 
             self.state
                 .events
-                .push_back(GameSessionEvent::OutboundTransaction(spends, None));
+                .push_back(GameSessionEvent::OutboundTransaction(
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        spends,
+                        None,
+                        &parent_coin,
+                    ),
+                ));
 
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
@@ -1157,6 +1160,10 @@ impl GameSession {
 }
 
 impl GameSession {
+    pub fn agg_sig_me_additional_data(&self) -> &Hash {
+        &self.state.agg_sig_me_additional_data
+    }
+
     #[cfg(test)]
     pub fn flush_pending(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
         let effects = {

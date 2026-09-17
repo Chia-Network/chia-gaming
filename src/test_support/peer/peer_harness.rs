@@ -1,5 +1,5 @@
 #[cfg(test)]
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use clvm_traits::ToClvm;
 
@@ -11,7 +11,7 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
 #[cfg(test)]
-use crate::common::types::{GameID, Hash, Node, PrivateKey, Timeout};
+use crate::common::types::{GameID, GameType, Hash, Node, PrivateKey, ProgramRef, Timeout};
 #[cfg(test)]
 use crate::game_session::{MessagePeerQueue, MessagePipe, PeerLifecyclePhase};
 #[cfg(test)]
@@ -106,12 +106,12 @@ impl PacketSender for Pipe {
 
 #[cfg(test)]
 impl WalletSpendInterface for Pipe {
-    fn spend_transaction_and_add_fee(
+    fn spend_transaction(
         &mut self,
-        bundle: &SpendBundle,
-        _expiry: Option<u64>,
+        submission: &crate::session_phases::effects::TransactionSubmission,
     ) -> Result<(), Error> {
-        self.outgoing_transactions.push_back(bundle.clone());
+        self.outgoing_transactions
+            .push_back(submission.bundle.clone());
         Ok(())
     }
 
@@ -120,7 +120,7 @@ impl WalletSpendInterface for Pipe {
         coin_id: &CoinString,
         timeout: &Timeout,
         _name: Option<&'static str>,
-        _spend: Option<SpendBundle>,
+        _spend: Option<crate::session_phases::effects::TransactionSubmission>,
         _semantic: Option<crate::session_phases::effects::TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         self.registered_coins
@@ -500,9 +500,70 @@ where
             }
 
             {
-                let mut env = ChannelEnv::new(allocator)?;
+                if let Some(funding_coin) =
+                    handlers[who]
+                        .coins_of_interest()
+                        .into_iter()
+                        .find_map(|(kind, coin)| {
+                            (kind == crate::session_phases::effects::CoinOfInterest::Funding)
+                                .then_some(coin)
+                        })
+                {
+                    let created = {
+                        let mut env = ChannelEnv::new(allocator)?;
+                        handlers[who]
+                            .coin_created(&mut env, &funding_coin)?
+                            .unwrap_or_default()
+                    };
+                    apply_effects_with_handshake_callbacks(
+                        allocator, handlers, pipes, who, created,
+                    )?;
+
+                    let spent = {
+                        let mut env = ChannelEnv::new(allocator)?;
+                        handlers[who].coin_spent(&mut env, &funding_coin)?
+                    };
+                    assert!(
+                        spent
+                            .iter()
+                            .any(|effect| matches!(effect, Effect::RegisterCoin { coin, .. } if coin == handlers[who].channel_state().expect("channel state after wallet offer").channel_coin())),
+                        "funding spend must register the predicted channel coin"
+                    );
+                    apply_effects_with_handshake_callbacks(allocator, handlers, pipes, who, spent)?;
+
+                    let reappeared = {
+                        let mut env = ChannelEnv::new(allocator)?;
+                        handlers[who]
+                            .coin_created(&mut env, &funding_coin)?
+                            .unwrap_or_default()
+                    };
+                    apply_effects_with_handshake_callbacks(
+                        allocator, handlers, pipes, who, reappeared,
+                    )?;
+                    let repeated_spend = {
+                        let mut env = ChannelEnv::new(allocator)?;
+                        handlers[who].coin_spent(&mut env, &funding_coin)?
+                    };
+                    assert!(
+                        !repeated_spend
+                            .iter()
+                            .any(|effect| matches!(effect, Effect::RegisterCoin { .. })),
+                        "re-observed funding spend must not duplicate channel registration"
+                    );
+                    apply_effects_with_handshake_callbacks(
+                        allocator,
+                        handlers,
+                        pipes,
+                        who,
+                        repeated_spend,
+                    )?;
+                }
+
                 if let Ok(channel_coin) = get_channel_coin_for_handler(&*handlers[who]) {
-                    let effects = handlers[who].coin_created(&mut env, &channel_coin)?;
+                    let effects = {
+                        let mut env = ChannelEnv::new(allocator)?;
+                        handlers[who].coin_created(&mut env, &channel_coin)?
+                    };
                     if let Some(effects) = effects {
                         apply_effects_with_handshake_callbacks(
                             allocator, handlers, pipes, who, effects,
@@ -522,6 +583,44 @@ where
     Err(Error::StrErr("handshake did not complete".to_string()))
 }
 
+#[cfg(test)]
+fn new_test_handshake_handler(
+    allocator: &mut AllocEncoder,
+    rng: &mut ChaCha8Rng,
+    game_types: &BTreeMap<GameType, ProgramRef>,
+    is_initiator: bool,
+) -> Box<dyn PeerLifecyclePhase> {
+    let channel_key = rng.random();
+    let unroll_key = rng.random();
+    let referee_key: PrivateKey = rng.random();
+    let mut pre_launcher_rng = ChaCha8Rng::from_seed(referee_key.bytes());
+    let private_keys = ChannelPrivateKeys {
+        my_channel_coin_private_key: channel_key,
+        my_unroll_coin_private_key: unroll_key,
+        my_referee_private_key: referee_key,
+        my_pre_launcher_private_key: pre_launcher_rng.random(),
+    };
+    let reward_private_key: PrivateKey = rng.random();
+    let reward_public_key = private_to_public_key(&reward_private_key);
+    let reward_puzzle_hash =
+        puzzle_hash_for_pk(allocator, &reward_public_key).expect("reward puzzle hash");
+
+    let init = OffChainPhaseInit {
+        private_keys,
+        game_types: game_types.clone(),
+        my_contribution: Amount::new(100),
+        their_contribution: Amount::new(100),
+        channel_timeout: Timeout::new(1000),
+        unroll_timeout: Timeout::new(15),
+        reward_puzzle_hash,
+    };
+    if is_initiator {
+        Box::new(HandshakeInitiatorPhase::new(init))
+    } else {
+        Box::new(HandshakeReceiverPhase::new(init))
+    }
+}
+
 pub fn test_peer_smoke() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
@@ -532,41 +631,6 @@ pub fn test_peer_smoke() {
 
     let game_type_map = game_collection(&mut allocator);
 
-    let new_handler = |allocator: &mut AllocEncoder,
-                       rng: &mut ChaCha8Rng,
-                       is_initiator: bool|
-     -> Box<dyn PeerLifecyclePhase> {
-        let channel_key = rng.random();
-        let unroll_key = rng.random();
-        let referee_key: PrivateKey = rng.random();
-        let mut pre_launcher_rng = ChaCha8Rng::from_seed(referee_key.bytes());
-        let private_keys1 = ChannelPrivateKeys {
-            my_channel_coin_private_key: channel_key,
-            my_unroll_coin_private_key: unroll_key,
-            my_referee_private_key: referee_key,
-            my_pre_launcher_private_key: pre_launcher_rng.random(),
-        };
-        let reward_private_key1: PrivateKey = rng.random();
-        let reward_public_key1 = private_to_public_key(&reward_private_key1);
-        let reward_puzzle_hash1 =
-            puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
-
-        let phi = OffChainPhaseInit {
-            private_keys: private_keys1,
-            game_types: game_type_map.clone(),
-            my_contribution: Amount::new(100),
-            their_contribution: Amount::new(100),
-            channel_timeout: Timeout::new(1000),
-            unroll_timeout: Timeout::new(15),
-            reward_puzzle_hash: reward_puzzle_hash1.clone(),
-        };
-        if is_initiator {
-            Box::new(HandshakeInitiatorPhase::new(phi))
-        } else {
-            Box::new(HandshakeReceiverPhase::new(phi))
-        }
-    };
-
     // Keep RNG draws stable for deterministic test vectors.
     let _parent_private_key: PrivateKey = rng.random();
     let _parent_public_key = private_to_public_key(&_parent_private_key);
@@ -576,8 +640,8 @@ pub fn test_peer_smoke() {
     let _parent_coin =
         CoinString::from_parts(&_parent_coin_id, &_parent_puzzle_hash, &Amount::new(200));
 
-    let h1 = new_handler(&mut allocator, &mut rng, true);
-    let h2 = new_handler(&mut allocator, &mut rng, false);
+    let h1 = new_test_handshake_handler(&mut allocator, &mut rng, &game_type_map, true);
+    let h2 = new_test_handshake_handler(&mut allocator, &mut rng, &game_type_map, false);
     let mut handlers = [h1, h2];
 
     {
@@ -724,6 +788,235 @@ pub fn test_peer_smoke() {
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 }
 
+fn prepare_receiver_for_handshake_c(
+    seed: [u8; 32],
+) -> (
+    AllocEncoder,
+    [Box<dyn PeerLifecyclePhase>; 2],
+    [Pipe; 2],
+    Vec<u8>,
+) {
+    let mut rng = ChaCha8Rng::from_seed(seed);
+    let mut allocator = AllocEncoder::new();
+    let mut pipes: [Pipe; 2] = Default::default();
+    pipes[1].message_pipe.my_id = 1;
+    let game_types = game_collection(&mut allocator);
+    let mut handlers = [
+        new_test_handshake_handler(&mut allocator, &mut rng, &game_types, true),
+        new_test_handshake_handler(&mut allocator, &mut rng, &game_types, false),
+    ];
+
+    for handler in &mut handlers {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handler.new_block(&mut env, 1).expect("initial height");
+    }
+    let start_effect = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handlers[0]
+            .start_handshake(&mut env, Amount::default())
+            .expect("start handshake")
+    };
+    apply_effects(
+        start_effect.into_iter().collect(),
+        &mut allocator,
+        &mut pipes[0],
+    )
+    .expect("send handshake A");
+
+    let handshake_a = pipes[0]
+        .message_pipe
+        .queue
+        .pop_front()
+        .expect("handshake A");
+    let receiver_effects = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handlers[1]
+            .received_message(&mut env, handshake_a)
+            .expect("receive handshake A")
+    };
+    apply_effects_with_handshake_callbacks(
+        &mut allocator,
+        &mut handlers,
+        &mut pipes,
+        1,
+        receiver_effects,
+    )
+    .expect("complete receiver funding");
+
+    let handshake_b = pipes[1]
+        .message_pipe
+        .queue
+        .pop_front()
+        .expect("handshake B");
+    let initiator_effects = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handlers[0]
+            .received_message(&mut env, handshake_b)
+            .expect("receive handshake B")
+    };
+    apply_effects_with_handshake_callbacks(
+        &mut allocator,
+        &mut handlers,
+        &mut pipes,
+        0,
+        initiator_effects,
+    )
+    .expect("complete initiator funding");
+
+    let valid_c = pipes[0]
+        .message_pipe
+        .queue
+        .pop_front()
+        .expect("handshake C");
+
+    (allocator, handlers, pipes, valid_c)
+}
+
+pub fn test_receiver_handshake_c_is_atomic() {
+    let (mut allocator, mut handlers, mut pipes, valid_c) =
+        prepare_receiver_for_handshake_c([23; 32]);
+    let mut invalid_c =
+        crate::session_phases::peer_wire::decode_peer_message(&valid_c).expect("decode C");
+    match &mut invalid_c {
+        PeerMessage::HandshakeC(payload) => {
+            let signed_spend = payload
+                .bundle
+                .spends
+                .iter_mut()
+                .find(|spend| !spend.bundle.signature.is_twos_complement_zero())
+                .expect("handshake C aggregate signature");
+            signed_spend.bundle.signature = Default::default();
+            assert!(!payload.bundle.spends.is_empty());
+        }
+        other => panic!("expected handshake C, got {other:?}"),
+    }
+    let invalid_c = crate::session_phases::peer_wire::encode_peer_message(&invalid_c)
+        .expect("encode invalid C");
+
+    let before = bencodex::to_vec(&handlers[1]).expect("serialize receiver before C");
+    let error = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handlers[1]
+            .received_message(&mut env, invalid_c)
+            .expect_err("invalid funding signature must be rejected")
+    };
+    assert!(format!("{error:?}").contains("aggregate signature"));
+    let after = bencodex::to_vec(&handlers[1]).expect("serialize receiver after invalid C");
+    assert_eq!(
+        after, before,
+        "rejected handshake C must not mutate receiver phase state"
+    );
+
+    let valid_effects = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handlers[1]
+            .received_message(&mut env, valid_c)
+            .expect("valid handshake C retry")
+    };
+    assert!(
+        valid_effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::SendPeer(PeerMessage::HandshakeD(_)))),
+        "valid retry must send handshake D"
+    );
+    assert!(
+        valid_effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SpendTransaction(submission)
+                if submission.fee_policy
+                    == crate::session_phases::effects::FeePolicy::AlreadyPaid
+        )),
+        "valid retry must submit the already-paid funding transaction"
+    );
+    apply_effects(valid_effects, &mut allocator, &mut pipes[1])
+        .expect("apply valid handshake C effects");
+    assert_eq!(pipes[1].message_pipe.queue.len(), 1);
+    assert_eq!(pipes[1].outgoing_transactions.len(), 1);
+}
+
+pub fn test_receiver_handshake_c_genesis_signature_failure_is_atomic() {
+    let (mut allocator, mut handlers, mut pipes, valid_c) =
+        prepare_receiver_for_handshake_c([24; 32]);
+    let valid_message =
+        crate::session_phases::peer_wire::decode_peer_message(&valid_c).expect("decode valid C");
+    let mut invalid_message = valid_message.clone();
+    match (&valid_message, &mut invalid_message) {
+        (PeerMessage::HandshakeC(valid), PeerMessage::HandshakeC(invalid)) => {
+            invalid.signatures.unroll_preempt_half_sig = Default::default();
+            assert_eq!(
+                invalid.bundle, valid.bundle,
+                "signature corruption must leave the funding bundle intact"
+            );
+            assert_ne!(
+                invalid.signatures, valid.signatures,
+                "invalid C must change only the state-one signatures"
+            );
+        }
+        (other, _) => panic!("expected handshake C, got {other:?}"),
+    }
+    let invalid_c = crate::session_phases::peer_wire::encode_peer_message(&invalid_message)
+        .expect("encode invalid C");
+
+    let before = bencodex::to_vec(&handlers[1]).expect("serialize receiver before invalid C");
+    let error = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handlers[1]
+            .received_message(&mut env, invalid_c)
+            .expect_err("invalid state-one signature must be rejected")
+    };
+    let error = format!("{error:?}");
+    assert!(
+        error.contains("receiver step C: genesis initialization failed"),
+        "error must identify receiver genesis initialization: {error}"
+    );
+    assert!(
+        error.contains("bad unroll signature verify"),
+        "error must identify state-one signature verification: {error}"
+    );
+    let after =
+        bencodex::to_vec(&handlers[1]).expect("serialize receiver after rejected invalid C");
+    assert_eq!(
+        after, before,
+        "genesis signature failure must not mutate receiver phase state"
+    );
+
+    let valid_effects = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handlers[1]
+            .received_message(&mut env, valid_c)
+            .expect("valid handshake C retry")
+    };
+    assert!(
+        valid_effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::SendPeer(PeerMessage::HandshakeD(_)))),
+        "valid retry must send handshake D"
+    );
+    assert!(
+        valid_effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SpendTransaction(submission)
+                if submission.fee_policy
+                    == crate::session_phases::effects::FeePolicy::AlreadyPaid
+        )),
+        "valid retry must submit the already-paid funding transaction"
+    );
+    apply_effects(valid_effects, &mut allocator, &mut pipes[1])
+        .expect("apply valid handshake C effects");
+    assert_eq!(pipes[1].message_pipe.queue.len(), 1);
+    assert_eq!(pipes[1].outgoing_transactions.len(), 1);
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
-    vec![("test_peer_smoke", &test_peer_smoke)]
+    vec![
+        ("test_peer_smoke", &test_peer_smoke),
+        (
+            "test_receiver_handshake_c_is_atomic",
+            &test_receiver_handshake_c_is_atomic,
+        ),
+        (
+            "test_receiver_handshake_c_genesis_signature_failure_is_atomic",
+            &test_receiver_handshake_c_genesis_signature_failure_is_atomic,
+        ),
+    ]
 }

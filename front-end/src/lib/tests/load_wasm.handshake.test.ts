@@ -19,6 +19,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  LONG_WASM_TEST_TIMEOUT,
   makeTestReliableState,
   pollOnce,
   startSimulator,
@@ -132,8 +133,11 @@ it(
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
       assert.deepEqual(
         wasm_blob2.getCoinsOfInterest().map((coin) => coin.label),
-        ['Channel coin', 'Funding coin'],
+        ['Funding coin'],
       );
+      const receiverFundingWatch = wasm_blob2.snapshotWatchedCoins();
+      assert.equal(receiverFundingWatch.length, 1);
+      assert.equal(receiverFundingWatch[0].coin_name, wasm_blob2.getCoinsOfInterest()[0].id);
       const sentB = cradle2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
@@ -146,8 +150,11 @@ it(
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
       assert.deepEqual(
         wasm_blob1.getCoinsOfInterest().map((coin) => coin.label),
-        ['Channel coin', 'Funding coin'],
+        ['Funding coin'],
       );
+      const initiatorFundingWatch = wasm_blob1.snapshotWatchedCoins();
+      assert.equal(initiatorFundingWatch.length, 1);
+      assert.equal(initiatorFundingWatch[0].coin_name, wasm_blob1.getCoinsOfInterest()[0].id);
       const sentC = cradle1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
@@ -215,6 +222,16 @@ it(
         'reload-regression-seed',
       );
       assert.equal(typeof restoredId, 'number');
+      const restoredWatches = WholeWasmObject.snapshot_watched_coins(restoredId) as Array<{
+        coin_name: string;
+        coin_string: string;
+      }>;
+      assert.equal(restoredWatches.length, 1);
+      assert.equal(
+        restoredWatches[0].coin_name,
+        receiverFundingWatch[0].coin_name,
+        'reload before funding spend must preserve the funding watch',
+      );
 
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('receiver-finished-four-message-handshake', wasm_blob2);
@@ -231,5 +248,5 @@ it(
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

@@ -1,6 +1,6 @@
 use crate::channel_state::types::ChannelEnv;
 use crate::common::types::{CoinString, Error, Program, PuzzleHash, SpendBundle, Timeout};
-use crate::session_phases::effects::{Effect, TimeoutClaimSemantic};
+use crate::session_phases::effects::{Effect, TimeoutClaimSemantic, TransactionSubmission};
 
 /// Async interface implemented by Peer to receive notifications about wallet
 /// state.
@@ -50,14 +50,8 @@ pub trait SpendWalletReceiver {
 
 /// Unroll time wallet interface.
 pub trait WalletSpendInterface {
-    /// Enqueue an outbound transaction.  `expiry` is the absolute height at/after
-    /// which the bundle can no longer be included (threaded from the handler), or
-    /// `None` when the bundle has no expiry.
-    fn spend_transaction_and_add_fee(
-        &mut self,
-        bundle: &SpendBundle,
-        expiry: Option<u64>,
-    ) -> Result<(), Error>;
+    /// Enqueue an outbound transaction with Rust-owned fee and expiry metadata.
+    fn spend_transaction(&mut self, submission: &TransactionSubmission) -> Result<(), Error>;
 
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
@@ -66,7 +60,7 @@ pub trait WalletSpendInterface {
         coin_id: &CoinString,
         timeout: &Timeout,
         name: Option<&'static str>,
-        spend: Option<SpendBundle>,
+        spend: Option<TransactionSubmission>,
         semantic: Option<TimeoutClaimSemantic>,
     ) -> Result<(), Error>;
 

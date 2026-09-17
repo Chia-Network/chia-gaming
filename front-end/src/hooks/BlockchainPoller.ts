@@ -118,12 +118,21 @@ export class BlockchainPoller {
       requestGapMs: adapter.requestGapMs,
       fundingMode: adapter.fundingMode,
       getRegistrationScopeKey: () => adapter.getRegistrationScopeKey?.(),
-      spend: (blob, spendBundle, changePuzzleHash, source, fee) =>
-        this.enqueueRpc(
-          'spend',
-          () => adapter.spend(blob, spendBundle, changePuzzleHash, source, fee),
-          true,
-        ),
+      spend: async (blob, spendBundle, changePuzzleHash, source, fee) => {
+        try {
+          return await this.enqueueRpc(
+            'spend',
+            () => adapter.spend(blob, spendBundle, changePuzzleHash, source, fee),
+            true,
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          if (/RPC request discarded during disconnect: spend/.test(detail)) {
+            return { status: 'unavailable', detail };
+          }
+          throw error;
+        }
+      },
       createFeeSpend: adapter.createFeeSpend
         ? (fee, concurrentSpendCoinId) =>
             this.enqueueRpc(
@@ -310,7 +319,7 @@ export class BlockchainPoller {
     this.coinPollingScheduler.stop();
     this.balancePollingScheduler.stop();
     for (const reject of [...this.pendingRpcRejects]) reject();
-    this.requestLane.clearQueued();
+    this.requestLane.abandonActive();
     // Remote wallet coin registrations are lost with the connection. Clear the
     // local cache even when a reconnect reuses the same registration scope key.
     this.registrationScopeKey = undefined;

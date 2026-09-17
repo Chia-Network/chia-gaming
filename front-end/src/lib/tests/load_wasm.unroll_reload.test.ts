@@ -15,6 +15,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  LONG_WASM_TEST_TIMEOUT,
   pollOnce,
   SessionControllerAdapter,
   startSimulator,
@@ -179,5 +180,5 @@ it(
       });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

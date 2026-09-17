@@ -16,6 +16,7 @@ import {
   createActivePair,
   exchangeUntilIdle,
   flushWrapperDrain,
+  LONG_WASM_TEST_TIMEOUT,
   startSimulator,
 } from './load_wasm.harness';
 import { runKrunkReloadCoverage } from './krunk_reload.scenario';
@@ -404,7 +405,7 @@ it(
       throw new Error(`[load_wasm Krunk completion failed]\n${String(e)}`, { cause: e });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );
 
 it(
@@ -420,5 +421,5 @@ it(
       });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

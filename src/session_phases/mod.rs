@@ -557,10 +557,10 @@ impl OffChainPhase {
                 let ch = self.channel_state()?;
                 effects.push(Effect::Log(make_send_log(ch, &[], false)));
             }
-            effects.push(Effect::PeerBatch {
+            effects.push(Effect::SendPeer(PeerMessage::Batch {
                 actions: vec![],
                 signatures: sigs,
-            });
+            }));
             self.have_potato = PotatoState::Absent;
             return Ok(effects);
         }
@@ -574,10 +574,10 @@ impl OffChainPhase {
                 let ch = self.channel_state()?;
                 effects.push(Effect::Log(make_send_log(ch, &[], false)));
             }
-            effects.push(Effect::PeerBatch {
+            effects.push(Effect::SendPeer(PeerMessage::Batch {
                 actions: vec![],
                 signatures: sigs,
-            });
+            }));
             self.have_potato = PotatoState::Absent;
             return Ok(effects);
         }
@@ -692,7 +692,13 @@ impl OffChainPhase {
                 if zero_payout {
                     effects.push(Effect::CompleteZeroPayoutShutdown);
                 } else {
-                    effects.push(Effect::SpendTransaction(bundle, None));
+                    effects.push(Effect::SpendTransaction(
+                        crate::session_phases::effects::TransactionSubmission::attach_to(
+                            bundle,
+                            None,
+                            &expected_coin,
+                        ),
+                    ));
                 }
                 if let Some((coin, shutdown_solution)) = self.pending_clean_shutdown.take() {
                     let handler = crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase::new_for_clean_shutdown(
@@ -875,7 +881,10 @@ impl OffChainPhase {
                         }),
                     }));
                     if !move_result.message.is_empty() {
-                        effects.push(Effect::PeerGameMessage(*game_id, move_result.message));
+                        effects.push(Effect::SendPeer(PeerMessage::Message(
+                            *game_id,
+                            move_result.message,
+                        )));
                     }
                     if finished {
                         self.game_action_queue
@@ -1007,10 +1016,16 @@ impl OffChainPhase {
         if zero_payout {
             effects.push(Effect::QueueTerminalHandoff(local_half_sig));
         } else {
-            effects.push(Effect::SpendTransaction(bundle, None));
-            effects.push(Effect::PeerCleanShutdownComplete {
+            effects.push(Effect::SpendTransaction(
+                crate::session_phases::effects::TransactionSubmission::attach_to(
+                    bundle,
+                    None,
+                    &coin_spend.coin,
+                ),
+            ));
+            effects.push(Effect::SendPeer(PeerMessage::CleanShutdownComplete {
                 channel_half_sig: local_half_sig,
-            });
+            }));
         }
 
         self.have_potato = PotatoState::Present;
@@ -1041,7 +1056,10 @@ impl OffChainPhase {
 
         if matches!(self.have_potato, PotatoState::Absent) {
             self.have_potato = PotatoState::Requested;
-            return Ok((false, Some(Effect::PeerRequestPotato)));
+            return Ok((
+                false,
+                Some(Effect::SendPeer(PeerMessage::RequestPotato(()))),
+            ));
         }
 
         Ok((false, None))
@@ -1289,9 +1307,9 @@ impl OffChainPhase {
                         let ch = self.channel_state()?;
                         effects.push(Effect::Log(make_send_log(ch, &[], true)));
                     }
-                    effects.push(Effect::PeerCleanShutdown {
+                    effects.push(Effect::SendPeer(PeerMessage::CleanShutdown {
                         channel_half_sig: spend.signature,
-                    });
+                    }));
                     return Ok((true, effects));
                 }
                 #[cfg(test)]
@@ -1331,12 +1349,12 @@ impl OffChainPhase {
         } else {
             PotatoState::Absent
         };
-        effects.push(Effect::PeerBatch {
+        effects.push(Effect::SendPeer(PeerMessage::Batch {
             actions: batch_actions,
             signatures: sigs,
-        });
+        }));
         if request_potato_back {
-            effects.push(Effect::PeerRequestPotato);
+            effects.push(Effect::SendPeer(PeerMessage::RequestPotato(())));
         }
 
         // Packaging and delivery intent succeeded. Later failures cannot be
@@ -1415,10 +1433,10 @@ impl OffChainPhase {
                         let ch = self.channel_state()?;
                         effects.push(Effect::Log(make_send_log(ch, &[], false)));
                     }
-                    effects.push(Effect::PeerBatch {
+                    effects.push(Effect::SendPeer(PeerMessage::Batch {
                         actions: vec![],
                         signatures: sigs,
-                    });
+                    }));
                     self.have_potato = PotatoState::Absent;
                     self.peer_wants_potato = false;
                 }
@@ -1521,7 +1539,11 @@ impl OffChainPhase {
                 saved,
                 "go on chain unroll",
             )?;
-            effects.push(Effect::SpendTransaction(bundle, None));
+            effects.push(Effect::SpendTransaction(
+                crate::session_phases::effects::TransactionSubmission::attach_to(
+                    bundle, None, &coin,
+                ),
+            ));
         }
 
         let channel_coin = {

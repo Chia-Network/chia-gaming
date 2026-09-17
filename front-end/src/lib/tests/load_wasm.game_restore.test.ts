@@ -24,6 +24,7 @@ import {
   exchangeUntilIdle,
   fetchPreset,
   flushWrapperDrain,
+  LONG_WASM_TEST_TIMEOUT,
   makeTestReliableState,
   postMoveHandState,
   startSimulator,
@@ -216,5 +217,5 @@ it(
       throw new Error(`[load_wasm game restore failed]\n${String(e)}`, { cause: e });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

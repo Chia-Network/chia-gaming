@@ -68,6 +68,17 @@ function mockGraphql(handler: (query: string, variables: Record<string, unknown>
   return calls;
 }
 
+function mockGraphqlError(message: string) {
+  setTestGlobal(
+    'fetch',
+    jest.fn(async () => ({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ errors: [{ message }] }),
+    })),
+  );
+}
+
 describe('CloudBlockchainInterface fee support', () => {
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
@@ -195,6 +206,41 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(feeCoin?.startsWith('cc'.repeat(32) + 'dd'.repeat(32))).toBe(true);
   });
 
+  it('rejects coin-record batches when the Cloud query fails', async () => {
+    mockGraphql((query) => {
+      if (query.includes('coinRecordsByNames')) {
+        throw new Error('cloud unavailable');
+      }
+      return {};
+    });
+    await expect(
+      new CloudBlockchainInterface().getCoinRecordsByNames(['aa'.repeat(32)]),
+    ).rejects.toThrow(/coin-record batch failed/i);
+  });
+
+  it('rejects coin-record batches containing incomplete identities', async () => {
+    mockGraphql((query) => {
+      if (query.includes('coinRecordsByNames')) {
+        return {
+          coinRecordsByNames: [
+            {
+              name: 'aa'.repeat(32),
+              amount: '1',
+              puzzleHash: 'bb',
+              parentCoinName: 'cc'.repeat(32),
+              createdBlockHeight: 1,
+              spentBlockHeight: null,
+            },
+          ],
+        };
+      }
+      return {};
+    });
+    await expect(
+      new CloudBlockchainInterface().getCoinRecordsByNames(['aa'.repeat(32)]),
+    ).rejects.toThrow(/incomplete coin identity/i);
+  });
+
   it('finalize rejects a sub-floor fee before starting OAuth', async () => {
     mockGraphql(() => ({}));
     const iface = new CloudBlockchainInterface();
@@ -239,7 +285,7 @@ describe('CloudBlockchainInterface fee support', () => {
     };
   }
 
-  it('spend throws on a non-accepted broadcast status', async () => {
+  it('classifies a non-accepted broadcast status as rejected', async () => {
     mockGraphql((query) => {
       if (query.includes('broadcastSpendBundle')) {
         return { broadcastSpendBundle: { status: 'FAILED' } };
@@ -247,9 +293,55 @@ describe('CloudBlockchainInterface fee support', () => {
       return {};
     });
     const iface = new CloudBlockchainInterface();
-    await expect(iface.spend('', sampleBundle(), '', 'test')).rejects.toThrow(
-      /rejected: status=FAILED/,
+    await expect(iface.spend('', sampleBundle(), '', 'test')).resolves.toEqual({
+      status: 'rejected',
+      detail: expect.stringMatching(/rejected: status=FAILED/),
+    });
+  });
+
+  it.each([
+    [undefined, 'rejected'],
+    ['MYSTERY', 'rejected'],
+    ['REJECTED', 'rejected'],
+  ])('classifies Cloud broadcast status %# as %s', async (status, expected) => {
+    mockGraphql((query) => {
+      if (query.includes('broadcastSpendBundle')) {
+        return { broadcastSpendBundle: status === undefined ? {} : { status } };
+      }
+      return {};
+    });
+    await expect(
+      new CloudBlockchainInterface().spend('', sampleBundle(), '', 'test'),
+    ).resolves.toMatchObject({ status: expected });
+  });
+
+  it.each([
+    ['duplicate transaction already in mempool', 'acknowledged'],
+    ['ALREADY_INCLUDING_TRANSACTION', 'acknowledged'],
+    ['this transaction is already in the mempool', 'acknowledged'],
+    ['transaction already included', 'acknowledged'],
+    ['conflicts with an existing transaction in the mempool', 'rejected'],
+    ['full node rejected spend: UNKNOWN_UNSPENT', 'rejected'],
+    ['full node rejected spend: INVALID_FEE_LOW_FEE', 'rejected'],
+    ['opaque Cloud Wallet failure', 'rejected'],
+  ])('classifies Cloud service error "%s" as %s', async (message, expected) => {
+    mockGraphqlError(message);
+    await expect(
+      new CloudBlockchainInterface().spend('', sampleBundle(), '', 'test'),
+    ).resolves.toMatchObject({ status: expected });
+  });
+
+  it('classifies a Cloud GraphQL transport failure as unavailable', async () => {
+    setTestGlobal(
+      'fetch',
+      jest.fn(async () => Promise.reject(new Error('network down'))),
     );
+    await expect(
+      new CloudBlockchainInterface().spend('', sampleBundle(), '', 'test'),
+    ).resolves.toMatchObject({
+      status: 'unavailable',
+      detail: expect.stringContaining('network down'),
+    });
   });
 
   it('spend broadcasts a bundle carrying a direct fee', async () => {
@@ -260,6 +352,9 @@ describe('CloudBlockchainInterface fee support', () => {
       return {};
     });
     const iface = new CloudBlockchainInterface();
-    await expect(iface.spend('', sampleBundle(), '', 'test', 500n)).resolves.toBe('SUCCESS');
+    await expect(iface.spend('', sampleBundle(), '', 'test', 500n)).resolves.toEqual({
+      status: 'acknowledged',
+      detail: 'SUCCESS',
+    });
   });
 });

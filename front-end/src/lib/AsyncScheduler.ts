@@ -16,7 +16,8 @@ function delay(ms: number): Promise<void> {
 export class AsyncJobQueue {
   private frontQueue: AsyncQueueJob[] = [];
   private queue: AsyncQueueJob[] = [];
-  private pumping = false;
+  private generation = 0;
+  private pumpingGeneration: number | null = null;
   private readonly gapMs: number;
   private readonly onError?: (job: AsyncQueueJob, err: unknown) => void;
 
@@ -41,29 +42,47 @@ export class AsyncJobQueue {
     this.queue = [];
   }
 
+  abandonActive(): void {
+    const discarded = [...this.frontQueue, ...this.queue];
+    this.frontQueue = [];
+    this.queue = [];
+    this.generation++;
+    this.pumpingGeneration = null;
+    for (const job of discarded) job.onDiscard?.();
+    void this.pump();
+  }
+
   resetForTests(): void {
     this.frontQueue = [];
     this.queue = [];
-    this.pumping = false;
+    this.generation++;
+    this.pumpingGeneration = null;
   }
 
   private async pump(): Promise<void> {
-    if (this.pumping) return;
-    this.pumping = true;
+    const generation = this.generation;
+    if (this.pumpingGeneration === generation) return;
+    this.pumpingGeneration = generation;
     try {
-      while (this.frontQueue.length > 0 || this.queue.length > 0) {
+      while (
+        generation === this.generation &&
+        (this.frontQueue.length > 0 || this.queue.length > 0)
+      ) {
         if (this.gapMs > 0) await delay(this.gapMs);
+        if (generation !== this.generation) return;
         const job = this.frontQueue.shift() ?? this.queue.shift();
         if (!job) continue;
         try {
           await job.run();
         } catch (e) {
-          this.onError?.(job, e);
+          if (generation === this.generation) this.onError?.(job, e);
         }
       }
     } finally {
-      this.pumping = false;
-      if (this.frontQueue.length > 0 || this.queue.length > 0) void this.pump();
+      if (generation === this.generation) {
+        this.pumpingGeneration = null;
+        if (this.frontQueue.length > 0 || this.queue.length > 0) void this.pump();
+      }
     }
   }
 }
@@ -144,6 +163,7 @@ export class AsyncPollingScheduler {
   stop(): void {
     this.interested = false;
     this.queued = false;
+    this.inFlight = false;
     this.generation++;
     clearGapTimer(this.timer);
   }
@@ -177,11 +197,9 @@ export class AsyncPollingScheduler {
         } catch (e) {
           this.target.onError?.(e);
         } finally {
-          this.inFlight = false;
-          if (this.interested) {
-            if (generation !== this.generation) {
-              this.enqueueIfIdle();
-            } else {
+          if (generation === this.generation) {
+            this.inFlight = false;
+            if (this.interested) {
               if (this.target.getNextIntervalMs) {
                 this.timer.intervalMs = this.target.getNextIntervalMs();
               }

@@ -16,6 +16,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  LONG_WASM_TEST_TIMEOUT,
   pollOnce,
   SessionControllerAdapter,
   startSimulator,
@@ -474,7 +475,7 @@ it(
       throw new Error(`[load_wasm reload injection failed]\n${String(error)}`, { cause: error });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );
 
 it(
@@ -545,7 +546,7 @@ it(
     adapters[1].set_blob(await delayedController);
     assert.deepEqual(calls, [['a11ce010'], ['b0b70010']]);
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );
 
 it.each([
@@ -566,5 +567,5 @@ it.each([
       });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

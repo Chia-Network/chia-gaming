@@ -75,6 +75,11 @@ fail with clang errors.
 ./tools/local-wasm-tests.sh
 ```
 
+The heavyweight load-WASM suites run in parallel simulator shards. Their shared
+ten-minute per-test timeout is a hang guard, not an expected runtime or a
+performance target; avoid adding smaller test-local budgets that become flaky
+under concurrent load.
+
 
 # Running from tarball or zipfile
 

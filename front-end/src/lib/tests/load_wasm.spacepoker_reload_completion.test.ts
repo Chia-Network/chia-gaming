@@ -18,6 +18,7 @@ import {
   createActivePair,
   exchangeUntilIdle,
   flushWrapperDrain,
+  LONG_WASM_TEST_TIMEOUT,
   startSimulator,
   type SessionControllerAdapter,
 } from './load_wasm.harness';
@@ -413,5 +414,5 @@ it(
       });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

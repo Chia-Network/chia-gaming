@@ -2,6 +2,7 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
+  WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../types/rpc/PushTransactions';
@@ -11,6 +12,8 @@ import { jsonStringify } from '../util/jsonSafe';
 import {
   beginOAuthPopupLogin,
   CloudWalletAuthError,
+  CloudWalletResponseError,
+  CloudWalletTransportError,
   createAuthTokenProvider,
   fetchFirstConsentedWalletId,
   graphqlRequest,
@@ -55,12 +58,6 @@ export {
 const APPROVE_TIMEOUT_MS = 10 * 60 * 1000;
 const SR_POLL_MS = 1500;
 
-/**
- * Broadcast statuses the Cloud Wallet API returns for an accepted spend. Any
- * other status is treated as a rejection (fail fast during early beta); if the API uses
- * a word not listed here, the thrown "rejected: status=..." message names it so
- * the allowlist can be corrected.
- */
 const ACCEPTED_BROADCAST_STATUSES = new Set([
   'SUCCESS',
   'SUBMITTED',
@@ -68,6 +65,47 @@ const ACCEPTED_BROADCAST_STATUSES = new Set([
   'PROCESSING',
   'OK',
 ]);
+const REJECTED_BROADCAST_STATUSES = new Set(['FAILED', 'REJECTED', 'REFUSED']);
+
+function isExactDuplicateTransaction(detail: string): boolean {
+  return (
+    /\bALREADY_INCLUDING_TRANSACTION\b/i.test(detail) ||
+    /\bduplicate transaction\b/i.test(detail) ||
+    /\btransaction (?:is |was |has been )?already (?:included|in (?:the )?mempool)\b/i.test(detail)
+  );
+}
+
+function cloudErrorDetail(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current != null && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error) {
+      parts.push(current.message);
+      current = (current as Error & { cause?: unknown }).cause;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+  }
+  return [...new Set(parts)].join(': ');
+}
+
+export function classifyCloudWalletSubmitError(error: unknown): WalletSubmitOutcome {
+  const detail = cloudErrorDetail(error);
+  if (error instanceof CloudWalletTransportError) {
+    return { status: 'unavailable', detail };
+  }
+  if (isExactDuplicateTransaction(detail)) {
+    return { status: 'acknowledged', detail };
+  }
+  const fallback =
+    error instanceof CloudWalletResponseError
+      ? 'Cloud Wallet rejected the submission'
+      : 'Cloud Wallet submission failed without a transport origin';
+  return { status: 'rejected', detail: detail || fallback };
+}
 
 export class CloudBlockchainInterface implements InternalBlockchainInterface {
   readonly fundingMode = 'direct' as const;
@@ -339,10 +377,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         const parent = normalizeHex(r.parentCoinName);
         const puzzleHash = normalizeHex(r.puzzleHash);
         if (parent.length !== 64 || puzzleHash.length !== 64) {
-          log(
-            `[cloud-blockchain] getCoinRecordsByNames skipping record with incomplete coin identity name=${normalizeHex(r.name)} parentLen=${parent.length} phLen=${puzzleHash.length}`,
+          throw new Error(
+            `Cloud Wallet returned incomplete coin identity name=${normalizeHex(r.name)} parentLen=${parent.length} phLen=${puzzleHash.length}`,
           );
-          continue;
         }
         records.push({
           coin: {
@@ -359,8 +396,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       }
       return records;
     } catch (e) {
-      log(`[cloud-blockchain] getCoinRecordsByNames error: ${String(e)}`);
-      return [];
+      const message = `Cloud Wallet coin-record batch failed: ${String(e)}`;
+      log(`[cloud-blockchain] getCoinRecordsByNames error: ${message}`);
+      throw new Error(message, { cause: e });
     }
   }
 
@@ -378,47 +416,62 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     _changePuzzleHash: string,
     source?: string,
     fee?: bigint,
-  ): Promise<string> {
-    const feeValue = fee || 0n;
-    const walletId = this.requireWalletId();
-    const bundle = spendBundle as WalletSpendBundle;
-    if (!bundle?.coin_spends?.length) {
-      throw new Error('broadcastSpendBundle: empty spend bundle');
-    }
+  ): Promise<WalletSubmitOutcome> {
+    try {
+      const feeValue = fee || 0n;
+      const walletId = this.requireWalletId();
+      const bundle = spendBundle as WalletSpendBundle;
+      if (!bundle?.coin_spends?.length) {
+        return { status: 'rejected', detail: 'broadcastSpendBundle: empty spend bundle' };
+      }
 
-    const data = await this.gql<{ broadcastSpendBundle: { status: string } }>(
-      `mutation($input: BroadcastSpendBundleInput!) {
+      const data = await this.gql<{ broadcastSpendBundle?: { status?: unknown } }>(
+        `mutation($input: BroadcastSpendBundleInput!) {
         broadcastSpendBundle(input: $input) { status }
       }`,
-      {
-        input: {
-          walletId,
-          aggregatedSignature: normalizeHex(bundle.aggregated_signature),
-          coinSpends: bundle.coin_spends.map((cs) => ({
-            coin: {
-              parentCoinInfo: normalizeHex(cs.coin.parent_coin_info),
-              puzzleHash: normalizeHex(cs.coin.puzzle_hash),
-              amount: cs.coin.amount,
-            },
-            puzzleReveal: normalizeHex(cs.puzzle_reveal),
-            solution: normalizeHex(cs.solution),
-          })),
+        {
+          input: {
+            walletId,
+            aggregatedSignature: normalizeHex(bundle.aggregated_signature),
+            coinSpends: bundle.coin_spends.map((cs) => ({
+              coin: {
+                parentCoinInfo: normalizeHex(cs.coin.parent_coin_info),
+                puzzleHash: normalizeHex(cs.coin.puzzle_hash),
+                amount: cs.coin.amount,
+              },
+              puzzleReveal: normalizeHex(cs.puzzle_reveal),
+              solution: normalizeHex(cs.solution),
+            })),
+          },
         },
-      },
-    );
-    const status = data.broadcastSpendBundle?.status ?? 'unknown';
-    log(
-      `[cloud-blockchain] broadcastSpendBundle from=${source ?? 'unknown'} status=${status} spends=${bundle.coin_spends.length} fee=${feeValue}`,
-    );
-    // A rejection reported in `status` (rather than as a GraphQL error) would
-    // otherwise look like success and silently strand the channel. Fail fast on
-    // any unrecognized status; the thrown message carries the raw status so the
-    // fee-rate classifier can rewrite it and the first unknown status is
-    // self-diagnosing.
-    if (!ACCEPTED_BROADCAST_STATUSES.has(status.toUpperCase())) {
-      throw new Error(`Cloud Wallet broadcastSpendBundle rejected: status=${status}`);
+      );
+      const status = data.broadcastSpendBundle?.status;
+      log(
+        `[cloud-blockchain] broadcastSpendBundle from=${source ?? 'unknown'} status=${String(status)} spends=${bundle.coin_spends.length} fee=${feeValue}`,
+      );
+      if (typeof status !== 'string') {
+        return {
+          status: 'rejected',
+          detail: 'Malformed Cloud Wallet broadcastSpendBundle response',
+        };
+      }
+      const normalizedStatus = status.toUpperCase();
+      if (ACCEPTED_BROADCAST_STATUSES.has(normalizedStatus)) {
+        return { status: 'acknowledged', detail: status };
+      }
+      if (REJECTED_BROADCAST_STATUSES.has(normalizedStatus)) {
+        return {
+          status: 'rejected',
+          detail: `Cloud Wallet broadcastSpendBundle rejected: status=${status}`,
+        };
+      }
+      return {
+        status: 'rejected',
+        detail: `Unknown Cloud Wallet broadcastSpendBundle status=${status}`,
+      };
+    } catch (error) {
+      return classifyCloudWalletSubmitError(error);
     }
-    return status;
   }
 
   private openApprovePopup(signatureRequestId: string): Window | null {

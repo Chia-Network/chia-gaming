@@ -433,11 +433,20 @@ coin reserves the opening fee and asserts the singleton launcher's
 announcement. The initiator sends the completed half and state-1 signatures
 in C.
 
-On C, the receiver verifies state 1, combines both exact halves, runs Chia
-consensus validation, sends its acceptance half in D, and submits the locally
-assembled transaction. The initiator independently combines and validates C
-and D before submission. Neither endpoint accepts an untrusted aggregate
-bundle supplied by its peer.
+Each role initially watches its known local wallet funding input, not the
+predicted channel coin. The funding coin's ordinary live observation does
+nothing. Once that exact coin is observed spent, Rust registers the predicted
+channel coin; only that coin's later creation completes activation. This avoids
+asking WalletConnect for a coin record before the channel coin can exist and
+keeps the missing-coin quirk out of ordinary handshake polling.
+
+On C, the receiver first validates the complete assembled funding transaction
+and verifies state 1 against a staged channel-state clone. Only after every
+check succeeds does it commit genesis state, send its acceptance half in D, and
+submit the locally assembled transaction. A rejected C leaves the receiver
+byte-for-byte unchanged and may be followed by a valid retry. The initiator
+independently combines and validates C and D before submission. Neither endpoint
+accepts an untrusted aggregate bundle supplied by its peer.
 
 #### State machine
 
@@ -649,6 +658,15 @@ and its phases emit protocol intents and interpret ordered observations;
 Neither the browser nor a wallet adapter may infer or override a protocol
 outcome.
 
+This is a security-sensitive application that constructs transactions
+controlling real value. Rust is therefore also the mandatory home for logic
+equivalent to backend business logic: authorization, transaction construction
+and validation, fee policy and attachment, and durable submission/retry state.
+JavaScript's dynamic browser and provider surface is useful for integration but
+is not a suitable source of truth for those rules. Moving such logic into the
+host requires an explicit architectural justification, not mere implementation
+convenience.
+
 JavaScript is the browser host. It transports opaque peer bytes, persists and
 replays transport state, adapts wallet and chain APIs, forwards raw chain
 observations, and projects Rust facts into UI. It may enforce explicit product
@@ -659,6 +677,28 @@ It does not maintain a game-move replay journal. Post-unroll redo is
 reconstructed from Rust-owned channel and on-chain state; after browser restore,
 a game's normal state-driven effect may resubmit an automatic action only when
 the restored canonical state still precedes that action.
+
+Outbound transactions carry a Rust-owned stable identifier, expiry, and
+captured fee intent. Exact canonical content is used only for idempotent
+deduplication: different transactions that spend the same inputs receive
+different IDs, and rejection retires only the named intent. Wallet delivery
+acknowledgement and chain finality are separate. Ordinary reconnect replay is
+limited to unacknowledged submissions, but any detected reorg resets and queues
+every retained, unexpired transaction once, including wallet-acknowledged ones.
+
+Rust captures the configured fee amount, target, and explicit
+`SubmitWithoutFee` attachment-failure policy when an intent is emitted.
+Wallet adapters perform one attempt and return only a typed
+acknowledged/unavailable/rejected outcome. Structured success or a response
+identifying the exact same transaction as already included is idempotent
+success. Failure to complete communication with the wallet is unavailable; an
+error returned by the wallet is rejected. Adapters preserve that provenance
+instead of deriving retry policy from consensus, mempool, or coin-status text.
+Fee-bearing wallet outputs from either WalletConnect or Cloud Wallet are
+validated and aggregated by one Rust boundary, including complete aggregate
+signature verification for `AGG_SIG_UNSAFE`. JavaScript does not inspect
+protocol bundle names, puzzles, inputs, or ordering, choose fee fallback, or
+own durable retry state.
 
 Each game package owns its concrete mutable hand. Fresh hands are created from
 accepted initialization terms; restored hands are constructed directly from
@@ -682,8 +722,8 @@ creating a fresh hand.
 
 | Concern | Owner |
 | --- | --- |
-| Protocol phases, game/channel facts, validation, lifecycle, spends; watch lifecycle and ordering | Rust |
-| Raw peer bytes, ACK durability, wallet RPC, chain polling | JavaScript host |
+| Protocol phases, game/channel facts, validation, lifecycle, spends; fee and submission intent; watch/retry lifecycle and ordering | Rust |
+| Raw peer bytes, peer ACK durability, one-shot wallet RPC, chain polling | JavaScript host |
 | UI projection, notification presentation, client capability constraints | JavaScript UI |
 
 The browser also separates three lifetimes that end at different moments.

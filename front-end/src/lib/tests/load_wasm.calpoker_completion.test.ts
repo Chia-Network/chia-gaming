@@ -18,6 +18,7 @@ import {
   createActivePair,
   exchangeUntilIdle,
   flushWrapperDrain,
+  LONG_WASM_TEST_TIMEOUT,
   startSimulator,
 } from './load_wasm.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
@@ -423,5 +424,5 @@ it(
       throw new Error(`[load_wasm Cal Poker completion failed]\n${String(e)}`, { cause: e });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

@@ -1,8 +1,14 @@
-import { rpc, WC_INTER_REQUEST_MS } from '../hooks/WalletConnectRpc';
+import {
+  rpc,
+  WC_INTER_REQUEST_MS,
+  WalletConnectResponseError,
+  WalletConnectTransportError,
+} from '../hooks/WalletConnectRpc';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
+  WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
@@ -21,7 +27,6 @@ import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/
 import { walletConnectState } from './useWalletConnect';
 import { jsonStringify } from '../util/jsonSafe';
 
-const PUSH_RETRY_DELAY = 30000;
 const PEER_READINESS_POLL_MS = 5000;
 const PEER_READINESS_RPC_TIMEOUT_MS = 7_000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
@@ -197,15 +202,49 @@ function collectErrorText(err: unknown): string {
 
 function isCoinRecordMiss(err: unknown): boolean {
   const text = collectErrorText(err).toLowerCase();
+  return text.includes('not found') || (text.includes('coin id') && text.includes('unknown'));
+}
+
+function isExactDuplicateTransaction(detail: string): boolean {
   return (
-    text.includes('not found') ||
-    (text.includes('coin id') && text.includes('unknown')) ||
-    (text.includes('internal error') && text.includes('-32603'))
+    /\bALREADY_INCLUDING_TRANSACTION\b/i.test(detail) ||
+    /\bduplicate transaction\b/i.test(detail) ||
+    /\btransaction (?:is |was |has been )?already (?:included|in (?:the )?mempool)\b/i.test(detail)
   );
 }
 
-function isRetryablePushError(errStr: string): boolean {
-  return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
+export function classifyWalletConnectSubmitError(err: unknown): WalletSubmitOutcome {
+  const detail = collectErrorText(err);
+  if (err instanceof WalletConnectTransportError) {
+    return { status: 'unavailable', detail };
+  }
+  if (isExactDuplicateTransaction(detail)) {
+    return { status: 'acknowledged', detail };
+  }
+  const fallback =
+    err instanceof WalletConnectResponseError
+      ? 'Wallet rejected pushTransactions'
+      : 'WalletConnect submission failed before returning a valid response';
+  return { status: 'rejected', detail: detail || fallback };
+}
+
+export function classifyWalletConnectSubmitResult(result: unknown): WalletSubmitOutcome {
+  const detail = collectErrorText(result);
+  if (isExactDuplicateTransaction(detail)) {
+    return { status: 'acknowledged', detail };
+  }
+  if (
+    typeof result === 'object' &&
+    result !== null &&
+    'success' in result &&
+    result.success === true
+  ) {
+    return { status: 'acknowledged', detail };
+  }
+  return {
+    status: 'rejected',
+    detail: detail || 'Malformed WalletConnect pushTransactions response',
+  };
 }
 
 function coinAmount(coin: CoinsetCoin): bigint {
@@ -360,7 +399,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     changePuzzleHash: string,
     _source?: string,
     fee?: bigint,
-  ): Promise<string> {
+  ): Promise<WalletSubmitOutcome> {
     const seq = ++this.spendSeq;
     const src = _source ?? 'unknown';
     const feeValue = fee || 0n;
@@ -389,20 +428,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       log(
         `[wc-blockchain] pushTransactions submitted #${seq} removals=${removals.length} result=${jsonStringify(result)}`,
       );
-      return result as unknown as string;
+      return classifyWalletConnectSubmitResult(result);
     } catch (e: unknown) {
       const errStr = collectErrorText(e);
-      if (isRetryablePushError(errStr)) {
-        return new Promise((resolve, reject) => {
-          setTimeout(() => {
-            this.spend(_blob, spendBundle, changePuzzleHash, `retry-of-#${seq}`, fee)
-              .then(resolve)
-              .catch(reject);
-          }, PUSH_RETRY_DELAY);
-        });
-      }
       log(`[wc-blockchain] pushTransactions error #${seq}: ${errStr}`);
-      throw new Error(`Wallet transaction submit failed from ${src}: ${errStr}`, { cause: e });
+      return classifyWalletConnectSubmitError(e);
     }
   }
 
@@ -653,12 +683,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         });
         if ((resp as any)?.error) {
           const msg = String((resp as any).error);
-          if (!msg.includes('not found')) {
-            log(
-              `[wc-blockchain] getCoinRecordsByNames daemon error (skipping coin) name=${name}: ${msg}`,
-            );
+          if (isCoinRecordMiss(msg)) {
+            continue;
           }
-          continue;
+          throw new Error(`wallet coin-record lookup failed for ${name}: ${msg}`);
         }
         const r = resp.coinRecords ?? [];
         if (r.length > 0) {
@@ -666,20 +694,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         }
         records.push(...r);
       } catch (e) {
-        // A single coin lookup must never abort the whole poll. The wallet
-        // raises ValueError("Coin ID's: [...] not found.") for coins that
-        // don't exist on-chain yet, and that message can arrive mangled
-        // through the WalletConnect/IPC bridge so isCoinRecordMiss can't
-        // always recognize it. The poller already treats an absent coin as
-        // "not on chain yet", so skip this coin instead of rethrowing —
-        // rethrowing aborted the poll right after the height was fetched,
-        // stalling the handshake on "waiting for height".
-        if (!isCoinRecordMiss(e)) {
-          log(
-            `[wc-blockchain] getCoinRecordsByNames unexpected error (skipping coin) name=${name}: ${collectErrorText(e)}`,
-          );
+        // A recognized miss is a complete answer: this coin does not exist yet.
+        // Any other failure makes the batch incomplete and must not be reported
+        // as an authoritative snapshot.
+        if (isCoinRecordMiss(e)) {
+          continue;
         }
-        continue;
+        const message = `wallet coin-record batch failed at ${name}: ${collectErrorText(e)}`;
+        log(`[wc-blockchain] getCoinRecordsByNames error: ${message}`);
+        throw new Error(message, { cause: e });
       }
     }
     return records;

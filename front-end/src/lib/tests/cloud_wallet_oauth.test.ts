@@ -815,7 +815,7 @@ describe('CloudBlockchainInterface coin records', () => {
     return fetchMock;
   }
 
-  it('getCoinRecordsByNames omits records missing parentCoinName instead of inventing a parent', async () => {
+  it('getCoinRecordsByNames rejects an incomplete identity instead of reporting a partial batch', async () => {
     mockGraphql(() => ({
       coinRecordsByNames: [
         {
@@ -832,14 +832,12 @@ describe('CloudBlockchainInterface coin records', () => {
       ],
     }));
     const iface = new CloudBlockchainInterface();
-    const records = await iface.getCoinRecordsByNames(['aa'.repeat(32), 'cc'.repeat(32)]);
-    expect(records).toHaveLength(1);
-    expect(records[0].coin.parentCoinInfo).toBe('ee'.repeat(32));
-    expect(records[0].coin.puzzleHash).toBe('dd'.repeat(32));
-    expect(records[0].coin.amount).toBe(200n);
+    await expect(iface.getCoinRecordsByNames(['aa'.repeat(32), 'cc'.repeat(32)])).rejects.toThrow(
+      /incomplete coin identity/i,
+    );
   });
 
-  it('selectCoins returns null when coin records have no parent identity', async () => {
+  it('selectCoins rejects when coin records have no parent identity', async () => {
     mockGraphql((query) => {
       if (query.includes('coinRecordsByNames')) {
         return {
@@ -867,6 +865,6 @@ describe('CloudBlockchainInterface coin records', () => {
       };
     });
     const iface = new CloudBlockchainInterface();
-    await expect(iface.selectCoins('uid', 50n)).resolves.toBeNull();
+    await expect(iface.selectCoins('uid', 50n)).rejects.toThrow(/incomplete coin identity/i);
   });
 });

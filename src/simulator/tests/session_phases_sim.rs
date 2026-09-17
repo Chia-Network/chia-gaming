@@ -184,12 +184,11 @@ impl PacketSender for SimulatedPeer {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(
+    fn spend_transaction(
         &mut self,
-        bundle: &SpendBundle,
-        _expiry: Option<u64>,
+        submission: &crate::session_phases::effects::TransactionSubmission,
     ) -> Result<(), Error> {
-        self.outbound_transactions.push(bundle.clone());
+        self.outbound_transactions.push(submission.bundle.clone());
         Ok(())
     }
     fn register_coin(
@@ -197,7 +196,7 @@ impl WalletSpendInterface for SimulatedPeer {
         _coin_id: &CoinString,
         _timeout: &Timeout,
         _name: Option<&'static str>,
-        _spend: Option<SpendBundle>,
+        _spend: Option<crate::session_phases::effects::TransactionSubmission>,
         _semantic: Option<crate::session_phases::effects::TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         Ok(())
@@ -2162,8 +2161,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 "player {i} should reach ResolvedClean"
             );
             assert!(
-                outcome.cradles[i].snapshot_watched_coins().len() <= 1,
-                "clean shutdown without games should poll at most the channel coin for player {i}, got {:?}",
+                outcome.cradles[i].snapshot_watched_coins().len() <= 2,
+                "clean shutdown without games should poll at most the funding and channel coins for player {i}, got {:?}",
                 outcome.cradles[i].snapshot_watched_coins(),
             );
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
@@ -2198,8 +2197,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 "player {i} should reach ResolvedClean"
             );
             assert!(
-                outcome.cradles[i].snapshot_watched_coins().len() <= 1,
-                "clean shutdown without games should poll at most the channel coin for player {i}, got {:?}",
+                outcome.cradles[i].snapshot_watched_coins().len() <= 2,
+                "clean shutdown without games should poll at most the funding and channel coins for player {i}, got {:?}",
                 outcome.cradles[i].snapshot_watched_coins(),
             );
             let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {

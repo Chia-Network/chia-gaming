@@ -1,4 +1,6 @@
 jest.mock('../../hooks/WalletConnectRpc', () => ({
+  WalletConnectTransportError: class WalletConnectTransportError extends Error {},
+  WalletConnectResponseError: class WalletConnectResponseError extends Error {},
   rpc: {
     createOfferForIds: jest.fn(),
     cancelOffer: jest.fn(),
@@ -52,8 +54,17 @@ jest.mock('../../hooks/useWalletConnect', () => ({
   walletConnectState: mockWalletConnectState,
 }));
 
-import { rpc } from '../../hooks/WalletConnectRpc';
+import {
+  rpc,
+  WalletConnectResponseError,
+  WalletConnectTransportError,
+} from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
+import {
+  classifyFakeBlockchainSubmitError,
+  classifyFakeBlockchainSubmitResult,
+  SimulatorTransportError,
+} from '../../hooks/FakeBlockchainInterface';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinIdFromBytes, toUint8 } from '../../util';
 import { encodePuzzleHashToBech32m } from '../../util/bech32m';
@@ -492,7 +503,7 @@ describe('RealBlockchainInterface', () => {
     });
   });
 
-  it('skips a coin whose lookup error is unrecognized instead of aborting the batch', async () => {
+  it('rejects an incomplete batch when a coin lookup fails unexpectedly', async () => {
     const unrecognizedName = 'unrecognized-coin-id';
     const presentName = 'present-coin-id';
     const record: CoinRecord = {
@@ -517,7 +528,8 @@ describe('RealBlockchainInterface', () => {
 
     await expect(
       new RealBlockchainInterface().getCoinRecordsByNames([unrecognizedName, presentName]),
-    ).resolves.toEqual([record]);
+    ).rejects.toThrow(/coin-record batch failed/i);
+    expect(mockGetCoinRecordsByNames).toHaveBeenCalledTimes(1);
   });
 
   it('records non-ephemeral root removals and never asks the wallet to add a fee', async () => {
@@ -571,7 +583,7 @@ describe('RealBlockchainInterface', () => {
     };
     await expect(
       blockchain.spend('80', submittedBundle, puzzleHash, 'submitTransaction', 10n),
-    ).resolves.toEqual({ success: true });
+    ).resolves.toMatchObject({ status: 'acknowledged' });
 
     const call = mockPushTransactions.mock.calls[0][0];
     // The fee-paying spend is aggregated in by the caller; chia_pushTransactions
@@ -764,5 +776,126 @@ describe('RealBlockchainInterface', () => {
         ],
       }),
     );
+  });
+
+  it('classifies a WalletConnect transport failure as unavailable without recursion', async () => {
+    jest.useFakeTimers();
+    try {
+      const blockchain = new RealBlockchainInterface();
+      mockPushTransactions.mockRejectedValue(
+        new WalletConnectTransportError('WalletConnect relayer disconnected'),
+      );
+
+      await expect(
+        blockchain.spend(
+          '80',
+          { coin_spends: [], aggregated_signature: '0x00' },
+          '11'.repeat(32),
+          'submitTransaction',
+        ),
+      ).resolves.toEqual({
+        status: 'unavailable',
+        detail: 'WalletConnect relayer disconnected',
+      });
+
+      expect(mockPushTransactions).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([
+    [{ success: true }, 'acknowledged'],
+    [{ success: false }, 'rejected'],
+    [undefined, 'rejected'],
+    [{ result: 'ok' }, 'rejected'],
+  ])('classifies resolved WalletConnect result %# as %s', async (result, status) => {
+    mockPushTransactions.mockResolvedValue(result);
+    await expect(
+      new RealBlockchainInterface().spend(
+        '80',
+        { coin_spends: [], aggregated_signature: '0x00' },
+        '11'.repeat(32),
+      ),
+    ).resolves.toMatchObject({ status });
+  });
+
+  it('does not infer a full-node verdict from fields outside the resolved contract', async () => {
+    mockPushTransactions.mockResolvedValue({
+      success: false,
+      error: { message: 'full node rejected spend: INVALID_FEE_TOO_CLOSE_TO_ZERO' },
+    });
+    await expect(
+      new RealBlockchainInterface().spend(
+        '80',
+        { coin_spends: [], aggregated_signature: '0x00' },
+        '11'.repeat(32),
+      ),
+    ).resolves.toMatchObject({
+      status: 'rejected',
+      detail: expect.stringContaining('INVALID_FEE_TOO_CLOSE_TO_ZERO'),
+    });
+  });
+
+  it('acknowledges an exact duplicate reported in a resolved wallet payload', async () => {
+    mockPushTransactions.mockResolvedValue({
+      success: false,
+      error: { message: 'ALREADY_INCLUDING_TRANSACTION' },
+    });
+    await expect(
+      new RealBlockchainInterface().spend(
+        '80',
+        { coin_spends: [], aggregated_signature: '0x00' },
+        '11'.repeat(32),
+      ),
+    ).resolves.toMatchObject({ status: 'acknowledged' });
+  });
+
+  it.each([
+    [new WalletConnectResponseError('ALREADY_INCLUDING_TRANSACTION'), 'acknowledged'],
+    [new WalletConnectResponseError('transaction already included'), 'acknowledged'],
+    [new WalletConnectResponseError('arbitrary wallet refusal'), 'rejected'],
+    [new WalletConnectResponseError('full node rejected spend: UNKNOWN_UNSPENT'), 'rejected'],
+    [new WalletConnectTransportError('request timed out'), 'unavailable'],
+  ])('classifies thrown WalletConnect error %# as %s', async (error, status) => {
+    mockPushTransactions.mockRejectedValue(error);
+    await expect(
+      new RealBlockchainInterface().spend(
+        '80',
+        { coin_spends: [], aggregated_signature: '0x00' },
+        '11'.repeat(32),
+      ),
+    ).resolves.toMatchObject({ status });
+  });
+
+  it('applies conservative simulator outcome defaults', () => {
+    expect(classifyFakeBlockchainSubmitResult([1])).toEqual({ status: 'acknowledged' });
+    expect(classifyFakeBlockchainSubmitResult([3, 5])).toMatchObject({
+      status: 'rejected',
+    });
+    expect(classifyFakeBlockchainSubmitResult([3, 9])).toMatchObject({
+      status: 'rejected',
+    });
+    expect(classifyFakeBlockchainSubmitResult([3, 99, 'INVALID_FEE_LOW_FEE'])).toMatchObject({
+      status: 'rejected',
+    });
+    expect(classifyFakeBlockchainSubmitResult(null)).toMatchObject({ status: 'rejected' });
+    expect(
+      classifyFakeBlockchainSubmitError(new Error('full node rejected spend: UNKNOWN_UNSPENT')),
+    ).toMatchObject({ status: 'rejected' });
+    expect(
+      classifyFakeBlockchainSubmitError(new Error('full node rejected spend: INVALID_FEE_LOW_FEE')),
+    ).toMatchObject({ status: 'rejected' });
+    expect(
+      classifyFakeBlockchainSubmitError(new SimulatorTransportError('WebSocket closed')),
+    ).toEqual({
+      status: 'unavailable',
+      detail: 'WebSocket closed',
+    });
+    expect(classifyFakeBlockchainSubmitError(new Error('unexpected simulator failure'))).toEqual({
+      status: 'rejected',
+      detail: 'unexpected simulator failure',
+    });
   });
 });

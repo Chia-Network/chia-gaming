@@ -1,5 +1,5 @@
 import { BlockchainPoller, PollingGameSession } from '../../hooks/BlockchainPoller';
-import { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
 
@@ -119,6 +119,34 @@ describe('BlockchainPoller', () => {
     expect(heightOnlyPeaks).toEqual([100n, 100n]);
   });
 
+  it('does not report an authoritative snapshot when the wallet batch fails', async () => {
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => Promise.reject(new Error('wallet unavailable')),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const reportCoinStates = jest.fn();
+    const reportNewBlock = jest.fn();
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'restored', coin_string: 'restored-coin' }],
+      reportCoinStates,
+      reportNewBlock,
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+
+    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(reportCoinStates).not.toHaveBeenCalled();
+    expect(reportNewBlock).toHaveBeenCalledWith(100n);
+  });
+
   it('advances a session with no watched coins through height-only observations', async () => {
     const rpc = makeRpc([100n]);
     const heightOnlyPeaks: bigint[] = [];
@@ -227,7 +255,7 @@ describe('BlockchainPoller', () => {
     const first = deferred<bigint>();
     const createOffer = deferred<unknown>();
     const selectCoins = deferred<string | null>();
-    const spend = deferred<string>();
+    const spend = deferred<WalletSubmitOutcome>();
     const balance = deferred<bigint>();
     const calls: string[] = [];
     const rpc = new Proxy(
@@ -277,7 +305,7 @@ describe('BlockchainPoller', () => {
     selectCoins.resolve(null);
     await advanceLane();
     expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend']);
-    spend.resolve('');
+    spend.resolve({ status: 'acknowledged' });
     await advanceLane();
     expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend', 'balance']);
 
@@ -286,7 +314,7 @@ describe('BlockchainPoller', () => {
     await expect(p2).resolves.toBe(11n);
     await expect(p3).resolves.toEqual({});
     await expect(p4).resolves.toBeNull();
-    await expect(p5).resolves.toBe('');
+    await expect(p5).resolves.toEqual({ status: 'acknowledged' });
     jest.useRealTimers();
   });
 
@@ -392,7 +420,7 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
-  it('restarts a poll that was in flight during reconnect', async () => {
+  it('runs fresh polling and urgent spend after reconnect while the old RPC remains hung', async () => {
     jest.useFakeTimers();
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
@@ -401,8 +429,14 @@ describe('BlockchainPoller', () => {
       .fn()
       .mockReturnValueOnce(firstHeight.promise)
       .mockResolvedValueOnce(101n);
+    const registerCoins = jest.fn().mockResolvedValue(undefined);
+    const getCoinRecordsByNames = jest.fn().mockResolvedValue([]);
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const rpc = {
       getHeightInfo,
+      registerCoins,
+      getCoinRecordsByNames,
+      spend,
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
@@ -411,7 +445,15 @@ describe('BlockchainPoller', () => {
         };
       },
     } as unknown as InternalBlockchainInterface;
+    const reportNewBlock = jest.fn();
+    const reportCoinStates = jest.fn();
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportNewBlock,
+      reportCoinStates,
+    };
     const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
     poller.start();
 
     await advanceLane(0);
@@ -421,10 +463,16 @@ describe('BlockchainPoller', () => {
     onConnectionChange?.(false);
     connected = true;
     onConnectionChange?.(true);
-    firstHeight.resolve(100n);
+    const spendResult = poller.rpc.spend('blob', {}, '11'.repeat(32), 'submitTransaction', 0n);
 
     await advanceLane(0);
     expect(getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(registerCoins).toHaveBeenCalledTimes(1);
+    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+    expect(reportNewBlock).toHaveBeenCalledWith(101n);
+    expect(reportCoinStates).toHaveBeenCalledWith(101n, []);
+    await expect(spendResult).resolves.toEqual({ status: 'acknowledged' });
     jest.useRealTimers();
   });
 
@@ -541,6 +589,10 @@ describe('BlockchainPoller', () => {
     await expect(poller.rpc.selectCoins('wallet', 1n)).rejects.toThrow(
       'RPC request discarded during disconnect: selectCoins',
     );
+    await expect(poller.rpc.spend('blob', {}, '11'.repeat(32))).resolves.toEqual({
+      status: 'unavailable',
+      detail: 'RPC request discarded during disconnect: spend',
+    });
     expect(selectCoins).not.toHaveBeenCalled();
 
     height.resolve(100n);

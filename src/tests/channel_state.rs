@@ -17,7 +17,10 @@ pub(crate) mod sim_tests {
     use clvm_traits::ToClvm;
 
     use crate::channel_state::types::HistoricalUnrollSpendInfo;
-    use crate::common::types::{Aggsig, CoinCondition, CoinID, GameID};
+    use crate::common::types::{
+        aggregate_wallet_fee_bundle, Aggsig, CoinCondition, CoinID, CoinSpend, CoinString, GameID,
+        Program, PuzzleHash, Spend, SpendBundle, ToQuotedProgram,
+    };
     use crate::test_support::sim_script::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
@@ -38,6 +41,81 @@ pub(crate) mod sim_tests {
         game.finish_handshake(env, 1).expect("finish_handshake(1)");
         game.finish_handshake(env, 0).expect("finish_handshake(0)");
         game
+    }
+
+    fn assert_real_preemption_accepts_fee(env: &mut ChannelEnv<'_>, transaction: Spend) {
+        let protocol_coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([0xa1; 32])),
+            &transaction.puzzle.sha256tree(env.allocator),
+            &Amount::new(200),
+        );
+        let target = protocol_coin.to_coin_id();
+        let protocol = SpendBundle {
+            name: Some("real unroll preemption".to_string()),
+            spends: vec![CoinSpend {
+                coin: protocol_coin,
+                bundle: transaction,
+            }],
+        };
+        let fee_conditions = vec![
+            (
+                51_u8,
+                (PuzzleHash::from_bytes([0xa2; 32]), (Amount::new(90), ())),
+            )
+                .to_clvm(env.allocator)
+                .expect("fee CREATE_COIN"),
+            (52_u8, (Amount::new(10), ()))
+                .to_clvm(env.allocator)
+                .expect("fee RESERVE_FEE"),
+            (64_u8, (target.clone(), ()))
+                .to_clvm(env.allocator)
+                .expect("fee ASSERT_CONCURRENT_SPEND"),
+        ];
+        let conditions = fee_conditions
+            .to_clvm(env.allocator)
+            .expect("fee conditions");
+        let puzzle: Puzzle = conditions
+            .to_quoted_program(env.allocator)
+            .expect("quoted fee puzzle")
+            .into();
+        let fee_bundle = SpendBundle {
+            name: None,
+            spends: vec![CoinSpend {
+                coin: CoinString::from_parts(
+                    &CoinID::new(Hash::from_bytes([0xa3; 32])),
+                    &puzzle.sha256tree(env.allocator),
+                    &Amount::new(100),
+                ),
+                bundle: Spend {
+                    puzzle,
+                    solution: Program::nil().into(),
+                    signature: Aggsig::default(),
+                },
+            }],
+        };
+
+        aggregate_wallet_fee_bundle(
+            protocol.clone(),
+            fee_bundle.clone(),
+            10,
+            &target,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .expect("real unroll preemption accepts canonical fee aggregation");
+
+        let mut invalid = protocol;
+        invalid.spends[0].bundle.signature = Aggsig::default();
+        let error = aggregate_wallet_fee_bundle(
+            invalid,
+            fee_bundle,
+            10,
+            &target,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .expect_err("invalid preemption signature must fail");
+        assert!(format!("{error:?}").contains("invalid aggregate signature"));
     }
 
     fn setup_split_genesis_handshake(
@@ -420,6 +498,7 @@ pub(crate) mod sim_tests {
             );
             let info = result.unwrap();
             assert!(!info.timeout, "should be a preemption, not a timeout");
+            assert_real_preemption_accepts_fee(&mut env, info.transaction);
         }
 
         // Case 3: current state → timeout.

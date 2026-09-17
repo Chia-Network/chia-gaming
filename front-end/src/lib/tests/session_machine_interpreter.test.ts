@@ -661,6 +661,7 @@ describe('session machine controller command failures', () => {
       pendingTerminalHandoff: () => null,
       snapshot_watched_coins: () => [],
       drain_submissions: () => [],
+      configure_submission_fee: () => {},
       accept_proposal: () =>
         wasmResult({
           actionSucceeded: false,

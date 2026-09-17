@@ -343,8 +343,16 @@ impl SimulationHarness {
                 self.cradles[player].go_on_chain(allocator, self.local_uis[player].got_error)?;
             }
 
-            let mut records = self.simulator.get_all_coin_states();
-            records.retain(|record| !destroyed.contains(&record.coin));
+            let watched_coins = self.host_watched_coins[player]
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut records = self.simulator.get_coin_states(&watched_coins);
+            for record in &mut records {
+                if destroyed.contains(&record.coin) {
+                    record.spent_height = Some(current_height as u64);
+                }
+            }
             let wait_blocked = self
                 .wait_blocks
                 .is_some_and(|(_, players)| players & (1 << player) != 0);
@@ -876,8 +884,8 @@ impl SimulationHarness {
                     GameSessionEvent::NeedCoinSpend(req) => {
                         coin_spend_req = Some(req.clone());
                     }
-                    GameSessionEvent::OutboundTransaction(tx, _) => {
-                        submissions_to_push.push(tx.clone());
+                    GameSessionEvent::OutboundTransaction(submission) => {
+                        submissions_to_push.push(submission.bundle.clone());
                     }
                     GameSessionEvent::OutboundMessage(msg) => {
                         if self.nerf_messages_for & (1 << player_index) != 0
@@ -1027,7 +1035,13 @@ impl SimulationHarness {
             pending_events = follow_up.events;
         }
 
-        submissions_to_push.extend(player.drain_submissions().expect("drain_submissions"));
+        submissions_to_push.extend(
+            player
+                .drain_submissions()
+                .expect("drain_submissions")
+                .into_iter()
+                .map(|submission| submission.bundle),
+        );
         for tx in &submissions_to_push {
             progress.submissions += 1;
             if self.nerf_transactions_for & (1 << player_index) != 0 {

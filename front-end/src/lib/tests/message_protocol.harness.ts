@@ -7,6 +7,7 @@ import type {
   InternalBlockchainInterface,
   PeerConnectionResult,
   SpendBundle,
+  TransactionSubmission,
   ChannelStatusPayload,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
@@ -125,6 +126,15 @@ export function makeMockCradle(
     report_height: jest.fn(() => wasmResult()),
     snapshot_watched_coins: jest.fn(() => []),
     drain_submissions: jest.fn(() => []),
+    configure_submission_fee: jest.fn(),
+    finalize_submission: jest.fn(() => ({
+      protocol_bundle: testSpendBundle('00'),
+      bundle: {},
+      applied_fee: '0',
+      warning: null,
+    })),
+    acknowledge_submission: jest.fn(),
+    reject_submission: jest.fn(),
     resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => wasmResult()),
@@ -322,11 +332,22 @@ export function transactionSubmitQueue(blob: SessionController): Promise<void> {
   return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
 }
 
-export function submitTransaction(blob: SessionController, tx: SpendBundle): void {
+export function submitTransaction(
+  blob: SessionController,
+  bundle: SpendBundle,
+  fee_request: { target: string; amount: string } | null = null,
+): void {
   if (!blob.rewardPuzzleHash) {
     blob.rewardPuzzleHash = '11'.repeat(32);
   }
-  (blob as unknown as { submitTransaction: (tx: SpendBundle) => void }).submitTransaction(tx);
+  const submission: TransactionSubmission = {
+    id: `test-${Math.random()}`,
+    bundle,
+    fee_request,
+  };
+  (
+    blob as unknown as { submitTransaction: (submission: TransactionSubmission) => void }
+  ).submitTransaction(submission);
 }
 
 export async function flushPromiseJobs(): Promise<void> {

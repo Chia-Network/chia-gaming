@@ -24,25 +24,27 @@ mod gaming_wasm {
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
         complete_fee_offer_bundle, convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount,
-        CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, GameID,
-        GameType, Hash, Node, PrivateKey, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
-        Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+        CoinID, CoinSpend, CoinString, CoinsetCoin,
+        CoinsetSpendBundle, CoinsetSpendRecord, GameID, GameType, Hash, Node, PrivateKey, Program,
+        ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle,
+        Timeout, ToQuotedProgram,
     };
-    use clvm_traits::{ClvmEncoder, ToClvm};
-    use chia_protocol::SpendBundle as ProtocolSpendBundle;
-    use chia_traits::Streamable;
-    use flate2::Decompress;
-    use flate2::FlushDecompress;
     use chia_gaming::game_session::{GameSession, GameSessionConfig, TerminalHandoffCommand};
-    use chia_gaming::transaction_manager::{
-        CoinStateRecord, ManagerDrain, TransactionManager,
-    };
     use chia_gaming::session_phases::effects::{
-        FailedGameAction, GameSessionEvent, GameNotification,
+        AttachmentFailurePolicy, FailedGameAction, FeeConfiguration, GameNotification,
+        GameSessionEvent, SubmissionFeeIntent,
     };
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
+    use chia_gaming::transaction_manager::{
+        CoinStateRecord, ManagerDrain, SubmissionFeeSource, TransactionManager,
+    };
+    use chia_protocol::SpendBundle as ProtocolSpendBundle;
+    use chia_traits::Streamable;
+    use clvm_traits::{ClvmEncoder, ToClvm};
+    use flate2::Decompress;
+    use flate2::FlushDecompress;
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -71,12 +73,33 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 10;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 12;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
         coin_name: String,
         coin_string: String,
+    }
+
+    #[derive(Serialize)]
+    struct JsTransactionSubmission {
+        id: String,
+        bundle: JsSpendBundle,
+        fee_request: Option<JsFeeRequest>,
+    }
+
+    #[derive(Serialize)]
+    struct JsFeeRequest {
+        target: String,
+        amount: String,
+    }
+
+    #[derive(Serialize)]
+    struct JsFinalizedSubmission {
+        protocol_bundle: JsSpendBundle,
+        bundle: CoinsetSpendBundle,
+        applied_fee: String,
+        warning: Option<String>,
     }
 
     thread_local! {
@@ -347,8 +370,8 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn serialize_game_session(cid: i32) -> Result<js_sys::Uint8Array, JsValue> {
         with_game(cid, move |cradle: &mut JsGameSession| {
-            let bytes = bencodex::to_vec(&cradle)
-                .map_err(|e| types::Error::StrErr(e.to_string()))?;
+            let bytes =
+                bencodex::to_vec(&cradle).map_err(|e| types::Error::StrErr(e.to_string()))?;
             bencodex::from_slice::<JsGameSession>(&bytes).map_err(|e| {
                 types::Error::StrErr(format!(
                     "serialized cradle failed immediate schema verification: {e}"
@@ -376,15 +399,15 @@ mod gaming_wasm {
     /// restore.
     #[wasm_bindgen]
     pub fn snapshot_watched_coins(cid: i32) -> Result<JsValue, JsValue> {
-        let result = with_game(cid, move |cradle: &mut JsGameSession| Ok(watch_coin_entries(cradle)))?;
+        let result = with_game(cid, move |cradle: &mut JsGameSession| {
+            Ok(watch_coin_entries(cradle))
+        })?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Spend bundles the manager captured and the hosting layer should submit to
-    /// the wallet/network.  Returns the same `SpendBundle` shape that the old
-    /// `OutboundTransaction` events carried; the manager intercepts those events
-    /// into its submission buffer, so the host should call this after each drain
-    /// to pick up newly captured transactions.
+    /// Typed submissions captured by the manager. The bundle remains opaque to
+    /// the host; Rust supplies the complete provider request when a fee source
+    /// is needed.
     #[wasm_bindgen]
     pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
         let result = with_game(cid, move |cradle: &mut JsGameSession| {
@@ -392,10 +415,57 @@ mod gaming_wasm {
                 .cradle
                 .drain_submissions()?
                 .iter()
-                .map(spend_bundle_to_js)
+                .map(|submission| JsTransactionSubmission {
+                    id: submission.id.to_string(),
+                    bundle: spend_bundle_to_js(&submission.bundle),
+                    fee_request: match &submission.fee_intent {
+                        SubmissionFeeIntent::Attach { target, amount, .. } => {
+                            Some(JsFeeRequest {
+                                target: hex::encode(target.bytes()),
+                                amount: amount.to_u64().to_string(),
+                            })
+                        }
+                        SubmissionFeeIntent::AlreadyPaid
+                        | SubmissionFeeIntent::NoFeeConfigured => None,
+                    },
+                })
                 .collect::<Vec<_>>())
         })?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn configure_submission_fee(cid: i32, amount: &str) -> Result<(), JsValue> {
+        let amount = amount
+            .parse::<u64>()
+            .map_err(|e| JsValue::from_str(&format!("invalid submission fee: {e}")))?;
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.configure_fee(FeeConfiguration {
+                amount: Amount::new(amount),
+                attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+            });
+            Ok(())
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn acknowledge_submission(cid: i32, submission_id: &str) -> Result<(), JsValue> {
+        let id = submission_id
+            .parse::<u64>()
+            .map_err(|e| JsValue::from_str(&format!("invalid submission id: {e}")))?;
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.acknowledge_submission(id)
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn reject_submission(cid: i32, submission_id: &str) -> Result<(), JsValue> {
+        let id = submission_id
+            .parse::<u64>()
+            .map_err(|e| JsValue::from_str(&format!("invalid submission id: {e}")))?;
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.reject_submission(id)
+        })
     }
 
     /// Re-queue every transaction the manager has retained for resubmission.
@@ -450,9 +520,7 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn report_height(cid: i32, height: u64) -> Result<JsValue, JsValue> {
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle
-                .cradle
-                .report_height(&mut cradle.allocator, height)
+            cradle.cradle.report_height(&mut cradle.allocator, height)
         })
     }
 
@@ -474,9 +542,7 @@ mod gaming_wasm {
             .map(Amount::new)
             .map_err(|e| JsValue::from_str(&format!("invalid opening fee: {e}")))?;
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle
-                .cradle
-                .start_handshake(&mut cradle.allocator, fee)
+            cradle.cradle.start_handshake(&mut cradle.allocator, fee)
         })
     }
 
@@ -524,10 +590,10 @@ mod gaming_wasm {
     const LATEST_OFFER_VERSION: u16 = 6;
 
     fn zdict_for_version(version: u16) -> Result<Vec<u8>, String> {
-        let legacy_cat = hex::decode(LEGACY_CAT_MOD_HEX)
-            .map_err(|e| format!("bad LEGACY_CAT_MOD hex: {e}"))?;
-        let offer_old = hex::decode(OFFER_MOD_OLD_HEX)
-            .map_err(|e| format!("bad OFFER_MOD_OLD hex: {e}"))?;
+        let legacy_cat =
+            hex::decode(LEGACY_CAT_MOD_HEX).map_err(|e| format!("bad LEGACY_CAT_MOD hex: {e}"))?;
+        let offer_old =
+            hex::decode(OFFER_MOD_OLD_HEX).map_err(|e| format!("bad OFFER_MOD_OLD hex: {e}"))?;
 
         // ZDICT entries indexed by version-1.
         // Mirrors chia-blockchain/chia/wallet/util/puzzle_compression.py
@@ -536,7 +602,8 @@ mod gaming_wasm {
             &[
                 chia_puzzles::P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE.as_slice(),
                 legacy_cat.as_slice(),
-            ].concat(),
+            ]
+            .concat(),
             // v2: old offer/settlement mod
             &offer_old,
             // v3: singleton + NFT puzzles
@@ -545,8 +612,10 @@ mod gaming_wasm {
                 chia_puzzles::NFT_STATE_LAYER.as_slice(),
                 chia_puzzles::NFT_OWNERSHIP_LAYER.as_slice(),
                 chia_puzzles::NFT_METADATA_UPDATER_DEFAULT.as_slice(),
-                chia_puzzles::NFT_OWNERSHIP_TRANSFER_PROGRAM_ONE_WAY_CLAIM_WITH_ROYALTIES.as_slice(),
-            ].concat(),
+                chia_puzzles::NFT_OWNERSHIP_TRANSFER_PROGRAM_ONE_WAY_CLAIM_WITH_ROYALTIES
+                    .as_slice(),
+            ]
+            .concat(),
             // v4: current CAT puzzle
             chia_puzzles::CAT_PUZZLE.as_slice(),
             // v5: current settlement payment
@@ -606,8 +675,13 @@ mod gaming_wasm {
             type MidstateRepr = u32;
             const CODE_LENGTH: usize = usize::MAX;
             const CHECKSUM_LENGTH: usize = 6;
-            const GENERATOR_SH: [u32; 5] =
-                [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+            const GENERATOR_SH: [u32; 5] = [
+                0x3b6a_57b2,
+                0x2650_8e6d,
+                0x1ea1_19fa,
+                0x3d42_33dd,
+                0x2a14_62b3,
+            ];
             const TARGET_RESIDUE: u32 = 0x2bc8_30a3;
         }
 
@@ -701,26 +775,83 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&bundle)?).into_js()
     }
 
+    #[derive(Deserialize)]
+    #[serde(tag = "kind", rename_all = "lowercase")]
+    enum JsWalletFeeSource {
+        Offer { offer: String },
+        Bundle { bundle: CoinsetSpendBundle },
+        Failure { reason: String },
+    }
+
     #[wasm_bindgen]
-    pub fn complete_fee_offer_to_coinset_org(
-        offer_bech32: &str,
-        fee: &str,
-        protocol_coin_id: &str,
+    pub fn finalize_submission(
+        cid: i32,
+        submission_id: &str,
+        fee_source_json: Option<String>,
     ) -> Result<JsValue, JsValue> {
-        let fee = fee
+        let id = submission_id
             .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid fee amount: {e}")))?;
-        let coin_id_bytes = hex::decode(protocol_coin_id.strip_prefix("0x").unwrap_or(protocol_coin_id))
-            .map_err(|e| JsValue::from_str(&format!("invalid protocol coin id: {e}")))?;
-        let protocol_coin_id = CoinID::new(
-            Hash::from_slice(&coin_id_bytes)
-                .map_err(|e| JsValue::from_str(&format!("invalid protocol coin id: {e:?}")))?,
-        );
-        let maker_bundle = decode_offer_to_spend_bundle(offer_bech32)
-            .map_err(|e| JsValue::from_str(&format!("fee offer decode error: {e}")))?;
-        let completed = complete_fee_offer_bundle(maker_bundle, fee, &protocol_coin_id)
-            .map_err(|e| JsValue::from_str(&format!("fee offer completion error: {e:?}")))?;
-        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&completed)?).into_js()
+            .map_err(|e| JsValue::from_str(&format!("invalid submission id: {e}")))?;
+        let fee_intent = with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.submission_fee_intent(id)
+        })?;
+        let fee_source = match fee_intent {
+            SubmissionFeeIntent::Attach { target, amount, .. } => fee_source_json
+                .ok_or_else(|| "the wallet did not provide a fee source".to_string())
+                .and_then(|json| {
+                    serde_json::from_str::<JsWalletFeeSource>(&json)
+                        .map_err(|e| format!("bad wallet fee source json: {e}"))
+                })
+                .and_then(|source| match source {
+                    JsWalletFeeSource::Offer { offer } => {
+                        decode_offer_to_spend_bundle(&offer)
+                            .map_err(|e| format!("fee offer decode error: {e}"))
+                            .and_then(|maker_bundle| {
+                                complete_fee_offer_bundle(
+                                    maker_bundle,
+                                    amount.to_u64(),
+                                    &target,
+                                )
+                                .map_err(|e| format!("fee offer completion error: {e:?}"))
+                            })
+                    }
+                    JsWalletFeeSource::Bundle { bundle } => {
+                        coinset_spend_bundle_to_spend_bundle(&bundle)
+                            .map_err(|e| format!("fee bundle decode error: {e:?}"))
+                    }
+                    JsWalletFeeSource::Failure { reason } => Err(reason),
+                })
+                .map(SubmissionFeeSource::Available)
+                .unwrap_or_else(SubmissionFeeSource::Failed),
+            SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
+                if fee_source_json.is_some() {
+                    return Err(JsValue::from_str(
+                        "fee source supplied for a submission that did not request one",
+                    ));
+                }
+                SubmissionFeeSource::NotRequested
+            }
+        };
+        let finalized = with_game(cid, move |cradle: &mut JsGameSession| {
+            let additional_data = cradle
+                .cradle
+                .cradle()
+                .agg_sig_me_additional_data()
+                .clone();
+            cradle.cradle.finalize_submission(
+                id,
+                fee_source,
+                &additional_data,
+                cradle.cradle.last_height(),
+            )
+        })?;
+        let result = JsFinalizedSubmission {
+            protocol_bundle: spend_bundle_to_js(&finalized.bundle),
+            bundle: spend_bundle_to_coinset_js(&finalized.bundle)?,
+            applied_fee: finalized.applied_fee.to_string(),
+            warning: finalized.warning,
+        };
+        serde_wasm_bindgen::to_value(&result).into_js()
     }
 
     #[wasm_bindgen]
@@ -793,9 +924,8 @@ mod gaming_wasm {
         let bytes = hex::decode(trimmed).map_err(|e| {
             JsValue::from_str(&format!("game_type must be hex of a 32-byte hash: {e}"))
         })?;
-        let hash = Hash::from_slice(&bytes).map_err(|e| {
-            JsValue::from_str(&format!("game_type must be a 32-byte hash: {e}"))
-        })?;
+        let hash = Hash::from_slice(&bytes)
+            .map_err(|e| JsValue::from_str(&format!("game_type must be a 32-byte hash: {e}")))?;
         Ok(GameType::from_hash(hash))
     }
 
@@ -824,8 +954,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn propose_games(cid: i32, games: JsValue) -> Result<JsValue, JsValue> {
-        let js_games: Vec<JsGameProposal> =
-            serde_wasm_bindgen::from_value(games).into_js()?;
+        let js_games: Vec<JsGameProposal> = serde_wasm_bindgen::from_value(games).into_js()?;
         with_game(cid, move |cradle: &mut JsGameSession| {
             let mut game_starts = Vec::with_capacity(js_games.len());
             for g in &js_games {
@@ -840,13 +969,10 @@ mod gaming_wasm {
                     parameters: g.parameters.clone(),
                 });
             }
-            let ids = cradle.cradle.propose_games(
-                &mut cradle.allocator,
-                &game_starts,
-            )?;
-            let dr = cradle
+            let ids = cradle
                 .cradle
-                .flush_and_collect(&mut cradle.allocator)?;
+                .propose_games(&mut cradle.allocator, &game_starts)?;
+            let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
             let ids_arr = js_sys::Array::new();
             for id in &ids {
                 ids_arr.push(&JsValue::from_str(&game_id_to_string(id)));
@@ -886,9 +1012,8 @@ mod gaming_wasm {
         entropy: Option<&str>,
     ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let readable_move = ReadableMove::from_program(std::rc::Rc::new(
-            Program::from_bytes(readable).into_js()?,
-        ));
+        let readable_move =
+            ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable).into_js()?));
         let new_entropy = if let Some(e) = entropy {
             Some(Hash::from_slice(&hex::decode(e).into_js()?).into_js()?)
         } else {
@@ -951,9 +1076,7 @@ mod gaming_wasm {
             game_id.clone(),
             FailedGameAction::Cheat,
             move |cradle: &mut JsGameSession| {
-                cradle
-                    .cradle
-                    .cheat(&mut cradle.allocator, &game_id, share)
+                cradle.cradle.cheat(&mut cradle.allocator, &game_id, share)
             },
         )
     }
@@ -965,9 +1088,8 @@ mod gaming_wasm {
         readable: &[u8],
     ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let readable_move = ReadableMove::from_program(std::rc::Rc::new(
-            Program::from_bytes(readable).into_js()?,
-        ));
+        let readable_move =
+            ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable).into_js()?));
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
             let entropy: Hash = cradle.rng.0.random();
             cradle.cradle.accept_proposal_and_move(
@@ -1035,19 +1157,22 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn accept_settlement(cid: i32, id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        with_game_action_drain(cid, game_id.clone(), FailedGameAction::AcceptSettlement, move |cradle: &mut JsGameSession| {
-            cradle
-                .cradle
-                .accept_settlement(&mut cradle.allocator, &game_id)
-        })
+        with_game_action_drain(
+            cid,
+            game_id.clone(),
+            FailedGameAction::AcceptSettlement,
+            move |cradle: &mut JsGameSession| {
+                cradle
+                    .cradle
+                    .accept_settlement(&mut cradle.allocator, &game_id)
+            },
+        )
     }
 
     #[wasm_bindgen]
     pub fn shut_down(cid: i32) -> Result<JsValue, JsValue> {
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle
-                .cradle
-                .shut_down(&mut cradle.allocator)
+            cradle.cradle.shut_down(&mut cradle.allocator)
         })
     }
 
@@ -1067,7 +1192,11 @@ mod gaming_wasm {
 
     fn terminal_handoff_command_to_js(command: &TerminalHandoffCommand) -> JsValue {
         let obj = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&obj, &"id".into(), &JsValue::from_str(&command.id.to_string()));
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"id".into(),
+            &JsValue::from_str(&command.id.to_string()),
+        );
         let bytes = js_sys::Uint8Array::from(command.message.as_slice());
         let _ = js_sys::Reflect::set(&obj, &"message".into(), &bytes);
         obj.into()
@@ -1088,7 +1217,10 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn go_on_chain(cid: i32) -> Result<JsValue, JsValue> {
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.go_on_chain(&mut cradle.allocator, false).map(|_| ())
+            cradle
+                .cradle
+                .go_on_chain(&mut cradle.allocator, false)
+                .map(|_| ())
         })
     }
 
@@ -1117,11 +1249,9 @@ mod gaming_wasm {
         };
 
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.report_puzzle_and_solution(
-                &mut cradle.allocator,
-                &coin,
-                ps_pair,
-            )
+            cradle
+                .cradle
+                .report_puzzle_and_solution(&mut cradle.allocator, &coin, ps_pair)
         })
     }
 
@@ -1265,23 +1395,21 @@ mod gaming_wasm {
                 "OutboundTerminalMessage should be intercepted before JS event serialization"
                     .to_string(),
             )),
-            GameSessionEvent::OutboundTransaction(_, _) => Err(types::Error::StrErr(
+            GameSessionEvent::OutboundTransaction(_) => Err(types::Error::StrErr(
                 "OutboundTransaction should be intercepted before JS event serialization"
                     .to_string(),
             )),
             GameSessionEvent::Notification(n) => notification_event_to_js(n),
-            GameSessionEvent::Log(line) => {
-                json_event_to_js(serde_json::json!({ "Log": line }))
-            }
-            GameSessionEvent::CoinSolutionRequest(coin) => {
-                json_event_to_js(serde_json::json!({ "CoinSolutionRequest": coin_string_to_hex(coin) }))
-            }
+            GameSessionEvent::Log(line) => json_event_to_js(serde_json::json!({ "Log": line })),
+            GameSessionEvent::CoinSolutionRequest(coin) => json_event_to_js(
+                serde_json::json!({ "CoinSolutionRequest": coin_string_to_hex(coin) }),
+            ),
             GameSessionEvent::ReceiveError(msg) => {
                 json_event_to_js(serde_json::json!({ "ReceiveError": msg }))
             }
-            GameSessionEvent::NeedCoinSpend(req) => {
-                json_event_to_js(serde_json::json!({ "NeedCoinSpend": coin_spend_request_to_js(req) }))
-            }
+            GameSessionEvent::NeedCoinSpend(req) => json_event_to_js(
+                serde_json::json!({ "NeedCoinSpend": coin_spend_request_to_js(req) }),
+            ),
             GameSessionEvent::WatchCoin { .. } => Err(types::Error::StrErr(
                 "WatchCoin should be intercepted before JS event serialization".to_string(),
             )),
@@ -1295,11 +1423,13 @@ mod gaming_wasm {
         #[test]
         fn leaked_outbound_transaction_fails_before_js_serialization() {
             let event = GameSessionEvent::OutboundTransaction(
-                SpendBundle {
-                    name: None,
-                    spends: Vec::new(),
-                },
-                None,
+                chia_gaming::session_phases::effects::TransactionSubmission::already_paid(
+                    SpendBundle {
+                        name: None,
+                        spends: Vec::new(),
+                    },
+                    None,
+                ),
             );
 
             let err = game_session_event_to_js(&event).expect_err("transaction must not leak");
@@ -1329,19 +1459,17 @@ mod gaming_wasm {
         action_succeeded: bool,
     ) -> Result<JsValue, types::Error> {
         let events = collect_drain_events(drain)?;
-        let watch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.watch_coins))
-            .map_err(|e| types::Error::StrErr(e.to_string()))?;
-        let unwatch_coins = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.unwatch_coins))
-            .map_err(|e| types::Error::StrErr(e.to_string()))?;
+        let watch_coins =
+            serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.watch_coins))
+                .map_err(|e| types::Error::StrErr(e.to_string()))?;
+        let unwatch_coins =
+            serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(&drain.unwatch_coins))
+                .map_err(|e| types::Error::StrErr(e.to_string()))?;
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
         let _ = js_sys::Reflect::set(&obj, &"watchCoins".into(), &watch_coins);
         let _ = js_sys::Reflect::set(&obj, &"unwatchCoins".into(), &unwatch_coins);
-        let _ = js_sys::Reflect::set(
-            &obj,
-            &"actionSucceeded".into(),
-            &action_succeeded.into(),
-        );
+        let _ = js_sys::Reflect::set(&obj, &"actionSucceeded".into(), &action_succeeded.into());
         let disposition = js_sys::Object::new();
         match pending_terminal {
             None if !terminal => {
@@ -1360,11 +1488,7 @@ mod gaming_wasm {
                 );
             }
             None => {
-                let _ = js_sys::Reflect::set(
-                    &disposition,
-                    &"kind".into(),
-                    &"terminal".into(),
-                );
+                let _ = js_sys::Reflect::set(&disposition, &"kind".into(), &"terminal".into());
             }
         }
         let _ = js_sys::Reflect::set(&obj, &"disposition".into(), &disposition);
@@ -1451,33 +1575,18 @@ mod gaming_wasm {
         hex::decode(hex_with_prefix).into_js()
     }
 
-    #[wasm_bindgen]
-    pub fn convert_spend_to_coinset_org(spend: &str) -> Result<JsValue, JsValue> {
+    fn spend_bundle_from_clvm_hex(spend: &str) -> Result<SpendBundle, JsValue> {
         let mut allocator = AllocEncoder::new();
         let spend_bytes = hex::decode(spend).into_js()?;
         let spend_program = Program::from_bytes(&spend_bytes).into_js()?;
         let spend_node = spend_program.to_nodeptr(&mut allocator).into_js()?;
-        let spend = SpendBundle::from_clvm(&allocator, spend_node).into_js()?;
-        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()
+        SpendBundle::from_clvm(&allocator, spend_node).into_js()
     }
 
-    /// Aggregate several coinset.org-shaped spend bundles into one.  Coin spends
-    /// are concatenated and the BLS aggregate signatures are summed (BLS
-    /// aggregation is point addition), so passing our pre-signed protocol bundle
-    /// together with a separately-signed wallet fee spend yields a single bundle
-    /// whose aggregate signature covers both.  Input is a JSON array of
-    /// `CoinsetSpendBundle`.
     #[wasm_bindgen]
-    pub fn aggregate_coinset_spend_bundles(bundles_json: &str) -> Result<JsValue, JsValue> {
-        let bundles = serde_json::from_str::<Vec<CoinsetSpendBundle>>(bundles_json)
-            .map_err(|e| JsValue::from_str(&format!("bad spend bundle json: {e}")))?;
-        let mut spends = Vec::new();
-        for bundle in bundles.iter() {
-            let converted = coinset_spend_bundle_to_spend_bundle(bundle).into_js()?;
-            spends.extend(converted.spends);
-        }
-        let merged = SpendBundle { name: None, spends };
-        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&merged)?).into_js()
+    pub fn convert_spend_to_coinset_org(spend: &str) -> Result<JsValue, JsValue> {
+        let spend = spend_bundle_from_clvm_hex(spend)?;
+        serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()
     }
 
     #[wasm_bindgen]

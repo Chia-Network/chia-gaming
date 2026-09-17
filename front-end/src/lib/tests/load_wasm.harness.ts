@@ -23,6 +23,8 @@ import { resolve } from 'path';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
+export const LONG_WASM_TEST_TIMEOUT = 10 * 60 * 1000;
+
 function rooted(name: string) {
   // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
   return resolve(__dirname, '../../../..', name);

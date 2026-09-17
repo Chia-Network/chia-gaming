@@ -9,7 +9,7 @@ import {
   CoinOfInterestEntry,
   CoinStateRecord,
   WasmResult,
-  SpendBundle,
+  TransactionSubmission,
   ProposeGameParams,
   WasmEvent,
   WasmNotification,
@@ -17,14 +17,7 @@ import {
   requireWasmResult,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
-import {
-  spend_bundle_to_clvm,
-  coerceToBytes,
-  coinIdFromBytes,
-  toUint8,
-  normalizeHexString,
-  encodeU64AsClvmHex,
-} from '../util';
+import { spend_bundle_to_clvm, coerceToBytes } from '../util';
 import { log, diagStack } from '../services/log';
 import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
 import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
@@ -49,9 +42,6 @@ import {
   ReliablePeerTransport,
   type ReliableMessageConsumer,
 } from '../services/PeerSession';
-
-const SINGLETON_LAUNCHER_PUZZLE_HASH =
-  'eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9';
 
 export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 
@@ -131,23 +121,6 @@ function extractErrorMessage(e: unknown): string {
     }
   }
   return String(e);
-}
-
-export function isBenignTransactionSubmitError(message: string): boolean {
-  return (
-    /spend rejected: status=\[3,9\].*Conflicting transaction/i.test(message) ||
-    /spend rejected: status=\[3,5\].*Coin not found/i.test(message) ||
-    // Cloud Wallet / full-node: the spend is already in the mempool (ours or a
-    // peer's competing spend of the same coin). Either way the chain will pick
-    // a winner; a popup does not help.
-    /conflicts with an existing transaction in the mempool/i.test(message) ||
-    // Both peers push the byte-identical funding bundle by design, so the second
-    // arrival is de-duplicated by the node's bundle-hash check. Resubmitting an
-    // identical bundle is harmless (see INTERNALS.md), so this is not an error.
-    /ALREADY_INCLUDING_TRANSACTION/i.test(message) ||
-    /duplicate transaction/i.test(message) ||
-    /already in the mempool/i.test(message)
-  );
 }
 
 /**
@@ -246,7 +219,16 @@ export class SessionController implements PollingGameSession {
   opponentAlias: string | undefined = undefined;
   durabilityWarning: string | undefined = undefined;
   onSaveNeeded: (() => void | Promise<void>) | null = null;
-  getFee: () => bigint = () => 0n;
+  private feeProvider: () => bigint = () => 0n;
+
+  get getFee(): () => bigint {
+    return this.feeProvider;
+  }
+
+  set getFee(provider: () => bigint) {
+    this.feeProvider = provider;
+    this.syncFeeConfiguration();
+  }
 
   constructor(
     blockchain: BlockchainPoller | null,
@@ -612,6 +594,11 @@ export class SessionController implements PollingGameSession {
     }
   }
 
+  private syncFeeConfiguration(): void {
+    if (!this.cradle) return;
+    this.cradle.configure_submission_fee(this.feeProvider().toString());
+  }
+
   spillStoredMessages() {
     if (this.qualifyingEvents != 7 || !this.cradle || this.reloading) {
       return;
@@ -621,6 +608,7 @@ export class SessionController implements PollingGameSession {
 
   setGameSession(cradle: ChiaGame) {
     this.cradle = cradle;
+    this.syncFeeConfiguration();
     if (this.pendingPeerFailure) {
       this.escalatePeerFailure();
       return;
@@ -801,139 +789,83 @@ export class SessionController implements PollingGameSession {
     this.kickSystem(1);
   }
 
-  // Prefer the singleton launcher during initial funding; otherwise use the
-  // first protocol spend. The fee wallet spend binds to this coin with
-  // ASSERT_CONCURRENT_SPEND.
-  private async computeBindCoinId(protocolBundle: unknown): Promise<string | undefined> {
-    const coinSpends = (protocolBundle as { coin_spends?: Array<{ coin?: unknown }> })?.coin_spends;
-    const launcherSpend = Array.isArray(coinSpends)
-      ? coinSpends.find(
-          (spend) =>
-            normalizeHexString(String((spend.coin as any)?.puzzle_hash ?? '')) ===
-            SINGLETON_LAUNCHER_PUZZLE_HASH,
-        )
-      : undefined;
-    const coin = Array.isArray(coinSpends)
-      ? ((launcherSpend?.coin ?? coinSpends[0]?.coin) as any)
-      : undefined;
-    if (!coin || coin.parent_coin_info === undefined || coin.puzzle_hash === undefined) {
-      return undefined;
-    }
-    const amount = typeof coin.amount === 'bigint' ? coin.amount : BigInt(coin.amount ?? 0);
-    const coinStringHex =
-      `${normalizeHexString(coin.parent_coin_info)}` +
-      `${normalizeHexString(coin.puzzle_hash)}` +
-      `${encodeU64AsClvmHex(amount)}`;
-    return coinIdFromBytes(toUint8(coinStringHex));
-  }
-
-  private async spendCoinIds(bundle: unknown): Promise<Set<string>> {
-    const coinSpends = (bundle as { coin_spends?: Array<{ coin?: any }> })?.coin_spends;
-    if (!Array.isArray(coinSpends)) return new Set();
-    const ids = await Promise.all(
-      coinSpends.map(async ({ coin }) => {
-        if (!coin || coin.parent_coin_info === undefined || coin.puzzle_hash === undefined) {
-          return null;
-        }
-        const amount = typeof coin.amount === 'bigint' ? coin.amount : BigInt(coin.amount ?? 0);
-        const coinStringHex =
-          `${normalizeHexString(coin.parent_coin_info)}` +
-          `${normalizeHexString(coin.puzzle_hash)}` +
-          `${encodeU64AsClvmHex(amount)}`;
-        return coinIdFromBytes(toUint8(coinStringHex));
-      }),
-    );
-    return new Set(ids.filter((id): id is string => id !== null));
-  }
-
-  private async submitTransactionNow(tx: SpendBundle) {
+  private async submitTransactionNow(submission: TransactionSubmission) {
     const blockchain = this.blockchain;
-    if (!blockchain) return;
+    if (!blockchain) {
+      this.deferSubmissionUntilFreshSync();
+      this.rxjsEmitter?.next({
+        type: 'error',
+        error: `Transaction ${submission.id} was deferred because the blockchain adapter is unavailable.`,
+      });
+      this.scheduleSave();
+      return;
+    }
     try {
-      // The blob/conversion/fee work used to run before the try, so a throw
-      // here (e.g. from the wasm connection) rejected the submit queue
-      // unhandled.  Keep it inside the try so every failure path is captured.
-      const blob = spend_bundle_to_clvm(tx);
-      const protocolBundle = this.wc?.convert_spend_to_coinset_org(blob);
-      const fee = this.getFee();
-      log(`[wasm] submitTransaction blobLen=${blob.length}`);
       if (!this.rewardPuzzleHash) {
         throw new Error('submitTransactionNow: rewardPuzzleHash is not set');
       }
-
-      // Build the fee spend per attempt (never baked into the Rust-retained
-      // bundle) and aggregate it into the protocol bundle so a single pushed
-      // bundle carries a signature covering both. Any failure to obtain the fee
-      // spend falls back to a zero-fee submission rather than blocking the spend.
-      let bundleToSubmit: unknown = protocolBundle;
-      let appliedFee = 0n;
-      if (
-        fee > 0n &&
-        tx.name !== 'channel-opening' &&
-        protocolBundle &&
-        this.wc &&
-        blockchain.rpc.createFeeSpend
-      ) {
-        const bindCoinId = await this.computeBindCoinId(protocolBundle);
-        let feeSpend: unknown = null;
-        let feeSpendError: string | undefined;
-        if (bindCoinId) {
-          try {
-            const feeSource = await blockchain.rpc.createFeeSpend(fee, bindCoinId);
-            if (feeSource?.kind === 'offer') {
-              feeSpend = this.wc.complete_fee_offer_to_coinset_org(
-                feeSource.offer,
-                fee.toString(),
-                bindCoinId,
-              );
-            } else if (feeSource?.kind === 'bundle') {
-              feeSpend = feeSource.bundle;
-            }
-            if (feeSpend) {
-              const protocolCoinIds = await this.spendCoinIds(protocolBundle);
-              const feeCoinIds = await this.spendCoinIds(feeSpend);
-              const reusedCoinId = [...feeCoinIds].find((id) => protocolCoinIds.has(id));
-              if (reusedCoinId) {
-                feeSpend = null;
-                feeSpendError = `the fee wallet reused protocol input coin 0x${reusedCoinId}`;
-              }
-            }
-          } catch (e) {
-            feeSpendError = extractErrorMessage(e);
+      let feeSourceJson: string | undefined;
+      if (submission.fee_request) {
+        const { amount, target } = submission.fee_request;
+        try {
+          const feeSource = await blockchain.rpc.createFeeSpend?.(BigInt(amount), target);
+          if (feeSource) {
+            feeSourceJson = jsonStringify(feeSource);
+          } else {
+            feeSourceJson = jsonStringify({
+              kind: 'failure',
+              reason: 'the wallet could not build a signed fee source',
+            });
           }
-        }
-        if (feeSpend) {
-          bundleToSubmit = this.wc.aggregate_coinset_spend_bundles(
-            jsonStringify([protocolBundle, feeSpend]),
-          );
-          appliedFee = fee;
-        } else {
-          // The wallet couldn't produce or complete a signed fee offer.
-          // Submitting without a fee keeps the game progressing, but the user
-          // must know their configured fee was dropped and why.
-          const reason = feeSpendError ?? 'the wallet could not build a signed fee offer';
-          const warning =
-            `Configured fee was not applied: ${reason}. ` +
-            'The transaction was submitted without a fee.';
-          log(`[wasm] submitTransaction: fee spend unavailable; ${warning}`);
-          this.rxjsEmitter?.next({ type: 'error', error: warning });
+        } catch (e) {
+          feeSourceJson = jsonStringify({ kind: 'failure', reason: extractErrorMessage(e) });
         }
       }
+      if (!this.cradle) {
+        throw new Error('WASM cradle became unavailable before submission finalization');
+      }
+      const finalized = this.cradle.finalize_submission(submission.id, feeSourceJson);
+      const blob = spend_bundle_to_clvm(finalized.protocol_bundle);
+      const appliedFee = BigInt(finalized.applied_fee);
+      log(`[wasm] submitTransaction blobLen=${blob.length}`);
+      if (finalized.warning) {
+        log(`[wasm] submitTransaction: ${finalized.warning}`);
+        this.rxjsEmitter?.next({ type: 'error', error: finalized.warning });
+      }
 
-      await blockchain.rpc.spend(
+      const outcome = await blockchain.rpc.spend(
         blob,
-        bundleToSubmit,
+        finalized.bundle,
         this.rewardPuzzleHash,
         'submitTransaction',
         appliedFee || undefined,
       );
-    } catch (e) {
-      const message = extractErrorMessage(e);
-      if (isBenignTransactionSubmitError(message)) {
-        log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
+      if (!this.cradle) {
+        if (this.retired) return;
+        throw new Error('WASM cradle became unavailable before recording the wallet outcome');
+      }
+      if (outcome.status === 'acknowledged') {
+        this.cradle.acknowledge_submission(submission.id);
+        this.scheduleSave();
         return;
       }
-      const coinDescs = (tx.spends ?? [])
+      if (outcome.status === 'unavailable') {
+        log(`[wasm] submitTransaction unavailable id=${submission.id}: ${outcome.detail}`);
+        this.deferSubmissionUntilFreshSync();
+        this.scheduleSave();
+        return;
+      }
+      this.cradle.reject_submission(submission.id);
+      const message = rewriteFeeRateRejection(outcome.detail);
+      log(`[wasm] submitTransaction rejected id=${submission.id}: ${message}`);
+      this.rxjsEmitter?.next({
+        type: 'error',
+        error: `Wallet rejected transaction ${submission.id}: ${message}`,
+      });
+      this.scheduleSave();
+    } catch (e) {
+      const message = extractErrorMessage(e);
+      const coinDescs = (submission.bundle.spends ?? [])
         .map((cs: any) => {
           const coinHex = typeof cs.coin === 'string' ? cs.coin : '';
           return coinHex.length >= 64 ? coinHex.slice(0, 64) : coinHex || 'unknown';
@@ -941,11 +873,21 @@ export class SessionController implements PollingGameSession {
         .join(', ');
       diagStack('submitTransaction failed', e);
       log(`[wasm] submitTransaction failed: ${message} coins=[${coinDescs}]`);
-      this.rxjsEmitter?.next({ type: 'error', error: rewriteFeeRateRejection(message) });
+      this.deferSubmissionUntilFreshSync();
+      this.rxjsEmitter?.next({
+        type: 'error',
+        error: `Transaction ${submission.id} was retained for retry after a local submission failure: ${rewriteFeeRateRejection(message)}`,
+      });
+      this.scheduleSave();
     }
   }
 
-  private submitTransaction(tx: SpendBundle) {
+  private deferSubmissionUntilFreshSync(): void {
+    this.resubmitAfterChainSync = true;
+    this.resubmitNeedsCoinSnapshot = this.snapshotWatchedCoins().length > 0;
+  }
+
+  private submitTransaction(submission: TransactionSubmission) {
     if (this.transactionPublishNerfed) return;
     // Guard the chain with a diagnostic catch: an unhandled rejection escaping
     // this promise is invisible in CI except as a bare empty-message test
@@ -960,7 +902,7 @@ export class SessionController implements PollingGameSession {
           log('[wasm] submitTransaction dropped because publishing is nerfed');
           return;
         }
-        return this.submitTransactionNow(tx);
+        return this.submitTransactionNow(submission);
       })
       .catch((e) => {
         diagStack('transactionSubmitQueue rejected', e);
@@ -974,20 +916,22 @@ export class SessionController implements PollingGameSession {
    */
   private drainAndSubmitTransactions() {
     if (!this.cradle || !this.blockchain) return;
-    let bundles: SpendBundle[];
+    this.syncFeeConfiguration();
+    let submissions: TransactionSubmission[];
     try {
-      bundles = this.cradle.drain_submissions();
+      submissions = this.cradle.drain_submissions();
     } catch (e) {
       diagStack('drain_submissions failed', e);
       log(`[wasm] drain_submissions failed: ${String(e)}`);
       return;
     }
-    for (const tx of bundles) {
-      this.submitTransaction(tx);
+    for (const submission of submissions) {
+      this.submitTransaction(submission);
     }
   }
 
   processResult(result: WasmResult | undefined): void {
+    this.syncFeeConfiguration();
     result = requireWasmResult(result);
     if (this.protocolStopped) {
       return;
@@ -1453,6 +1397,7 @@ export class SessionController implements PollingGameSession {
 
   private resubmitAfterFreshChainSync() {
     if (!this.resubmitAfterChainSync || this.protocolStopped || !this.cradle) return;
+    if (this.blockchain?.rpc.isReadyForPlay?.() === false) return;
     this.resubmitAfterChainSync = false;
     this.cradle.resubmit_submitted();
     this.drainAndSubmitTransactions();
