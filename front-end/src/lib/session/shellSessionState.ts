@@ -3,6 +3,7 @@ import type { AdvisoryStartParams } from '../../services/HubConnection';
 import type { RestoreStatus } from '../../hooks/SessionController';
 import type { AcceptReason } from './acceptLifecycle';
 import type { SessionModel } from './model';
+import type { LiveSessionSave, PreHandshakeSessionSave } from './saveEnvelope';
 
 export type PendingSessionProposal = {
   from_id: string;
@@ -35,6 +36,23 @@ export function isAcceptSessionTransition(transition: ShellSessionTransition): b
     transition.kind === 'pending' &&
     (transition.reason === 'accept-advisory' || transition.reason === 'accept-proposal')
   );
+}
+
+export function peerConnectionForSavedSession(
+  connection: PeerConnectionResult,
+  save: LiveSessionSave | PreHandshakeSessionSave,
+): PeerConnectionResult {
+  const transport = save.phase === 'live' ? save.live : save.transport;
+  return {
+    ...connection,
+    reliableState: {
+      sessionId: save.pairing.gameSessionId,
+      messageNumber: transport.messageNumber,
+      remoteNumber: transport.remoteNumber,
+      unackedMessages: structuredClone(transport.unackedMessages),
+      disposition: transport.disposition,
+    },
+  };
 }
 
 export interface ShellSessionState {

@@ -5,6 +5,7 @@ import { useShellSessionState } from '../hooks/useShellSessionState';
 import {
   PendingSessionProposal,
   isAcceptSessionTransition,
+  peerConnectionForSavedSession,
 } from '../lib/session/shellSessionState';
 import {
   persistFreshStartCheckpoint,
@@ -3311,7 +3312,7 @@ const Shell = () => {
           channelTimeout: parseOptionalBigInt(pairing.channelTimeout),
           unrollTimeout: parseOptionalBigInt(pairing.unrollTimeout),
         });
-        setPeerConn(stablePeerConn);
+        setPeerConn(peerConnectionForSavedSession(stablePeerConn, save));
       } else if (transportDisposition !== null) {
         setSessionConfig(null);
         setPeerConn(null);
