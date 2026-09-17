@@ -1,6 +1,7 @@
 import type {
   ChannelStatus,
   ChannelStatusPayload,
+  CoinOfInterestEntry,
   PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
@@ -214,6 +215,26 @@ export function selectDisplayedGameInstance(model: SessionModel): GameInstanceVi
 
 export function selectBetweenHands(model: SessionModel): boolean {
   return model.game.handKey > 0 && model.game.activeIds.length === 0;
+}
+
+export function selectDashboardCoins(
+  model: SessionModel,
+  coins: readonly CoinOfInterestEntry[],
+): CoinOfInterestEntry[] {
+  const activeIds = new Set(model.game.activeIds);
+  return coins.flatMap((coin) => {
+    const gameId = coin.game_id;
+    if (!gameId || !coin.game_coin_kind) return [{ ...coin }];
+    if (coin.game_coin_kind === 'current' && !activeIds.has(gameId)) return [];
+    const handIndex = model.game.currentHandIds.indexOf(gameId);
+    if (handIndex < 0) return [{ ...coin }];
+    return [
+      {
+        ...coin,
+        label: `Hand ${handIndex + 1} ${coin.game_coin_kind === 'reward' ? 'reward coin' : 'coin'}`,
+      },
+    ];
+  });
 }
 
 /**

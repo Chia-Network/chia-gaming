@@ -551,9 +551,7 @@ export interface GameSessionProps {
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
-  onCoinsProviderChange?: (
-    getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null,
-  ) => void;
+  onCoinsChange?: (coins: import('../types/ChiaGaming').CoinOfInterestEntry[]) => void;
   suppressPhaseReporting?: boolean;
   blockchain: BlockchainPoller | null;
   terminalPresentation?: TerminalSessionPresentation | null;
@@ -569,7 +567,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   onSessionPhaseChange,
   onRestoreStatusChange,
   onSessionModelChange,
-  onCoinsProviderChange,
+  onCoinsChange,
   suppressPhaseReporting,
   blockchain,
   sessionController,
@@ -595,14 +593,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   }, [session.sessionModel, onSessionModelChange]);
 
   useEffect(() => {
-    if (!onCoinsProviderChange) return;
-    if (terminalMode) {
-      onCoinsProviderChange(null);
-      return;
-    }
-    onCoinsProviderChange(() => sessionController.getCoinsOfInterest());
-    return () => onCoinsProviderChange(null);
-  }, [sessionController, onCoinsProviderChange, terminalMode]);
+    if (!onCoinsChange || terminalMode) return;
+    onCoinsChange(sessionController.getCoinsOfInterest());
+  }, [sessionController, session.sessionModel, onCoinsChange, terminalMode]);
 
   const resolvedPhaseReportedRef = useRef(false);
   useEffect(() => {

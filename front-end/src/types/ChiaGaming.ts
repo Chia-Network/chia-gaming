@@ -208,6 +208,8 @@ type GameSessionCreateConfig = WasmContract.GameSessionConfig;
 export interface CoinOfInterestEntry {
   label: string;
   id: string;
+  game_id?: string;
+  game_coin_kind?: 'current' | 'reward';
 }
 
 export interface WasmConnection {

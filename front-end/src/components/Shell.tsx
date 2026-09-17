@@ -149,6 +149,7 @@ import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
   PRE_ACTIVE_CHANNEL_STATES,
+  selectDashboardCoins,
   selectGameDashboardView,
   selectGameTabConnected,
   selectStatusBarBalances,
@@ -426,21 +427,14 @@ function GameDashboard({
   view,
   balances,
   onAction,
-  getCoins,
+  coins,
 }: {
   view: GameDashboardViewModel;
   balances: StatusBarBalanceSegment[] | null;
   onAction: (kind: GameDashboardActionKind) => void;
-  getCoins: () => CoinOfInterestEntry[];
+  coins: CoinOfInterestEntry[];
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
-  const refreshCoins = useCallback(() => {
-    setCoins(getCoins());
-  }, [getCoins]);
-  useEffect(() => {
-    if (expanded) refreshCoins();
-  }, [expanded, refreshCoins]);
 
   const barColor = BANNER_TONE_BAR[view.bannerTone];
   return (
@@ -533,13 +527,7 @@ function GameDashboard({
         </div>
         {expanded && (
           <div className="mt-2">
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-xs text-canvas-solid">Coin IDs</span>
-              <Button variant="ghost" color="neutral" size="sm" onClick={refreshCoins}>
-                Refresh
-              </Button>
-            </div>
-            {coins.length > 0 && (
+            {coins.length > 0 ? (
               <div className="flex flex-col gap-y-0.5 text-xs">
                 {coins.map((coin) => (
                   <div key={`${coin.label}:${coin.id}`} className="flex flex-col gap-y-0.5">
@@ -552,6 +540,8 @@ function GameDashboard({
                   </div>
                 ))}
               </div>
+            ) : (
+              <span className="text-xs text-canvas-solid">No coins yet</span>
             )}
           </div>
         )}
@@ -767,13 +757,12 @@ const Shell = () => {
     sessionController.attachReliableTransport(ps.reliableTransport);
   }, []);
 
-  const coinsGetterRef = useRef<(() => CoinOfInterestEntry[]) | null>(null);
-  const [frozenCoins, setFrozenCoins] = useState<CoinOfInterestEntry[]>([]);
-  const handleCoinsProviderChange = useCallback((getter: (() => CoinOfInterestEntry[]) | null) => {
-    coinsGetterRef.current = getter;
-    if (getter) setFrozenCoins([]);
+  const coinsRef = useRef<CoinOfInterestEntry[]>([]);
+  const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
+  const handleCoinsChange = useCallback((next: CoinOfInterestEntry[]) => {
+    coinsRef.current = next;
+    setCoins(next);
   }, []);
-  const getCoins = useCallback(() => coinsGetterRef.current?.() ?? frozenCoins, [frozenCoins]);
 
   const setSessionConfig = useCallback((value: GameSessionParams | null) => {
     sessionConfigRef.current = value;
@@ -2975,7 +2964,7 @@ const Shell = () => {
       }
       const alias =
         sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
-      const terminalCoins = coinsGetterRef.current?.() ?? frozenCoins;
+      const terminalCoins = selectDashboardCoins(model, coinsRef.current);
       const identity = {
         myName: alias ?? '',
         opponentName:
@@ -3001,7 +2990,7 @@ const Shell = () => {
         return false;
       }
 
-      setFrozenCoins(terminal.coins);
+      handleCoinsChange(terminal.coins);
       dashboardSessionModelRef.current = terminal.model;
       setDashboardSessionModel(terminal.model);
       setFinishedSessionIdentity(terminal.identity);
@@ -3041,7 +3030,7 @@ const Shell = () => {
     },
     [
       clearSessionTimers,
-      frozenCoins,
+      handleCoinsChange,
       presenceBusy,
       resetPeerRelayState,
       setDashboardSessionModel,
@@ -3229,7 +3218,7 @@ const Shell = () => {
       const model = sessionModelFromSave(save);
       dashboardSessionModelRef.current = model;
       setDashboardSessionModel(model);
-      setFrozenCoins(save.terminal.coinsOfInterest);
+      handleCoinsChange(save.terminal.coinsOfInterest);
       setFinishedSessionIdentity({
         myName: save.terminal.myAlias ?? peekAlias() ?? '',
         opponentName: save.terminal.opponentAlias ?? undefined,
@@ -3248,6 +3237,7 @@ const Shell = () => {
       setResuming(false);
     },
     [
+      handleCoinsChange,
       presenceBusy,
       setActiveTab,
       setDashboardSessionModel,
@@ -4107,6 +4097,9 @@ const Shell = () => {
     peerLiveness,
   });
   const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
+  const dashboardCoins = dashboardSessionModel
+    ? selectDashboardCoins(dashboardSessionModel, coins)
+    : coins;
   const sessionConsentOverlay = pendingAdvisory ? (
     <div className="absolute inset-0 flex items-center justify-center bg-canvas-bg/80 backdrop-blur-sm z-50">
       <div className="bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center">
@@ -4671,7 +4664,7 @@ const Shell = () => {
               view={dashboardView}
               balances={statusBarBalances}
               onAction={handleDashboardAction}
-              getCoins={getCoins}
+              coins={dashboardCoins}
             />
             <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
               {(() => {
@@ -4719,7 +4712,7 @@ const Shell = () => {
                             onSessionPhaseChange={handleSessionPhaseChange}
                             onRestoreStatusChange={handleRestoreStatusChange}
                             onSessionModelChange={handleSessionModelChange}
-                            onCoinsProviderChange={handleCoinsProviderChange}
+                            onCoinsChange={handleCoinsChange}
                             suppressPhaseReporting={shouldSuppressPhaseReporting(
                               restoreBlocked,
                               terminalPresentation != null,

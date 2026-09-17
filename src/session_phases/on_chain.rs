@@ -222,9 +222,11 @@ impl OnChainPhase {
 
     fn try_emit_terminal(
         &mut self,
-        _game_id: &GameID,
+        game_id: &GameID,
         notification: GameNotification,
     ) -> Option<Effect> {
+        self.current_game_coins
+            .retain(|(known_id, _)| known_id != game_id);
         if let GameNotification::GameSettled {
             id,
             coin_id: Some(coin),

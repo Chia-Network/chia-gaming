@@ -545,11 +545,11 @@ impl GameSession {
     /// Labeled coin ids (hex) the dashboard shows for block-explorer lookup.
     /// Sourced from the active phase handler; an on-chain grouped hand can
     /// surface multiple entries.
-    pub fn coins_of_interest(&self) -> Vec<(String, String)> {
+    pub fn coins_of_interest(&self) -> Vec<(CoinOfInterest, String)> {
         self.peer
             .coins_of_interest()
             .into_iter()
-            .map(|(kind, coin)| (kind.label(), coin.to_coin_id().to_string()))
+            .map(|(kind, coin)| (kind, coin.to_coin_id().to_string()))
             .collect()
     }
 

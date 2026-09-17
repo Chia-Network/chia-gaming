@@ -660,11 +660,14 @@ projects channel / lifecycle labels and the primary action button
 (clean shutdown, go on-chain, abandon, etc.). `selectStatusBarBalances`
 projects the balance segments under those labels. Both read from the shared
 `SessionModel`; they are not a separate React-owned copy of channel state.
-The expanded dashboard lists the predicted channel coin and, once its wallet
-bundle is available, the local funding coin whose spend emitted the handshake
-extra conditions. The funding coin entry disappears when the channel coin is
-observed and the handshake transitions to the off-chain phase. Coin parent IDs
-are protocol ancestry and are not displayed.
+The expanded dashboard lists the current coins of interest and updates the list
+whenever the live session model changes; it has no manual refresh control.
+Game-associated entries use the accepted group's stable hand ordinal rather
+than the private protocol game ID. A current game coin disappears when that
+hand settles because the coin has been spent, while a newly created reward coin
+can remain visible. During handshake this list includes the predicted channel
+coin and, once available, the local funding coin whose spend emitted the extra
+conditions. Coin parent IDs are protocol ancestry and are not displayed.
 
 During the short interval after the user accepts a session — before
 `GameSession` has reported its first live model, and also while a prior finished

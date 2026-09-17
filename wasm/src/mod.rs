@@ -39,7 +39,7 @@ mod gaming_wasm {
         CoinStateRecord, ManagerDrain, TransactionManager,
     };
     use chia_gaming::session_phases::effects::{
-        FailedGameAction, GameSessionEvent, GameNotification,
+        CoinOfInterest, FailedGameAction, GameNotification, GameSessionEvent,
     };
     use chia_gaming::session_phases::game_collection;
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
@@ -1054,6 +1054,10 @@ mod gaming_wasm {
     struct JsCoinOfInterest {
         label: String,
         id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        game_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        game_coin_kind: Option<&'static str>,
     }
 
     /// Labeled coin ids (hex) to show in the expanded dashboard.
@@ -1064,7 +1068,23 @@ mod gaming_wasm {
         })?;
         let entries: Vec<JsCoinOfInterest> = coins
             .into_iter()
-            .map(|(label, id)| JsCoinOfInterest { label, id })
+            .map(|(kind, id)| {
+                let (game_id, game_coin_kind) = match kind {
+                    CoinOfInterest::CurrentGame(game_id) => {
+                        (Some(game_id.to_string()), Some("current"))
+                    }
+                    CoinOfInterest::GameReward(game_id) => {
+                        (Some(game_id.to_string()), Some("reward"))
+                    }
+                    _ => (None, None),
+                };
+                JsCoinOfInterest {
+                    label: kind.label(),
+                    id,
+                    game_id,
+                    game_coin_kind,
+                }
+            })
             .collect();
         serde_wasm_bindgen::to_value(&entries).into_js()
     }

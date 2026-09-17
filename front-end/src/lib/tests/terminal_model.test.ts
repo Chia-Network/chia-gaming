@@ -1,7 +1,9 @@
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
+  selectDashboardCoins,
   selectGameDashboardView,
+  type SessionModel,
 } from '../session/model';
 import type { SettlementOutcome } from '../settlement';
 import {
@@ -38,6 +40,28 @@ function keyedTerminalGame(
 }
 
 describe('terminal session model', () => {
+  it('uses hand ordinals and removes spent terminal game coins', () => {
+    const model = {
+      game: {
+        activeIds: ['6'],
+        currentHandIds: ['6', '4'],
+      },
+    } as unknown as SessionModel;
+
+    expect(
+      selectDashboardCoins(model, [
+        { label: 'Game 6 coin', id: 'a', game_id: '6', game_coin_kind: 'current' },
+        { label: 'Game 4 coin', id: 'b', game_id: '4', game_coin_kind: 'current' },
+        { label: 'Game 4 reward coin', id: 'c', game_id: '4', game_coin_kind: 'reward' },
+        { label: 'Unroll change coin', id: 'd' },
+      ]),
+    ).toEqual([
+      { label: 'Hand 1 coin', id: 'a', game_id: '6', game_coin_kind: 'current' },
+      { label: 'Hand 2 reward coin', id: 'c', game_id: '4', game_coin_kind: 'reward' },
+      { label: 'Unroll change coin', id: 'd' },
+    ]);
+  });
+
   it('does not retain a premature opponent-timeout state after the game finishes', () => {
     const view = selectGameDashboardView(
       createSessionModel({
