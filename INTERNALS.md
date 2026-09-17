@@ -104,6 +104,13 @@ submission, it keeps a retained copy for reload/reorg recovery and derives the
 output coins that transaction should create from its `CREATE_COIN` conditions.
 Those expected outputs are replay/conflict metadata only. They do not become host
 poll targets unless a protocol handler separately registers the coin as watched.
+After the wallet accepts the transaction, the host acknowledges that retained
+entry and stores the exact wallet-finalized aggregate bundle. A normal fresh-sync
+pass requeues only entries that have not been acknowledged, preventing a
+successful unroll submission from prompting for the same fee again. If an
+expected output later vanishes in a reorg, the manager clears the acknowledgement
+and explicitly requeues that finalized bundle unchanged; it does not ask the
+wallet to construct a new fee spend.
 
 The replay rule is deliberately narrow:
 

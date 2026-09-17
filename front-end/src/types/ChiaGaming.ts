@@ -230,6 +230,8 @@ export interface WasmConnection {
   report_height: (cid: number, height: bigint) => WasmResult;
   snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
   drain_submissions: (cid: number) => SpendBundle[];
+  acknowledge_submission: (cid: number, spend: string, finalizedBundleJson: string) => void;
+  submission_is_finalized: (cid: number, spend: string) => boolean;
   resubmit_submitted: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
   aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
@@ -417,6 +419,16 @@ export class ChiaGame {
   /** Spend bundles the manager captured and the host should submit. */
   drain_submissions(): SpendBundle[] {
     return this.wasm.drain_submissions(this.session);
+  }
+
+  /** Record that the wallet accepted a drained submission. */
+  acknowledge_submission(spend: string, finalizedBundleJson: string): void {
+    this.wasm.acknowledge_submission(this.session, spend, finalizedBundleJson);
+  }
+
+  /** Whether this bundle must be replayed without another wallet fee spend. */
+  submission_is_finalized(spend: string): boolean {
+    return this.wasm.submission_is_finalized(this.session, spend);
   }
 
   /** Re-queue all retained submissions for resubmission (call after reload). */

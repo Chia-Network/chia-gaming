@@ -399,6 +399,44 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Record that the wallet accepted a drained transaction.
+    #[wasm_bindgen]
+    pub fn acknowledge_submission(
+        cid: i32,
+        spend: &str,
+        finalized_bundle_json: &str,
+    ) -> Result<(), JsValue> {
+        let mut allocator = AllocEncoder::new();
+        let spend_bytes = hex::decode(spend).into_js()?;
+        let spend_program = Program::from_bytes(&spend_bytes).into_js()?;
+        let spend_node = spend_program.to_nodeptr(&mut allocator).into_js()?;
+        let bundle = SpendBundle::from_clvm(&allocator, spend_node).into_js()?;
+        let finalized_bundle =
+            serde_json::from_str::<CoinsetSpendBundle>(finalized_bundle_json)
+                .map_err(|e| JsValue::from_str(&format!("bad finalized spend bundle json: {e}")))?;
+        let finalized_bundle =
+            coinset_spend_bundle_to_spend_bundle(&finalized_bundle).into_js()?;
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle
+                .cradle
+                .acknowledge_submission(&bundle, finalized_bundle)
+        })
+    }
+
+    /// Whether a drained bundle is already wallet-finalized and must be
+    /// replayed unchanged rather than receiving another fee attachment.
+    #[wasm_bindgen]
+    pub fn submission_is_finalized(cid: i32, spend: &str) -> Result<bool, JsValue> {
+        let mut allocator = AllocEncoder::new();
+        let spend_bytes = hex::decode(spend).into_js()?;
+        let spend_program = Program::from_bytes(&spend_bytes).into_js()?;
+        let spend_node = spend_program.to_nodeptr(&mut allocator).into_js()?;
+        let bundle = SpendBundle::from_clvm(&allocator, spend_node).into_js()?;
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            Ok(cradle.cradle.submission_is_finalized(&bundle))
+        })
+    }
+
     /// Re-queue every transaction the manager has retained for resubmission.
     /// Called on session restore so transactions that were drained but may not
     /// have reached the network before a reload are submitted again.  The host

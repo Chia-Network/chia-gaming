@@ -672,7 +672,7 @@ describe('transaction submission', () => {
     blob.detachBlockchain(blockchain);
   });
 
-  it('does not request a second fee offer when fresh sync requeues an in-flight submission', async () => {
+  it('skips fresh-sync duplicates and replays the finalized transaction unchanged after reorg', async () => {
     let resolveFeeOffer: ((offer: string) => void) | null = null;
     const feeOffer = new Promise<string>((resolve) => {
       resolveFeeOffer = resolve;
@@ -703,6 +703,8 @@ describe('transaction submission', () => {
     const submission = testSpendBundle('01');
     let initialQueued = true;
     let replayQueued = false;
+    let walletAcknowledged = false;
+    let walletFinalized = false;
     const cradle = {
       ...makeMockCradle(),
       drain_submissions: jest.fn(() => {
@@ -716,8 +718,13 @@ describe('transaction submission', () => {
         }
         return [];
       }),
+      acknowledge_submission: jest.fn(() => {
+        walletAcknowledged = true;
+        walletFinalized = true;
+      }),
+      submission_is_finalized: jest.fn(() => walletFinalized),
       resubmit_submitted: jest.fn(() => {
-        replayQueued = true;
+        replayQueued = !walletAcknowledged;
       }),
     } as unknown as ChiaGame;
     const protocolBundle = {
@@ -763,15 +770,26 @@ describe('transaction submission', () => {
     }
     expect(createFeeOffer).toHaveBeenCalledTimes(1);
 
+    resolveFeeOffer?.('offer1signed');
+    await transactionSubmitQueue(blob);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
+
     blob.attachBlockchain(blockchain);
     blob.reportCoinStates(1n, []);
     expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
-
-    resolveFeeOffer?.('offer1signed');
     await transactionSubmitQueue(blob);
 
     expect(createFeeOffer).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
+
+    walletAcknowledged = false;
+    replayQueued = true;
+    blob.processResult(wasmResult());
+    await transactionSubmitQueue(blob);
+
+    expect(createFeeOffer).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(2);
+    expect(spend.mock.calls[1][1]).toEqual(spend.mock.calls[0][1]);
     blob.detachBlockchain(blockchain);
   });
 

@@ -856,16 +856,15 @@ export class SessionController implements PollingGameSession {
       // unhandled.  Keep it inside the try so every failure path is captured.
       const blob = spend_bundle_to_clvm(tx);
       const protocolBundle = this.wc?.convert_spend_to_coinset_org(blob);
-      const fee = this.getFee();
+      const walletFinalized = this.cradle?.submission_is_finalized(blob) ?? false;
+      const fee = walletFinalized ? 0n : this.getFee();
       log(`[wasm] submitTransaction blobLen=${blob.length}`);
       if (!this.rewardPuzzleHash) {
         throw new Error('submitTransactionNow: rewardPuzzleHash is not set');
       }
 
-      // Build the fee spend per attempt (never baked into the Rust-retained
-      // bundle) and aggregate it into the protocol bundle so a single pushed
-      // bundle carries a signature covering both. Any failure to obtain the fee
-      // spend falls back to a zero-fee submission rather than blocking the spend.
+      // A reorg replay is already the exact wallet-finalized aggregate bundle.
+      // New protocol submissions may attach a fee spend once before broadcast.
       let bundleToSubmit: unknown = protocolBundle;
       let appliedFee = 0n;
       if (
@@ -926,6 +925,10 @@ export class SessionController implements PollingGameSession {
         'submitTransaction',
         appliedFee || undefined,
       );
+      if (this.cradle) {
+        this.cradle.acknowledge_submission(blob, jsonStringify(bundleToSubmit));
+        this.scheduleSave();
+      }
     } catch (e) {
       const message = extractErrorMessage(e);
       if (isBenignTransactionSubmitError(message)) {

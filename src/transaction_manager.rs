@@ -48,7 +48,12 @@ pub struct CoinStateRecord {
 /// retained so its outputs can be resubmitted if a reorg rolls them back.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SubmittedTx {
+    /// Protocol-authored submission retained for lifecycle/conflict tracking.
     bundle: SpendBundle,
+    /// Exact wallet-finalized bundle accepted for broadcast. Reorg replay uses
+    /// this unchanged, including its original fee spend.
+    #[serde(default)]
+    finalized_bundle: Option<SpendBundle>,
     /// Coin ids this transaction spends.  An output coin's parent is one of
     /// these, which is how a vanished output is matched back to its creator.
     spent_coin_ids: Vec<CoinID>,
@@ -61,6 +66,11 @@ struct SubmittedTx {
     /// Set once any expected output is observed on-chain.
     #[serde(default)]
     landed: bool,
+    /// The host confirmed that its wallet accepted this transaction. Ordinary
+    /// reconnect replay skips acknowledged submissions; reorg recovery can
+    /// explicitly re-arm them when an expected output vanishes.
+    #[serde(default)]
+    wallet_acknowledged: bool,
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
     expiry: Option<u64>,
@@ -90,6 +100,14 @@ fn expected_output_coins(bundle: &SpendBundle) -> Result<Vec<CoinString>, Error>
         }));
     }
     Ok(out)
+}
+
+fn spent_coin_ids(bundle: &SpendBundle) -> Vec<CoinID> {
+    bundle
+        .spends
+        .iter()
+        .map(|spend| spend.coin.to_coin_id())
+        .collect()
 }
 
 /// Combine two optional expiry heights, keeping the tightest (smallest)
@@ -386,13 +404,15 @@ impl<C> TransactionManager<C> {
         let mut new_outputs: Vec<Option<Vec<CoinString>>> =
             Vec::with_capacity(self.pending_submissions.len());
         for (bundle, _) in self.pending_submissions.iter() {
-            let spent_coin_ids: Vec<CoinID> =
+            let bundle_spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
-            if self
-                .submitted
-                .iter()
-                .any(|t| t.spent_coin_ids == spent_coin_ids)
-            {
+            if self.submitted.iter().any(|tx| {
+                tx.spent_coin_ids == bundle_spent_coin_ids
+                    || tx
+                        .finalized_bundle
+                        .as_ref()
+                        .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
+            }) {
                 new_outputs.push(None);
             } else {
                 new_outputs.push(Some(expected_output_coins(bundle)?));
@@ -400,28 +420,66 @@ impl<C> TransactionManager<C> {
         }
         let out = std::mem::take(&mut self.pending_submissions);
         for ((bundle, expiry), outputs) in out.iter().zip(new_outputs) {
-            let spent_coin_ids: Vec<CoinID> =
+            let bundle_spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
             // Don't double-track the same creating transaction across resubmits;
             // instead tighten the existing entry's expiry to the minimum of the
             // two (a `None` expiry means no constraint, so any `Some` wins).
-            if let Some(existing) = self
-                .submitted
-                .iter_mut()
-                .find(|t| t.spent_coin_ids == spent_coin_ids)
-            {
+            if let Some(existing) = self.submitted.iter_mut().find(|tx| {
+                tx.spent_coin_ids == bundle_spent_coin_ids
+                    || tx
+                        .finalized_bundle
+                        .as_ref()
+                        .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
+            }) {
                 existing.expiry = min_expiry(existing.expiry, *expiry);
             } else if let Some(outputs) = outputs {
                 self.submitted.push(SubmittedTx {
                     bundle: bundle.clone(),
-                    spent_coin_ids,
+                    finalized_bundle: None,
+                    spent_coin_ids: bundle_spent_coin_ids,
                     expected_output_coins: outputs,
                     landed: false,
+                    wallet_acknowledged: false,
                     expiry: *expiry,
                 });
             }
         }
         Ok(out.into_iter().map(|(bundle, _)| bundle).collect())
+    }
+
+    /// Record that the hosting wallet accepted a drained transaction.
+    pub fn acknowledge_submission(
+        &mut self,
+        bundle: &SpendBundle,
+        finalized_bundle: SpendBundle,
+    ) -> Result<(), Error> {
+        let bundle_spent_coin_ids = spent_coin_ids(bundle);
+        let Some(submitted) = self.submitted.iter_mut().find(|tx| {
+            tx.spent_coin_ids == bundle_spent_coin_ids
+                || tx
+                    .finalized_bundle
+                    .as_ref()
+                    .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
+        }) else {
+            return Err(Error::StrErr(
+                "acknowledge_submission: transaction is not retained".to_string(),
+            ));
+        };
+        submitted.wallet_acknowledged = true;
+        submitted.finalized_bundle = Some(finalized_bundle);
+        self.pending_submissions
+            .retain(|(pending, _)| spent_coin_ids(pending) != bundle_spent_coin_ids);
+        Ok(())
+    }
+
+    pub fn submission_is_finalized(&self, bundle: &SpendBundle) -> bool {
+        let bundle_spent_coin_ids = spent_coin_ids(bundle);
+        self.submitted.iter().any(|tx| {
+            tx.finalized_bundle
+                .as_ref()
+                .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
+        })
     }
 
     /// Re-queue retained, unexpired submissions after the host has supplied a
@@ -431,9 +489,13 @@ impl<C> TransactionManager<C> {
     pub fn requeue_submitted(&mut self) {
         self.submitted
             .retain(|tx| !matches!(tx.expiry, Some(expiry) if self.last_height >= expiry));
-        for tx in self.submitted.iter() {
-            self.pending_submissions
-                .push((tx.bundle.clone(), tx.expiry));
+        for tx in self.submitted.iter().filter(|tx| !tx.wallet_acknowledged) {
+            self.pending_submissions.push((
+                tx.finalized_bundle
+                    .clone()
+                    .unwrap_or_else(|| tx.bundle.clone()),
+                tx.expiry,
+            ));
         }
     }
 
@@ -882,7 +944,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             };
             // Find (and prune expired) the transaction that created this coin.
             let mut resubmit: Option<(SpendBundle, Option<u64>)> = None;
-            self.submitted.retain(|tx| {
+            self.submitted.retain_mut(|tx| {
                 if !tx.spent_coin_ids.contains(&parent) {
                     return true;
                 }
@@ -890,7 +952,13 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 {
                     return false;
                 }
-                resubmit = Some((tx.bundle.clone(), tx.expiry));
+                tx.wallet_acknowledged = false;
+                resubmit = Some((
+                    tx.finalized_bundle
+                        .clone()
+                        .unwrap_or_else(|| tx.bundle.clone()),
+                    tx.expiry,
+                ));
                 true
             });
             if let Some(submission) = resubmit {
@@ -1971,6 +2039,14 @@ mod tests {
         // The host submits the creating tx; the manager remembers it.
         let submitted = mgr.drain_submissions().unwrap();
         assert_eq!(submitted.len(), 1);
+        let mut finalized = submitted[0].clone();
+        finalized.name = Some("create-child-with-wallet-fee".to_string());
+        finalized.spends.push(CoinSpend {
+            coin: test_coin(99),
+            bundle: Spend::default(),
+        });
+        mgr.acknowledge_submission(&submitted[0], finalized.clone())
+            .unwrap();
 
         // Child confirms at height 10.
         mgr.report_coin_states(
@@ -1991,8 +2067,8 @@ mod tests {
             .expect("report");
         assert!(mgr.vanished_coins().contains(&child));
         let resubmitted = mgr.drain_submissions().unwrap();
-        assert_eq!(resubmitted.len(), 1);
-        assert_eq!(resubmitted[0].name.as_deref(), Some("create-child"));
+        assert_eq!(resubmitted, vec![finalized]);
+        assert_eq!(mgr.submitted.len(), 1);
     }
 
     #[test]
@@ -2405,6 +2481,26 @@ mod tests {
         let replay = mgr.drain_submissions().unwrap();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].name.as_deref(), Some("tx-a"));
+    }
+
+    #[test]
+    fn acknowledged_submission_is_not_requeued_by_fresh_sync() {
+        let mut allocator = AllocEncoder::new();
+        let bundle = test_bundle("tx-a");
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
+            bundle.clone(),
+            None,
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+
+        assert_eq!(mgr.drain_submissions().unwrap(), vec![bundle.clone()]);
+        mgr.acknowledge_submission(&bundle, bundle.clone()).unwrap();
+        assert!(mgr.submission_is_finalized(&bundle));
+        mgr.requeue_submitted();
+
+        assert!(mgr.drain_submissions().unwrap().is_empty());
     }
 
     #[test]
