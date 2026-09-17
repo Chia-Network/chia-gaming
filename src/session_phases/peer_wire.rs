@@ -562,14 +562,18 @@ fn peer_message_to_value(message: &PeerMessage) -> Result<Value, Error> {
 fn peer_message_from_value(value: Value) -> Result<PeerMessage, Error> {
     let (tag, value) = expect_tag(value)?;
     match tag.as_str() {
-        "HA" => Ok(PeerMessage::HandshakeA(handshake_b_from_value(value)?)),
+        "HA" => Ok(PeerMessage::HandshakeA(Box::new(handshake_b_from_value(
+            value,
+        )?))),
         "HB" => {
             let mut map = expect_exact(value, ["i", "g", "s"])?;
-            Ok(PeerMessage::HandshakeB(HandshakePayloadBWithGenesis {
-                identity: handshake_b_from_value(take(&mut map, "i")?)?,
-                channel_coin_grandparent: CoinID::new(hash_from_value(take(&mut map, "g")?)?),
-                signatures: signatures_from_value(take(&mut map, "s")?)?,
-            }))
+            Ok(PeerMessage::HandshakeB(Box::new(
+                HandshakePayloadBWithGenesis {
+                    identity: handshake_b_from_value(take(&mut map, "i")?)?,
+                    channel_coin_grandparent: CoinID::new(hash_from_value(take(&mut map, "g")?)?),
+                    signatures: signatures_from_value(take(&mut map, "s")?)?,
+                },
+            )))
         }
         "HC" => {
             let mut map = expect_exact(value, ["b", "s"])?;
@@ -748,12 +752,12 @@ mod tests {
             BatchAction::AcceptSettlement(GameID(4), Amount::new(5)),
         ];
         let messages = vec![
-            PeerMessage::HandshakeA(identity.clone()),
-            PeerMessage::HandshakeB(HandshakePayloadBWithGenesis {
+            PeerMessage::HandshakeA(Box::new(identity.clone())),
+            PeerMessage::HandshakeB(Box::new(HandshakePayloadBWithGenesis {
                 identity,
                 channel_coin_grandparent: CoinID::default(),
                 signatures: signatures(),
-            }),
+            })),
             PeerMessage::HandshakeC(HandshakePayloadC {
                 bundle: empty_bundle(),
                 signatures: signatures(),

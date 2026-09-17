@@ -391,8 +391,8 @@ pub enum Effect {
     Notify(GameNotification),
 
     // PacketSender — one variant per peer message type
-    PeerHandshakeA(HandshakePayloadB),
-    PeerHandshakeB(HandshakePayloadBWithGenesis),
+    PeerHandshakeA(Box<HandshakePayloadB>),
+    PeerHandshakeB(Box<HandshakePayloadBWithGenesis>),
     PeerHandshakeC(HandshakePayloadC),
     PeerHandshakeD(HandshakePayloadD),
 

@@ -188,7 +188,7 @@ impl HandshakeInitiatorPhase {
         let my_hs_info = self.my_handshake_b();
         self.state = InitiatorState::SentA(Box::new(my_hs_info.clone()));
 
-        Ok(Some(Effect::PeerHandshakeA(my_hs_info)))
+        Ok(Some(Effect::PeerHandshakeA(Box::new(my_hs_info))))
     }
 
     fn make_channel_state(
@@ -1307,13 +1307,13 @@ mod finished_message_tests {
         let error = phase
             .process_message(
                 &mut env,
-                Rc::new(PeerMessage::HandshakeB(
+                Rc::new(PeerMessage::HandshakeB(Box::new(
                     crate::session_phases::handshake::HandshakePayloadBWithGenesis {
                         identity: payload,
                         channel_coin_grandparent: CoinID::default(),
                         signatures: StateUpdateSignatures::default(),
                     },
-                )),
+                ))),
             )
             .expect_err("HandshakeB collision");
         assert!(format!("{error:?}").contains("public key collision"));

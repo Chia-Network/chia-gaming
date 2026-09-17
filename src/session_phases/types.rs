@@ -104,8 +104,8 @@ pub enum BatchAction {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub enum PeerMessage {
-    HandshakeA(HandshakePayloadB),
-    HandshakeB(HandshakePayloadBWithGenesis),
+    HandshakeA(Box<HandshakePayloadB>),
+    HandshakeB(Box<HandshakePayloadBWithGenesis>),
     HandshakeC(HandshakePayloadC),
     HandshakeD(HandshakePayloadD),
 

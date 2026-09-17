@@ -316,7 +316,7 @@ impl HandshakeReceiverPhase {
                 };
 
                 self.state = ReceiverState::WaitingForOffer(Box::new(HandshakeStepInfo {
-                    first_player_hs_info: msg.clone(),
+                    first_player_hs_info: (**msg).clone(),
                     second_player_hs_info: my_hs_info.clone(),
                 }));
                 if self.last_height > 0 {
@@ -901,11 +901,11 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                 spend: None,
                 semantic: None,
             },
-            Effect::PeerHandshakeB(HandshakePayloadBWithGenesis {
+            Effect::PeerHandshakeB(Box::new(HandshakePayloadBWithGenesis {
                 identity: info.second_player_hs_info,
                 channel_coin_grandparent: pre_launcher_coin.to_coin_id(),
                 signatures: state_zero_signatures,
-            }),
+            })),
         ])
     }
     fn propose_games(
@@ -1164,7 +1164,10 @@ mod queued_message_tests {
         let mut allocator = crate::common::types::AllocEncoder::new();
         let mut env = ChannelEnv::new(&mut allocator).expect("env");
         let error = phase
-            .process_message(&mut env, Rc::new(PeerMessage::HandshakeA(payload)))
+            .process_message(
+                &mut env,
+                Rc::new(PeerMessage::HandshakeA(Box::new(payload))),
+            )
             .expect_err("HandshakeA collision");
         assert!(format!("{error:?}").contains("public key collision"));
     }
