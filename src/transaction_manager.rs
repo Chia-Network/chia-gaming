@@ -66,11 +66,6 @@ struct SubmittedTx {
     /// Set once any expected output is observed on-chain.
     #[serde(default)]
     landed: bool,
-    /// The host confirmed that its wallet accepted this transaction. Ordinary
-    /// reconnect replay skips acknowledged submissions; reorg recovery can
-    /// explicitly re-arm them when an expected output vanishes.
-    #[serde(default)]
-    wallet_acknowledged: bool,
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
     expiry: Option<u64>,
@@ -450,7 +445,6 @@ impl<C> TransactionManager<C> {
                     spent_coin_ids: bundle_spent_coin_ids,
                     expected_output_coins: outputs,
                     landed: false,
-                    wallet_acknowledged: false,
                     expiry: *expiry,
                 });
             }
@@ -480,7 +474,6 @@ impl<C> TransactionManager<C> {
                 "acknowledge_submission: transaction is not retained".to_string(),
             ));
         };
-        submitted.wallet_acknowledged = true;
         submitted.finalized_bundle = Some(finalized_bundle);
         self.pending_submissions
             .retain(|(pending, _, _)| spent_coin_ids(pending) != bundle_spent_coin_ids);
@@ -499,13 +492,15 @@ impl<C> TransactionManager<C> {
     }
 
     /// Re-queue retained, unexpired submissions after the host has supplied a
-    /// fresh chain height. A transaction drained before reload may not have
-    /// reached the network; an absolute-expiry transaction cannot become valid
-    /// again and is discarded rather than repeatedly offered to the wallet.
+    /// fresh chain height. Wallet acknowledgement only proves the RPC accepted
+    /// the spend, not that it reached the mempool, so unlanded acknowledged
+    /// submissions replay their exact finalized bundle after reload. Landed
+    /// submissions are requeued only by explicit reorg recovery. An
+    /// absolute-expiry transaction cannot become valid again and is discarded.
     pub fn requeue_submitted(&mut self) {
         self.submitted
             .retain(|tx| !matches!(tx.expiry, Some(expiry) if self.last_height >= expiry));
-        for tx in self.submitted.iter().filter(|tx| !tx.wallet_acknowledged) {
+        for tx in self.submitted.iter().filter(|tx| !tx.landed) {
             self.pending_submissions.push((
                 tx.finalized_bundle
                     .clone()
@@ -969,7 +964,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 {
                     return false;
                 }
-                tx.wallet_acknowledged = false;
                 resubmit = Some((
                     tx.finalized_bundle
                         .clone()
@@ -2523,7 +2517,7 @@ mod tests {
     }
 
     #[test]
-    fn acknowledged_submission_is_not_requeued_by_fresh_sync() {
+    fn acknowledged_submission_requeues_exact_finalized_bundle_after_fresh_sync() {
         let mut allocator = AllocEncoder::new();
         let bundle = test_bundle_spending_creating("tx-a", &test_coin(40), &test_coin(41));
         let mut finalized = bundle.clone();
@@ -2546,7 +2540,7 @@ mod tests {
         assert!(mgr.submission_is_finalized(&finalized));
         mgr.requeue_submitted();
 
-        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.drain_submissions().unwrap(), vec![finalized]);
     }
 
     #[test]
@@ -2627,7 +2621,7 @@ mod tests {
     }
 
     #[test]
-    fn winning_spend_retains_submission_for_replay() {
+    fn landed_spend_is_not_requeued_on_reload_and_is_retained_until_buried() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(32);
         let child = CoinString::from_parts(
@@ -2646,8 +2640,8 @@ mod tests {
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // The input is spent and the retained tx's expected child appears.  That
-        // means this transaction won, so it stays retained for replay if a later
-        // reload or reorg needs it.
+        // means this transaction won, so it stays retained for explicit reorg
+        // recovery but an ordinary reload does not resubmit it.
         mgr.report_coin_states(
             &mut allocator,
             12,
@@ -2666,9 +2660,8 @@ mod tests {
         )
         .expect("report");
         mgr.requeue_submitted();
-        let replay = mgr.drain_submissions().unwrap();
-        assert_eq!(replay.len(), 1);
-        assert_eq!(replay[0].name.as_deref(), Some("spend-coin"));
+        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.submitted.len(), 1);
 
         // Once the spent input is buried deeply enough, the input coin is evicted
         // and the winning transaction no longer needs to be retained.
@@ -2676,6 +2669,7 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 12 + depth, &[])
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
+        assert!(mgr.submitted.is_empty());
         mgr.requeue_submitted();
         assert!(mgr.drain_submissions().unwrap().is_empty());
     }

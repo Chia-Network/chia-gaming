@@ -65,7 +65,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
     cleanShutdownGraceStartedAt: currentPresentation?.cleanShutdownGraceStartedAt ?? null,
   });
   return {
-    terminal: isTerminalChannelSnapshot(authoritativeStatus),
+    terminal: isTerminalChannelSnapshot(authoritativeStatus) && model.game.activeIds.length === 0,
     presentation,
     terminalIStarted: wasm.iStarted,
     myAlias: wasm.myAlias,

@@ -760,8 +760,16 @@ const Shell = () => {
   const coinsRef = useRef<CoinOfInterestEntry[]>([]);
   const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
   const handleCoinsChange = useCallback((next: CoinOfInterestEntry[]) => {
-    coinsRef.current = next;
-    setCoins(next);
+    const remaining = new Map(next.map((coin) => [coin.id, coin]));
+    const ordered = coinsRef.current.flatMap((coin) => {
+      const updated = remaining.get(coin.id);
+      if (!updated) return [];
+      remaining.delete(coin.id);
+      return [updated];
+    });
+    ordered.push(...remaining.values());
+    coinsRef.current = ordered;
+    setCoins(ordered);
   }, []);
 
   const setSessionConfig = useCallback((value: GameSessionParams | null) => {
@@ -4164,9 +4172,10 @@ const Shell = () => {
   ) : null;
 
   // --- Main tabbed app ---
-  // autoResuming with session hydrated: mount the real tree invisibly so
-  // GameSession/hub can finish restore, then flip to ready in one paint.
-  const shellHidden = bootState.kind === 'autoResuming';
+  // Once the session is hydrated, show the real tree while GameSession/hub
+  // finish restoring. Protocol actions remain gated, and GameSession renders
+  // its restoring state instead of leaving the page blank if reconciliation
+  // takes time.
   return (
     <>
       <UncaughtClientErrorReporter />
@@ -4177,10 +4186,8 @@ const Shell = () => {
           position: 'relative',
           width: '100vw',
           height: '100vh',
-          ...(shellHidden ? { visibility: 'hidden' as const } : {}),
         }}
         className="bg-canvas-bg-subtle text-canvas-text"
-        aria-hidden={shellHidden || undefined}
       >
         {/* Tab bar with branding */}
         <div

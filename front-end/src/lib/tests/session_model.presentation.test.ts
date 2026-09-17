@@ -292,6 +292,23 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       actionKind: 'none',
       channelDetail: null,
     });
+    expect(
+      selectGameDashboardView(
+        createSessionModel({
+          channel: {
+            status: {
+              ...INITIAL_CHANNEL_STATUS_MODEL,
+              state: 'ResolvedUnrolled',
+            },
+          },
+          game: { activeIds: ['7'] },
+        }),
+      ),
+    ).toMatchObject({
+      actionLabel: 'Waiting',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
     // Resolved display keeps Me/Opp balances (not wiped to "No Session").
     expect(
       selectStatusBarBalances(

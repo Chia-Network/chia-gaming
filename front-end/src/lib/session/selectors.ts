@@ -476,6 +476,13 @@ function dashboardActionFor(
   cleanShutdownGraceActive: boolean,
   abandonEnabled: boolean,
 ): Pick<GameDashboardViewModel, 'actionLabel' | 'actionEnabled' | 'actionKind'> {
+  if (
+    (model.channel.status.state === 'ResolvedUnrolled' ||
+      model.channel.status.state === 'ResolvedStale') &&
+    model.game.activeIds.length > 0
+  ) {
+    return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
+  }
   if (isTerminalChannelSnapshot(model.channel.status)) {
     return { actionLabel: 'Done', actionEnabled: false, actionKind: 'none' };
   }

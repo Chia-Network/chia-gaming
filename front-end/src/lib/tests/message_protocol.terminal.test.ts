@@ -673,7 +673,7 @@ describe('transaction submission', () => {
     blob.detachBlockchain(blockchain);
   });
 
-  it('submits one fee-bearing transaction across in-flight fresh sync and replays it unchanged after reorg', async () => {
+  it('submits one fee-bearing transaction and replays it unchanged after restored fresh sync', async () => {
     let resolveFeeOffer: ((offer: string) => void) | null = null;
     const feeOffer = new Promise<string>((resolve) => {
       resolveFeeOffer = resolve;
@@ -704,7 +704,6 @@ describe('transaction submission', () => {
     const submission = testSpendBundle('01');
     let initialQueued = true;
     let replayQueued = false;
-    let walletAcknowledged = false;
     let walletFinalized = false;
     const cradle = {
       ...makeMockCradle(),
@@ -720,12 +719,11 @@ describe('transaction submission', () => {
         return [];
       }),
       acknowledge_submission: jest.fn(() => {
-        walletAcknowledged = true;
         walletFinalized = true;
       }),
       submission_is_finalized: jest.fn(() => walletFinalized),
       resubmit_submitted: jest.fn(() => {
-        replayQueued = !walletAcknowledged;
+        replayQueued = true;
       }),
     } as unknown as ChiaGame;
     const protocolBundle = {
@@ -788,16 +786,9 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(createFeeOffer).toHaveBeenCalledTimes(1);
-    expect(spend).toHaveBeenCalledTimes(1);
-
-    walletAcknowledged = false;
-    replayQueued = true;
-    blob.processResult(wasmResult());
-    await transactionSubmitQueue(blob);
-
-    expect(createFeeOffer).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(2);
     expect(spend.mock.calls[1][1]).toEqual(spend.mock.calls[0][1]);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(2);
     blob.detachBlockchain(blockchain);
   });
 
