@@ -3856,6 +3856,7 @@ const Shell = () => {
 
   const handleDashboardAction = useCallback(
     (kind: GameDashboardActionKind) => {
+      if (bootState.kind !== 'ready') return;
       switch (kind) {
         case 'cancel': {
           // During Accept, Cancel before the checkpoint write lands must not wipe
@@ -3905,6 +3906,7 @@ const Shell = () => {
     [
       abandonActiveChannel,
       abortAcceptIfActive,
+      bootState.kind,
       cancelDashboardSession,
       requestDashboardCleanShutdown,
       requestDashboardGoOnChain,
@@ -4103,6 +4105,7 @@ const Shell = () => {
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
     setupPending: shouldSynthesizeSetupPending(sessionPaneTransition, hasLiveSessionModel),
+    actionsBlocked: bootState.kind !== 'ready',
     cleanShutdownGraceActive,
     abandonEnabled,
     peerLiveness,

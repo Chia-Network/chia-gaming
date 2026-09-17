@@ -300,6 +300,7 @@ export function selectGameTabConnected(args: {
 export interface GameDashboardSelectorOptions {
   hasSession?: boolean;
   setupPending?: boolean;
+  actionsBlocked?: boolean;
   cleanShutdownGraceActive?: boolean;
   abandonEnabled?: boolean;
   peerLiveness?: PeerLiveness;
@@ -554,9 +555,13 @@ export function selectGameDashboardView(
       ...EMPTY_DASHBOARD_VIEW_BASE,
       bannerTone,
       channelStatusLabel: 'Setting Up',
-      actionLabel: 'Cancel',
-      actionEnabled: true,
-      actionKind: 'cancel',
+      ...(options.actionsBlocked
+        ? {
+            actionLabel: 'Waiting' as const,
+            actionEnabled: false,
+            actionKind: 'none' as const,
+          }
+        : { actionLabel: 'Cancel', actionEnabled: true, actionKind: 'cancel' as const }),
     };
   }
   if (!model || options.hasSession === false) {
@@ -571,11 +576,17 @@ export function selectGameDashboardView(
   }
 
   const channel = model.channel.status;
-  const action = dashboardActionFor(
-    model,
-    options.cleanShutdownGraceActive ?? false,
-    options.abandonEnabled ?? false,
-  );
+  const action = options.actionsBlocked
+    ? {
+        actionLabel: 'Waiting' as const,
+        actionEnabled: false,
+        actionKind: 'none' as const,
+      }
+    : dashboardActionFor(
+        model,
+        options.cleanShutdownGraceActive ?? false,
+        options.abandonEnabled ?? false,
+      );
 
   return {
     bannerTone,

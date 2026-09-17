@@ -699,6 +699,26 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     });
   });
 
+  it('blocks dashboard actions while session restore is unresolved', () => {
+    const active = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+      game: { activeIds: ['7'] },
+    });
+
+    expect(selectGameDashboardView(active, { actionsBlocked: true })).toMatchObject({
+      actionLabel: 'Waiting',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
+    expect(
+      selectGameDashboardView(null, { setupPending: true, actionsBlocked: true }),
+    ).toMatchObject({
+      actionLabel: 'Waiting',
+      actionEnabled: false,
+      actionKind: 'none',
+    });
+  });
+
   it('stops showing hand state after the last game finishes', () => {
     const terminal = createSessionModel({
       channel: {
