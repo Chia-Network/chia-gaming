@@ -40,7 +40,7 @@ use rand::SeedableRng;
 #[cfg(test)]
 use rand_chacha::ChaCha8Rng;
 
-use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
+use crate::common::constants::CREATE_COIN;
 #[cfg(test)]
 use crate::common::standard_coin::puzzle_hash_for_pk;
 use crate::common::standard_coin::standard_solution_partial;
@@ -299,11 +299,12 @@ fn dummy_wallet_coin(
 fn build_dummy_wallet_bundle_for_request(
     allocator: &mut AllocEncoder,
     request: &crate::session_phases::handshake::CoinSpendRequest,
+    player: usize,
 ) -> Result<SpendBundle, Error> {
     let parent = if request.coin_id.is_some() {
         CoinID::default()
     } else {
-        CoinID::new(Hash::from_bytes([1; 32]))
+        CoinID::new(Hash::from_bytes([player as u8 + 1; 32]))
     };
     let (coin, identity) = dummy_wallet_coin(allocator, &parent)?;
     if let Some(expected_coin_id) = request.coin_id.as_ref() {
@@ -313,11 +314,21 @@ fn build_dummy_wallet_bundle_for_request(
             "dummy wallet selected a coin other than the requested coin"
         );
     }
-    let settlement_puzzle_hash = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+    let direct_puzzle_hash = request
+        .conditions
+        .iter()
+        .find(|condition| condition.opcode == crate::common::constants::RECEIVE_MESSAGE)
+        .and_then(|condition| condition.args.get(2))
+        .ok_or_else(|| Error::StrErr("dummy wallet request has no message source".to_string()))
+        .and_then(|bytes| {
+            Hash::from_slice(bytes)
+                .map(PuzzleHash::from_hash)
+                .map_err(|e| Error::StrErr(format!("dummy wallet message puzzle hash: {e:?}")))
+        })?;
     let mut conditions = vec![Node(
         (
             CREATE_COIN,
-            (settlement_puzzle_hash, (request.amount.clone(), ())),
+            (direct_puzzle_hash, (request.amount.clone(), ())),
         )
             .to_clvm(allocator)
             .into_gen()?,
@@ -368,24 +379,8 @@ where
     let mut pending = VecDeque::from(effects);
     while let Some(effect) = pending.pop_front() {
         match effect {
-            Effect::NeedLauncherCoinId => {
-                let (wallet_coin, _) = dummy_wallet_coin(allocator, &CoinID::default())?;
-                let launcher_coin = CoinString::from_parts(
-                    &wallet_coin.to_coin_id(),
-                    &PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
-                    &Amount::default(),
-                );
-                let mut env = ChannelEnv::new(allocator)?;
-                let follow_up = handlers[who].provide_launcher_coin(
-                    &mut env,
-                    launcher_coin,
-                    Amount::default(),
-                    None,
-                )?;
-                pending.extend(follow_up);
-            }
             Effect::NeedCoinSpend(req) => {
-                let bundle = build_dummy_wallet_bundle_for_request(allocator, &req)?;
+                let bundle = build_dummy_wallet_bundle_for_request(allocator, &req, who)?;
                 let mut env = ChannelEnv::new(allocator)?;
                 let follow_up = handlers[who].provide_coin_spend_bundle(&mut env, bundle)?;
                 pending.extend(follow_up);
@@ -451,7 +446,10 @@ where
     P: ToLocalUI + ChannelFundingWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     for handler in handlers.iter_mut() {
-        let effects = handler.new_block(1)?;
+        let effects = {
+            let mut env = ChannelEnv::new(allocator)?;
+            handler.new_block(&mut env, 1)?
+        };
         if !effects.is_empty() {
             return Err(Error::StrErr(
                 "unexpected effects from initial new_block".to_string(),
@@ -538,7 +536,16 @@ pub fn test_peer_smoke() {
                        rng: &mut ChaCha8Rng,
                        is_initiator: bool|
      -> Box<dyn PeerLifecyclePhase> {
-        let private_keys1: ChannelPrivateKeys = rng.random();
+        let channel_key = rng.random();
+        let unroll_key = rng.random();
+        let referee_key: PrivateKey = rng.random();
+        let mut pre_launcher_rng = ChaCha8Rng::from_seed(referee_key.bytes());
+        let private_keys1 = ChannelPrivateKeys {
+            my_channel_coin_private_key: channel_key,
+            my_unroll_coin_private_key: unroll_key,
+            my_referee_private_key: referee_key,
+            my_pre_launcher_private_key: pre_launcher_rng.random(),
+        };
         let reward_private_key1: PrivateKey = rng.random();
         let reward_public_key1 = private_to_public_key(&reward_private_key1);
         let reward_puzzle_hash1 =
@@ -576,7 +583,9 @@ pub fn test_peer_smoke() {
     {
         let start_effect = {
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
-            handlers[0].start_handshake(&mut env).expect("should work")
+            handlers[0]
+                .start_handshake(&mut env, Amount::default())
+                .expect("should work")
         };
         apply_effects(
             start_effect.into_iter().collect(),

@@ -90,7 +90,7 @@ intercepts blockchain bookkeeping events before they reach JavaScript:
 `OutboundTransaction` entries are captured for `drain_submissions()`, and
 `WatchCoin` entries update the manager's watched-coin set and are returned as
 `result.watchCoins` polling deltas. The remaining events — wallet requests
-(`NeedCoinSpend`, `NeedLauncherCoin`), outbound peer messages, notifications,
+(`NeedCoinSpend`), outbound peer messages, notifications,
 logs, receive errors, and puzzle/solution requests — are returned to JS as
 `result.events`.
 
@@ -123,7 +123,6 @@ handlers:
 - `ReceiveError` — peer message decode failure
 - `CoinSolutionRequest` — fetch puzzle/solution from blockchain
 - `Log` — diagnostic output
-- `NeedLauncherCoin` — request the wallet to provide the launcher coin
 - `NeedCoinSpend` — request the wallet to create and sign a spend bundle
 
 `OutboundTransaction` and `WatchCoin` are intentionally absent from the JS event

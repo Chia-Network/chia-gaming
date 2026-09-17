@@ -125,10 +125,10 @@ export class BlockchainPoller {
           true,
         ),
       createFeeOffer: adapter.createFeeOffer
-        ? (fee, concurrentSpendCoinId) =>
+        ? (fee, concurrentSpendCoinId, paymentPuzzleHash) =>
             this.enqueueRpc(
               'createFeeOffer',
-              () => adapter.createFeeOffer!(fee, concurrentSpendCoinId),
+              () => adapter.createFeeOffer!(fee, concurrentSpendCoinId, paymentPuzzleHash),
               true,
             )
         : undefined,

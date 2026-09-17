@@ -24,6 +24,7 @@ use tokio::sync::{mpsc, oneshot, watch, Notify};
 use crate::channel_state::types::ChannelEnv;
 use crate::common::constants::{
     ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
+    RECEIVE_MESSAGE,
 };
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::standard_coin::ChiaIdentity;
@@ -33,6 +34,7 @@ use crate::common::types::{
     Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
 use crate::game_session::CoinObservation;
+use crate::session_phases::handshake::{raw_coin_conditions_to_clvm, RawCoinCondition};
 use crate::simulator::Simulator;
 use crate::utils::map_m;
 use clvm_traits::Atom;
@@ -463,6 +465,7 @@ impl GameRunner {
         }
 
         let mut atom_conditions: Vec<(u32, Vec<u8>)> = Vec::new();
+        let mut message_conditions = Vec::new();
         for ec in &req.extra_conditions {
             match ec.opcode {
                 CREATE_COIN => {
@@ -515,6 +518,16 @@ impl GameRunner {
                     }
                     atom_conditions.push((ec.opcode, arg));
                 }
+                RECEIVE_MESSAGE => {
+                    message_conditions.push(RawCoinCondition {
+                        opcode: ec.opcode,
+                        args: ec
+                            .args
+                            .iter()
+                            .map(|arg| check_for_hex(arg))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    });
+                }
                 _ => {
                     return Err(Error::StrErr(format!(
                         "unsupported extra condition opcode {} in simulator create_offer_for_ids",
@@ -543,6 +556,11 @@ impl GameRunner {
             let cond_node = (opcode, (arg_node, ())).to_clvm(env.allocator).into_gen()?;
             condition_nodes.push(Node(cond_node));
         }
+        condition_nodes.extend(raw_coin_conditions_to_clvm(
+            env.allocator,
+            &message_conditions,
+            None,
+        )?);
         let conditions_clvm = condition_nodes.to_clvm(env.allocator).into_gen()?;
 
         let spend = standard_solution_partial(

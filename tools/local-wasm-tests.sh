@@ -43,16 +43,13 @@ for arg in "$@"; do
 done
 
 cleanup() {
-    if [ -n "$SIM_PID" ]; then
-        kill "$SIM_PID" 2>/dev/null || true
-        wait "$SIM_PID" 2>/dev/null || true
-    fi
+    for pid in "${WASM_PIDS[@]}"; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
     if [ -n "$HUB_TEST_PID" ]; then
         kill "$HUB_TEST_PID" 2>/dev/null || true
         wait "$HUB_TEST_PID" 2>/dev/null || true
-    fi
-    if [ -n "$SIM_READY_FILE" ]; then
-        rm -f "$SIM_READY_FILE"
     fi
 }
 trap cleanup EXIT INT TERM
@@ -88,70 +85,117 @@ fi
 echo "=== Running hub-service tests ==="
 pnpm --filter chia-gaming-hub-service run test &
 HUB_TEST_PID=$!
+WASM_PIDS=()
 
-# Let the kernel choose a collision-free port, then propagate the simulator's
-# reported address to every test client before Jest starts.
-SIM_PORT="${CHIA_GAMING_SIM_PORT:-0}"
-SIM_READY_FILE="$(mktemp "${TMPDIR:-/tmp}/chia-gaming-sim-ready.XXXXXX")"
-rm -f "$SIM_READY_FILE"
-export CHIA_GAMING_SIM_LISTEN_ADDR="[::]:$SIM_PORT"
-export CHIA_GAMING_SIM_READY_FILE="$SIM_READY_FILE"
-
-echo "=== Starting simulator ==="
 SIM_BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/chia-gaming-sim"
-RUST_LOG=error "$SIM_BIN" &
-SIM_PID=$!
-
-echo "=== Waiting for simulator address ==="
-for i in $(seq 1 30); do
-    if [ -s "$SIM_READY_FILE" ]; then
-        break
-    fi
-    if ! kill -0 "$SIM_PID" 2>/dev/null; then
-        echo "Simulator process died during startup"
-        exit 1
-    fi
-    sleep 1
-done
-if [ ! -s "$SIM_READY_FILE" ]; then
-    echo "Simulator did not report its bound address"
-    exit 1
-fi
-SIM_ADDR="$(cat "$SIM_READY_FILE")"
-SIM_PORT="${SIM_ADDR##*:}"
-case "$SIM_PORT" in
-    ''|*[!0-9]*|0) echo "Simulator reported invalid address: $SIM_ADDR"; exit 1 ;;
-esac
-export CHIA_GAMING_SIM_URL="http://127.0.0.1:$SIM_PORT"
-export CHIA_GAMING_SIM_WS_URL="ws://127.0.0.1:$SIM_PORT/ws"
-
-echo "=== Waiting for simulator on port $SIM_PORT ==="
-for i in $(seq 1 10); do
-    if curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
-        echo "Simulator ready"
-        break
-    fi
-    sleep 1
-done
-
-if ! curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
-    echo "Simulator failed to start"
-    exit 1
-fi
-export CHIA_GAMING_TEST_SIMULATOR_OWNED=1
 
 echo "=== Running tests ==="
 if [[ "$(node --help)" == *"--no-experimental-webstorage"* ]]; then
     export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage"
 fi
-# We just guaranteed the sim is up; a "no sim" skip here would hide a broken
-# harness, so make it a hard failure to match CI.
-export LOAD_WASM_REQUIRE_SIM=1
+
 FRONTEND_STATUS=0
-if pnpm --filter chia-gaming-fe run test; then
+if pnpm --filter chia-gaming-fe run generate:games &&
+   pnpm --filter chia-gaming-fe exec tsc -p tsconfig.json --noEmit &&
+   pnpm --filter chia-gaming-fe exec jest --testPathIgnorePatterns=load_wasm \
+       --silent=false --verbose --useStderr --ci --forceExit; then
     :
 else
     FRONTEND_STATUS=$?
+fi
+
+run_wasm_shard() (
+    local shard="$1"
+    local shard_count="$2"
+    local ready_file
+    local sim_log
+    local sim_pid=
+
+    ready_file="$(mktemp "${TMPDIR:-/tmp}/chia-gaming-sim-ready.XXXXXX")"
+    sim_log="$(mktemp "${TMPDIR:-/tmp}/chia-gaming-sim-log.XXXXXX")"
+    rm -f "$ready_file"
+
+    cleanup_shard() {
+        if [ -n "$sim_pid" ]; then
+            kill "$sim_pid" 2>/dev/null || true
+            wait "$sim_pid" 2>/dev/null || true
+        fi
+        rm -f "$ready_file" "$sim_log"
+    }
+    trap cleanup_shard EXIT INT TERM
+
+    export CHIA_GAMING_SIM_LISTEN_ADDR="[::]:0"
+    export CHIA_GAMING_SIM_READY_FILE="$ready_file"
+    RUST_LOG=error "$SIM_BIN" >"$sim_log" 2>&1 &
+    sim_pid=$!
+
+    for _ in $(seq 1 30); do
+        if [ -s "$ready_file" ]; then
+            break
+        fi
+        if ! kill -0 "$sim_pid" 2>/dev/null; then
+            echo "WASM shard $shard simulator exited during startup" >&2
+            cat "$sim_log" >&2
+            exit 1
+        fi
+        sleep 1
+    done
+    if [ ! -s "$ready_file" ]; then
+        echo "WASM shard $shard simulator did not report its address" >&2
+        cat "$sim_log" >&2
+        exit 1
+    fi
+
+    local sim_addr
+    local sim_port
+    sim_addr="$(cat "$ready_file")"
+    sim_port="${sim_addr##*:}"
+    case "$sim_port" in
+        ''|*[!0-9]*|0)
+            echo "WASM shard $shard simulator reported invalid address: $sim_addr" >&2
+            cat "$sim_log" >&2
+            exit 1
+            ;;
+    esac
+
+    export CHIA_GAMING_SIM_URL="http://127.0.0.1:$sim_port"
+    export CHIA_GAMING_SIM_WS_URL="ws://127.0.0.1:$sim_port/ws"
+    export CHIA_GAMING_TEST_SIMULATOR_OWNED=1
+    export LOAD_WASM_REQUIRE_SIM=1
+
+    for _ in $(seq 1 10); do
+        if curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    if ! curl -s -X POST "$CHIA_GAMING_SIM_URL/health" >/dev/null 2>&1; then
+        echo "WASM shard $shard simulator failed its health check" >&2
+        cat "$sim_log" >&2
+        exit 1
+    fi
+
+    echo "=== WASM/Jest shard $shard/$shard_count on port $sim_port ==="
+    if ! pnpm --filter chia-gaming-fe exec jest --runInBand \
+        --shard="$shard/$shard_count" --testPathPatterns=load_wasm \
+        --silent=false --verbose --useStderr --ci --forceExit; then
+        cat "$sim_log" >&2
+        exit 1
+    fi
+)
+
+if [ "$FRONTEND_STATUS" -eq 0 ]; then
+    WASM_SHARD_COUNT=3
+    for shard in $(seq 1 "$WASM_SHARD_COUNT"); do
+        run_wasm_shard "$shard" "$WASM_SHARD_COUNT" &
+        WASM_PIDS+=("$!")
+    done
+    for pid in "${WASM_PIDS[@]}"; do
+        if ! wait "$pid"; then
+            FRONTEND_STATUS=1
+        fi
+    done
+    WASM_PIDS=()
 fi
 
 HUB_STATUS=0

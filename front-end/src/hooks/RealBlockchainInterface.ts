@@ -28,6 +28,21 @@ const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
 const RESERVE_FEE = 52n;
+const RECEIVE_MESSAGE = 67n;
+
+function serializeClvmAtomHex(atomHex: string): string {
+  const atom = normalizeHexString(atomHex);
+  if (atom.length === 0) return '80';
+  const byteLength = atom.length / 2;
+  if (!Number.isInteger(byteLength)) {
+    throw new Error(`CLVM atom has odd-length hex: ${atomHex}`);
+  }
+  if (byteLength === 1 && Number.parseInt(atom, 16) <= 0x7f) return atom;
+  if (byteLength < 0x40) {
+    return (0x80 | byteLength).toString(16).padStart(2, '0') + atom;
+  }
+  throw new Error(`CLVM message argument is too large: ${byteLength} bytes`);
+}
 const CHANGE_ADDRESS_STORAGE_PREFIX = 'appState_wcChangeAddress:';
 const REMOTE_WALLET_STORAGE_PREFIX = 'appState_wcRemoteWalletId:';
 
@@ -390,53 +405,35 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async createFeeOffer(fee: bigint, concurrentSpendCoinId: string): Promise<string | null> {
+  async createFeeOffer(
+    fee: bigint,
+    concurrentSpendCoinId: string,
+    paymentPuzzleHash: string,
+  ): Promise<string | null> {
     if (fee <= 0n) return null;
     const protocolCoinId = concurrentSpendCoinId.startsWith('0x')
       ? concurrentSpendCoinId
       : `0x${normalizeHexString(concurrentSpendCoinId)}`;
     try {
-      // WalletConnect does not expose push=false or extra_conditions on
-      // send_transaction. A validate-only offer does expose both signing and
-      // arbitrary conditions without broadcasting. The fee is the offer's
-      // settlement output, not the wallet RPC's fee parameter. WASM spends
-      // that output through a nil-puzzle child before aggregation.
-      // Preselect so the settlement and nil-child coin ids are known before the
-      // wallet signs ASSERT_CONCURRENT_SPEND for the burn coin. Chia 2.7.4 does not
-      // support coin_ids on create_offer_for_ids, so WASM verifies that the
-      // offer's actual output matches this prediction before submission.
-      const requiredAmount = fee;
-      const selection = await rpc.selectCoins({
-        walletId: 1n,
-        amount: requiredAmount,
-        allowUnsynced: true,
-      });
-      const selected = selection?.coins?.find((coin) => BigInt(coin.amount) >= requiredAmount);
-      const selectedCoin = selected
-        ? `${normalizeHexString(selected.parentCoinInfo)}${normalizeHexString(selected.puzzleHash)}${encodeU64AsClvmHex(BigInt(selected.amount))}`
-        : null;
-      if (!selectedCoin) {
-        throw new Error(`wallet has no single coin large enough for fee ${fee}`);
-      }
-      const selectedCoinId = await coinIdFromBytes(toUint8(selectedCoin));
-      const settlementPuzzleHash =
-        'cfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7';
-      const settlementCoinId = await coinIdFromBytes(
-        toUint8(`${selectedCoinId}${settlementPuzzleHash}${encodeU64AsClvmHex(fee)}`),
-      );
-      const nilPuzzleHash = await coinIdFromBytes(new Uint8Array([1]));
-      const nilCoinId = await coinIdFromBytes(
-        toUint8(`${settlementCoinId}${nilPuzzleHash}${encodeU64AsClvmHex(fee)}`),
-      );
-
       const response = await rpc.createOfferForIds({
         offer: { '1': -fee },
         driverDict: {},
         validateOnly: true,
         allowUnsynced: true,
         extraConditions: [
-          { opcode: 64n, args: { coin_id: protocolCoinId } },
-          { opcode: 64n, args: { coin_id: `0x${nilCoinId}` } },
+          {
+            opcode: RECEIVE_MESSAGE,
+            args: {
+              msg: '0x',
+              var_args: [
+                serializeClvmAtomHex(paymentPuzzleHash),
+                serializeClvmAtomHex(encodeU64AsClvmHex(fee)),
+              ],
+              mode_integer: '24',
+              sender: null,
+              receiver: null,
+            },
+          },
           { opcode: 52n, args: { amount: fee } },
         ],
       });
@@ -445,7 +442,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('wallet returned no signed offer for the fee');
       }
       log(
-        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} burn=0x${nilCoinId}`,
+        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} payment=${paymentPuzzleHash}`,
       );
       return offer;
     } catch (e) {
@@ -521,21 +518,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     _openingFee?: bigint,
   ): Promise<any | null> {
     try {
-      for (const [walletId, amount] of Object.entries(offer)) {
-        if (amount >= 0n) continue;
-        try {
-          await rpc.selectCoins({
-            walletId: BigInt(walletId),
-            amount: -amount,
-            allowUnsynced: true,
-          });
-        } catch (error) {
-          log(
-            `[wc-blockchain] pre-offer selectCoins refresh failed; continuing with createOfferForIds: ${String(error)}`,
-          );
-        }
-      }
-
       const conditions = [...(extraConditions ?? [])];
       if (maxHeight !== undefined) {
         conditions.push({
@@ -574,6 +556,19 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
             args: { amount: decodeNonNegativeClvmIntHex(amountHex) },
           };
         }
+        if (condition.opcode === RECEIVE_MESSAGE) {
+          const [modeHex = '', msg = '', ...varArgs] = args;
+          return {
+            opcode: condition.opcode,
+            args: {
+              msg: `0x${normalizeHexString(msg)}`,
+              var_args: varArgs.map(serializeClvmAtomHex),
+              mode_integer: decodeNonNegativeClvmIntHex(modeHex).toString(),
+              sender: null,
+              receiver: null,
+            },
+          };
+        }
         if (condition.opcode === ASSERT_BEFORE_HEIGHT_ABSOLUTE) {
           const [heightHex = ''] = args;
           return {
@@ -589,10 +584,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const payload = {
         offer,
         driverDict: {},
-        // The initiator supplies a committed coin ID. Persist that offer so the
-        // wallet reserves its removals while the receiver builds the other half.
-        // Chia 2.7.4 cannot request-pin the coin, so Rust still verifies it.
-        validateOnly: !coinIds?.length,
+        // Persist handshake funding offers so the wallet reserves its selected
+        // inputs. This matters when both peers use the same wallet: the second
+        // request must not select the first request's still-unspent coin.
+        validateOnly: false,
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
         allowUnsynced: true,
       };

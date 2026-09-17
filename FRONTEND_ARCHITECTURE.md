@@ -660,6 +660,11 @@ projects channel / lifecycle labels and the primary action button
 (clean shutdown, go on-chain, abandon, etc.). `selectStatusBarBalances`
 projects the balance segments under those labels. Both read from the shared
 `SessionModel`; they are not a separate React-owned copy of channel state.
+The expanded dashboard lists the predicted channel coin and, once its wallet
+bundle is available, the local funding coin whose spend emitted the handshake
+extra conditions. The funding coin entry disappears when the channel coin is
+observed and the handshake transitions to the off-chain phase. Coin parent IDs
+are protocol ancestry and are not displayed.
 
 During the short interval after the user accepts a session — before
 `GameSession` has reported its first live model, and also while a prior finished
@@ -861,7 +866,7 @@ player app wraps each body in the peer reliability header before handing it to
 - **Keepalive payload:** tag `0x03` followed by the same 16-byte `session_id`.
 
 The proposer selects the random session ID and sends `session_proposal` as data
-message 1. `session_reject`, Handshake A-F, batches, and shutdown messages
+message 1. `session_reject`, Handshake A-D, batches, and shutdown messages
 continue in the same sequence. Acceptance changes the ordered-body consumer
 from Shell negotiation to `SessionController`; it does not replace the
 transport. Host messages such as `session_reject` are recognized only after
@@ -1139,12 +1144,12 @@ Shell manages wallet connections through two abstractions defined in
   endpoints at call time through `getCloudWallet*` getters, so UI-entered config
   takes effect without a rebuild.
 
-  Cloud Wallet carries the fee inside the funding spend itself: `createOfferForIds`
-  passes `fee` to the `createSpendWithExtraConditions` mutation (which adds
-  `RESERVE_FEE` and selects coins for `amount + fee`), and `selectCoins` requests
-  `amount + fee` so the pinned launcher-parent coin can cover both. It therefore
-  implements no `createFeeSpend`; `submitTransactionNow` skips the separate fee
-  spend for backends lacking that method and broadcasts with no fee parameter.
+  Cloud Wallet's `createSpendWithExtraConditions` path directly creates the
+  message-bound pre-launcher or contribution coin; it does not insert an
+  OFFER_MOD settlement coin. The protocol child has amount
+  `contribution + opening fee` and emits `RESERVE_FEE`, so the mutation does
+  not also declare a native wallet fee. Cloud Wallet implements no separate
+  `createFeeSpend`.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no

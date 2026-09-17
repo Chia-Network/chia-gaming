@@ -23,7 +23,8 @@ mod gaming_wasm {
     use chia_gaming::channel_state::types::ReadableMove;
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
-        complete_fee_offer_bundle, convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder,
+        complete_fee_offer_bundle, convert_coinset_org_spend_to_spend, fee_payment_puzzle_hash,
+        Aggsig, AllocEncoder,
         Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
         GameID, GameType, Hash, Node, PrivateKey, Program, ProgramRef, PublicKey, Puzzle,
         PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
@@ -71,7 +72,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 8;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 10;
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -468,46 +469,15 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn set_funding_coin(cid: i32, hex_coinstring: &str) -> Result<JsValue, JsValue> {
-        let coin = hex_to_coinstring(hex_coinstring).into_js()?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle
-                .cradle
-                .set_funding_coin(&mut cradle.allocator, coin)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn start_handshake(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.start_handshake(&mut cradle.allocator)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn provide_launcher_coin(
-        cid: i32,
-        hex_coinstring: &str,
-        opening_fee: &str,
-        offer_settlement_coin: Option<String>,
-    ) -> Result<JsValue, JsValue> {
-        let coin = hex_to_coinstring(hex_coinstring).into_js()?;
+    pub fn start_handshake(cid: i32, opening_fee: &str) -> Result<JsValue, JsValue> {
         let fee = opening_fee
             .parse::<u64>()
             .map(Amount::new)
             .map_err(|e| JsValue::from_str(&format!("invalid opening fee: {e}")))?;
-        let settlement_coin = offer_settlement_coin
-            .as_deref()
-            .map(hex_to_coinstring)
-            .transpose()
-            .into_js()?;
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.provide_launcher_coin(
-                &mut cradle.allocator,
-                coin,
-                fee,
-                settlement_coin,
-            )
+            cradle
+                .cradle
+                .start_handshake(&mut cradle.allocator, fee)
         })
     }
 
@@ -730,6 +700,19 @@ mod gaming_wasm {
         let bundle = decode_offer_to_spend_bundle(offer_bech32)
             .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
         serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&bundle)?).into_js()
+    }
+
+    #[wasm_bindgen]
+    pub fn fee_payment_puzzle_hash_for_coin(protocol_coin_id: &str) -> Result<String, JsValue> {
+        let coin_id_bytes = hex::decode(protocol_coin_id.trim_start_matches("0x"))
+            .map_err(|e| JsValue::from_str(&format!("invalid protocol coin id hex: {e}")))?;
+        let protocol_coin_id = CoinID::new(
+            Hash::from_slice(&coin_id_bytes)
+                .map_err(|e| JsValue::from_str(&format!("invalid protocol coin id: {e:?}")))?,
+        );
+        let puzzle_hash = fee_payment_puzzle_hash(&protocol_coin_id)
+            .map_err(|e| JsValue::from_str(&format!("fee payment puzzle error: {e:?}")))?;
+        Ok(hex::encode(puzzle_hash.bytes()))
     }
 
     #[wasm_bindgen]
@@ -1040,11 +1023,9 @@ mod gaming_wasm {
     struct JsCoinOfInterest {
         label: String,
         id: String,
-        #[serde(rename = "parentId")]
-        parent_id: String,
     }
 
-    /// Labeled coin and parent ids (hex) to show above the protocol state.
+    /// Labeled coin ids (hex) to show above the protocol state.
     #[wasm_bindgen]
     pub fn coins_of_interest(cid: i32) -> Result<JsValue, JsValue> {
         let coins = with_game(cid, move |cradle: &mut JsGameSession| {
@@ -1052,11 +1033,7 @@ mod gaming_wasm {
         })?;
         let entries: Vec<JsCoinOfInterest> = coins
             .into_iter()
-            .map(|(label, id, parent_id)| JsCoinOfInterest {
-                label,
-                id,
-                parent_id,
-            })
+            .map(|(label, id)| JsCoinOfInterest { label, id })
             .collect();
         serde_wasm_bindgen::to_value(&entries).into_js()
     }
@@ -1318,9 +1295,6 @@ mod gaming_wasm {
             }
             GameSessionEvent::NeedCoinSpend(req) => {
                 json_event_to_js(serde_json::json!({ "NeedCoinSpend": coin_spend_request_to_js(req) }))
-            }
-            GameSessionEvent::NeedLauncherCoin => {
-                json_event_to_js(serde_json::json!({ "NeedLauncherCoin": true }))
             }
             GameSessionEvent::WatchCoin { .. } => Err(types::Error::StrErr(
                 "WatchCoin should be intercepted before JS event serialization".to_string(),

@@ -6,7 +6,7 @@ import {
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { log } from '../services/log';
-import { normalizeHexString, toUint8, toHexString } from '../util';
+import { encodeU64AsClvmHex, normalizeHexString, toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
 import {
   beginOAuthPopupLogin,
@@ -549,18 +549,26 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
     maxHeight?: bigint,
-    openingFee = 0n,
+    _openingFee = 0n,
   ): Promise<any | null> {
     const walletId = this.requireWalletId();
     const amount = absAmountFromOffer(offer);
-    const conditions = conditionsForGraphql(
-      extraConditions?.filter((condition) => condition.opcode !== 52n),
-      maxHeight,
-    );
-    const fee = openingFee;
+    const directConditions = [...(extraConditions ?? [])];
+    const fundingReceive = directConditions.find((condition) => condition.opcode === 67n);
+    if (fundingReceive) {
+      const mode = BigInt(`0x${fundingReceive.args[0] || '0'}`);
+      const targetPuzzleHash = fundingReceive.args[2];
+      if ((mode === 16n || mode === 24n) && targetPuzzleHash) {
+        directConditions.push({
+          opcode: 51n,
+          args: [targetPuzzleHash, encodeU64AsClvmHex(amount)],
+        });
+      }
+    }
+    const conditions = conditionsForGraphql(directConditions, maxHeight);
 
     log(
-      `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} fee=${fee} conditions=${jsonStringify(conditions)}`,
+      `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} conditions=${jsonStringify(conditions)}`,
     );
 
     const created = await this.gql<{
@@ -577,7 +585,6 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         input: {
           walletId,
           amount,
-          fee: fee > 0n ? fee : undefined,
           coinIds: coinIds?.map((id) => normalizeHex(id)),
           extraConditions: conditions.length ? conditions : undefined,
           autoSubmit: false,

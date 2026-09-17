@@ -123,26 +123,44 @@ it(
 
       cradle2.deliver_message(sentA[0].msgno, sentA[0].msg);
       await flushWrapperDrain([cradle2]);
+      await fakeBlockchainInfo.farmBlock();
+      await pollOnce(poller);
+      await wasm_blob2.flushPendingWork();
+      await flushWrapperDrain([cradle2]);
       wasm_blob1.receiveAck(BigInt(sentA[0].msgno));
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
+      assert.deepEqual(
+        wasm_blob2.getCoinsOfInterest().map((coin) => coin.label),
+        ['Channel coin', 'Funding coin'],
+      );
       const sentB = cradle2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
       cradle1.deliver_message(sentB[0].msgno, sentB[0].msg);
       await flushWrapperDrain([cradle1]);
+      await wasm_blob1.flushPendingWork();
+      await flushWrapperDrain([cradle1]);
       wasm_blob2.receiveAck(BigInt(sentB[0].msgno));
       await flushWrapperDrain([cradle2]);
-      assertCradleRoundTrip('initiator-processed-b-needs-launcher', wasm_blob1);
-      assertCradleRoundTrip('initiator-provided-launcher-sent-c', wasm_blob1);
+      assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
+      assert.deepEqual(
+        wasm_blob1.getCoinsOfInterest().map((coin) => coin.label),
+        ['Channel coin', 'Funding coin'],
+      );
       const sentC = cradle1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
       cradle2.deliver_message(sentC[0].msgno, sentC[0].msg);
       await flushWrapperDrain([cradle2]);
+      await wasm_blob2.flushPendingWork();
+      await flushWrapperDrain([cradle2]);
       wasm_blob1.receiveAck(BigInt(sentC[0].msgno));
       await flushWrapperDrain([cradle1]);
-      assertCradleRoundTrip('receiver-processed-c-sent-d', wasm_blob2);
+      const makingOfferAcceptanceBytes = assertCradleRoundTrip(
+        'receiver-processed-c-sent-d',
+        wasm_blob2,
+      );
       const sentD = cradle2.outbound_messages();
       assert.equal(sentD.length, 1, 'receiver should have one HandshakeD message');
 
@@ -150,23 +168,11 @@ it(
       await flushWrapperDrain([cradle1]);
       wasm_blob2.receiveAck(BigInt(sentD[0].msgno));
       await flushWrapperDrain([cradle2]);
-      assertCradleRoundTrip('initiator-processed-d-waiting-for-height', wasm_blob1);
+      assertCradleRoundTrip('initiator-processed-d', wasm_blob1);
       await fakeBlockchainInfo.farmBlock();
       await pollOnce(poller);
-      assertCradleRoundTrip('initiator-height-observed-needs-coin-spend', wasm_blob1);
       await flushWrapperDrain([cradle1]);
-      assertCradleRoundTrip('initiator-wallet-offer-complete-sent-e', wasm_blob1);
-      const sentE = cradle1.outbound_messages();
-      assert.equal(sentE.length, 1, 'initiator should have one HandshakeE message');
-
-      cradle2.deliver_message(sentE[0].msgno, sentE[0].msg);
-      await flushWrapperDrain([cradle2]);
-      wasm_blob1.receiveAck(BigInt(sentE[0].msgno));
-      await flushWrapperDrain([cradle1]);
-      const makingOfferAcceptanceBytes = assertCradleRoundTrip(
-        'receiver-processed-e-making-offer-acceptance',
-        wasm_blob2,
-      );
+      assertCradleRoundTrip('initiator-observed-channel', wasm_blob1);
       // Stop live durability saves before the explicit snapshot so a late
       // onSaveNeeded cannot overwrite the cradle under test.
       wasm_blob1.onSaveNeeded = () => Promise.resolve();
@@ -211,14 +217,15 @@ it(
       assert.equal(typeof restoredId, 'number');
 
       await flushWrapperDrain([cradle2]);
-      assertCradleRoundTrip('receiver-wallet-offer-complete-sent-f', wasm_blob2);
+      assertCradleRoundTrip('receiver-finished-four-message-handshake', wasm_blob2);
 
       await action_with_messages(poller, cradle1, cradle2);
       for (const blob of [wasm_blob1, wasm_blob2]) {
-        const [channelCoin] = blob.getCoinsOfInterest();
+        const coins = blob.getCoinsOfInterest();
+        assert.equal(coins.length, 1);
+        const [channelCoin] = coins;
         assert.equal(channelCoin.label, 'Channel coin');
         assert.match(channelCoin.id, /^[0-9a-f]{64}$/);
-        assert.match(channelCoin.parentId ?? '', /^[0-9a-f]{64}$/);
       }
     } catch (e) {
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });

@@ -940,33 +940,19 @@ describe('bounded controller histories', () => {
 });
 
 describe('WASM wallet funding requests', () => {
-  it('derives and provides the offer settlement and positive launcher with the opening fee', async () => {
-    const walletCoin = `${'11'.repeat(32)}${'22'.repeat(32)}03e8`;
-    const selectCoins = jest.fn().mockResolvedValue(walletCoin);
-    const blockchain = new BlockchainPoller(
-      { ...mockRpc, fundingMode: 'offer-settlement', selectCoins },
-      60000,
-    );
+  it('starts the handshake with the configured opening fee without selecting a coin', () => {
+    const selectCoins = jest.fn();
     const { blob, cradle } = createReadyBlob();
-    (cradle as unknown as { provide_launcher_coin: jest.Mock }).provide_launcher_coin = jest
-      .fn()
-      .mockReturnValue(wasmResult());
+    const startHandshake = jest.fn().mockReturnValue(wasmResult());
+    (cradle as unknown as { start_handshake: jest.Mock }).start_handshake = startHandshake;
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
     blob.getFee = () => 10n;
-    (blob as unknown as { myContribution: bigint }).myContribution = 100n;
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, selectCoins }, 60000);
 
-    blob.processResult(wasmResult({ events: [{ NeedLauncherCoin: true }] }));
-    await blob.flushPendingWork();
+    blob.activateSpend();
 
-    const { computeOfferFundedLauncherCoin } = await import('../../util/launcher');
-    const expected = await computeOfferFundedLauncherCoin(walletCoin, 100n, 10n);
-    expect(selectCoins).toHaveBeenCalledWith('test', 110n);
-    expect(cradle.provide_launcher_coin).toHaveBeenCalledWith(
-      expected.launcherCoinHex,
-      '10',
-      expected.settlementCoinHex,
-    );
+    expect(startHandshake).toHaveBeenCalledWith('10');
+    expect(selectCoins).not.toHaveBeenCalled();
   });
 
   it('forwards a typed NeedCoinSpend payload to createOfferForIds', async () => {
@@ -1061,6 +1047,7 @@ describe('wallet fee attachment on submission', () => {
   function attachWc(blob: SessionController, aggregate: jest.Mock, feeSpend?: unknown) {
     (blob as unknown as { wc: unknown }).wc = {
       convert_spend_to_coinset_org: () => protocolBundle,
+      fee_payment_puzzle_hash_for_coin: () => 'ef'.repeat(32),
       complete_fee_offer_to_coinset_org: () => feeSpend,
       aggregate_coinset_spend_bundles: aggregate,
     };
@@ -1124,7 +1111,7 @@ describe('wallet fee attachment on submission', () => {
     const bindCoinId = await coinIdFromBytes(
       toUint8(`${'cc'.repeat(32)}eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9`),
     );
-    expect(createFeeOffer).toHaveBeenCalledWith(10n, bindCoinId);
+    expect(createFeeOffer).toHaveBeenCalledWith(10n, bindCoinId, 'ef'.repeat(32));
     expect(aggregate).toHaveBeenCalledWith(jsonStringify([protocolBundle, feeSpend]));
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),

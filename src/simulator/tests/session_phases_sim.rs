@@ -161,6 +161,21 @@ fn build_wallet_bundle_for_request(
     })
 }
 
+fn simulator_channel_private_keys(rng: &mut ChaCha8Rng) -> [ChannelPrivateKeys; 2] {
+    let legacy_keys: [[PrivateKey; 3]; 2] =
+        std::array::from_fn(|_| [rng.random(), rng.random(), rng.random()]);
+
+    std::array::from_fn(|player| {
+        let mut pre_launcher_rng = ChaCha8Rng::from_seed(legacy_keys[player][2].bytes());
+        ChannelPrivateKeys {
+            my_channel_coin_private_key: legacy_keys[player][0].clone(),
+            my_unroll_coin_private_key: legacy_keys[player][1].clone(),
+            my_referee_private_key: legacy_keys[player][2].clone(),
+            my_pre_launcher_private_key: pre_launcher_rng.random(),
+        }
+    })
+}
+
 impl PacketSender for SimulatedPeer {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         self.message_pipe.send_message(msg)
@@ -973,7 +988,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         &coins0[0],
         Amount::new(bal),
     )?;
-    let (parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
+    let (_parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
         allocator,
         &identities[1].puzzle_hash,
         &identities[1],
@@ -1021,8 +1036,8 @@ fn run_game_container_with_action_list_with_success_predicate(
         TransactionManager::new(cradle2),
     ];
     // Give coins to the cradles.
-    cradles[0].set_funding_coin(allocator, parent_coin_0)?;
-    cradles[1].set_funding_coin(allocator, parent_coin_1)?;
+    cradles[0].start_handshake(allocator, Amount::default())?;
+    cradles[1].start_handshake(allocator, Amount::default())?;
     let harness = SimulationHarness::new(cradles, simulator, local_uis);
     let (harness, early_success) = script_runner::run_script(
         allocator,
@@ -1318,7 +1333,7 @@ pub fn run_calpoker_container_with_action_list_with_success_predicate(
     let pk2: PrivateKey = rng.random();
     let id2 = ChiaIdentity::new(allocator, pk2).expect("ok");
 
-    let private_keys: [ChannelPrivateKeys; 2] = rng.random();
+    let private_keys = simulator_channel_private_keys(&mut rng);
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
     run_game_container_with_action_list_with_success_predicate(
         allocator,
@@ -1368,7 +1383,7 @@ pub fn run_spacepoker_container_with_action_list_with_seed(
     let pk2: PrivateKey = rng.random();
     let id2 = ChiaIdentity::new(allocator, pk2).expect("ok");
 
-    let private_keys: [ChannelPrivateKeys; 2] = rng.random();
+    let private_keys = simulator_channel_private_keys(&mut rng);
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
     let bet_unit = 10i64.to_clvm(allocator).into_gen()?;
     let spacepoker_parameters = Program::from_nodeptr(allocator, bet_unit)?;
@@ -1405,7 +1420,7 @@ pub fn run_krunk_container_with_action_list_with_success_predicate(
     let pk2: PrivateKey = rng.random();
     let id2 = ChiaIdentity::new(allocator, pk2).expect("ok");
 
-    let private_keys: [ChannelPrivateKeys; 2] = rng.random();
+    let private_keys = simulator_channel_private_keys(&mut rng);
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
     run_game_container_with_action_list_with_success_predicate(
         allocator,
@@ -1663,7 +1678,7 @@ pub fn setup_debug_test(
     let pk2: PrivateKey = rng.random();
     let id2 = ChiaIdentity::new(allocator, pk2)?;
 
-    let private_keys: [ChannelPrivateKeys; 2] = rng.random();
+    let private_keys = simulator_channel_private_keys(rng);
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
     let pid1 = ChiaIdentity::new(allocator, private_keys[0].my_referee_private_key.clone())?;
@@ -1952,7 +1967,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let pk2: PrivateKey = rng.random();
             let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
 
-            let private_keys: [ChannelPrivateKeys; 2] = rng.random();
+            let private_keys = simulator_channel_private_keys(&mut rng);
             let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
             let mut moves = vec![
@@ -4952,7 +4967,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
             let pk2: PrivateKey = rng.random();
             let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
-            let private_keys: [ChannelPrivateKeys; 2] = rng.random();
+            let private_keys = simulator_channel_private_keys(&mut rng);
             let identities: [ChiaIdentity; 2] = [id1, id2];
 
             // WaitBlocks at the start lets the post-handshake empty potato
@@ -5089,7 +5104,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
             let pk2: PrivateKey = rng.random();
             let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
-            let private_keys: [ChannelPrivateKeys; 2] = rng.random();
+            let private_keys = simulator_channel_private_keys(&mut rng);
             let identities: [ChiaIdentity; 2] = [id1, id2];
 
             let moves = vec![

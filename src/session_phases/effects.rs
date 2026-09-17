@@ -6,8 +6,8 @@ use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, GameID, GameType, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
-    CoinSpendRequest, HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE,
-    HandshakePayloadF,
+    CoinSpendRequest, HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadC,
+    HandshakePayloadD,
 };
 use crate::session_phases::proposal::ProposalParameters;
 use crate::session_phases::types::{BatchAction, PeerMessage};
@@ -307,6 +307,7 @@ pub enum GameNotification {
 /// practice this can include multiple simultaneous game coins and payouts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoinOfInterest {
+    Funding,
     Channel,
     Unroll,
     UnrollPayout,
@@ -317,6 +318,7 @@ pub enum CoinOfInterest {
 impl CoinOfInterest {
     pub fn label(self) -> &'static str {
         match self {
+            CoinOfInterest::Funding => "Funding coin",
             CoinOfInterest::Channel => "Channel coin",
             CoinOfInterest::Unroll => "Unroll coin",
             CoinOfInterest::UnrollPayout => "Unroll payout coin",
@@ -368,7 +370,6 @@ pub enum GameSessionEvent {
     CoinSolutionRequest(CoinString),
     ReceiveError(String),
     NeedCoinSpend(CoinSpendRequest),
-    NeedLauncherCoin,
     WatchCoin {
         coin_name: CoinID,
         coin_string: CoinString,
@@ -391,13 +392,10 @@ pub enum Effect {
 
     // PacketSender — one variant per peer message type
     PeerHandshakeA(HandshakePayloadB),
-    PeerHandshakeB(HandshakePayloadB),
+    PeerHandshakeB(HandshakePayloadBWithGenesis),
     PeerHandshakeC(HandshakePayloadC),
     PeerHandshakeD(HandshakePayloadD),
-    PeerHandshakeE(HandshakePayloadE),
-    PeerHandshakeF(HandshakePayloadF),
 
-    NeedLauncherCoinId,
     NeedCoinSpend(CoinSpendRequest),
     PeerBatch {
         actions: Vec<BatchAction>,
@@ -471,15 +469,6 @@ pub fn apply_effects(
             }
             Effect::PeerHandshakeD(msg) => {
                 system.send_message(&PeerMessage::HandshakeD(msg))?;
-            }
-            Effect::PeerHandshakeE(payload) => {
-                system.send_message(&PeerMessage::HandshakeE(payload))?;
-            }
-            Effect::PeerHandshakeF(payload) => {
-                system.send_message(&PeerMessage::HandshakeF(payload))?;
-            }
-            Effect::NeedLauncherCoinId => {
-                // Handled by the cradle/WASM layer, not by the trait system.
             }
             Effect::NeedCoinSpend(_) => {
                 // Handled by the cradle/WASM layer, not by the trait system.
@@ -586,6 +575,7 @@ mod tests {
 
     #[test]
     fn coin_of_interest_labels_describe_coin_provenance() {
+        assert_eq!(CoinOfInterest::Funding.label(), "Funding coin");
         assert_eq!(CoinOfInterest::UnrollPayout.label(), "Unroll payout coin");
         assert_eq!(CoinOfInterest::CurrentGame.label(), "Current game coin");
         assert_eq!(CoinOfInterest::GamePayout.label(), "Game payout coin");

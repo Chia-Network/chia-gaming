@@ -219,9 +219,6 @@ export class SessionController implements PollingGameSession {
   // Null means blockchain attachment preceded asynchronous cradle restore, so
   // the restored manager has not yet told us whether a coin snapshot is needed.
   private resubmitNeedsCoinSnapshot: boolean | null = null;
-  launcherProvided: boolean;
-  private lastSelectCoinsValue: string | null = null;
-  private lastLauncherCoinId: string | null = null;
 
   wasmNotificationHistory: string[] = [];
   diagnosticLog: string[] = [];
@@ -311,7 +308,6 @@ export class SessionController implements PollingGameSession {
     this.reloading = false;
     this.qualifyingEvents = 0;
     this.blockchain = blockchain;
-    this.launcherProvided = false;
     this.rxjsMessageSingleton = new Subject<WasmEvent>();
     this.rxjsEmitter = {
       next: (evt: WasmEvent) => {
@@ -652,7 +648,7 @@ export class SessionController implements PollingGameSession {
     if (!this.cradle) {
       throw new Error('activateSpend called without cradle');
     }
-    const result = this.cradle.start_handshake();
+    const result = this.cradle.start_handshake(this.getFee().toString());
     this.processResult(result);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
@@ -675,67 +671,6 @@ export class SessionController implements PollingGameSession {
 
   getChannelPuzzleHash(): string | null {
     return this.cradle?.get_channel_puzzle_hash() ?? null;
-  }
-
-  private async handleNeedLauncherCoin() {
-    if (this.launcherProvided) return;
-    const blockchain = this.blockchain;
-    if (!blockchain) {
-      this.rxjsEmitter?.next({ type: 'error', error: 'Blockchain is not connected' });
-      return;
-    }
-    this.launcherProvided = true;
-
-    try {
-      const openingFee = this.getFee();
-      const requiredAmount = this.myContribution + openingFee;
-      if (requiredAmount > 0xffff_ffff_ffff_ffffn) {
-        throw new Error('contribution plus opening fee exceeds the Chia u64 amount range');
-      }
-      const coin = await blockchain.rpc.selectCoins(this.uniqueId, requiredAmount);
-      if (!coin) {
-        throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
-      }
-      this.lastSelectCoinsValue = coin;
-      const { computeLauncherCoin, computeOfferFundedLauncherCoin } = await import(
-        '../util/launcher'
-      );
-      const offerFunded = blockchain.rpc.fundingMode !== 'direct';
-      let settlementCoinHex: string | undefined;
-      let derived: { launcherCoinHex: string; launcherCoinId: string };
-      if (offerFunded) {
-        const offerDerived = await computeOfferFundedLauncherCoin(
-          coin,
-          this.myContribution,
-          openingFee,
-        );
-        settlementCoinHex = offerDerived.settlementCoinHex;
-        derived = offerDerived;
-      } else {
-        derived = await computeLauncherCoin(coin);
-      }
-      const { launcherCoinHex, launcherCoinId } = derived;
-      this.lastLauncherCoinId = launcherCoinId;
-      log(`[wasm] provide_launcher_coin id=${launcherCoinId}`);
-      if (!this.cradle) {
-        throw new Error('provide_launcher_coin called without cradle');
-      }
-      const result = this.cradle.provide_launcher_coin(
-        launcherCoinHex,
-        openingFee.toString(),
-        settlementCoinHex,
-      );
-      this.processResult(result);
-    } catch (e) {
-      this.launcherProvided = false;
-      diagStack('handleNeedLauncherCoin error', e);
-      const msg = extractErrorMessage(e);
-      log(`[wasm] handleNeedLauncherCoin error: ${msg}`);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
-      if (this.cradle) {
-        this.processResult(this.cradle.wallet_callback_failed(msg));
-      }
-    }
   }
 
   private async handleNeedCoinSpend(request: NeedCoinSpendRequest) {
@@ -787,9 +722,7 @@ export class SessionController implements PollingGameSession {
             : undefined;
 
       if (typeof offerString === 'string' && offerString.startsWith('offer')) {
-        console.warn(
-          '[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path',
-        );
+        log('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
           if (persistedTradeId) {
@@ -947,7 +880,8 @@ export class SessionController implements PollingGameSession {
         let feeSpendError: string | undefined;
         if (bindCoinId) {
           try {
-            feeOffer = await blockchain.rpc.createFeeOffer(fee, bindCoinId);
+            const paymentPuzzleHash = this.wc.fee_payment_puzzle_hash_for_coin(bindCoinId);
+            feeOffer = await blockchain.rpc.createFeeOffer(fee, bindCoinId, paymentPuzzleHash);
             if (feeOffer) {
               feeSpend = this.wc.complete_fee_offer_to_coinset_org(
                 feeOffer,
@@ -1345,8 +1279,6 @@ export class SessionController implements PollingGameSession {
     } else if ('Log' in event) {
       this.diagnosticLog = appendRecent(this.diagnosticLog, event.Log, DIAGNOSTIC_LOG_LIMIT);
       this.rxjsEmitter?.next({ type: 'log', message: event.Log });
-    } else if ('NeedLauncherCoin' in event) {
-      this.trackEffect(this.handleNeedLauncherCoin());
     } else if ('NeedCoinSpend' in event) {
       this.trackEffect(this.handleNeedCoinSpend(event.NeedCoinSpend));
     } else {

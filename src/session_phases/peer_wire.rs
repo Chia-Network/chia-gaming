@@ -4,11 +4,11 @@ use bencodex::Value;
 
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, PublicKey,
-    Puzzle, PuzzleHash, Spend, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
+    PublicKey, Puzzle, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
-    HandshakePayloadB, HandshakePayloadC, HandshakePayloadD, HandshakePayloadE, HandshakePayloadF,
+    HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadC, HandshakePayloadD,
 };
 use crate::session_phases::proposal::{GameProposal, ProposalParameters};
 use crate::session_phases::types::{
@@ -510,22 +510,23 @@ fn coin_spend_from_value(value: Value) -> Result<CoinSpend, Error> {
 fn peer_message_to_value(message: &PeerMessage) -> Result<Value, Error> {
     Ok(match message {
         PeerMessage::HandshakeA(value) => tagged("HA", handshake_b_to_value(value)),
-        PeerMessage::HandshakeB(value) => tagged("HB", handshake_b_to_value(value)),
-        PeerMessage::HandshakeC(value) => {
-            tagged("HC", dict([("lc", bytes(value.launcher_coin.to_bytes()))]))
-        }
-        PeerMessage::HandshakeD(value) => {
-            tagged("HD", dict([("s", signatures_to_value(&value.signatures))]))
-        }
-        PeerMessage::HandshakeE(value) => tagged(
-            "HE",
+        PeerMessage::HandshakeB(value) => tagged(
+            "HB",
+            dict([
+                ("i", handshake_b_to_value(&value.identity)),
+                ("g", bytes(value.channel_coin_grandparent.bytes())),
+                ("s", signatures_to_value(&value.signatures)),
+            ]),
+        ),
+        PeerMessage::HandshakeC(value) => tagged(
+            "HC",
             dict([
                 ("b", funding_bundle_to_value(&value.bundle)?),
                 ("s", signatures_to_value(&value.signatures)),
             ]),
         ),
-        PeerMessage::HandshakeF(value) => {
-            tagged("HF", dict([("b", funding_bundle_to_value(&value.bundle)?)]))
+        PeerMessage::HandshakeD(value) => {
+            tagged("HD", dict([("b", funding_bundle_to_value(&value.bundle)?)]))
         }
         PeerMessage::Batch {
             actions,
@@ -562,29 +563,24 @@ fn peer_message_from_value(value: Value) -> Result<PeerMessage, Error> {
     let (tag, value) = expect_tag(value)?;
     match tag.as_str() {
         "HA" => Ok(PeerMessage::HandshakeA(handshake_b_from_value(value)?)),
-        "HB" => Ok(PeerMessage::HandshakeB(handshake_b_from_value(value)?)),
-        "HC" => {
-            let mut map = expect_exact(value, ["lc"])?;
-            Ok(PeerMessage::HandshakeC(HandshakePayloadC {
-                launcher_coin: CoinString::from_bytes(&expect_bytes(take(&mut map, "lc")?)?),
-            }))
-        }
-        "HD" => {
-            let mut map = expect_exact(value, ["s"])?;
-            Ok(PeerMessage::HandshakeD(HandshakePayloadD {
+        "HB" => {
+            let mut map = expect_exact(value, ["i", "g", "s"])?;
+            Ok(PeerMessage::HandshakeB(HandshakePayloadBWithGenesis {
+                identity: handshake_b_from_value(take(&mut map, "i")?)?,
+                channel_coin_grandparent: CoinID::new(hash_from_value(take(&mut map, "g")?)?),
                 signatures: signatures_from_value(take(&mut map, "s")?)?,
             }))
         }
-        "HE" => {
+        "HC" => {
             let mut map = expect_exact(value, ["b", "s"])?;
-            Ok(PeerMessage::HandshakeE(HandshakePayloadE {
+            Ok(PeerMessage::HandshakeC(HandshakePayloadC {
                 bundle: funding_bundle_from_value(take(&mut map, "b")?)?,
                 signatures: signatures_from_value(take(&mut map, "s")?)?,
             }))
         }
-        "HF" => {
+        "HD" => {
             let mut map = expect_exact(value, ["b"])?;
-            Ok(PeerMessage::HandshakeF(HandshakePayloadF {
+            Ok(PeerMessage::HandshakeD(HandshakePayloadD {
                 bundle: funding_bundle_from_value(take(&mut map, "b")?)?,
             }))
         }
@@ -683,11 +679,11 @@ mod tests {
             b"du1:Sdu1:c0:ee"
         );
         assert_eq!(
-            encode_peer_message(&PeerMessage::HandshakeF(HandshakePayloadF {
+            encode_peer_message(&PeerMessage::HandshakeD(HandshakePayloadD {
                 bundle: empty_bundle(),
             }))
             .unwrap(),
-            b"du2:HFdu1:bdu1:g0:u1:nnu1:sleeee"
+            b"du2:HDdu1:bdu1:g0:u1:nnu1:sleeee"
         );
     }
 
@@ -753,18 +749,16 @@ mod tests {
         ];
         let messages = vec![
             PeerMessage::HandshakeA(identity.clone()),
-            PeerMessage::HandshakeB(identity),
-            PeerMessage::HandshakeC(HandshakePayloadC {
-                launcher_coin: CoinString::from_bytes(&[1]),
-            }),
-            PeerMessage::HandshakeD(HandshakePayloadD {
+            PeerMessage::HandshakeB(HandshakePayloadBWithGenesis {
+                identity,
+                channel_coin_grandparent: CoinID::default(),
                 signatures: signatures(),
             }),
-            PeerMessage::HandshakeE(HandshakePayloadE {
+            PeerMessage::HandshakeC(HandshakePayloadC {
                 bundle: empty_bundle(),
                 signatures: signatures(),
             }),
-            PeerMessage::HandshakeF(HandshakePayloadF {
+            PeerMessage::HandshakeD(HandshakePayloadD {
                 bundle: empty_bundle(),
             }),
             PeerMessage::Batch {
@@ -813,14 +807,14 @@ mod tests {
                 signature,
             },
         };
-        let message = PeerMessage::HandshakeF(HandshakePayloadF {
+        let message = PeerMessage::HandshakeD(HandshakePayloadD {
             bundle: SpendBundle {
                 name: None,
                 spends: vec![spend(signature.clone()), spend(Aggsig::default())],
             },
         });
         let encoded = encode_peer_message(&message).unwrap();
-        let PeerMessage::HandshakeF(decoded) = decode_peer_message(&encoded).unwrap() else {
+        let PeerMessage::HandshakeD(decoded) = decode_peer_message(&encoded).unwrap() else {
             panic!("wrong message");
         };
         assert_eq!(decoded.bundle.spends[0].bundle.signature, signature);
@@ -829,7 +823,7 @@ mod tests {
             .signature
             .is_twos_complement_zero());
 
-        let noncanonical = PeerMessage::HandshakeF(HandshakePayloadF {
+        let noncanonical = PeerMessage::HandshakeD(HandshakePayloadD {
             bundle: SpendBundle {
                 name: None,
                 spends: vec![

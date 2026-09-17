@@ -2001,7 +2001,7 @@ impl PeerLifecyclePhase for OnChainPhase {
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
         None
     }
-    fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
+    fn new_block(&mut self, _env: &mut ChannelEnv<'_>, _height: u64) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
     fn handshake_finished(&self) -> bool {
@@ -2010,7 +2010,11 @@ impl PeerLifecyclePhase for OnChainPhase {
     fn is_on_chain(&self) -> bool {
         true
     }
-    fn start_handshake(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Option<Effect>, Error> {
+    fn start_handshake(
+        &mut self,
+        _env: &mut ChannelEnv<'_>,
+        _opening_fee: Amount,
+    ) -> Result<Option<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "start_handshake"))
     }
     fn channel_offer(
@@ -2026,18 +2030,6 @@ impl PeerLifecyclePhase for OnChainPhase {
         _bundle: &SpendBundle,
     ) -> Result<Option<Effect>, Error> {
         Ok(None)
-    }
-    fn provide_launcher_coin(
-        &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _launcher_coin: CoinString,
-        _opening_fee: Amount,
-        _offer_settlement_coin: Option<CoinString>,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "provide_launcher_coin",
-        ))
     }
     fn provide_coin_spend_bundle(
         &mut self,

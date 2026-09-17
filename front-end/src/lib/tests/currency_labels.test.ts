@@ -51,6 +51,8 @@ describe('formatAmount / formatMojos honor the network labels', () => {
     expect(formatAmount(999_999n)).toBe('999999 MOJO');
     expect(formatAmount(1_000_000_000_000n)).toBe('1 XCH');
     expect(formatMojos(100_000_000n)).toBe('0.0001 XCH');
+    expect(formatMojos(10_000_000_000n)).toBe('0.01 XCH');
+    expect(formatMojos(1_000_000_000_000n)).toBe('1 XCH');
     expect(formatMojos(999n)).toBe('999 mojos');
   });
 
@@ -59,6 +61,8 @@ describe('formatAmount / formatMojos honor the network labels', () => {
     expect(formatAmount(999_999n)).toBe('999999 TMOJO');
     expect(formatAmount(1_000_000_000_000n)).toBe('1 TXCH');
     expect(formatMojos(100_000_000n)).toBe('0.0001 TXCH');
+    expect(formatMojos(10_000_000_000n)).toBe('0.01 TXCH');
+    expect(formatMojos(1_000_000_000_000n)).toBe('1 TXCH');
     expect(formatMojos(999n)).toBe('999 TMojos');
   });
 });

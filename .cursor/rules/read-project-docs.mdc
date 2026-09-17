@@ -9,5 +9,6 @@ At the start of each conversation, read `OVERVIEW.md` in full before diving
 into the task. It provides the conceptual foundation and links to detailed
 docs. Read the linked docs as they become relevant to the task at hand.
 
-**Build/test commands:** Always use `./cb.sh` and `./ct.sh`. Never use
-`cargo test` directly.
+**Build/test commands:** Use `./cb.sh` for builds, `./ct.sh` for targeted or
+interactive test runs, and `./ct-automation.sh` for automated/LLM full-suite
+runs. Never use `cargo test` directly.

@@ -6,7 +6,7 @@ use crate::utils::proper_list;
 use crate::common::constants::{
     AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, ASSERT_COIN_ANNOUNCEMENT_ATOM,
     ASSERT_CONCURRENT_SPEND_ATOM, ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ANNOUNCEMENT_ATOM,
-    CREATE_COIN_ATOM, RESERVE_FEE_ATOM,
+    CREATE_COIN_ATOM, RECEIVE_MESSAGE_ATOM, RESERVE_FEE_ATOM, SEND_MESSAGE_ATOM,
 };
 
 use crate::common::types::{
@@ -30,6 +30,8 @@ pub enum CoinCondition {
     ReserveFee(Amount),
     AssertConcurrentSpend(CoinID),
     AssertHeightRelative(u64),
+    SendMessage(u8, Vec<u8>, Vec<Vec<u8>>),
+    ReceiveMessage(u8, Vec<u8>, Vec<Vec<u8>>),
 }
 
 /// Parse a single condition.
@@ -44,6 +46,36 @@ fn parse_condition(
     let Some(exploded) = proper_list(allocator.allocator_ref(), condition, true) else {
         return Ok(None);
     };
+    if exploded.len() >= 3 && allocator.allocator_ref().sexp(exploded[0]) == SExp::Atom {
+        let op = allocator.allocator_ref().atom(exploded[0]);
+        if op.as_ref() == SEND_MESSAGE_ATOM || op.as_ref() == RECEIVE_MESSAGE_ATOM {
+            if !exploded
+                .iter()
+                .all(|node| allocator.allocator_ref().sexp(*node) == SExp::Atom)
+            {
+                return Err(Error::StrErr(
+                    "message condition arguments must be atoms".to_string(),
+                ));
+            }
+            let mode_atom = allocator.allocator_ref().atom(exploded[1]);
+            if mode_atom.len() != 1 || mode_atom[0] & 0xc0 != 0 {
+                return Err(Error::StrErr(
+                    "message condition mode must be one byte using only six bits".to_string(),
+                ));
+            }
+            let mode = mode_atom[0];
+            let message = allocator.allocator_ref().atom(exploded[2]).to_vec();
+            let data = exploded[3..]
+                .iter()
+                .map(|node| allocator.allocator_ref().atom(*node).to_vec())
+                .collect();
+            return Ok(Some(if op.as_ref() == SEND_MESSAGE_ATOM {
+                CoinCondition::SendMessage(mode, message, data)
+            } else {
+                CoinCondition::ReceiveMessage(mode, message, data)
+            }));
+        }
+    }
     if exploded.len() > 2
         && matches!(
             (

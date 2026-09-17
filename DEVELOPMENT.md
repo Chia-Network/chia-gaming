@@ -64,6 +64,10 @@ fail with clang errors.
 # - JS/WASM integration tests
 ./ct.sh
 
+# Run the same full suite with quiet success output. This is preferred for
+# automation and LLM agents; failures are replayed in full on stderr.
+./ct-automation.sh
+
 # Run only sim test(s) matching 'accept_finished' (while debugging)
 ./ct.sh -o accept_finished
 

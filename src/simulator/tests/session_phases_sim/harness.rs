@@ -825,7 +825,7 @@ impl SimulationHarness {
         allocator: &mut AllocEncoder,
         player_index: usize,
         identities: &[ChiaIdentity],
-        launcher_coin: &CoinString,
+        _launcher_coin: &CoinString,
         timing_enabled: bool,
         num_steps: usize,
     ) -> Result<DrainProgress, Error> {
@@ -869,12 +869,10 @@ impl SimulationHarness {
         loop {
             progress.events += pending_events.len();
             let mut coin_requests = Vec::new();
-            let mut need_launcher = false;
             let mut coin_spend_req: Option<CoinSpendRequest> = None;
 
             for event in &pending_events {
                 match event {
-                    GameSessionEvent::NeedLauncherCoin => need_launcher = true,
                     GameSessionEvent::NeedCoinSpend(req) => {
                         coin_spend_req = Some(req.clone());
                     }
@@ -971,21 +969,11 @@ impl SimulationHarness {
                 }
             }
 
-            let has_followup =
-                need_launcher || coin_spend_req.is_some() || !coin_requests.is_empty();
+            let has_followup = coin_spend_req.is_some() || !coin_requests.is_empty();
             if !has_followup {
                 break;
             }
 
-            if player_index == 0 && need_launcher {
-                player.provide_launcher_coin(
-                    allocator,
-                    launcher_coin.clone(),
-                    Amount::default(),
-                    None,
-                )?;
-                progress.callbacks += 1;
-            }
             if let Some(req) = coin_spend_req {
                 let wallet_bundle = build_wallet_bundle_for_request(
                     allocator,

@@ -109,16 +109,15 @@ the other can preempt with the newer opposite-parity state they received.
 ```
 Funding coins (one per player)
     │
-    ├── Alice's offer creates settlement child (contribution + fee)
-    │       │
-    │       ▼
-    │   Settlement Coin ── OFFER_MOD / SETTLEMENT_PAYMENT puzzle
-    │       │
-    │       ▼
-    │   Launcher Coin ── SINGLETON_LAUNCHER puzzle (Alice's contribution)
-    │       │
-    │       ▼  (launcher creates channel coin)
-    └──▶ Channel Coin ── 2-of-2 multisig (aggregate channel keys)
+    ├── Receiver offer → Settlement → one-time Pre-launcher
+    │                                      │
+    │                                      ▼
+    │                           zero-value Singleton Launcher
+    ├── Initiator offer → Settlement → quoted Contribution Coin
+    │                                      │
+    │                                      └── asserts launcher announcement
+    │
+    └──────────────────────────────▶ Channel Coin ── 2-of-2 multisig
              │
              ▼  (spend to unroll)
          Unroll Coin ── unroll_puzzle.clsp (sequence number, default conditions)
@@ -135,13 +134,11 @@ Funding coins (one per player)
 
 ### Channel Coin
 
-- Created as a child of a **standard singleton launcher**. For offer-based
-wallets, the launcher's parent is the settlement-payment coin created from a
-wallet coin selected by Alice; direct-spend wallets may create a zero-value
-launcher from that wallet coin instead. Both
-players' funding coins contribute to the launcher transaction, and both
-assert `ASSERT_COIN_ANNOUNCEMENT` on the launcher's output plus
-`ASSERT_BEFORE_HEIGHT_ABSOLUTE` as a timeout guard.
+- Created as a child of a **zero-value standard singleton launcher**. The
+receiver's persisted funding offer fixes its ancestry through a signed one-time
+pre-launcher; the initiator's quoted contribution coin asserts the launcher's
+announcement. CHIP-25 messages bind both wallet spends without host-selected
+coin IDs.
 - Controlled by a **2-of-2 aggregate signature** — neither player can spend it
 alone.
 - Every off-chain state update produces a new signed commitment for how this
@@ -395,112 +392,78 @@ that does not carry the potato and can be sent at any time.
 
 **Key code:** `src/session_phases/mod.rs` (`OffChainPhase`, `PotatoState`)
 
-### Handshake (6-Message Protocol)
+### Handshake (4-Message Protocol)
 
 Before play begins, the two players execute a multi-step handshake
-(steps A through F) to exchange public keys, agree on channel parameters,
+(steps A through D) to exchange public keys, agree on channel parameters,
 co-sign the initial channel coin, and transition to `OffChainPhase`.
 
-The protocol is designed so that Alice (the initiator) commits the channel
-coin ID — derived from a singleton launcher — before either party signs any
-unroll state. This prevents either side from stealing funds or burning the
-other's money.
+The receiver obtains its funding offer first. Its OFFER_MOD settlement output
+creates a one-time standard-puzzle pre-launcher, which creates and concurrently
+spends a zero-value singleton launcher. This fixes the channel ancestry before
+either party signs an unroll state without requiring the host to select or
+name a wallet coin.
 
 Each side runs its own handler: `HandshakeInitiatorPhase` (the player who
-starts the channel) and `HandshakeReceiverPhase`. The A-F labels are the
-wire/message protocol labels. Internally, the split handlers use semantic
-state names (`SentA`, `WaitingForLauncher`, `SentC`, etc.) while still speaking
-the same A-F wire messages. A and B include a text-to-`u32` capabilities map;
+starts the channel) and `HandshakeReceiverPhase`. The A-D labels are the
+wire/message protocol labels. A and B include a text-to-`u32` capabilities map;
 `peer_protocol = 1` is required and unknown capability keys are ignored.
 Handshake messages are not sent via `Batch`:
 
 | Step | Sender | Message | Payload type |
 |------|--------|---------|--------------|
-| A | Initiator | `HandshakeA` | `HandshakePayloadA` (= `HandshakePayloadB`): keys, reward ph, PoPs, contributions |
-| B | Receiver | `HandshakeB` | `HandshakePayloadB`: same shape as A |
-| C | Initiator | `HandshakeC` | `HandshakePayloadC`: launcher `CoinString` |
-| D | Receiver | `HandshakeD` | `HandshakePayloadD`: state-0 `StateUpdateSignatures` |
-| E | Initiator | `HandshakeE` | `HandshakePayloadE`: partial `SpendBundle` + state-0 sigs |
-| F | Receiver | `HandshakeF` | `HandshakePayloadF`: receiver acceptance `SpendBundle` |
+| A | Initiator | `HandshakeA` | keys, reward ph, PoPs, and contributions |
+| B | Receiver | `HandshakeB` | receiver identity, pre-launcher ID, and state-0 signatures |
+| C | Initiator | `HandshakeC` | initiator funding bundle and state-1 signatures |
+| D | Receiver | `HandshakeD` | receiver funding/acceptance bundle |
 
 #### Between-message wallet interactions
 
-Between B and C, the initiator snapshots its configured opening fee and asks
-the wallet to select a coin covering its contribution plus that fee. The
-library emits
-`Effect::NeedLauncherCoinId`; the hosting layer (WASM wrapper or simulator)
-calls `selectCoins`, computes the offer settlement coin and its positive-value
-launcher (or the direct wallet child for Cloud Wallet), and feeds them back via
-the split handler callback (`provide_launcher_coin` on the active
-`PeerLifecyclePhase` implementation).
+After A, the receiver requests a persisted funding offer for
+`contribution + opening_fee`. The wallet spend carries a mode-16
+`RECEIVE_MESSAGE` from the pre-launcher's puzzle hash. The library completes
+the settlement output into that pre-launcher, signs it with a dedicated
+one-time private key persisted in the handshake state, and sends B only after
+the ancestry and state-0 signatures are known.
 
-The receiver verifies in C that the launcher coin's puzzle hash equals
-`SINGLETON_LAUNCHER_HASH`, ensuring the channel coin parent is a standard
-launcher.
+After B, the initiator requests its own persisted funding offer for
+`contribution + opening_fee`. Its wallet spend receives a mode-24 nil message
+from a quoted contribution coin identified by puzzle hash and amount. That
+coin reserves the opening fee and asserts the singleton launcher's
+announcement. The initiator sends the completed half and state-1 signatures
+in C.
 
-Between D and E, the initiator must obtain a wallet `SpendBundle`
-contributing their share of the channel funding. The library emits
-`Effect::NeedCoinSpend(CoinSpendRequest)` containing the required amount,
-conditions (ASSERT_COIN_ANNOUNCEMENT, RESERVE_FEE when nonzero,
-ASSERT_BEFORE_HEIGHT_ABSOLUTE, and CREATE_COIN for direct-mode launchers), and
-the wallet coin ID to use. The hosting
-layer refreshes coin selection, calls `createOfferForIds`, and feeds the returned
-`SpendBundle` back via `provide_coin_spend_bundle` on the split handler. The
-initiator offer is persisted so its removals remain reserved while the receiver
-builds its half, while receiver and fee offers remain validate-only. When the
-WalletConnect response includes a trade ID, the host cancels a rejected
-initiator offer off-chain before retry. Chia Wallet 2.7.4 may omit that ID, so
-automatic cancellation is best-effort. Its WalletConnect command also does not expose its transaction-config
-coin-selection fields, so the library independently verifies that the initiator
-bundle applies every requested extra condition to the committed launcher parent
-before completing the settlement output into the launcher, appending the
-launcher `CoinSpend`, and sending the combined bundle in E.
-A mismatch is discarded and requested again, up to three total mismatches,
-without advancing the handshake.
-
-Between E and F, the receiver must similarly obtain a wallet `SpendBundle`
-contributing their share. The library emits `Effect::NeedCoinSpend` with the
-receiver's conditions and amount. After receiving the wallet bundle, the
-library sends that acceptance in F. It also combines the acceptance with the
-initiator's bundle from E, validates the exact combined bundle with Chia
-consensus rules, and submits the result locally. The initiator does the same:
-it combines its local E bundle with F and validates all spends together before
-submission. Whole-bundle validation checks aggregate signatures, duplicate
-coin spends, and cross-spend announcements. Each nonempty wallet half
-concentrates its bundle-level aggregate signature on exactly one internal
-spend; per-input signature fields are rejected. The protocol additionally
-requires F itself to assert the expected launcher announcement. Both players may
-publish the same assembled funding transaction; neither trusts the other
-side's combined bundle.
+On C, the receiver verifies state 1, combines both exact halves, runs Chia
+consensus validation, sends its acceptance half in D, and submits the locally
+assembled transaction. The initiator independently combines and validates C
+and D before submission. Neither endpoint accepts an untrusted aggregate
+bundle supplied by its peer.
 
 #### State machine
 
-Initiator (`have_potato = false` after E):
+Initiator (`have_potato = false` after C):
 
 ```
-WaitingForStart → SentA → WaitingForLauncher → SentC → WaitingForOffer → Finished
-   (send A)       (recv B, NeedLauncherCoinId)   (recv D, store signed state 0, advance to state 1,
-                 provide_launcher → send C)       NeedCoinSpend, provide_coin_spend → send E)
+WaitingForStart → SentA → WaitingForOffer → Finished
+   (send A)       (recv B, initialize state 1, request wallet offer, send C)
 ```
 
-Receiver (`have_potato = true` after E):
+Receiver (`have_potato = true` after receiving state 1 in C):
 
 ```
-WaitingForA → SentB → SentD → WaitingForCompletion → Finished
- (recv A,     (recv C, verify launcher coin, send D)   (recv E, verify/store signed state 1,
-  send B)                                              NeedCoinSpend, provide_coin_spend → send F)
+WaitingForA → WaitingForOffer → SentB → Finished
+ (recv A, request wallet offer, derive ancestry/send B, recv C/send D)
 ```
 
 Handshake-specific wallet callback plumbing now lives in the split handshake
 handlers, not in `OffChainPhase` monolithic handshake state.
 
 The transition to `OffChainPhase` requires completed role-specific handshake
-work and `coin_created` — the channel coin appearing on-chain. F and the local
-coin observation may arrive in either order. Before E, every wrong message is
-rejected even during wallet waits. After E, only non-handshake activation-lag
-messages are retained and transferred FIFO into the off-chain phase. A
-late-arriving `HandshakeF` after the transition is silently ignored, and
-duplicate F messages cause at most one funding submission. Internally, the
+work and `coin_created` — the channel coin appearing on-chain. D and the local
+coin observation may arrive in either order. Once a side has finished its
+role-specific handshake work, non-handshake activation-lag messages are
+retained and transferred FIFO into the off-chain phase. A late D is ignored
+after the initiator has already transitioned. Internally, the
 split handshake handlers move from `Finished` to `Done` during this handoff:
 `Finished` means the handshake's own protocol work is complete, while `Done`
 means the replacement `OffChainPhase` has been created and the old handshake
@@ -508,17 +471,16 @@ handler no longer reports channel status.
 
 #### Security properties
 
-1. **No unroll signatures before coin ID is known:** The initiator sends the
-   channel coin ID in C. Only after the receiver has this ID do they sign any
-   unroll state (D). The initiator likewise only signs after verifying the
-   receiver's signatures (E).
-2. **Launcher verification:** The receiver checks that the launcher coin's
-   puzzle hash is `SINGLETON_LAUNCHER_HASH`, ensuring the initiator cannot
-   substitute an arbitrary coin.
-3. **Signature symmetry:** Both sides call
-   `ChannelState::verify_and_store_initial_peer_signatures` at the first
-   point where they receive the peer's state-0 signatures (initiator on D,
-   receiver on E), verifying and storing them before proceeding.
+1. **No unroll signatures before coin ID is known:** B commits the pre-launcher
+   ID and therefore the zero-value singleton launcher and channel coin before
+   the initiator accepts state 0 or signs state 1.
+2. **One-time ancestry key:** The receiver's pre-launcher uses a separately
+   generated private key, persisted only as handshake/session key material and
+   never reused as a channel, unroll, or referee key.
+3. **Signature ordering:** B carries state-0 signatures; C verifies them,
+   advances the initiator to state 1, and returns state-1 signatures. The
+   receiver verifies those signatures before D and starts off-chain as the
+   initial potato holder, ready to send state 2.
 4. **Proof-of-possession (PoP) for aggregate keys:** The channel and unroll
    coins use simple BLS key aggregation (pk_a + pk_b). Without proof that
    each party controls the private key behind their public key, a rogue key
@@ -528,48 +490,36 @@ handler no longer reports channel status.
    message includes a PoP for both the channel key and the unroll key:
    `Sign(sk, pk.bytes())`. The receiver verifies these before proceeding.
    (The referee key already has an implicit PoP via `reward_payout_signature`.)
-5. **Locally assembled funding transaction:** Handshake F is the receiver's
-   acceptance only. Both endpoints combine their exact E and F halves and run
+5. **Locally assembled funding transaction:** Handshake D is the receiver's
+   acceptance only. Both endpoints combine their exact C and D halves and run
    Chia consensus validation over the result. Duplicate spends, signatures,
-   and E-to-F announcement dependencies are therefore checked as one
-   transaction. F must itself assert the expected launcher announcement.
+   messages, and launcher-announcement dependencies are checked as one
+   transaction.
    Neither endpoint submits an untrusted combined bundle from the peer.
 
 #### Wallet API interaction
 
-The handshake requires interaction with the Chia wallet at three points:
+The handshake requires one offer from each wallet:
 
 | Call | When | Purpose |
 |------|------|---------|
-| `selectCoins(amount + fee)` | After B (initiator only) | Select the wallet coin used to derive the settlement and launcher ancestry |
-| `createOfferForIds(amount, conditions)` | After D (initiator) | Get a signed `SpendBundle` contributing the initiator's share of funding |
-| `createOfferForIds(amount, conditions)` | After E (receiver) | Get a signed `SpendBundle` contributing the receiver's share of funding |
+| `createOfferForIds(amount + fee, conditions)` | After A (receiver) | Fix the pre-launcher ancestry and receiver funding half |
+| `createOfferForIds(amount + fee, conditions)` | After B (initiator) | Build the quoted contribution funding half |
 
-For the initiator, the offer-based `createOfferForIds` call takes contribution
-plus opening fee; the receiver still offers only its contribution. Extra
-conditions carry the launcher assertion and explicit `RESERVE_FEE`.
-WalletConnect refreshes
-coin selection immediately before each call. The initiator call persists its
-offer temporarily so the wallet reserves those removals; the receiver call is
-validate-only. The initiator rejects its bundle unless the committed launcher
-parent emits every requested condition. Before requesting another, the host
-cancels a rejected persisted offer when the wallet supplied its trade ID;
-Chia Wallet 2.7.4 responses that omit the ID cannot be cancelled automatically.
+Both calls let the wallet select and reserve their inputs. Persisting the
+offers prevents two concurrent sessions—or both peers using the same
+wallet—from selecting the same unspent coin. The extra conditions bind those
+inputs to protocol-owned children using CHIP-25 messages; no host coin-ID
+selection callback is required.
 
 In the **simulator** these are implemented by `Simulator::select_coins` and
 the `create_offer_for_ids` HTTP endpoint (which calls
 `standard_solution_partial` to produce a signed spend). In the **real wallet**
 they map to WalletConnect RPCs:
 
-- `chia_selectCoins` — select spendable coins totalling at least the required
-  amount.
 - `chia_createOfferForIds` — create a signed `SpendBundle` with the specified
   conditions and amount. The `extraConditions` parameter carries the
-  channel-specific assertions. Chia Wallet 2.7.4 does not admit
-  `includedCoinIds` or `primaryCoin` through this WalletConnect command, so
-  the client runs the committed coin's spend and verifies that it emits every
-  requested condition. Mismatched bundles are discarded and retried up to a
-  fixed three-mismatch limit, after which the handshake fails and must restart.
+  channel-specific message receive and height conditions.
 - `chia_pushTransactions` — broadcast the assembled funding `SpendBundle` to the
   network, wrapped in a `TransactionRecord` (both players submit the transaction
   they assembled locally).
@@ -577,26 +527,27 @@ they map to WalletConnect RPCs:
 #### Channel coin funding
 
 The channel coin is created via a **standard singleton launcher**. For
-offer-based wallets, the funding transaction contains five logical spends:
+offer-based wallets, the funding transaction contains seven logical spends:
 
-1. **Initiator's wallet coin** — creates an OFFER_MOD settlement coin worth
-   contribution plus fee, asserts the launcher announcement, declares
-   `RESERVE_FEE`, and applies the height guard.
-2. **Initiator settlement coin** — creates the standard launcher with the
-   initiator contribution.
-3. **Receiver's wallet coin** — creates its contribution settlement output
-   and asserts the same launcher announcement and height guard.
-4. **Receiver settlement coin** — is completed with no outputs so its value
-   funds the aggregate transaction.
-5. **Launcher coin** — the standard launcher puzzle, whose solution is
+1. **Receiver wallet coin** — creates an OFFER_MOD settlement output and
+   receives the pre-launcher's mode-16 message.
+2. **Receiver settlement coin** — creates a `contribution + fee` pre-launcher.
+3. **Pre-launcher** — a one-time standard puzzle that sends the wallet message,
+   reserves the fee, creates the zero-value launcher, and requires it be spent.
+4. **Initiator wallet coin** — creates its OFFER_MOD settlement output and
+   receives a mode-24 message from the contribution coin's puzzle hash and amount.
+5. **Initiator settlement coin** — creates the quoted contribution coin.
+6. **Contribution coin** — sends the wallet message, reserves the fee, and
+   asserts the launcher announcement.
+7. **Launcher coin** — the standard zero-value launcher puzzle, whose solution is
    `(channel_puzzle_hash, total_amount, ())`.
 
-The settlement inputs provide `our_contribution + fee + their_contribution`;
-the launcher creates a channel worth both contributions, leaving exactly the
-declared fee. Cloud Wallet's direct-spend API retains the equivalent existing
-path in which its signed wallet spend creates a zero-value launcher and
-provides the contribution and native fee as aggregate deficits. Opening
-bundles are marked so the submission layer does not attach another fee offer.
+The two wallet inputs provide both contributions plus both opening fees; the
+launcher creates a channel worth the contributions, leaving exactly the two
+declared fees. Opening bundles are marked so submission does not attach a
+second fee. Cloud Wallet's direct-spend API omits the two settlement coins and
+creates the same pre-launcher or contribution child directly from its wallet
+spend.
 
 **Key code:** `src/session_phases/handshake_initiator.rs`,
 `src/session_phases/handshake_receiver.rs`,
@@ -751,8 +702,8 @@ persisted hand state when no live tree survived (for example, after reload).
 
 | Handler | File | Role |
 |---------|------|------|
-| `HandshakeInitiatorPhase` | `session_phases/handshake_initiator.rs` | Initiator side of the handshake (sends A, C, E). Linear state machine; transitions to `OffChainPhase` when the channel coin appears on-chain. |
-| `HandshakeReceiverPhase` | `session_phases/handshake_receiver.rs` | Receiver side of the handshake (sends B, D, F). Same transition trigger. |
+| `HandshakeInitiatorPhase` | `session_phases/handshake_initiator.rs` | Initiator side of the handshake (sends A and C). Transitions after local channel observation. |
+| `HandshakeReceiverPhase` | `session_phases/handshake_receiver.rs` | Receiver side (sends B and D and starts with the potato). Same local observation gate. |
 | `OffChainPhase` | `session_phases/mod.rs` | Off-chain game play: batching actions, exchanging the potato, proposing/accepting/playing games. |
 | `SpendChannelCoinPhase` | `session_phases/spend_channel_coin_phase.rs` | Watches the channel coin spend and handles both clean shutdown (change coin observation) and unroll paths. Handles preemption, forward-aligns game state, always transitions to `OnChainPhase`. |
 | `OnChainPhase` | `session_phases/on_chain.rs` | On-chain dispute resolution: submits moves, claims timeouts, detects slashes. Driven entirely by coin-watching events, not peer messages. |
@@ -774,7 +725,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | **Types & Utilities**     | `src/common/`                                | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc.           |
 | **Referee**               | `src/referee/`                               | Per-game state machine: moves, timeouts, slashes                             |
 | **Channel State**         | `src/channel_state/`                       | Channel/unroll/game coin management, balance tracking                        |
-| **Handshake Handlers**    | `src/session_phases/handshake_initiator.rs`, `handshake_receiver.rs` | Handshake state machines (A-F), one per side              |
+| **Handshake Handlers**    | `src/session_phases/handshake_initiator.rs`, `handshake_receiver.rs` | Four-message handshake state machines, one per side       |
 | **Off-Chain Phase**       | `src/session_phases/mod.rs`                  | Off-chain game play: batching, potato exchange, proposals, moves             |
 | **Spend Channel Coin Phase** | `src/session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; handles clean shutdown and unroll paths, creates OnChainPhase |
 | **On-Chain Phase**        | `src/session_phases/on_chain.rs`             | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
@@ -814,6 +765,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `src/simulator/tests/session_phases_sim.rs` | Integration tests including notification suite           |
 | `src/test_support/peer/peer_harness.rs`   | Test peer helper                                         |
 | `src/test_support/sim_script.rs`                  | `SimScriptAction` enum and simulation loop driver        |
+| `ct-automation.sh`                         | Preferred quiet full-suite wrapper for automation and LLM agents |
 | `tools/local-wasm-tests.sh`                 | Local JS/WASM integration test runner                    |
 
 
@@ -847,11 +799,11 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `GameNotification`              | `session_phases/effects.rs`                    | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, gameplay `GameStatus { status: GameStatusKind, ... }`, and unified settlement `GameSettled { id, outcome, our_share, coin_id }` |
 | `Effect`                        | `session_phases/effects.rs`                    | All side effects returned by handler methods (notifications, transactions, coin registrations)               |
 | `PeerLifecyclePhase`                   | `game_session.rs`                              | Trait implemented by all lifecycle phases — uniform interface for messages, coin events, game actions        |
-| `HandshakeInitiatorPhase`     | `session_phases/handshake_initiator.rs`        | Initiator handshake state machine (A → C → E → coin_created)                                                |
-| `HandshakeReceiverPhase`      | `session_phases/handshake_receiver.rs`         | Receiver handshake state machine (B → D → F → coin_created)                                                 |
+| `HandshakeInitiatorPhase`     | `session_phases/handshake_initiator.rs`        | Initiator handshake state machine (A → C → coin_created)                                                    |
+| `HandshakeReceiverPhase`      | `session_phases/handshake_receiver.rs`         | Receiver handshake state machine (B → D → coin_created)                                                     |
 | `SpendChannelCoinPhase`       | `session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; clean shutdown detection + unroll handling, creates `OnChainPhase`         |
 | `ChannelCoinSpendInfo`          | `channel_state/types/`                       | Solution, conditions, and aggregate signature for spending the channel coin                                  |
-| `PeerMessage`                   | `session_phases/types.rs`                      | Wire message enum: `HandshakeA`–`HandshakeF`, `Batch`, `RequestPotato`, `Message`, etc.                     |
+| `PeerMessage`                   | `session_phases/types.rs`                      | Wire message enum: `HandshakeA`–`HandshakeD`, `Batch`, `RequestPotato`, `Message`, etc.                     |
 
 ---
 

@@ -15,9 +15,8 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, GameType,
-    GetCoinStringParts, Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend,
-    SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
+    ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::session_phases::effects::{
     apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
@@ -108,10 +107,14 @@ pub trait PeerLifecyclePhase {
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>>;
-    fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error>;
+    fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error>;
     fn handshake_finished(&self) -> bool;
     fn is_on_chain(&self) -> bool;
-    fn start_handshake(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Effect>, Error>;
+    fn start_handshake(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        opening_fee: Amount,
+    ) -> Result<Option<Effect>, Error>;
     fn channel_offer(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -122,13 +125,6 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         bundle: &SpendBundle,
     ) -> Result<Option<Effect>, Error>;
-    fn provide_launcher_coin(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        launcher_coin: CoinString,
-        opening_fee: Amount,
-        offer_settlement_coin: Option<CoinString>,
-    ) -> Result<Vec<Effect>, Error>;
     fn provide_coin_spend_bundle(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -412,69 +408,6 @@ pub struct GameSessionConfig {
     pub agg_sig_me_additional_data: Hash,
 }
 
-/// Scan a wallet `SpendBundle` for settlement-payment outputs created by
-/// `createOfferForIds` and append claim spends that consume them.
-///
-/// The real Chia wallet's `createOfferForIds` produces balanced spends: the
-/// offered mojos are routed to a settlement-payment puzzle (OFFER_MOD) instead
-/// of creating a true deficit.  Channel funding needs deficit spends so the
-/// launcher's channel coin creation is covered.  By spending the settlement
-/// coins with an empty solution (no outputs), their value becomes deficit.
-pub(crate) fn claim_settlement_coins(
-    allocator: &mut AllocEncoder,
-    bundle: SpendBundle,
-) -> SpendBundle {
-    let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
-    let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT)
-        .expect("valid settlement puzzle constant");
-    let empty_solution: ProgramRef = Program::nil().into();
-
-    let mut claim_spends = Vec::new();
-
-    for spend in &bundle.spends {
-        let puzzle_prog = spend.bundle.puzzle.to_program();
-        let solution_prog = spend.bundle.solution.p();
-        let conditions = match CoinCondition::from_puzzle_and_solution(
-            allocator,
-            &puzzle_prog,
-            &solution_prog,
-        ) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let parent_coin_id = spend.coin.to_coin_id();
-
-        for cond in &conditions {
-            if let CoinCondition::CreateCoin(ph, amount) = cond {
-                if *ph == settlement_ph {
-                    let settlement_coin =
-                        CoinString::from_parts(&parent_coin_id, &settlement_ph, amount);
-                    claim_spends.push(CoinSpend {
-                        coin: settlement_coin,
-                        bundle: Spend {
-                            puzzle: settlement_puzzle.clone(),
-                            solution: empty_solution.clone(),
-                            signature: Aggsig::default(),
-                        },
-                    });
-                }
-            }
-        }
-    }
-
-    if claim_spends.is_empty() {
-        return bundle;
-    }
-
-    let mut spends = bundle.spends;
-    spends.extend(claim_spends);
-    SpendBundle {
-        name: bundle.name,
-        spends,
-    }
-}
-
 impl GameSession {
     pub fn new_with_keys(config: GameSessionConfig, private_keys: ChannelPrivateKeys) -> Self {
         GameSession {
@@ -624,20 +557,11 @@ impl GameSession {
     /// Labeled coin ids (hex) the dashboard shows above the protocol state so
     /// the user can look them up in a block explorer. Sourced from the active
     /// phase handler; an on-chain grouped hand can surface multiple entries.
-    pub fn coins_of_interest(&self) -> Vec<(String, String, String)> {
+    pub fn coins_of_interest(&self) -> Vec<(String, String)> {
         self.peer
             .coins_of_interest()
             .into_iter()
-            .map(|(kind, coin)| {
-                let (parent_id, _, _) = coin
-                    .get_coin_string_parts()
-                    .expect("phase supplied an invalid coin of interest");
-                (
-                    kind.label().to_string(),
-                    coin.to_coin_id().to_string(),
-                    parent_id.to_string(),
-                )
-            })
+            .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
             .collect()
     }
 
@@ -682,27 +606,6 @@ impl GameSession {
         ) || (self.state.session_disposition.is_none()
             && self.channel_status_terminal()
             && !self.peer.has_active_on_chain_games())
-    }
-
-    pub fn provide_launcher_coin(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        launcher_coin: CoinString,
-        opening_fee: Amount,
-        offer_settlement_coin: Option<CoinString>,
-    ) -> Result<(), Error> {
-        let effects = {
-            let mut env =
-                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.provide_launcher_coin(
-                &mut env,
-                launcher_coin,
-                opening_fee,
-                offer_settlement_coin,
-            )?
-        };
-        self.process_effects(effects, allocator)?;
-        Ok(())
     }
 
     pub fn provide_coin_spend_bundle(
@@ -1018,10 +921,6 @@ impl GameSession {
                 self.state.next_terminal_handoff_id += 1;
                 self.state.pending_outbound_terminal = Some(command);
                 self.state.session_disposition = Some(SessionDisposition::AwaitOutboundTerminal);
-            } else if matches!(effect, Effect::NeedLauncherCoinId) {
-                self.state
-                    .events
-                    .push_back(GameSessionEvent::NeedLauncherCoin);
             } else if let Effect::NeedCoinSpend(req) = effect {
                 self.state
                     .events
@@ -1345,30 +1244,15 @@ impl GameSession {
         self.peer.channel_state()?.get_reward_puzzle_hash(&mut env)
     }
 
-    pub fn set_funding_coin(
+    pub fn start_handshake(
         &mut self,
         allocator: &mut AllocEncoder,
-        coin: CoinString,
+        opening_fee: Amount,
     ) -> Result<(), Error> {
-        self.state.funding_coin = Some(coin.clone());
-
         let start_effect = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.start_handshake(&mut env)?
-        };
-        let mut effects = Vec::new();
-        effects.extend(start_effect);
-        self.process_effects(effects, allocator)?;
-
-        Ok(())
-    }
-
-    pub fn start_handshake(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
-        let start_effect = {
-            let mut env =
-                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.start_handshake(&mut env)?
+            self.peer.start_handshake(&mut env, opening_fee)?
         };
         let mut effects = Vec::new();
         effects.extend(start_effect);
@@ -1534,7 +1418,11 @@ impl GameSession {
             };
             self.process_effects(effects, allocator)?;
         }
-        let height_effects = self.peer.new_block(self.state.current_height)?;
+        let height_effects = {
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
+            self.peer.new_block(&mut env, self.state.current_height)?
+        };
         self.process_effects(height_effects, allocator)?;
         self.check_channel_creation_expiry(height, observations);
         Ok(())
@@ -1554,7 +1442,11 @@ impl GameSession {
             return Ok(());
         }
         self.state.current_height = height;
-        let height_effects = self.peer.new_block(height)?;
+        let height_effects = {
+            let mut env =
+                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
+            self.peer.new_block(&mut env, height)?
+        };
         self.process_effects(height_effects, allocator)
     }
 
@@ -1861,66 +1753,6 @@ mod genesis_challenge_tests {
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
-    fn handshake_pair_waiting_for_launcher() -> (GameSession, GameSession, AllocEncoder) {
-        let mut allocator = AllocEncoder::new();
-        let mut rng = ChaCha8Rng::from_seed([3u8; 32]);
-        let genesis = Hash::from_bytes([0x11; 32]);
-        let make_config = |identity, is_initiator, my, their| GameSessionConfig {
-            game_types: BTreeMap::new(),
-            is_initiator,
-            identity,
-            my_contribution: Amount::new(my),
-            their_contribution: Amount::new(their),
-            channel_timeout: Timeout::new(5),
-            unroll_timeout: Timeout::new(15),
-            reward_puzzle_hash: PuzzleHash::from_bytes([if is_initiator { 2 } else { 3 }; 32]),
-            agg_sig_me_additional_data: genesis.clone(),
-        };
-        let initiator_identity =
-            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
-        let receiver_identity =
-            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
-        let mut initiator = GameSession::new_with_keys(
-            make_config(initiator_identity, true, 100, 200),
-            rng.random(),
-        );
-        let mut receiver = GameSession::new_with_keys(
-            make_config(receiver_identity, false, 200, 100),
-            rng.random(),
-        );
-
-        initiator
-            .start_handshake(&mut allocator)
-            .expect("start initiator");
-        let message_a = initiator
-            .flush_and_collect(&mut allocator)
-            .expect("collect A")
-            .events
-            .into_iter()
-            .find_map(|event| match event {
-                GameSessionEvent::OutboundMessage(message) => Some(message),
-                _ => None,
-            })
-            .expect("handshake A");
-        receiver.deliver_message(&message_a).expect("queue A");
-        let message_b = receiver
-            .flush_and_collect(&mut allocator)
-            .expect("process A")
-            .events
-            .into_iter()
-            .find_map(|event| match event {
-                GameSessionEvent::OutboundMessage(message) => Some(message),
-                _ => None,
-            })
-            .expect("handshake B");
-        initiator.deliver_message(&message_b).expect("queue B");
-        initiator
-            .flush_and_collect(&mut allocator)
-            .expect("process B");
-
-        (initiator, receiver, allocator)
-    }
-
     #[test]
     fn channel_env_new_with_genesis_uses_provided_challenge() {
         let mut allocator = AllocEncoder::new();
@@ -2000,7 +1832,7 @@ mod genesis_challenge_tests {
         );
 
         session
-            .start_handshake(&mut allocator)
+            .start_handshake(&mut allocator, Amount::default())
             .expect("receiver start is an intentional no-op");
         let error = session
             .propose_games(&mut allocator, &[])
@@ -2010,52 +1842,5 @@ mod genesis_challenge_tests {
             Error::StrErr(message)
                 if message == "propose_games is not available in handshake receiver phase"
         ));
-    }
-
-    #[test]
-    fn initiator_rejects_peer_messages_while_waiting_for_launcher_wallet() {
-        let (mut initiator, _receiver, mut allocator) = handshake_pair_waiting_for_launcher();
-        let request =
-            crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::RequestPotato(()))
-                .expect("encode request");
-
-        initiator.deliver_message(&request).expect("queue request");
-        let result = initiator
-            .flush_and_collect(&mut allocator)
-            .expect("fail handshake safely");
-
-        assert!(initiator.state.is_failed);
-        assert!(initiator.state.inbound_messages.is_empty());
-        assert!(result.events.iter().any(|event| matches!(
-            event,
-            GameSessionEvent::ReceiveError(reason)
-                if reason.contains("WaitingForLauncher")
-        )));
-    }
-
-    #[test]
-    fn initiator_rejects_handshake_f_before_handshake_e() {
-        let (mut initiator, _receiver, mut allocator) = handshake_pair_waiting_for_launcher();
-        let early_f = crate::session_phases::peer_wire::encode_peer_message(
-            &PeerMessage::HandshakeF(crate::session_phases::handshake::HandshakePayloadF {
-                bundle: SpendBundle {
-                    name: None,
-                    spends: vec![],
-                },
-            }),
-        )
-        .expect("encode F");
-
-        initiator.deliver_message(&early_f).expect("queue F");
-        let result = initiator
-            .flush_and_collect(&mut allocator)
-            .expect("fail handshake safely");
-
-        assert!(initiator.state.is_failed);
-        assert!(result.events.iter().any(|event| matches!(
-            event,
-            GameSessionEvent::ReceiveError(reason)
-                if reason.contains("WaitingForLauncher")
-        )));
     }
 }

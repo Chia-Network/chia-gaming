@@ -96,7 +96,7 @@ describe('CloudBlockchainInterface fee support', () => {
     return (call!.variables.input ?? {}) as Record<string, unknown>;
   }
 
-  it('createOfferForIds includes the explicit opening fee in the mutation input', async () => {
+  it('createOfferForIds directly creates the message-bound funding child', async () => {
     const calls = mockGraphql((query) => {
       if (query.includes('createSpendWithExtraConditions')) {
         return {
@@ -106,11 +106,12 @@ describe('CloudBlockchainInterface fee support', () => {
       return {};
     });
     const iface = new CloudBlockchainInterface();
+    const preLauncherPuzzleHash = 'ab'.repeat(32);
     await expect(
       iface.createOfferForIds(
         'uid',
         { '1': -1000n },
-        [{ opcode: 52n, args: ['01f4'] }],
+        [{ opcode: 67n, args: ['10', '', preLauncherPuzzleHash] }],
         undefined,
         undefined,
         500n,
@@ -118,8 +119,11 @@ describe('CloudBlockchainInterface fee support', () => {
     ).rejects.toThrow(/popup/i);
     const input = findSpendMutation(calls);
     expect(input.amount).toBe('1000');
-    expect(input.fee).toBe('500');
-    expect(input.extraConditions).toBeUndefined();
+    expect(input.fee).toBeUndefined();
+    expect(input.extraConditions).toEqual([
+      { opcode: '67', args: ['10', '', preLauncherPuzzleHash] },
+      { opcode: '51', args: [preLauncherPuzzleHash, '1000'] },
+    ]);
   });
 
   it('createOfferForIds omits the fee when zero', async () => {

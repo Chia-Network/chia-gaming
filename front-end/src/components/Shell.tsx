@@ -547,14 +547,6 @@ function GameDashboard({
                         {pasteableCoinId(coin.id)}
                       </span>
                     </span>
-                    {coin.parentId && (
-                      <span className="flex min-w-0 flex-wrap gap-x-1">
-                        <span className="text-canvas-solid">{coin.label} parent ID:</span>
-                        <span className="break-all font-mono text-canvas-text-contrast select-all cursor-text">
-                          {pasteableCoinId(coin.parentId)}
-                        </span>
-                      </span>
-                    )}
                   </div>
                 ))}
               </div>

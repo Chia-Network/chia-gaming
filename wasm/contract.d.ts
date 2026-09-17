@@ -228,8 +228,7 @@ export type GameSessionEvent =
   | { Log: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
-  | { NeedCoinSpend: NeedCoinSpendRequest }
-  | { NeedLauncherCoin: true };
+  | { NeedCoinSpend: NeedCoinSpendRequest };
 
 export interface WatchedCoinEntry {
   coin_name: string;

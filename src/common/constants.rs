@@ -9,6 +9,8 @@ lazy_static! {
 pub const CREATE_COIN: u32 = 51;
 pub const CREATE_COIN_ANNOUNCEMENT: u32 = 60;
 pub const ASSERT_COIN_ANNOUNCEMENT: u32 = 61;
+pub const SEND_MESSAGE: u32 = 66;
+pub const RECEIVE_MESSAGE: u32 = 67;
 pub const REM: u32 = 1;
 pub const ASSERT_HEIGHT_RELATIVE: u32 = 82;
 pub const ASSERT_BEFORE_HEIGHT_ABSOLUTE: u32 = 87;
@@ -22,6 +24,8 @@ pub const CREATE_COIN_ANNOUNCEMENT_ATOM: [u8; 1] = [60];
 pub const ASSERT_COIN_ANNOUNCEMENT_ATOM: [u8; 1] = [61];
 pub const RESERVE_FEE_ATOM: [u8; 1] = [52];
 pub const ASSERT_CONCURRENT_SPEND_ATOM: [u8; 1] = [64];
+pub const SEND_MESSAGE_ATOM: [u8; 1] = [66];
+pub const RECEIVE_MESSAGE_ATOM: [u8; 1] = [67];
 pub const ASSERT_HEIGHT_RELATIVE_ATOM: [u8; 1] = [82];
 
 pub const GROUP_ORDER: [u8; 32] = [

@@ -1230,6 +1230,8 @@ full Rust, frontend, and simulator-backed test suite. The frontend test/build
 step runs `generate:games`, which regenerates
 `front-end/src/generated/gamePackages.ts` from `games/registry.json`. Do not
 invoke individual Cargo test commands in place of these repository scripts.
+Automation and LLM agents should use `./ct-automation.sh` for the full-suite
+run; it suppresses successful output and replays complete failures on stderr.
 
 Place frontend package tests beside the game under
 `games/<key>/ui/**/*.{test,spec}.{ts,tsx}`. The frontend Jest configuration
@@ -1285,7 +1287,8 @@ Before considering the game complete, check that:
   behavior.
 - Live and frozen branches of the single mount render the expected game state,
   and the frozen branch cannot dispatch.
-- The full project test suite passes through `./ct.sh`.
+- The full project test suite passes through `./ct.sh` (or
+  `./ct-automation.sh` for automated/LLM runs).
 
 For detailed handler and validator examples, see
 [`HANDLER_GUIDE.md` — Worked Examples](HANDLER_GUIDE.md#worked-examples-reference-games).

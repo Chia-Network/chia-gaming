@@ -17,9 +17,9 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID,
     GameType, GetCoinStringParts, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash,
-    Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, MAX_BLOCK_COST_CLVM,
+    Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram, MAX_BLOCK_COST_CLVM,
 };
-use crate::game_session::{claim_settlement_coins, phase_operation_error, PeerLifecyclePhase};
+use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
     format_coin, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
     GameNotification, TimeoutClaimSemantic,
@@ -27,80 +27,77 @@ use crate::session_phases::effects::{
 use crate::session_phases::handshake::{
     local_capabilities, raw_coin_conditions_to_clvm, validate_ab_payload,
     validate_assembled_channel_funding, CoinSpendRequest, HandshakePayloadB, HandshakePayloadC,
-    HandshakePayloadE, HandshakePayloadF, HandshakeStepInfo, HandshakeStepWithSpend,
-    RawCoinCondition, MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES, MAX_QUEUED_PEER_MESSAGES,
+    HandshakePayloadD, HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition,
+    MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES, MAX_QUEUED_PEER_MESSAGES,
 };
 use crate::session_phases::proposal::GameProposal;
 use crate::session_phases::types::{OffChainPhaseInit, PeerMessage, SpendWalletReceiver};
 use crate::session_phases::OffChainPhase;
 
-const MAX_WALLET_OFFER_MISMATCHES: u8 = 3;
-
 #[derive(Debug, Serialize, Deserialize)]
 enum InitiatorState {
     WaitingForStart,
     SentA(Box<HandshakePayloadB>),
-    WaitingForLauncher(Box<HandshakeStepInfo>),
-    SentC(Box<HandshakeStepInfo>),
     WaitingForOffer(Box<HandshakeStepInfo>, StateUpdateSignatures),
     Finished(Box<HandshakeStepWithSpend>),
     Done,
 }
 
-fn validate_wallet_bundle_applies_conditions(
+pub(crate) fn validate_wallet_bundle_applies_conditions(
     allocator: &mut AllocEncoder,
     wallet_bundle: &SpendBundle,
     request: &CoinSpendRequest,
-) -> Result<(), Error> {
-    let expected_coin_id = request.coin_id.as_ref().ok_or_else(|| {
-        Error::Channel("wallet funding request did not specify a coin".to_string())
-    })?;
-    let matching_spends = wallet_bundle
-        .spends
-        .iter()
-        .filter(|spend| spend.coin.to_coin_id() == *expected_coin_id)
-        .collect::<Vec<_>>();
-    if matching_spends.len() != 1 {
-        return Err(Error::Channel(format!(
-            "wallet funding offer spent launcher parent {} times; expected exactly once",
-            matching_spends.len()
-        )));
-    }
-
-    let spend = matching_spends[0];
-    let puzzle = spend.bundle.puzzle.to_program().to_nodeptr(allocator)?;
-    let solution = spend.bundle.solution.to_nodeptr(allocator)?;
-    let emitted = run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        puzzle,
-        solution,
-        MAX_BLOCK_COST_CLVM,
-    )
-    .into_gen()?
-    .1;
-    let emitted = crate::utils::proper_list(allocator.allocator_ref(), emitted, true)
-        .ok_or_else(|| Error::Channel("wallet coin conditions were not a list".to_string()))?;
-    let mut emitted_hashes = emitted
-        .into_iter()
-        .map(|condition| Node(condition).sha256tree(allocator))
-        .collect::<Vec<_>>();
-
-    for required in raw_coin_conditions_to_clvm(allocator, &request.conditions, request.max_height)?
-    {
-        let required_hash = required.sha256tree(allocator);
-        let Some(index) = emitted_hashes
+) -> Result<CoinString, Error> {
+    let required_hashes =
+        raw_coin_conditions_to_clvm(allocator, &request.conditions, request.max_height)?
+            .into_iter()
+            .map(|condition| condition.sha256tree(allocator))
+            .collect::<Vec<_>>();
+    let mut matching_coin = None;
+    for spend in &wallet_bundle.spends {
+        if request
+            .coin_id
+            .as_ref()
+            .is_some_and(|coin_id| spend.coin.to_coin_id() != *coin_id)
+        {
+            continue;
+        }
+        let puzzle = spend.bundle.puzzle.to_program().to_nodeptr(allocator)?;
+        let solution = spend.bundle.solution.to_nodeptr(allocator)?;
+        let emitted = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            puzzle,
+            solution,
+            MAX_BLOCK_COST_CLVM,
+        )
+        .into_gen()?
+        .1;
+        let emitted = crate::utils::proper_list(allocator.allocator_ref(), emitted, true)
+            .ok_or_else(|| Error::Channel("wallet coin conditions were not a list".to_string()))?;
+        let emitted_hashes = emitted
+            .into_iter()
+            .map(|condition| Node(condition).sha256tree(allocator))
+            .collect::<Vec<_>>();
+        if required_hashes
             .iter()
-            .position(|emitted| *emitted == required_hash)
-        else {
-            return Err(Error::Channel(
-                "wallet funding offer put required conditions on a different coin".to_string(),
-            ));
-        };
-        emitted_hashes.swap_remove(index);
+            .all(|required| emitted_hashes.contains(required))
+        {
+            if matching_coin.is_some() {
+                return Err(Error::Channel(
+                    "wallet funding offer applied the required conditions to multiple spends; expected exactly one"
+                        .to_string(),
+                ));
+            }
+            matching_coin = Some(spend.coin.clone());
+        }
     }
-
-    Ok(())
+    matching_coin.ok_or_else(|| {
+        Error::Channel(
+            "wallet funding offer applied the required conditions to 0 spends; expected exactly one"
+                .to_string(),
+        )
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -109,11 +106,9 @@ pub struct HandshakeInitiatorPhase {
 
     channel_state: Option<ChannelState>,
     channel_initiation_transaction: Option<SpendBundle>,
-    launcher_coin: Option<CoinString>,
+    funding_coin: Option<CoinString>,
     #[serde(default)]
     opening_fee: Amount,
-    #[serde(default)]
-    offer_settlement_coin: Option<CoinString>,
 
     private_keys: ChannelPrivateKeys,
     #[serde(skip, default)]
@@ -127,8 +122,6 @@ pub struct HandshakeInitiatorPhase {
     last_height: u64,
     channel_deadline: Option<u64>,
     pending_coin_spend: bool,
-    #[serde(default)]
-    wallet_offer_mismatches: u8,
 
     waiting_to_start: bool,
     transaction_pushed: bool,
@@ -151,9 +144,8 @@ impl HandshakeInitiatorPhase {
             state: InitiatorState::WaitingForStart,
             channel_state: None,
             channel_initiation_transaction: None,
-            launcher_coin: None,
+            funding_coin: None,
             opening_fee: Amount::default(),
-            offer_settlement_coin: None,
             private_keys: phi.private_keys,
             game_types: phi.game_types,
             my_contribution: phi.my_contribution,
@@ -164,7 +156,6 @@ impl HandshakeInitiatorPhase {
             last_height: 0,
             channel_deadline: None,
             pending_coin_spend: false,
-            wallet_offer_mismatches: 0,
             waiting_to_start: true,
             transaction_pushed: false,
             funding_announcement: None,
@@ -256,13 +247,13 @@ impl HandshakeInitiatorPhase {
         }
     }
 
-    fn try_send_step_e(
+    fn try_send_step_c(
         &mut self,
         info: HandshakeStepInfo,
         our_sigs: StateUpdateSignatures,
     ) -> Result<Option<Effect>, Error> {
         if let Some(spend) = self.channel_initiation_transaction.clone() {
-            let send_effect = Effect::PeerHandshakeE(HandshakePayloadE {
+            let send_effect = Effect::PeerHandshakeC(HandshakePayloadC {
                 bundle: spend.clone(),
                 signatures: our_sigs,
             });
@@ -270,12 +261,6 @@ impl HandshakeInitiatorPhase {
             return Ok(Some(send_effect));
         }
         Ok(None)
-    }
-
-    fn get_launcher_coin(&self) -> Result<&CoinString, Error> {
-        self.launcher_coin
-            .as_ref()
-            .ok_or_else(|| Error::StrErr("launcher_coin not set".to_string()))
     }
 
     fn encode_u64_as_clvm_int(val: u64) -> Vec<u8> {
@@ -297,103 +282,6 @@ impl HandshakeInitiatorPhase {
 
     fn compute_not_valid_after_height(&self) -> Option<u64> {
         Some(self.last_height + self.channel_timeout.to_u64())
-    }
-
-    fn build_launcher_coin_spend(&self, env: &mut ChannelEnv<'_>) -> Result<CoinSpend, Error> {
-        let ch = self.channel_state()?;
-        let channel_coin = ch.channel_coin();
-        let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
-        let launcher_coin = self.get_launcher_coin()?.clone();
-
-        let nil: () = ();
-        let launcher_solution_clvm = (
-            channel_puzzle_hash.clone(),
-            (total_amount.clone(), (nil, ())),
-        )
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        let launcher_solution_program =
-            Program::from_nodeptr(env.allocator, launcher_solution_clvm)?;
-
-        Ok(CoinSpend {
-            coin: launcher_coin,
-            bundle: Spend {
-                puzzle: Puzzle::from_bytes(&crate::common::constants::SINGLETON_LAUNCHER)
-                    .expect("valid singleton launcher constant"),
-                solution: launcher_solution_program.into(),
-                signature: Aggsig::default(),
-            },
-        })
-    }
-
-    fn build_settlement_launcher_spend(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<Option<CoinSpend>, Error> {
-        let Some(settlement_coin) = self.offer_settlement_coin.clone() else {
-            return Ok(None);
-        };
-        let launcher_coin = self.get_launcher_coin()?;
-        let (_, launcher_puzzle_hash, launcher_amount) = launcher_coin.get_coin_string_parts()?;
-        let payment = (launcher_puzzle_hash, (launcher_amount, ()))
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        let notarized_payment = (settlement_coin.to_coin_id(), (payment, ()))
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        let solution_node = vec![notarized_payment].to_clvm(env.allocator).into_gen()?;
-        let solution = Program::from_nodeptr(env.allocator, solution_node)?;
-        Ok(Some(CoinSpend {
-            coin: settlement_coin,
-            bundle: Spend {
-                puzzle: Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT)?,
-                solution: solution.into(),
-                signature: Aggsig::default(),
-            },
-        }))
-    }
-
-    fn validate_offer_settlement_created(
-        &self,
-        allocator: &mut AllocEncoder,
-        wallet_bundle: &SpendBundle,
-    ) -> Result<(), Error> {
-        let Some(settlement_coin) = self.offer_settlement_coin.as_ref() else {
-            return Ok(());
-        };
-        let (wallet_coin_id, settlement_ph, settlement_amount) =
-            settlement_coin.get_coin_string_parts()?;
-        let source_spend = wallet_bundle
-            .spends
-            .iter()
-            .find(|spend| spend.coin.to_coin_id() == wallet_coin_id)
-            .ok_or_else(|| {
-                Error::Channel(
-                    "wallet funding offer did not spend the committed settlement parent"
-                        .to_string(),
-                )
-            })?;
-        let conditions = crate::common::types::CoinCondition::from_puzzle_and_solution(
-            allocator,
-            source_spend.bundle.puzzle.to_program().as_ref(),
-            source_spend.bundle.solution.p().as_ref(),
-        )?;
-        let matching = conditions
-            .iter()
-            .filter(|condition| {
-                matches!(
-                    condition,
-                    crate::common::types::CoinCondition::CreateCoin(ph, amount)
-                        if *ph == settlement_ph && *amount == settlement_amount
-                )
-            })
-            .count();
-        if matching != 1 {
-            return Err(Error::Channel(format!(
-                "wallet funding offer created {matching} matching settlement coins, expected 1"
-            )));
-        }
-        Ok(())
     }
 
     fn compute_coin_announcement_hash(
@@ -418,60 +306,76 @@ impl HandshakeInitiatorPhase {
         .hash())
     }
 
-    fn build_alice_coin_spend_request(&mut self) -> Result<CoinSpendRequest, Error> {
+    fn contribution_amount(&self) -> Result<Amount, Error> {
+        self.my_contribution
+            .to_u64()
+            .checked_add(self.opening_fee.to_u64())
+            .map(Amount::new)
+            .ok_or_else(|| {
+                Error::StrErr("initiator contribution plus opening fee overflowed u64".to_string())
+            })
+    }
+
+    fn contribution_puzzle(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+    ) -> Result<(Puzzle, PuzzleHash), Error> {
         let ch = self.channel_state()?;
         let channel_coin = ch.channel_coin();
-        let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
-        let launcher_coin = self.get_launcher_coin()?;
-        let launcher_coin_id = launcher_coin.to_coin_id();
-        let (launcher_parent, _, launcher_amount) = launcher_coin.get_coin_string_parts()?;
-
+        let (launcher_coin_id, channel_puzzle_hash, total_amount) =
+            channel_coin.get_coin_string_parts()?;
         let ann_hash = self.compute_coin_announcement_hash(
             &launcher_coin_id,
             &channel_puzzle_hash,
             &total_amount,
         )?;
         self.funding_announcement = Some(ann_hash.clone());
-        let (amount, coin_id, mut conditions) =
-            if let Some(settlement_coin) = self.offer_settlement_coin.as_ref() {
-                let (wallet_coin_id, _, _) = settlement_coin.get_coin_string_parts()?;
-                let total = self
-                    .my_contribution
-                    .to_u64()
-                    .checked_add(self.opening_fee.to_u64())
-                    .ok_or_else(|| {
-                        Error::StrErr(
-                            "initiator contribution plus opening fee overflowed u64".to_string(),
-                        )
-                    })?;
-                (Amount::new(total), wallet_coin_id, Vec::new())
-            } else {
-                let launcher_ph_bytes = crate::common::constants::SINGLETON_LAUNCHER_HASH.to_vec();
-                let amount_bytes = Self::encode_u64_as_clvm_int(launcher_amount.to_u64());
-                (
-                    self.my_contribution.clone(),
-                    launcher_parent,
-                    vec![RawCoinCondition {
-                        opcode: crate::common::constants::CREATE_COIN,
-                        args: vec![launcher_ph_bytes, amount_bytes],
-                    }],
-                )
-            };
-        conditions.push(RawCoinCondition {
-            opcode: crate::common::constants::ASSERT_COIN_ANNOUNCEMENT,
-            args: vec![ann_hash.bytes().to_vec()],
-        });
+        let mut nodes = vec![
+            (crate::common::constants::SEND_MESSAGE, (24_u8, ((), ())))
+                .to_clvm(env.allocator)
+                .into_gen()?,
+            (
+                crate::common::constants::ASSERT_COIN_ANNOUNCEMENT,
+                (ann_hash.clone(), ()),
+            )
+                .to_clvm(env.allocator)
+                .into_gen()?,
+        ];
         if self.opening_fee.to_u64() > 0 {
-            conditions.push(RawCoinCondition {
-                opcode: crate::common::constants::RESERVE_FEE_ATOM[0] as u32,
-                args: vec![Self::encode_u64_as_clvm_int(self.opening_fee.to_u64())],
-            });
+            nodes.push(
+                (
+                    crate::common::constants::RESERVE_FEE_ATOM[0],
+                    (self.opening_fee.clone(), ()),
+                )
+                    .to_clvm(env.allocator)
+                    .into_gen()?,
+            );
         }
+        let conditions = nodes.to_clvm(env.allocator).into_gen()?;
+        let puzzle: Puzzle = conditions.to_quoted_program(env.allocator)?.into();
+        let puzzle_hash = puzzle.sha256tree(env.allocator);
+        Ok((puzzle, puzzle_hash))
+    }
+
+    fn build_alice_coin_spend_request(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+    ) -> Result<CoinSpendRequest, Error> {
+        let amount = self.contribution_amount()?;
+        let (_, puzzle_hash) = self.contribution_puzzle(env)?;
         Ok(CoinSpendRequest {
-            amount,
+            amount: amount.clone(),
             fee: self.opening_fee.clone(),
-            conditions,
-            coin_id: Some(coin_id),
+            conditions: vec![RawCoinCondition {
+                opcode: crate::common::constants::RECEIVE_MESSAGE,
+                args: vec![
+                    vec![24],
+                    vec![],
+                    puzzle_hash.bytes().to_vec(),
+                    Self::encode_u64_as_clvm_int(amount.to_u64()),
+                ],
+            }],
+            coin_id: None,
             max_height: self.compute_not_valid_after_height(),
         })
     }
@@ -531,6 +435,7 @@ impl HandshakeInitiatorPhase {
             }
 
             InitiatorState::SentA(handshake_a) => {
+                let handshake_a = (**handshake_a).clone();
                 let msg = if let PeerMessage::HandshakeB(msg) = msg_envelope.borrow() {
                     msg
                 } else {
@@ -540,7 +445,7 @@ impl HandshakeInitiatorPhase {
                 };
 
                 validate_ab_payload(
-                    msg,
+                    &msg.identity,
                     &self.private_keys,
                     &self.reward_puzzle_hash,
                     &self.my_contribution,
@@ -549,57 +454,46 @@ impl HandshakeInitiatorPhase {
 
                 let our_channel_pk =
                     private_to_public_key(&self.private_keys.my_channel_coin_private_key);
-                let aggregate_pk = our_channel_pk + msg.channel_public_key.clone();
+                let aggregate_pk = our_channel_pk + msg.identity.channel_public_key.clone();
                 let channel_puzzle_hash =
                     puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_pk)?;
-                effects.push(Effect::ChannelPuzzleHash(channel_puzzle_hash));
-                effects.push(Effect::NeedLauncherCoinId);
-
-                self.state = InitiatorState::WaitingForLauncher(Box::new(HandshakeStepInfo {
-                    first_player_hs_info: *handshake_a.clone(),
-                    second_player_hs_info: msg.clone(),
-                }));
-            }
-
-            InitiatorState::WaitingForLauncher(_) => {
-                return Err(Error::StrErr(format!(
-                    "initiator WaitingForLauncher: unexpected peer message: {msg_envelope:?}"
-                )));
-            }
-
-            InitiatorState::SentC(_info) => {
-                let msg = if let PeerMessage::HandshakeD(msg) = msg_envelope.borrow() {
-                    msg
-                } else {
-                    return Err(Error::StrErr(format!(
-                        "Expected handshake D message, got {msg_envelope:?}"
-                    )));
-                };
-
-                let genesis = {
-                    let ch = self.channel_state_mut()?;
-                    ch.initialize_genesis_as_initiator(env, &msg.signatures)
-                        .map_err(|e| {
-                            Error::StrErr(format!(
-                                "initiator step D: genesis initialization failed: {e}"
-                            ))
-                        })?
-                };
+                let launcher_coin = CoinString::from_parts(
+                    &msg.channel_coin_grandparent,
+                    &PuzzleHash::from_bytes(crate::common::constants::SINGLETON_LAUNCHER_HASH),
+                    &Amount::default(),
+                );
+                let (channel_state, _) =
+                    self.make_channel_state(launcher_coin.to_coin_id(), false, &msg.identity, env)?;
+                self.channel_state = Some(channel_state);
+                let genesis = self
+                    .channel_state_mut()?
+                    .initialize_genesis_as_initiator(env, &msg.signatures)
+                    .map_err(|e| {
+                        Error::StrErr(format!(
+                            "initiator step B: genesis initialization failed: {e}"
+                        ))
+                    })?;
                 self.last_channel_coin_spend_info = Some(genesis.state_zero_spend);
                 let our_sigs = genesis.state_one_signatures;
+                let info = HandshakeStepInfo {
+                    first_player_hs_info: handshake_a,
+                    second_player_hs_info: msg.identity.clone(),
+                };
+                effects.push(Effect::ChannelPuzzleHash(channel_puzzle_hash));
+                effects.push(Effect::RegisterCoin {
+                    coin: self.channel_state()?.channel_coin().clone(),
+                    timeout: Timeout::new(1_000_000),
+                    name: Some("channel"),
+                    spend: None,
+                    semantic: None,
+                });
                 if self.last_height > 0 {
-                    let coin_spend_request = self.build_alice_coin_spend_request()?;
+                    let coin_spend_request = self.build_alice_coin_spend_request(env)?;
                     self.channel_deadline = self.compute_not_valid_after_height();
                     effects.push(Effect::NeedCoinSpend(coin_spend_request));
                 } else {
                     self.pending_coin_spend = true;
                 }
-
-                let info = match std::mem::replace(&mut self.state, InitiatorState::WaitingForStart)
-                {
-                    InitiatorState::SentC(info) => *info,
-                    _ => unreachable!(),
-                };
                 self.state = InitiatorState::WaitingForOffer(Box::new(info), our_sigs);
             }
 
@@ -610,7 +504,7 @@ impl HandshakeInitiatorPhase {
             }
 
             InitiatorState::Finished(_) => {
-                if let PeerMessage::HandshakeF(HandshakePayloadF { bundle }) = msg_envelope.borrow()
+                if let PeerMessage::HandshakeD(HandshakePayloadD { bundle }) = msg_envelope.borrow()
                 {
                     if !self.transaction_pushed {
                         let initiator_bundle = match &self.state {
@@ -619,7 +513,7 @@ impl HandshakeInitiatorPhase {
                         };
                         let announcement = self.funding_announcement.as_ref().ok_or_else(|| {
                             Error::StrErr(
-                                "handshake F arrived without a funding announcement".to_string(),
+                                "handshake D arrived without a funding announcement".to_string(),
                             )
                         })?;
                         let combined = validate_assembled_channel_funding(
@@ -635,7 +529,7 @@ impl HandshakeInitiatorPhase {
                     }
                 } else {
                     return Err(Error::StrErr(format!(
-                        "initiator Finished: expected handshake F, got {msg_envelope:?}"
+                        "initiator Finished: expected handshake D, got {msg_envelope:?}"
                     )));
                 }
             }
@@ -673,12 +567,10 @@ impl HandshakeInitiatorPhase {
         let msg_envelope = crate::session_phases::peer_wire::decode_peer_message(&msg)?;
         if matches!(self.state, InitiatorState::Finished(_)) {
             match &msg_envelope {
-                PeerMessage::HandshakeF(_) => {}
+                PeerMessage::HandshakeD(_) => {}
                 PeerMessage::HandshakeA(_)
                 | PeerMessage::HandshakeB(_)
-                | PeerMessage::HandshakeC(_)
-                | PeerMessage::HandshakeD(_)
-                | PeerMessage::HandshakeE(_) => {
+                | PeerMessage::HandshakeC(_) => {
                     return Err(Error::StrErr(
                         "initiator Finished: out-of-order handshake message".to_string(),
                     ));
@@ -892,11 +784,11 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         self.failed = true;
         self.failure_advisory = Some(reason);
     }
-    fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
+    fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error> {
         self.last_height = height;
         if self.pending_coin_spend && self.last_height > 0 {
             self.pending_coin_spend = false;
-            let req = self.build_alice_coin_spend_request()?;
+            let req = self.build_alice_coin_spend_request(env)?;
             self.channel_deadline = self.compute_not_valid_after_height();
             return Ok(vec![Effect::NeedCoinSpend(req)]);
         }
@@ -908,7 +800,12 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
     fn is_on_chain(&self) -> bool {
         false
     }
-    fn start_handshake(&mut self, env: &mut ChannelEnv<'_>) -> Result<Option<Effect>, Error> {
+    fn start_handshake(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        opening_fee: Amount,
+    ) -> Result<Option<Effect>, Error> {
+        self.opening_fee = opening_fee;
         self.start(env)
     }
     fn channel_offer(
@@ -921,7 +818,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         if let InitiatorState::WaitingForOffer(info, sigs) = &self.state {
             let info = *info.clone();
             let sigs = sigs.clone();
-            let result = self.try_send_step_e(info, sigs)?;
+            let result = self.try_send_step_c(info, sigs)?;
             self.try_transition_to_off_chain();
             return Ok(result);
         }
@@ -938,129 +835,104 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
             "channel_transaction_completion",
         ))
     }
-    fn provide_launcher_coin(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        launcher_coin: CoinString,
-        opening_fee: Amount,
-        offer_settlement_coin: Option<CoinString>,
-    ) -> Result<Vec<Effect>, Error> {
-        let info = match &self.state {
-            InitiatorState::WaitingForLauncher(info) => (**info).clone(),
-            _ => {
-                return Err(Error::StrErr(
-                    "provide_launcher_coin: not in WaitingForLauncher state".to_string(),
-                ))
-            }
-        };
-
-        let (launcher_parent, launcher_ph, launcher_amount) =
-            launcher_coin.get_coin_string_parts()?;
-        let expected_ph = PuzzleHash::from_bytes(crate::common::constants::SINGLETON_LAUNCHER_HASH);
-        if launcher_ph != expected_ph {
-            return Err(Error::Channel(
-                "Launcher coin puzzle hash is not SINGLETON_LAUNCHER".to_string(),
-            ));
-        }
-        if let Some(settlement_coin) = offer_settlement_coin.as_ref() {
-            let (_, settlement_ph, settlement_amount) = settlement_coin.get_coin_string_parts()?;
-            let expected_settlement_ph =
-                PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
-            let expected_settlement_amount = self
-                .my_contribution
-                .to_u64()
-                .checked_add(opening_fee.to_u64())
-                .ok_or_else(|| {
-                    Error::StrErr(
-                        "initiator contribution plus opening fee overflowed u64".to_string(),
-                    )
-                })?;
-            if settlement_ph != expected_settlement_ph
-                || settlement_amount.to_u64() != expected_settlement_amount
-            {
-                return Err(Error::Channel(
-                    "offer settlement coin does not match contribution plus fee".to_string(),
-                ));
-            }
-            if launcher_parent != settlement_coin.to_coin_id()
-                || launcher_amount != self.my_contribution
-            {
-                return Err(Error::Channel(
-                    "offer-funded launcher has invalid parent or amount".to_string(),
-                ));
-            }
-        } else if launcher_amount.to_u64() != 0 {
-            return Err(Error::Channel(
-                "direct-funded launcher must have amount zero".to_string(),
-            ));
-        }
-
-        let (channel_state, _init_result) = self.make_channel_state(
-            launcher_coin.to_coin_id(),
-            false,
-            &info.second_player_hs_info,
-            env,
-        )?;
-        let channel_coin = channel_state.channel_coin().clone();
-        self.channel_state = Some(channel_state);
-        self.launcher_coin = Some(launcher_coin.clone());
-        self.opening_fee = opening_fee;
-        self.offer_settlement_coin = offer_settlement_coin;
-        self.state = InitiatorState::SentC(Box::new(info.clone()));
-
-        Ok(vec![
-            Effect::RegisterCoin {
-                coin: channel_coin,
-                timeout: Timeout::new(1_000_000),
-                name: Some("channel"),
-                spend: None,
-                semantic: None,
-            },
-            Effect::PeerHandshakeC(HandshakePayloadC { launcher_coin }),
-        ])
-    }
     fn provide_coin_spend_bundle(
         &mut self,
         env: &mut ChannelEnv<'_>,
         wallet_bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error> {
         let bundle = if matches!(self.state, InitiatorState::WaitingForOffer(_, _)) {
-            let mut request = self.build_alice_coin_spend_request()?;
+            let mut request = self.build_alice_coin_spend_request(env)?;
             request.max_height = self.channel_deadline;
-            if let Err(validation_error) =
-                validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)
-            {
-                self.wallet_offer_mismatches = self.wallet_offer_mismatches.saturating_add(1);
-                if self.wallet_offer_mismatches >= MAX_WALLET_OFFER_MISMATCHES {
-                    return Err(Error::Channel(format!(
-                        "wallet failed to spend the committed launcher parent after \
-                         {MAX_WALLET_OFFER_MISMATCHES} funding offers: {validation_error}"
-                    )));
+            self.funding_coin = Some(validate_wallet_bundle_applies_conditions(
+                env.allocator,
+                &wallet_bundle,
+                &request,
+            )?);
+            let amount = self.contribution_amount()?;
+            let (contribution_puzzle, contribution_ph) = self.contribution_puzzle(env)?;
+            let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+            let mut settlement_coins = Vec::new();
+            let mut direct_contribution_coins = Vec::new();
+            for spend in &wallet_bundle.spends {
+                let conditions = crate::common::types::CoinCondition::from_puzzle_and_solution(
+                    env.allocator,
+                    spend.bundle.puzzle.to_program().as_ref(),
+                    spend.bundle.solution.p().as_ref(),
+                )?;
+                for condition in conditions {
+                    if let crate::common::types::CoinCondition::CreateCoin(ph, created_amount) =
+                        condition
+                    {
+                        if ph == settlement_ph && created_amount == amount {
+                            settlement_coins.push(CoinString::from_parts(
+                                &spend.coin.to_coin_id(),
+                                &settlement_ph,
+                                &amount,
+                            ));
+                        } else if ph == contribution_ph && created_amount == amount {
+                            direct_contribution_coins.push(CoinString::from_parts(
+                                &spend.coin.to_coin_id(),
+                                &contribution_ph,
+                                &amount,
+                            ));
+                        }
+                    }
                 }
-                return Ok(vec![Effect::NeedCoinSpend(request)]);
             }
-            if let Err(validation_error) =
-                self.validate_offer_settlement_created(env.allocator, &wallet_bundle)
-            {
-                self.wallet_offer_mismatches = self.wallet_offer_mismatches.saturating_add(1);
-                if self.wallet_offer_mismatches >= MAX_WALLET_OFFER_MISMATCHES {
+            let (settlement_coin, contribution_coin) = match (
+                settlement_coins.as_slice(),
+                direct_contribution_coins.as_slice(),
+            ) {
+                ([settlement_coin], []) => (
+                    Some(settlement_coin.clone()),
+                    CoinString::from_parts(
+                        &settlement_coin.to_coin_id(),
+                        &contribution_ph,
+                        &amount,
+                    ),
+                ),
+                ([], [contribution_coin]) => (None, contribution_coin.clone()),
+                _ => {
                     return Err(Error::Channel(format!(
-                        "wallet failed to create the committed settlement coin after \
-                         {MAX_WALLET_OFFER_MISMATCHES} funding offers: {validation_error}"
-                    )));
+                            "initiator wallet bundle created {} settlement and {} direct contribution candidates; expected exactly one funding path",
+                            settlement_coins.len(),
+                            direct_contribution_coins.len(),
+                        )));
                 }
-                return Ok(vec![Effect::NeedCoinSpend(request)]);
-            }
-            let launcher_spend = self.build_launcher_coin_spend(env)?;
-            let mut spends = if self.offer_settlement_coin.is_some() {
-                wallet_bundle.spends
-            } else {
-                claim_settlement_coins(env.allocator, wallet_bundle).spends
             };
-            if let Some(settlement_spend) = self.build_settlement_launcher_spend(env)? {
-                spends.push(settlement_spend);
+            let settlement_solution_node = if let Some(settlement_coin) = &settlement_coin {
+                let payment = (contribution_ph, (amount.clone(), ()))
+                    .to_clvm(env.allocator)
+                    .into_gen()?;
+                let notarized_payment = (settlement_coin.to_coin_id(), (payment, ()))
+                    .to_clvm(env.allocator)
+                    .into_gen()?;
+                Some(vec![notarized_payment].to_clvm(env.allocator).into_gen()?)
+            } else {
+                None
+            };
+            let mut spends = wallet_bundle.spends;
+            if let (Some(settlement_coin), Some(settlement_solution_node)) =
+                (settlement_coin, settlement_solution_node)
+            {
+                spends.push(CoinSpend {
+                    coin: settlement_coin,
+                    bundle: Spend {
+                        puzzle: Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT)?,
+                        solution: Program::from_nodeptr(env.allocator, settlement_solution_node)?
+                            .into(),
+                        signature: Aggsig::default(),
+                    },
+                });
             }
-            spends.push(launcher_spend);
+            spends.push(CoinSpend {
+                coin: contribution_coin,
+                bundle: Spend {
+                    puzzle: contribution_puzzle,
+                    solution: Program::nil().into(),
+                    signature: Aggsig::default(),
+                },
+            });
             SpendBundle {
                 name: Some("channel-opening".to_string()),
                 spends,
@@ -1154,9 +1026,6 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
             InitiatorState::WaitingForStart | InitiatorState::SentA(_) => {
                 ChannelStatus::Handshaking
             }
-            InitiatorState::WaitingForLauncher(_) | InitiatorState::SentC(_) => {
-                ChannelStatus::Handshaking
-            }
             InitiatorState::WaitingForOffer(_, _) => ChannelStatus::OurWalletMakingOffer,
             InitiatorState::Finished(_) => {
                 if self.transaction_pushed {
@@ -1190,14 +1059,17 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        // Surface the state channel coin once it's known so the host can show
-        // its id in the unfolded data while the channel-creation transaction is
-        // pending (the default returns none, the right answer only before any
-        // coin exists).
-        match self.channel_state.as_ref() {
-            Some(ch) => vec![(CoinOfInterest::Channel, ch.channel_coin().clone())],
-            None => vec![],
+        // While funding is pending, surface both the predicted channel coin and
+        // the local wallet coin that emitted the required extra conditions.
+        let mut coins = self
+            .channel_state
+            .as_ref()
+            .map(|ch| vec![(CoinOfInterest::Channel, ch.channel_coin().clone())])
+            .unwrap_or_default();
+        if let Some(funding_coin) = &self.funding_coin {
+            coins.push((CoinOfInterest::Funding, funding_coin.clone()));
         }
+        coins
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         HandshakeInitiatorPhase::channel_state(self)
@@ -1261,13 +1133,9 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
 #[cfg(test)]
 mod finished_message_tests {
     use super::*;
-    use crate::common::constants::{
-        ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT, SINGLETON_LAUNCHER_HASH,
-    };
-    use crate::common::standard_coin::{
-        private_to_public_key, sign_agg_sig_me, standard_solution_partial, ChiaIdentity,
-    };
-    use crate::common::types::{PrivateKey, Sha256Input, Sha256tree, ToQuotedProgram};
+    use crate::common::constants::{ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN_ANNOUNCEMENT};
+    use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
+    use crate::common::types::{Sha256Input, Sha256tree, ToQuotedProgram};
     use clvm_traits::ClvmEncoder;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
@@ -1332,16 +1200,16 @@ mod finished_message_tests {
         let create_conditions = ((CREATE_COIN_ANNOUNCEMENT, (message.clone(), ())), ())
             .to_clvm(allocator)
             .expect("create announcement conditions");
-        let initiator_spend = spend_for_conditions(allocator, 1, create_conditions);
+        let receiver_spend = spend_for_conditions(allocator, 2, create_conditions);
         let announcement = Sha256Input::Array(vec![
-            Sha256Input::Bytes(initiator_spend.coin.to_coin_id().bytes()),
+            Sha256Input::Bytes(receiver_spend.coin.to_coin_id().bytes()),
             Sha256Input::Bytes(message.bytes()),
         ])
         .hash();
         let assert_conditions = ((ASSERT_COIN_ANNOUNCEMENT, (announcement.clone(), ())), ())
             .to_clvm(allocator)
             .expect("assert announcement conditions");
-        let receiver_spend = spend_for_conditions(allocator, 2, assert_conditions);
+        let initiator_spend = spend_for_conditions(allocator, 1, assert_conditions);
         (
             SpendBundle {
                 name: None,
@@ -1389,128 +1257,11 @@ mod finished_message_tests {
         phase
     }
 
-    fn waiting_for_offer_phase(
-        allocator: &mut crate::common::types::AllocEncoder,
-    ) -> (HandshakeInitiatorPhase, SpendBundle, SpendBundle, CoinID) {
-        let wallet_identity = ChiaIdentity::new(
-            allocator,
-            PrivateKey::from_bytes(&[7; 32]).expect("wallet key"),
-        )
-        .expect("wallet identity");
-        let wallet_coin = CoinString::from_parts(
-            &CoinID::default(),
-            &wallet_identity.puzzle_hash,
-            &Amount::new(200),
-        );
-        let launcher_parent = wallet_coin.to_coin_id();
-        let launcher_coin = CoinString::from_parts(
-            &launcher_parent,
-            &PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
-            &Amount::default(),
-        );
-
-        let make_phase = |seed| {
-            let mut rng = ChaCha8Rng::from_seed([seed; 32]);
-            HandshakeInitiatorPhase::new(OffChainPhaseInit {
-                private_keys: rng.random(),
-                game_types: BTreeMap::new(),
-                my_contribution: Amount::new(100),
-                their_contribution: Amount::new(100),
-                channel_timeout: Timeout::new(5),
-                unroll_timeout: Timeout::new(15),
-                reward_puzzle_hash: PuzzleHash::from_bytes([seed; 32]),
-            })
-        };
-        let mut phase = make_phase(20);
-        let peer = make_phase(21);
-        let first_player_hs_info = phase.my_handshake_b();
-        let second_player_hs_info = peer.my_handshake_b();
-        let mut env = ChannelEnv::new(allocator).expect("env");
-        let (channel_state, _) = phase
-            .make_channel_state(
-                launcher_coin.to_coin_id(),
-                false,
-                &second_player_hs_info,
-                &mut env,
-            )
-            .expect("channel state");
-        phase.channel_state = Some(channel_state);
-        phase.launcher_coin = Some(launcher_coin);
-        phase.last_height = 10;
-        phase.channel_deadline = phase.compute_not_valid_after_height();
-        phase.state = InitiatorState::WaitingForOffer(
-            Box::new(HandshakeStepInfo {
-                first_player_hs_info,
-                second_player_hs_info,
-            }),
-            StateUpdateSignatures::default(),
-        );
-
-        let request = phase
-            .build_alice_coin_spend_request()
-            .expect("funding request");
-        let required_conditions =
-            raw_coin_conditions_to_clvm(allocator, &request.conditions, request.max_height)
-                .expect("required conditions")
-                .to_clvm(allocator)
-                .expect("condition list");
-        let unrelated_conditions = (
-            (
-                crate::common::constants::CREATE_COIN,
-                (PuzzleHash::from_bytes([9; 32]), (Amount::new(1), ())),
-            ),
-            (),
-        )
-            .to_clvm(allocator)
-            .expect("unrelated conditions");
-        let make_wallet_spend = |allocator: &mut AllocEncoder, conditions| {
-            let spend = standard_solution_partial(
-                allocator,
-                &wallet_identity.synthetic_private_key,
-                &wallet_coin.to_coin_id(),
-                conditions,
-                &wallet_identity.synthetic_public_key,
-                &Hash::from_bytes(crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA),
-                false,
-            )
-            .expect("wallet spend");
-            CoinSpend {
-                coin: wallet_coin.clone(),
-                bundle: Spend {
-                    puzzle: wallet_identity.puzzle.clone(),
-                    solution: spend.solution,
-                    signature: spend.signature,
-                },
-            }
-        };
-        let matching_spend = make_wallet_spend(allocator, required_conditions);
-        let expected_without_conditions = make_wallet_spend(allocator, unrelated_conditions);
-        let wrong_origin_conditions =
-            raw_coin_conditions_to_clvm(allocator, &request.conditions, request.max_height)
-                .expect("wrong-origin conditions")
-                .to_clvm(allocator)
-                .expect("wrong-origin condition list");
-        let wrong_origin_spend = spend_for_conditions(allocator, 8, wrong_origin_conditions);
-
-        (
-            phase,
-            SpendBundle {
-                name: None,
-                spends: vec![matching_spend],
-            },
-            SpendBundle {
-                name: None,
-                spends: vec![expected_without_conditions, wrong_origin_spend],
-            },
-            launcher_parent,
-        )
-    }
-
-    fn encode_f(bundle: SpendBundle) -> Vec<u8> {
-        crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::HandshakeF(
-            HandshakePayloadF { bundle },
+    fn encode_d(bundle: SpendBundle) -> Vec<u8> {
+        crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::HandshakeD(
+            HandshakePayloadD { bundle },
         ))
-        .expect("encode F")
+        .expect("encode D")
     }
 
     fn payload_colliding_with_local_channel_key(
@@ -1554,13 +1305,22 @@ mod finished_message_tests {
         phase.start(&mut env).expect("start initiator");
         let payload = payload_colliding_with_local_channel_key(&phase);
         let error = phase
-            .process_message(&mut env, Rc::new(PeerMessage::HandshakeB(payload)))
+            .process_message(
+                &mut env,
+                Rc::new(PeerMessage::HandshakeB(
+                    crate::session_phases::handshake::HandshakePayloadBWithGenesis {
+                        identity: payload,
+                        channel_coin_grandparent: CoinID::default(),
+                        signatures: StateUpdateSignatures::default(),
+                    },
+                )),
+            )
             .expect_err("HandshakeB collision");
         assert!(format!("{error:?}").contains("public key collision"));
     }
 
     #[test]
-    fn wallet_funding_bundle_must_spend_launcher_parent_exactly_once() {
+    fn wallet_funding_bundle_returns_the_unique_condition_emitting_coin() {
         let mut allocator = crate::common::types::AllocEncoder::new();
         let conditions = ().to_clvm(&mut allocator).expect("nil conditions");
         let spend = spend_for_conditions(&mut allocator, 7, conditions);
@@ -1573,7 +1333,7 @@ mod finished_message_tests {
             max_height: None,
         };
 
-        validate_wallet_bundle_applies_conditions(
+        let funding_coin = validate_wallet_bundle_applies_conditions(
             &mut allocator,
             &SpendBundle {
                 name: None,
@@ -1582,6 +1342,7 @@ mod finished_message_tests {
             &request,
         )
         .expect("matching launcher parent");
+        assert_eq!(funding_coin.to_coin_id(), expected_coin_id);
 
         for spends in [vec![], vec![spend.clone(), spend]] {
             let error = validate_wallet_bundle_applies_conditions(
@@ -1590,162 +1351,24 @@ mod finished_message_tests {
                 &request,
             )
             .expect_err("missing or duplicate launcher parent must fail");
-            assert!(format!("{error:?}").contains("expected exactly once"));
+            assert!(format!("{error:?}").contains("expected exactly one"));
         }
     }
 
     #[test]
-    fn wallet_offer_mismatch_retries_without_advancing_then_matching_offer_proceeds() {
-        let mut allocator = crate::common::types::AllocEncoder::new();
-        let (mut phase, matching_bundle, wrong_origin_bundle, launcher_parent) =
-            waiting_for_offer_phase(&mut allocator);
-        let mut env = ChannelEnv::new(&mut allocator).expect("env");
-
-        let effects = phase
-            .provide_coin_spend_bundle(&mut env, wrong_origin_bundle)
-            .expect("mismatch should retry");
-        let request = match effects.as_slice() {
-            [Effect::NeedCoinSpend(request)] => request,
-            _ => panic!("mismatch must emit one NeedCoinSpend"),
-        };
-        assert_eq!(request.coin_id.as_ref(), Some(&launcher_parent));
-        assert_eq!(phase.wallet_offer_mismatches, 1);
-        assert!(matches!(phase.state, InitiatorState::WaitingForOffer(_, _)));
-        assert!(phase.channel_initiation_transaction.is_none());
-
-        let effects = phase
-            .provide_coin_spend_bundle(&mut env, matching_bundle)
-            .expect("matching retry should proceed");
-        assert!(matches!(effects.as_slice(), [Effect::PeerHandshakeE(_)]));
-        assert!(matches!(phase.state, InitiatorState::Finished(_)));
-        assert!(phase.channel_initiation_transaction.is_some());
-    }
-
-    #[test]
-    fn offer_funding_routes_contribution_plus_fee_through_positive_launcher() {
-        let mut allocator = crate::common::types::AllocEncoder::new();
-        let (mut phase, wallet_bundle, _, wallet_coin_id) = waiting_for_offer_phase(&mut allocator);
-        let settlement_coin = CoinString::from_parts(
-            &wallet_coin_id,
-            &PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH),
-            &Amount::new(110),
-        );
-        let launcher_coin = CoinString::from_parts(
-            &settlement_coin.to_coin_id(),
-            &PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
-            &Amount::new(100),
-        );
-        phase.opening_fee = Amount::new(10);
-        phase.offer_settlement_coin = Some(settlement_coin.clone());
-        phase.launcher_coin = Some(launcher_coin.clone());
-        phase
-            .channel_state
-            .as_mut()
-            .expect("channel state")
-            .set_launcher_coin_id(&launcher_coin.to_coin_id())
-            .expect("set launcher id");
-
-        let request = phase
-            .build_alice_coin_spend_request()
-            .expect("offer funding request");
-        assert_eq!(request.amount, Amount::new(110));
-        assert_eq!(request.fee, Amount::new(10));
-        assert_eq!(request.coin_id.as_ref(), Some(&wallet_coin_id));
-        assert!(request
-            .conditions
-            .iter()
-            .any(|condition| condition.opcode
-                == crate::common::constants::RESERVE_FEE_ATOM[0] as u32));
-        assert!(!request
-            .conditions
-            .iter()
-            .any(|condition| condition.opcode == crate::common::constants::CREATE_COIN));
-
-        let mut env = ChannelEnv::new(&mut allocator).expect("env");
-        let settlement_spend = phase
-            .build_settlement_launcher_spend(&mut env)
-            .expect("settlement spend")
-            .expect("offer mode");
-        assert_eq!(settlement_spend.coin, settlement_coin);
-        let conditions = crate::common::types::CoinCondition::from_puzzle_and_solution(
-            env.allocator,
-            settlement_spend.bundle.puzzle.to_program().as_ref(),
-            settlement_spend.bundle.solution.p().as_ref(),
-        )
-        .expect("settlement conditions");
-        assert!(conditions.iter().any(|condition| {
-            matches!(
-                condition,
-                crate::common::types::CoinCondition::CreateCoin(ph, amount)
-                    if *ph == PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH)
-                        && *amount == Amount::new(100)
-            )
-        }));
-
-        let error = phase
-            .validate_offer_settlement_created(env.allocator, &wallet_bundle)
-            .expect_err("wallet bundle without committed settlement must fail");
-        assert!(format!("{error:?}").contains("matching settlement coins"));
-
-        let encoded = bencodex::to_vec(&phase).expect("serialize offer-funded phase");
-        let restored: HandshakeInitiatorPhase =
-            bencodex::from_slice(&encoded).expect("restore offer-funded phase");
-        assert_eq!(restored.opening_fee, Amount::new(10));
-        assert_eq!(
-            restored.offer_settlement_coin.as_ref(),
-            Some(&settlement_coin)
-        );
-        assert_eq!(restored.launcher_coin.as_ref(), Some(&launcher_coin));
-    }
-
-    #[test]
-    fn wallet_offer_mismatch_exhaustion_fails_after_three_offers() {
-        let mut allocator = crate::common::types::AllocEncoder::new();
-        let (mut phase, _, _, launcher_parent) = waiting_for_offer_phase(&mut allocator);
-        let mut env = ChannelEnv::new(&mut allocator).expect("env");
-
-        for attempt in 1..=MAX_WALLET_OFFER_MISMATCHES {
-            let result = phase.provide_coin_spend_bundle(
-                &mut env,
-                SpendBundle {
-                    name: None,
-                    spends: vec![],
-                },
-            );
-            if attempt < MAX_WALLET_OFFER_MISMATCHES {
-                let effects = result.expect("mismatch before limit should retry");
-                let request = match effects.as_slice() {
-                    [Effect::NeedCoinSpend(request)] => request,
-                    _ => panic!("mismatch must emit one NeedCoinSpend"),
-                };
-                assert_eq!(request.coin_id.as_ref(), Some(&launcher_parent));
-            } else {
-                let error = result.expect_err("third mismatch must fail");
-                assert!(format!("{error:?}").contains(
-                    "wallet failed to spend the committed launcher parent after 3 funding offers"
-                ));
-            }
-        }
-
-        assert_eq!(phase.wallet_offer_mismatches, MAX_WALLET_OFFER_MISMATCHES);
-        assert!(matches!(phase.state, InitiatorState::WaitingForOffer(_, _)));
-        assert!(phase.channel_initiation_transaction.is_none());
-    }
-
-    #[test]
-    fn finished_submits_only_the_first_independently_delivered_handshake_f() {
+    fn finished_submits_only_the_first_independently_delivered_handshake_d() {
         let mut allocator = crate::common::types::AllocEncoder::new();
         let (e_bundle, f_bundle, announcement) = announcement_bound_bundles(&mut allocator);
         let e_coin = e_bundle.spends[0].coin.clone();
         let f_coin = f_bundle.spends[0].coin.clone();
         let mut phase = finished_phase(e_bundle, announcement);
         let mut env = ChannelEnv::new(&mut allocator).expect("env");
-        let encoded = encode_f(f_bundle);
+        let encoded = encode_d(f_bundle);
 
         let first = phase
             .received_message(&mut env, encoded.clone())
-            .expect("first F");
-        let second = phase.received_message(&mut env, encoded).expect("second F");
+            .expect("first D");
+        let second = phase.received_message(&mut env, encoded).expect("second D");
 
         let submitted: Vec<_> = first
             .iter()
@@ -1763,7 +1386,7 @@ mod finished_message_tests {
     }
 
     #[test]
-    fn finished_rejects_handshake_f_that_echoes_initiator_coins() {
+    fn finished_rejects_handshake_d_that_echoes_initiator_coins() {
         let mut allocator = crate::common::types::AllocEncoder::new();
         let (e_bundle, mut f_bundle, announcement) = announcement_bound_bundles(&mut allocator);
         let mut echoed_spend = e_bundle.spends[0].clone();
@@ -1772,14 +1395,14 @@ mod finished_message_tests {
         let mut phase = finished_phase(e_bundle, announcement);
         let mut env = ChannelEnv::new(&mut allocator).expect("env");
         let err = phase
-            .received_message(&mut env, encode_f(f_bundle))
-            .expect_err("echoed F");
+            .received_message(&mut env, encode_d(f_bundle))
+            .expect_err("echoed D");
         assert!(format!("{err:?}").contains("DoubleSpend"));
         assert!(!phase.transaction_pushed);
     }
 
     #[test]
-    fn finished_rejects_handshake_f_without_launcher_announcement() {
+    fn finished_rejects_handshake_d_without_launcher_announcement() {
         let mut allocator = crate::common::types::AllocEncoder::new();
         let (e_bundle, _, announcement) = announcement_bound_bundles(&mut allocator);
         let empty_conditions = ().to_clvm(&mut allocator).expect("empty conditions");
@@ -1790,9 +1413,9 @@ mod finished_message_tests {
         let mut phase = finished_phase(e_bundle, announcement);
         let mut env = ChannelEnv::new(&mut allocator).expect("env");
         let err = phase
-            .received_message(&mut env, encode_f(f_bundle))
-            .expect_err("silent F");
-        assert!(format!("{err:?}").contains("does not assert the launcher announcement"));
+            .received_message(&mut env, encode_d(f_bundle))
+            .expect_err("silent D");
+        assert!(format!("{err:?}").contains("spend bundle consensus validation failed"));
         assert!(!phase.transaction_pushed);
     }
 }

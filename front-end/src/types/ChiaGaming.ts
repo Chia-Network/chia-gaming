@@ -85,11 +85,6 @@ function requireGameSessionEvent(event: unknown): void {
         throw new Error('cradle returned an invalid NeedCoinSpend event');
       }
       return;
-    case 'NeedLauncherCoin':
-      if (payload !== true) {
-        throw new Error('cradle returned an invalid NeedLauncherCoin event');
-      }
-      return;
     default:
       throw new Error(`cradle returned an unknown GameSessionEvent: ${key}`);
   }
@@ -213,7 +208,6 @@ type GameSessionCreateConfig = WasmContract.GameSessionConfig;
 export interface CoinOfInterestEntry {
   label: string;
   id: string;
-  parentId?: string;
 }
 
 export interface WasmConnection {
@@ -227,14 +221,7 @@ export interface WasmConnection {
   registered_game_packages: () => Array<{ key: string; id: string }>;
 
   // Blockchain
-  set_funding_coin: (cid: number, coinstring: string) => WasmResult;
-  start_handshake: (cid: number) => WasmResult;
-  provide_launcher_coin: (
-    cid: number,
-    hex_launcher_coin: string,
-    opening_fee: string,
-    offer_settlement_coin?: string,
-  ) => WasmResult;
+  start_handshake: (cid: number, opening_fee: string) => WasmResult;
   provide_coin_spend_bundle: (cid: number, bundle_json: string) => WasmResult;
   provide_offer_bech32: (cid: number, offer_bech32: string) => WasmResult;
   wallet_callback_failed: (cid: number, reason: string) => WasmResult;
@@ -247,6 +234,7 @@ export interface WasmConnection {
   convert_spend_to_coinset_org: (spend: string) => unknown;
   aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
+  fee_payment_puzzle_hash_for_coin: (protocol_coin_id: string) => string;
   complete_fee_offer_to_coinset_org: (
     offer: string,
     fee: string,
@@ -396,25 +384,8 @@ export class ChiaGame {
     return this.wasm.deliver_message(this.session, msg);
   }
 
-  set_funding_coin(coin_string: string): WasmResult {
-    return this.wasm.set_funding_coin(this.session, coin_string);
-  }
-
-  start_handshake(): WasmResult {
-    return this.wasm.start_handshake(this.session);
-  }
-
-  provide_launcher_coin(
-    hex_launcher_coin: string,
-    opening_fee: string,
-    offer_settlement_coin?: string,
-  ): WasmResult {
-    return this.wasm.provide_launcher_coin(
-      this.session,
-      hex_launcher_coin,
-      opening_fee,
-      offer_settlement_coin,
-    );
+  start_handshake(opening_fee: string): WasmResult {
+    return this.wasm.start_handshake(this.session, opening_fee);
   }
 
   provide_coin_spend_bundle(bundle_json: string): WasmResult {
@@ -547,7 +518,11 @@ export interface InternalBlockchainInterface {
   // spends of the protocol coin and predicted nil burn coin. The host completes
   // the offer output into that burn chain before aggregation. Undefined on
   // backends that do not support fees.
-  createFeeOffer?(fee: bigint, concurrentSpendCoinId: string): Promise<string | null>;
+  createFeeOffer?(
+    fee: bigint,
+    concurrentSpendCoinId: string,
+    paymentPuzzleHash: string,
+  ): Promise<string | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
