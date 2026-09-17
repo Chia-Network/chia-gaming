@@ -426,25 +426,21 @@ function GameDashboard({
   view,
   balances,
   onAction,
-  getProtocolState,
   getCoins,
 }: {
   view: GameDashboardViewModel;
   balances: StatusBarBalanceSegment[] | null;
   onAction: (kind: GameDashboardActionKind) => void;
-  getProtocolState: () => string | null;
   getCoins: () => CoinOfInterestEntry[];
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [protocolText, setProtocolText] = useState<string | null>(null);
   const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
-  const refreshProtocolState = useCallback(() => {
-    setProtocolText(getProtocolState());
+  const refreshCoins = useCallback(() => {
     setCoins(getCoins());
-  }, [getProtocolState, getCoins]);
+  }, [getCoins]);
   useEffect(() => {
-    if (expanded) refreshProtocolState();
-  }, [expanded, refreshProtocolState]);
+    if (expanded) refreshCoins();
+  }, [expanded, refreshCoins]);
 
   const barColor = BANNER_TONE_BAR[view.bannerTone];
   return (
@@ -537,8 +533,14 @@ function GameDashboard({
         </div>
         {expanded && (
           <div className="mt-2">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs text-canvas-solid">Coin IDs</span>
+              <Button variant="ghost" color="neutral" size="sm" onClick={refreshCoins}>
+                Refresh
+              </Button>
+            </div>
             {coins.length > 0 && (
-              <div className="mb-2 flex flex-col gap-y-0.5 text-xs">
+              <div className="flex flex-col gap-y-0.5 text-xs">
                 {coins.map((coin) => (
                   <div key={`${coin.label}:${coin.id}`} className="flex flex-col gap-y-0.5">
                     <span className="flex min-w-0 flex-wrap gap-x-1">
@@ -551,15 +553,6 @@ function GameDashboard({
                 ))}
               </div>
             )}
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-xs text-canvas-solid">Protocol state</span>
-              <Button variant="ghost" color="neutral" size="sm" onClick={refreshProtocolState}>
-                Refresh
-              </Button>
-            </div>
-            <pre className="max-h-80 overflow-auto whitespace-pre rounded border border-canvas-line bg-canvas-bg p-2 text-[11px] font-mono text-canvas-text-contrast select-text cursor-text">
-              {protocolText ?? 'No active channel.'}
-            </pre>
           </div>
         )}
       </div>
@@ -773,15 +766,6 @@ const Shell = () => {
     if (!ps || !sessionController) return;
     sessionController.attachReliableTransport(ps.reliableTransport);
   }, []);
-
-  // The dashboard pulls the protocol-state pretty-print on demand (when its
-  // detail view is expanded) rather than having it pushed on every change. The
-  // live session registers a getter here; the dashboard reads through it.
-  const protocolStateGetterRef = useRef<(() => string | null) | null>(null);
-  const handleProtocolStateProviderChange = useCallback((getter: (() => string | null) | null) => {
-    protocolStateGetterRef.current = getter;
-  }, []);
-  const getProtocolState = useCallback(() => protocolStateGetterRef.current?.() ?? null, []);
 
   const coinsGetterRef = useRef<(() => CoinOfInterestEntry[]) | null>(null);
   const [frozenCoins, setFrozenCoins] = useState<CoinOfInterestEntry[]>([]);
@@ -4687,7 +4671,6 @@ const Shell = () => {
               view={dashboardView}
               balances={statusBarBalances}
               onAction={handleDashboardAction}
-              getProtocolState={getProtocolState}
               getCoins={getCoins}
             />
             <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
@@ -4736,7 +4719,6 @@ const Shell = () => {
                             onSessionPhaseChange={handleSessionPhaseChange}
                             onRestoreStatusChange={handleRestoreStatusChange}
                             onSessionModelChange={handleSessionModelChange}
-                            onProtocolStateProviderChange={handleProtocolStateProviderChange}
                             onCoinsProviderChange={handleCoinsProviderChange}
                             suppressPhaseReporting={shouldSuppressPhaseReporting(
                               restoreBlocked,

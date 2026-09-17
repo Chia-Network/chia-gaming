@@ -997,13 +997,6 @@ mod gaming_wasm {
     /// dashboard. This reads directly out of Rust (borrow-safe) rather than
     /// being pushed through notifications.
     #[wasm_bindgen]
-    pub fn protocol_state_pretty(cid: i32) -> Result<String, JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.protocol_state_pretty()
-        })
-    }
-
-    #[wasm_bindgen]
     pub fn historical_unroll_count(cid: i32) -> Result<Option<u32>, JsValue> {
         with_game(cid, move |cradle: &mut JsGameSession| {
             cradle
@@ -1025,7 +1018,7 @@ mod gaming_wasm {
         id: String,
     }
 
-    /// Labeled coin ids (hex) to show above the protocol state.
+    /// Labeled coin ids (hex) to show in the expanded dashboard.
     #[wasm_bindgen]
     pub fn coins_of_interest(cid: i32) -> Result<JsValue, JsValue> {
         let coins = with_game(cid, move |cradle: &mut JsGameSession| {

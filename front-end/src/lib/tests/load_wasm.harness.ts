@@ -238,7 +238,6 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
   // Fingerprint immediately: if serialize_game_session returned a WASM-memory view,
   // later WASM activity would mutate these bytes in place.
   const ownedFingerprint = Uint8Array.from(serialized);
-  const state = controller.getProtocolStatePretty() ?? 'unknown';
   try {
     const restoredId = WholeWasmObject.restore_session(serialized, `reload-regression-${stage}`);
     assert.equal(typeof restoredId, 'number');
@@ -256,8 +255,7 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
     );
   } catch (e) {
     throw new Error(
-      `${stage}: ${serialized.byteLength} byte cradle failed immediate restore; ` +
-        `protocol=${state}\n${String(e)}`,
+      `${stage}: ${serialized.byteLength} byte cradle failed immediate restore\n${String(e)}`,
       { cause: e },
     );
   }

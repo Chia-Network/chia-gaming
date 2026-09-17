@@ -551,7 +551,6 @@ export interface GameSessionProps {
   onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
-  onProtocolStateProviderChange?: (getter: (() => string | null) | null) => void;
   onCoinsProviderChange?: (
     getter: (() => import('../types/ChiaGaming').CoinOfInterestEntry[]) | null,
   ) => void;
@@ -570,7 +569,6 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   onSessionPhaseChange,
   onRestoreStatusChange,
   onSessionModelChange,
-  onProtocolStateProviderChange,
   onCoinsProviderChange,
   suppressPhaseReporting,
   blockchain,
@@ -595,16 +593,6 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   useEffect(() => {
     onSessionModelChange?.(session.sessionModel);
   }, [session.sessionModel, onSessionModelChange]);
-
-  useEffect(() => {
-    if (!onProtocolStateProviderChange) return;
-    if (terminalMode) {
-      onProtocolStateProviderChange(null);
-      return;
-    }
-    onProtocolStateProviderChange(() => sessionController.getProtocolStatePretty());
-    return () => onProtocolStateProviderChange(null);
-  }, [sessionController, onProtocolStateProviderChange, terminalMode]);
 
   useEffect(() => {
     if (!onCoinsProviderChange) return;

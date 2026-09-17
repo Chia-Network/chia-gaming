@@ -1616,16 +1616,6 @@ export class SessionController implements PollingGameSession {
     };
   }
 
-  getProtocolStatePretty(): string | null {
-    if (!this.cradle) return null;
-    try {
-      return this.cradle.protocol_state_pretty();
-    } catch (e) {
-      console.error('[wasm] getProtocolStatePretty failed:', e);
-      return null;
-    }
-  }
-
   getCoinsOfInterest(): CoinOfInterestEntry[] {
     if (!this.cradle) return [];
     try {

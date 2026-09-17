@@ -11,7 +11,6 @@ pub mod channel_state;
 /// with via a trait interface that's either local and synchronous or over a pipe.
 pub mod game_session;
 pub mod games;
-pub mod protocol_pretty;
 mod referee;
 pub mod session_phases;
 pub mod shutdown;
