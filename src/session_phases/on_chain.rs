@@ -138,13 +138,43 @@ fn on_chain_move_submission_effects(
     ]
 }
 
+fn ordered_coins_of_interest(
+    terminal_reward_coin: Option<&CoinString>,
+    current_game_coins: &[(GameID, CoinString)],
+    game_payout_coins: &[(GameID, CoinString)],
+) -> Vec<(CoinOfInterest, CoinString)> {
+    let mut coins = Vec::new();
+    if let Some(reward) = terminal_reward_coin.filter(|coin| {
+        coin.amount()
+            .is_some_and(|amount| amount > Amount::default())
+    }) {
+        coins.push((CoinOfInterest::UnrollChange, reward.clone()));
+    }
+    coins.extend(
+        current_game_coins
+            .iter()
+            .map(|(id, coin)| (CoinOfInterest::CurrentGame(*id), coin.clone())),
+    );
+    coins.extend(
+        game_payout_coins
+            .iter()
+            .filter(|(_, coin)| {
+                coin.amount()
+                    .is_some_and(|amount| amount > Amount::default())
+            })
+            .map(|(id, coin)| (CoinOfInterest::GameReward(*id), coin.clone())),
+    );
+    coins
+}
+
 impl OnChainPhase {
     pub fn new(args: OnChainPhaseArgs) -> Self {
-        let current_game_coins = args
+        let mut current_game_coins: Vec<_> = args
             .game_map
             .iter()
             .map(|(coin, state)| (state.game_id, coin.clone()))
             .collect();
+        current_game_coins.sort_by_key(|(game_id, _)| game_id.0);
         OnChainPhase {
             have_potato: args.have_potato,
             channel_timeout: args.channel_timeout,
@@ -2108,27 +2138,11 @@ impl PeerLifecyclePhase for OnChainPhase {
         // finished (settled, slashed, or forfeited) its coin is no longer of
         // interest. The forfeit path also prunes game_map, but the explicit
         // game_finished check makes the disappearance reliable regardless.
-        let mut coins: Vec<(CoinOfInterest, CoinString)> = self
-            .current_game_coins
-            .iter()
-            .map(|(id, coin)| (CoinOfInterest::CurrentGame(*id), coin.clone()))
-            .collect();
-        if let Some(reward) = self.terminal_reward_coin.as_ref().filter(|coin| {
-            coin.amount()
-                .is_some_and(|amount| amount > Amount::default())
-        }) {
-            coins.push((CoinOfInterest::UnrollChange, reward.clone()));
-        }
-        coins.extend(
-            self.game_payout_coins
-                .iter()
-                .filter(|(_, coin)| {
-                    coin.amount()
-                        .is_some_and(|amount| amount > Amount::default())
-                })
-                .map(|(id, coin)| (CoinOfInterest::GameReward(*id), coin.clone())),
-        );
-        coins
+        ordered_coins_of_interest(
+            self.terminal_reward_coin.as_ref(),
+            &self.current_game_coins,
+            &self.game_payout_coins,
+        )
     }
     fn has_active_on_chain_games(&self) -> bool {
         // `game_finished` means the referee has no legal next move. The game
@@ -2203,6 +2217,31 @@ impl PeerLifecyclePhase for OnChainPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unroll_outputs_are_listed_change_then_hands_in_creation_order() {
+        let coin = |amount| {
+            CoinString::from_parts(
+                &CoinString::default().to_coin_id(),
+                &PuzzleHash::default(),
+                &Amount::new(amount),
+            )
+        };
+        let coins = ordered_coins_of_interest(
+            Some(&coin(3)),
+            &[(GameID(1), coin(1)), (GameID(2), coin(2))],
+            &[],
+        );
+
+        assert_eq!(
+            coins.into_iter().map(|(kind, _)| kind).collect::<Vec<_>>(),
+            vec![
+                CoinOfInterest::UnrollChange,
+                CoinOfInterest::CurrentGame(GameID(1)),
+                CoinOfInterest::CurrentGame(GameID(2)),
+            ]
+        );
+    }
 
     #[test]
     fn on_chain_move_submission_precedes_playing_move_notification() {
