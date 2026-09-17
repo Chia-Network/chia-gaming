@@ -1111,6 +1111,7 @@ describe('wallet fee attachment on submission', () => {
     const bindCoinId = await coinIdFromBytes(
       toUint8(`${'cc'.repeat(32)}eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9`),
     );
+    expect(createFeeOffer).toHaveBeenCalledTimes(1);
     expect(createFeeOffer).toHaveBeenCalledWith(10n, bindCoinId, 'ef'.repeat(32));
     expect(aggregate).toHaveBeenCalledWith(jsonStringify([protocolBundle, feeSpend]));
     expect(spend).toHaveBeenCalledWith(
@@ -1142,7 +1143,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
-    expect(createFeeOffer).toHaveBeenCalled();
+    expect(createFeeOffer).toHaveBeenCalledTimes(1);
     expect(aggregate).not.toHaveBeenCalled();
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
@@ -1180,6 +1181,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
+    expect(createFeeOffer).toHaveBeenCalledTimes(1);
     expect(aggregate).not.toHaveBeenCalled();
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
@@ -1212,7 +1214,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
-    expect(createFeeOffer).toHaveBeenCalled();
+    expect(createFeeOffer).toHaveBeenCalledTimes(1);
     expect(aggregate).not.toHaveBeenCalled();
     // Zero-fee fallback still submits the protocol bundle.
     expect(spend).toHaveBeenCalledWith(

@@ -230,6 +230,7 @@ export class SessionController implements PollingGameSession {
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private transactionSubmitQueue: Promise<void> = Promise.resolve();
+  private queuedTransactionKeys = new Set<string>();
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
   private protocolStopped = false;
@@ -945,6 +946,14 @@ export class SessionController implements PollingGameSession {
 
   private submitTransaction(tx: SpendBundle) {
     if (this.transactionPublishNerfed) return;
+    const transactionKey = jsonStringify(tx);
+    if (this.queuedTransactionKeys.has(transactionKey)) {
+      log(
+        `[wasm] submitTransaction skipped duplicate queued transaction name=${tx.name ?? 'none'}`,
+      );
+      return;
+    }
+    this.queuedTransactionKeys.add(transactionKey);
     // Guard the chain with a diagnostic catch: an unhandled rejection escaping
     // this promise is invisible in CI except as a bare empty-message test
     // failure, which is exactly the symptom we are chasing.
@@ -962,6 +971,9 @@ export class SessionController implements PollingGameSession {
       })
       .catch((e) => {
         diagStack('transactionSubmitQueue rejected', e);
+      })
+      .finally(() => {
+        this.queuedTransactionKeys.delete(transactionKey);
       });
   }
 

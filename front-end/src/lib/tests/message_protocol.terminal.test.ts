@@ -672,6 +672,109 @@ describe('transaction submission', () => {
     blob.detachBlockchain(blockchain);
   });
 
+  it('does not request a second fee offer when fresh sync requeues an in-flight submission', async () => {
+    let resolveFeeOffer: ((offer: string) => void) | null = null;
+    const feeOffer = new Promise<string>((resolve) => {
+      resolveFeeOffer = resolve;
+    });
+    const createFeeOffer = jest.fn(() => feeOffer);
+    const spend = jest.fn().mockResolvedValue('');
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        createFeeOffer,
+        spend,
+        isConnected: () => true,
+      } as InternalBlockchainInterface,
+      60000,
+    );
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(
+      blockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
+    setActiveBlob(blob);
+    blob.rewardPuzzleHash = '11'.repeat(32);
+
+    const submission = testSpendBundle('01');
+    let initialQueued = true;
+    let replayQueued = false;
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest.fn(() => {
+        if (initialQueued) {
+          initialQueued = false;
+          return [submission];
+        }
+        if (replayQueued) {
+          replayQueued = false;
+          return [submission];
+        }
+        return [];
+      }),
+      resubmit_submitted: jest.fn(() => {
+        replayQueued = true;
+      }),
+    } as unknown as ChiaGame;
+    const protocolBundle = {
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: `0x${'aa'.repeat(32)}`,
+            puzzle_hash: `0x${'bb'.repeat(32)}`,
+            amount: 100n,
+          },
+        },
+      ],
+    };
+    const feeSpend = {
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: `0x${'cc'.repeat(32)}`,
+            puzzle_hash: `0x${'dd'.repeat(32)}`,
+            amount: 10n,
+          },
+        },
+      ],
+    };
+
+    blob.loadWasm(mockWasmConnection);
+    (blob as unknown as { wc: unknown }).wc = {
+      convert_spend_to_coinset_org: () => protocolBundle,
+      fee_payment_puzzle_hash_for_coin: () => 'ef'.repeat(32),
+      complete_fee_offer_to_coinset_org: () => feeSpend,
+      aggregate_coinset_spend_bundles: () => protocolBundle,
+    };
+    blob.setGameSession(cradle);
+    blob.getFee = () => 10n;
+
+    blob.processResult(wasmResult());
+    for (let attempt = 0; attempt < 20 && createFeeOffer.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    if (createFeeOffer.mock.calls.length === 0) {
+      resolveFeeOffer?.('offer1cleanup');
+      await transactionSubmitQueue(blob);
+    }
+    expect(createFeeOffer).toHaveBeenCalledTimes(1);
+
+    blob.attachBlockchain(blockchain);
+    blob.reportCoinStates(1n, []);
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+
+    resolveFeeOffer?.('offer1signed');
+    await transactionSubmitQueue(blob);
+
+    expect(createFeeOffer).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+    blob.detachBlockchain(blockchain);
+  });
+
   it('submits drained transactions sequentially', async () => {
     let resolveFirst: (() => void) | null = null;
     const spend = jest
