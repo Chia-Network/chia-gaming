@@ -4260,6 +4260,9 @@ const Shell = () => {
             style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}
             className="flex items-center gap-2"
           >
+            <span className="text-2xl font-black tracking-wide text-canvas-text-contrast">
+              BETA
+            </span>
             <img
               src="images/chia_logo.png"
               alt="Chia Logo"
