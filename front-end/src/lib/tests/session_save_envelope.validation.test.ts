@@ -34,6 +34,37 @@ describe('validateSessionSaveEnvelope', () => {
     ).not.toThrow();
   });
 
+  it('accepts a live resolved-unroll checkpoint while a game coin remains active', () => {
+    const save = activeSave({ channelStatus: { state: 'ResolvedUnrolled' } });
+
+    expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
+    expect(sessionModelFromSave(save).game.activeIds).toEqual(['game-1']);
+  });
+
+  it('preserves game coin metadata needed for hand labels through terminal reload', () => {
+    const save = baseSave({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [
+        {
+          label: 'Game 7 reward coin',
+          id: 'coin-7',
+          game_id: '7',
+          game_coin_kind: 'reward',
+        },
+      ],
+    });
+
+    const decoded = decodeSessionSaveEnvelope(save).save;
+    expect(decoded.phase === 'terminal' && decoded.terminal.coinsOfInterest).toEqual([
+      {
+        label: 'Game 7 reward coin',
+        id: 'coin-7',
+        game_id: '7',
+        game_coin_kind: 'reward',
+      },
+    ]);
+  });
+
   it.each([
     [
       'preferences',

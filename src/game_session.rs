@@ -532,18 +532,6 @@ impl GameSession {
             .force_stale_unroll_spend_for_testing(&mut env, saved)
     }
 
-    /// Render the current protocol-level peer state as indented text for the
-    /// dashboard. The peer is serialized to bencodex (via typetag, so the
-    /// concrete phase becomes the top-level tag) and re-read into an untyped
-    /// tree so the renderer can apply length- and name-based elision.
-    pub fn protocol_state_pretty(&self) -> Result<String, Error> {
-        let bytes = bencodex::to_vec(&self.peer)
-            .map_err(|e| Error::StrErr(format!("protocol_state_pretty serialize: {e:?}")))?;
-        let value: crate::protocol_pretty::BencodexValue = bencodex::from_slice(&bytes)
-            .map_err(|e| Error::StrErr(format!("protocol_state_pretty parse: {e:?}")))?;
-        Ok(crate::protocol_pretty::pretty_print(&value))
-    }
-
     pub fn historical_unroll_count(&self) -> Option<usize> {
         self.peer
             .channel_state()
@@ -551,14 +539,14 @@ impl GameSession {
             .map(|channel| channel.unroll_puzzle_hash_map().len())
     }
 
-    /// Labeled coin ids (hex) the dashboard shows above the protocol state so
-    /// the user can look them up in a block explorer. Sourced from the active
-    /// phase handler; an on-chain grouped hand can surface multiple entries.
-    pub fn coins_of_interest(&self) -> Vec<(String, String)> {
+    /// Labeled coin ids (hex) the dashboard shows for block-explorer lookup.
+    /// Sourced from the active phase handler; an on-chain grouped hand can
+    /// surface multiple entries.
+    pub fn coins_of_interest(&self) -> Vec<(CoinOfInterest, String)> {
         self.peer
             .coins_of_interest()
             .into_iter()
-            .map(|(kind, coin)| (kind.label().to_string(), coin.to_coin_id().to_string()))
+            .map(|(kind, coin)| (kind, coin.to_coin_id().to_string()))
             .collect()
     }
 

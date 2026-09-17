@@ -529,9 +529,31 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
           iStarted: requireBoolean(terminal.iStarted, 'terminal.iStarted'),
           coinsOfInterest: coins.map((coin, index) => {
             const fields = requireRecord(coin, `terminal.coinsOfInterest[${index}]`);
+            const gameId =
+              fields.game_id === undefined
+                ? undefined
+                : requireString(fields.game_id, `terminal.coinsOfInterest[${index}].game_id`);
+            const gameCoinKind =
+              fields.game_coin_kind === undefined
+                ? undefined
+                : requireString(
+                    fields.game_coin_kind,
+                    `terminal.coinsOfInterest[${index}].game_coin_kind`,
+                  );
+            if (
+              gameCoinKind !== undefined &&
+              gameCoinKind !== 'current' &&
+              gameCoinKind !== 'reward'
+            ) {
+              throw new Error(
+                `Garbled save: invalid terminal.coinsOfInterest[${index}].game_coin_kind`,
+              );
+            }
             return {
               label: requireString(fields.label, `terminal.coinsOfInterest[${index}].label`),
               id: requireString(fields.id, `terminal.coinsOfInterest[${index}].id`),
+              ...(gameId === undefined ? {} : { game_id: gameId }),
+              ...(gameCoinKind === undefined ? {} : { game_coin_kind: gameCoinKind }),
             };
           }),
           myAlias: requireNullableString(terminal.myAlias, 'terminal.myAlias', true),
@@ -568,8 +590,14 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   if (typedEnvelope.phase === 'terminal' && !isTerminalChannelSnapshot(save.channelStatus)) {
     throw new Error('Garbled save: terminal phase requires a terminal channelStatus');
   }
-  if (typedEnvelope.phase === 'live' && isTerminalChannelSnapshot(save.channelStatus)) {
-    throw new Error('Garbled save: live phase cannot contain a terminal channelStatus');
+  if (
+    typedEnvelope.phase === 'live' &&
+    isTerminalChannelSnapshot(save.channelStatus) &&
+    save.activeGameIds.length === 0
+  ) {
+    throw new Error(
+      'Garbled save: live phase cannot contain a terminal channelStatus without active games',
+    );
   }
 
   const activeIds = save.activeGameIds;

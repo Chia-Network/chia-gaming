@@ -203,6 +203,7 @@ export class SessionController implements PollingGameSession {
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private transactionSubmitQueue: Promise<void> = Promise.resolve();
+  private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
   private protocolStopped = false;
@@ -833,6 +834,11 @@ export class SessionController implements PollingGameSession {
         this.rxjsEmitter?.next({ type: 'error', error: finalized.warning });
       }
 
+      // Finalization captures the exact wallet-produced aggregate bundle in
+      // Rust. Persist it before broadcast so a reload replays these bytes
+      // instead of requesting and attaching a second fee source.
+      this.scheduleSave();
+      await this.flushPendingSave();
       const outcome = await blockchain.rpc.spend(
         blob,
         finalized.bundle,
@@ -1285,7 +1291,7 @@ export class SessionController implements PollingGameSession {
 
   private escalatePeerFailure(): void {
     if (!this.pendingPeerFailure || !this.cradle) return;
-    this.goOnChain();
+    this.goOnChain('peer-failure');
   }
 
   private deliverOrderedMessage(_msgno: bigint, msg: Uint8Array): void {
@@ -1551,16 +1557,6 @@ export class SessionController implements PollingGameSession {
     };
   }
 
-  getProtocolStatePretty(): string | null {
-    if (!this.cradle) return null;
-    try {
-      return this.cradle.protocol_state_pretty();
-    } catch (e) {
-      console.error('[wasm] getProtocolStatePretty failed:', e);
-      return null;
-    }
-  }
-
   getCoinsOfInterest(): CoinOfInterestEntry[] {
     if (!this.cradle) return [];
     try {
@@ -1724,8 +1720,12 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  goOnChain(): boolean {
+  goOnChain(origin: 'dashboard' | 'peer-failure' | 'hub-remap' | 'direct' = 'direct'): boolean {
     if (!this.cradle) throw new Error('no cradle');
+    this.goOnChainSequence += 1;
+    log(
+      `[wasm] goOnChain invoked sequence=${this.goOnChainSequence} origin=${origin} alreadyOnChain=${this.onChain}`,
+    );
     try {
       const result = this.cradle.go_on_chain();
       const startedOnChain = result.actionSucceeded && result.disposition.kind === 'active';

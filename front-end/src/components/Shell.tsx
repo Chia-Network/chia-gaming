@@ -5,6 +5,7 @@ import { useShellSessionState } from '../hooks/useShellSessionState';
 import {
   PendingSessionProposal,
   isAcceptSessionTransition,
+  peerConnectionForSavedSession,
 } from '../lib/session/shellSessionState';
 import {
   persistFreshStartCheckpoint,
@@ -149,6 +150,7 @@ import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
   PRE_ACTIVE_CHANNEL_STATES,
+  selectDashboardCoins,
   selectGameDashboardView,
   selectGameTabConnected,
   selectStatusBarBalances,
@@ -426,25 +428,14 @@ function GameDashboard({
   view,
   balances,
   onAction,
-  getProtocolState,
-  getCoins,
+  coins,
 }: {
   view: GameDashboardViewModel;
   balances: StatusBarBalanceSegment[] | null;
   onAction: (kind: GameDashboardActionKind) => void;
-  getProtocolState: () => string | null;
-  getCoins: () => CoinOfInterestEntry[];
+  coins: CoinOfInterestEntry[];
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [protocolText, setProtocolText] = useState<string | null>(null);
-  const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
-  const refreshProtocolState = useCallback(() => {
-    setProtocolText(getProtocolState());
-    setCoins(getCoins());
-  }, [getProtocolState, getCoins]);
-  useEffect(() => {
-    if (expanded) refreshProtocolState();
-  }, [expanded, refreshProtocolState]);
 
   const barColor = BANNER_TONE_BAR[view.bannerTone];
   return (
@@ -537,8 +528,8 @@ function GameDashboard({
         </div>
         {expanded && (
           <div className="mt-2">
-            {coins.length > 0 && (
-              <div className="mb-2 flex flex-col gap-y-0.5 text-xs">
+            {coins.length > 0 ? (
+              <div className="flex flex-col gap-y-0.5 text-xs">
                 {coins.map((coin) => (
                   <div key={`${coin.label}:${coin.id}`} className="flex flex-col gap-y-0.5">
                     <span className="flex min-w-0 flex-wrap gap-x-1">
@@ -550,16 +541,9 @@ function GameDashboard({
                   </div>
                 ))}
               </div>
+            ) : (
+              <span className="text-xs text-canvas-solid">No coins yet</span>
             )}
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-xs text-canvas-solid">Protocol state</span>
-              <Button variant="ghost" color="neutral" size="sm" onClick={refreshProtocolState}>
-                Refresh
-              </Button>
-            </div>
-            <pre className="max-h-80 overflow-auto whitespace-pre rounded border border-canvas-line bg-canvas-bg p-2 text-[11px] font-mono text-canvas-text-contrast select-text cursor-text">
-              {protocolText ?? 'No active channel.'}
-            </pre>
           </div>
         )}
       </div>
@@ -774,22 +758,20 @@ const Shell = () => {
     sessionController.attachReliableTransport(ps.reliableTransport);
   }, []);
 
-  // The dashboard pulls the protocol-state pretty-print on demand (when its
-  // detail view is expanded) rather than having it pushed on every change. The
-  // live session registers a getter here; the dashboard reads through it.
-  const protocolStateGetterRef = useRef<(() => string | null) | null>(null);
-  const handleProtocolStateProviderChange = useCallback((getter: (() => string | null) | null) => {
-    protocolStateGetterRef.current = getter;
+  const coinsRef = useRef<CoinOfInterestEntry[]>([]);
+  const [coins, setCoins] = useState<CoinOfInterestEntry[]>([]);
+  const handleCoinsChange = useCallback((next: CoinOfInterestEntry[]) => {
+    const remaining = new Map(next.map((coin) => [coin.id, coin]));
+    const ordered = coinsRef.current.flatMap((coin) => {
+      const updated = remaining.get(coin.id);
+      if (!updated) return [];
+      remaining.delete(coin.id);
+      return [updated];
+    });
+    ordered.push(...remaining.values());
+    coinsRef.current = ordered;
+    setCoins(ordered);
   }, []);
-  const getProtocolState = useCallback(() => protocolStateGetterRef.current?.() ?? null, []);
-
-  const coinsGetterRef = useRef<(() => CoinOfInterestEntry[]) | null>(null);
-  const [frozenCoins, setFrozenCoins] = useState<CoinOfInterestEntry[]>([]);
-  const handleCoinsProviderChange = useCallback((getter: (() => CoinOfInterestEntry[]) | null) => {
-    coinsGetterRef.current = getter;
-    if (getter) setFrozenCoins([]);
-  }, []);
-  const getCoins = useCallback(() => coinsGetterRef.current?.() ?? frozenCoins, [frozenCoins]);
 
   const setSessionConfig = useCallback((value: GameSessionParams | null) => {
     sessionConfigRef.current = value;
@@ -804,9 +786,12 @@ const Shell = () => {
     (value: SessionModel | null | ((prev: SessionModel | null) => SessionModel | null)) => {
       const next = typeof value === 'function' ? value(dashboardSessionModelRef.current) : value;
       dashboardSessionModelRef.current = next;
+      if (next === null) {
+        handleCoinsChange([]);
+      }
       shellDispatchRef.current({ type: 'setDashboardSessionModel', value: next });
     },
-    [],
+    [handleCoinsChange],
   );
 
   const setSessionPhase = useCallback((value: SessionPhase) => {
@@ -2418,7 +2403,7 @@ const Shell = () => {
                 } else if (controllerRestoreStatus === 'failed') {
                   pendingHubRemapEscalationRef.current = null;
                   setSessionError(true);
-                } else if (sessionController?.goOnChain()) {
+                } else if (sessionController?.goOnChain('hub-remap')) {
                   pendingHubRemapEscalationRef.current = null;
                   saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
                   if (save) save.identity.myHubPlayerId = playerId;
@@ -2991,7 +2976,7 @@ const Shell = () => {
       }
       const alias =
         sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
-      const terminalCoins = coinsGetterRef.current?.() ?? frozenCoins;
+      const terminalCoins = selectDashboardCoins(model, coinsRef.current);
       const identity = {
         myName: alias ?? '',
         opponentName:
@@ -3017,7 +3002,7 @@ const Shell = () => {
         return false;
       }
 
-      setFrozenCoins(terminal.coins);
+      handleCoinsChange(terminal.coins);
       dashboardSessionModelRef.current = terminal.model;
       setDashboardSessionModel(terminal.model);
       setFinishedSessionIdentity(terminal.identity);
@@ -3057,7 +3042,7 @@ const Shell = () => {
     },
     [
       clearSessionTimers,
-      frozenCoins,
+      handleCoinsChange,
       presenceBusy,
       resetPeerRelayState,
       setDashboardSessionModel,
@@ -3129,7 +3114,7 @@ const Shell = () => {
         if (!pending) {
           throw new Error('Deferred hub remap escalation is missing its pending identity');
         }
-        if (!sessionController?.goOnChain()) {
+        if (!sessionController?.goOnChain('hub-remap')) {
           setSessionError(true);
           markPeerDead();
           return;
@@ -3245,7 +3230,7 @@ const Shell = () => {
       const model = sessionModelFromSave(save);
       dashboardSessionModelRef.current = model;
       setDashboardSessionModel(model);
-      setFrozenCoins(save.terminal.coinsOfInterest);
+      handleCoinsChange(save.terminal.coinsOfInterest);
       setFinishedSessionIdentity({
         myName: save.terminal.myAlias ?? peekAlias() ?? '',
         opponentName: save.terminal.opponentAlias ?? undefined,
@@ -3264,6 +3249,7 @@ const Shell = () => {
       setResuming(false);
     },
     [
+      handleCoinsChange,
       presenceBusy,
       setActiveTab,
       setDashboardSessionModel,
@@ -3326,7 +3312,7 @@ const Shell = () => {
           channelTimeout: parseOptionalBigInt(pairing.channelTimeout),
           unrollTimeout: parseOptionalBigInt(pairing.unrollTimeout),
         });
-        setPeerConn(stablePeerConn);
+        setPeerConn(peerConnectionForSavedSession(stablePeerConn, save));
       } else if (transportDisposition !== null) {
         setSessionConfig(null);
         setPeerConn(null);
@@ -3845,7 +3831,7 @@ const Shell = () => {
   }, [setDashboardSessionModel, startCleanShutdownGrace]);
 
   const performDashboardGoOnChain = useCallback(() => {
-    if (!sessionController?.goOnChain()) return;
+    if (!sessionController?.goOnChain('dashboard')) return;
     sessionPhaseRef.current = 'on-chain';
     setSessionPhase('on-chain');
     hubConnRef.current?.setBusy(presenceBusy('on-chain'));
@@ -3871,6 +3857,7 @@ const Shell = () => {
 
   const handleDashboardAction = useCallback(
     (kind: GameDashboardActionKind) => {
+      if (bootState.kind !== 'ready') return;
       switch (kind) {
         case 'cancel': {
           // During Accept, Cancel before the checkpoint write lands must not wipe
@@ -3920,6 +3907,7 @@ const Shell = () => {
     [
       abandonActiveChannel,
       abortAcceptIfActive,
+      bootState.kind,
       cancelDashboardSession,
       requestDashboardCleanShutdown,
       requestDashboardGoOnChain,
@@ -4118,11 +4106,15 @@ const Shell = () => {
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
     setupPending: shouldSynthesizeSetupPending(sessionPaneTransition, hasLiveSessionModel),
+    actionsBlocked: bootState.kind !== 'ready',
     cleanShutdownGraceActive,
     abandonEnabled,
     peerLiveness,
   });
   const statusBarBalances = selectStatusBarBalances(dashboardSessionModel);
+  const dashboardCoins = dashboardSessionModel
+    ? selectDashboardCoins(dashboardSessionModel, coins)
+    : coins;
   const sessionConsentOverlay = pendingAdvisory ? (
     <div className="absolute inset-0 flex items-center justify-center bg-canvas-bg/80 backdrop-blur-sm z-50">
       <div className="bg-canvas-bg border border-canvas-border rounded-lg p-6 shadow-lg max-w-sm text-center">
@@ -4184,9 +4176,10 @@ const Shell = () => {
   ) : null;
 
   // --- Main tabbed app ---
-  // autoResuming with session hydrated: mount the real tree invisibly so
-  // GameSession/hub can finish restore, then flip to ready in one paint.
-  const shellHidden = bootState.kind === 'autoResuming';
+  // Once the session is hydrated, show the real tree while GameSession/hub
+  // finish restoring. Protocol actions remain gated, and GameSession renders
+  // its restoring state instead of leaving the page blank if reconciliation
+  // takes time.
   return (
     <>
       <UncaughtClientErrorReporter />
@@ -4197,10 +4190,8 @@ const Shell = () => {
           position: 'relative',
           width: '100vw',
           height: '100vh',
-          ...(shellHidden ? { visibility: 'hidden' as const } : {}),
         }}
         className="bg-canvas-bg-subtle text-canvas-text"
-        aria-hidden={shellHidden || undefined}
       >
         {/* Tab bar with branding */}
         <div
@@ -4283,6 +4274,9 @@ const Shell = () => {
             style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}
             className="flex items-center gap-2"
           >
+            <span className="text-2xl font-black tracking-wide text-canvas-text-contrast">
+              BETA
+            </span>
             <img
               src="images/chia_logo.png"
               alt="Chia Logo"
@@ -4687,8 +4681,7 @@ const Shell = () => {
               view={dashboardView}
               balances={statusBarBalances}
               onAction={handleDashboardAction}
-              getProtocolState={getProtocolState}
-              getCoins={getCoins}
+              coins={dashboardCoins}
             />
             <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
               {(() => {
@@ -4736,8 +4729,7 @@ const Shell = () => {
                             onSessionPhaseChange={handleSessionPhaseChange}
                             onRestoreStatusChange={handleRestoreStatusChange}
                             onSessionModelChange={handleSessionModelChange}
-                            onProtocolStateProviderChange={handleProtocolStateProviderChange}
-                            onCoinsProviderChange={handleCoinsProviderChange}
+                            onCoinsChange={handleCoinsChange}
                             suppressPhaseReporting={shouldSuppressPhaseReporting(
                               restoreBlocked,
                               terminalPresentation != null,

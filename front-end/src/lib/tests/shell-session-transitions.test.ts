@@ -1,9 +1,11 @@
 import {
   initialShellSessionState,
   isAcceptSessionTransition,
+  peerConnectionForSavedSession,
   shellSessionReducer,
   type ShellSessionState,
 } from '../session/shellSessionState';
+import { activeSave } from './session_save_envelope.fixtures';
 
 describe('shellSessionReducer', () => {
   it('identifies accept transitions', () => {
@@ -98,6 +100,34 @@ describe('shellSessionReducer', () => {
     });
     expect(state.sessionConfig?.pairingToken).toBe('token-1');
     expect(state.peerConn).not.toBeNull();
+  });
+
+  it('provides persisted reliable identity before the hub peer reconnects', () => {
+    const save = activeSave({
+      gameSessionId: 'ab'.repeat(16),
+      messageNumber: 7n,
+      remoteNumber: 5n,
+      unackedMessages: [{ msgno: 6n, msg: new Uint8Array([1, 2, 3]) }],
+    });
+    if (save.phase !== 'live') throw new Error('expected live save fixture');
+    const idleConnection = {
+      sendMessage: () => false,
+      sendAck: () => false,
+      sendKeepalive: () => false,
+      hostLog: () => {},
+      close: () => {},
+    };
+
+    const connection = peerConnectionForSavedSession(idleConnection, save);
+
+    expect(connection.reliableState).toEqual({
+      sessionId: 'ab'.repeat(16),
+      messageNumber: 7n,
+      remoteNumber: 5n,
+      unackedMessages: [{ msgno: 6n, msg: new Uint8Array([1, 2, 3]) }],
+      disposition: 'active',
+    });
+    expect(connection.reliableState?.unackedMessages).not.toBe(save.live.unackedMessages);
   });
 
   it('enters and leaves a transition', () => {

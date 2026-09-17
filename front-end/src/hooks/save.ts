@@ -1,3 +1,4 @@
+import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
 import {
   deleteSessionRecord,
   type DurableRejectionTombstone,
@@ -929,7 +930,7 @@ export function setTheme(theme: 'dark' | 'light'): void {
 // --- Default fee ---
 
 export function getDefaultFee(): bigint {
-  return loadState().preferences.defaultFee ?? 0n;
+  return loadState().preferences.defaultFee ?? MIN_NONZERO_FEE_MOJOS;
 }
 
 export function setDefaultFee(fee: bigint): void {

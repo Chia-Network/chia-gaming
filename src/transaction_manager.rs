@@ -57,6 +57,12 @@ struct SubmittedTx {
     delivery_state: SubmissionDeliveryState,
     bundle: SpendBundle,
     fee_intent: SubmissionFeeIntent,
+    /// Exact bundle produced by Rust after incorporating the wallet's fee
+    /// source. Once present, every retry replays these bytes unchanged.
+    #[serde(default)]
+    finalized_bundle: Option<SpendBundle>,
+    #[serde(default)]
+    finalized_applied_fee: u64,
     /// Coin ids this transaction spends.  An output coin's parent is one of
     /// these, which is how a vanished output is matched back to its creator.
     spent_coin_ids: Vec<CoinID>,
@@ -441,7 +447,13 @@ impl<C> TransactionManager<C> {
         self.submitted
             .iter()
             .find(|tx| tx.id == id)
-            .map(|tx| tx.fee_intent.clone())
+            .map(|tx| {
+                if tx.finalized_bundle.is_some() {
+                    SubmissionFeeIntent::AlreadyPaid
+                } else {
+                    tx.fee_intent.clone()
+                }
+            })
             .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))
     }
 
@@ -543,6 +555,8 @@ impl<C> TransactionManager<C> {
                     delivery_state: SubmissionDeliveryState::AwaitingWalletAck,
                     bundle: submission.bundle.clone(),
                     fee_intent: fee_intent.clone(),
+                    finalized_bundle: None,
+                    finalized_applied_fee: 0,
                     spent_coin_ids,
                     expected_output_coins: outputs,
                     landed: false,
@@ -551,11 +565,23 @@ impl<C> TransactionManager<C> {
                 Some(id)
             };
             if let Some(id) = id.filter(|id| emitted_ids.insert(*id)) {
+                let retained = self
+                    .submitted
+                    .iter()
+                    .find(|tx| tx.id == id)
+                    .expect("drained submission must be retained");
                 out.push(DrainedSubmission {
                     id,
-                    bundle: submission.bundle,
-                    expiry: submission.expiry,
-                    fee_intent,
+                    bundle: retained
+                        .finalized_bundle
+                        .clone()
+                        .unwrap_or(submission.bundle),
+                    expiry: retained.expiry,
+                    fee_intent: if retained.finalized_bundle.is_some() {
+                        SubmissionFeeIntent::AlreadyPaid
+                    } else {
+                        fee_intent
+                    },
                 });
             }
         }
@@ -566,7 +592,7 @@ impl<C> TransactionManager<C> {
     /// is untrusted: attachment failures follow the captured Rust policy, while
     /// an unknown id or retained-state invariant remains a hard error.
     pub fn finalize_submission(
-        &self,
+        &mut self,
         id: u64,
         fee_source: SubmissionFeeSource,
         agg_sig_me_additional_data: &Hash,
@@ -574,10 +600,22 @@ impl<C> TransactionManager<C> {
     ) -> Result<FinalizedSubmission, Error> {
         let submission = self
             .submitted
-            .iter()
+            .iter_mut()
             .find(|tx| tx.id == id)
             .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))?;
-        match &submission.fee_intent {
+        if let Some(bundle) = &submission.finalized_bundle {
+            if !matches!(fee_source, SubmissionFeeSource::NotRequested) {
+                return Err(Error::StrErr(format!(
+                    "finalized submission {id} received another fee source"
+                )));
+            }
+            return Ok(FinalizedSubmission {
+                bundle: bundle.clone(),
+                applied_fee: submission.finalized_applied_fee,
+                warning: None,
+            });
+        }
+        let finalized = match &submission.fee_intent {
             SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
                 if !matches!(fee_source, SubmissionFeeSource::NotRequested) {
                     return Err(Error::StrErr(format!(
@@ -627,7 +665,10 @@ impl<C> TransactionManager<C> {
                     },
                 }
             }
-        }
+        }?;
+        submission.finalized_bundle = Some(finalized.bundle.clone());
+        submission.finalized_applied_fee = finalized.applied_fee;
+        Ok(finalized)
     }
 
     pub fn acknowledge_submission(&mut self, id: u64) -> Result<(), Error> {
@@ -672,11 +713,9 @@ impl<C> TransactionManager<C> {
     pub fn requeue_submitted(&mut self) {
         let height = self.last_height;
         self.retain_submitted(|tx| !matches!(tx.expiry, Some(expiry) if height >= expiry));
-        for tx in self
-            .submitted
-            .iter()
-            .filter(|tx| tx.delivery_state == SubmissionDeliveryState::AwaitingWalletAck)
-        {
+        for tx in self.submitted.iter().filter(|tx| {
+            tx.delivery_state == SubmissionDeliveryState::AwaitingWalletAck && !tx.landed
+        }) {
             if self
                 .pending_submissions
                 .iter()
@@ -1076,10 +1115,15 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             .collect();
         for tx in self.submitted.iter_mut() {
             if !tx.expected_output_coins.is_empty() {
-                tx.landed = tx
+                let output_observed = tx
                     .expected_output_coins
                     .iter()
                     .any(|coin| observed_created.contains(coin));
+                if output_observed {
+                    tx.landed = true;
+                } else if reorg || spend_reversal {
+                    tx.landed = false;
+                }
             }
         }
         let current_height = height;
@@ -3253,6 +3297,25 @@ mod tests {
                 "Configured fee was not applied: malformed provider source. The transaction will be attempted without a fee."
             )
         );
+        manager.last_height = 2;
+        let mut allocator = AllocEncoder::new();
+        manager
+            .report_height(&mut allocator, 1)
+            .expect("reorg replay");
+        let replay = manager.drain_submissions().unwrap().remove(0);
+        assert_eq!(replay.id, drained.id);
+        assert_eq!(replay.bundle, finalized.bundle);
+        assert_eq!(replay.fee_intent, SubmissionFeeIntent::AlreadyPaid);
+        let replay_finalized = manager
+            .finalize_submission(
+                replay.id,
+                SubmissionFeeSource::NotRequested,
+                &Hash::default(),
+                1,
+            )
+            .unwrap();
+        assert_eq!(replay_finalized.bundle, finalized.bundle);
+        assert_eq!(replay_finalized.applied_fee, finalized.applied_fee);
         assert!(manager
             .finalize_submission(
                 drained.id + 1,
@@ -3512,7 +3575,7 @@ mod tests {
     }
 
     #[test]
-    fn winning_spend_retains_submission_for_replay() {
+    fn landed_spend_is_not_requeued_on_reload_and_is_retained_until_buried() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(32);
         let child = CoinString::from_parts(
@@ -3535,8 +3598,8 @@ mod tests {
         assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
 
         // The input is spent and the retained tx's expected child appears.  That
-        // means this transaction won, so it stays retained for replay if a later
-        // reload or reorg needs it.
+        // means this transaction won, so it stays retained for explicit reorg
+        // recovery but an ordinary reload does not resubmit it.
         mgr.report_coin_states(
             &mut allocator,
             12,
@@ -3555,9 +3618,8 @@ mod tests {
         )
         .expect("report");
         mgr.requeue_submitted();
-        let replay = mgr.drain_submissions().unwrap();
-        assert_eq!(replay.len(), 1);
-        assert_eq!(replay[0].bundle.name.as_deref(), Some("spend-coin"));
+        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.submitted.len(), 1);
 
         // Once the spent input is buried deeply enough, the input coin is evicted
         // and the winning transaction no longer needs to be retained.
@@ -3565,8 +3627,8 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 12 + depth, &[])
             .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
-        mgr.report_height(&mut allocator, 12 + depth - 1)
-            .expect("rollback after finality eviction");
+        assert!(mgr.submitted.is_empty());
+        mgr.requeue_submitted();
         assert!(mgr.drain_submissions().unwrap().is_empty());
     }
 

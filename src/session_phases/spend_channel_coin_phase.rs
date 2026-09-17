@@ -1467,7 +1467,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             coin.amount()
                 .is_some_and(|amount| amount > Amount::default())
         }) {
-            coins.push((CoinOfInterest::UnrollPayout, reward.clone()));
+            coins.push((CoinOfInterest::UnrollChange, reward.clone()));
         }
         coins
     }

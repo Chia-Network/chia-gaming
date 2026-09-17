@@ -1,7 +1,9 @@
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
+  selectDashboardCoins,
   selectGameDashboardView,
+  type SessionModel,
 } from '../session/model';
 import type { SettlementOutcome } from '../settlement';
 import {
@@ -38,7 +40,29 @@ function keyedTerminalGame(
 }
 
 describe('terminal session model', () => {
-  it('shows a premature opponent timeout as an explicit ended detail', () => {
+  it('uses hand ordinals and removes spent terminal game coins', () => {
+    const model = {
+      game: {
+        activeIds: ['6'],
+        currentHandIds: ['6', '4'],
+      },
+    } as unknown as SessionModel;
+
+    expect(
+      selectDashboardCoins(model, [
+        { label: 'Game 6 coin', id: 'a', game_id: '6', game_coin_kind: 'current' },
+        { label: 'Game 4 coin', id: 'b', game_id: '4', game_coin_kind: 'current' },
+        { label: 'Game 4 reward coin', id: 'c', game_id: '4', game_coin_kind: 'reward' },
+        { label: 'Unroll change coin', id: 'd' },
+      ]),
+    ).toEqual([
+      { label: 'Hand 1 coin', id: 'a', game_id: '6', game_coin_kind: 'current' },
+      { label: 'Hand 2 reward coin', id: 'c', game_id: '4', game_coin_kind: 'reward' },
+      { label: 'Unroll change coin', id: 'd' },
+    ]);
+  });
+
+  it('does not retain a premature opponent-timeout state after the game finishes', () => {
     const view = selectGameDashboardView(
       createSessionModel({
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
@@ -46,11 +70,11 @@ describe('terminal session model', () => {
       }),
     );
 
-    expect(view.handStatusLabel).toBe('Ended');
-    expect(view.handDetail).toBe('Opponent timed out');
+    expect(view.handStatusLabel).toBe('No hand');
+    expect(view.handDetail).toBeNull();
   });
 
-  it('keeps each timeout side’s ended detail distinct', () => {
+  it('does not retain our timeout state after the game finishes', () => {
     const timedOut = selectGameDashboardView(
       createSessionModel({
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
@@ -62,11 +86,11 @@ describe('terminal session model', () => {
       }),
     );
 
-    expect(timedOut.handStatusLabel).toBe('Ended');
-    expect(timedOut.handDetail).toBe('Timed out waiting for our move');
+    expect(timedOut.handStatusLabel).toBe('No hand');
+    expect(timedOut.handDetail).toBeNull();
   });
 
-  it('shows settled cleanly as an ended detail', () => {
+  it('does not retain settled-cleanly state after the game finishes', () => {
     const view = selectGameDashboardView(
       createSessionModel({
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
@@ -74,11 +98,11 @@ describe('terminal session model', () => {
       }),
     );
 
-    expect(view.handStatusLabel).toBe('Ended');
-    expect(view.handDetail).toBe('Settled cleanly');
+    expect(view.handStatusLabel).toBe('No hand');
+    expect(view.handDetail).toBeNull();
   });
 
-  it('shows move-too-late as an ended detail distinct from forfeit', () => {
+  it('does not retain move-too-late state after the game finishes', () => {
     const view = selectGameDashboardView(
       createSessionModel({
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ResolvedUnrolled' } },
@@ -86,8 +110,8 @@ describe('terminal session model', () => {
       }),
     );
 
-    expect(view.handStatusLabel).toBe('Ended');
-    expect(view.handDetail).toBe('Attempt to move failed');
+    expect(view.handStatusLabel).toBe('No hand');
+    expect(view.handDetail).toBeNull();
   });
 
   it('parses GameSettled into glossary labels without session-level Folded', () => {

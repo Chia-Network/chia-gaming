@@ -208,6 +208,8 @@ type GameSessionCreateConfig = WasmContract.GameSessionConfig;
 export interface CoinOfInterestEntry {
   label: string;
   id: string;
+  game_id?: string;
+  game_coin_kind?: 'current' | 'reward';
 }
 
 export interface TransactionSubmission {
@@ -296,7 +298,6 @@ export interface WasmConnection {
   ) => WasmResult;
   deliver_message: (cid: number, inbound_message: Uint8Array) => WasmResult;
   get_identity: (cid: number) => IChiaIdentity;
-  protocol_state_pretty: (cid: number) => string;
   historical_unroll_count: (cid: number) => number | undefined;
   coins_of_interest: (cid: number) => CoinOfInterestEntry[];
   serialize_game_session: (cid: number) => Uint8Array;
@@ -330,10 +331,6 @@ export class ChiaGame {
 
   cancel_proposal(game_id: string): WasmResult {
     return this.wasm.cancel_proposal(this.session, game_id);
-  }
-
-  protocol_state_pretty(): string {
-    return this.wasm.protocol_state_pretty(this.session);
   }
 
   historical_unroll_count(): bigint | undefined {

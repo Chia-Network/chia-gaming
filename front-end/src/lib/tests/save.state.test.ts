@@ -13,6 +13,7 @@ import {
   clearSessionId,
   regenerateSessionId,
   getBlockchainType,
+  getDefaultFee,
   loadState,
   setAlias,
   flushSessionSave,
@@ -38,6 +39,10 @@ import {
 } from './save.harness';
 
 describe('flat state', () => {
+  it('defaults the transaction fee to the effective nonzero floor', () => {
+    expect(getDefaultFee()).toBe(100_000_000n);
+  });
+
   it('getPlayerId generates and persists a player ID', () => {
     const id = getPlayerId();
     expect(id).toBeTruthy();

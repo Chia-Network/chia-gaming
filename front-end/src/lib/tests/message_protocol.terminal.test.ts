@@ -13,7 +13,6 @@ import {
   channelStatus,
   createReadyBlob,
   enc,
-  flushPromiseJobs,
   makeMockCradle,
   makePeerConn,
   mockBlockchain,
@@ -411,12 +410,17 @@ describe('transaction submission', () => {
 
   it('drops queued publishes after controller cleanup without cancelling an in-flight publish', async () => {
     let resolveFirst: (() => void) | null = null;
+    let markFirstStarted: (() => void) | null = null;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
     const spend = jest
       .fn()
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             resolveFirst = () => resolve({ status: 'acknowledged' });
+            markFirstStarted?.();
           }),
       )
       .mockResolvedValue({ status: 'acknowledged' });
@@ -442,7 +446,7 @@ describe('transaction submission', () => {
 
     submitTransaction(blob, testSpendBundle('09'));
     submitTransaction(blob, testSpendBundle('0a'));
-    await flushPromiseJobs();
+    await firstStarted;
     expect(spend).toHaveBeenCalledTimes(1);
 
     blob.cleanup();
@@ -674,12 +678,17 @@ describe('transaction submission', () => {
 
   it('submits drained transactions sequentially', async () => {
     let resolveFirst: (() => void) | null = null;
+    let markFirstStarted: (() => void) | null = null;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
     const spend = jest
       .fn()
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             resolveFirst = () => resolve({ status: 'acknowledged' });
+            markFirstStarted?.();
           }),
       )
       .mockResolvedValue({ status: 'acknowledged' });
@@ -714,7 +723,7 @@ describe('transaction submission', () => {
     blob.setGameSession(cradle);
     blob.processResult(wasmResult());
 
-    await flushPromiseJobs();
+    await firstStarted;
     expect(spend).toHaveBeenCalledTimes(1);
     resolveFirst?.();
     await transactionSubmitQueue(blob);
