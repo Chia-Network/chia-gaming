@@ -143,6 +143,25 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(input.fee).toBeUndefined();
   });
 
+  it('createFeeSpend uses the native fee and binds directly to the protocol coin', async () => {
+    const calls = mockGraphql((query) => {
+      if (query.includes('createSpendWithExtraConditions')) {
+        return {
+          createSpendWithExtraConditions: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
+        };
+      }
+      return {};
+    });
+    const iface = new CloudBlockchainInterface();
+    const protocolCoinId = 'ab'.repeat(32);
+    await expect(iface.createFeeSpend(500n, protocolCoinId)).rejects.toThrow(/popup/i);
+    const input = findSpendMutation(calls);
+    expect(input.amount).toBe('0');
+    expect(input.fee).toBe('500');
+    expect(input.coinIds).toBeUndefined();
+    expect(input.extraConditions).toEqual([{ opcode: '64', args: [protocolCoinId] }]);
+  });
+
   it('selectCoins treats the supplied amount as the exact requirement', async () => {
     const nodeA = { name: '11'.repeat(32), amount: '100', puzzleHash: 'bb'.repeat(32) };
     const nodeB = { name: '22'.repeat(32), amount: '150', puzzleHash: 'dd'.repeat(32) };
@@ -233,7 +252,7 @@ describe('CloudBlockchainInterface fee support', () => {
     );
   });
 
-  it('spend resolves on an accepted broadcast status', async () => {
+  it('spend broadcasts a bundle carrying a direct fee', async () => {
     mockGraphql((query) => {
       if (query.includes('broadcastSpendBundle')) {
         return { broadcastSpendBundle: { status: 'SUCCESS' } };
@@ -241,6 +260,6 @@ describe('CloudBlockchainInterface fee support', () => {
       return {};
     });
     const iface = new CloudBlockchainInterface();
-    await expect(iface.spend('', sampleBundle(), '', 'test')).resolves.toBe('SUCCESS');
+    await expect(iface.spend('', sampleBundle(), '', 'test', 500n)).resolves.toBe('SUCCESS');
   });
 });

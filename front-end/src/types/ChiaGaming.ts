@@ -234,7 +234,6 @@ export interface WasmConnection {
   convert_spend_to_coinset_org: (spend: string) => unknown;
   aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
-  fee_payment_puzzle_hash_for_coin: (protocol_coin_id: string) => string;
   complete_fee_offer_to_coinset_org: (
     offer: string,
     fee: string,
@@ -513,16 +512,13 @@ export interface InternalBlockchainInterface {
     source?: string,
     fee?: bigint,
   ): Promise<string>;
-  // Build a signed, validate-only XCH offer whose settlement output is exactly
-  // the fee and whose maker spend reserves that fee and asserts concurrent
-  // spends of the protocol coin and predicted nil burn coin. The host completes
-  // the offer output into that burn chain before aggregation. Undefined on
-  // backends that do not support fees.
-  createFeeOffer?(
+  // Build the wallet half of a fee-bearing aggregate spend, bound to the known
+  // protocol coin. WalletConnect returns an offer for the host to complete;
+  // direct-spend backends return an already complete signed bundle.
+  createFeeSpend?(
     fee: bigint,
     concurrentSpendCoinId: string,
-    paymentPuzzleHash: string,
-  ): Promise<string | null>;
+  ): Promise<{ kind: 'offer'; offer: string } | { kind: 'bundle'; bundle: unknown } | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

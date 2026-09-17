@@ -23,11 +23,10 @@ mod gaming_wasm {
     use chia_gaming::channel_state::types::ReadableMove;
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
-        complete_fee_offer_bundle, convert_coinset_org_spend_to_spend, fee_payment_puzzle_hash,
-        Aggsig, AllocEncoder,
-        Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
-        GameID, GameType, Hash, Node, PrivateKey, Program, ProgramRef, PublicKey, Puzzle,
-        PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+        complete_fee_offer_bundle, convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount,
+        CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, GameID,
+        GameType, Hash, Node, PrivateKey, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
+        Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
     };
     use clvm_traits::{ClvmEncoder, ToClvm};
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
@@ -700,19 +699,6 @@ mod gaming_wasm {
         let bundle = decode_offer_to_spend_bundle(offer_bech32)
             .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
         serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&bundle)?).into_js()
-    }
-
-    #[wasm_bindgen]
-    pub fn fee_payment_puzzle_hash_for_coin(protocol_coin_id: &str) -> Result<String, JsValue> {
-        let coin_id_bytes = hex::decode(protocol_coin_id.trim_start_matches("0x"))
-            .map_err(|e| JsValue::from_str(&format!("invalid protocol coin id hex: {e}")))?;
-        let protocol_coin_id = CoinID::new(
-            Hash::from_slice(&coin_id_bytes)
-                .map_err(|e| JsValue::from_str(&format!("invalid protocol coin id: {e:?}")))?,
-        );
-        let puzzle_hash = fee_payment_puzzle_hash(&protocol_coin_id)
-            .map_err(|e| JsValue::from_str(&format!("fee payment puzzle error: {e:?}")))?;
-        Ok(hex::encode(puzzle_hash.bytes()))
     }
 
     #[wasm_bindgen]

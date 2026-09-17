@@ -1047,17 +1047,16 @@ describe('wallet fee attachment on submission', () => {
   function attachWc(blob: SessionController, aggregate: jest.Mock, feeSpend?: unknown) {
     (blob as unknown as { wc: unknown }).wc = {
       convert_spend_to_coinset_org: () => protocolBundle,
-      fee_payment_puzzle_hash_for_coin: () => 'ef'.repeat(32),
       complete_fee_offer_to_coinset_org: () => feeSpend,
       aggregate_coinset_spend_bundles: aggregate,
     };
   }
 
   it('does not attach a second fee spend to a channel-opening bundle', async () => {
-    const createFeeOffer = jest.fn();
+    const createFeeSpend = jest.fn();
     const spend = jest.fn().mockResolvedValue('ok');
     const aggregate = jest.fn();
-    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeOffer, spend }, 60000);
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
@@ -1067,7 +1066,7 @@ describe('wallet fee attachment on submission', () => {
     submitTransaction(blob, { ...testSpendBundle('coin'), name: 'channel-opening' });
     await transactionSubmitQueue(blob);
 
-    expect(createFeeOffer).not.toHaveBeenCalled();
+    expect(createFeeSpend).not.toHaveBeenCalled();
     expect(aggregate).not.toHaveBeenCalled();
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
@@ -1094,10 +1093,10 @@ describe('wallet fee attachment on submission', () => {
       aggregated_signature: '0xfee',
     };
     const aggregated = { coin_spends: [], aggregated_signature: '0xcombined' };
-    const createFeeOffer = jest.fn().mockResolvedValue('offer1signed');
+    const createFeeSpend = jest.fn().mockResolvedValue({ kind: 'offer', offer: 'offer1signed' });
     const spend = jest.fn().mockResolvedValue('ok');
     const aggregate = jest.fn().mockReturnValue(aggregated);
-    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeOffer, spend }, 60000);
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
@@ -1111,7 +1110,46 @@ describe('wallet fee attachment on submission', () => {
     const bindCoinId = await coinIdFromBytes(
       toUint8(`${'cc'.repeat(32)}eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9`),
     );
-    expect(createFeeOffer).toHaveBeenCalledWith(10n, bindCoinId, 'ef'.repeat(32));
+    expect(createFeeSpend).toHaveBeenCalledWith(10n, bindCoinId);
+    expect(aggregate).toHaveBeenCalledWith(jsonStringify([protocolBundle, feeSpend]));
+    expect(spend).toHaveBeenCalledWith(
+      expect.any(String),
+      aggregated,
+      '11'.repeat(32),
+      'submitTransaction',
+      10n,
+    );
+  });
+
+  it('aggregates a direct Cloud Wallet fee bundle without offer completion', async () => {
+    const feeSpend = {
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: `0x${'99'.repeat(32)}`,
+            puzzle_hash: `0x${'88'.repeat(32)}`,
+            amount: 1000n,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
+        },
+      ],
+      aggregated_signature: '0xfee',
+    };
+    const aggregated = { coin_spends: [], aggregated_signature: '0xcombined' };
+    const createFeeSpend = jest.fn().mockResolvedValue({ kind: 'bundle', bundle: feeSpend });
+    const spend = jest.fn().mockResolvedValue('ok');
+    const aggregate = jest.fn().mockReturnValue(aggregated);
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+    blob.getFee = () => 10n;
+    attachWc(blob, aggregate);
+
+    submitTransaction(blob, testSpendBundle('coin'));
+    await transactionSubmitQueue(blob);
+
     expect(aggregate).toHaveBeenCalledWith(jsonStringify([protocolBundle, feeSpend]));
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
@@ -1123,10 +1161,10 @@ describe('wallet fee attachment on submission', () => {
   });
 
   it('submits with zero fee and warns the user when the wallet cannot build a fee offer', async () => {
-    const createFeeOffer = jest.fn().mockResolvedValue(null);
+    const createFeeSpend = jest.fn().mockResolvedValue(null);
     const spend = jest.fn().mockResolvedValue('ok');
     const aggregate = jest.fn();
-    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeOffer, spend }, 60000);
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
@@ -1142,7 +1180,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
-    expect(createFeeOffer).toHaveBeenCalled();
+    expect(createFeeSpend).toHaveBeenCalled();
     expect(aggregate).not.toHaveBeenCalled();
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
@@ -1161,10 +1199,10 @@ describe('wallet fee attachment on submission', () => {
       coin_spends: [protocolBundle.coin_spends[0]],
       aggregated_signature: '0xfee',
     };
-    const createFeeOffer = jest.fn().mockResolvedValue('offer1signed');
+    const createFeeSpend = jest.fn().mockResolvedValue({ kind: 'offer', offer: 'offer1signed' });
     const spend = jest.fn().mockResolvedValue('ok');
     const aggregate = jest.fn();
-    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeOffer, spend }, 60000);
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
@@ -1193,10 +1231,10 @@ describe('wallet fee attachment on submission', () => {
   });
 
   it('surfaces the real wallet error in the warning when the fee offer fails', async () => {
-    const createFeeOffer = jest.fn().mockRejectedValue(new Error('Internal error (code=-32603)'));
+    const createFeeSpend = jest.fn().mockRejectedValue(new Error('Internal error (code=-32603)'));
     const spend = jest.fn().mockResolvedValue('ok');
     const aggregate = jest.fn();
-    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeOffer, spend }, 60000);
+    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
@@ -1212,7 +1250,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
-    expect(createFeeOffer).toHaveBeenCalled();
+    expect(createFeeSpend).toHaveBeenCalled();
     expect(aggregate).not.toHaveBeenCalled();
     // Zero-fee fallback still submits the protocol bundle.
     expect(spend).toHaveBeenCalledWith(

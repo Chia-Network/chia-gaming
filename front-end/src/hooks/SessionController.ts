@@ -872,22 +872,24 @@ export class SessionController implements PollingGameSession {
         tx.name !== 'channel-opening' &&
         protocolBundle &&
         this.wc &&
-        blockchain.rpc.createFeeOffer
+        blockchain.rpc.createFeeSpend
       ) {
         const bindCoinId = await this.computeBindCoinId(protocolBundle);
-        let feeOffer: string | null = null;
         let feeSpend: unknown = null;
         let feeSpendError: string | undefined;
         if (bindCoinId) {
           try {
-            const paymentPuzzleHash = this.wc.fee_payment_puzzle_hash_for_coin(bindCoinId);
-            feeOffer = await blockchain.rpc.createFeeOffer(fee, bindCoinId, paymentPuzzleHash);
-            if (feeOffer) {
+            const feeSource = await blockchain.rpc.createFeeSpend(fee, bindCoinId);
+            if (feeSource?.kind === 'offer') {
               feeSpend = this.wc.complete_fee_offer_to_coinset_org(
-                feeOffer,
+                feeSource.offer,
                 fee.toString(),
                 bindCoinId,
               );
+            } else if (feeSource?.kind === 'bundle') {
+              feeSpend = feeSource.bundle;
+            }
+            if (feeSpend) {
               const protocolCoinIds = await this.spendCoinIds(protocolBundle);
               const feeCoinIds = await this.spendCoinIds(feeSpend);
               const reusedCoinId = [...feeCoinIds].find((id) => protocolCoinIds.has(id));

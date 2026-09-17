@@ -1148,8 +1148,11 @@ Shell manages wallet connections through two abstractions defined in
   message-bound pre-launcher or contribution coin; it does not insert an
   OFFER_MOD settlement coin. The protocol child has amount
   `contribution + opening fee` and emits `RESERVE_FEE`, so the mutation does
-  not also declare a native wallet fee. Cloud Wallet implements no separate
-  `createFeeSpend`.
+  not also declare a native wallet fee. For later transactions, its
+  `createFeeSpend` call instead requests an amount-zero direct spend with the
+  native `fee` field and `ASSERT_CONCURRENT_SPEND` of the known protocol coin.
+  Cloud Wallet supplies the reserve-fee condition and deficit directly, so
+  there is no OFFER_MOD settlement or nil-puzzle child.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
@@ -1161,13 +1164,16 @@ Shell manages wallet connections through two abstractions defined in
   (the Wallet-tab editor in `Shell.tsx` and the Cloud Wallet connect modal's fee
   field) reject a nonzero fee below it. Zero (a free transaction) and
   floor-or-above are allowed. This is a floor below which a fee definitely cannot
-  work, not a guarantee of inclusion. Cloud-vs-Cloud is the pairing that most
-  needs it: neither peer has a wallet-built fee spend, so the entered fee is the
-  whole story, whereas a WalletConnect peer aggregates a real `createFeeSpend`
-  bundle. Both peers push the byte-identical funding bundle, so the node de-dups
-  the second arrival; `isBenignTransactionSubmitError` recognizes that
-  duplicate/`ALREADY_INCLUDING_TRANSACTION` as harmless, and a fee-rate rejection
-  is rewritten by `rewriteFeeRateRejection` into an actionable message.
+  work, not a guarantee of inclusion. For ordinary WalletConnect submissions,
+  `createFeeSpend` makes a validate-only offer whose wallet spend asserts the
+  known target coin is spent concurrently and reserves the fee. The host
+  completes its OFFER_MOD output into a spent nil-puzzle coin. Cloud Wallet
+  returns its direct amount-zero fee spend instead. The host aggregates either
+  backend's result with the protocol bundle. Both peers push the byte-identical
+  funding bundle, so the node de-dups the second arrival;
+  `isBenignTransactionSubmitError` recognizes that duplicate/
+  `ALREADY_INCLUDING_TRANSACTION` as harmless, and a fee-rate rejection is
+  rewritten by `rewriteFeeRateRejection` into an actionable message.
 
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single

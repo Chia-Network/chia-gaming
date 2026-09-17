@@ -46,7 +46,7 @@ pub use self::serializable_chacha8::ChaCha8SerializationWrapper;
 pub use self::sha256input::{atom_from_clvm, Hash, Sha256Input};
 pub use self::spend::{
     check_for_hex, complete_fee_offer_bundle, convert_coinset_org_spend_to_spend,
-    fee_payment_puzzle_hash, BrokenOutCoinSpendInfo, CoinSpend, CoinsetCoin, CoinsetSpendBundle,
-    CoinsetSpendRecord, Spend, SpendBundle,
+    BrokenOutCoinSpendInfo, CoinSpend, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Spend,
+    SpendBundle,
 };
 pub use self::timeout::Timeout;

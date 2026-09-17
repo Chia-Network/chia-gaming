@@ -27,6 +27,7 @@ const PEER_READINESS_RPC_TIMEOUT_MS = 7_000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
+const ASSERT_CONCURRENT_SPEND = 64n;
 const RESERVE_FEE = 52n;
 const RECEIVE_MESSAGE = 67n;
 
@@ -405,11 +406,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async createFeeOffer(
+  async createFeeSpend(
     fee: bigint,
     concurrentSpendCoinId: string,
-    paymentPuzzleHash: string,
-  ): Promise<string | null> {
+  ): Promise<{ kind: 'offer'; offer: string } | null> {
     if (fee <= 0n) return null;
     const protocolCoinId = concurrentSpendCoinId.startsWith('0x')
       ? concurrentSpendCoinId
@@ -421,19 +421,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         validateOnly: true,
         allowUnsynced: true,
         extraConditions: [
-          {
-            opcode: RECEIVE_MESSAGE,
-            args: {
-              msg: '0x',
-              var_args: [
-                serializeClvmAtomHex(paymentPuzzleHash),
-                serializeClvmAtomHex(encodeU64AsClvmHex(fee)),
-              ],
-              mode_integer: '24',
-              sender: null,
-              receiver: null,
-            },
-          },
+          { opcode: ASSERT_CONCURRENT_SPEND, args: { coin_id: protocolCoinId } },
           { opcode: 52n, args: { amount: fee } },
         ],
       });
@@ -441,16 +429,14 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (typeof offer !== 'string' || !offer.startsWith('offer')) {
         throw new Error('wallet returned no signed offer for the fee');
       }
-      log(
-        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} payment=${paymentPuzzleHash}`,
-      );
-      return offer;
+      log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
+      return { kind: 'offer', offer };
     } catch (e) {
       // Propagate the real reason (RPC error, missing signed bundle) so the
       // caller's user-facing warning is accurate rather than always blaming
       // insufficient balance.
       const text = collectErrorText(e);
-      log(`[wc-blockchain] createFeeOffer failed: ${text}`);
+      log(`[wc-blockchain] createFeeSpend failed: ${text}`);
       throw e instanceof Error ? e : new Error(text);
     }
   }

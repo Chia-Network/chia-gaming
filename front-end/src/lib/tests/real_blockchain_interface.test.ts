@@ -697,10 +697,10 @@ describe('RealBlockchainInterface', () => {
     mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
 
     const bindCoinId = 'ab'.repeat(32);
-    const paymentPuzzleHash = 'ef'.repeat(32);
-    await expect(blockchain.createFeeOffer(10n, bindCoinId, paymentPuzzleHash)).resolves.toBe(
-      'offer1signed',
-    );
+    await expect(blockchain.createFeeSpend(10n, bindCoinId)).resolves.toEqual({
+      kind: 'offer',
+      offer: 'offer1signed',
+    });
 
     expect(mockSelectCoins).not.toHaveBeenCalled();
     expect(mockCreateOfferForIds).toHaveBeenCalledWith({
@@ -709,16 +709,7 @@ describe('RealBlockchainInterface', () => {
       validateOnly: true,
       allowUnsynced: true,
       extraConditions: [
-        {
-          opcode: 67n,
-          args: {
-            msg: '0x',
-            var_args: [`a0${paymentPuzzleHash}`, '0a'],
-            mode_integer: '24',
-            sender: null,
-            receiver: null,
-          },
-        },
+        { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
         { opcode: 52n, args: { amount: 10n } },
       ],
     });
@@ -727,7 +718,7 @@ describe('RealBlockchainInterface', () => {
   it('propagates the wallet error when it cannot build a fee offer', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockRejectedValue(new Error('wallet not synced'));
-    await expect(blockchain.createFeeOffer(10n, 'cd'.repeat(32), 'ef'.repeat(32))).rejects.toThrow(
+    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).rejects.toThrow(
       'wallet not synced',
     );
   });
@@ -735,17 +726,16 @@ describe('RealBlockchainInterface', () => {
   it('does not preselect or pin a fee parent coin', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
-    await expect(blockchain.createFeeOffer(10n, 'cd'.repeat(32), 'ef'.repeat(32))).resolves.toBe(
-      'offer1signed',
-    );
+    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toEqual({
+      kind: 'offer',
+      offer: 'offer1signed',
+    });
     expect(mockSelectCoins).not.toHaveBeenCalled();
   });
 
   it('does not contact the wallet for a zero fee', async () => {
     const blockchain = new RealBlockchainInterface();
-    await expect(
-      blockchain.createFeeOffer(0n, 'cd'.repeat(32), 'ef'.repeat(32)),
-    ).resolves.toBeNull();
+    await expect(blockchain.createFeeSpend(0n, 'cd'.repeat(32))).resolves.toBeNull();
     expect(mockSelectCoins).not.toHaveBeenCalled();
     expect(mockCreateOfferForIds).not.toHaveBeenCalled();
   });

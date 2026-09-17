@@ -380,9 +380,6 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     fee?: bigint,
   ): Promise<string> {
     const feeValue = fee || 0n;
-    if (feeValue !== 0n) {
-      throw new Error('Cloud Wallet v1 does not support nonzero external fees');
-    }
     const walletId = this.requireWalletId();
     const bundle = spendBundle as WalletSpendBundle;
     if (!bundle?.coin_spends?.length) {
@@ -411,7 +408,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     );
     const status = data.broadcastSpendBundle?.status ?? 'unknown';
     log(
-      `[cloud-blockchain] broadcastSpendBundle from=${source ?? 'unknown'} status=${status} spends=${bundle.coin_spends.length}`,
+      `[cloud-blockchain] broadcastSpendBundle from=${source ?? 'unknown'} status=${status} spends=${bundle.coin_spends.length} fee=${feeValue}`,
     );
     // A rejection reported in `status` (rather than as a GraphQL error) would
     // otherwise look like success and silently strand the channel. Fail fast on
@@ -543,32 +540,19 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     throw new Error('Timed out polling Cloud Wallet signature request');
   }
 
-  async createOfferForIds(
-    _uniqueId: string,
-    offer: { [walletId: string]: bigint },
-    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
+  private async createDirectSpend(
+    amount: bigint,
+    directConditions: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
     maxHeight?: bigint,
-    _openingFee = 0n,
-  ): Promise<any | null> {
+    fee = 0n,
+    source = 'funding',
+  ): Promise<WalletSpendBundle> {
     const walletId = this.requireWalletId();
-    const amount = absAmountFromOffer(offer);
-    const directConditions = [...(extraConditions ?? [])];
-    const fundingReceive = directConditions.find((condition) => condition.opcode === 67n);
-    if (fundingReceive) {
-      const mode = BigInt(`0x${fundingReceive.args[0] || '0'}`);
-      const targetPuzzleHash = fundingReceive.args[2];
-      if ((mode === 16n || mode === 24n) && targetPuzzleHash) {
-        directConditions.push({
-          opcode: 51n,
-          args: [targetPuzzleHash, encodeU64AsClvmHex(amount)],
-        });
-      }
-    }
     const conditions = conditionsForGraphql(directConditions, maxHeight);
 
     log(
-      `[cloud-blockchain] createSpendWithExtraConditions amount=${amount} conditions=${jsonStringify(conditions)}`,
+      `[cloud-blockchain] createSpendWithExtraConditions source=${source} amount=${amount} fee=${fee} conditions=${jsonStringify(conditions)}`,
     );
 
     const created = await this.gql<{
@@ -585,6 +569,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         input: {
           walletId,
           amount,
+          fee: fee > 0n ? fee : undefined,
           coinIds: coinIds?.map((id) => normalizeHex(id)),
           extraConditions: conditions.length ? conditions : undefined,
           autoSubmit: false,
@@ -599,7 +584,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
     const popup = this.openApprovePopup(srId);
     if (!popup) {
-      throw new Error('Popup blocked — allow popups to approve Cloud Wallet funding');
+      throw new Error(`Popup blocked — allow popups to approve Cloud Wallet ${source}`);
     }
 
     // Poll until SIGNED; fail fast on postMessage rejected/error (ignore message timeout).
@@ -640,9 +625,50 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const hashBuf = await crypto.subtle.digest('SHA-256', nameBytes);
     const name = toHexString(new Uint8Array(hashBuf));
     log(
-      `[cloud-blockchain] createOfferForIds signed bundle name=${name} spends=${bundle.coin_spends.length} aggsig=${aggregatedSignature ? 'real' : 'nil'} source=signedSpendBundle srStatus=${sr.status}`,
+      `[cloud-blockchain] createDirectSpend signed bundle name=${name} spends=${bundle.coin_spends.length} aggsig=${aggregatedSignature ? 'real' : 'nil'} source=${source} srStatus=${sr.status}`,
     );
     return bundle;
+  }
+
+  async createOfferForIds(
+    _uniqueId: string,
+    offer: { [walletId: string]: bigint },
+    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
+    coinIds?: string[],
+    maxHeight?: bigint,
+    _openingFee = 0n,
+  ): Promise<WalletSpendBundle> {
+    const amount = absAmountFromOffer(offer);
+    const directConditions = [...(extraConditions ?? [])];
+    const fundingReceive = directConditions.find((condition) => condition.opcode === 67n);
+    if (fundingReceive) {
+      const mode = BigInt(`0x${fundingReceive.args[0] || '0'}`);
+      const targetPuzzleHash = fundingReceive.args[2];
+      if ((mode === 16n || mode === 24n) && targetPuzzleHash) {
+        directConditions.push({
+          opcode: 51n,
+          args: [targetPuzzleHash, encodeU64AsClvmHex(amount)],
+        });
+      }
+    }
+    return this.createDirectSpend(amount, directConditions, coinIds, maxHeight);
+  }
+
+  async createFeeSpend(
+    fee: bigint,
+    concurrentSpendCoinId: string,
+  ): Promise<{ kind: 'bundle'; bundle: WalletSpendBundle } | null> {
+    if (fee <= 0n) return null;
+    const targetCoinId = normalizeHex(concurrentSpendCoinId);
+    const bundle = await this.createDirectSpend(
+      0n,
+      [{ opcode: 64n, args: [targetCoinId] }],
+      undefined,
+      undefined,
+      fee,
+      'fee',
+    );
+    return { kind: 'bundle', bundle };
   }
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
