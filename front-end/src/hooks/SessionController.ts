@@ -150,6 +150,14 @@ export function isBenignTransactionSubmitError(message: string): boolean {
   );
 }
 
+export function isAlreadySubmittedTransactionError(message: string): boolean {
+  return (
+    /ALREADY_INCLUDING_TRANSACTION/i.test(message) ||
+    /duplicate transaction/i.test(message) ||
+    /already in the mempool/i.test(message)
+  );
+}
+
 /**
  * Chia's mempool treats a fee below 5 mojos per cost unit as zero and, on a full
  * mempool, rejects the bundle outright rather than admitting it as free. This
@@ -231,6 +239,7 @@ export class SessionController implements PollingGameSession {
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private transactionSubmitQueue: Promise<void> = Promise.resolve();
   private queuedTransactionKeys = new Set<string>();
+  private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
   private protocolStopped = false;
@@ -850,11 +859,14 @@ export class SessionController implements PollingGameSession {
   private async submitTransactionNow(tx: SpendBundle) {
     const blockchain = this.blockchain;
     if (!blockchain) return;
+    let blob: string | null = null;
+    let bundleToSubmit: unknown;
+    let walletSubmissionAttempted = false;
     try {
       // The blob/conversion/fee work used to run before the try, so a throw
       // here (e.g. from the wasm connection) rejected the submit queue
       // unhandled.  Keep it inside the try so every failure path is captured.
-      const blob = spend_bundle_to_clvm(tx);
+      blob = spend_bundle_to_clvm(tx);
       const protocolBundle = this.wc?.convert_spend_to_coinset_org(blob);
       const walletFinalized = this.cradle?.submission_is_finalized(blob) ?? false;
       const fee = walletFinalized ? 0n : this.getFee();
@@ -865,7 +877,7 @@ export class SessionController implements PollingGameSession {
 
       // A reorg replay is already the exact wallet-finalized aggregate bundle.
       // New protocol submissions may attach a fee spend once before broadcast.
-      let bundleToSubmit: unknown = protocolBundle;
+      bundleToSubmit = protocolBundle;
       let appliedFee = 0n;
       if (
         fee > 0n &&
@@ -918,6 +930,7 @@ export class SessionController implements PollingGameSession {
         }
       }
 
+      walletSubmissionAttempted = true;
       await blockchain.rpc.spend(
         blob,
         bundleToSubmit,
@@ -932,6 +945,16 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const message = extractErrorMessage(e);
       if (isBenignTransactionSubmitError(message)) {
+        if (
+          walletSubmissionAttempted &&
+          isAlreadySubmittedTransactionError(message) &&
+          blob !== null &&
+          bundleToSubmit !== undefined &&
+          this.cradle
+        ) {
+          this.cradle.acknowledge_submission(blob, jsonStringify(bundleToSubmit));
+          this.scheduleSave();
+        }
         log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
         return;
       }
@@ -949,7 +972,7 @@ export class SessionController implements PollingGameSession {
 
   private submitTransaction(tx: SpendBundle) {
     if (this.transactionPublishNerfed) return;
-    const transactionKey = jsonStringify(tx);
+    const transactionKey = jsonStringify(tx.spends);
     if (this.queuedTransactionKeys.has(transactionKey)) {
       log(
         `[wasm] submitTransaction skipped duplicate queued transaction name=${tx.name ?? 'none'}`,
@@ -996,6 +1019,8 @@ export class SessionController implements PollingGameSession {
       return;
     }
     for (const tx of bundles) {
+      const spentCoins = tx.spends.map((spend) => spend.coin.slice(0, 16)).join(',');
+      log(`[wasm] drained submission name=${tx.name ?? 'none'} spends=${spentCoins || 'none'}`);
       this.submitTransaction(tx);
     }
   }
@@ -1354,7 +1379,7 @@ export class SessionController implements PollingGameSession {
 
   private escalatePeerFailure(): void {
     if (!this.pendingPeerFailure || !this.cradle) return;
-    this.goOnChain();
+    this.goOnChain('peer-failure');
   }
 
   private deliverOrderedMessage(_msgno: bigint, msg: Uint8Array): void {
@@ -1467,6 +1492,7 @@ export class SessionController implements PollingGameSession {
   private resubmitAfterFreshChainSync() {
     if (!this.resubmitAfterChainSync || this.protocolStopped || !this.cradle) return;
     this.resubmitAfterChainSync = false;
+    log('[wasm] resubmit_submitted after fresh chain sync');
     this.cradle.resubmit_submitted();
     this.drainAndSubmitTransactions();
   }
@@ -1782,8 +1808,12 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  goOnChain(): boolean {
+  goOnChain(origin: 'dashboard' | 'peer-failure' | 'hub-remap' | 'direct' = 'direct'): boolean {
     if (!this.cradle) throw new Error('no cradle');
+    this.goOnChainSequence += 1;
+    log(
+      `[wasm] goOnChain invoked sequence=${this.goOnChainSequence} origin=${origin} alreadyOnChain=${this.onChain}`,
+    );
     try {
       const result = this.cradle.go_on_chain();
       const startedOnChain = result.actionSucceeded && result.disposition.kind === 'active';

@@ -262,9 +262,9 @@ pub struct TransactionManager<C> {
     watched_coins: HashMap<CoinString, WatchedCoin>,
     /// Transactions the cradle asked to submit, awaiting the hosting layer.
     /// Each carries the optional absolute expiry height threaded from the
-    /// handler (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`), so it lands on the retained
-    /// `SubmittedTx` when drained.
-    pending_submissions: Vec<(SpendBundle, Option<u64>)>,
+    /// handler (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`) and whether the manager
+    /// explicitly requeued it for fresh-sync/reorg replay.
+    pending_submissions: Vec<(SpendBundle, Option<u64>, bool)>,
     /// Events for the hosting layer that were not intercepted by the manager.
     #[serde(skip)]
     pending_events: GameSessionEventQueue,
@@ -403,23 +403,33 @@ impl<C> TransactionManager<C> {
         // Parse before consuming the queue so a bad bundle does not drop peers.
         let mut new_outputs: Vec<Option<Vec<CoinString>>> =
             Vec::with_capacity(self.pending_submissions.len());
-        for (bundle, _) in self.pending_submissions.iter() {
+        let mut emit = Vec::with_capacity(self.pending_submissions.len());
+        let mut seen_pending_spent_coin_ids = Vec::new();
+        for (bundle, _, replay) in self.pending_submissions.iter() {
             let bundle_spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
-            if self.submitted.iter().any(|tx| {
+            if seen_pending_spent_coin_ids.contains(&bundle_spent_coin_ids) {
+                new_outputs.push(None);
+                emit.push(false);
+                continue;
+            }
+            seen_pending_spent_coin_ids.push(bundle_spent_coin_ids.clone());
+            let already_retained = self.submitted.iter().any(|tx| {
                 tx.spent_coin_ids == bundle_spent_coin_ids
                     || tx
                         .finalized_bundle
                         .as_ref()
                         .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
-            }) {
+            });
+            emit.push(*replay || !already_retained);
+            if already_retained {
                 new_outputs.push(None);
             } else {
                 new_outputs.push(Some(expected_output_coins(bundle)?));
             }
         }
         let out = std::mem::take(&mut self.pending_submissions);
-        for ((bundle, expiry), outputs) in out.iter().zip(new_outputs) {
+        for ((bundle, expiry, _), outputs) in out.iter().zip(new_outputs) {
             let bundle_spent_coin_ids: Vec<CoinID> =
                 bundle.spends.iter().map(|s| s.coin.to_coin_id()).collect();
             // Don't double-track the same creating transaction across resubmits;
@@ -445,7 +455,11 @@ impl<C> TransactionManager<C> {
                 });
             }
         }
-        Ok(out.into_iter().map(|(bundle, _)| bundle).collect())
+        Ok(out
+            .into_iter()
+            .zip(emit)
+            .filter_map(|((bundle, _, _), emit)| emit.then_some(bundle))
+            .collect())
     }
 
     /// Record that the hosting wallet accepted a drained transaction.
@@ -469,16 +483,18 @@ impl<C> TransactionManager<C> {
         submitted.wallet_acknowledged = true;
         submitted.finalized_bundle = Some(finalized_bundle);
         self.pending_submissions
-            .retain(|(pending, _)| spent_coin_ids(pending) != bundle_spent_coin_ids);
+            .retain(|(pending, _, _)| spent_coin_ids(pending) != bundle_spent_coin_ids);
         Ok(())
     }
 
     pub fn submission_is_finalized(&self, bundle: &SpendBundle) -> bool {
         let bundle_spent_coin_ids = spent_coin_ids(bundle);
         self.submitted.iter().any(|tx| {
-            tx.finalized_bundle
-                .as_ref()
-                .is_some_and(|finalized| spent_coin_ids(finalized) == bundle_spent_coin_ids)
+            tx.finalized_bundle.is_some()
+                && (tx.spent_coin_ids == bundle_spent_coin_ids
+                    || tx.finalized_bundle.as_ref().is_some_and(|finalized| {
+                        spent_coin_ids(finalized) == bundle_spent_coin_ids
+                    }))
         })
     }
 
@@ -495,6 +511,7 @@ impl<C> TransactionManager<C> {
                     .clone()
                     .unwrap_or_else(|| tx.bundle.clone()),
                 tx.expiry,
+                true,
             ));
         }
     }
@@ -532,7 +549,7 @@ impl<C> TransactionManager<C> {
         for event in events {
             match event {
                 GameSessionEvent::OutboundTransaction(tx, expiry) => {
-                    self.pending_submissions.push((tx, expiry));
+                    self.pending_submissions.push((tx, expiry, false));
                 }
                 GameSessionEvent::WatchCoin {
                     coin_string,
@@ -673,7 +690,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             if let Some(semantic) = semantic {
                 self.cradle.session_timeout_claim_submitted(semantic)?;
             }
-            self.pending_submissions.push((spend, None));
+            self.pending_submissions.push((spend, None, true));
         }
         Ok(())
     }
@@ -962,7 +979,8 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 true
             });
             if let Some(submission) = resubmit {
-                self.pending_submissions.push(submission);
+                self.pending_submissions
+                    .push((submission.0, submission.1, true));
             }
         }
     }
@@ -1265,6 +1283,27 @@ mod tests {
         assert_eq!(subs[0].name.as_deref(), Some("tx-a"));
         // Draining empties the buffer.
         assert!(mgr.drain_submissions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn later_duplicate_submission_with_different_name_is_not_drained_again() {
+        let mut allocator = AllocEncoder::new();
+        let first = test_bundle("go on chain unroll");
+        let mut duplicate = first.clone();
+        duplicate.name = Some("impatience unroll".to_string());
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
+            first.clone(),
+            None,
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        assert_eq!(mgr.drain_submissions().unwrap(), vec![first]);
+
+        mgr.pending_submissions.push((duplicate, None, false));
+        assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.submitted.len(), 1);
     }
 
     #[test]
@@ -2486,7 +2525,12 @@ mod tests {
     #[test]
     fn acknowledged_submission_is_not_requeued_by_fresh_sync() {
         let mut allocator = AllocEncoder::new();
-        let bundle = test_bundle("tx-a");
+        let bundle = test_bundle_spending_creating("tx-a", &test_coin(40), &test_coin(41));
+        let mut finalized = bundle.clone();
+        finalized.spends.push(CoinSpend {
+            coin: test_coin(42),
+            bundle: Spend::default(),
+        });
         let mut mock = MockGameSession::default();
         mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
             bundle.clone(),
@@ -2496,8 +2540,10 @@ mod tests {
         mgr.flush_and_collect(&mut allocator).expect("drain");
 
         assert_eq!(mgr.drain_submissions().unwrap(), vec![bundle.clone()]);
-        mgr.acknowledge_submission(&bundle, bundle.clone()).unwrap();
+        mgr.acknowledge_submission(&bundle, finalized.clone())
+            .unwrap();
         assert!(mgr.submission_is_finalized(&bundle));
+        assert!(mgr.submission_is_finalized(&finalized));
         mgr.requeue_submitted();
 
         assert!(mgr.drain_submissions().unwrap().is_empty());
@@ -2508,7 +2554,7 @@ mod tests {
         let mut manager = TransactionManager::new(PersistableMockGameSession);
         manager
             .pending_submissions
-            .push((test_bundle("restored-on-chain-move"), None));
+            .push((test_bundle("restored-on-chain-move"), None, false));
         assert_eq!(manager.drain_submissions().unwrap().len(), 1);
 
         let encoded = bencodex::to_vec(&manager).expect("serialize manager");

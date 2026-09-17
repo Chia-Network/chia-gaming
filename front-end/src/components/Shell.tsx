@@ -777,9 +777,12 @@ const Shell = () => {
     (value: SessionModel | null | ((prev: SessionModel | null) => SessionModel | null)) => {
       const next = typeof value === 'function' ? value(dashboardSessionModelRef.current) : value;
       dashboardSessionModelRef.current = next;
+      if (next === null) {
+        handleCoinsChange([]);
+      }
       shellDispatchRef.current({ type: 'setDashboardSessionModel', value: next });
     },
-    [],
+    [handleCoinsChange],
   );
 
   const setSessionPhase = useCallback((value: SessionPhase) => {
@@ -2391,7 +2394,7 @@ const Shell = () => {
                 } else if (controllerRestoreStatus === 'failed') {
                   pendingHubRemapEscalationRef.current = null;
                   setSessionError(true);
-                } else if (sessionController?.goOnChain()) {
+                } else if (sessionController?.goOnChain('hub-remap')) {
                   pendingHubRemapEscalationRef.current = null;
                   saveSession({ scope: 'common', identity: { myHubPlayerId: playerId } });
                   if (save) save.identity.myHubPlayerId = playerId;
@@ -3102,7 +3105,7 @@ const Shell = () => {
         if (!pending) {
           throw new Error('Deferred hub remap escalation is missing its pending identity');
         }
-        if (!sessionController?.goOnChain()) {
+        if (!sessionController?.goOnChain('hub-remap')) {
           setSessionError(true);
           markPeerDead();
           return;
@@ -3819,7 +3822,7 @@ const Shell = () => {
   }, [setDashboardSessionModel, startCleanShutdownGrace]);
 
   const performDashboardGoOnChain = useCallback(() => {
-    if (!sessionController?.goOnChain()) return;
+    if (!sessionController?.goOnChain('dashboard')) return;
     sessionPhaseRef.current = 'on-chain';
     setSessionPhase('on-chain');
     hubConnRef.current?.setBusy(presenceBusy('on-chain'));

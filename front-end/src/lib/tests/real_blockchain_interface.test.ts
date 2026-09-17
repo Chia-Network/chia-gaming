@@ -692,7 +692,7 @@ describe('RealBlockchainInterface', () => {
     );
   });
 
-  it('builds a wallet-signed fee offer without using the wallet fee parameter', async () => {
+  it('persists a wallet-signed fee offer to reserve its selected input', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
 
@@ -706,7 +706,7 @@ describe('RealBlockchainInterface', () => {
     expect(mockCreateOfferForIds).toHaveBeenCalledWith({
       offer: { '1': -10n },
       driverDict: {},
-      validateOnly: true,
+      validateOnly: false,
       allowUnsynced: true,
       extraConditions: [
         {

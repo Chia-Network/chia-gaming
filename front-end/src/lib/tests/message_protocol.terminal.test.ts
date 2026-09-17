@@ -1,4 +1,5 @@
 import {
+  isAlreadySubmittedTransactionError,
   isBenignTransactionSubmitError,
   rewriteFeeRateRejection,
   SessionController,
@@ -672,7 +673,7 @@ describe('transaction submission', () => {
     blob.detachBlockchain(blockchain);
   });
 
-  it('skips fresh-sync duplicates and replays the finalized transaction unchanged after reorg', async () => {
+  it('submits one fee-bearing transaction across in-flight fresh sync and replays it unchanged after reorg', async () => {
     let resolveFeeOffer: ((offer: string) => void) | null = null;
     const feeOffer = new Promise<string>((resolve) => {
       resolveFeeOffer = resolve;
@@ -714,7 +715,7 @@ describe('transaction submission', () => {
         }
         if (replayQueued) {
           replayQueued = false;
-          return [submission];
+          return [{ ...submission, name: 'fresh sync replay' }];
         }
         return [];
       }),
@@ -770,13 +771,20 @@ describe('transaction submission', () => {
     }
     expect(createFeeOffer).toHaveBeenCalledTimes(1);
 
+    blob.attachBlockchain(blockchain);
+    blob.reportCoinStates(1n, []);
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+
     resolveFeeOffer?.('offer1signed');
     await transactionSubmitQueue(blob);
     expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
 
+    expect(createFeeOffer).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+
     blob.attachBlockchain(blockchain);
-    blob.reportCoinStates(1n, []);
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    blob.reportCoinStates(2n, []);
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(2);
     await transactionSubmitQueue(blob);
 
     expect(createFeeOffer).toHaveBeenCalledTimes(1);
@@ -901,6 +909,16 @@ describe('transaction submission', () => {
     expect(isBenignTransactionSubmitError('This transaction is already in the mempool.')).toBe(
       true,
     );
+    expect(isAlreadySubmittedTransactionError('Err.ALREADY_INCLUDING_TRANSACTION')).toBe(true);
+    expect(isAlreadySubmittedTransactionError('duplicate transaction de-duplicated')).toBe(true);
+    expect(isAlreadySubmittedTransactionError('This transaction is already in the mempool.')).toBe(
+      true,
+    );
+    expect(
+      isAlreadySubmittedTransactionError(
+        'This transaction conflicts with an existing transaction in the mempool.',
+      ),
+    ).toBe(false);
     expect(isBenignTransactionSubmitError('spend rejected: status=[3,99] something else')).toBe(
       false,
     );
@@ -917,7 +935,10 @@ describe('transaction submission', () => {
       )
       .mockRejectedValueOnce(
         new Error('This transaction conflicts with an existing transaction in the mempool.'),
-      );
+      )
+      .mockRejectedValueOnce(new Error('Err.ALREADY_INCLUDING_TRANSACTION'))
+      .mockRejectedValueOnce(new Error('duplicate transaction de-duplicated'))
+      .mockRejectedValueOnce(new Error('This transaction is already in the mempool.'));
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
@@ -943,19 +964,27 @@ describe('transaction submission', () => {
     });
     const cradle = {
       ...makeMockCradle(),
+      acknowledge_submission: jest.fn(),
       drain_submissions: jest.fn(() => [
         testSpendBundle('03'),
         testSpendBundle('04'),
         testSpendBundle('05'),
+        testSpendBundle('06'),
+        testSpendBundle('07'),
+        testSpendBundle('08'),
       ]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
+    (blob as unknown as { wc: unknown }).wc = {
+      convert_spend_to_coinset_org: () => ({ coin_spends: [] }),
+    };
     blob.setGameSession(cradle);
     blob.processResult(wasmResult());
 
     await transactionSubmitQueue(blob);
-    expect(spend).toHaveBeenCalledTimes(3);
+    expect(spend).toHaveBeenCalledTimes(6);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(3);
     expect(errors).toEqual([]);
   });
 

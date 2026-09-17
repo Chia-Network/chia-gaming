@@ -418,7 +418,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const response = await rpc.createOfferForIds({
         offer: { '1': -fee },
         driverDict: {},
-        validateOnly: true,
+        // Persist the offer so the wallet reserves its selected fee input
+        // until the aggregate transaction spends it. A validate-only offer can
+        // select the same still-unconfirmed coin for concurrent submissions.
+        validateOnly: false,
         allowUnsynced: true,
         extraConditions: [
           {
