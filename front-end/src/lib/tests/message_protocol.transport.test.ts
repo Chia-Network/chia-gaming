@@ -1,4 +1,5 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
+import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import type { NeedCoinSpendRequest, WasmResult } from '../../types/ChiaGaming';
 import { requireWasmResult } from '../../types/ChiaGaming';
@@ -9,6 +10,7 @@ import { reduceSessionNotification } from '../session/sessionMachineNotification
 import { createSessionModel } from '../session/model';
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
 import {
+  attachTestCommitCoordinator,
   channelStatus,
   createReadyBlob,
   createUnreadyBlob,
@@ -18,6 +20,7 @@ import {
   mockRpc,
   mockWasmConnection,
   setActiveBlob,
+  setTestPersistence,
   submitTransaction,
   testSpendBundle,
   transactionSubmitQueue,
@@ -125,7 +128,7 @@ describe('in-order delivery', () => {
     expect(reasons).toEqual(['first', 'second']);
   });
 
-  it('yields a self-replenishing active FIFO after the event budget', async () => {
+  it('drains a self-replenishing active FIFO to the commit fixed point', async () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     let delivered = 0;
@@ -147,10 +150,7 @@ describe('in-order delivery', () => {
       events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
     });
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(delivered).toBe(100);
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await blob.flushPendingWork();
     expect(delivered).toBe(101);
   });
 
@@ -252,9 +252,6 @@ describe('protocol identity loading', () => {
           Notification: {
             ProposalMade: {
               id: '7',
-              group_ids: ['7'],
-              my_contribution: '100',
-              their_contribution: '100',
               timeout: '15',
               game_type: testProtocolId('calpoker'),
               parameters: null,
@@ -288,9 +285,6 @@ describe('protocol identity loading', () => {
           Notification: {
             ProposalMade: {
               id: '7',
-              group_ids: ['7'],
-              my_contribution: '100',
-              their_contribution: '100',
               timeout: '15',
               game_type: testProtocolId('calpoker'),
               parameters: null,
@@ -340,9 +334,6 @@ describe('protocol identity loading', () => {
           Notification: {
             ProposalMade: {
               id: '7',
-              group_ids: ['7'],
-              my_contribution: '100',
-              their_contribution: '100',
               timeout: '15',
               game_type: testProtocolId('calpoker'),
               parameters: null,
@@ -399,7 +390,7 @@ describe('SessionController WASM action results', () => {
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     Object.assign(cradle, {
-      propose_games: jest.fn(() => ({ ...failedResult(`${name} domain error`), ids: ['7'] })),
+      propose: jest.fn(() => ({ ...failedResult(`${name} domain error`), id: '7' })),
       accept_proposal: jest.fn(() => failedResult(`${name} domain error`)),
       cancel_proposal: jest.fn(() => failedResult(`${name} domain error`)),
       shut_down: jest.fn(() => failedResult(`${name} domain error`)),
@@ -484,13 +475,11 @@ describe('active game tracking', () => {
       };
       let machine = createSessionMachineState(createSessionModel());
       machine = reduceSessionMachine(machine, {
-        type: 'upsert-proposal-group',
-        group: {
-          primaryId: '1',
-          memberIds: ['1', '3'],
+        type: 'upsert-pending-proposal',
+        proposal: {
+          id: '1',
           handProposal: terms,
-          origin: 'local',
-          disposition: 'outgoing',
+          lifecycle: 'local-outgoing',
         },
       }).state;
       const settledIds: string[] = [];
@@ -507,18 +496,21 @@ describe('active game tracking', () => {
           {
             Notification: {
               ProposalAcceptedGroup: {
+                id: 1n,
                 members: [
                   {
                     id: '1',
                     player_a_contribution: '100',
                     player_b_contribution: '0',
                     our_turn: true,
+                    readable_parameters: Program.fromBigInt(100n).serialize(),
                   },
                   {
                     id: '3',
                     player_a_contribution: '0',
                     player_b_contribution: '100',
                     our_turn: false,
+                    readable_parameters: Program.fromBigInt(100n).serialize(),
                   },
                 ],
               },
@@ -636,7 +628,7 @@ describe('game action failure events', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { blob, cradle } = createReadyBlob();
     const save = jest.fn();
-    blob.onSaveNeeded = save;
+    setTestPersistence(blob, save);
     (
       cradle as unknown as {
         make_move: (gameId: string, readable: Uint8Array) => WasmResult;
@@ -884,7 +876,8 @@ describe('outbound message numbering', () => {
     const blob = new SessionController(null, 'test', 100n, 100n, peer);
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(makeMockCradle());
-    blob.onSaveNeeded = jest.fn();
+    attachTestCommitCoordinator(blob);
+    setTestPersistence(blob, jest.fn());
 
     expect(blob.queueHostMessage(enc('handshake A'))).toBe(2n);
     await blob.flushPendingWork();

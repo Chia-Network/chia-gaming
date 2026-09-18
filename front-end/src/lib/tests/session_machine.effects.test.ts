@@ -1,14 +1,23 @@
 import type { SessionController } from '../../hooks/SessionController';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { runSessionMachineTransition } from '../session/sessionMachineEffects';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { send } from './session_machine.harness';
+import { runSessionMachineTransition, send } from './session_machine.harness';
 
 describe('session machine behavior sequences', () => {
-  it('queues dispatches requested during a React projection instead of re-entering it', () => {
+  it('queues dispatches requested during a React projection instead of re-entering it', async () => {
+    jest.useFakeTimers();
     const controller = {
       clearDerivedGamePresentation: () => {},
+      attachTransactionCoordinator: jest.fn(),
+      flushDeferredWork: jest.fn(),
+      prepareReliableCommit: jest.fn(() => ({
+        generation: 0,
+        outboundCount: 0,
+        ackCount: 0,
+        remoteNumber: 0n,
+      })),
+      completeReliableCommit: jest.fn(),
     } as unknown as SessionController;
 
     const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
@@ -48,6 +57,7 @@ describe('session machine behavior sequences', () => {
     });
 
     runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
+    await runtime.persist();
 
     expect(maxRenderDepth).toBe(1);
 
@@ -58,6 +68,7 @@ describe('session machine behavior sequences', () => {
 
       sameTermsRequested: true,
     });
+    jest.useRealTimers();
   });
 
   it('publishes machine authority before commands and React', () => {

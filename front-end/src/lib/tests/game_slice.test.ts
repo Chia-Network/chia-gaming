@@ -45,11 +45,9 @@ describe('game slice reducer', () => {
         betweenHand: {
           lastHandProposal: {
             gameType: 'krunk',
-            playerAContribution: 100n,
-            playerBContribution: 100n,
             senderIsPlayerA: true,
             gameTimeout: 15n,
-            parameters: null,
+            parameters: 100n,
           },
         },
       }),

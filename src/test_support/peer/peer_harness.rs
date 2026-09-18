@@ -46,10 +46,10 @@ use crate::common::standard_coin::puzzle_hash_for_pk;
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::CoinSpend;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sim-tests"))]
 use crate::test_support::calpoker_sim::prefix_test_moves;
-#[cfg(test)]
-use crate::test_support::sim_script::SimScriptAction;
+#[cfg(all(test, feature = "sim-tests"))]
+use crate::test_support::sim_script::{ScriptGameRef, SimScriptAction};
 
 #[derive(Default)]
 #[cfg(test)]
@@ -63,6 +63,7 @@ struct Pipe {
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
     opponent_messages: Vec<(GameID, ReadableMove)>,
+    notifications: Vec<GameNotification>,
 
     // Bootstrap info
     channel_puzzle_hash: Option<PuzzleHash>,
@@ -152,6 +153,7 @@ impl ChannelFundingWallet for Pipe {
 #[cfg(test)]
 impl ToLocalUI for Pipe {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        self.notifications.push(notification.clone());
         match notification {
             GameNotification::GameStatus {
                 id,
@@ -603,6 +605,29 @@ pub fn test_peer_smoke() {
     )
     .expect("handshake should complete");
 
+    let rollback_probe = GameProposal {
+        sender_is_player_a: true,
+        game_type: game_collection::game_type_for_package(&mut allocator, "calpoker"),
+        timeout: Timeout::new(15),
+        parameters: ProposalParameters::Integer(100),
+    };
+    for peer in &mut peers {
+        let mut env = ChannelEnv::new(&mut allocator).expect("channel environment");
+        peer.assert_invalid_clean_shutdown_rollback_for_testing(&mut env, &rollback_probe);
+    }
+
+    peers[0].queue_stale_game_action_for_testing(GameID(999));
+    let request_potato =
+        crate::session_phases::peer_wire::encode_peer_message(&PeerMessage::RequestPotato(()))
+            .expect("encode potato request");
+    let effects = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("channel environment");
+        peers[1]
+            .received_message(&mut env, request_potato)
+            .expect("valid potato request")
+    };
+    apply_effects(effects, &mut allocator, &mut pipe_sender[1])
+        .expect("send valid empty peer batch");
     quiesce(
         &mut allocator,
         Amount::new(200),
@@ -610,6 +635,18 @@ pub fn test_peer_smoke() {
         &mut pipe_sender,
     )
     .expect("should work");
+    assert!(
+        pipe_sender[0].notifications.iter().any(|notification| {
+            matches!(
+                notification,
+                GameNotification::ActionFailed {
+                    id: Some(GameID(999)),
+                    ..
+                }
+            )
+        }),
+        "valid peer batch should commit and reconcile the stale local game action"
+    );
     assert!(
         pipe_sender[0].went_on_chain.is_none(),
         "peer 0 went on chain after handshake: {:?}",
@@ -621,28 +658,26 @@ pub fn test_peer_smoke() {
         pipe_sender[1].went_on_chain
     );
 
-    let game_ids = {
-        let (game_ids, effects1) = {
+    let proposal_id = {
+        let (proposal_id, effects1) = {
             let calpoker_type = game_collection::game_type_for_package(&mut allocator, "calpoker");
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
-            let (game_ids, effects1) = FromLocalUI::propose_games(
+            let (proposal_id, effects1) = FromLocalUI::propose(
                 &mut peers[1],
                 &mut env,
-                &[GameProposal {
-                    player_a_contribution: Amount::new(100),
-                    player_b_contribution: Amount::new(100),
+                &GameProposal {
                     sender_is_player_a: true,
                     game_type: calpoker_type,
                     timeout: Timeout::new(15),
-                    parameters: ProposalParameters::Null,
-                }],
+                    parameters: ProposalParameters::Integer(100),
+                },
             )
             .expect("should run");
-            (game_ids, effects1)
+            (proposal_id, effects1)
         };
         apply_effects(effects1, &mut allocator, &mut pipe_sender[1]).expect("should work");
 
-        game_ids
+        proposal_id
     };
 
     quiesce(
@@ -656,7 +691,7 @@ pub fn test_peer_smoke() {
     {
         let effects0 = {
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
-            FromLocalUI::accept_proposal(&mut peers[0], &mut env, &game_ids[0])
+            FromLocalUI::accept_proposal(&mut peers[0], &mut env, &proposal_id)
                 .expect("should accept")
         };
         apply_effects(effects0, &mut allocator, &mut pipe_sender[0]).expect("should work");
@@ -683,45 +718,54 @@ pub fn test_peer_smoke() {
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
-    let moves = prefix_test_moves(&mut allocator, GameID(0));
+    #[cfg(feature = "sim-tests")]
+    {
+        let moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(0, 0));
 
-    for this_move in moves.iter() {
-        let (who, what) = if let SimScriptAction::Move(who, _, what, _) = this_move {
-            (*who, what.clone())
-        } else {
-            panic!();
-        };
+        for this_move in moves.iter() {
+            let (who, what) = if let SimScriptAction::Move(who, _, what, _) = this_move {
+                (*who, what.clone())
+            } else {
+                panic!();
+            };
 
-        {
-            let entropy = rng.random();
-            let mut env = ChannelEnv::new(&mut allocator).expect("should work");
-            let effects =
-                FromLocalUI::make_move(&mut peers[who ^ 1], &mut env, &game_ids[0], &what, entropy)
+            {
+                let entropy = rng.random();
+                let mut env = ChannelEnv::new(&mut allocator).expect("should work");
+                let effects = FromLocalUI::make_move(
+                    &mut peers[who ^ 1],
+                    &mut env,
+                    &GameID(0),
+                    &what,
+                    entropy,
+                )
+                .expect("should work");
+                apply_effects(effects, &mut allocator, &mut pipe_sender[who ^ 1])
                     .expect("should work");
-            apply_effects(effects, &mut allocator, &mut pipe_sender[who ^ 1]).expect("should work");
+            }
+
+            quiesce(
+                &mut allocator,
+                Amount::new(200),
+                &mut peers,
+                &mut pipe_sender,
+            )
+            .expect("should work");
         }
 
-        quiesce(
-            &mut allocator,
-            Amount::new(200),
-            &mut peers,
-            &mut pipe_sender,
-        )
-        .expect("should work");
+        assert!(
+            pipe_sender[0].went_on_chain.is_none(),
+            "peer 0 went on chain after moves: {:?}",
+            pipe_sender[0].went_on_chain
+        );
+        assert!(
+            pipe_sender[1].went_on_chain.is_none(),
+            "peer 1 went on chain after moves: {:?}",
+            pipe_sender[1].went_on_chain
+        );
+        assert!(pipe_sender[0].message_pipe.queue.is_empty());
+        assert!(pipe_sender[1].message_pipe.queue.is_empty());
     }
-
-    assert!(
-        pipe_sender[0].went_on_chain.is_none(),
-        "peer 0 went on chain after moves: {:?}",
-        pipe_sender[0].went_on_chain
-    );
-    assert!(
-        pipe_sender[1].went_on_chain.is_none(),
-        "peer 1 went on chain after moves: {:?}",
-        pipe_sender[1].went_on_chain
-    );
-    assert!(pipe_sender[0].message_pipe.queue.is_empty());
-    assert!(pipe_sender[1].message_pipe.queue.is_empty());
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {

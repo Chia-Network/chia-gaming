@@ -31,11 +31,9 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
   ];
   const handProposal: HandProposal = {
     gameType: 'calpoker',
-    playerAContribution: 20n,
-    playerBContribution: 20n,
     senderIsPlayerA: false,
     gameTimeout: 15n,
-    parameters: null,
+    parameters: 20n,
   };
   const runtimes: SessionMachineRuntime[] = [];
   const ports: LiveGamePort[] = [];
@@ -96,7 +94,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         });
       },
     });
-    controller.onSaveNeeded = () => Promise.resolve();
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
         if (event.type !== 'notification') return;
@@ -162,21 +159,21 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     await exchange();
     const review = runtimes[1]
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-review');
     assert.ok(review, 'calpoker initial deal receiver must observe the real proposal');
-    const gameId = review.memberIds[0];
 
-    runtimes[1].dispatch({ type: 'accept-review', primaryId: review.primaryId });
+    runtimes[1].dispatch({ type: 'accept-review', id: review.id });
+    await exchange();
+    const gameId = runtimes[0].getState().model.game.currentHandIds[0]!;
+    assert.deepEqual(hand(0).playerHand, []);
+    assert.deepEqual(hand(1).playerHand, []);
+
+    submitNil(0, 1n);
     await exchange();
     assert.deepEqual(hand(0).playerHand, []);
     assert.deepEqual(hand(1).playerHand, []);
 
     submitNil(1, 1n);
-    await exchange();
-    assert.deepEqual(hand(0).playerHand, []);
-    assert.deepEqual(hand(1).playerHand, []);
-
-    submitNil(0, 1n);
     await exchange();
 
     const bob = hand(0);
@@ -188,28 +185,28 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.deepEqual(alice.playerHand, bob.opponentHand);
     assert.deepEqual(alice.opponentHand, bob.playerHand);
     assert.ok(
-      statuses[0].some((entry) => entry.id === gameId && entry.moverShare == null),
-      'Bob must receive the initial deal as an advisory GameMessage',
+      statuses[0].some((entry) => entry.id === gameId && entry.moverShare != null),
+      'Bob must derive the initial deal from Alice’s authoritative move',
     );
     assert.ok(
-      statuses[1].some((entry) => entry.id === gameId && entry.moverShare != null),
-      'Alice must derive the initial deal from Bob’s authoritative move',
+      statuses[1].some((entry) => entry.id === gameId && entry.moverShare == null),
+      'Alice must receive the initial deal as an advisory GameMessage',
     );
 
-    const aliceSelections = alice.playerHand.slice(0, 4);
-    submitSelections(1, aliceSelections);
-    await exchange();
-
-    const bobSelections = hand(0).playerHand.slice(0, 4);
+    const bobSelections = bob.playerHand.slice(0, 4);
     submitSelections(0, bobSelections);
     await exchange();
-    const aliceOutcome = hand(1).outcome;
-    assert.ok(aliceOutcome, 'Alice must derive the outcome from Bob’s final readable');
 
-    submitNil(1, 3n);
+    const aliceSelections = hand(1).playerHand.slice(0, 4);
+    submitSelections(1, aliceSelections);
     await exchange();
     const bobOutcome = hand(0).outcome;
-    assert.ok(bobOutcome, 'Bob must derive the outcome from Alice’s terminal readable');
+    assert.ok(bobOutcome, 'Bob must derive the outcome from Alice’s final readable');
+
+    submitNil(0, 3n);
+    await exchange();
+    const aliceOutcome = hand(1).outcome;
+    assert.ok(aliceOutcome, 'Alice must derive the outcome from Bob’s terminal readable');
 
     assert.deepEqual(aliceOutcome.my_cards, bobOutcome.their_cards);
     assert.deepEqual(aliceOutcome.their_cards, bobOutcome.my_cards);
@@ -256,10 +253,8 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     );
     const secondProposal = runtimes[1]
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-cached');
     assert.ok(secondProposal, 'second Calpoker hand receiver must cache the same-terms proposal');
-    const secondGameId = secondProposal.memberIds[0];
-    assert.notEqual(secondGameId, gameId);
     runtimes[1].dispatch({ type: 'choose-same-terms' });
     assert.equal(
       runtimes[1].getState().model.betweenHand.mode,
@@ -267,6 +262,8 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
       'Calpoker repeat acceptance must bypass the compose form',
     );
     await exchange();
+    const secondGameId = runtimes[0].getState().model.game.currentHandIds[0]!;
+    assert.notEqual(secondGameId, gameId);
 
     assert.deepEqual(
       runtimes.map((runtime) => runtime.getState().model.game.handKey),
@@ -295,14 +292,14 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.deepEqual(
       secondStartup,
       [
-        { moveNumber: 0n, isPlayerTurn: false },
         { moveNumber: 0n, isPlayerTurn: true },
+        { moveNumber: 0n, isPlayerTurn: false },
       ],
       'fresh durable state must agree with the new Rust referee turn',
     );
-    assert.deepEqual(submittedMoves, [2, 4], 'only Alice must autofire the second opening');
+    assert.deepEqual(submittedMoves, [4, 2], 'only Bob must autofire the second opening');
 
-    submitNil(0, 1n);
+    submitNil(1, 1n);
     await exchange();
     const secondAlice = hand(1);
     const secondBob = hand(0);
@@ -348,21 +345,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     assert.deepEqual(stages(1), { runtime: 1n, hook: 1n });
 
     act(() => {
-      hookHands[1]!.setCardSelections(secondAlice.playerHand.slice(0, 4));
-    });
-    act(renderHooks);
-    act(() => {
-      hookHands[1]!.handleMakeMove();
-    });
-    act(renderHooks);
-    assert.deepEqual(stages(1), { runtime: 2n, hook: 2n });
-    await act(async () => {
-      await exchange();
-    });
-    act(renderHooks);
-
-    act(() => {
-      hookHands[0]!.setCardSelections(hand(0).playerHand.slice(0, 4));
+      hookHands[0]!.setCardSelections(secondBob.playerHand.slice(0, 4));
     });
     act(renderHooks);
     act(() => {
@@ -370,6 +353,20 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     });
     act(renderHooks);
     assert.deepEqual(stages(0), { runtime: 2n, hook: 2n });
+    await act(async () => {
+      await exchange();
+    });
+    act(renderHooks);
+
+    act(() => {
+      hookHands[1]!.setCardSelections(hand(1).playerHand.slice(0, 4));
+    });
+    act(renderHooks);
+    act(() => {
+      hookHands[1]!.handleMakeMove();
+    });
+    act(renderHooks);
+    assert.deepEqual(stages(1), { runtime: 2n, hook: 2n });
 
     await act(async () => {
       await exchange();
@@ -406,9 +403,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     }
   } finally {
     if (hookRenderer) act(() => hookRenderer?.unmount());
-    controllers.forEach((controller) => {
-      controller.onSaveNeeded = null;
-    });
   }
 }
 

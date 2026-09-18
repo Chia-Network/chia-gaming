@@ -10,7 +10,7 @@ import {
 import type {
   GameInstanceModel,
   GameInstanceViewModel,
-  ProposalGroupOrigin,
+  ProposalOrigin,
   GameTerminalModel,
   GameTurnState,
   RegisteredGameType,
@@ -21,7 +21,7 @@ export interface GameSlice {
   handKey: number;
   activeIds: string[];
   currentHandIds: string[];
-  currentHandOrigin: ProposalGroupOrigin | null;
+  currentHandOrigin: ProposalOrigin | null;
   instances: Record<string, GameInstanceModel>;
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
@@ -46,10 +46,9 @@ export type GameSliceAction =
       type: 'accepted-group';
       groupIds: string[];
       members: readonly { amount: string; startTurn: GameTurnState }[];
-      origin: ProposalGroupOrigin;
+      origin: ProposalOrigin;
       gameType?: RegisteredGameType;
     }
-  | { type: 'remove-group'; groupIds: readonly string[] }
   | {
       type: 'status';
       id: string;
@@ -125,24 +124,6 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
         instances,
         lastDisplayedId: newHand ? action.groupIds[0]! : slice.lastDisplayedId,
         activeGameType: newHand ? (action.gameType ?? slice.activeGameType) : slice.activeGameType,
-      };
-      break;
-    }
-    case 'remove-group': {
-      const removed = new Set(action.groupIds);
-      const currentHandIds = slice.currentHandIds.filter((id) => !removed.has(id));
-      next = {
-        ...slice,
-        activeIds: slice.activeIds.filter((id) => !removed.has(id)),
-        currentHandIds,
-        currentHandOrigin: currentHandIds.length === 0 ? null : slice.currentHandOrigin,
-        instances: Object.fromEntries(
-          Object.entries(slice.instances).filter(([id]) => !removed.has(id)),
-        ),
-        lastDisplayedId:
-          slice.lastDisplayedId !== null && removed.has(slice.lastDisplayedId)
-            ? null
-            : slice.lastDisplayedId,
       };
       break;
     }

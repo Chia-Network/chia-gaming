@@ -12,6 +12,8 @@
 (import std.curry)
 (import std.assert)
 (import std.len)
+(import std.deep_compare)
+(import std.or)
 
 ; --- deterministic factory ---
 ;
@@ -30,27 +32,33 @@
 (defun krunk_factory
     (DICT_PUBKEY DICT_TREE
      @ _args
-     (player_a_contribution player_b_contribution game_parameters))
+     (proposer_reserve accepter_reserve requested_stake))
     (assert
-        (> player_a_contribution 0)
-        (= player_a_contribution player_b_contribution)
-        (= (% player_a_contribution 100) 0)
-        (not game_parameters)
-        (assign
-            base_unit (/ player_a_contribution 100)
-            initial_state (li DICT_PUBKEY base_unit)
-            alice_handler (curry krunk_alice_handler_commit DICT_TREE)
-            bob_handler (curry krunk_bob_handler_commit DICT_TREE)
-            (li
-                ; Slot 0 allocates player A's contribution; player A goes first.
-                (li
-                    player_a_contribution 0 1 0 32 initial_state 0
-                    alice_handler bob_handler (list val_commit val_guess val_clue)
-                )
-                ; Slot 1 allocates player B's contribution; player B goes first.
-                (li
-                    0 player_b_contribution 0 0 32 initial_state 0
-                    alice_handler bob_handler (list val_commit val_guess val_clue)
+        (> requested_stake 0)
+        (= (% requested_stake 100) 0)
+        (deep= _args (li proposer_reserve accepter_reserve requested_stake))
+        (if (or (> requested_stake proposer_reserve) (> requested_stake accepter_reserve))
+            (li 0 (> requested_stake proposer_reserve) (> requested_stake accepter_reserve))
+            (assign
+                base_unit (/ requested_stake 100)
+                initial_state (li DICT_PUBKEY base_unit)
+                alice_handler (curry krunk_alice_handler_commit DICT_TREE)
+                bob_handler (curry krunk_bob_handler_commit DICT_TREE)
+                (li 1
+                    (li
+                        ; Slot 0 allocates the proposer's contribution.
+                        (li
+                            requested_stake 0 1 0 32 initial_state 0
+                            alice_handler bob_handler (list val_commit val_guess val_clue)
+                            requested_stake
+                        )
+                        ; Slot 1 allocates the accepter's contribution and swaps first role.
+                        (li
+                            0 requested_stake 0 0 32 initial_state 0
+                            alice_handler bob_handler (list val_commit val_guess val_clue)
+                            requested_stake
+                        )
+                    )
                 )
             )
         )

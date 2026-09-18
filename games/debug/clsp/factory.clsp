@@ -210,22 +210,30 @@
   )
 
 (defun factory
-    (player_a_contribution player_b_contribution (CURRY_PACK))
+    (proposer_reserve accepter_reserve (CURRY_PACK))
   (assert
-    (> player_a_contribution 0)
-    (> player_b_contribution 0)
-    (list
+    (> proposer_reserve 0)
+    (> accepter_reserve 0)
+    (assign
+     proposer_contribution (if (> proposer_reserve 100) 100 proposer_reserve)
+     accepter_contribution (if (> accepter_reserve 100) 100 accepter_reserve)
      (list
-      player_a_contribution
-      player_b_contribution
       1
-      ()
-      512
-      (list () () ())
-      0
-      (curry SELF_PROG "myturn" curry-args)
-      (curry SELF_PROG "theirturn" curry-args)
-      (list (curry SELF_PROG "validator" curry-args))
+      (list
+       (list
+        proposer_contribution
+        accepter_contribution
+        1
+        ()
+        512
+        (list () () ())
+        0
+        (curry SELF_PROG "myturn" curry-args)
+        (curry SELF_PROG "theirturn" curry-args)
+        (list (curry SELF_PROG "validator" curry-args))
+        (list proposer_contribution accepter_contribution)
+        )
+       )
       )
      )
     )

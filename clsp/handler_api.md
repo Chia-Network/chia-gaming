@@ -8,11 +8,11 @@ game-specific — calpoker is one implementation.
 
 
 ## Game Factory
-Both peers run the same deterministic factory once with the uniform proper-list
-wrapper:
+Both peers run the same deterministic factory when a proposal is accepted,
+using the current out-of-game reserves:
 
 ```
-(player_a_contribution player_b_contribution game_parameters)
+(proposer_reserve accepter_reserve game_parameters)
 ```
 
 `game_parameters` is the game's opaque CLVM value converted from Bencodex by
@@ -21,22 +21,21 @@ become CLVM atoms; integers are limited to signed `i128` and use canonical
 signed CLVM integer encoding, booleans map to nil/`1`, null maps to nil, and
 lists remain proper lists.
 Timeout, channel identity, local identity, and `sender_is_player_a` are not
-factory inputs. A factory returns a proper, nonempty list of game records.
-Every record is a proper list with exactly 10 fields:
+factory inputs. Success is `(1 records)`, where `records` is a proper,
+nonempty list and every record has exactly 11 fields:
 
 ```
-(player_a_contribution player_b_contribution player_a_goes_first initial_move
+(proposer_contribution accepter_contribution proposer_goes_first initial_move
  initial_max_move_size initial_state initial_mover_share my_turn_handler
- their_turn_handler validation_programs)
+ their_turn_handler validation_programs readable_parameters)
 ```
 
-`player_a_goes_first` is canonical nil or `1`. Handler order is always the
-handler for the player whose turn is first, followed by the handler for the
-waiting player. Both peers execute and compare the complete ordered factory
-shape locally; the wire retains only the ordered setup commitments, and the
-receiver rebuilds raw state, handlers, and validator programs from its own
-factory run. Rust maps player A/B to sender/receiver and local/opponent globally
-using the proposal's one `sender_is_player_a` bit; member order never changes.
+`proposer_goes_first` is canonical nil or `1`. The handler fields are the
+proposer-turn and accepter-turn entry programs. Both peers independently run
+the factory; no generated records or game IDs are sent on the wire. Rust maps
+proposal-relative contributions and turns to stable player A/B and each
+endpoint's local perspective using the proposal's `sender_is_player_a` bit;
+member order never changes.
 Field 5 remains `initial_state`. Field 9, `validation_programs`, is a proper,
 nonempty list of every validator program the game may select. Its first program
 is the initial validator; later programs are registry entries whose list order
@@ -45,22 +44,32 @@ member's first validation-program hash is the registered protocol identity.
 Use canonical nil for `initial_state` unless the first transition genuinely
 needs pre-existing validator state.
 
-The host derives `amount` by adding the player A and B contributions. It
-also calculates the first validator's tree hash, which is the protocol game ID
-for the first record. Factories do not return either redundant value.
+The host derives `amount` by adding the proposer and accepter contributions.
+It assigns shared sequential game IDs only after the complete factory result
+has been accepted. `readable_parameters` is an opaque per-member CLVM value
+reported to the host for game initialization.
+
+Insufficient reserves are a normal result:
+
+```
+(0 proposer_balance_short accepter_balance_short)
+```
+
+Both flags are canonical booleans. Malformed parameters remain hard errors.
 
 Canonical CLVM parameters, produced only inside the Rust host by converting the
 game's structured Bencodex proposal parameters:
 
-- Calpoker: nil.
-- Space Poker: one positive bet-unit integer atom.
-- Krunk: nil. Its factory is curried with the dictionary public key and tree
+- Calpoker: one positive requested per-player contribution.
+- Space Poker: `(stack_size minimum_raise)`. A zero stack size selects the
+  largest shared stack allowed by both reserves, rounded down to the raise.
+- Krunk: one positive requested per-player contribution divisible by 100. Its
+  factory is curried with the dictionary public key and tree
   and returns the fixed two-game atomic hand.
 
 A factory probe returns the complete representative invocation list, not only
-`game_parameters`: Calpoker currently probes with `(1 1 ())`, Space Poker with
-representative contributions plus a positive bet unit, and Krunk with
-`(100 100 ())`.
+`game_parameters`: Calpoker currently probes with `(1 1 1)`, Space Poker with
+`(1 1 (1 1))`, and Krunk with `(100 100 100)`.
 
 
 ## Handler parameters

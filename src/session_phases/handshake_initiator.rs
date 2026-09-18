@@ -16,8 +16,9 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID,
-    GameType, GetCoinStringParts, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash,
-    Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram, MAX_BLOCK_COST_CLVM,
+    GameType, GetCoinStringParts, Hash, IntoErr, LocalProposalId, Node, Program, ProgramRef,
+    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    MAX_BLOCK_COST_CLVM,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
@@ -759,7 +760,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
     fn self_accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(
             self.phase_name(),
@@ -944,24 +945,24 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         self.channel_offer(env, bundle)
             .map(|effect| effect.into_iter().collect::<Vec<_>>())
     }
-    fn propose_games(
+    fn propose(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        Err(phase_operation_error(self.phase_name(), "propose_games"))
+        _proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
+        Err(phase_operation_error(self.phase_name(), "propose"))
     }
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "accept_proposal"))
     }
     fn cancel_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "cancel_proposal"))
     }

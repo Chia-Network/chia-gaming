@@ -1,4 +1,5 @@
 import { type GameMountView, type LiveGamePort } from '@games/host';
+import { Program } from 'clvm-lib';
 import type { UseGameSessionResult } from '../../hooks/useGameSession';
 import {
   createRegisteredGameHand,
@@ -23,26 +24,25 @@ function modelFor(gameType: 'calpoker' | 'spacepoker' | 'krunk') {
     gameType === 'spacepoker'
       ? {
           gameType,
-          playerAContribution: 100n,
-          playerBContribution: 100n,
           senderIsPlayerA: false,
           gameTimeout: 15n,
-          parameters: 10n,
+          parameters: [10n, 10n],
         }
       : {
           gameType,
-          playerAContribution: 100n,
-          playerBContribution: 100n,
           senderIsPlayerA: gameType === 'krunk',
           gameTimeout: 15n,
-          parameters: null,
+          parameters: 100n,
         };
   const hand = createRegisteredGameHand(gameType, {
-    parameters: handProposal.parameters,
     members: ids.map((_, index) => ({
       playerAContribution: gameType === 'krunk' ? (index === 0 ? 100n : 0n) : 100n,
       playerBContribution: gameType === 'krunk' ? (index === 0 ? 0n : 100n) : 100n,
       ourTurn: gameType === 'krunk' ? index === 0 : true,
+      readableParameters:
+        gameType === 'spacepoker'
+          ? Program.fromList([Program.fromBigInt(10n), Program.fromBigInt(10n)])
+          : Program.fromBigInt(100n),
     })),
   });
   return createSessionModel({
@@ -113,8 +113,14 @@ describe('game mount registry', () => {
       handSource: {
         frozen: false,
         hand: createRegisteredGameHand('calpoker', {
-          parameters: model.betweenHand.lastHandProposal!.parameters,
-          members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: true }],
+          members: [
+            {
+              playerAContribution: 100n,
+              playerBContribution: 100n,
+              ourTurn: true,
+              readableParameters: Program.fromBigInt(100n),
+            },
+          ],
         }),
         port,
       },

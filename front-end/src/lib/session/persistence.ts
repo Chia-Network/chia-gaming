@@ -34,7 +34,7 @@ import {
   parseComposeDraftState,
   encodeComposeDraftState,
   parseOptionalHandProposalSnapshot,
-  parseProposalGroups,
+  parsePendingProposals,
   parseHandProposalSnapshot,
 } from './persistenceBetweenHands';
 import {
@@ -299,8 +299,6 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
 
 function savedHandProposalFromModel(handProposal: HandProposal): SavedHandProposal {
   return {
-    player_a_contribution: handProposal.playerAContribution.toString(),
-    player_b_contribution: handProposal.playerBContribution.toString(),
     sender_is_player_a: handProposal.senderIsPlayerA,
     game_timeout: handProposal.gameTimeout.toString(),
     game_type: handProposal.gameType,
@@ -363,7 +361,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     fields.betweenHandPendingRetryHandProposal,
     'betweenHandPendingRetryHandProposal',
   );
-  const proposalGroups = parseProposalGroups(fields.proposalGroups, 'proposalGroups');
+  const pendingProposals = parsePendingProposals(fields.pendingProposals, 'pendingProposals');
   const waitingStateEnteredAt =
     fields.waitingStateEnteredAt === null
       ? null
@@ -405,12 +403,10 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       pendingRetryHandProposal === null
         ? null
         : savedHandProposalFromModel(pendingRetryHandProposal),
-    proposalGroups: proposalGroups.map((group) => ({
-      primary_id: group.primaryId,
-      member_ids: group.memberIds,
-      origin: group.origin,
-      disposition: group.disposition,
-      hand_proposal: savedHandProposalFromModel(group.handProposal),
+    pendingProposals: pendingProposals.map((proposal) => ({
+      id: proposal.id,
+      lifecycle: proposal.lifecycle,
+      hand_proposal: savedHandProposalFromModel(proposal.handProposal),
     })),
     waitingStateEnteredAt,
     cleanShutdownGraceStartedAt,
@@ -691,8 +687,11 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   const restoredActiveIds = [...activeIds];
   const lastDisplayedId = save.lastDisplayedGameId;
   const mode = save.betweenHandMode;
-  const proposalGroups = parseProposalGroups(save.proposalGroups, 'proposalGroups');
-  const hasOutgoing = proposalGroups.some((group) => group.disposition === 'outgoing');
+  const pendingProposals = parsePendingProposals(save.pendingProposals, 'pendingProposals');
+  const hasOutgoing = pendingProposals.some(
+    (proposal) =>
+      proposal.lifecycle === 'local-outgoing' || proposal.lifecycle === 'local-cancel-queued',
+  );
   const model = normalizeSessionPresentation(
     createSessionModel({
       restore: {
@@ -728,7 +727,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       },
       betweenHand: {
         mode,
-        proposalGroups,
+        pendingProposals,
         rejectedOnceHandProposal: parseOptionalHandProposalSnapshot(
           save.betweenHandRejectedOnceHandProposal,
           'betweenHandRejectedOnceHandProposal',

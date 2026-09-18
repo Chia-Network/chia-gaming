@@ -1,5 +1,6 @@
 pub mod dict_tree_lookup;
 pub mod handlers;
+#[cfg(feature = "sim-tests")]
 pub mod sim;
 pub mod validation;
 

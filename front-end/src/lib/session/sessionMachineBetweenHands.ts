@@ -124,10 +124,8 @@ export function reduceBetweenHandEvent(
       return assertNever(event);
   }
 
-  const shouldPersist =
-    event.type === 'select-compose-game' || event.type === 'set-compose-timeout';
   return {
     state: next,
-    effects: shouldPersist && next !== state ? [{ type: 'persist-session' }] : [],
+    effects: [],
   };
 }

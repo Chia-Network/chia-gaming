@@ -17,11 +17,9 @@ function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
 
 const CAL_TERMS = {
   gameType: 'calpoker' as const,
-  playerAContribution: 100n,
-  playerBContribution: 100n,
   senderIsPlayerA: false,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 100n,
 };
 const CAL_HAND_STATE = calpokerStateCodec.encode({
   playerHand: [],
@@ -159,11 +157,9 @@ describe('session model round trips', () => {
       betweenHand: {
         lastHandProposal: {
           gameType: 'krunk',
-          playerAContribution: 100n,
-          playerBContribution: 100n,
           senderIsPlayerA: true,
           gameTimeout: 15n,
-          parameters: null,
+          parameters: 100n,
         },
       },
     });

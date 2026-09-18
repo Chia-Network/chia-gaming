@@ -28,12 +28,6 @@ export type ChannelEvent = Extract<
   | { type: 'coin-enrichment-completed' }
 >;
 
-function withSessionPersistence(transition: SessionMachineTransition): SessionMachineTransition {
-  return transition.effects.some((effect) => effect.type === 'persist-session')
-    ? transition
-    : { ...transition, effects: [...transition.effects, { type: 'persist-session' }] };
-}
-
 function assertNever(event: never): never {
   throw new Error(`Unhandled channel event: ${JSON.stringify(event)}`);
 }
@@ -211,7 +205,7 @@ export function reduceChannelEvent(
             channel: { ...state.model.channel, cleanShutdownStarted: true },
           },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     case 'start-clean-shutdown':
       return { state, effects: [{ type: 'controller-clean-shutdown' }] };
@@ -247,7 +241,7 @@ export function reduceChannelEvent(
             nextNotificationId: notification.id,
           },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     }
     case 'coin-enrichment-completed': {
@@ -264,46 +258,36 @@ export function reduceChannelEvent(
         ) {
           return { state, effects: [] };
         }
-        return withSessionPersistence(
-          reduceChannelEvent(state, {
-            type: 'channel-coin-enriched',
-            state: event.channelState,
-            coinHex: event.coinHex,
-          }),
-        );
+        return reduceChannelEvent(state, {
+          type: 'channel-coin-enriched',
+          state: event.channelState,
+          coinHex: event.coinHex,
+        });
       }
       const instance = state.model.game.instances[event.id];
       if (!instance) return { state, effects: [] };
       if (event.target === 'settlement') {
         if (instance.terminal.type === 'none') return { state, effects: [] };
-        return withSessionPersistence(
-          reduceDurableGameEvent(state, {
-            type: 'game',
-            action: {
-              type: 'settled',
-              id: event.id,
-              terminal: { ...instance.terminal, rewardCoinHex: event.coinHex },
-            },
-          }),
-        );
-      }
-      return withSessionPersistence(
-        reduceDurableGameEvent(state, {
+        return reduceDurableGameEvent(state, {
           type: 'game',
-          action: { type: 'coin-enriched', id: event.id, coinHex: event.coinHex },
-        }),
-      );
+          action: {
+            type: 'settled',
+            id: event.id,
+            terminal: { ...instance.terminal, rewardCoinHex: event.coinHex },
+          },
+        });
+      }
+      return reduceDurableGameEvent(state, {
+        type: 'game',
+        action: { type: 'coin-enriched', id: event.id, coinHex: event.coinHex },
+      });
     }
     default:
       return assertNever(event);
   }
 
-  const shouldPersist =
-    event.type === 'dismiss-channel-notification' ||
-    event.type === 'dismiss-channel' ||
-    event.type === 'dismiss-game-notification';
   return {
     state: next,
-    effects: shouldPersist && next !== state ? [{ type: 'persist-session' }] : [],
+    effects: [],
   };
 }

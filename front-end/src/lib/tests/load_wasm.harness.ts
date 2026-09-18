@@ -93,6 +93,54 @@ const activeSubscriptions: Subscription[] = [];
 const activeCradles: SessionControllerAdapter[] = [];
 let testPoller: BlockchainPoller | null = null;
 
+function attachStandaloneTestCommitCoordinator(controller: SessionController): void {
+  let dirty = false;
+  let flushing: Promise<void> = Promise.resolve();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const schedule = () => {
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      void coordinator.flush().catch(() => {});
+    }, 0);
+  };
+  const coordinator = {
+    requestCommit: () => {
+      dirty = true;
+      schedule();
+    },
+    enqueue: (work: () => void) => {
+      work();
+    },
+    flush: (): Promise<void> => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      flushing = flushing
+        .catch(() => {})
+        .then(async () => {
+          while (dirty) {
+            try {
+              dirty = false;
+              controller.flushDeferredWork();
+              const commit = controller.prepareReliableCommit();
+              const rejection = controller.prepareInboundSessionRejectPersistence();
+              if (rejection) await rejection.write();
+              controller.completeReliableCommit(commit);
+            } catch (error) {
+              dirty = true;
+              controller.reportDurabilityError(error);
+              throw error;
+            }
+          }
+        });
+      return flushing;
+    },
+  };
+  controller.attachTransactionCoordinator(coordinator);
+}
+
 export function addActiveSubscription(sub: Subscription): Subscription {
   activeSubscriptions.push(sub);
   return sub;
@@ -168,6 +216,10 @@ export class SessionControllerAdapter {
 
   set_blob(blob: SessionController) {
     this.blob = blob;
+    // These integration tests deliberately drive controllers before a React
+    // runtime exists. Give that phase an explicit in-memory commit consumer;
+    // SessionMachineRuntime replaces it when a reloadable lane is bound.
+    attachStandaloneTestCommitCoordinator(blob);
     this.blob.kickSystem(2);
   }
 
@@ -403,8 +455,6 @@ export async function createActivePair(
   second.pairingToken = `restore-games-${index}-second`;
   first.perGameAmount = 100n;
   second.perGameAmount = 100n;
-  first.onSaveNeeded = () => Promise.resolve();
-  second.onSaveNeeded = () => Promise.resolve();
   cradles[0].set_blob(first);
   cradles[1].set_blob(second);
   await action_with_messages(poller, cradles[0], cradles[1]);
@@ -415,14 +465,21 @@ export function postMoveHandState(
   handProposal: HandProposal,
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
+  const stake =
+    handProposal.gameType === 'spacepoker'
+      ? (handProposal.parameters as readonly bigint[])[0]! *
+        (handProposal.parameters as readonly bigint[])[1]!
+      : (handProposal.parameters as bigint);
+  const readableParameters =
+    handProposal.gameType === 'spacepoker'
+      ? Program.fromList((handProposal.parameters as readonly bigint[]).map(Program.fromBigInt))
+      : Program.fromBigInt(stake);
   const hand = createRegisteredGameHand(handProposal.gameType, {
-    parameters: handProposal.parameters,
     members: ids.map((_, index) => ({
-      playerAContribution:
-        handProposal.gameType === 'krunk' && index !== 0 ? 0n : handProposal.playerAContribution,
-      playerBContribution:
-        handProposal.gameType === 'krunk' && index === 0 ? 0n : handProposal.playerBContribution,
+      playerAContribution: handProposal.gameType === 'krunk' && index !== 0 ? 0n : stake,
+      playerBContribution: handProposal.gameType === 'krunk' && index === 0 ? 0n : stake,
       ourTurn: handProposal.gameType === 'krunk' ? index === 1 : true,
+      readableParameters,
     })),
   });
   const accepted = snapshotRegisteredGameHand(handProposal.gameType, hand);

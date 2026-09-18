@@ -288,7 +288,7 @@ class SpacepokerReloadDriver {
     const receiver = proposer ^ 1;
     const cached = this.lanes[receiver].runtime
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-cached');
     assert.ok(cached, 'same-terms receiver must cache the exact proposal');
     this.lanes[receiver].runtime.dispatch({ type: 'choose-same-terms' });
     await this.exchange();
@@ -334,11 +334,9 @@ async function runSpacepokerReloadCompletion(poller: BlockchainPoller): Promise<
   const adapters = await createActivePair(poller, 12);
   const handProposal: HandProposal = {
     gameType: 'spacepoker',
-    playerAContribution: 20n,
-    playerBContribution: 20n,
     senderIsPlayerA: true,
     gameTimeout: 15n,
-    parameters: 10n,
+    parameters: [2n, 10n],
   };
   const lanes = adapters.map((adapter) => {
     const controller = adapter.blob!;
@@ -361,9 +359,9 @@ async function runSpacepokerReloadCompletion(poller: BlockchainPoller): Promise<
     await driver.exchange();
     const review = lanes[1].runtime
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-review');
     assert.ok(review, 'Space Poker receiver must observe the real proposal');
-    lanes[1].runtime.dispatch({ type: 'accept-review', primaryId: review.primaryId });
+    lanes[1].runtime.dispatch({ type: 'accept-review', id: review.id });
     await driver.exchange();
 
     await driver.startHand();
@@ -413,5 +411,7 @@ it(
       });
     }
   },
-  120 * 1000,
+  // The exhaustive real-WASM state matrix takes about two minutes in isolation;
+  // leave headroom for the other simulator-backed shards running concurrently.
+  180 * 1000,
 );

@@ -3,7 +3,7 @@ import type { GameProposalFormHandle, HandProposalFormProps } from '../../host';
 import { AmountInput } from './AmountInput';
 import { isValidKrunkStake } from './handProposal';
 
-type KrunkParameters = Record<string, never>;
+type KrunkParameters = bigint;
 
 export const HandProposalForm = forwardRef<
   GameProposalFormHandle<KrunkParameters>,
@@ -13,7 +13,7 @@ export const HandProposalForm = forwardRef<
   ref,
 ) {
   const initialAmount = initialValues
-    ? initialValues.senderContribution
+    ? initialValues.parameters
     : defaultContribution > 0n
       ? defaultContribution
       : 100n;
@@ -33,9 +33,7 @@ export const HandProposalForm = forwardRef<
         ? { ok: false, error }
         : {
             ok: true,
-            senderContribution: amount,
-            receiverContribution: amount,
-            parameters: {},
+            parameters: amount,
           };
     },
   }));

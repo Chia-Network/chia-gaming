@@ -3,7 +3,9 @@ mod gaming_wasm {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
     use std::convert::TryFrom;
-    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    #[cfg(target_family = "wasm")]
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicI32, Ordering};
 
     use hex::FromHexError;
 
@@ -26,8 +28,8 @@ mod gaming_wasm {
         complete_fee_offer_bundle, convert_coinset_org_spend_to_spend, fee_payment_puzzle_hash,
         Aggsig, AllocEncoder,
         Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
-        GameID, GameType, Hash, Node, PrivateKey, Program, ProgramRef, PublicKey, Puzzle,
-        PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+        GameID, GameType, Hash, LocalProposalId, Node, PrivateKey, Program, ProgramRef, PublicKey,
+        Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
     };
     use clvm_traits::{ClvmEncoder, ToClvm};
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
@@ -72,7 +74,17 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 10;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 11;
+
+    #[cfg(test)]
+    mod serialization_schema_tests {
+        use super::*;
+
+        #[test]
+        fn exported_game_session_serialization_schema_is_current() {
+            assert_eq!(game_session_serialization_schema(), 11);
+        }
+    }
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {
@@ -98,6 +110,7 @@ mod gaming_wasm {
         fn __wasm_call_ctors();
     }
 
+    #[cfg(target_family = "wasm")]
     static WASM_CTORS_RAN: AtomicBool = AtomicBool::new(false);
 
     /// Hosts may call this more than once; constructors must run at most once.
@@ -824,19 +837,19 @@ mod gaming_wasm {
         // First generated member's initial validation puzzle hash, as 32-byte hex.
         game_type: String,
         timeout: u64,
-        player_a_contribution: u64,
-        player_b_contribution: u64,
         sender_is_player_a: bool,
         parameters: ProposalParameters,
-    }
-
-    fn game_id_to_string(id: &GameID) -> String {
-        id.0.to_string()
     }
 
     fn string_to_game_id(id: &str) -> Result<GameID, JsValue> {
         Ok(GameID(id.parse::<u64>().map_err(|e| {
             JsValue::from_str(&format!("bad game id: {e}"))
+        })?))
+    }
+
+    fn string_to_local_proposal_id(id: &str) -> Result<LocalProposalId, JsValue> {
+        Ok(LocalProposalId(id.parse::<u64>().map_err(|e| {
+            JsValue::from_str(&format!("bad proposal id: {e}"))
         })?))
     }
 
@@ -875,59 +888,51 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn propose_games(cid: i32, games: JsValue) -> Result<JsValue, JsValue> {
-        let js_games: Vec<JsGameProposal> =
-            serde_wasm_bindgen::from_value(games).into_js()?;
+    pub fn propose(cid: i32, proposal: JsValue) -> Result<JsValue, JsValue> {
+        let proposal: JsGameProposal =
+            serde_wasm_bindgen::from_value(proposal).into_js()?;
         with_game(cid, move |cradle: &mut JsGameSession| {
-            let mut game_starts = Vec::with_capacity(js_games.len());
-            for g in &js_games {
-                let game_type = parse_game_type_hex(&g.game_type)
-                    .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
-                game_starts.push(GameProposal {
-                    player_a_contribution: Amount::new(g.player_a_contribution),
-                    player_b_contribution: Amount::new(g.player_b_contribution),
-                    sender_is_player_a: g.sender_is_player_a,
-                    game_type,
-                    timeout: Timeout::new(g.timeout),
-                    parameters: g.parameters.clone(),
-                });
-            }
-            let ids = cradle.cradle.propose_games(
-                &mut cradle.allocator,
-                &game_starts,
-            )?;
+            let game_type = parse_game_type_hex(&proposal.game_type)
+                .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
+            let start = GameProposal {
+                sender_is_player_a: proposal.sender_is_player_a,
+                game_type,
+                timeout: Timeout::new(proposal.timeout),
+                parameters: proposal.parameters,
+            };
+            let id = cradle.cradle.propose(&mut cradle.allocator, &start)?;
             let dr = cradle
                 .cradle
                 .flush_and_collect(&mut cradle.allocator)?;
-            let ids_arr = js_sys::Array::new();
-            for id in &ids {
-                ids_arr.push(&JsValue::from_str(&game_id_to_string(id)));
-            }
             let pending_terminal = cradle.cradle.pending_terminal_handoff();
             let terminal = cradle.cradle.is_fully_resolved();
             let result = manager_drain_to_js(&dr, pending_terminal, terminal, true)?;
-            let _ = js_sys::Reflect::set(&result, &"ids".into(), &ids_arr);
+            let _ = js_sys::Reflect::set(
+                &result,
+                &"id".into(),
+                &JsValue::from_str(&id.to_string()),
+            );
             Ok(result)
         })
     }
 
     #[wasm_bindgen]
     pub fn accept_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
-        let game_id = string_to_game_id(game_id)?;
+        let proposal_id = string_to_local_proposal_id(game_id)?;
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
             cradle
                 .cradle
-                .accept_proposal(&mut cradle.allocator, &game_id)
+                .accept_proposal(&mut cradle.allocator, &proposal_id)
         })
     }
 
     #[wasm_bindgen]
     pub fn cancel_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
-        let game_id = string_to_game_id(game_id)?;
+        let proposal_id = string_to_local_proposal_id(game_id)?;
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
             cradle
                 .cradle
-                .cancel_proposal(&mut cradle.allocator, &game_id)
+                .cancel_proposal(&mut cradle.allocator, &proposal_id)
         })
     }
 
@@ -1008,27 +1013,6 @@ mod gaming_wasm {
                     .cheat(&mut cradle.allocator, &game_id, share)
             },
         )
-    }
-
-    #[wasm_bindgen]
-    pub fn accept_proposal_and_move(
-        cid: i32,
-        id: &str,
-        readable: &[u8],
-    ) -> Result<JsValue, JsValue> {
-        let game_id = string_to_game_id(id)?;
-        let readable_move = ReadableMove::from_program(std::rc::Rc::new(
-            Program::from_bytes(readable).into_js()?,
-        ));
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            let entropy: Hash = cradle.rng.0.random();
-            cradle.cradle.accept_proposal_and_move(
-                &mut cradle.allocator,
-                &game_id,
-                readable_move,
-                entropy,
-            )
-        })
     }
 
     /// Pull the protocol-level peer state, rendered as indented text for the

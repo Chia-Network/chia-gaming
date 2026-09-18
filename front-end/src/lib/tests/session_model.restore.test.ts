@@ -148,26 +148,20 @@ describe('session model restore, schema, and event contracts', () => {
       },
       betweenHandMode: 'review-incoming-proposal',
       betweenHandLastHandProposal: {
-        player_a_contribution: '10',
-        player_b_contribution: '10',
         sender_is_player_a: false,
         game_timeout: '23',
         game_type: 'spacepoker',
-        parameters: 1n,
+        parameters: [10n, 1n],
       },
-      proposalGroups: [
+      pendingProposals: [
         {
-          primary_id: '42',
-          member_ids: ['42'],
-          origin: 'peer',
-          disposition: 'incoming-review',
+          id: '42',
+          lifecycle: 'peer-review',
           hand_proposal: {
-            player_a_contribution: '20',
-            player_b_contribution: '20',
             sender_is_player_a: false,
             game_timeout: '31',
             game_type: 'spacepoker',
-            parameters: 2n,
+            parameters: [10n, 2n],
           },
         },
       ],
@@ -192,30 +186,24 @@ describe('session model restore, schema, and event contracts', () => {
       },
       betweenHand: {
         mode: 'review-incoming-proposal',
-        proposalGroups: [
+        pendingProposals: [
           {
-            primaryId: '42',
-            memberIds: ['42'],
-            origin: 'peer',
-            disposition: 'incoming-review',
+            id: '42',
+            lifecycle: 'peer-review',
             handProposal: {
               gameType: 'spacepoker',
-              playerAContribution: 20n,
-              playerBContribution: 20n,
               senderIsPlayerA: false,
               gameTimeout: 31n,
-              parameters: 2n,
+              parameters: [10n, 2n],
             },
           },
         ],
         rejectedOnceHandProposal: null,
         lastHandProposal: {
           gameType: 'spacepoker',
-          playerAContribution: 10n,
-          playerBContribution: 10n,
           senderIsPlayerA: false,
           gameTimeout: 23n,
-          parameters: 1n,
+          parameters: [10n, 1n],
         },
         compose: {
           selectedGame: 'spacepoker',
@@ -228,8 +216,8 @@ describe('session model restore, schema, and event contracts', () => {
     });
 
     expect(selectGameSessionView(restored).betweenHands).toBe(true);
-    expect(selectGameSessionView(restored).currentHandAmount).toBe(10n);
-    expect(restored.betweenHand.proposalGroups).toEqual(live.betweenHand.proposalGroups);
+    expect(selectGameSessionView(restored).currentHandAmount).toBe(0n);
+    expect(restored.betweenHand.pendingProposals).toEqual(live.betweenHand.pendingProposals);
     expect(restored.betweenHand.mode).toBe(live.betweenHand.mode);
   });
 

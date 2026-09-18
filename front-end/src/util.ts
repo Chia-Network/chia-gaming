@@ -37,14 +37,16 @@ export async function coinIdFromBytes(coin: Uint8Array | number[]): Promise<stri
  * persisted losslessly as a `$bytes` tag. The danger is a byte blob that has
  * lost its typed-array identity and degraded into a plain array of numbers or
  * a numeric-keyed object (`{0:93,...}`) — those trip the validator and break
- * coin parsing. This coerces any of those shapes back into a `Uint8Array`.
+ * coin parsing. WASM-backed views must also be copied: `memory.grow()` detaches
+ * the old memory buffer, which would otherwise corrupt a value retained for a
+ * later persistence boundary.
  */
 export function coerceToBytes(value: unknown): Uint8Array | null {
   if (value == null) return null;
-  if (value instanceof Uint8Array) return value;
+  if (value instanceof Uint8Array) return Uint8Array.from(value);
   if (ArrayBuffer.isView(value)) {
     const view = value as ArrayBufferView;
-    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+    return Uint8Array.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
   }
   if (Array.isArray(value)) {
     return Uint8Array.from(value, (b) => Number(b) & 0xff);

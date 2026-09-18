@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use crate::channel_state::game::Game;
+use crate::channel_state::game::{FactoryResult, Game};
 use crate::common::load_clvm::read_binary_puzzle;
 use crate::common::types::{AllocEncoder, GameType, Program, ProgramRef};
 
@@ -26,11 +26,14 @@ pub fn register_package(
     factories: &mut BTreeMap<GameType, ProgramRef>,
     package_ids: &mut Vec<(String, GameType)>,
 ) {
-    let games = Game::run_factory(allocator, factory.clone().into(), &probe)
-        .unwrap_or_else(|e| panic!("package {key} factory probe failed: {e:?}"));
-    if games.is_empty() {
-        panic!("package {key} factory returned no games");
-    }
+    let games = match Game::run_factory(allocator, factory.clone().into(), &probe)
+        .unwrap_or_else(|e| panic!("package {key} factory probe failed: {e:?}"))
+    {
+        FactoryResult::Success(games) => games,
+        FactoryResult::InsufficientBalance { .. } => {
+            panic!("package {key} factory probe reported insufficient balance")
+        }
+    };
     let id = GameType::from_hash(games[0].initial_validation_program_hash().clone());
     if factories.contains_key(&id) {
         panic!("package {key} duplicate first-validator hash {id}");

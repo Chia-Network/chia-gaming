@@ -5,15 +5,13 @@ use bencodex::Value;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
-    PublicKey, Puzzle, PuzzleHash, Spend, SpendBundle, Timeout,
+    PublicKey, Puzzle, PuzzleHash, Spend, SpendBundle, Timeout, WireProposalId,
 };
 use crate::session_phases::handshake::{
     HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadC, HandshakePayloadD,
 };
 use crate::session_phases::proposal::{GameProposal, ProposalParameters};
-use crate::session_phases::types::{
-    BatchAction, PeerMessage, PeerMove, WireGameSpec, WireProposalGroup,
-};
+use crate::session_phases::types::{BatchAction, PeerMessage, PeerMove, WireProposal};
 
 pub fn encode_peer_message(message: &PeerMessage) -> Result<Vec<u8>, Error> {
     bencodex::encode(&peer_message_to_value(message)?).map_err(wire_error)
@@ -302,8 +300,6 @@ fn proposal_parameters_from_value(value: Value) -> Result<ProposalParameters, Er
 
 fn proposal_to_value(value: &GameProposal) -> Result<Value, Error> {
     Ok(dict([
-        ("ac", integer(value.player_a_contribution.to_u64())),
-        ("bc", integer(value.player_b_contribution.to_u64())),
         ("pa", Value::Bool(value.sender_is_player_a)),
         ("gt", hash_to_value(value.game_type.hash())),
         ("t", integer(value.timeout.to_u64())),
@@ -312,10 +308,8 @@ fn proposal_to_value(value: &GameProposal) -> Result<Value, Error> {
 }
 
 fn proposal_from_value(value: Value) -> Result<GameProposal, Error> {
-    let mut map = expect_exact(value, ["ac", "bc", "pa", "gt", "t", "p"])?;
+    let mut map = expect_exact(value, ["pa", "gt", "t", "p"])?;
     Ok(GameProposal {
-        player_a_contribution: Amount::new(expect_u64(take(&mut map, "ac")?)?),
-        player_b_contribution: Amount::new(expect_u64(take(&mut map, "bc")?)?),
         sender_is_player_a: expect_bool(take(&mut map, "pa")?)?,
         game_type: GameType::from_hash(hash_from_value(take(&mut map, "gt")?)?),
         timeout: Timeout::new(expect_u64(take(&mut map, "t")?)?),
@@ -323,53 +317,18 @@ fn proposal_from_value(value: Value) -> Result<GameProposal, Error> {
     })
 }
 
-fn game_spec_to_value(value: &WireGameSpec) -> Value {
-    dict([
-        ("i", integer(value.game_id.0)),
-        ("ac", integer(value.player_a_contribution.to_u64())),
-        ("bc", integer(value.player_b_contribution.to_u64())),
-        ("af", Value::Bool(value.player_a_goes_first)),
-        ("vp", hash_to_value(&value.initial_validation_program_hash)),
-        ("vi", hash_to_value(&value.initial_validation_info_hash)),
-        ("m", bytes(&value.initial_move)),
-        ("ms", integer(u64::from(value.initial_max_move_size))),
-        ("sh", integer(value.initial_mover_share.to_u64())),
-    ])
-}
-
-fn game_spec_from_value(value: Value) -> Result<WireGameSpec, Error> {
-    let mut map = expect_exact(value, ["i", "ac", "bc", "af", "vp", "vi", "m", "ms", "sh"])?;
-    Ok(WireGameSpec {
-        game_id: GameID(expect_u64(take(&mut map, "i")?)?),
-        player_a_contribution: Amount::new(expect_u64(take(&mut map, "ac")?)?),
-        player_b_contribution: Amount::new(expect_u64(take(&mut map, "bc")?)?),
-        player_a_goes_first: expect_bool(take(&mut map, "af")?)?,
-        initial_validation_program_hash: hash_from_value(take(&mut map, "vp")?)?,
-        initial_validation_info_hash: hash_from_value(take(&mut map, "vi")?)?,
-        initial_move: expect_bytes(take(&mut map, "m")?)?,
-        initial_max_move_size: expect_u32(take(&mut map, "ms")?)?,
-        initial_mover_share: Amount::new(expect_u64(take(&mut map, "sh")?)?),
-    })
-}
-
-fn proposal_group_to_value(value: &WireProposalGroup) -> Result<Value, Error> {
+fn wire_proposal_to_value(value: &WireProposal) -> Result<Value, Error> {
     Ok(dict([
+        ("i", integer(value.origin_wire_id.0)),
         ("s", proposal_to_value(&value.start)?),
-        (
-            "m",
-            Value::List(value.members.iter().map(game_spec_to_value).collect()),
-        ),
     ]))
 }
 
-fn proposal_group_from_value(value: Value) -> Result<WireProposalGroup, Error> {
-    let mut map = expect_exact(value, ["s", "m"])?;
-    Ok(WireProposalGroup {
+fn wire_proposal_from_value(value: Value) -> Result<WireProposal, Error> {
+    let mut map = expect_exact(value, ["i", "s"])?;
+    Ok(WireProposal {
+        origin_wire_id: WireProposalId(expect_u64(take(&mut map, "i")?)?),
         start: proposal_from_value(take(&mut map, "s")?)?,
-        members: expect_list(take(&mut map, "m")?)?
-            .into_iter()
-            .map(game_spec_from_value)
-            .collect::<Result<_, _>>()?,
     })
 }
 
@@ -394,9 +353,9 @@ fn peer_move_from_value(value: Value) -> Result<PeerMove, Error> {
 
 fn batch_action_to_value(value: &BatchAction) -> Result<Value, Error> {
     Ok(match value {
-        BatchAction::ProposeGroup(group) => tagged("P", proposal_group_to_value(group)?),
-        BatchAction::AcceptProposalGroup(id) => tagged("AP", integer(id.0)),
-        BatchAction::CancelProposalGroup(id) => tagged("CP", integer(id.0)),
+        BatchAction::Propose(proposal) => tagged("P", wire_proposal_to_value(proposal)?),
+        BatchAction::AcceptProposal(id) => tagged("AP", integer(id.0)),
+        BatchAction::CancelProposal(id) => tagged("CP", integer(id.0)),
         BatchAction::Move(id, peer_move) => tagged(
             "M",
             Value::List(vec![integer(id.0), peer_move_to_value(peer_move)]),
@@ -411,9 +370,13 @@ fn batch_action_to_value(value: &BatchAction) -> Result<Value, Error> {
 fn batch_action_from_value(value: Value) -> Result<BatchAction, Error> {
     let (tag, value) = expect_tag(value)?;
     match tag.as_str() {
-        "P" => Ok(BatchAction::ProposeGroup(proposal_group_from_value(value)?)),
-        "AP" => Ok(BatchAction::AcceptProposalGroup(GameID(expect_u64(value)?))),
-        "CP" => Ok(BatchAction::CancelProposalGroup(GameID(expect_u64(value)?))),
+        "P" => Ok(BatchAction::Propose(wire_proposal_from_value(value)?)),
+        "AP" => Ok(BatchAction::AcceptProposal(WireProposalId(expect_u64(
+            value,
+        )?))),
+        "CP" => Ok(BatchAction::CancelProposal(WireProposalId(expect_u64(
+            value,
+        )?))),
         "M" => {
             let mut values = expect_list(value)?;
             if values.len() != 2 {
@@ -717,31 +680,19 @@ mod tests {
             my_contribution: Amount::new(1),
             their_contribution: Amount::new(2),
         };
-        let group = WireProposalGroup {
+        let proposal = WireProposal {
+            origin_wire_id: WireProposalId(5),
             start: GameProposal {
-                player_a_contribution: Amount::new(1),
-                player_b_contribution: Amount::new(2),
                 sender_is_player_a: true,
                 game_type: GameType::from_hash(Hash::default()),
                 timeout: Timeout::new(3),
                 parameters: ProposalParameters::List(vec![ProposalParameters::Integer(4)]),
             },
-            members: vec![WireGameSpec {
-                game_id: GameID(5),
-                player_a_contribution: Amount::new(1),
-                player_b_contribution: Amount::new(2),
-                player_a_goes_first: false,
-                initial_validation_program_hash: Hash::default(),
-                initial_validation_info_hash: Hash::default(),
-                initial_move: vec![6],
-                initial_max_move_size: 7,
-                initial_mover_share: Amount::new(8),
-            }],
         };
         let actions = vec![
-            BatchAction::ProposeGroup(group),
-            BatchAction::AcceptProposalGroup(GameID(1)),
-            BatchAction::CancelProposalGroup(GameID(2)),
+            BatchAction::Propose(proposal),
+            BatchAction::AcceptProposal(WireProposalId(1)),
+            BatchAction::CancelProposal(WireProposalId(2)),
             BatchAction::Move(
                 GameID(3),
                 PeerMove {

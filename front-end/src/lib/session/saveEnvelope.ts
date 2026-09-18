@@ -4,13 +4,13 @@ import type { GameProtocolPresentation } from './gameSlice';
 import type {
   BetweenHandModeModel,
   NotificationKind,
-  ProposalGroupDisposition,
-  ProposalGroupOrigin,
+  PendingProposalLifecycle,
+  ProposalOrigin,
   RegisteredGameType,
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 24n;
+export const SESSION_SAVE_VERSION = 26n;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
@@ -85,8 +85,6 @@ export interface SavedGameInstance {
 }
 
 interface SavedHandProposalBase {
-  player_a_contribution: string;
-  player_b_contribution: string;
   sender_is_player_a: boolean;
   game_timeout: string;
 }
@@ -106,7 +104,7 @@ export interface SavedQueuedNotification {
 export interface SessionPresentationSave {
   activeGameIds: string[];
   currentHandGameIds: string[];
-  currentHandOrigin: ProposalGroupOrigin | null;
+  currentHandOrigin: ProposalOrigin | null;
   lastDisplayedGameId: string | null;
   gameInstances: Record<string, SavedGameInstance>;
   activeGameType: RegisteredGameType;
@@ -126,11 +124,9 @@ export interface SessionPresentationSave {
   betweenHandLastHandProposal: SavedHandProposal | null;
   betweenHandRejectedOnceHandProposal: SavedHandProposal | null;
   betweenHandPendingRetryHandProposal: SavedHandProposal | null;
-  proposalGroups: Array<{
-    primary_id: string;
-    member_ids: string[];
-    origin: ProposalGroupOrigin;
-    disposition: ProposalGroupDisposition;
+  pendingProposals: Array<{
+    id: string;
+    lifecycle: PendingProposalLifecycle;
     hand_proposal: SavedHandProposal;
   }>;
   waitingStateEnteredAt: bigint | null;

@@ -37,33 +37,27 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     {
       handProposal: {
         gameType: 'calpoker',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: false,
         gameTimeout: 15n,
-        parameters: null,
+        parameters: 100n,
       },
       expectedMembers: 1,
     },
     {
       handProposal: {
         gameType: 'spacepoker',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: false,
         gameTimeout: 15n,
-        parameters: 10n,
+        parameters: [10n, 10n],
       },
       expectedMembers: 1,
     },
     {
       handProposal: {
         gameType: 'krunk',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: true,
         gameTimeout: 15n,
-        parameters: null,
+        parameters: 100n,
       },
       expectedMembers: 2,
     },
@@ -73,25 +67,27 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     const cradles = await createActivePair(poller, index);
     const proposer = cradles[0].blob!;
     const mover = cradles[1].blob!;
-    const ids = proposer.proposeGame({
+    const proposalIds = proposer.proposeGame({
       game_type: protocolIdForCatalog(testCase.handProposal.gameType),
       timeout: testCase.handProposal.gameTimeout,
-      player_a_contribution: testCase.handProposal.playerAContribution,
-      player_b_contribution: testCase.handProposal.playerBContribution,
       sender_is_player_a: testCase.handProposal.senderIsPlayerA,
       parameters: testCase.handProposal.parameters,
     });
+    assert.equal(proposalIds.length, 1);
+    await exchangeUntilIdle(cradles);
+    mover.acceptProposal(proposalIds[0]);
+    await exchangeUntilIdle(cradles);
+    const ids = [...mover.activeGameIds];
     assert.equal(ids.length, testCase.expectedMembers);
-    await exchangeUntilIdle(cradles);
-    mover.acceptProposal(ids[0]);
-    await exchangeUntilIdle(cradles);
-    assert.deepEqual(mover.activeGameIds, ids);
+    assert.deepEqual(proposer.activeGameIds, ids);
 
+    const actionIsProposer = testCase.handProposal.gameType !== 'krunk';
+    const actionController = actionIsProposer ? proposer : mover;
     const postMove = postMoveHandState(testCase.handProposal, ids);
-    const beforeMove = Uint8Array.from(mover.getWasmFields()!.serializedGameSession);
-    mover.makeMove(postMove.moverId, postMove.move);
-    await flushWrapperDrain([cradles[1]]);
-    const afterMove = mover.getWasmFields()!;
+    const beforeMove = Uint8Array.from(actionController.getWasmFields()!.serializedGameSession);
+    actionController.makeMove(postMove.moverId, postMove.move);
+    await flushWrapperDrain([cradles[actionIsProposer ? 0 : 1]]);
+    const afterMove = actionController.getWasmFields()!;
     assert.notDeepEqual(
       afterMove.serializedGameSession,
       beforeMove,
@@ -108,7 +104,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         handKey: 1,
         activeIds: ids,
         currentHandIds: ids,
-        currentHandOrigin: 'local',
+        currentHandOrigin: actionIsProposer ? 'local' : 'peer',
         lastDisplayedId: postMove.moverId,
         activeGameType: testCase.handProposal.gameType,
         handState: postMove.handState,
