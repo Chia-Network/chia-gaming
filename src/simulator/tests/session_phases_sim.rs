@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
@@ -35,7 +35,8 @@ use crate::simulator::Simulator;
 use crate::test_support::calpoker_sim::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{make_debug_games, DebugGameCurry};
 use crate::test_support::sim_script::{
-    ActionReadiness, PostActionDrain, ProposeTrigger, SimAssertion, SimScriptAction,
+    ActionReadiness, PostActionDrain, ProposeTrigger, ScriptGameRef, ScriptProposalRef,
+    SimAssertion, SimScriptAction,
 };
 use crate::utils::pair_of_array_mut;
 
@@ -701,13 +702,15 @@ pub struct LocalTestUIReceiver {
     /// semantic-progress refinement within one state.
     last_event_channel_status: Option<ChannelStatus>,
     pub proposed_game_ids: Vec<LocalProposalId>,
-    pub proposed_local_ids: HashMap<LocalProposalId, LocalProposalId>,
-    pub accepted_proposal_ids: Vec<LocalProposalId>,
+    proposal_bindings: HashMap<ScriptProposalRef, LocalProposalId>,
+    proposal_refs_by_id: HashMap<LocalProposalId, ScriptProposalRef>,
+    unbound_proposal_ids: VecDeque<LocalProposalId>,
+    pub accepted_proposal_ids: HashSet<ScriptProposalRef>,
     pub received_proposal_ids: Vec<LocalProposalId>,
     pub silently_rejected_proposal_ids: HashSet<LocalProposalId>,
     pub game_accepted_ids: HashSet<GameID>,
-    /// Script-facing game IDs mapped to accepted live-game IDs.
-    pub game_id_aliases: HashMap<GameID, GameID>,
+    /// Script references bound from `ProposalAcceptedGroup.members`.
+    pub accepted_game_ids: HashMap<ScriptGameRef, GameID>,
     pub opponent_moved_in_game: HashSet<GameID>,
     pub game_finished_ids: HashSet<GameID>,
 }
@@ -835,6 +838,9 @@ impl ToLocalUI for LocalTestUIReceiver {
             GameNotification::ProposalMade { id, .. } => {
                 self.assert_channel_created("game_proposed");
                 self.received_proposal_ids.push(*id);
+                if !self.proposal_refs_by_id.contains_key(id) {
+                    self.unbound_proposal_ids.push_back(*id);
+                }
                 self.notifications.push(notification.clone());
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
@@ -844,22 +850,16 @@ impl ToLocalUI for LocalTestUIReceiver {
                 members,
             } => {
                 self.assert_channel_created("game_proposal_accepted");
-                let script_proposal_id = self
-                    .accepted_proposal_ids
-                    .iter()
-                    .copied()
-                    .find(|id| !self.game_id_aliases.contains_key(&GameID(id.0)))
-                    .or_else(|| {
-                        self.proposed_game_ids
-                            .iter()
-                            .copied()
-                            .find(|id| !self.game_id_aliases.contains_key(&GameID(id.0)))
-                    })
-                    .map(|id| GameID(id.0))
-                    .unwrap_or(GameID(proposal_id.0));
-                for (index, member) in members.iter().enumerate() {
-                    self.game_id_aliases
-                        .insert(GameID(script_proposal_id.0 + 2 * index as u64), member.id);
+                if let Some(reference) = self.proposal_refs_by_id.get(proposal_id).copied() {
+                    for (member, accepted) in members.iter().enumerate() {
+                        self.accepted_game_ids.insert(
+                            ScriptGameRef::AcceptedMember {
+                                proposal: reference,
+                                member,
+                            },
+                            accepted.id,
+                        );
+                    }
                 }
                 self.game_accepted_ids
                     .extend(members.iter().map(|member| member.id));
@@ -1104,11 +1104,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     // Rule A for proposer side:
     for (i, lui) in local_uis.iter().enumerate() {
-        for id in lui.proposed_game_ids.iter() {
-            let local_id = lui
-                .proposed_local_ids
-                .get(id)
-                .expect("proposed script ID must map to its local ID");
+        for local_id in &lui.proposed_game_ids {
             let accepted = lui
                 .notifications
                 .iter()
@@ -1133,7 +1129,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 .count();
             assert!(
                 accepted + cancelled == 1,
-                "player {i}: propose_game({id:?}) should have exactly one \
+                "player {i}: propose_game({local_id:?}) should have exactly one \
                  Accepted or Cancelled, got {accepted} accepted + {cancelled} cancelled.\n\
                  All notifications: {:?}",
                 lui.notifications
@@ -1520,7 +1516,7 @@ fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Err
 
 fn calpoker_test_moves_with_selected_cards(
     allocator: &mut AllocEncoder,
-    game_id: GameID,
+    game_id: ScriptGameRef,
     alice_selected: &[usize],
     bob_selected: &[usize],
 ) -> Vec<SimScriptAction> {
@@ -1546,7 +1542,7 @@ fn calpoker_test_moves_with_selected_cards(
     vec![
         SimScriptAction::Move(
             0,
-            game_id.clone(),
+            game_id,
             ReadableMove::from_program(Rc::new(
                 Program::from_nodeptr(allocator, alice_word_hash).expect("good"),
             )),
@@ -1554,7 +1550,7 @@ fn calpoker_test_moves_with_selected_cards(
         ),
         SimScriptAction::Move(
             1,
-            game_id.clone(),
+            game_id,
             ReadableMove::from_program(Rc::new(
                 Program::from_nodeptr(allocator, bob_word).expect("good"),
             )),
@@ -1562,7 +1558,7 @@ fn calpoker_test_moves_with_selected_cards(
         ),
         SimScriptAction::Move(
             0,
-            game_id.clone(),
+            game_id,
             ReadableMove::from_program(Rc::new(
                 Program::from_nodeptr(allocator, alice_picks).expect("good"),
             )),
@@ -1570,7 +1566,7 @@ fn calpoker_test_moves_with_selected_cards(
         ),
         SimScriptAction::Move(
             1,
-            game_id.clone(),
+            game_id,
             ReadableMove::from_program(Rc::new(
                 Program::from_nodeptr(allocator, bob_picks).expect("good"),
             )),
@@ -1699,7 +1695,10 @@ impl DebugGameTestMove {
 pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize, who: usize) {
     test_setup
         .game_actions
-        .push(SimScriptAction::AcceptSettlement(who, GameID(1)));
+        .push(SimScriptAction::AcceptSettlement(
+            who,
+            ScriptGameRef::accepted(1, 0),
+        ));
     test_setup
         .game_actions
         .push(SimScriptAction::WaitBlocks(wait, 0));
@@ -1737,17 +1736,12 @@ pub fn setup_debug_test(
     let pid2 = ChiaIdentity::new(allocator, private_keys[1].my_referee_private_key.clone())?;
     let private_identities: [ChiaIdentity; 2] = [pid1, pid2];
 
-    // The first proposal handle is 1, while accepted games receive shared IDs
-    // from a separate sequence starting at 0.
-    let first_proposal_handle: u64 = 1;
+    let first_proposal_id = ScriptProposalRef(1);
     let mut debug_games = make_debug_games(allocator, rng, &private_identities, 0)?;
 
     let mut game_actions = Vec::new();
     game_actions.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
-    game_actions.push(SimScriptAction::AcceptProposal(
-        1,
-        LocalProposalId(first_proposal_handle),
-    ));
+    game_actions.push(SimScriptAction::AcceptProposal(1, first_proposal_id));
 
     for (i, do_move) in moves.iter().enumerate() {
         let alice_turn = i % 2 == 0;
@@ -1774,7 +1768,10 @@ pub fn setup_debug_test(
 
         game_actions.push(SimScriptAction::Move(
             i % 2,
-            GameID(first_proposal_handle),
+            ScriptGameRef::AcceptedMember {
+                proposal: first_proposal_id,
+                member: 0,
+            },
             the_move.ui_move.clone(),
             true,
         ));
@@ -1802,33 +1799,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
         let moves = [
             SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
             Some(&|move_number, cradles| {
-                let proposer = cradles[0]
-                    .proposal_contributions_for_testing()
-                    .unwrap_or_default();
-                let receiver = cradles[1]
-                    .proposal_contributions_for_testing()
-                    .unwrap_or_default();
-
-                if move_number == 1 && proposer.len() == 1 && receiver.len() == 1 {
-                    assert_eq!(
-                        proposer,
-                        vec![(LocalProposalId(0), Amount::default(), Amount::default())],
-                        "proposer must store one origin proposal handle",
-                    );
-                    assert_eq!(
-                        receiver,
-                        vec![(LocalProposalId(0), Amount::default(), Amount::default())],
-                        "receiver must store one origin proposal handle",
-                    );
-                }
-
-                move_number >= moves.len() && proposer.is_empty() && receiver.is_empty()
+                move_number >= moves.len()
+                    && cradles.iter().all(|cradle| {
+                        cradle
+                            .allocated_balances_for_testing()
+                            .is_ok_and(|balances| balances == (Amount::new(100), Amount::new(100)))
+                    })
             }),
             Some(100),
         )
@@ -1865,7 +1847,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
         let moves = [
             SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -1874,8 +1856,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 move_number >= moves.len()
                     && cradles.iter().all(|cradle| {
                         cradle
-                            .proposal_contributions_for_testing()
-                            .is_ok_and(|proposals| proposals.is_empty())
+                            .allocated_balances_for_testing()
+                            .is_ok_and(|balances| balances == (Amount::new(100), Amount::new(100)))
                     })
             }),
             Some(100),
@@ -1896,7 +1878,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
         let moves = [
             SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-            SimScriptAction::CancelProposal(1, LocalProposalId(1)),
+            SimScriptAction::CancelProposal(1, ScriptProposalRef(1)),
             SimScriptAction::CleanShutdown(0),
         ];
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
@@ -1935,7 +1917,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
         let moves = [
             SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-            SimScriptAction::MalformedAcceptProposal(1, LocalProposalId(1), WireProposalId(3)),
+            SimScriptAction::MalformedAcceptProposal(1, ScriptProposalRef(1), WireProposalId(3)),
         ];
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -1963,13 +1945,24 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("proposal_local_and_wire_ids_diverge_without_pre_emit_gap", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = [
-            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            // This colliding local attempt is cancelled before emission and
-            // therefore consumes no wire ID.
-            SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
-            SimScriptAction::CancelProposal(1, LocalProposalId(1)),
-            SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(0, LocalProposalId(2)),
+            SimScriptAction::ProposeNewGameAs(
+                0,
+                ScriptProposalRef(10),
+                ProposeTrigger::Channel,
+            ),
+            // Cancelling this incoming proposal does not consume an outgoing wire ID.
+            SimScriptAction::ProposeNewGameAs(
+                1,
+                ScriptProposalRef(11),
+                ProposeTrigger::Channel,
+            ),
+            SimScriptAction::CancelProposal(1, ScriptProposalRef(10)),
+            SimScriptAction::ProposeNewGameAs(
+                1,
+                ScriptProposalRef(12),
+                ProposeTrigger::Channel,
+            ),
+            SimScriptAction::AcceptProposal(0, ScriptProposalRef(12)),
         ];
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -2010,7 +2003,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup.game_actions = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposalPair(1, LocalProposalId(1), LocalProposalId(3)),
+                SimScriptAction::AcceptProposalPair(1, ScriptProposalRef(1), ScriptProposalRef(3)),
             ];
 
             let outcome = run_game_container_with_action_list_with_success_predicate(
@@ -2068,8 +2061,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
                 SimScriptAction::MalformedSecondAcceptInPair(
                     1,
-                    LocalProposalId(1),
-                    LocalProposalId(3),
+                    ScriptProposalRef(1),
+                    ScriptProposalRef(3),
                     WireProposalId(99),
                 ),
             ];
@@ -2121,9 +2114,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Play moves
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
@@ -2177,9 +2173,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             if let SimScriptAction::Move(player, game_id, readable, _) = moves[5].clone() {
                 moves.insert(
                     5,
@@ -2268,9 +2267,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         moves.push(SimScriptAction::CleanShutdown(1));
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -2467,9 +2469,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             if let SimScriptAction::Move(player, game_id, readable, _) = moves[5].clone() {
                 moves.insert(
                     5,
@@ -2567,9 +2572,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        let mut hand_moves = prefix_test_moves(&mut allocator, GameID(1));
+        let mut hand_moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
         let final_move = hand_moves
             .pop()
             .expect("calpoker fixture should include a final move");
@@ -2609,7 +2614,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 SimScriptAction::GoOnChain(1),
                 SimScriptAction::WaitBlocks(20, 1),
             ];
@@ -2671,9 +2676,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             moves.push(SimScriptAction::GoOnChain(1));
             moves.push(SimScriptAction::WaitBlocks(20, 1));
             let outcome = run_calpoker_container_with_action_list_with_success_predicate(
@@ -2759,9 +2767,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let moves_len = moves.len();
             moves.remove(moves_len - 2);
             moves.remove(moves_len - 2);
@@ -2838,12 +2849,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // then submits a move with invalid data that Alice detects.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         moves.truncate(5);
         moves.push(SimScriptAction::GoOnChain(0));
-        moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::default()));
+        moves.push(SimScriptAction::Cheat(
+            1,
+            ScriptGameRef::accepted(1, 0),
+            Amount::default(),
+        ));
         // Let both players process blocks so Alice detects & slashes.
         moves.push(SimScriptAction::WaitBlocks(30, 0));
 
@@ -2918,9 +2936,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             SimScriptAction::GoOnChain(0),
-            SimScriptAction::Cheat(0, GameID(1), Amount::default()),
+            SimScriptAction::Cheat(0, ScriptGameRef::accepted(1, 0), Amount::default()),
             SimScriptAction::WaitBlocks(30, 0),
         ];
 
@@ -3377,7 +3395,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         sim_setup
             .game_actions
-            .push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+            .push(SimScriptAction::AcceptSettlement(
+                1,
+                ScriptGameRef::accepted(1, 0),
+            ));
         sim_setup
             .game_actions
             .push(SimScriptAction::WaitBlocks(5, 0));
@@ -3417,9 +3438,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .push(SimScriptAction::WaitBlocks(6, 0));
         sim_setup
             .game_actions
-            .push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+            .push(SimScriptAction::AcceptSettlement(
+                1,
+                ScriptGameRef::accepted(1, 0),
+            ));
         sim_setup.game_actions.push(SimScriptAction::Assert(
-            SimAssertion::GameCoinTimeoutRegistered(1, GameID(1)),
+            SimAssertion::GameCoinTimeoutRegistered(1, ScriptGameRef::accepted(1, 0)),
         ));
         sim_setup
             .game_actions
@@ -3444,9 +3468,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         moves.push(SimScriptAction::NerfTransactions(0));
         moves.push(SimScriptAction::CleanShutdown(1));
 
@@ -3524,9 +3551,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         moves.push(SimScriptAction::NerfTransactions(1));
         moves.push(SimScriptAction::CleanShutdown(1));
 
@@ -3604,9 +3634,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         // Nerf both so the clean shutdown tx is dropped for both sides.  Once
         // the clean shutdown is abandoned, both managers fall back to unrolling
         // the shared channel coin, and the manager rebroadcasts that unroll
@@ -3675,9 +3708,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         // Nerf all transactions so no clean shutdown tx lands.
         moves.push(SimScriptAction::NerfTransactions(0));
         moves.push(SimScriptAction::NerfTransactions(1));
@@ -3754,9 +3790,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // is cached for redo.  The unroll is NOT stale from Bob's view.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+        let game_moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
         moves.push(game_moves[0].clone()); // alice commit
         moves.push(game_moves[1].clone()); // bob seed
         moves.push(SimScriptAction::NerfMessages(0));
@@ -3860,9 +3896,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // is nerfed so she can't play and times out.
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+            let game_moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
             moves.push(game_moves[0].clone()); // alice commit
             moves.push(game_moves[1].clone()); // bob seed
             moves.push(game_moves[2].clone()); // alice reveal
@@ -3959,9 +3995,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+            let game_moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
             moves.extend(game_moves[..3].iter().cloned());
             moves.push(SimScriptAction::NerfMessages(1));
             moves.push(game_moves[3].clone());
@@ -3987,8 +4023,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 );
             }
             let accepted_game_id = outcome.local_uis[0]
-                .game_id_aliases
-                .get(&GameID(1))
+                .accepted_game_ids
+                .get(&ScriptGameRef::accepted(1, 0))
                 .copied()
                 .expect("proposal handle 1 should resolve to an accepted game");
             assert!(
@@ -4010,9 +4046,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // so his clock runs out.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         moves.truncate(5);
         moves.push(SimScriptAction::GoOnChain(1));
         // 120 blocks covers the unroll timeout (5) and
@@ -4104,12 +4143,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // turn, allowing Cheat(1) to fire.
         let mut on_chain_moves: Vec<SimScriptAction> = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+        let game_moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
         on_chain_moves.extend(game_moves.into_iter().take(3));
         on_chain_moves.push(SimScriptAction::GoOnChain(0));
-        on_chain_moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::default()));
+        on_chain_moves.push(SimScriptAction::Cheat(
+            1,
+            ScriptGameRef::accepted(1, 0),
+            Amount::default(),
+        ));
         on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -4191,13 +4234,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // to complete before issuing the cheat.
         let mut on_chain_moves: Vec<SimScriptAction> = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+        let game_moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
         on_chain_moves.extend(game_moves.into_iter().take(4));
         on_chain_moves.push(SimScriptAction::GoOnChain(0));
         on_chain_moves.push(SimScriptAction::WaitBlocks(8, 0));
-        on_chain_moves.push(SimScriptAction::Cheat(0, GameID(1), Amount::default()));
+        on_chain_moves.push(SimScriptAction::Cheat(
+            0,
+            ScriptGameRef::accepted(1, 0),
+            Amount::default(),
+        ));
         on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -4283,12 +4330,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // rather than a hardcoded default.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(5).collect();
         on_chain_moves.push(SimScriptAction::GoOnChain(0));
-        on_chain_moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::new(137)));
+        on_chain_moves.push(SimScriptAction::Cheat(
+            1,
+            ScriptGameRef::accepted(1, 0),
+            Amount::new(137),
+        ));
         on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -4320,8 +4374,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p1_notifs = &outcome.local_uis[1].notifications;
         let accepted_game_id = outcome.local_uis[1]
-            .game_id_aliases
-            .get(&GameID(1))
+            .accepted_game_ids
+            .get(&ScriptGameRef::accepted(1, 0))
             .copied()
             .expect("proposal handle 1 should resolve to an accepted game");
         assert!(p1_notifs.iter().any(|notification| matches!(
@@ -4408,13 +4462,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // the on-chain resolution.
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0)));
             let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(SimScriptAction::GoOnChain(0));
             on_chain_moves.push(SimScriptAction::NerfTransactions(0));
-            on_chain_moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::new(137)));
+            on_chain_moves.push(SimScriptAction::Cheat(
+                1,
+                ScriptGameRef::accepted(1, 0),
+                Amount::new(137),
+            ));
             on_chain_moves.push(SimScriptAction::WaitBlocks(120, 0));
             on_chain_moves.push(SimScriptAction::UnNerfTransactions(false));
             on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
@@ -4495,9 +4553,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // Take 3 moves so after the unroll/redo it is Bob's turn.
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+            let game_moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
             moves.extend(game_moves.iter().take(3).cloned());
             moves.push(SimScriptAction::GoOnChain(0));
             moves.push(SimScriptAction::WaitBlocks(6, 0));
@@ -4507,15 +4565,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // the assertion resumes at the next block to validate its child.
             moves.push(SimScriptAction::Assert(SimAssertion::GameCoinPublished(
                 1,
-                GameID(1),
+                ScriptGameRef::accepted(1, 0),
             )));
             // These contiguous assertions must observe the same tip as the
             // successful next-block assertion above.
             moves.push(SimScriptAction::Assert(
-                SimAssertion::GameCoinTimeoutRegistered(1, GameID(1)),
+                SimAssertion::GameCoinTimeoutRegistered(1, ScriptGameRef::accepted(1, 0)),
             ));
             moves.push(SimScriptAction::Assert(
-                SimAssertion::GameCoinTimeoutRegistered(1, GameID(1)),
+                SimAssertion::GameCoinTimeoutRegistered(1, ScriptGameRef::accepted(1, 0)),
             ));
             // Let the game resolve after the move.
             moves.push(SimScriptAction::WaitBlocks(30, 0));
@@ -4524,8 +4582,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 .expect("should finish");
 
             let accepted_game_id = outcome.local_uis[1]
-                .game_id_aliases
-                .get(&GameID(1))
+                .accepted_game_ids
+                .get(&ScriptGameRef::accepted(1, 0))
                 .copied()
                 .expect("proposal handle 1 should resolve to an accepted game");
             let host_events = &outcome.host_events[1];
@@ -4614,12 +4672,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // handler (off-chain Accept immediately finishes the game).
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0)));
         moves.pop();
         moves.push(SimScriptAction::GoOnChain(0));
-        moves.push(SimScriptAction::AcceptSettlement(0, GameID(1)));
+        moves.push(SimScriptAction::AcceptSettlement(
+            0,
+            ScriptGameRef::accepted(1, 0),
+        ));
         moves.push(SimScriptAction::WaitBlocks(120, 1));
         moves.push(SimScriptAction::WaitBlocks(5, 0));
 
@@ -4629,8 +4690,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let p0_notifs = &outcome.local_uis[0].notifications;
         let p1_notifs = &outcome.local_uis[1].notifications;
         let accepted_game_id = outcome.local_uis[0]
-            .game_id_aliases
-            .get(&GameID(1))
+            .accepted_game_ids
+            .get(&ScriptGameRef::accepted(1, 0))
             .copied()
             .expect("proposal handle 1 should resolve to an accepted game");
         let applied_index = p0_notifs
@@ -4730,9 +4791,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // game in pending_settlements.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0)));
         moves.push(SimScriptAction::NerfMessages(1));
         moves.push(SimScriptAction::GoOnChain(1));
         moves.push(SimScriptAction::WaitBlocks(120, 0));
@@ -4771,7 +4832,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         sim_setup.game_actions.push(SimScriptAction::NerfTransactions(0));
         sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
-        sim_setup.game_actions.push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::AcceptSettlement(
+                1,
+                ScriptGameRef::accepted(1, 0),
+            ));
         sim_setup.game_actions.push(SimScriptAction::GoOnChain(1));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 0));
 
@@ -4856,7 +4922,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         //     pre_game_ids but not surviving_ids → EndedCancelled.
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
             SimScriptAction::GoOnChain(1),
             SimScriptAction::WaitBlocks(120, 0),
@@ -4923,7 +4989,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // committed (unroll reverts to before the game existed).
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             SimScriptAction::GoOnChain(1),
             SimScriptAction::WaitBlocks(20, 1),
         ];
@@ -4994,7 +5060,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             SimScriptAction::GoOnChain(1),
             SimScriptAction::WaitBlocks(20, 1),
         ];
@@ -5058,13 +5124,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // turn, allowing Cheat(1) to fire.
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0)));
             let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(SimScriptAction::GoOnChain(0));
             on_chain_moves.push(SimScriptAction::NerfTransactions(0));
-            on_chain_moves.push(SimScriptAction::Cheat(1, GameID(1), Amount::default()));
+            on_chain_moves.push(SimScriptAction::Cheat(
+                1,
+                ScriptGameRef::accepted(1, 0),
+                Amount::default(),
+            ));
             on_chain_moves.push(SimScriptAction::WaitBlocks(120, 0));
             on_chain_moves.push(SimScriptAction::UnNerfTransactions(false));
             on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
@@ -5135,12 +5205,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // from Alice's view gives a GameError or ChannelError.
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0)));
             let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(SimScriptAction::GoOnChain(0));
-            on_chain_moves.push(SimScriptAction::ForceDestroyCoin(0, GameID(1)));
+            on_chain_moves.push(SimScriptAction::ForceDestroyCoin(
+                0,
+                ScriptGameRef::accepted(1, 0),
+            ));
             on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -5374,13 +5447,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(4).collect();
         on_chain_moves.push(SimScriptAction::GoOnChain(0));
         on_chain_moves.push(SimScriptAction::WaitBlocks(5, 0));
-        on_chain_moves.push(SimScriptAction::ForceDestroyCoin(1, GameID(1)));
+        on_chain_moves.push(SimScriptAction::ForceDestroyCoin(
+            1,
+            ScriptGameRef::accepted(1, 0),
+        ));
         on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -5453,13 +5532,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0)));
             let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(4).collect();
             on_chain_moves.push(SimScriptAction::GoOnChain(0));
             on_chain_moves.push(SimScriptAction::WaitBlocks(5, 0));
-            on_chain_moves.push(SimScriptAction::ForceDestroyCoin(0, GameID(1)));
+            on_chain_moves.push(SimScriptAction::ForceDestroyCoin(
+                0,
+                ScriptGameRef::accepted(1, 0),
+            ));
             on_chain_moves.push(SimScriptAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -5504,7 +5586,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             // Let the handshake + empty potato exchanges settle.
             SimScriptAction::WaitBlocks(5, 0),
             // Corrupt player 1: pretend we're at state 0 and wipe stored
@@ -5595,7 +5677,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             // Let the handshake + empty potato exchanges settle.
             SimScriptAction::WaitBlocks(5, 0),
             // Corrupt player 1: pretend we're at state 100.
@@ -5696,9 +5778,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // times out.  Alice's reveal never fires (game ends first).
         let mut all_moves_vec = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        all_moves_vec.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        all_moves_vec.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
         let all_moves = all_moves_vec;
         let mut moves = Vec::new();
         moves.push(SimScriptAction::WaitBlocks(5, 0));
@@ -5852,7 +5937,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let moves = vec![
             SimScriptAction::ProposeNewGameWithTimeout(0, ProposeTrigger::Channel, 27),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             SimScriptAction::WaitBlocks(3, 0),
         ];
         let move_count = moves.len();
@@ -5894,7 +5979,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // potato and initiates clean shutdown (no live games to block it).
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::CancelProposal(1, LocalProposalId(1)),
+            SimScriptAction::CancelProposal(1, ScriptProposalRef(1)),
             SimScriptAction::CleanShutdown(0),
         ];
 
@@ -5938,7 +6023,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
             SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
-            SimScriptAction::CancelProposal(0, LocalProposalId(1)),
+            SimScriptAction::CancelProposal(0, ScriptProposalRef(1)),
             SimScriptAction::CleanShutdown(0),
         ];
 
@@ -5984,7 +6069,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let moves = vec![
                 SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::CancelProposal(1, LocalProposalId(0)),
+                SimScriptAction::CancelProposal(1, ScriptProposalRef(0)),
                 SimScriptAction::CleanShutdown(1),
             ];
 
@@ -6026,7 +6111,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // on-chain. Both sides should see ProposalMade + ProposalAcceptedGroup.
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             SimScriptAction::WaitBlocks(1, 2),
             SimScriptAction::GoOnChain(0),
             SimScriptAction::WaitBlocks(120, 0),
@@ -6119,7 +6204,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // on both sides.
             let moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::WaitForProposal(1, LocalProposalId(1)),
+                SimScriptAction::WaitForProposal(1, ScriptProposalRef(1)),
                 SimScriptAction::CleanShutdown(1),
             ];
 
@@ -6162,7 +6247,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // The local ID is consumed, but Bob sees no wire action.
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::CancelProposal(0, LocalProposalId(1)),
+            SimScriptAction::CancelProposal(0, ScriptProposalRef(1)),
             SimScriptAction::CleanShutdown(0),
         ];
 
@@ -6206,9 +6291,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // acceptance. Go on-chain to resolve game A.
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(3)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(3)),
             SimScriptAction::GoOnChain(0),
             SimScriptAction::WaitBlocks(120, 0),
             SimScriptAction::WaitBlocks(5, 0),
@@ -6223,7 +6308,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         .expect("should finish");
 
         let p1_notifs = &outcome.local_uis[1].notifications;
-        let p1_local_id = outcome.local_uis[1].proposed_local_ids[&LocalProposalId(3)];
+        let p1_local_id = LocalProposalId(1);
         assert!(
             !p1_notifs
                 .iter()
@@ -6242,7 +6327,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ),
             "failed local acceptance must not emit a local ProposalCancelled: {p1_notifs:?}"
         );
-        let p0_local_id = outcome.local_uis[0].proposed_local_ids[&LocalProposalId(3)];
+        let p0_local_id = LocalProposalId(1);
         assert!(
             outcome.local_uis[0].notifications.iter().any(
                 |n| matches!(n, GameNotification::ProposalCancelled { id, reason: CancelReason::CancelledByPeer, .. } if *id == p0_local_id)
@@ -6259,9 +6344,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // vanished proposal is a hard error (no soft discard).
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             SimScriptAction::WaitBlocks(1, 2),
-            SimScriptAction::CancelProposal(0, LocalProposalId(1)),
+            SimScriptAction::CancelProposal(0, ScriptProposalRef(1)),
         ];
 
         match run_calpoker_container_with_action_list_with_success_predicate(
@@ -6294,7 +6379,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Proposal round-trip advances player 0's state_number past
         // the snapshot without changing the first game's referee PH.
         sim_setup.game_actions.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, LocalProposalId(3)));
+        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, ScriptProposalRef(3)));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
         // Nerf both players to prevent preemption during channel coin
         // spend detection.  After un-nerfing, only the timeout path fires.
@@ -6377,7 +6462,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // NOW snapshot: player 1 just received the proposal potato, so their
         // cached spend info includes the correct game PH (after 2 moves).
         sim_setup.game_actions.push(SimScriptAction::SaveUnrollSnapshot(1));
-        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, LocalProposalId(3)));
+        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, ScriptProposalRef(3)));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
         // Third move with player 1's reply nerfed: player 0 sends the move,
         // player 1 receives but reply is dropped → cached_redo_actions set.
@@ -6464,7 +6549,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
         sim_setup
             .game_actions
-            .push(SimScriptAction::AcceptProposal(1, LocalProposalId(3)));
+            .push(SimScriptAction::AcceptProposal(1, ScriptProposalRef(3)));
         sim_setup
             .game_actions
             .push(SimScriptAction::WaitBlocks(5, 0));
@@ -6561,7 +6646,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Proposal round-trip advances player 0's state_number past
         // the snapshot so that the stale detection triggers.
         sim_setup.game_actions.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, LocalProposalId(3)));
+        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(1, ScriptProposalRef(3)));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
         // Player 1 proposes a third game; player 0 will accept it.
         // No ID collision possible: role-namespaced nonces ensure each
@@ -6571,7 +6656,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Nerf player 1's messages so the accept response never reaches
         // player 0 — the third game stays as CachedRedoActions::ProposalAccepted.
         sim_setup.game_actions.push(SimScriptAction::NerfMessages(1));
-        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(0, LocalProposalId(0)));
+        sim_setup.game_actions.push(SimScriptAction::AcceptProposal(0, ScriptProposalRef(0)));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(3, 0));
         sim_setup.game_actions.push(SimScriptAction::UnNerfMessages);
         sim_setup.game_actions.push(SimScriptAction::NerfTransactions(0));
@@ -6721,7 +6806,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .push(SimScriptAction::NerfMessages(0));
         sim_setup
             .game_actions
-            .push(SimScriptAction::AcceptSettlement(0, GameID(1)));
+            .push(SimScriptAction::AcceptSettlement(
+                0,
+                ScriptGameRef::accepted(1, 0),
+            ));
         sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
         sim_setup
             .game_actions
@@ -6866,9 +6954,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // at step e and skip the move instead of submitting it.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        moves.extend(prefix_test_moves(
+            &mut allocator,
+            ScriptGameRef::accepted(1, 0),
+        ));
 
         // Pop step e and issue it after GoOnChain, as a normal move.
         let step_e = moves.pop().unwrap();
@@ -6927,11 +7018,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // bob_win_dir == -1, meaning Alice wins.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
         moves.extend(calpoker_test_moves_with_selected_cards(
             &mut allocator,
-            GameID(1),
+            ScriptGameRef::accepted(1, 0),
             &[32, 36, 41, 49],
             &[2, 6, 9, 13],
         ));
@@ -7017,11 +7108,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // terminal instead of being left waiting on a phantom turn.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
         let mut game_moves = calpoker_test_moves_with_selected_cards(
             &mut allocator,
-            GameID(1),
+            ScriptGameRef::accepted(1, 0),
             &[32, 36, 41, 49],
             &[2, 6, 9, 13],
         )
@@ -7118,7 +7209,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
-        sim_setup.game_actions.push(SimScriptAction::AcceptSettlement(0, GameID(1)));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::AcceptSettlement(
+                0,
+                ScriptGameRef::accepted(1, 0),
+            ));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
@@ -7538,7 +7634,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
             SimScriptAction::WaitBlocks(3, 0),
-            SimScriptAction::SelfAcceptProposal(0, LocalProposalId(1)),
+            SimScriptAction::SelfAcceptProposal(0, ScriptProposalRef(1)),
             SimScriptAction::WaitBlocks(20, 0),
         ];
 

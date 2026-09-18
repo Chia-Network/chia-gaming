@@ -49,7 +49,7 @@ use crate::common::types::CoinSpend;
 #[cfg(test)]
 use crate::test_support::calpoker_sim::prefix_test_moves;
 #[cfg(test)]
-use crate::test_support::sim_script::SimScriptAction;
+use crate::test_support::sim_script::{ScriptGameRef, SimScriptAction};
 
 #[derive(Default)]
 #[cfg(test)]
@@ -603,6 +603,16 @@ pub fn test_peer_smoke() {
     )
     .expect("handshake should complete");
 
+    let rollback_probe = GameProposal {
+        sender_is_player_a: true,
+        game_type: game_collection::game_type_for_package(&mut allocator, "calpoker"),
+        timeout: Timeout::new(15),
+        parameters: ProposalParameters::Integer(100),
+    };
+    for peer in &mut peers {
+        peer.assert_complete_transaction_rollback_for_testing(&rollback_probe);
+    }
+
     quiesce(
         &mut allocator,
         Amount::new(200),
@@ -681,7 +691,7 @@ pub fn test_peer_smoke() {
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
-    let moves = prefix_test_moves(&mut allocator, GameID(0));
+    let moves = prefix_test_moves(&mut allocator, ScriptGameRef::accepted(0, 0));
 
     for this_move in moves.iter() {
         let (who, what) = if let SimScriptAction::Move(who, _, what, _) = this_move {

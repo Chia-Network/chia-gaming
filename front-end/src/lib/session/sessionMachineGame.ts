@@ -8,6 +8,7 @@ import {
 import { Program } from 'clvm-lib';
 import type { GameHandInitialization, GameUpdate, PersistedGameState } from '@games/host';
 import { selectPendingProposal } from './selectors';
+import { proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -153,7 +154,7 @@ export function reduceDurableGameEvent(
           amount: (member.playerAContribution + member.playerBContribution).toString(),
           startTurn: member.ourTurn ? 'my-turn' : 'their-turn',
         })),
-        origin: proposal.origin,
+        origin: proposalOrigin(proposal),
         gameType: proposal.handProposal.gameType,
       });
       const modelWithGame = withGameSlice(state.model, game);
@@ -281,7 +282,7 @@ export function reduceDurableGameEvent(
           ...state,
           model: { ...state.model, game: { ...state.model.game, handState } },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     }
     case 'local-game-action-committed': {
@@ -305,7 +306,7 @@ export function reduceDurableGameEvent(
             game: { ...state.model.game, handState },
           },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     }
     case 'local-action-applied': {
@@ -317,7 +318,7 @@ export function reduceDurableGameEvent(
       });
       return {
         state: { ...state, model: withGameSlice(state.model, game) },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     }
     default:

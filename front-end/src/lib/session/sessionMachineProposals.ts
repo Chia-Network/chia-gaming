@@ -4,11 +4,12 @@ import type {
   SessionMachineState,
   SessionMachineTransition,
 } from './sessionMachineTypes';
+import type { PendingProposalLifecycle, PendingProposalModel, ProposalOrigin } from './types';
 
 export type ProposalEvent = Extract<
   SessionMachineEvent,
   | { type: 'upsert-pending-proposal' }
-  | { type: 'set-proposal-status' }
+  | { type: 'set-proposal-lifecycle' }
   | { type: 'clear-proposals' }
   | { type: 'request-accept-proposal' }
   | { type: 'request-cancel-proposal' }
@@ -16,6 +17,17 @@ export type ProposalEvent = Extract<
   | { type: 'proposal-sent' }
   | { type: 'proposal-command-succeeded' }
 >;
+
+export function proposalOrigin(proposal: PendingProposalModel): ProposalOrigin {
+  return proposal.lifecycle.startsWith('local-') ? 'local' : 'peer';
+}
+
+export function proposalHasLifecycle(
+  proposal: PendingProposalModel,
+  lifecycle: PendingProposalLifecycle,
+): boolean {
+  return proposal.lifecycle === lifecycle;
+}
 
 export function clearProposalIds(
   state: SessionMachineState,
@@ -64,7 +76,7 @@ export function reduceProposalEvent(
         effects: [],
       };
     }
-    case 'set-proposal-status':
+    case 'set-proposal-lifecycle':
       return {
         state: {
           ...state,
@@ -73,7 +85,7 @@ export function reduceProposalEvent(
             betweenHand: {
               ...state.model.betweenHand,
               pendingProposals: state.model.betweenHand.pendingProposals.map((proposal) =>
-                proposal.id === event.id ? { ...proposal, status: event.status } : proposal,
+                proposal.id === event.id ? { ...proposal, lifecycle: event.lifecycle } : proposal,
               ),
             },
           },
@@ -95,8 +107,7 @@ export function reduceProposalEvent(
       const proposal = {
         id: event.id,
         handProposal: event.handProposal,
-        origin: 'local' as const,
-        status: 'outgoing' as const,
+        lifecycle: 'local-outgoing' as const,
       };
       const tracked = reduceProposalEvent(state, { type: 'upsert-pending-proposal', proposal });
       return {
@@ -110,13 +121,17 @@ export function reduceProposalEvent(
             },
           },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     }
     case 'proposal-command-succeeded': {
       const betweenHand = state.model.betweenHand;
+      const proposal = betweenHand.pendingProposals.find(({ id }) => id === event.id);
+      if (!proposal) {
+        throw new Error(`Proposal command succeeded for unknown proposal ${event.id}`);
+      }
       if (event.command === 'accept-proposal') {
-        if (event.context === 'accept-review') {
+        if (proposal.lifecycle === 'peer-review') {
           return {
             state: {
               ...state,
@@ -126,16 +141,16 @@ export function reduceProposalEvent(
                   ...betweenHand,
                   pendingProposals: betweenHand.pendingProposals.map((proposal) =>
                     proposal.id === event.id
-                      ? { ...proposal, status: 'accepting' as const }
+                      ? { ...proposal, lifecycle: 'peer-accept-queued' as const }
                       : proposal,
                   ),
                 },
               },
             },
-            effects: [{ type: 'persist-session' }],
+            effects: [],
           };
         }
-        if (event.context === 'choose-same-terms') {
+        if (proposal.lifecycle === 'peer-cached') {
           return {
             state: {
               ...state,
@@ -146,17 +161,21 @@ export function reduceProposalEvent(
                   newHandRequested: false,
                   pendingProposals: betweenHand.pendingProposals.map((proposal) =>
                     proposal.id === event.id
-                      ? { ...proposal, status: 'accepting' as const }
+                      ? { ...proposal, lifecycle: 'peer-accept-queued' as const }
                       : proposal,
                   ),
                 },
               },
               coordination: { ...state.coordination, sameTermsRequested: false },
             },
-            effects: [{ type: 'persist-session' }],
+            effects: [],
           };
         }
-      } else if (event.context === 'reject-current-proposal') {
+        throw new Error(
+          `Accept command succeeded from invalid proposal lifecycle ${proposal.lifecycle}`,
+        );
+      }
+      if (proposal.lifecycle === 'peer-cached') {
         return {
           state: {
             ...state,
@@ -176,9 +195,10 @@ export function reduceProposalEvent(
               },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
-      } else if (event.context === 'reject-review') {
+      }
+      if (proposal.lifecycle === 'peer-review') {
         return {
           state: {
             ...state,
@@ -194,49 +214,34 @@ export function reduceProposalEvent(
               },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
-      if (event.command === 'cancel-proposal') {
-        const proposal = betweenHand.pendingProposals.find(({ id }) => id === event.id);
-        if (proposal?.origin === 'peer') {
-          return {
-            state: {
-              ...state,
-              model: {
-                ...state.model,
-                betweenHand: {
-                  ...betweenHand,
-                  pendingProposals: betweenHand.pendingProposals.filter(
-                    (candidate) => candidate.id !== event.id,
-                  ),
-                },
-              },
-            },
-            effects: [{ type: 'persist-session' }],
-          };
-        }
-        if (proposal?.origin === 'local') {
-          return {
-            state: {
-              ...state,
-              model: {
-                ...state.model,
-                betweenHand: {
-                  ...betweenHand,
-                  pendingProposals: betweenHand.pendingProposals.map((candidate) =>
-                    candidate.id === event.id
-                      ? { ...candidate, status: 'advisory-cancelling' as const }
-                      : candidate,
-                  ),
-                },
-              },
-            },
-            effects: [{ type: 'persist-session' }],
-          };
-        }
+      if (proposal.lifecycle === 'peer-cancel-queued') {
+        return { state: clearProposalIds(state, [event.id]), effects: [] };
       }
-      return { state, effects: [] };
+      if (proposal.lifecycle === 'local-outgoing') {
+        return {
+          state: {
+            ...state,
+            model: {
+              ...state.model,
+              betweenHand: {
+                ...betweenHand,
+                pendingProposals: betweenHand.pendingProposals.map((candidate) =>
+                  candidate.id === event.id
+                    ? { ...candidate, lifecycle: 'local-cancel-queued' as const }
+                    : candidate,
+                ),
+              },
+            },
+          },
+          effects: [],
+        };
+      }
+      throw new Error(
+        `Cancel command succeeded from invalid proposal lifecycle ${proposal.lifecycle}`,
+      );
     }
     default:
       return assertNever(event);

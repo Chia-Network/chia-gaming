@@ -148,18 +148,18 @@ export interface QueuedNotificationModel {
   payload?: ChannelStatusModel;
 }
 
-export type PendingProposalStatus =
-  | 'outgoing'
-  | 'incoming-cached'
-  | 'incoming-review'
-  | 'accepting'
-  | 'advisory-cancelling';
+export type PendingProposalLifecycle =
+  | 'local-outgoing'
+  | 'local-cancel-queued'
+  | 'peer-cached'
+  | 'peer-review'
+  | 'peer-accept-queued'
+  | 'peer-cancel-queued';
 
 export interface PendingProposalModel {
   id: string;
   handProposal: HandProposal;
-  origin: ProposalOrigin;
-  status: PendingProposalStatus;
+  lifecycle: PendingProposalLifecycle;
 }
 
 export type BetweenHandModeModel = 'decision' | 'compose-proposal' | 'review-incoming-proposal';

@@ -87,7 +87,7 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
   lane.runtime.dispatch({ type: 'submit-compose', handProposal });
   const outgoing = lane.runtime
     .getState()
-    .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'outgoing');
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'local-outgoing');
   assert.ok(outgoing);
   await exchangeUntilIdle(adapters);
   adapters[1].blob!.acceptProposal(outgoing.id);

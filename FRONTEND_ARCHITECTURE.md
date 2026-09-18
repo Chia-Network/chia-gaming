@@ -444,7 +444,7 @@ are grouped under those phase-owned payloads:
 | `betweenHandLastHandProposal`          | `SavedHandProposal \| null`                                                                                   | Last agreed generic A/B-oriented hand proposal, including the exact opaque `parameters`. Null when there is no agreed hand yet. |
 | `betweenHandRejectedOnceHandProposal`  | `SavedHandProposal \| null`                                                                                   | Hand proposal already rejected once, used to avoid repeated automatic retries.                                                                                                                                                                                                                                          |
 | `betweenHandPendingRetryHandProposal`  | `SavedHandProposal \| null`                                                                                   | Local hand proposal waiting for retry after a proposal collision.                                                                                                                                                                                                                                              |
-| `pendingProposals`              | `Array<{ id, hand_proposal, origin, status }>`                                                                    | Scalar pending proposals keyed by endpoint-local ID. Status is outgoing, incoming-cached, incoming-review, accepting, or advisory-cancelling; generated game members never enter this collection. |
+| `pendingProposals`              | `Array<{ id, hand_proposal, lifecycle }>`                                                                    | Scalar pending proposals keyed by endpoint-local ID. The lifecycle discriminant is local-outgoing, local-cancel-queued, peer-cached, peer-review, peer-accept-queued, or peer-cancel-queued; generated game members never enter this collection. |
 | `waitingStateEnteredAt`         | `bigint \| null`                                                                                           | Epoch ms when the channel entered an abandon-eligible waiting state.                                                                                                                                                                                                                                            |
 | `cleanShutdownGraceStartedAt`   | `bigint \| null`                                                                                           | Epoch ms when the clean-shutdown grace timer started.                                                                                                                                                                                                                                                           |
 
@@ -461,12 +461,14 @@ two authoritative sources:
    queues, host-owned compose state, between-hand mode, running balance, and
    dismissed notifications.
 
-The pure root reducer returns the next authority and ordered effects.
-`SessionMachineRuntime` publishes that authority, runs commands (including
-`persist-session`), and only then schedules React. Games dispatch a
-`GameIntent`. A command result distinguishes rejection, queueing, and actual
-application. A game mutates its concrete hand before requesting an action; the
-public intent carries no state. The runtime keeps the previous canonical
+The pure root reducer returns the next unpublished authority and ordered
+commands. `SessionMachineRuntime` drains reducer events, reentrant controller
+events, WASM results, and generated commands to a fixed point. It then persists
+one combined snapshot, publishes the final authority to React once, and releases
+the staged reliable messages and acknowledgements. Games dispatch a `GameIntent`.
+A command result distinguishes rejection, queueing, and actual application. A
+game mutates its concrete hand before requesting an action; the public intent
+carries no state. The runtime keeps the previous canonical
 `handState` only as a temporary synchronous checkpoint while it calls Rust. A
 synchronous command exception or `MoveRejected` restores that checkpoint. If
 Rust accepts the action as queued or already applied, the runtime rereads
@@ -487,12 +489,11 @@ service. Accepted stakes, factory-ordered member state, and terminal outcomes
 are part of the complete hand state rather than parallel mount projections.
 Protocol IDs remain in the host session model and never enter package state. A new
 `handKey` creates a fresh component and `GameHand` lifetime.
-`SessionController.onSaveNeeded` invokes the same runtime persistence path for
-ordinary debounced WASM changes. Every successful mutating WASM command
-schedules that coalesced save even when it emits no events; read-only polling
-does not. Delivery-critical outbound messages and acknowledgements still bypass
-the delay and flush immediately before sending. Game-owned local-only
-`state-changed` updates retain the existing outer persistence debounce.
+Every successful mutating WASM command marks the same runtime transaction dirty
+even when it emits no events; read-only polling does not. The runtime keeps
+intermediate machine states unpublished. Stimuli arriving while persistence is
+in flight are retained for the next transaction and cannot alter the snapshot
+or React projection being committed.
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
@@ -525,13 +526,14 @@ leaves its sibling's move/handler state untouched; the persisted opaque hand
 state still contains both members.
 
 Proposal state is one normalized `pendingProposals` collection. Each entry owns
-one endpoint-local proposal ID, one `HandProposal`, its local/peer origin, and
-an explicit advisory UI status. Rust alone maps that local ID to the origin's
-parity-sequenced wire ID while the proposal remains pending. Acceptance removes
+one endpoint-local proposal ID, one `HandProposal`, and one lifecycle
+discriminant that also determines local/peer origin. Rust alone maps that local
+ID to the origin's parity-sequenced wire ID while the proposal remains pending.
+Acceptance removes
 the proposal and creates factory-ordered game members in `GameSlice`;
 `InsufficientBalance` and proposal cancellation remove only the proposal.
 Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
-independently by `GameID`. The current v25 envelope makes
+independently by `GameID`. The current v26 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
@@ -539,30 +541,32 @@ sidecar.
 This schema does not migrate incompatible records from aggregate current-game
 fields; they are deleted instead.
 
-Rejecting an incoming proposal returns the model to compose as soon as the
-cancel command succeeds. There is no `expectingCounterProposal` flag or timer.
-A legitimate crossed proposal may therefore produce a brief compose-state
-flicker before its `ProposalMade` arrives and is reduced normally.
+Rejecting an incoming proposal returns the unpublished model to compose as soon
+as the cancel command succeeds. There is no `expectingCounterProposal` flag or
+timer. Any crossed `ProposalMade` in the same runnable event wave is reduced
+before the single post-persistence React projection, so intermediate compose
+state is not displayed.
 
 #### Delivery-critical saves
 
-Peer message counters and queues are part of the reliable transport protocol,
-so they are not allowed to wait for the normal debounce. The shared reliability
-owner exists before the WASM controller: it increments `messageNumber`, appends
-every outbound semantic body to `unackedMessages`, and queues the actual
-WebSocket send. When an inbound body is delivered to negotiation or WASM, it
-advances `remoteNumber` and queues the ack. The queued sends/acks are held until
-the corresponding semantic state is durable.
+Peer message counters and queues are part of the reliable transport protocol.
+The shared reliability owner exists before the WASM controller: it increments
+`messageNumber`, appends every outbound semantic body to `unackedMessages`, and
+stages the actual WebSocket send. When an inbound body is delivered to
+negotiation or WASM, it advances `remoteNumber` and stages the ack. With a live
+runtime these allocations participate in the same generic transaction as all
+other session work.
 
-At that point the reliability owner performs one immediate durability flush:
+At quiescence the transaction coordinator:
 
-1. Cancel any pending debounced save.
-2. Call its save boundary, which records pending negotiation directly or
-   serializes the cradle and merges the current WASM/JS fields into
-   `SessionSave`.
-3. Await `flushSessionSave()` to commit the record through an IndexedDB
-   read/write transaction.
-4. Send all queued outbound messages and acks.
+1. Captures the staged reliable generation together with the final WASM and JS
+   working state.
+2. Performs exactly one `SessionSave` IndexedDB write.
+3. Publishes the captured machine state to React once.
+4. Releases the captured outbound messages and acknowledgements in order.
+
+Pre-runtime negotiation uses the reliability owner's explicit flush path with
+the same persist-before-send rule.
 
 This preserves the transport invariant across reloads: the peer only observes a
 message or ack after the local save contains the corresponding
@@ -1693,8 +1697,8 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v25 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v25 presentation snapshot encoder                                                            |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v26 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v26 presentation snapshot encoder                                                            |
 | `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                    |
 | `front-end/src/lib/session/incomingProposal.ts`  | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                        |
 | `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                               |

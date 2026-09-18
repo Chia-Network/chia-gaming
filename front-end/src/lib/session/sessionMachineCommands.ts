@@ -1,6 +1,7 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
 import { handProposalsEqual } from '../gameRegistry';
-import { selectProposalByStatus } from './selectors';
+import { selectProposalByLifecycle } from './selectors';
+import { proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -24,28 +25,22 @@ export function reduceSessionCommand(
   const betweenHand = state.model.betweenHand;
   switch (event.type) {
     case 'choose-same-terms': {
-      if (selectProposalByStatus(state.model, 'accepting')) {
+      if (selectProposalByLifecycle(state.model, 'peer-accept-queued')) {
         return { state, effects: [] };
       }
-      const cached = selectProposalByStatus(state.model, 'incoming-cached');
+      const cached = selectProposalByLifecycle(state.model, 'peer-cached');
       if (cached) {
         if (
           handProposalsEqual(
             cached.handProposal,
-            cached.origin,
+            proposalOrigin(cached),
             betweenHand.lastHandProposal,
             state.model.game.currentHandOrigin,
           )
         ) {
           return {
             state,
-            effects: [
-              {
-                type: 'controller-accept-proposal',
-                id: cached.id,
-                context: 'choose-same-terms',
-              },
-            ],
+            effects: [{ type: 'controller-accept-proposal', id: cached.id }],
           };
         }
         return {
@@ -57,14 +52,14 @@ export function reduceSessionCommand(
                 ...betweenHand,
                 pendingProposals: betweenHand.pendingProposals.map((proposal) =>
                   proposal.id === cached.id
-                    ? { ...proposal, status: 'incoming-review' as const }
+                    ? { ...proposal, lifecycle: 'peer-review' as const }
                     : proposal,
                 ),
                 mode: 'review-incoming-proposal',
               },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
       const terms = betweenHand.lastHandProposal;
@@ -77,7 +72,7 @@ export function reduceSessionCommand(
               betweenHand: { ...betweenHand, mode: 'compose-proposal' },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
       const localTerms =
@@ -97,12 +92,12 @@ export function reduceSessionCommand(
       };
     }
     case 'reject-current-proposal': {
-      const cached = selectProposalByStatus(state.model, 'incoming-cached');
+      const cached = selectProposalByLifecycle(state.model, 'peer-cached');
       if (
         cached &&
         !handProposalsEqual(
           cached.handProposal,
-          cached.origin,
+          proposalOrigin(cached),
           betweenHand.lastHandProposal,
           state.model.game.currentHandOrigin,
         )
@@ -116,14 +111,14 @@ export function reduceSessionCommand(
                 ...betweenHand,
                 pendingProposals: betweenHand.pendingProposals.map((proposal) =>
                   proposal.id === cached.id
-                    ? { ...proposal, status: 'incoming-review' as const }
+                    ? { ...proposal, lifecycle: 'peer-review' as const }
                     : proposal,
                 ),
                 mode: 'review-incoming-proposal',
               },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
       return {
@@ -144,15 +139,7 @@ export function reduceSessionCommand(
                 },
               },
             },
-        effects: cached
-          ? [
-              {
-                type: 'controller-cancel-proposal',
-                id: cached.id,
-                context: 'reject-current-proposal',
-              },
-            ]
-          : [{ type: 'persist-session' }],
+        effects: cached ? [{ type: 'controller-cancel-proposal', id: cached.id }] : [],
       };
     }
     case 'open-compose':
@@ -171,7 +158,7 @@ export function reduceSessionCommand(
             },
           },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     case 'submit-compose':
       return {
@@ -179,21 +166,15 @@ export function reduceSessionCommand(
         effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],
       };
     case 'accept-review': {
-      const review = selectProposalByStatus(state.model, 'incoming-review');
+      const review = selectProposalByLifecycle(state.model, 'peer-review');
       if (!review || review.id !== event.id) return { state, effects: [] };
       return {
         state,
-        effects: [
-          {
-            type: 'controller-accept-proposal',
-            id: review.id,
-            context: 'accept-review',
-          },
-        ],
+        effects: [{ type: 'controller-accept-proposal', id: review.id }],
       };
     }
     case 'reject-review': {
-      const review = selectProposalByStatus(state.model, 'incoming-review');
+      const review = selectProposalByLifecycle(state.model, 'peer-review');
       if (!review) {
         return {
           state: {
@@ -207,18 +188,12 @@ export function reduceSessionCommand(
               },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
       return {
         state,
-        effects: [
-          {
-            type: 'controller-cancel-proposal',
-            id: review.id,
-            context: 'reject-review',
-          },
-        ],
+        effects: [{ type: 'controller-cancel-proposal', id: review.id }],
       };
     }
   }

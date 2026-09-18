@@ -66,16 +66,7 @@ export function snapshotFromSessionModel(
       throw new Error(`Session invariant broken: pending proposal ${proposal.id} appears twice`);
     }
     proposalIds.add(proposal.id);
-    if (
-      (proposal.status === 'incoming-cached' || proposal.status === 'incoming-review') &&
-      proposal.origin !== 'peer'
-    ) {
-      throw new Error('Session invariant broken: incoming proposal is not peer-originated');
-    }
-    if (proposal.status === 'outgoing' || proposal.status === 'advisory-cancelling') {
-      if (proposal.origin !== 'local') {
-        throw new Error('Session invariant broken: outgoing proposal is not local');
-      }
+    if (proposal.lifecycle === 'local-outgoing' || proposal.lifecycle === 'local-cancel-queued') {
       localOutgoingProposals += 1;
     }
   }
@@ -140,8 +131,7 @@ export function snapshotFromSessionModel(
       : null,
     pendingProposals: model.betweenHand.pendingProposals.map((proposal) => ({
       id: proposal.id,
-      origin: proposal.origin,
-      status: proposal.status,
+      lifecycle: proposal.lifecycle,
       hand_proposal: handProposalSnapshot(proposal.handProposal),
     })),
     waitingStateEnteredAt: facts.waitingStateEnteredAt ?? null,

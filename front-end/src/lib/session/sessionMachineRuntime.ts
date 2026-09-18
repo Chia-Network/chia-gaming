@@ -1,5 +1,4 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
-import { runSessionMachineTransition } from './sessionMachineEffects';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
 import { persistSessionSnapshot } from './sessionMachinePersist';
 import { reduceSessionMachine } from './sessionMachine';
@@ -11,6 +10,7 @@ import type {
 } from './sessionMachineTypes';
 import type { RegisteredGameType } from './types';
 import type { coinIdHex } from './gameSessionEvents';
+import type { ReliableCommitCoordinator } from '../../services/PeerSession';
 import {
   packageFor,
   restoreRegisteredGameHandState,
@@ -56,30 +56,47 @@ export class SessionMachineRuntime {
   };
   private dispatching = false;
   private readonly pendingEvents: SessionMachineEvent[] = [];
-  private projectionTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly pendingControllerWork: Array<() => void> = [];
+  private transactionActive = false;
+  private committing = false;
+  private dirty = false;
+  private projectionPending = false;
+  private commitScheduled = false;
+  private commitTimer: ReturnType<typeof setTimeout> | null = null;
+  private commitPromise: Promise<void> = Promise.resolve();
+  private readonly persistSnapshot: (state: SessionMachineState) => Promise<void>;
+  private readonly onError: (error: unknown) => void;
+  private readonly commitCoordinator: ReliableCommitCoordinator;
 
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
     this.state = initial;
     this.controller = dependencies.controller;
+    this.onError = dependencies.onError;
     this.restoreActiveHand(initial);
+    this.persistSnapshot = dependencies.persist
+      ? () => dependencies.persist!()
+      : (state) =>
+          persistSessionSnapshot({
+            controller: dependencies.controller,
+            getState: () => state,
+            restoring: dependencies.restoring,
+            getRestoreStatus: dependencies.getRestoreStatus,
+            getRestoreError: dependencies.getRestoreError,
+          });
     this.interpreter = new SessionMachineInterpreter({
       controller: dependencies.controller,
       iStarted: dependencies.iStarted,
       getState: () => this.state,
       dispatch: (event) => this.dispatch(event),
-      persist:
-        dependencies.persist ??
-        (() =>
-          persistSessionSnapshot({
-            controller: dependencies.controller,
-            getState: () => this.state,
-            restoring: dependencies.restoring,
-            getRestoreStatus: dependencies.getRestoreStatus,
-            getRestoreError: dependencies.getRestoreError,
-          })),
       onError: dependencies.onError,
       enrichCoin: dependencies.enrichCoin,
     });
+    this.commitCoordinator = {
+      requestCommit: () => this.requestCommit(),
+      flush: () => this.flush(),
+      enqueue: (work) => this.enqueueControllerWork(work),
+    };
+    this.controller.attachTransactionCoordinator(this.commitCoordinator);
   }
 
   getState(): SessionMachineState {
@@ -92,31 +109,34 @@ export class SessionMachineRuntime {
 
   clearRender(): void {
     this.render = () => {};
-    if (this.projectionTimer !== null) {
-      clearTimeout(this.projectionTimer);
-      this.projectionTimer = null;
-    }
   }
 
   dispatch(event: SessionMachineEvent): void {
     this.pendingEvents.push(event);
+    if (this.committing || this.transactionActive || this.dispatching) {
+      this.scheduleCommit(false);
+      return;
+    }
+    this.runTransaction();
+  }
+
+  private drainMachineEvents(): void {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
       while (this.pendingEvents.length > 0) {
         const next = this.prepareGameEvent(this.pendingEvents.shift()!);
-        const transition = reduceSessionMachine(this.state, next, this.activeHandContext);
-        runSessionMachineTransition(transition, {
-          setAuthority: (state) => {
-            this.state = state;
-          },
-          getAuthority: () => this.state,
-          controller: {
-            clearDerivedGamePresentation: () => this.controller.clearDerivedGamePresentation(),
-          },
-          runCommand: (effect) => this.interpreter.run(effect),
-          render: () => this.scheduleProjection(),
-        });
+        const previous = this.state;
+        const transition = reduceSessionMachine(previous, next, this.activeHandContext);
+        this.state = transition.state;
+        if (this.state !== previous) this.dirty = true;
+        for (const effect of transition.effects) {
+          if (effect.type === 'clear-derived-game-presentation') {
+            this.controller.clearDerivedGamePresentation();
+          } else {
+            this.interpreter.run(effect);
+          }
+        }
       }
     } catch (error) {
       this.pendingEvents.length = 0;
@@ -168,7 +188,7 @@ export class SessionMachineRuntime {
       }
       const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
       if (disposition === 'rejected') {
-        this.restoreAndRender(checkpoint);
+        this.restoreAndProject(checkpoint);
         return;
       }
       const accepted = this.snapshotActiveHand();
@@ -179,19 +199,13 @@ export class SessionMachineRuntime {
         state: accepted.state,
       });
     } catch (error) {
-      this.restoreAndRender(checkpoint);
+      this.restoreAndProject(checkpoint);
       throw error;
     }
   }
 
   persist(): Promise<void> {
-    return persistSessionSnapshot({
-      controller: this.controller,
-      getState: () => this.state,
-      restoring: this.state.model.restore.restoring,
-      getRestoreStatus: () => this.controller.getRestoreStatus(),
-      getRestoreError: () => this.controller.getRestoreError(),
-    });
+    return this.flush();
   }
 
   private restoreActiveHand(state: SessionMachineState): void {
@@ -230,16 +244,121 @@ export class SessionMachineRuntime {
     this.activeHandGameType = gameType;
   }
 
-  private restoreAndRender(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {
+  private restoreAndProject(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {
     this.restoreHandFrom(checkpoint);
-    this.scheduleProjection();
+    this.projectionPending = true;
+    this.scheduleCommit(false);
   }
 
-  private scheduleProjection(): void {
-    if (this.projectionTimer !== null) return;
-    this.projectionTimer = setTimeout(() => {
-      this.projectionTimer = null;
-      this.render(this.state);
+  private enqueueControllerWork(work: () => void): void {
+    if (this.committing) {
+      this.pendingControllerWork.push(work);
+      return;
+    }
+    this.runTransaction(work);
+  }
+
+  private runTransaction(work?: () => void, requestCommit = true): void {
+    if (this.transactionActive) {
+      work?.();
+      return;
+    }
+    this.transactionActive = true;
+    try {
+      work?.();
+      for (;;) {
+        this.drainMachineEvents();
+        this.controller.flushDeferredWork();
+        if (this.pendingEvents.length === 0) break;
+      }
+    } finally {
+      this.transactionActive = false;
+    }
+    if (requestCommit) this.scheduleCommit(false);
+  }
+
+  private requestCommit(): void {
+    this.scheduleCommit(true);
+  }
+
+  private scheduleCommit(markDirty: boolean): void {
+    if (markDirty) this.dirty = true;
+    if (!this.dirty && !this.projectionPending) return;
+    if (this.committing || this.transactionActive || this.commitScheduled) return;
+    this.commitScheduled = true;
+    this.commitTimer = setTimeout(() => {
+      this.commitTimer = null;
+      this.commitScheduled = false;
+      this.startCommit();
     }, 0);
+    if (typeof this.commitTimer === 'object' && 'unref' in this.commitTimer) {
+      this.commitTimer.unref();
+    }
+  }
+
+  private startCommit(): void {
+    if (this.committing || (!this.dirty && !this.projectionPending)) return;
+    this.runTransaction(undefined, false);
+    if (this.committing || (!this.dirty && !this.projectionPending)) return;
+    const projectedState = this.state;
+    if (!this.dirty) {
+      this.projectionPending = false;
+      try {
+        this.render(projectedState);
+      } catch (error) {
+        this.onError(error);
+      }
+      return;
+    }
+    const reliableCommit = this.controller.prepareReliableCommit();
+    this.dirty = false;
+    this.projectionPending = false;
+    this.committing = true;
+    this.commitPromise = this.persistSnapshot(projectedState)
+      .then(() => {
+        this.render(projectedState);
+        this.controller.completeReliableCommit(reliableCommit);
+      })
+      .catch((error) => {
+        this.dirty = true;
+        this.projectionPending = true;
+        throw error;
+      })
+      .finally(() => {
+        this.committing = false;
+        if (this.pendingControllerWork.length > 0 || this.pendingEvents.length > 0) {
+          const work = this.pendingControllerWork.splice(0);
+          this.runTransaction(() => {
+            for (const task of work) task();
+          });
+        } else if (this.projectionPending) {
+          this.scheduleCommit(false);
+        }
+      });
+    void this.commitPromise.catch(this.onError);
+  }
+
+  private async flush(): Promise<void> {
+    if (this.commitTimer !== null) {
+      clearTimeout(this.commitTimer);
+      this.commitTimer = null;
+      this.commitScheduled = false;
+    }
+    if (
+      !this.committing &&
+      (this.dirty || this.projectionPending || this.pendingEvents.length > 0)
+    ) {
+      this.startCommit();
+    }
+    await this.commitPromise;
+    if (
+      this.committing ||
+      this.dirty ||
+      this.projectionPending ||
+      this.pendingEvents.length > 0 ||
+      this.pendingControllerWork.length > 0
+    ) {
+      return this.flush();
+    }
   }
 }

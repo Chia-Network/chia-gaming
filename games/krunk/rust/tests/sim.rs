@@ -3,10 +3,9 @@ use std::rc::Rc;
 use clvm_traits::ClvmEncoder;
 
 use crate::channel_state::types::ReadableMove;
-use crate::common::types::{GameID, LocalProposalId};
-use crate::common::types::{AllocEncoder, Program};
+use crate::common::types::{AllocEncoder, GameID, Program};
 use crate::game_session::GameSession;
-use crate::test_support::sim_script::SimScriptAction;
+use crate::test_support::sim_script::{ScriptGameRef, ScriptProposalRef, SimScriptAction};
 use crate::transaction_manager::TransactionManager;
 
 /// Build a Program holding a single 5-byte atom (a krunk word).
@@ -19,13 +18,16 @@ fn word_program(allocator: &mut AllocEncoder, word: &[u8; 5]) -> Program {
 
 /// Happy-path krunk moves: Alice commits "crane", Bob guesses "crane",
 /// Alice's clue handler auto-detects the match and reveals.
-pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<SimScriptAction> {
+pub fn prefix_test_moves(
+    allocator: &mut AllocEncoder,
+    game_id: ScriptGameRef,
+) -> Vec<SimScriptAction> {
     test_moves_for_picker(allocator, game_id, 0)
 }
 
 fn test_moves_for_picker(
     allocator: &mut AllocEncoder,
-    game_id: GameID,
+    game_id: ScriptGameRef,
     picker: usize,
 ) -> Vec<SimScriptAction> {
     // Dictionary entries are uppercase (see krunkwords.txt).
@@ -105,16 +107,24 @@ mod sim_tests {
     fn full_group_moves(allocator: &mut AllocEncoder) -> Vec<SimScriptAction> {
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
-        moves.extend(test_moves_for_picker(allocator, GameID(1), 0));
-        moves.extend(test_moves_for_picker(allocator, GameID(3), 1));
+        moves.extend(test_moves_for_picker(
+            allocator,
+            ScriptGameRef::accepted(1, 0),
+            0,
+        ));
+        moves.extend(test_moves_for_picker(
+            allocator,
+            ScriptGameRef::accepted(1, 1),
+            1,
+        ));
         moves
     }
 
     fn third_guess_terminal_moves(
         allocator: &mut AllocEncoder,
-        game_id: GameID,
+        game_id: ScriptGameRef,
     ) -> Vec<SimScriptAction> {
         let nil_move = Program::from_hex("80").expect("nil move");
         let mut moves = vec![SimScriptAction::Move(
@@ -142,7 +152,7 @@ mod sim_tests {
 
     fn first_wrong_guess_moves(
         allocator: &mut AllocEncoder,
-        game_id: GameID,
+        game_id: ScriptGameRef,
         picker: usize,
     ) -> Vec<SimScriptAction> {
         let guesser = 1 - picker;
@@ -170,7 +180,11 @@ mod sim_tests {
         ]
     }
 
-    fn assert_single_scripted_nil(moves: &[SimScriptAction], picker: usize, game_id: GameID) {
+    fn assert_single_scripted_nil(
+        moves: &[SimScriptAction],
+        picker: usize,
+        game_id: ScriptGameRef,
+    ) {
         let count = moves
             .iter()
             .filter(|action| {
@@ -282,7 +296,7 @@ mod sim_tests {
 
     fn run_cached_nil_redo_case(
         picker: usize,
-        script_game_id: GameID,
+        script_game_id: ScriptGameRef,
         accepted_game_id: GameID,
     ) {
         let mut allocator = AllocEncoder::new();
@@ -290,7 +304,7 @@ mod sim_tests {
         let nil_move = round.pop().expect("nil clue");
         let mut moves = vec![
             SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+            SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
         ];
         moves.extend(round);
         moves.push(SimScriptAction::NerfMessages(picker));
@@ -316,9 +330,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let num_moves = moves.len();
             let result = run_krunk_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -369,10 +386,10 @@ mod sim_tests {
             let invalid_word = word_program(&mut allocator, b"XXXXX");
             let moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 SimScriptAction::Move(
                     0,
-                    GameID(1),
+                    ScriptGameRef::accepted(1, 0),
                     ReadableMove::from_program(Rc::new(invalid_word)),
                     true,
                 ),
@@ -418,18 +435,21 @@ mod sim_tests {
                 .expect("serialize request");
                 let moves = vec![
                     SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                    SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                    SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                     // Give away the potato without changing the game turn, then
                     // queue the move while player 0 still has move authority.
                     SimScriptAction::InjectRawMessage(0, request_potato),
                     SimScriptAction::Move(
                         0,
-                        GameID(1),
+                        ScriptGameRef::accepted(1, 0),
                         ReadableMove::from_program(Rc::new(valid_word)),
                         true,
                     ),
                     SimScriptAction::WaitBlocks(1, 0),
-                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
+                    SimScriptAction::WaitForMoveApplied(
+                        0,
+                        ScriptGameRef::accepted(1, 0),
+                    ),
                 ];
                 let move_count = moves.len();
                 let outcome = run_krunk_container_with_action_list_with_success_predicate(
@@ -471,18 +491,25 @@ mod sim_tests {
                     &PeerMessage::RequestPotato(()),
                 )
                 .expect("serialize request");
-                let game_moves = prefix_test_moves(&mut allocator, GameID(1));
+                let game_moves =
+                    prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
                 let moves = vec![
                     SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                    SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                    SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                     game_moves[0].clone(),
-                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
+                    SimScriptAction::WaitForMoveApplied(
+                        0,
+                        ScriptGameRef::accepted(1, 0),
+                    ),
                     game_moves[1].clone(),
                     // Give away the potato before Alice's second move so its
                     // application occurs after the second wait boundary.
                     SimScriptAction::InjectRawMessage(0, request_potato),
                     game_moves[2].clone(),
-                    SimScriptAction::WaitForMoveApplied(0, GameID(1)),
+                    SimScriptAction::WaitForMoveApplied(
+                        0,
+                        ScriptGameRef::accepted(1, 0),
+                    ),
                 ];
                 let outcome = run_krunk_container_with_action_list_with_success_predicate(
                     &mut allocator,
@@ -518,20 +545,20 @@ mod sim_tests {
             let game_3_commit = word_program(&mut allocator, b"CRANE");
             let moves = vec![
                 SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 SimScriptAction::NerfMessages(1),
                 SimScriptAction::Move(
                     1,
-                    GameID(3),
+                    ScriptGameRef::accepted(1, 1),
                     ReadableMove::from_program(Rc::new(game_3_commit)),
                     true,
                 ),
-                SimScriptAction::AcceptSettlement(1, GameID(999)),
-                SimScriptAction::AcceptSettlement(1, GameID(998)),
+                SimScriptAction::AcceptSettlement(1, ScriptGameRef::missing(999)),
+                SimScriptAction::AcceptSettlement(1, ScriptGameRef::missing(998)),
                 SimScriptAction::UnNerfMessages,
                 SimScriptAction::Move(
                     0,
-                    GameID(1),
+                    ScriptGameRef::accepted(1, 0),
                     ReadableMove::from_program(Rc::new(game_1_commit)),
                     true,
                 ),
@@ -590,14 +617,14 @@ mod sim_tests {
             .expect("serialize request");
             let moves = vec![
                 SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 SimScriptAction::NerfMessages(1),
                 SimScriptAction::InjectRawMessage(1, request_potato),
-                SimScriptAction::AcceptSettlement(1, GameID(999)),
+                SimScriptAction::AcceptSettlement(1, ScriptGameRef::missing(999)),
                 SimScriptAction::UnNerfMessages,
                 SimScriptAction::Move(
                     0,
-                    GameID(1),
+                    ScriptGameRef::accepted(1, 0),
                     ReadableMove::from_program(Rc::new(game_1_commit)),
                     true,
                 ),
@@ -644,11 +671,11 @@ mod sim_tests {
             .expect("serialize request");
             let moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 SimScriptAction::InjectRawMessage(0, request_potato.clone()),
                 SimScriptAction::Move(
                     0,
-                    GameID(1),
+                    ScriptGameRef::accepted(1, 0),
                     ReadableMove::from_program(Rc::new(invalid_word)),
                     true,
                 ),
@@ -716,7 +743,7 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let moves = vec![
                 SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 SimScriptAction::GoOnChain(0),
                 SimScriptAction::WaitBlocks(120, 0),
             ];
@@ -821,25 +848,25 @@ mod sim_tests {
         }));
 
         res.push(("test_krunk_player_0_picker_cached_nil_redo_id_1", &|| {
-            run_cached_nil_redo_case(0, GameID(1), GameID(0));
+            run_cached_nil_redo_case(0, ScriptGameRef::accepted(1, 0), GameID(0));
         }));
 
         res.push(("test_krunk_player_1_picker_cached_nil_redo_id_3", &|| {
-            run_cached_nil_redo_case(1, GameID(3), GameID(1));
+            run_cached_nil_redo_case(1, ScriptGameRef::accepted(1, 1), GameID(1));
         }));
 
         res.push((
             "test_krunk_nil_queued_during_channel_spend_executes_once",
             &|| {
                 let picker = 0;
-                let script_game_id = GameID(1);
+                let script_game_id = ScriptGameRef::accepted(1, 0);
                 let accepted_game_id = GameID(0);
                 let mut allocator = AllocEncoder::new();
                 let mut round = first_wrong_guess_moves(&mut allocator, script_game_id, picker);
                 let nil_move = round.pop().expect("nil clue");
                 let mut moves = vec![
                     SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-                    SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                    SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 ];
                 moves.extend(round);
                 moves.push(SimScriptAction::GoOnChain(picker));
@@ -906,9 +933,10 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            let mut game_moves = third_guess_terminal_moves(&mut allocator, GameID(1));
+            let mut game_moves =
+                third_guess_terminal_moves(&mut allocator, ScriptGameRef::accepted(1, 0));
             let terminal_reveal = game_moves.pop().expect("terminal reveal");
             moves.extend(game_moves);
             moves.push(SimScriptAction::GoOnChain(0));

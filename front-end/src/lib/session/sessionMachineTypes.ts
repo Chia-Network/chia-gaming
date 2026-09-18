@@ -6,7 +6,7 @@ import type {
   HandProposal,
   LocalActionKind,
   PendingProposalModel,
-  PendingProposalStatus,
+  PendingProposalLifecycle,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
@@ -48,19 +48,12 @@ export type SessionControllerCommand =
   | 'clean-shutdown'
   | 'go-on-chain';
 
-export type ProposalCommandContext =
-  | 'accept-review'
-  | 'choose-same-terms'
-  | 'reject-current-proposal'
-  | 'reject-review';
-
 export type SessionMachineEffect =
-  | { type: 'controller-accept-proposal'; id: string; context?: ProposalCommandContext }
-  | { type: 'controller-cancel-proposal'; id: string; context?: ProposalCommandContext }
+  | { type: 'controller-accept-proposal'; id: string }
+  | { type: 'controller-cancel-proposal'; id: string }
   | { type: 'controller-propose-game'; handProposal: HandProposal }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
-  | { type: 'persist-session' }
   | {
       type: 'request-coin-enrichment';
       target: 'channel' | 'game' | 'settlement';
@@ -97,11 +90,7 @@ export type SessionMachineEvent =
   | { type: 'dismiss-game-notification' }
   | { type: 'set-between-hand-mode'; mode: BetweenHandModeModel }
   | { type: 'upsert-pending-proposal'; proposal: PendingProposalModel }
-  | {
-      type: 'set-proposal-status';
-      id: string;
-      status: PendingProposalStatus;
-    }
+  | { type: 'set-proposal-lifecycle'; id: string; lifecycle: PendingProposalLifecycle }
   | { type: 'set-rejected-terms'; handProposal: HandProposal | null }
   | { type: 'set-last-terms'; handProposal: HandProposal }
   | { type: 'set-pending-retry-terms'; handProposal: HandProposal | null }
@@ -163,7 +152,6 @@ export type SessionMachineEvent =
       type: 'proposal-command-succeeded';
       command: 'accept-proposal' | 'cancel-proposal';
       id: string;
-      context?: ProposalCommandContext;
     }
   | { type: 'clean-shutdown-command-succeeded' }
   | { type: 'controller-command-failed'; command: SessionControllerCommand; message: string }

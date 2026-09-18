@@ -535,13 +535,12 @@ describe('validateSessionSaveEnvelope', () => {
       'betweenHandLastHandProposal.parameters',
     ],
     [
-      'peer proposal',
+      'proposal lifecycle',
       {
         pendingProposals: [
           {
             id: 'proposal-1',
-            origin: 'local',
-            status: 'incoming-cached',
+            lifecycle: 'local-cached',
             hand_proposal: {
               sender_is_player_a: false,
               game_timeout: '15',
@@ -551,7 +550,7 @@ describe('validateSessionSaveEnvelope', () => {
           },
         ],
       },
-      'peer-originated',
+      'lifecycle',
     ],
     [
       'pending proposals',
@@ -559,8 +558,7 @@ describe('validateSessionSaveEnvelope', () => {
         pendingProposals: [
           {
             id: 'proposal-1',
-            origin: 'local',
-            status: 'outgoing',
+            lifecycle: 'local-outgoing',
             hand_proposal: {
               sender_is_player_a: true,
               game_timeout: '15',
@@ -570,8 +568,7 @@ describe('validateSessionSaveEnvelope', () => {
           },
           {
             id: 'proposal-1',
-            origin: 'peer',
-            status: 'incoming-cached',
+            lifecycle: 'peer-cached',
             hand_proposal: {
               sender_is_player_a: false,
               game_timeout: '15',

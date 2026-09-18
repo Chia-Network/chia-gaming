@@ -156,8 +156,7 @@ describe('session model restore, schema, and event contracts', () => {
       pendingProposals: [
         {
           id: '42',
-          origin: 'peer',
-          status: 'incoming-review',
+          lifecycle: 'peer-review',
           hand_proposal: {
             sender_is_player_a: false,
             game_timeout: '31',
@@ -190,8 +189,7 @@ describe('session model restore, schema, and event contracts', () => {
         pendingProposals: [
           {
             id: '42',
-            origin: 'peer',
-            status: 'incoming-review',
+            lifecycle: 'peer-review',
             handProposal: {
               gameType: 'spacepoker',
               senderIsPlayerA: false,

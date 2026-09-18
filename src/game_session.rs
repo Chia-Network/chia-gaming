@@ -489,14 +489,6 @@ impl ToLocalUI for GameSessionState {
 
 impl GameSession {
     #[cfg(test)]
-    pub fn proposal_contributions_for_testing(
-        &self,
-    ) -> Result<Vec<(LocalProposalId, Amount, Amount)>, Error> {
-        let channel = self.peer.channel_state()?;
-        Ok(channel.proposal_contributions_for_testing())
-    }
-
-    #[cfg(test)]
     pub fn allocated_balances_for_testing(&self) -> Result<(Amount, Amount), Error> {
         let channel = self.peer.channel_state()?;
         Ok((

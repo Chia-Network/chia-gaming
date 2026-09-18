@@ -25,9 +25,6 @@ export function pendingProposalFromProposalMade(
   ) {
     return null;
   }
-  if (packageFor(gameType).decodeProposalParameters(payload.parameters) === null) {
-    return null;
-  }
   return {
     id: String(payload.id),
     handProposal: {
@@ -36,7 +33,9 @@ export function pendingProposalFromProposalMade(
       gameTimeout: timeout,
       parameters: payload.parameters,
     },
-    origin: 'peer',
-    status: 'incoming-cached',
+    lifecycle:
+      packageFor(gameType).decodeProposalParameters(payload.parameters) === null
+        ? 'peer-cancel-queued'
+        : 'peer-cached',
   };
 }

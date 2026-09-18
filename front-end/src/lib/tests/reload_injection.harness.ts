@@ -12,6 +12,7 @@ import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { sessionModelFromSave } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
+import { persistSessionSnapshot } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionModel } from '../session/types';
 import {
@@ -44,7 +45,16 @@ function bindRuntime(
   iStarted: boolean,
   restoring: boolean,
 ): ReloadableSessionLane {
-  const persist = () => persistOutsideReload(controller, () => runtime.persist());
+  const persist = () =>
+    persistOutsideReload(controller, () =>
+      persistSessionSnapshot({
+        controller,
+        getState: () => runtime.getState(),
+        restoring,
+        getRestoreStatus: () => controller.getRestoreStatus(),
+        getRestoreError: () => controller.getRestoreError(),
+      }),
+    );
   const runtime = new SessionMachineRuntime(
     createSessionMachineState(model, {
       firstGameAccepted: model.channel.status.state === 'Active',
@@ -139,6 +149,7 @@ export async function injectSessionReload(
   let save: Awaited<ReturnType<typeof peekSession>>;
   try {
     await lane.runtime.persist();
+    await lane.controller.onSaveNeeded?.();
     await flushSessionSave();
     resetSaveState();
     save = await peekSession();

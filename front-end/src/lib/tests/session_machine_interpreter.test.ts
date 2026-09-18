@@ -59,8 +59,7 @@ function stateWithProposals(
         pendingProposals: groups.map(({ id, handProposal, origin = 'local' }) => ({
           id,
           handProposal,
-          origin,
-          status: origin === 'local' ? ('outgoing' as const) : ('incoming-cached' as const),
+          lifecycle: origin === 'local' ? ('local-outgoing' as const) : ('peer-cached' as const),
         })),
       },
     }),
@@ -78,6 +77,15 @@ function fakeController(overrides: Partial<SessionController> = {}): SessionCont
     makeMove: jest.fn(),
     acceptSettlement: jest.fn(),
     cheat: jest.fn(),
+    attachTransactionCoordinator: jest.fn(),
+    flushDeferredWork: jest.fn(),
+    prepareReliableCommit: jest.fn(() => ({
+      generation: 0,
+      outboundCount: 0,
+      ackCount: 0,
+      remoteNumber: 0n,
+    })),
+    completeReliableCommit: jest.fn(),
     ...overrides,
   } as unknown as SessionController;
 }
@@ -112,18 +120,14 @@ describe('session machine effect interpreter', () => {
         order.push('dispatch');
         events.push(event);
       },
-      persist: async () => {
-        order.push('persist');
-      },
       onError: (error) => {
         throw error;
       },
     });
 
-    interpreter.run({ type: 'persist-session' });
     interpreter.run({ type: 'controller-propose-game', handProposal: TERMS });
 
-    expect(order).toEqual(['persist', 'controller', 'dispatch']);
+    expect(order).toEqual(['controller', 'dispatch']);
     expect(events).toEqual([{ type: 'proposal-sent', id: '7', handProposal: TERMS }]);
   });
 });
@@ -372,6 +376,7 @@ describe('session machine causal sequences', () => {
       iStarted: true,
       notification: { ChannelStatus: { state: 'Active', coin: new Uint8Array([2]) } },
     });
+    await runtime.persist();
     persisted.length = 0;
 
     pending[0]('stale-channel');
@@ -381,6 +386,7 @@ describe('session machine causal sequences', () => {
 
     pending[1]('channel-coin');
     await Promise.resolve();
+    await runtime.persist();
     expect(persisted).toHaveLength(1);
     expect(persisted[0].model.channel.status.coinHex).toBe('channel-coin');
 
@@ -394,6 +400,7 @@ describe('session machine causal sequences', () => {
     persisted.length = 0;
     pending[2]('game-coin');
     await Promise.resolve();
+    await runtime.persist();
     expect(persisted).toHaveLength(1);
     expect(persisted[0].model.game.instances['7'].coinHex).toBe('game-coin');
 
@@ -412,6 +419,7 @@ describe('session machine causal sequences', () => {
     persisted.length = 0;
     pending[3]('reward-coin');
     await Promise.resolve();
+    await runtime.persist();
     expect(persisted).toHaveLength(1);
     expect(persisted[0].model.game.instances['7'].terminal.rewardCoinHex).toBe('reward-coin');
   });
@@ -463,7 +471,7 @@ describe('session machine causal sequences', () => {
     const transition = reduceSessionMachine(state, { type: 'choose-same-terms' });
     expect(transition.state.model.betweenHand.mode).toBe('compose-proposal');
     expect(transition.state.model.betweenHand.lastHandProposal).toBeNull();
-    expect(transition.effects).toEqual([{ type: 'persist-session' }]);
+    expect(transition.effects).toEqual([]);
   });
 
   function sameTermsProposalState() {
@@ -523,7 +531,7 @@ describe('session machine causal sequences', () => {
       },
     });
     expect(transition.state.coordination.sameTermsRequested).toBe(false);
-    expect(transition.effects.map((effect) => effect.type)).toEqual(['persist-session']);
+    expect(transition.effects).toEqual([]);
   });
 
   it('retains Krunk retry terms after proposal cancellation', () => {
@@ -541,7 +549,7 @@ describe('session machine causal sequences', () => {
 
     expect(transition.state.model.betweenHand.pendingProposals).toEqual([]);
     expect(transition.state.model.betweenHand.pendingRetryHandProposal).toEqual(KRUNK_TERMS);
-    expect(transition.effects.map((effect) => effect.type)).toEqual(['persist-session']);
+    expect(transition.effects).toEqual([]);
   });
 
   it('reviews a crossed incoming proposal that arrives after immediate fallback', () => {
@@ -560,7 +568,7 @@ describe('session machine causal sequences', () => {
 
     expect(state.model.betweenHand.mode).toBe('review-incoming-proposal');
     expect(state.model.betweenHand.pendingProposals).toEqual([
-      expect.objectContaining({ id: '9', status: 'incoming-review' }),
+      expect.objectContaining({ id: '9', lifecycle: 'peer-review' }),
     ]);
   });
 
@@ -653,15 +661,14 @@ describe('session machine controller command failures', () => {
     return { controller, initial, persisted, rendered, runtime };
   }
 
-  it('keeps a thrown proposal retryable without confirming or persisting proposalSent', () => {
+  it('keeps a thrown proposal retryable without confirming or persisting proposalSent', async () => {
     const proposeGame = jest.fn(() => {
       throw new Error('wallet refused proposal');
     });
     const { persisted, rendered, runtime } = runtimeHarness({ proposeGame });
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
-    jest.runOnlyPendingTimers();
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
     expect(runtime.getState().model.betweenHand.compose.proposalSent).toBe(false);
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
@@ -672,7 +679,7 @@ describe('session machine controller command failures', () => {
     expect(persisted[0].model.betweenHand.compose.proposalSent).toBe(false);
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
     expect(proposeGame).toHaveBeenCalledTimes(2);
   });
 
@@ -710,8 +717,7 @@ describe('session machine controller command failures', () => {
             {
               id: '7',
               handProposal: TERMS,
-              origin: 'peer',
-              status: 'incoming-review',
+              lifecycle: 'peer-review',
             },
           ],
         },
@@ -731,6 +737,7 @@ describe('session machine controller command failures', () => {
     });
 
     runtime.dispatch({ type: 'accept-review', id: '7' });
+    await runtime.persist();
 
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
     expect(runtime.getState().model.betweenHand.pendingProposals[0]?.id).toBe('7');
@@ -745,21 +752,20 @@ describe('session machine controller command failures', () => {
     controller.cleanupAfterTerminalFlush();
   });
 
-  it('confirms and persists a successful proposal exactly once', () => {
+  it('confirms and persists a successful proposal exactly once', async () => {
     const { persisted, rendered, runtime } = runtimeHarness({
       proposeGame: jest.fn(() => '7'),
     });
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
 
     expect(runtime.getState().model.betweenHand.compose.proposalSent).toBe(true);
     expect(runtime.getState().model.betweenHand.pendingProposals).toEqual([
       {
         id: '7',
         handProposal: TERMS,
-        origin: 'local',
-        status: 'outgoing',
+        lifecycle: 'local-outgoing',
       },
     ]);
     expect(persisted).toHaveLength(1);
@@ -786,13 +792,12 @@ describe('session machine controller command failures', () => {
       },
       { type: 'reject-review' } as const,
     ],
-  ])('keeps review state retryable when %s throws', (_name, override, event) => {
+  ])('keeps review state retryable when %s throws', async (_name, override, event) => {
     const { persisted, rendered, runtime } = runtimeHarness(override);
     const review = {
       id: '7',
       handProposal: TERMS,
-      origin: 'peer' as const,
-      status: 'incoming-review' as const,
+      lifecycle: 'peer-review' as const,
     };
     runtime.dispatch({ type: 'upsert-pending-proposal', proposal: review });
     runtime.dispatch({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
@@ -800,7 +805,7 @@ describe('session machine controller command failures', () => {
     rendered.length = 0;
 
     runtime.dispatch(event);
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
 
     expect(runtime.getState().model.betweenHand.pendingProposals).toContainEqual(review);
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
@@ -825,15 +830,14 @@ describe('session machine controller command failures', () => {
       { type: 'reject-review' } as const,
       'compose-proposal',
     ],
-  ])('persists successful %s confirmation exactly once', (_name, override, event, mode) => {
+  ])('persists successful %s confirmation exactly once', async (_name, override, event, mode) => {
     const { persisted, rendered, runtime } = runtimeHarness(override);
     runtime.dispatch({
       type: 'upsert-pending-proposal',
       proposal: {
         id: '7',
         handProposal: TERMS,
-        origin: 'peer',
-        status: 'incoming-review',
+        lifecycle: 'peer-review',
       },
     });
     runtime.dispatch({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
@@ -841,7 +845,7 @@ describe('session machine controller command failures', () => {
     rendered.length = 0;
 
     runtime.dispatch(event);
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
 
     expect(runtime.getState().model.betweenHand.mode).toBe(mode);
     if (event.type === 'reject-review') {
@@ -852,7 +856,7 @@ describe('session machine controller command failures', () => {
     expect(rendered.at(-1)).toBe(runtime.getState());
   });
 
-  it('queues an actionable error and renders authority when go-on-chain throws', () => {
+  it('queues an actionable error and renders authority when go-on-chain throws', async () => {
     const { persisted, rendered, runtime } = runtimeHarness({
       goOnChain: () => {
         throw new Error('chain failed');
@@ -860,7 +864,7 @@ describe('session machine controller command failures', () => {
     });
 
     runtime.dispatch({ type: 'go-on-chain' });
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
 
     expect(runtime.getState().coordination.hostOnChain).toBe(false);
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
@@ -871,14 +875,14 @@ describe('session machine controller command failures', () => {
     expect(rendered.at(-1)).toBe(runtime.getState());
   });
 
-  it('does not confirm clean shutdown on throw and persists success exactly once', () => {
+  it('does not confirm clean shutdown on throw and persists success exactly once', async () => {
     const failed = runtimeHarness({
       cleanShutdown: () => {
         throw new Error('shutdown failed');
       },
     });
     failed.runtime.dispatch({ type: 'start-clean-shutdown' });
-    jest.runOnlyPendingTimers();
+    await failed.runtime.persist();
     expect(failed.runtime.getState().model.channel.cleanShutdownStarted).toBe(false);
     expect(failed.persisted).toHaveLength(1);
     expect(failed.persisted[0].model.channel.cleanShutdownStarted).toBe(false);
@@ -886,7 +890,7 @@ describe('session machine controller command failures', () => {
 
     const succeeded = runtimeHarness({ cleanShutdown: jest.fn() });
     succeeded.runtime.dispatch({ type: 'start-clean-shutdown' });
-    jest.runOnlyPendingTimers();
+    await succeeded.runtime.persist();
     expect(succeeded.runtime.getState().model.channel.cleanShutdownStarted).toBe(true);
     expect(succeeded.persisted).toHaveLength(1);
     expect(succeeded.persisted[0].model.channel.cleanShutdownStarted).toBe(true);
@@ -897,7 +901,7 @@ describe('session machine controller command failures', () => {
 describe('session machine local game action boundary', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
-  function localActionHarness(
+  async function localActionHarness(
     makeMove: SessionController['makeMove'],
     overrides: Partial<SessionController> = {},
   ) {
@@ -930,6 +934,7 @@ describe('session machine local game action boundary', () => {
         },
       ],
     });
+    await runtime.persist();
     persisted.length = 0;
     rendered.length = 0;
     return { runtime, persisted, rendered };
@@ -1209,11 +1214,11 @@ describe('session machine local game action boundary', () => {
     expect(makeMove).toHaveBeenCalledWith('9', null);
   });
 
-  it('leaves feature state, history, turn, and saves unchanged when Rust rejects synchronously', () => {
+  it('leaves feature state, history, turn, and saves unchanged when Rust rejects synchronously', async () => {
     const makeMove = jest.fn(() => {
       throw new Error('make move failed: rejected');
     });
-    const { runtime, persisted, rendered } = localActionHarness(makeMove);
+    const { runtime, persisted, rendered } = await localActionHarness(makeMove);
     const before = runtime.getState();
     const current = calpokerStateCodec.decode(before.model.game.handState)!;
 
@@ -1225,7 +1230,7 @@ describe('session machine local game action boundary', () => {
         command: { type: 'make-move', readable: null },
       }),
     ).toThrow('rejected');
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(runtime.getState()).toBe(before);
@@ -1236,9 +1241,9 @@ describe('session machine local game action boundary', () => {
     expect(runtime.getGameHand()?.getState()).toEqual(current);
   });
 
-  it('rolls back an immediate tagged rejection without persisting rejected state', () => {
+  it('rolls back an immediate tagged rejection without persisting rejected state', async () => {
     const makeMove = jest.fn(() => 'rejected' as const);
-    const { runtime, persisted } = localActionHarness(makeMove);
+    const { runtime, persisted } = await localActionHarness(makeMove);
     const canonical = runtime.getState().model.game.handState;
     const checkpoint = calpokerStateCodec.decode(canonical)!;
 
@@ -1254,9 +1259,9 @@ describe('session machine local game action boundary', () => {
     expect(persisted).toHaveLength(0);
   });
 
-  it('commits queued success as canonical and persists it immediately', () => {
+  it('commits queued success as canonical and persists it immediately', async () => {
     const makeMove = jest.fn(() => 'queued' as const);
-    const { runtime, persisted, rendered } = localActionHarness(makeMove);
+    const { runtime, persisted, rendered } = await localActionHarness(makeMove);
 
     updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
@@ -1264,7 +1269,7 @@ describe('session machine local game action boundary', () => {
       id: '7',
       command: { type: 'make-move', readable: null },
     });
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(rendered).toHaveLength(1);
@@ -1282,13 +1287,14 @@ describe('session machine local game action boundary', () => {
       iStarted: false,
       notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
     });
+    await runtime.persist();
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
     expect(runtime.getState().model.game.handState).toBe(canonical);
     expect(runtime.getGameHand()?.getState()).toEqual(calpokerStateCodec.decode(canonical));
     expect(persisted).toHaveLength(2);
   });
 
-  it('ends an immediately applied action with Rust-reported presentation', () => {
+  it('ends an immediately applied action with Rust-reported presentation', async () => {
     const context: { runtime?: SessionMachineRuntime } = {};
     const makeMove = jest.fn(() => {
       context.runtime!.dispatch({
@@ -1298,7 +1304,7 @@ describe('session machine local game action boundary', () => {
       });
       return 'applied' as const;
     });
-    const harness = localActionHarness(makeMove);
+    const harness = await localActionHarness(makeMove);
     const runtime = harness.runtime;
     context.runtime = runtime;
 
@@ -1308,7 +1314,7 @@ describe('session machine local game action boundary', () => {
       id: '7',
       command: { type: 'make-move', readable: null },
     });
-    jest.runOnlyPendingTimers();
+    await runtime.persist();
 
     expect(calpokerStateCodec.decode(runtime.getState().model.game.handState)).toMatchObject({
       moveNumber: 1n,
@@ -1316,11 +1322,11 @@ describe('session machine local game action boundary', () => {
     });
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
     expect(harness.rendered).toHaveLength(1);
-    expect(harness.persisted).toHaveLength(2);
+    expect(harness.persisted).toHaveLength(1);
   });
 
-  it('retains accepted state when later action failure UX is reported', () => {
-    const { runtime } = localActionHarness(
+  it('retains accepted state when later action failure UX is reported', async () => {
+    const { runtime } = await localActionHarness(
       jest.fn(() => 'queued' as const),
       {
         cheat: jest.fn(() => 'queued'),
@@ -1350,8 +1356,8 @@ describe('session machine local game action boundary', () => {
     });
   });
 
-  it('applies LocalActionApplied only to host protocol presentation', () => {
-    const { runtime } = localActionHarness(jest.fn(() => 'queued' as const));
+  it('applies LocalActionApplied only to host protocol presentation', async () => {
+    const { runtime } = await localActionHarness(jest.fn(() => 'queued' as const));
     const handState = runtime.getState().model.game.handState;
     runtime.dispatch({
       type: 'wasm-notification',
@@ -1365,9 +1371,9 @@ describe('session machine local game action boundary', () => {
   it.each([
     ['wrong type', { gameType: 'spacepoker' as const, id: '7' }, 'gameType'],
     ['wrong id', { gameType: 'calpoker' as const, id: '9' }, 'game id'],
-  ])('fails fast for an internal %s local action', (_label, identity, message) => {
+  ])('fails fast for an internal %s local action', async (_label, identity, message) => {
     const makeMove = jest.fn();
-    const { runtime } = localActionHarness(makeMove);
+    const { runtime } = await localActionHarness(makeMove);
     updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     expect(() =>
       runtime.commitLocalGameAction({

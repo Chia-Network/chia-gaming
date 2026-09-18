@@ -136,7 +136,7 @@ describe('game package proposal adapters', () => {
     expect(proposal?.handProposal.parameters).toBe(parameters);
   });
 
-  it('rejects malformed generic and package-specific peer parameters', () => {
+  it('rejects malformed envelopes and retains package-invalid parameters for cancellation', () => {
     const base = {
       id: 4n,
       sender_is_player_a: true,
@@ -146,8 +146,12 @@ describe('game package proposal adapters', () => {
     };
     expect(pendingProposalFromProposalMade({ ...base, id: null as never })).toBeNull();
     expect(pendingProposalFromProposalMade({ ...base, sender_is_player_a: 1 })).toBeNull();
-    expect(pendingProposalFromProposalMade({ ...base, parameters: '10' })).toBeNull();
-    expect(pendingProposalFromProposalMade({ ...base, parameters: Uint8Array.of(10) })).toBeNull();
+    for (const parameters of ['10', Uint8Array.of(10)]) {
+      expect(pendingProposalFromProposalMade({ ...base, parameters })).toMatchObject({
+        id: '4',
+        lifecycle: 'peer-cancel-queued',
+      });
+    }
   });
 
   it('accepts only bounded peer game timeouts', () => {

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::channel_state::types::ProposedGame;
+use crate::channel_state::types::{ProposalLifecycle, ProposedGame};
 use crate::common::types::{Error, LocalProposalId, WireProposalId};
 use crate::session_phases::proposal::GameProposal;
 
@@ -49,8 +49,7 @@ impl ProposalLedger {
         let local_id = self.allocate_local_id()?;
         self.pending.push(ProposedGame {
             local_id,
-            origin_wire_id: None,
-            originated_locally: true,
+            lifecycle: ProposalLifecycle::LocalDraft,
             game_type: start.game_type.clone(),
             timeout: start.timeout.clone(),
             parameters: start.parameters.clone(),
@@ -65,22 +64,25 @@ impl ProposalLedger {
             .iter_mut()
             .find(|proposal| proposal.local_id == local_id)
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {local_id}")))?;
-        if !proposal.originated_locally {
-            return Err(Error::StrErr(
-                "cannot emit a peer-origin proposal".to_string(),
-            ));
-        }
-        if proposal.origin_wire_id.is_some() {
-            return Err(Error::StrErr(format!(
-                "proposal {local_id} was already emitted"
-            )));
+        match proposal.lifecycle {
+            ProposalLifecycle::LocalDraft => {}
+            ProposalLifecycle::LocalEmitted(_) => {
+                return Err(Error::StrErr(format!(
+                    "proposal {local_id} was already emitted"
+                )));
+            }
+            ProposalLifecycle::PeerPending(_) => {
+                return Err(Error::StrErr(
+                    "cannot emit a peer-origin proposal".to_string(),
+                ));
+            }
         }
         let wire_id = WireProposalId(self.next_outgoing_wire_id);
         self.next_outgoing_wire_id = self
             .next_outgoing_wire_id
             .checked_add(2)
             .ok_or_else(|| Error::StrErr("outgoing proposal wire id overflow".into()))?;
-        proposal.origin_wire_id = Some(wire_id);
+        proposal.lifecycle = ProposalLifecycle::LocalEmitted(wire_id);
         Ok(wire_id)
     }
 
@@ -103,8 +105,7 @@ impl ProposalLedger {
         let local_id = self.allocate_local_id()?;
         self.pending.push(ProposedGame {
             local_id,
-            origin_wire_id: Some(origin_wire_id),
-            originated_locally: false,
+            lifecycle: ProposalLifecycle::PeerPending(origin_wire_id),
             game_type: start.game_type.clone(),
             timeout: start.timeout.clone(),
             parameters: start.parameters.clone(),
@@ -122,7 +123,7 @@ impl ProposalLedger {
     pub fn local_for_wire(&self, wire_id: WireProposalId) -> Option<LocalProposalId> {
         self.pending
             .iter()
-            .find(|proposal| proposal.origin_wire_id == Some(wire_id))
+            .find(|proposal| proposal.lifecycle.wire_id() == Some(wire_id))
             .map(|proposal| proposal.local_id)
     }
 
@@ -155,13 +156,13 @@ impl ProposalLedger {
     pub fn has_outgoing(&self) -> bool {
         self.pending
             .iter()
-            .any(|proposal| proposal.originated_locally)
+            .any(|proposal| proposal.lifecycle.originated_locally())
     }
 
     pub fn incoming_ids(&self) -> Vec<LocalProposalId> {
         self.pending
             .iter()
-            .filter(|proposal| !proposal.originated_locally)
+            .filter(|proposal| !proposal.lifecycle.originated_locally())
             .map(|proposal| proposal.local_id)
             .collect()
     }
@@ -203,6 +204,10 @@ mod tests {
     fn pre_wire_cancel_consumes_only_local_id() {
         let mut ledger = ProposalLedger::new(false);
         let first = ledger.create_outgoing(&proposal()).unwrap();
+        assert_eq!(
+            ledger.find_local(first).unwrap().lifecycle,
+            ProposalLifecycle::LocalDraft
+        );
         ledger.remove_local(first).unwrap();
         let second = ledger.create_outgoing(&proposal()).unwrap();
         let wire = ledger.emit_outgoing(second).unwrap();
@@ -210,6 +215,10 @@ mod tests {
         assert_eq!(first, LocalProposalId(0));
         assert_eq!(second, LocalProposalId(1));
         assert_eq!(wire, WireProposalId(1));
+        assert_eq!(
+            ledger.find_local(second).unwrap().lifecycle,
+            ProposalLifecycle::LocalEmitted(wire)
+        );
         assert_eq!(ledger.next_wire_ids().0, WireProposalId(3));
     }
 
@@ -234,6 +243,10 @@ mod tests {
         assert_eq!(outgoing, LocalProposalId(0));
         assert_eq!(incoming, LocalProposalId(1));
         assert_eq!(
+            ledger.find_local(incoming).unwrap().lifecycle,
+            ProposalLifecycle::PeerPending(WireProposalId(1))
+        );
+        assert_eq!(
             ledger.local_for_wire(WireProposalId(1)),
             Some(LocalProposalId(1))
         );
@@ -256,5 +269,35 @@ mod tests {
         assert!(wrong_parity
             .record_incoming(WireProposalId(0), &proposal())
             .is_err());
+    }
+
+    #[test]
+    fn proposal_lifecycle_round_trips_without_illegal_combinations() {
+        let mut ledger = ProposalLedger::new(false);
+        let draft = ledger.create_outgoing(&proposal()).unwrap();
+        let emitted = ledger.create_outgoing(&proposal()).unwrap();
+        ledger.emit_outgoing(emitted).unwrap();
+        ledger
+            .record_incoming(WireProposalId(0), &proposal())
+            .unwrap();
+
+        let encoded = bencodex::to_vec(&ledger).expect("serialize proposal ledger");
+        let restored: ProposalLedger =
+            bencodex::from_slice(&encoded).expect("deserialize proposal ledger");
+        let lifecycles: Vec<ProposalLifecycle> = restored
+            .pending()
+            .iter()
+            .map(|proposal| proposal.lifecycle)
+            .collect();
+
+        assert_eq!(restored.find_local(draft).unwrap().local_id, draft);
+        assert_eq!(
+            lifecycles,
+            vec![
+                ProposalLifecycle::LocalDraft,
+                ProposalLifecycle::LocalEmitted(WireProposalId(1)),
+                ProposalLifecycle::PeerPending(WireProposalId(0)),
+            ]
+        );
     }
 }

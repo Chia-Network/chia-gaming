@@ -234,14 +234,6 @@ export function useGameSession(
 
   useEffect(() => {
     if (terminalMode) return;
-    controller.onSaveNeeded = () => runtime.persist();
-    return () => {
-      controller.onSaveNeeded = null;
-    };
-  }, [controller, runtime, terminalMode]);
-
-  useEffect(() => {
-    if (terminalMode) return;
     const subscription = controller.getObservable().subscribe({
       next: (event: WasmEvent) => {
         switch (event.type) {

@@ -61,6 +61,19 @@ export interface ReliableMessageConsumer {
   committed?: () => void;
 }
 
+export interface ReliableCommitCoordinator {
+  requestCommit(): void;
+  flush(): Promise<void>;
+  enqueue(work: () => void): void;
+}
+
+export interface PreparedReliableCommit {
+  generation: number;
+  outboundCount: number;
+  ackCount: number;
+  remoteNumber: bigint;
+}
+
 export class ReliablePeerTransport {
   readonly state: ReliableTransportState;
   readonly runtime = {
@@ -78,6 +91,7 @@ export class ReliablePeerTransport {
   private flushing = false;
   private flushPromise: Promise<void> = Promise.resolve();
   private lastReplayAt = 0;
+  private commitCoordinator: ReliableCommitCoordinator | null = null;
 
   constructor(
     state: ReliableTransportState,
@@ -92,6 +106,15 @@ export class ReliablePeerTransport {
   attachConsumer(consumer: ReliableMessageConsumer): void {
     this.consumer = consumer;
     this.drainContiguous();
+  }
+
+  attachCommitCoordinator(coordinator: ReliableCommitCoordinator): void {
+    this.commitCoordinator = coordinator;
+    if (this.hasPendingDurability()) coordinator.requestCommit();
+  }
+
+  detachCommitCoordinator(coordinator: ReliableCommitCoordinator): void {
+    if (this.commitCoordinator === coordinator) this.commitCoordinator = null;
   }
 
   drain(): void {
@@ -125,6 +148,17 @@ export class ReliablePeerTransport {
   }
 
   receiveData(msgno: bigint, body: Uint8Array): boolean {
+    if (this.commitCoordinator) {
+      let accepted = true;
+      this.commitCoordinator.enqueue(() => {
+        accepted = this.receiveDataNow(msgno, body);
+      });
+      return accepted;
+    }
+    return this.receiveDataNow(msgno, body);
+  }
+
+  private receiveDataNow(msgno: bigint, body: Uint8Array): boolean {
     if (body.byteLength > this.receivePolicy.maxPeerBodyBytes) {
       this.fail(
         `peer message body ${body.byteLength} exceeds maximum ${this.receivePolicy.maxPeerBodyBytes}`,
@@ -191,6 +225,17 @@ export class ReliablePeerTransport {
   }
 
   receiveAck(ack: bigint): boolean {
+    if (this.commitCoordinator) {
+      let accepted = true;
+      this.commitCoordinator.enqueue(() => {
+        accepted = this.receiveAckNow(ack);
+      });
+      return accepted;
+    }
+    return this.receiveAckNow(ack);
+  }
+
+  private receiveAckNow(ack: bigint): boolean {
     const highestAllocated = this.state.messageNumber - 1n;
     if (ack < 1n || ack > highestAllocated) {
       this.fail(
@@ -235,6 +280,7 @@ export class ReliablePeerTransport {
   }
 
   async flushPending(): Promise<void> {
+    if (this.commitCoordinator) return this.commitCoordinator.flush();
     this.flushScheduled = false;
     if (this.flushing) return this.flushPromise;
     this.flushing = true;
@@ -257,6 +303,7 @@ export class ReliablePeerTransport {
     this.persistedGeneration = this.durabilityGeneration;
     this.flushScheduled = false;
     this.consumer = null;
+    this.commitCoordinator = null;
   }
 
   discardOutbound(): void {
@@ -320,6 +367,10 @@ export class ReliablePeerTransport {
   }
 
   private scheduleFlush(): void {
+    if (this.commitCoordinator) {
+      this.commitCoordinator.requestCommit();
+      return;
+    }
     if (this.flushScheduled) return;
     this.flushScheduled = true;
     const timer = setTimeout(() => {
@@ -361,6 +412,36 @@ export class ReliablePeerTransport {
     for (const { msgno } of failedOutbound) this.unsentDurableOutbound.add(msgno);
     this.durableAckRetries = [...new Set([...this.durableAckRetries, ...failedAcks])];
     consumer.committed?.();
+  }
+
+  prepareCommit(): PreparedReliableCommit {
+    return {
+      generation: this.durabilityGeneration,
+      outboundCount: this.pendingOutbound.length,
+      ackCount: this.pendingAcks.length,
+      remoteNumber: this.state.remoteNumber,
+    };
+  }
+
+  completeCommit(commit: PreparedReliableCommit): void {
+    const consumer = this.consumer;
+    const outbound = this.pendingOutbound.splice(0, commit.outboundCount);
+    const acks = this.pendingAcks.splice(0, commit.ackCount);
+    this.persistedGeneration = commit.generation;
+    this.durableRemoteNumber = commit.remoteNumber;
+    for (const { msgno } of outbound) this.unsentDurableOutbound.add(msgno);
+    const failedOutbound = outbound.filter(({ msgno, msg }) => {
+      const sent = this.sendData(msgno, msg);
+      if (sent) {
+        this.unsentDurableOutbound.delete(msgno);
+        consumer?.sent?.(msgno);
+      }
+      return !sent;
+    });
+    const failedAcks = acks.filter((ack) => !this.sendAck(ack));
+    for (const { msgno } of failedOutbound) this.unsentDurableOutbound.add(msgno);
+    this.durableAckRetries = [...new Set([...this.durableAckRetries, ...failedAcks])];
+    consumer?.committed?.();
   }
 
   private retryDurableAcks(): void {

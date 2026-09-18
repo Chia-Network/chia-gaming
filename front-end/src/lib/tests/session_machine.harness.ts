@@ -35,8 +35,7 @@ export function trackProposal(
     proposal: {
       id,
       handProposal,
-      origin,
-      status: origin === 'local' ? 'outgoing' : 'incoming-cached',
+      lifecycle: origin === 'local' ? 'local-outgoing' : 'peer-cached',
     },
   });
 }

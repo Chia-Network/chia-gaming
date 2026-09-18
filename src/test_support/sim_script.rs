@@ -43,13 +43,39 @@ mod sim_tests {
         sign_reward_payout, ChiaIdentity,
     };
     use crate::common::types::{
-        Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, LocalProposalId, Program,
-        PublicKey, Puzzle, PuzzleHash, Sha256tree, WireProposalId,
+        Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, Program, PublicKey, Puzzle,
+        PuzzleHash, Sha256tree, WireProposalId,
     };
     use crate::simulator::Simulator;
 
     use rand::prelude::*;
     use std::rc::Rc;
+
+    /// Scenario-local proposal handle, bound to endpoint-local IDs observed at runtime.
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct ScriptProposalRef(pub u64);
+
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub enum ScriptGameRef {
+        AcceptedMember {
+            proposal: ScriptProposalRef,
+            member: usize,
+        },
+        Missing(GameID),
+    }
+
+    impl ScriptGameRef {
+        pub const fn accepted(proposal: u64, member: usize) -> Self {
+            Self::AcceptedMember {
+                proposal: ScriptProposalRef(proposal),
+                member,
+            }
+        }
+
+        pub const fn missing(id: u64) -> Self {
+            Self::Missing(GameID(id))
+        }
+    }
 
     pub struct ChannelHandlerGame {
         pub game_id: GameID,
@@ -167,8 +193,8 @@ mod sim_tests {
     pub enum ProposeTrigger {
         /// Wait for the channel to be created (handshake complete).
         Channel,
-        /// Wait for a specific game (by GameID) to finish.
-        AfterGame(GameID),
+        /// Wait for a specific accepted proposal member to finish.
+        AfterGame(ScriptGameRef),
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -176,30 +202,30 @@ mod sim_tests {
         Immediate,
         GameCanMove {
             player: usize,
-            game_id: GameID,
+            game: ScriptGameRef,
         },
         AcceptProposal {
             player: usize,
-            proposal_id: LocalProposalId,
+            proposal: ScriptProposalRef,
         },
         ChannelReady {
             player: usize,
         },
         ProposalExists {
             player: usize,
-            proposal_id: LocalProposalId,
+            proposal: ScriptProposalRef,
         },
         ProposalKnown {
             player: usize,
-            proposal_id: LocalProposalId,
+            proposal: ScriptProposalRef,
         },
         MoveApplied {
             player: usize,
-            game_id: GameID,
+            game: ScriptGameRef,
         },
         NerfedTransactionAvailable,
         AfterGame {
-            game_id: GameID,
+            game: ScriptGameRef,
         },
     }
 
@@ -218,8 +244,8 @@ mod sim_tests {
 
     #[derive(Clone, Debug)]
     pub enum SimAssertion {
-        GameCoinPublished(usize, GameID),
-        GameCoinTimeoutRegistered(usize, GameID),
+        GameCoinPublished(usize, ScriptGameRef),
+        GameCoinTimeoutRegistered(usize, ScriptGameRef),
     }
 
     #[derive(Clone)]
@@ -227,15 +253,15 @@ mod sim_tests {
         /// Do a timeout
         Timeout(usize),
         /// Move (player, game_id, clvm readable move, was received)
-        Move(usize, GameID, ReadableMove, bool),
+        Move(usize, ScriptGameRef, ReadableMove, bool),
         /// Fake move (player, game_id, readable, sabotage bytes).
-        FakeMove(usize, GameID, ReadableMove, Vec<u8>),
+        FakeMove(usize, ScriptGameRef, ReadableMove, Vec<u8>),
         /// Make a normal move, but tamper the outbound batch signatures.
-        BadSignatureMove(usize, GameID, ReadableMove),
+        BadSignatureMove(usize, ScriptGameRef, ReadableMove),
         /// Cheat (player, game_id, mover_share).
-        Cheat(usize, GameID, Amount),
+        Cheat(usize, ScriptGameRef, Amount),
         /// Force-destroy a game coin (player, game_id).
-        ForceDestroyCoin(usize, GameID),
+        ForceDestroyCoin(usize, ScriptGameRef),
         /// Nerf (silently drop) all outbound transactions for a player.
         NerfTransactions(usize),
         /// Stop nerfing transactions. If true, replay the backlog to the
@@ -250,6 +276,8 @@ mod sim_tests {
         /// Propose a new game from the specified player.
         /// The trigger specifies what event to wait for before proposing.
         ProposeNewGame(usize, ProposeTrigger),
+        /// Propose a new game with an explicit scenario-local reference.
+        ProposeNewGameAs(usize, ScriptProposalRef, ProposeTrigger),
         /// Propose a new game from the specified player with a custom game timeout.
         ProposeNewGameWithTimeout(usize, ProposeTrigger, u64),
         /// Like ProposeNewGame but with my_turn=false so the receiver moves first.
@@ -261,15 +289,15 @@ mod sim_tests {
         /// Wait a number of blocks
         WaitBlocks(usize, usize),
         /// Accept timeout (player, game_id)
-        AcceptSettlement(usize, GameID),
+        AcceptSettlement(usize, ScriptGameRef),
         /// Shut down
         CleanShutdown(usize),
         /// Wait until a player has observed channel creation.
         WaitForChannel(usize),
         /// Wait until a player has stored a proposal.
-        WaitForProposal(usize, LocalProposalId),
+        WaitForProposal(usize, ScriptProposalRef),
         /// Wait until a player's queued move has actually applied.
-        WaitForMoveApplied(usize, GameID),
+        WaitForMoveApplied(usize, ScriptGameRef),
         /// Corrupt a player's state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
@@ -287,16 +315,16 @@ mod sim_tests {
         NerfMessages(usize),
         /// Stop nerfing messages.
         UnNerfMessages,
-        /// Accept a proposed game. (player, local proposal ID)
-        AcceptProposal(usize, LocalProposalId),
+        /// Accept a proposed game. (player, scenario proposal reference)
+        AcceptProposal(usize, ScriptProposalRef),
         /// Queue two proposal acceptances before flushing, preserving bundle order.
-        AcceptProposalPair(usize, LocalProposalId, LocalProposalId),
+        AcceptProposalPair(usize, ScriptProposalRef, ScriptProposalRef),
         /// Accept locally but replace the wire proposal ID.
-        MalformedAcceptProposal(usize, LocalProposalId, WireProposalId),
+        MalformedAcceptProposal(usize, ScriptProposalRef, WireProposalId),
         /// Queue two acceptances and corrupt the second wire proposal ID.
-        MalformedSecondAcceptInPair(usize, LocalProposalId, LocalProposalId, WireProposalId),
-        /// Cancel a proposed game (player, local proposal ID).
-        CancelProposal(usize, LocalProposalId),
+        MalformedSecondAcceptInPair(usize, ScriptProposalRef, ScriptProposalRef, WireProposalId),
+        /// Cancel a proposed game (player, scenario proposal reference).
+        CancelProposal(usize, ScriptProposalRef),
         /// Snapshot the current unroll spend info for later stale unroll.
         SaveUnrollSnapshot(usize),
         /// Force-submit a stale unroll using a previously saved snapshot.
@@ -305,8 +333,8 @@ mod sim_tests {
         /// Used for testing message validation (e.g. oversized messages).
         InjectRawMessage(usize, Vec<u8>),
         /// Force a self-accept: bypass local parity check and send
-        /// AcceptProposal for our own proposal (SEC-975). (player, local proposal ID)
-        SelfAcceptProposal(usize, LocalProposalId),
+        /// AcceptProposal for our own proposal (SEC-975). (player, scenario proposal reference)
+        SelfAcceptProposal(usize, ScriptProposalRef),
         /// Propose a game but tamper the outbound message to use a game_id
         /// with the wrong parity. Tests receiver-side parity rejection.
         WrongParityProposal(usize),
@@ -352,17 +380,23 @@ mod sim_tests {
                 SimScriptAction::UnblockCoinReports(r) => {
                     write!(formatter, "UnblockCoinReports({r})")
                 }
-                SimScriptAction::ProposeNewGame(p, t) => {
-                    write!(formatter, "ProposeNewGame({p},{t:?})")
+                SimScriptAction::ProposeNewGame(p, trigger) => {
+                    write!(formatter, "ProposeNewGame({p},{trigger:?})")
                 }
-                SimScriptAction::ProposeNewGameWithTimeout(p, t, timeout) => {
-                    write!(formatter, "ProposeNewGameWithTimeout({p},{t:?},{timeout})")
+                SimScriptAction::ProposeNewGameAs(p, proposal, trigger) => {
+                    write!(formatter, "ProposeNewGameAs({p},{proposal:?},{trigger:?})")
                 }
-                SimScriptAction::ProposeNewGameTheirTurn(p, t) => {
-                    write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
+                SimScriptAction::ProposeNewGameWithTimeout(p, trigger, timeout) => {
+                    write!(
+                        formatter,
+                        "ProposeNewGameWithTimeout({p},{trigger:?},{timeout})"
+                    )
                 }
-                SimScriptAction::ProposeKrunkGroup(p, t) => {
-                    write!(formatter, "ProposeKrunkGroup({p},{t:?})")
+                SimScriptAction::ProposeNewGameTheirTurn(p, trigger) => {
+                    write!(formatter, "ProposeNewGameTheirTurn({p},{trigger:?})")
+                }
+                SimScriptAction::ProposeKrunkGroup(p, trigger) => {
+                    write!(formatter, "ProposeKrunkGroup({p},{trigger:?})")
                 }
                 SimScriptAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
                 SimScriptAction::AcceptSettlement(p, g) => {
@@ -442,7 +476,7 @@ mod sim_tests {
                 | Self::BadSignatureMove(player, game_id, _) => ActionSchedule {
                     readiness: ActionReadiness::GameCanMove {
                         player: *player,
-                        game_id: *game_id,
+                        game: *game_id,
                     },
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
@@ -452,12 +486,13 @@ mod sim_tests {
                 | Self::MalformedAcceptProposal(player, proposal_id, _) => ActionSchedule {
                     readiness: ActionReadiness::AcceptProposal {
                         player: *player,
-                        proposal_id: *proposal_id,
+                        proposal: *proposal_id,
                     },
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
                 },
                 Self::ProposeNewGame(player, trigger)
+                | Self::ProposeNewGameAs(player, _, trigger)
                 | Self::ProposeNewGameWithTimeout(player, trigger, _)
                 | Self::ProposeNewGameTheirTurn(player, trigger)
                 | Self::ProposeKrunkGroup(player, trigger) => ActionSchedule {
@@ -465,8 +500,8 @@ mod sim_tests {
                         ProposeTrigger::Channel => {
                             ActionReadiness::ChannelReady { player: *player }
                         }
-                        ProposeTrigger::AfterGame(game_id) => {
-                            ActionReadiness::AfterGame { game_id: *game_id }
+                        ProposeTrigger::AfterGame(game) => {
+                            ActionReadiness::AfterGame { game: *game }
                         }
                     },
                     post_action_drain: PostActionDrain::OnChain,
@@ -480,7 +515,7 @@ mod sim_tests {
                 Self::WaitForProposal(player, proposal_id) => ActionSchedule {
                     readiness: ActionReadiness::ProposalExists {
                         player: *player,
-                        proposal_id: *proposal_id,
+                        proposal: *proposal_id,
                     },
                     post_action_drain: PostActionDrain::None,
                     expects_on_chain_transition: false,
@@ -488,7 +523,7 @@ mod sim_tests {
                 Self::WaitForMoveApplied(player, game_id) => ActionSchedule {
                     readiness: ActionReadiness::MoveApplied {
                         player: *player,
-                        game_id: *game_id,
+                        game: *game_id,
                     },
                     post_action_drain: PostActionDrain::None,
                     expects_on_chain_transition: false,
@@ -517,7 +552,7 @@ mod sim_tests {
                 Self::CancelProposal(player, proposal_id) => ActionSchedule {
                     readiness: ActionReadiness::ProposalKnown {
                         player: *player,
-                        proposal_id: *proposal_id,
+                        proposal: *proposal_id,
                     },
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
@@ -719,8 +754,8 @@ mod sim_tests {
 
         #[test]
         fn every_script_action_has_an_exhaustive_data_bearing_schedule() {
-            let gid = GameID(7);
-            let proposal_id = LocalProposalId(7);
+            let game = ScriptGameRef::accepted(7, 0);
+            let proposal_id = ScriptProposalRef(7);
             let immediate_drain =
                 schedule(ActionReadiness::Immediate, PostActionDrain::OnChain, false);
             let immediate_no_drain =
@@ -730,17 +765,14 @@ mod sim_tests {
             let transition_no_drain =
                 schedule(ActionReadiness::Immediate, PostActionDrain::None, true);
             let can_move = schedule(
-                ActionReadiness::GameCanMove {
-                    player: 1,
-                    game_id: gid,
-                },
+                ActionReadiness::GameCanMove { player: 1, game },
                 PostActionDrain::OnChain,
                 false,
             );
             let accept = schedule(
                 ActionReadiness::AcceptProposal {
                     player: 1,
-                    proposal_id,
+                    proposal: proposal_id,
                 },
                 PostActionDrain::OnChain,
                 false,
@@ -758,16 +790,13 @@ mod sim_tests {
             let proposal = schedule(
                 ActionReadiness::ProposalExists {
                     player: 1,
-                    proposal_id,
+                    proposal: proposal_id,
                 },
                 PostActionDrain::None,
                 false,
             );
             let move_applied = schedule(
-                ActionReadiness::MoveApplied {
-                    player: 1,
-                    game_id: gid,
-                },
+                ActionReadiness::MoveApplied { player: 1, game },
                 PostActionDrain::None,
                 false,
             );
@@ -777,27 +806,27 @@ mod sim_tests {
                 false,
             );
             let after_game = schedule(
-                ActionReadiness::AfterGame { game_id: gid },
+                ActionReadiness::AfterGame { game },
                 PostActionDrain::OnChain,
                 false,
             );
             let cases = vec![
                 (SimScriptAction::Timeout(1), immediate_no_drain),
-                (SimScriptAction::Move(1, gid, readable(), true), can_move),
+                (SimScriptAction::Move(1, game, readable(), true), can_move),
                 (
-                    SimScriptAction::FakeMove(1, gid, readable(), vec![1]),
+                    SimScriptAction::FakeMove(1, game, readable(), vec![1]),
                     can_move,
                 ),
                 (
-                    SimScriptAction::BadSignatureMove(1, gid, readable()),
+                    SimScriptAction::BadSignatureMove(1, game, readable()),
                     can_move,
                 ),
                 (
-                    SimScriptAction::Cheat(1, gid, Amount::new(10)),
+                    SimScriptAction::Cheat(1, game, Amount::new(10)),
                     immediate_drain,
                 ),
                 (
-                    SimScriptAction::ForceDestroyCoin(1, gid),
+                    SimScriptAction::ForceDestroyCoin(1, game),
                     immediate_no_drain,
                 ),
                 (SimScriptAction::NerfTransactions(1), immediate_no_drain),
@@ -819,7 +848,15 @@ mod sim_tests {
                     channel,
                 ),
                 (
-                    SimScriptAction::ProposeNewGame(1, ProposeTrigger::AfterGame(gid)),
+                    SimScriptAction::ProposeNewGameAs(
+                        1,
+                        ScriptProposalRef(7),
+                        ProposeTrigger::Channel,
+                    ),
+                    channel,
+                ),
+                (
+                    SimScriptAction::ProposeNewGame(1, ProposeTrigger::AfterGame(game)),
                     after_game,
                 ),
                 (
@@ -829,7 +866,7 @@ mod sim_tests {
                 (
                     SimScriptAction::ProposeNewGameWithTimeout(
                         1,
-                        ProposeTrigger::AfterGame(gid),
+                        ProposeTrigger::AfterGame(game),
                         20,
                     ),
                     after_game,
@@ -839,7 +876,7 @@ mod sim_tests {
                     channel,
                 ),
                 (
-                    SimScriptAction::ProposeNewGameTheirTurn(1, ProposeTrigger::AfterGame(gid)),
+                    SimScriptAction::ProposeNewGameTheirTurn(1, ProposeTrigger::AfterGame(game)),
                     after_game,
                 ),
                 (
@@ -847,26 +884,26 @@ mod sim_tests {
                     channel,
                 ),
                 (
-                    SimScriptAction::ProposeKrunkGroup(1, ProposeTrigger::AfterGame(gid)),
+                    SimScriptAction::ProposeKrunkGroup(1, ProposeTrigger::AfterGame(game)),
                     after_game,
                 ),
                 (SimScriptAction::GoOnChain(1), transition_drain),
                 (SimScriptAction::WaitBlocks(3, 1), immediate_no_drain),
-                (SimScriptAction::AcceptSettlement(1, gid), immediate_drain),
+                (SimScriptAction::AcceptSettlement(1, game), immediate_drain),
                 (SimScriptAction::CleanShutdown(1), immediate_drain),
                 (SimScriptAction::WaitForChannel(1), channel_no_drain),
                 (SimScriptAction::WaitForProposal(1, proposal_id), proposal),
-                (SimScriptAction::WaitForMoveApplied(1, gid), move_applied),
+                (SimScriptAction::WaitForMoveApplied(1, game), move_applied),
                 (
                     SimScriptAction::CorruptStateNumber(1, 9),
                     immediate_no_drain,
                 ),
                 (
-                    SimScriptAction::Assert(SimAssertion::GameCoinPublished(1, gid)),
+                    SimScriptAction::Assert(SimAssertion::GameCoinPublished(1, game)),
                     immediate_no_drain,
                 ),
                 (
-                    SimScriptAction::Assert(SimAssertion::GameCoinTimeoutRegistered(1, gid)),
+                    SimScriptAction::Assert(SimAssertion::GameCoinTimeoutRegistered(1, game)),
                     immediate_no_drain,
                 ),
                 (SimScriptAction::ForceUnroll(1), transition_no_drain),
@@ -878,7 +915,7 @@ mod sim_tests {
                 (SimScriptAction::UnNerfMessages, immediate_no_drain),
                 (SimScriptAction::AcceptProposal(1, proposal_id), accept),
                 (
-                    SimScriptAction::AcceptProposalPair(1, proposal_id, LocalProposalId(9)),
+                    SimScriptAction::AcceptProposalPair(1, proposal_id, ScriptProposalRef(9)),
                     accept,
                 ),
                 (
@@ -889,7 +926,7 @@ mod sim_tests {
                     SimScriptAction::MalformedSecondAcceptInPair(
                         1,
                         proposal_id,
-                        LocalProposalId(9),
+                        ScriptProposalRef(9),
                         WireProposalId(11),
                     ),
                     immediate_drain,
@@ -899,7 +936,7 @@ mod sim_tests {
                     schedule(
                         ActionReadiness::ProposalKnown {
                             player: 1,
-                            proposal_id,
+                            proposal: proposal_id,
                         },
                         PostActionDrain::OnChain,
                         false,
@@ -936,5 +973,6 @@ mod sim_tests {
 #[cfg(feature = "sim-tests")]
 pub use sim_tests::{
     new_channel_handler_game, ActionReadiness, ActionSchedule, ChannelHandlerGame, PostActionDrain,
-    ProposeTrigger, SimAssertion, SimScriptAction, SimScriptActionResult,
+    ProposeTrigger, ScriptGameRef, ScriptProposalRef, SimAssertion, SimScriptAction,
+    SimScriptActionResult,
 };

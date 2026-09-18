@@ -18,7 +18,7 @@ enum StepOutcome {
 enum DeferredAssertion {
     GameCoinPublished {
         player: usize,
-        game_id: GameID,
+        game_id: ScriptGameRef,
         parent: CoinString,
         submitted_height: usize,
     },
@@ -206,15 +206,21 @@ pub(in super::super) fn run_script(
                     }
                     SimScriptAction::ProposeNewGame(who, _trigger)
                     | SimScriptAction::ProposeNewGameTheirTurn(who, _trigger)
-                    | SimScriptAction::ProposeNewGameWithTimeout(who, _trigger, _) => {
+                    | SimScriptAction::ProposeNewGameWithTimeout(who, _trigger, _)
+                    | SimScriptAction::ProposeNewGameAs(who, _, _trigger) => {
                         let my_turn = matches!(
                             ga,
                             SimScriptAction::ProposeNewGame(_, _)
                                 | SimScriptAction::ProposeNewGameWithTimeout(_, _, _)
+                                | SimScriptAction::ProposeNewGameAs(_, _, _)
                         );
                         let timeout = match ga {
                             SimScriptAction::ProposeNewGameWithTimeout(_, _, timeout) => *timeout,
                             _ => 15,
+                        };
+                        let reference = match ga {
+                            SimScriptAction::ProposeNewGameAs(_, reference, _) => Some(*reference),
+                            _ => None,
                         };
                         let parameters = if package_key == "calpoker" || package_key == "krunk" {
                             let stake = 100u64.to_clvm(allocator).into_gen()?;
@@ -239,6 +245,7 @@ pub(in super::super) fn run_script(
                         harness.propose(
                             allocator,
                             *who,
+                            reference,
                             &[GameProposal {
                                 sender_is_player_a: my_turn,
                                 game_type: proposal_type.clone(),
@@ -252,6 +259,7 @@ pub(in super::super) fn run_script(
                         harness.propose(
                             allocator,
                             *who,
+                            None,
                             &[GameProposal {
                                 sender_is_player_a: true,
                                 game_type: krunk_type.clone(),
@@ -423,6 +431,7 @@ pub(in super::super) fn run_script(
                         harness.propose(
                             allocator,
                             *who,
+                            None,
                             &[GameProposal {
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
@@ -449,6 +458,7 @@ pub(in super::super) fn run_script(
                         harness.propose(
                             allocator,
                             *who,
+                            None,
                             &[GameProposal {
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
@@ -478,6 +488,7 @@ pub(in super::super) fn run_script(
                         harness.propose(
                             allocator,
                             *who,
+                            None,
                             &[GameProposal {
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
@@ -500,6 +511,7 @@ pub(in super::super) fn run_script(
                         harness.propose(
                             allocator,
                             *who,
+                            None,
                             &[GameProposal {
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
@@ -525,6 +537,7 @@ pub(in super::super) fn run_script(
                         harness.propose(
                             allocator,
                             *who,
+                            None,
                             &[GameProposal {
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
@@ -552,6 +565,7 @@ pub(in super::super) fn run_script(
                         harness.propose(
                             allocator,
                             *who,
+                            None,
                             &[GameProposal {
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
@@ -603,8 +617,12 @@ mod tests {
 
     #[test]
     fn deferred_assertion_resumes_the_whole_contiguous_block_at_one_tip() {
-        let assertion =
-            || SimScriptAction::Assert(SimAssertion::GameCoinTimeoutRegistered(0, GameID(1)));
+        let assertion = || {
+            SimScriptAction::Assert(SimAssertion::GameCoinTimeoutRegistered(
+                0,
+                ScriptGameRef::accepted(1, 0),
+            ))
+        };
         let actions = [assertion(), assertion(), assertion()];
         let mut cursor = 0;
 

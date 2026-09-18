@@ -3,9 +3,17 @@ use std::collections::BTreeSet;
 use clvmr::{Allocator, NodePtr, SExp};
 
 pub struct FactoryGameNodes {
-    pub fields: [NodePtr; 11],
+    pub proposer_contribution: NodePtr,
+    pub accepter_contribution: NodePtr,
     pub proposer_goes_first: bool,
+    pub initial_move: NodePtr,
+    pub initial_max_move_size: NodePtr,
+    pub initial_state: NodePtr,
+    pub initial_mover_share: NodePtr,
+    pub my_turn_handler: NodePtr,
+    pub their_turn_handler: NodePtr,
     pub validation_programs: Vec<NodePtr>,
+    pub readable_parameters: NodePtr,
 }
 
 pub enum FactoryResultNodes {
@@ -120,9 +128,17 @@ pub fn parse_factory_result(
             }
         }
         parsed.push(FactoryGameNodes {
-            fields,
+            proposer_contribution: fields[0],
+            accepter_contribution: fields[1],
             proposer_goes_first,
+            initial_move: fields[3],
+            initial_max_move_size: fields[4],
+            initial_state: fields[5],
+            initial_mover_share: fields[6],
+            my_turn_handler: fields[7],
+            their_turn_handler: fields[8],
             validation_programs,
+            readable_parameters: fields[10],
         });
     }
 
@@ -248,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_shortage_flags_and_exposes_first_validator() {
+    fn parses_shortage_flags_and_named_game_fields() {
         let mut allocator = Allocator::new();
         let false_flag = NodePtr::NIL;
         let true_flag = atom(&mut allocator, 1);
@@ -273,6 +289,15 @@ mod tests {
             FactoryResultNodes::Success(records) => {
                 assert_eq!(records[0].validation_programs[0], expected);
                 assert!(records[0].proposer_goes_first);
+                assert_eq!(records[0].proposer_contribution, NodePtr::NIL);
+                assert_eq!(records[0].accepter_contribution, NodePtr::NIL);
+                assert_eq!(records[0].initial_move, NodePtr::NIL);
+                assert_eq!(records[0].initial_max_move_size, NodePtr::NIL);
+                assert_eq!(records[0].initial_state, NodePtr::NIL);
+                assert_eq!(records[0].initial_mover_share, NodePtr::NIL);
+                assert_eq!(records[0].my_turn_handler, NodePtr::NIL);
+                assert_eq!(records[0].their_turn_handler, NodePtr::NIL);
+                assert_eq!(records[0].readable_parameters, NodePtr::NIL);
             }
             FactoryResultNodes::InsufficientBalance { .. } => panic!("success parsed as shortage"),
         }

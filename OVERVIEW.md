@@ -286,23 +286,22 @@ If actions are queued before shutdown, they are first flushed in an ordinary
 Batch and the sender requests the potato back.
 
 The receiver processes actions sequentially and rejects the entire batch if any
-action fails validation. Rejection uses a **rollback mechanism**: before peer
-batch processing begins, `OffChainPhase` snapshots both the `ChannelState` and
-the local `game_action_queue`. If any action or signature verification fails,
-both snapshots are restored. This makes a peer batch atomic across all state that
-could otherwise affect dispute recovery: intermediate mutations to `live_games`,
-`pending_settlements`, balances, `state_number`, `cached_redo_actions`, and
-queued local actions are not allowed to leak out of a failed peer batch. The
-error then triggers go-on-chain (the peer sent a bad batch, so we dispute
-on-chain).
+action fails validation. `OffChainPhase` runs every mutating entry point against
+a cloneable working state containing channel state, local actions, incoming
+messages, potato ownership, peer-potato intent, clean-shutdown correlation,
+last spend commitment, and height. If any action or signature verification
+fails, the complete working state is discarded and no effects or replacement
+phase are published. This prevents intermediate proposal, game, balance,
+signature, potato, shutdown, or queue mutations from leaking out of a failed
+peer batch. The error then triggers go-on-chain (the peer sent a bad batch, so
+we dispute on-chain).
 
-Local queue draining is independently transactional wherever it runs. Before
-`drain_queue_into_batch` starts, it snapshots the channel state and action
-queue; any failure restores both before returning diagnostic context to its
-caller. The caller may then remove only the failed local action and either
-retry or notify the UI. This applies both while responding to a received batch
-and during the host's ordinary pending-action flush, so no unsent prefix of a
-failed drain remains applied locally.
+Local queue draining uses a nested complete-state savepoint. A failure restores
+the whole working state before returning diagnostic context to its caller; the
+caller may then remove exactly the failed local action and retry or notify the
+UI. This applies both while responding to a received batch and during the
+host's ordinary pending-action flush, so no unsent prefix of a failed drain
+remains applied locally.
 
 Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
@@ -378,9 +377,9 @@ return validator programs; non-nil next hashes are resolved in the local
 registry.
 
 The `game_action_queue` is populated only by local API calls (user/UI actions),
-never directly by received peer messages. Received batches can still make queued
-local actions stale as a side effect of valid peer state changes, so failed peer
-batch handling snapshots the queue as part of the atomic boundary. Separately,
+never directly by received peer messages. Received batches can still make
+queued local actions stale as a side effect of valid peer state changes, so the
+queue is part of the complete `OffChainPhase` transaction. Separately,
 `drain_queue_into_batch` processes the local queue when we hold the potato; any
 errors during local draining reflect bugs or stale local intents, not a normal
 peer-data recovery path.

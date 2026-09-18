@@ -26,12 +26,13 @@ import type {
   GameTurnState,
   HandStatus,
   PendingProposalModel,
-  PendingProposalStatus,
+  PendingProposalLifecycle,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
   StatusBarBalanceSegment,
 } from './types';
+import { proposalOrigin } from './sessionMachineProposals';
 
 /** Shared empty dashboard fields; setupPending / no-session override labels + action. */
 export const EMPTY_DASHBOARD_VIEW_BASE: Omit<
@@ -52,20 +53,20 @@ export function selectPendingProposal(
   return model.betweenHand.pendingProposals.find((proposal) => proposal.id === id) ?? null;
 }
 
-export function selectProposalByStatus(
+export function selectProposalByLifecycle(
   model: SessionModel,
-  status: PendingProposalStatus,
+  lifecycle: PendingProposalLifecycle,
 ): PendingProposalModel | null {
-  return model.betweenHand.pendingProposals.find((proposal) => proposal.status === status) ?? null;
+  return (
+    model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === lifecycle) ?? null
+  );
 }
 
 export function selectIncomingProposal(model: SessionModel): PendingProposalModel | null {
   return (
-    selectProposalByStatus(model, 'incoming-review') ??
-    selectProposalByStatus(model, 'incoming-cached') ??
-    model.betweenHand.pendingProposals.find(
-      (proposal) => proposal.origin === 'peer' && proposal.status === 'accepting',
-    ) ??
+    selectProposalByLifecycle(model, 'peer-review') ??
+    selectProposalByLifecycle(model, 'peer-cached') ??
+    selectProposalByLifecycle(model, 'peer-accept-queued') ??
     null
   );
 }
@@ -78,12 +79,12 @@ export function selectIProposedHand(model: SessionModel): boolean {
     throw new Error('Game model invariant broken: current hand is missing its origin');
   }
   const proposal =
-    selectProposalByStatus(model, 'incoming-review') ??
-    selectProposalByStatus(model, 'incoming-cached') ??
-    selectProposalByStatus(model, 'accepting') ??
-    selectProposalByStatus(model, 'outgoing') ??
-    selectProposalByStatus(model, 'advisory-cancelling');
-  return proposal?.origin === 'local';
+    selectProposalByLifecycle(model, 'peer-review') ??
+    selectProposalByLifecycle(model, 'peer-cached') ??
+    selectProposalByLifecycle(model, 'peer-accept-queued') ??
+    selectProposalByLifecycle(model, 'local-outgoing') ??
+    selectProposalByLifecycle(model, 'local-cancel-queued');
+  return proposal ? proposalOrigin(proposal) === 'local' : false;
 }
 
 /**

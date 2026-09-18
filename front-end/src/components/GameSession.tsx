@@ -717,8 +717,8 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   const setupCoverCopy = channelSetupCoverCopy(handEverStarted, session.channelStatus);
   const hasPersistedGameState = !!session.gameSpecificView.handState;
   const hasReviewPeerProposal =
-    session.incomingProposal?.status === 'incoming-review' ||
-    session.incomingProposal?.status === 'accepting';
+    session.incomingProposal?.lifecycle === 'peer-review' ||
+    session.incomingProposal?.lifecycle === 'peer-accept-queued';
   const showBetweenHandOverlay =
     session.betweenHands &&
     session.channelStatus.state === 'Active' &&
@@ -853,8 +853,8 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
             <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
           )}
           {session.betweenHandMode === 'review-incoming-proposal' &&
-            (session.incomingProposal?.status === 'incoming-review' ||
-              session.incomingProposal?.status === 'accepting') && (
+            (session.incomingProposal?.lifecycle === 'peer-review' ||
+              session.incomingProposal?.lifecycle === 'peer-accept-queued') && (
               <ReviewProposalDialog session={session} />
             )}
         </BetweenHandOverlay>

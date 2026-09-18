@@ -47,6 +47,8 @@ import {
 import {
   decodePeerAppMessage,
   ReliablePeerTransport,
+  type PreparedReliableCommit,
+  type ReliableCommitCoordinator,
   type ReliableMessageConsumer,
 } from '../services/PeerSession';
 
@@ -233,6 +235,7 @@ export class SessionController implements PollingGameSession {
   private readonly receivePolicy: ReadonlySessionReceivePolicy;
   private pendingPeerFailure: string | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private transactionCoordinator: ReliableCommitCoordinator | null = null;
   private restoreStatus: RestoreStatus = 'idle';
   private restoreError: string | null = null;
   private restorePromise: Promise<void> | null = null;
@@ -338,6 +341,32 @@ export class SessionController implements PollingGameSession {
     this.reliableTransport = transport;
     this.reliableState = transport.state;
     this.reliableTransport.attachConsumer(this.reliableConsumer);
+    if (this.transactionCoordinator) {
+      this.reliableTransport.attachCommitCoordinator(this.transactionCoordinator);
+    }
+  }
+
+  attachTransactionCoordinator(coordinator: ReliableCommitCoordinator): void {
+    if (this.transactionCoordinator && this.transactionCoordinator !== coordinator) {
+      this.reliableTransport.detachCommitCoordinator(this.transactionCoordinator);
+    }
+    this.transactionCoordinator = coordinator;
+    this.reliableTransport.attachCommitCoordinator(coordinator);
+    if (this.eventQueue.length > 0) coordinator.requestCommit();
+  }
+
+  detachTransactionCoordinator(coordinator: ReliableCommitCoordinator): void {
+    if (this.transactionCoordinator !== coordinator) return;
+    this.reliableTransport.detachCommitCoordinator(coordinator);
+    this.transactionCoordinator = null;
+  }
+
+  prepareReliableCommit(): PreparedReliableCommit {
+    return this.reliableTransport.prepareCommit();
+  }
+
+  completeReliableCommit(commit: PreparedReliableCommit): void {
+    this.reliableTransport.completeCommit(commit);
   }
 
   setInboundSessionRejectHandler(
@@ -456,6 +485,10 @@ export class SessionController implements PollingGameSession {
     this.blockchainAttached = false;
     this.blockchain = null;
     this.onSaveNeeded = null;
+    if (this.transactionCoordinator) {
+      this.reliableTransport.detachCommitCoordinator(this.transactionCoordinator);
+      this.transactionCoordinator = null;
+    }
     this.persistInboundSessionReject = null;
     this.inboundSessionRejectHandler = null;
     if (this.saveTimer) {
@@ -712,7 +745,9 @@ export class SessionController implements PollingGameSession {
         log(`[wasm] ${msg}`);
         this.rxjsEmitter?.next({ type: 'error', error: msg });
         if (this.cradle) {
-          this.processResult(this.cradle.wallet_callback_failed(msg));
+          this.enqueueStimulus(() => {
+            if (this.cradle) this.processResult(this.cradle.wallet_callback_failed(msg));
+          });
         }
         return;
       }
@@ -740,26 +775,42 @@ export class SessionController implements PollingGameSession {
           }
           return;
         }
-        let result: WasmResult;
+        let needsCancel = false;
         try {
-          result = requireWasmResult(this.cradle.provide_offer_bech32(offerString));
+          await new Promise<void>((resolve, reject) => {
+            this.enqueueStimulus(() => {
+              try {
+                if (!this.cradle) {
+                  resolve();
+                  return;
+                }
+                const result = requireWasmResult(this.cradle.provide_offer_bech32(offerString));
+                needsCancel = result.events.some((event) => 'NeedCoinSpend' in event);
+                this.processResult(result);
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            });
+          });
         } catch (error) {
           if (persistedTradeId) {
             await this.cancelRejectedFundingOffer(persistedTradeId);
           }
           throw error;
         }
-        if (persistedTradeId && result.events.some((event) => 'NeedCoinSpend' in event)) {
+        if (persistedTradeId && needsCancel) {
           await this.cancelRejectedFundingOffer(persistedTradeId);
         }
-        this.processResult(result);
       } else {
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
           return;
         }
         const bundleJson = typeof bundle === 'string' ? bundle : jsonStringify(bundle);
-        this.processResult(this.cradle.provide_coin_spend_bundle(bundleJson));
+        this.enqueueStimulus(() => {
+          if (this.cradle) this.processResult(this.cradle.provide_coin_spend_bundle(bundleJson));
+        });
       }
     } catch (e) {
       diagStack('handleNeedCoinSpend error', e);
@@ -771,7 +822,9 @@ export class SessionController implements PollingGameSession {
       }
       this.rxjsEmitter?.next({ type: 'error', error: msg });
       if (this.cradle) {
-        this.processResult(this.cradle.wallet_callback_failed(msg));
+        this.enqueueStimulus(() => {
+          if (this.cradle) this.processResult(this.cradle.wallet_callback_failed(msg));
+        });
       }
     }
   }
@@ -939,8 +992,11 @@ export class SessionController implements PollingGameSession {
         appliedFee || undefined,
       );
       if (this.cradle) {
-        this.cradle.acknowledge_submission(blob, jsonStringify(bundleToSubmit));
-        this.scheduleSave();
+        this.enqueueStimulus(() => {
+          if (!this.cradle) return;
+          this.cradle.acknowledge_submission(blob!, jsonStringify(bundleToSubmit));
+          this.scheduleSave();
+        });
       }
     } catch (e) {
       const message = extractErrorMessage(e);
@@ -952,8 +1008,11 @@ export class SessionController implements PollingGameSession {
           bundleToSubmit !== undefined &&
           this.cradle
         ) {
-          this.cradle.acknowledge_submission(blob, jsonStringify(bundleToSubmit));
-          this.scheduleSave();
+          this.enqueueStimulus(() => {
+            if (!this.cradle) return;
+            this.cradle.acknowledge_submission(blob!, jsonStringify(bundleToSubmit));
+            this.scheduleSave();
+          });
         }
         log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
         return;
@@ -1026,6 +1085,22 @@ export class SessionController implements PollingGameSession {
   }
 
   processResult(result: WasmResult | undefined): void {
+    if (this.transactionCoordinator) {
+      this.transactionCoordinator.enqueue(() => this.processResultNow(result));
+      return;
+    }
+    this.processResultNow(result);
+  }
+
+  private enqueueStimulus(work: () => void): void {
+    if (this.transactionCoordinator) {
+      this.transactionCoordinator.enqueue(work);
+    } else {
+      work();
+    }
+  }
+
+  private processResultNow(result: WasmResult | undefined): void {
     result = requireWasmResult(result);
     if (this.protocolStopped) {
       return;
@@ -1159,6 +1234,11 @@ export class SessionController implements PollingGameSession {
 
   private scheduleDrain(): void {
     if (this.drainScheduled || this.eventQueue.length === 0) return;
+    if (this.transactionCoordinator) {
+      this.drainScheduled = true;
+      this.transactionCoordinator.requestCommit();
+      return;
+    }
     this.drainScheduled = true;
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
@@ -1348,10 +1428,13 @@ export class SessionController implements PollingGameSession {
         ps = await blockchain.rpc.getPuzzleAndSolution(coinHex);
       }
       if (!this.protocolStopped && this.cradle) {
-        const result = ps
-          ? this.cradle.report_puzzle_and_solution(coinHex, ps[0], ps[1])
-          : this.cradle.report_puzzle_and_solution(coinHex, undefined, undefined);
-        this.processResult(result);
+        this.enqueueStimulus(() => {
+          if (this.protocolStopped || !this.cradle) return;
+          const result = ps
+            ? this.cradle.report_puzzle_and_solution(coinHex, ps[0], ps[1])
+            : this.cradle.report_puzzle_and_solution(coinHex, undefined, undefined);
+          this.processResult(result);
+        });
       }
     } catch (e) {
       diagStack('puzzle/solution fetch failed', e);
@@ -1448,7 +1531,7 @@ export class SessionController implements PollingGameSession {
       this.pendingChainObservations.push({ kind: 'coin-states', peak, records });
       return;
     }
-    this.deliverCoinStates(peak, records);
+    this.enqueueStimulus(() => this.deliverCoinStates(peak, records));
   }
 
   reportNewBlock(peak: bigint) {
@@ -1456,7 +1539,7 @@ export class SessionController implements PollingGameSession {
       this.pendingChainObservations.push({ kind: 'height', peak });
       return;
     }
-    this.deliverHeight(peak);
+    this.enqueueStimulus(() => this.deliverHeight(peak));
   }
 
   private deliverHeight(peak: bigint) {
@@ -1501,6 +1584,10 @@ export class SessionController implements PollingGameSession {
 
   scheduleSave() {
     if (!this.cradle) return;
+    if (this.transactionCoordinator) {
+      this.transactionCoordinator.requestCommit();
+      return;
+    }
     if (this.saveTimer) return;
     const timer = setTimeout(() => {
       this.saveTimer = null;
@@ -1522,6 +1609,10 @@ export class SessionController implements PollingGameSession {
   }
 
   async flushPendingSave(): Promise<void> {
+    if (this.transactionCoordinator) {
+      await this.transactionCoordinator.flush();
+      return;
+    }
     // Rust intentionally omits transient cradle events from serialization.
     // Move every event into its durable JS representation (message counters,
     // unacked messages, notifications) before taking the lifecycle snapshot.

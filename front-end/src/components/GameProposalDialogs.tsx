@@ -113,7 +113,7 @@ export function ComposeProposalDialog({
 export function ReviewProposalDialog({ session }: { session: UseGameSessionResult }) {
   const review = session.incomingProposal;
   if (!review) return null;
-  const accepting = review.status === 'accepting';
+  const accepting = review.lifecycle === 'peer-accept-queued';
   return (
     <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4">
       <div className="flex flex-col gap-3 text-center">

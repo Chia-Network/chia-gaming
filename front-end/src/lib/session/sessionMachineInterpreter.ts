@@ -16,7 +16,6 @@ export interface SessionMachineInterpreterDependencies {
   iStarted: boolean;
   getState(): SessionMachineState;
   dispatch(event: SessionMachineEvent): void;
-  persist(): Promise<void>;
   onError(error: unknown): void;
   enrichCoin?: typeof coinIdHex;
 }
@@ -47,7 +46,6 @@ export class SessionMachineInterpreter {
               type: 'proposal-command-succeeded',
               command: 'accept-proposal',
               id: effect.id,
-              context: effect.context,
             }),
         );
         return;
@@ -60,7 +58,6 @@ export class SessionMachineInterpreter {
               type: 'proposal-command-succeeded',
               command: 'cancel-proposal',
               id: effect.id,
-              context: effect.context,
             }),
         );
         return;
@@ -112,9 +109,6 @@ export class SessionMachineInterpreter {
         );
         return;
       }
-      case 'persist-session':
-        void dependencies.persist().catch(dependencies.onError);
-        return;
       case 'request-coin-enrichment':
         void (dependencies.enrichCoin ?? coinIdHex)(effect.coin)
           .then((coinHex) => {

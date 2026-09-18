@@ -71,8 +71,7 @@ describe('session model proposal and normalization contracts', () => {
           {
             id,
             handProposal: terms,
-            origin: 'local',
-            status: 'outgoing',
+            lifecycle: 'local-outgoing',
           },
         ],
       },
@@ -124,15 +123,14 @@ describe('session model proposal and normalization contracts', () => {
           {
             id: '11',
             handProposal: terms,
-            origin: 'local',
-            status: 'advisory-cancelling',
+            lifecycle: 'local-cancel-queued',
           },
         ],
       },
     });
     expect(selectPendingProposal(model, '11')).toMatchObject({
       id: '11',
-      status: 'advisory-cancelling',
+      lifecycle: 'local-cancel-queued',
       handProposal: terms,
     });
     expect(selectPendingProposal(model, '13')).toBeNull();
@@ -211,8 +209,7 @@ describe('session model proposal and normalization contracts', () => {
         pendingProposals: [
           {
             id: '11',
-            origin: 'local',
-            status: 'outgoing',
+            lifecycle: 'local-outgoing',
             hand_proposal: {
               sender_is_player_a: false,
               game_timeout: '15',
@@ -222,8 +219,7 @@ describe('session model proposal and normalization contracts', () => {
           },
           {
             id: '23',
-            origin: 'peer',
-            status: 'incoming-review',
+            lifecycle: 'peer-review',
             hand_proposal: {
               sender_is_player_a: false,
               game_timeout: '25',

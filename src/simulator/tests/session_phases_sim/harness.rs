@@ -99,36 +99,90 @@ pub(super) struct SimulationHarness {
     host_watched_coins: [HashSet<CoinString>; 2],
     host_events: [Vec<HostBoundaryEvent>; 2],
     move_readiness_boundary: Option<MoveReadinessBoundary>,
+    pending_received_proposal_refs: [VecDeque<ScriptProposalRef>; 2],
 }
 
 impl SimulationHarness {
-    fn runtime_game_id(&self, player: usize, requested: GameID) -> GameID {
-        self.local_uis[player]
-            .game_id_aliases
-            .get(&requested)
-            .copied()
-            .unwrap_or(requested)
+    fn resolved_game_id(&self, player: usize, game: ScriptGameRef) -> Option<GameID> {
+        match game {
+            ScriptGameRef::AcceptedMember { .. } => {
+                self.local_uis[player].accepted_game_ids.get(&game).copied()
+            }
+            ScriptGameRef::Missing(id) => Some(id),
+        }
+    }
+
+    fn game_id(&self, player: usize, game: ScriptGameRef) -> Result<GameID, Error> {
+        self.resolved_game_id(player, game).ok_or_else(|| {
+            Error::StrErr(format!(
+                "player {player} has not bound accepted game reference {game:?}"
+            ))
+        })
+    }
+
+    fn bind_proposal_reference(
+        &mut self,
+        player: usize,
+        reference: ScriptProposalRef,
+        local_id: LocalProposalId,
+    ) {
+        let previous = self.local_uis[player]
+            .proposal_bindings
+            .insert(reference, local_id);
+        assert!(
+            previous.is_none(),
+            "player {player} rebound proposal reference {reference:?} from {previous:?} to {local_id:?}"
+        );
+        let previous = self.local_uis[player]
+            .proposal_refs_by_id
+            .insert(local_id, reference);
+        assert!(
+            previous.is_none(),
+            "player {player} rebound local proposal {local_id:?} from {previous:?} to {reference:?}"
+        );
+    }
+
+    fn bind_next_proposal_reference(
+        &mut self,
+        player: usize,
+        reference: ScriptProposalRef,
+    ) -> bool {
+        if self.local_uis[player]
+            .proposal_bindings
+            .contains_key(&reference)
+        {
+            return true;
+        }
+        let Some(local_id) = self.local_uis[player].unbound_proposal_ids.pop_front() else {
+            return false;
+        };
+        self.bind_proposal_reference(player, reference, local_id);
+        true
+    }
+
+    fn bind_next_proposal_for_both(&mut self, player: usize, reference: ScriptProposalRef) -> bool {
+        if !self.bind_next_proposal_reference(player, reference) {
+            return false;
+        }
+        self.bind_next_proposal_reference(player ^ 1, reference);
+        true
     }
 
     fn local_proposal_id(
-        &self,
+        &mut self,
         player: usize,
-        requested: LocalProposalId,
+        proposal: ScriptProposalRef,
     ) -> Result<LocalProposalId, Error> {
-        if let Some(id) = self.local_uis[player].proposed_local_ids.get(&requested) {
-            return Ok(*id);
-        }
-        let pending = self.cradles[player].proposal_contributions_for_testing()?;
-        if let Some((id, _, _)) = pending.iter().find(|(id, _, _)| *id == requested) {
-            return Ok(*id);
-        }
-        if let [(id, _, _)] = pending.as_slice() {
-            return Ok(*id);
-        }
-        Err(Error::StrErr(format!(
-            "cannot resolve script proposal {requested:?} among {:?}",
-            pending.iter().map(|(id, _, _)| *id).collect::<Vec<_>>()
-        )))
+        self.bind_next_proposal_for_both(player, proposal);
+        self.local_uis[player]
+            .proposal_bindings
+            .get(&proposal)
+            .copied()
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "player {player} has not observed proposal reference {proposal:?}"
+                ))
+            })
     }
 
     pub(super) fn new(
@@ -157,6 +211,7 @@ impl SimulationHarness {
             host_watched_coins: [HashSet::new(), HashSet::new()],
             host_events: [Vec::new(), Vec::new()],
             move_readiness_boundary: None,
+            pending_received_proposal_refs: [VecDeque::new(), VecDeque::new()],
         }
     }
 
@@ -205,7 +260,15 @@ impl SimulationHarness {
         action_index: usize,
         readiness: ActionReadiness,
     ) {
-        let ActionReadiness::MoveApplied { player, game_id } = readiness else {
+        match readiness {
+            ActionReadiness::AcceptProposal { player, proposal }
+            | ActionReadiness::ProposalExists { player, proposal }
+            | ActionReadiness::ProposalKnown { player, proposal } => {
+                self.bind_next_proposal_for_both(player, proposal);
+            }
+            _ => {}
+        }
+        let ActionReadiness::MoveApplied { player, game } = readiness else {
             self.move_readiness_boundary = None;
             return;
         };
@@ -215,7 +278,10 @@ impl SimulationHarness {
         {
             return;
         }
-        let game_id = self.runtime_game_id(player, game_id);
+        let Some(game_id) = self.resolved_game_id(player, game) else {
+            self.move_readiness_boundary = None;
+            return;
+        };
         self.move_readiness_boundary = Some(MoveReadinessBoundary::capture(
             action_index,
             player,
@@ -231,76 +297,61 @@ impl SimulationHarness {
     ) -> bool {
         match readiness {
             ActionReadiness::Immediate => true,
-            ActionReadiness::GameCanMove { player, game_id } => {
-                let game_id = self.runtime_game_id(player, game_id);
-                self.local_uis[player].game_accepted_ids.contains(&game_id)
-                    || self.local_uis[player]
-                        .opponent_moved_in_game
-                        .contains(&game_id)
+            ActionReadiness::GameCanMove { player, game } => {
+                self.resolved_game_id(player, game).is_some_and(|game_id| {
+                    self.local_uis[player].game_accepted_ids.contains(&game_id)
+                        || self.local_uis[player]
+                            .opponent_moved_in_game
+                            .contains(&game_id)
+                })
             }
-            ActionReadiness::AcceptProposal {
-                player,
-                proposal_id,
-            } => {
+            ActionReadiness::AcceptProposal { player, proposal } => {
                 if self.local_uis[player]
                     .accepted_proposal_ids
-                    .contains(&proposal_id)
+                    .contains(&proposal)
                 {
                     let local_id = self.local_uis[player]
-                        .proposed_local_ids
-                        .get(&proposal_id)
+                        .proposal_bindings
+                        .get(&proposal)
                         .copied();
-                    let script_game_id = GameID(proposal_id.0);
-                    self.local_uis[player]
-                        .game_id_aliases
-                        .contains_key(&script_game_id)
-                        || self.local_uis[player].notifications.iter().any(|n| {
+                    self.local_uis[player].accepted_game_ids.keys().any(|game| {
+                        matches!(
+                            game,
+                            ScriptGameRef::AcceptedMember {
+                                proposal: bound,
+                                ..
+                            } if *bound == proposal
+                        )
+                    }) || self.local_uis[player].notifications.iter().any(|n| {
                             matches!(n, GameNotification::InsufficientBalance { id, .. } if Some(*id) == local_id)
                                 || matches!(
                                     n,
                                     GameNotification::ProposalCancelled { id, .. }
                                         if Some(*id) == local_id
                                 )
-                                || is_terminal_for_id(n, &script_game_id)
                         })
                 } else {
                     self.local_uis[player]
-                        .received_proposal_ids
-                        .contains(&proposal_id)
-                        || self.cradles[player]
-                            .proposal_contributions_for_testing()
-                            .is_ok_and(|pending| pending.len() == 1)
+                        .proposal_bindings
+                        .contains_key(&proposal)
                 }
             }
             ActionReadiness::ChannelReady { player } => self.local_uis[player].channel_created,
-            ActionReadiness::ProposalExists {
-                player,
-                proposal_id,
-            } => self.cradles[player]
-                .proposal_contributions_for_testing()
-                .is_ok_and(|proposals| {
-                    proposals.len() == 1 || proposals.iter().any(|(id, _, _)| *id == proposal_id)
-                }),
-            ActionReadiness::ProposalKnown {
-                player,
-                proposal_id,
-            } => {
-                let runtime_game_id = self.runtime_game_id(player, GameID(proposal_id.0));
-                self.cradles[player]
-                    .proposal_contributions_for_testing()
-                    .is_ok_and(|proposals| {
-                        proposals.len() == 1
-                            || proposals.iter().any(|(id, _, _)| *id == proposal_id)
-                    })
-                    || self.local_uis[player]
-                        .game_accepted_ids
-                        .contains(&runtime_game_id)
+            ActionReadiness::ProposalExists { player, proposal } => self.local_uis[player]
+                .proposal_bindings
+                .contains_key(&proposal),
+            ActionReadiness::ProposalKnown { player, proposal } => {
+                self.local_uis[player]
+                    .proposal_bindings
+                    .contains_key(&proposal)
                     || self.local_uis[player]
                         .accepted_proposal_ids
-                        .contains(&proposal_id)
+                        .contains(&proposal)
             }
-            ActionReadiness::MoveApplied { player, game_id } => {
-                let game_id = self.runtime_game_id(player, game_id);
+            ActionReadiness::MoveApplied { player, game } => {
+                let Some(game_id) = self.resolved_game_id(player, game) else {
+                    return false;
+                };
                 let boundary = self
                     .move_readiness_boundary
                     .expect("move readiness boundary must be established before evaluation");
@@ -312,9 +363,10 @@ impl SimulationHarness {
                 boundary.is_satisfied(&self.local_uis[player])
             }
             ActionReadiness::NerfedTransactionAvailable => !self.nerfed_tx_backlog.is_empty(),
-            ActionReadiness::AfterGame { game_id } => self.local_uis.iter().any(|ui| {
-                let runtime_game_id = ui.game_id_aliases.get(&game_id).copied().unwrap_or(game_id);
-                ui.game_finished_ids.contains(&runtime_game_id)
+            ActionReadiness::AfterGame { game } => self.local_uis.iter().any(|ui| {
+                ui.accepted_game_ids
+                    .get(&game)
+                    .is_some_and(|game_id| ui.game_finished_ids.contains(game_id))
             }),
         }
     }
@@ -431,9 +483,11 @@ impl SimulationHarness {
     pub(super) fn assert_game_coin_submitted(
         &self,
         player: usize,
-        game_id: GameID,
+        game: ScriptGameRef,
     ) -> (CoinString, usize) {
-        let game_id = self.runtime_game_id(player, game_id);
+        let game_id = self
+            .game_id(player, game)
+            .expect("game publication assertion requires an accepted member");
         let coin = self.cradles[player]
             .get_game_coin(&game_id)
             .unwrap_or_else(|| panic!("player {player} has no current coin for game {game_id:?}"));
@@ -447,11 +501,13 @@ impl SimulationHarness {
     pub(super) fn assert_game_coin_child_published(
         &self,
         player: usize,
-        game_id: GameID,
+        game: ScriptGameRef,
         parent: &CoinString,
         submitted_height: usize,
     ) {
-        let game_id = self.runtime_game_id(player, game_id);
+        let game_id = self
+            .game_id(player, game)
+            .expect("game child assertion requires an accepted member");
         let current_height = self.simulator.get_current_height();
         assert_eq!(
             current_height,
@@ -476,8 +532,10 @@ impl SimulationHarness {
         assert_eq!(created_height as usize, submitted_height + 1);
     }
 
-    pub(super) fn assert_game_coin_timeout_registered(&self, player: usize, game_id: GameID) {
-        let game_id = self.runtime_game_id(player, game_id);
+    pub(super) fn assert_game_coin_timeout_registered(&self, player: usize, game: ScriptGameRef) {
+        let game_id = self
+            .game_id(player, game)
+            .expect("timeout assertion requires an accepted member");
         let coin = self.cradles[player]
             .get_game_coin(&game_id)
             .unwrap_or_else(|| panic!("player {player} has no current coin for game {game_id:?}"));
@@ -494,11 +552,11 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        game_id: &GameID,
+        game: &ScriptGameRef,
         readable: ReadableMove,
         entropy: Hash,
     ) -> Result<(), Error> {
-        let game_id = self.runtime_game_id(player, *game_id);
+        let game_id = self.game_id(player, *game)?;
         self.cradles[player].make_move(allocator, &game_id, readable, entropy)?;
         for ui in &mut self.local_uis {
             ui.game_accepted_ids.remove(&game_id);
@@ -513,6 +571,7 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
+        reference: Option<ScriptProposalRef>,
         proposals: &[GameProposal],
     ) -> Result<(), Error> {
         let [proposal] = proposals else {
@@ -522,12 +581,15 @@ impl SimulationHarness {
             )));
         };
         let local_id = self.cradles[player].propose(allocator, proposal)?;
-        let proposal_number = self.local_uis[player].proposed_game_ids.len() as u64;
-        let script_id = LocalProposalId((if player == 0 { 1 } else { 0 }) + 2 * proposal_number);
-        self.local_uis[player].proposed_game_ids.push(script_id);
-        self.local_uis[player]
-            .proposed_local_ids
-            .insert(script_id, local_id);
+        self.local_uis[player].proposed_game_ids.push(local_id);
+        if let Some(reference) = reference {
+            self.bind_proposal_reference(player, reference, local_id);
+            self.pending_received_proposal_refs[player ^ 1].push_back(reference);
+        } else {
+            self.local_uis[player]
+                .unbound_proposal_ids
+                .push_back(local_id);
+        }
         Ok(())
     }
 
@@ -535,22 +597,19 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        proposal_id: &LocalProposalId,
+        proposal: &ScriptProposalRef,
     ) -> Result<bool, Error> {
         if self.local_uis[player]
             .accepted_proposal_ids
-            .contains(proposal_id)
+            .contains(proposal)
         {
             return Ok(false);
         }
-        let local_id = self.local_proposal_id(player, *proposal_id)?;
+        let local_id = self.local_proposal_id(player, *proposal)?;
         self.cradles[player].accept_proposal(allocator, &local_id)?;
         self.local_uis[player]
-            .proposed_local_ids
-            .insert(*proposal_id, local_id);
-        self.local_uis[player]
             .accepted_proposal_ids
-            .push(*proposal_id);
+            .insert(*proposal);
         Ok(true)
     }
 
@@ -558,8 +617,8 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        first: &LocalProposalId,
-        second: &LocalProposalId,
+        first: &ScriptProposalRef,
+        second: &ScriptProposalRef,
     ) -> Result<bool, Error> {
         if self.local_uis[player].accepted_proposal_ids.contains(first)
             && self.local_uis[player]
@@ -575,14 +634,8 @@ impl SimulationHarness {
                     .contains(second),
             "paired acceptance was only partially queued"
         );
-        let pending = self.cradles[player].proposal_contributions_for_testing()?;
-        let mut pending_ids = pending.iter().map(|(id, _, _)| *id);
-        let first_local = pending_ids
-            .next()
-            .ok_or_else(|| Error::StrErr("first proposal is not pending".into()))?;
-        let second_local = pending_ids
-            .next()
-            .ok_or_else(|| Error::StrErr("second proposal is not pending".into()))?;
+        let first_local = self.local_proposal_id(player, *first)?;
+        let second_local = self.local_proposal_id(player, *second)?;
         self.cradles[player].accept_proposal(allocator, &first_local)?;
         self.cradles[player].accept_proposal(allocator, &second_local)?;
         self.local_uis[player]
@@ -595,10 +648,10 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        local_proposal_id: &LocalProposalId,
+        proposal: &ScriptProposalRef,
         wire_proposal_id: &WireProposalId,
     ) -> Result<bool, Error> {
-        if !self.accept_proposal(allocator, player, local_proposal_id)? {
+        if !self.accept_proposal(allocator, player, proposal)? {
             return Ok(false);
         }
         self.cradles[player].flush_pending(allocator)?;
@@ -635,8 +688,8 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        first: &LocalProposalId,
-        second: &LocalProposalId,
+        first: &ScriptProposalRef,
+        second: &ScriptProposalRef,
         replacement_wire_id: &WireProposalId,
     ) -> Result<bool, Error> {
         if !self.accept_proposal_pair(allocator, player, first, second)? {
@@ -679,16 +732,13 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        proposal_id: &LocalProposalId,
+        proposal: &ScriptProposalRef,
     ) -> Result<(), Error> {
-        let local_id = self.local_proposal_id(player, *proposal_id)?;
-        if !self.local_uis[player]
-            .proposed_game_ids
-            .contains(proposal_id)
-        {
+        let local_id = self.local_proposal_id(player, *proposal)?;
+        if !self.local_uis[player].proposed_game_ids.contains(&local_id) {
             self.local_uis[player]
                 .silently_rejected_proposal_ids
-                .insert(*proposal_id);
+                .insert(local_id);
         }
         self.cradles[player].cancel_proposal(allocator, &local_id)
     }
@@ -719,12 +769,12 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        game_id: &GameID,
+        game: &ScriptGameRef,
         readable: ReadableMove,
         entropy: Hash,
         move_data: &[u8],
     ) -> Result<(), Error> {
-        self.make_move(allocator, player, game_id, readable, entropy)?;
+        self.make_move(allocator, player, game, readable, entropy)?;
         self.cradles[player].flush_pending(allocator)?;
         self.cradles[player].replace_last_message(|message| {
             let PeerMessage::Batch {
@@ -760,15 +810,17 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        game_id: &GameID,
+        game: &ScriptGameRef,
         share: Amount,
     ) -> Result<(), Error> {
-        let game_id = self.runtime_game_id(player, *game_id);
+        let game_id = self.game_id(player, *game)?;
         self.cradles[player].cheat(allocator, &game_id, share)
     }
 
-    pub(super) fn force_destroy_coin(&mut self, player: usize, game_id: &GameID) -> bool {
-        let game_id = self.runtime_game_id(player, *game_id);
+    pub(super) fn force_destroy_coin(&mut self, player: usize, game: &ScriptGameRef) -> bool {
+        let Some(game_id) = self.resolved_game_id(player, *game) else {
+            return false;
+        };
         let Some(coin) = self.cradles[player].get_game_coin(&game_id) else {
             return false;
         };
@@ -880,9 +932,9 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        game_id: &GameID,
+        game: &ScriptGameRef,
     ) -> Result<(), Error> {
-        let game_id = self.runtime_game_id(player, *game_id);
+        let game_id = self.game_id(player, *game)?;
         self.cradles[player].accept_settlement(allocator, &game_id)
     }
 
@@ -942,9 +994,9 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        proposal_id: &LocalProposalId,
+        proposal: &ScriptProposalRef,
     ) -> Result<(), Error> {
-        let local_id = self.local_proposal_id(player, *proposal_id)?;
+        let local_id = self.local_proposal_id(player, *proposal)?;
         self.cradles[player].self_accept_proposal(allocator, &local_id)
     }
 
@@ -1110,6 +1162,16 @@ impl SimulationHarness {
                         ));
                     }
                     GameSessionEvent::Notification(notification) => {
+                        if let GameNotification::ProposalCancelled { id, .. } = notification {
+                            if let Some(reference) = self.local_uis[player_index]
+                                .proposal_refs_by_id
+                                .get(id)
+                                .copied()
+                            {
+                                self.pending_received_proposal_refs[player_index ^ 1]
+                                    .retain(|pending| *pending != reference);
+                            }
+                        }
                         deferred_notifications.push(notification.clone());
                     }
                     GameSessionEvent::ReceiveError(error) => {
@@ -1233,6 +1295,13 @@ impl SimulationHarness {
         }
 
         for notification in deferred_notifications {
+            if let GameNotification::ProposalMade { id, .. } = &notification {
+                if let Some(reference) =
+                    self.pending_received_proposal_refs[player_index].pop_front()
+                {
+                    self.bind_proposal_reference(player_index, reference, *id);
+                }
+            }
             let notification_coin_in_mempool = if let GameNotification::GameStatus {
                 coin_id: Some(coin),
                 ..

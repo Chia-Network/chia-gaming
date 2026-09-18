@@ -269,7 +269,7 @@ impl ChannelState {
     pub fn is_our_proposal(&self, id: LocalProposalId) -> bool {
         self.proposal_ledger
             .find_local(id)
-            .is_some_and(|proposal| proposal.originated_locally)
+            .is_some_and(|proposal| proposal.lifecycle.originated_locally())
     }
 
     pub fn next_game_id_for_testing(&self) -> GameID {
@@ -313,7 +313,8 @@ impl ChannelState {
 
     pub fn proposal_wire_id(&self, id: LocalProposalId) -> Result<WireProposalId, Error> {
         self.find_proposal(id)?
-            .origin_wire_id
+            .lifecycle
+            .wire_id()
             .ok_or_else(|| Error::StrErr(format!("proposal {id} has not been emitted")))
     }
 
@@ -1187,15 +1188,6 @@ impl ChannelState {
         self.proposal_ledger
             .find_local(id)
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {id}")))
-    }
-
-    #[cfg(test)]
-    pub fn proposal_contributions_for_testing(&self) -> Vec<(LocalProposalId, Amount, Amount)> {
-        self.proposal_ledger
-            .pending()
-            .iter()
-            .map(|proposal| (proposal.local_id, Amount::default(), Amount::default()))
-            .collect()
     }
 
     pub fn pending_peer_proposal_ids(&self) -> Vec<LocalProposalId> {

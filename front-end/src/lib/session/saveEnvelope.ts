@@ -4,13 +4,13 @@ import type { GameProtocolPresentation } from './gameSlice';
 import type {
   BetweenHandModeModel,
   NotificationKind,
-  PendingProposalStatus,
+  PendingProposalLifecycle,
   ProposalOrigin,
   RegisteredGameType,
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 25n;
+export const SESSION_SAVE_VERSION = 26n;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
@@ -126,8 +126,7 @@ export interface SessionPresentationSave {
   betweenHandPendingRetryHandProposal: SavedHandProposal | null;
   pendingProposals: Array<{
     id: string;
-    origin: ProposalOrigin;
-    status: PendingProposalStatus;
+    lifecycle: PendingProposalLifecycle;
     hand_proposal: SavedHandProposal;
   }>;
   waitingStateEnteredAt: bigint | null;

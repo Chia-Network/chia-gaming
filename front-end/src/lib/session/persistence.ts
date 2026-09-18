@@ -405,8 +405,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
         : savedHandProposalFromModel(pendingRetryHandProposal),
     pendingProposals: pendingProposals.map((proposal) => ({
       id: proposal.id,
-      origin: proposal.origin,
-      status: proposal.status,
+      lifecycle: proposal.lifecycle,
       hand_proposal: savedHandProposalFromModel(proposal.handProposal),
     })),
     waitingStateEnteredAt,
@@ -690,7 +689,8 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   const mode = save.betweenHandMode;
   const pendingProposals = parsePendingProposals(save.pendingProposals, 'pendingProposals');
   const hasOutgoing = pendingProposals.some(
-    (proposal) => proposal.status === 'outgoing' || proposal.status === 'advisory-cancelling',
+    (proposal) =>
+      proposal.lifecycle === 'local-outgoing' || proposal.lifecycle === 'local-cancel-queued',
   );
   const model = normalizeSessionPresentation(
     createSessionModel({

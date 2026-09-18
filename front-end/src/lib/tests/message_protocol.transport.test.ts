@@ -480,8 +480,7 @@ describe('active game tracking', () => {
         proposal: {
           id: '1',
           handProposal: terms,
-          origin: 'local',
-          status: 'outgoing',
+          lifecycle: 'local-outgoing',
         },
       }).state;
       const settledIds: string[] = [];

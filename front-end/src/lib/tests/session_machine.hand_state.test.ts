@@ -115,7 +115,7 @@ describe('session machine behavior sequences', () => {
         error: null,
       },
     });
-    expect(changed.effects).toEqual([{ type: 'persist-session' }]);
+    expect(changed.effects).toEqual([]);
     state = changed.state;
 
     const progressed = state.model.game.handState;

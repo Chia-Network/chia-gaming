@@ -5,6 +5,9 @@ import { reduceSessionNotification } from '../session/sessionMachineNotification
 import { parsePendingProposals } from '../session/persistenceBetweenHands';
 import { snapshotFromSessionModel } from '../session/sessionSnapshot';
 import type { PendingProposalModel } from '../session/types';
+import { selectIncomingProposal } from '../session/selectors';
+import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
 
 const TERMS = {
   gameType: 'calpoker' as const,
@@ -13,12 +16,8 @@ const TERMS = {
   parameters: 10n,
 };
 
-function pending(
-  id: string,
-  origin: 'local' | 'peer',
-  status: PendingProposalModel['status'],
-): PendingProposalModel {
-  return { id, handProposal: TERMS, origin, status };
+function pending(id: string, lifecycle: PendingProposalModel['lifecycle']): PendingProposalModel {
+  return { id, handProposal: TERMS, lifecycle };
 }
 
 function withProposal(proposal: PendingProposalModel) {
@@ -28,31 +27,33 @@ function withProposal(proposal: PendingProposalModel) {
 }
 
 describe('scalar advisory proposal lifecycle', () => {
+  beforeEach(() => setProtocolIds(TEST_PROTOCOL_IDS));
+  afterEach(() => resetProtocolIds());
+
   it('marks a queued acceptance and advisory outgoing cancellation without creating games', () => {
-    let accepting = withProposal(pending('7', 'peer', 'incoming-review'));
+    let accepting = withProposal(pending('7', 'peer-review'));
     accepting = reduceSessionMachine(accepting, {
       type: 'proposal-command-succeeded',
       command: 'accept-proposal',
       id: '7',
-      context: 'accept-review',
     }).state;
-    expect(accepting.model.betweenHand.pendingProposals[0]?.status).toBe('accepting');
+    expect(accepting.model.betweenHand.pendingProposals[0]?.lifecycle).toBe('peer-accept-queued');
     expect(accepting.model.game.activeIds).toEqual([]);
 
-    let cancelling = withProposal(pending('9', 'local', 'outgoing'));
+    let cancelling = withProposal(pending('9', 'local-outgoing'));
     cancelling = reduceSessionMachine(cancelling, {
       type: 'proposal-command-succeeded',
       command: 'cancel-proposal',
       id: '9',
     }).state;
-    expect(cancelling.model.betweenHand.pendingProposals[0]?.status).toBe('advisory-cancelling');
+    expect(cancelling.model.betweenHand.pendingProposals[0]?.lifecycle).toBe('local-cancel-queued');
   });
 
   it.each([
     [
       'cancelled',
       { ProposalCancelled: { id: 7n, reason: 'CancelledByUs' as const } },
-      'advisory-cancelling' as const,
+      'local-cancel-queued' as const,
     ],
     [
       'insufficient',
@@ -63,11 +64,11 @@ describe('scalar advisory proposal lifecycle', () => {
           their_balance_short: false,
         },
       },
-      'accepting' as const,
+      'peer-accept-queued' as const,
     ],
-  ])('resolves queued proposal through %s notification', (_label, notification, status) => {
+  ])('resolves queued proposal through %s notification', (_label, notification, lifecycle) => {
     const transition = reduceSessionNotification(
-      withProposal(pending('7', status === 'advisory-cancelling' ? 'local' : 'peer', status)),
+      withProposal(pending('7', lifecycle)),
       notification,
       false,
       reduceSessionMachine,
@@ -78,7 +79,7 @@ describe('scalar advisory proposal lifecycle', () => {
 
   it('creates generated games only from ProposalAcceptedGroup', () => {
     const state = reduceSessionNotification(
-      withProposal(pending('7', 'peer', 'accepting')),
+      withProposal(pending('7', 'peer-accept-queued')),
       {
         ProposalAcceptedGroup: {
           id: 7n,
@@ -102,7 +103,7 @@ describe('scalar advisory proposal lifecycle', () => {
 
   it('lets authoritative acceptance win over advisory outgoing cancellation', () => {
     const state = reduceSessionNotification(
-      withProposal(pending('7', 'local', 'advisory-cancelling')),
+      withProposal(pending('7', 'local-cancel-queued')),
       {
         ProposalAcceptedGroup: {
           id: 7n,
@@ -125,22 +126,20 @@ describe('scalar advisory proposal lifecycle', () => {
   });
 
   it('removes a receiver rejection immediately after its command queues', () => {
-    const state = reduceSessionMachine(withProposal(pending('7', 'peer', 'incoming-review')), {
+    const state = reduceSessionMachine(withProposal(pending('7', 'peer-review')), {
       type: 'proposal-command-succeeded',
       command: 'cancel-proposal',
       id: '7',
-      context: 'reject-review',
     }).state;
     expect(state.model.betweenHand.pendingProposals).toEqual([]);
     expect(state.model.betweenHand.mode).toBe('compose-proposal');
   });
 
   it('ignores a later cancellation after definitive receiver-side removal', () => {
-    const removed = reduceSessionMachine(withProposal(pending('7', 'peer', 'incoming-review')), {
+    const removed = reduceSessionMachine(withProposal(pending('7', 'peer-review')), {
       type: 'proposal-command-succeeded',
       command: 'cancel-proposal',
       id: '7',
-      context: 'reject-review',
     }).state;
     const transition = reduceSessionNotification(
       removed,
@@ -176,7 +175,7 @@ describe('scalar advisory proposal lifecycle', () => {
         betweenHand: {
           mode: 'decision',
           lastHandProposal: TERMS,
-          pendingProposals: [pending('7', 'peer', 'accepting')],
+          pendingProposals: [pending('7', 'peer-accept-queued')],
         },
       }),
     );
@@ -185,10 +184,10 @@ describe('scalar advisory proposal lifecycle', () => {
     expect(transition.effects).toEqual([]);
   });
 
-  it.each(['accepting', 'advisory-cancelling'] as const)(
+  it.each(['peer-accept-queued', 'local-cancel-queued'] as const)(
     'restores a pending %s proposal',
-    (status) => {
-      const proposal = pending('7', status === 'accepting' ? 'peer' : 'local', status);
+    (lifecycle) => {
+      const proposal = pending('7', lifecycle);
       const snapshot = snapshotFromSessionModel(
         createSessionModel({ betweenHand: { pendingProposals: [proposal] } }),
       );
@@ -200,7 +199,7 @@ describe('scalar advisory proposal lifecycle', () => {
 
   it('never removes a live game when proposal and game numeric IDs collide', () => {
     let state = reduceSessionNotification(
-      withProposal(pending('1', 'local', 'outgoing')),
+      withProposal(pending('1', 'local-outgoing')),
       {
         ProposalAcceptedGroup: {
           id: 1n,
@@ -220,7 +219,7 @@ describe('scalar advisory proposal lifecycle', () => {
     ).state;
     state = reduceSessionMachine(state, {
       type: 'upsert-pending-proposal',
-      proposal: pending('7', 'local', 'outgoing'),
+      proposal: pending('7', 'local-outgoing'),
     }).state;
     state = reduceSessionNotification(
       state,
@@ -237,5 +236,32 @@ describe('scalar advisory proposal lifecycle', () => {
     expect(state.model.betweenHand.pendingProposals).toEqual([]);
     expect(state.model.game.activeIds).toEqual(['7']);
     expect(state.model.game.handState).not.toBeNull();
+  });
+
+  it('persists a hidden malformed proposal until definitive cancellation is ordered', () => {
+    const transition = reduceSessionNotification(
+      createSessionMachineState(createSessionModel()),
+      {
+        ProposalMade: {
+          id: 77n,
+          game_type: testProtocolId('calpoker'),
+          timeout: 15n,
+          sender_is_player_a: false,
+          parameters: [10n, 20n],
+        },
+      },
+      false,
+      reduceSessionMachine,
+    );
+    const hidden = transition.state.model.betweenHand.pendingProposals[0];
+
+    expect(hidden).toMatchObject({ id: '77', lifecycle: 'peer-cancel-queued' });
+    expect(selectIncomingProposal(transition.state.model)).toBeNull();
+    expect(transition.effects).toContainEqual({
+      type: 'controller-cancel-proposal',
+      id: '77',
+    });
+    const snapshot = snapshotFromSessionModel(transition.state.model);
+    expect(parsePendingProposals(snapshot.pendingProposals, 'pendingProposals')).toEqual([hidden]);
   });
 });

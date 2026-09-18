@@ -116,7 +116,10 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
   const wasmCheckpoint = (index: number) =>
     Uint8Array.from(lanes[index].controller.getWasmFields()!.serializedGameSession);
   const reloadAt = async (index: number, stage: string, expectedMove?: bigint) => {
-    const savedHand = structuredClone(lanes[index].runtime.getState().model.game.handState);
+    const savedHand = structuredClone({
+      gameType: lanes[index].runtime.getState().model.game.activeGameType,
+      state: hand(index),
+    });
     const restored = await injectSessionReload(lanes[index], poller);
     lanes[index] = restored.lane;
     assert.equal(
@@ -162,7 +165,9 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
     await flushWrapperDrain(adapters);
     const outgoingProposal = lanes[0].runtime
       .getState()
-      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'outgoing');
+      .model.betweenHand.pendingProposals.find(
+        (proposal) => proposal.lifecycle === 'local-outgoing',
+      );
     assert.ok(outgoingProposal, 'reload proposer must retain its outgoing proposal');
     const queuedProposalMessages = adapters[0].outbound_messages();
     assert.ok(queuedProposalMessages.length > 0, 'real proposal must reach the transport boundary');
@@ -185,7 +190,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
     await exchange();
     const review = lanes[1].runtime
       .getState()
-      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-review');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-review');
     assert.ok(review, 'Calpoker reload receiver must observe the real proposal');
 
     const incomingReviewCheckpoint = structuredClone(lanes[1].runtime.getState().model.betweenHand);
@@ -301,7 +306,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
     await exchange();
     const secondProposal = lanes[1].runtime
       .getState()
-      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-cached');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-cached');
     assert.ok(secondProposal, 'terminal reload must advance to a cached same-terms proposal');
     lanes[1].runtime.dispatch({ type: 'choose-same-terms' });
     await exchange();

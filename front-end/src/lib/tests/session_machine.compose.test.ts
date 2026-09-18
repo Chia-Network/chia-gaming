@@ -117,8 +117,7 @@ describe('session machine behavior sequences', () => {
         pendingProposals: [
           {
             id: '11',
-            origin: 'local',
-            status: 'outgoing',
+            lifecycle: 'local-outgoing',
             hand_proposal: {
               player_a_contribution: '10',
               player_b_contribution: '10',

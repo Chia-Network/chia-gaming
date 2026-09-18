@@ -250,9 +250,7 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  propose?: (cid: number, proposal: ProposeGameParams) => WasmResult;
-  /** Temporary compatibility with the currently generated pre-scalar WASM package. */
-  propose_games?: (cid: number, games: ProposeGameParams[]) => WasmResult;
+  propose: (cid: number, proposal: ProposeGameParams) => WasmResult;
   accept_proposal: (cid: number, game_id: string) => WasmResult;
   cancel_proposal: (cid: number, game_id: string) => WasmResult;
   make_move_with_entropy_for_testing: (
@@ -298,9 +296,7 @@ export class ChiaGame {
   }
 
   propose(proposal: ProposeGameParams): WasmResult {
-    if (this.wasm.propose) return this.wasm.propose(this.session, proposal);
-    if (this.wasm.propose_games) return this.wasm.propose_games(this.session, [proposal]);
-    throw new Error('WASM proposal API is unavailable');
+    return this.wasm.propose(this.session, proposal);
   }
 
   accept_proposal(game_id: string): WasmResult {

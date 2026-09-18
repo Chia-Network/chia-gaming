@@ -102,7 +102,7 @@ export function reduceSessionMachine(
       return reduceBetweenHandEvent(state, event);
 
     case 'upsert-pending-proposal':
-    case 'set-proposal-status':
+    case 'set-proposal-lifecycle':
     case 'clear-proposals':
     case 'request-accept-proposal':
     case 'request-cancel-proposal':

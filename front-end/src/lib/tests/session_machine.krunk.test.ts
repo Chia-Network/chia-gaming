@@ -412,7 +412,7 @@ describe('session machine behavior sequences', () => {
         message: 'XXXXX is not in the dictionary.',
       },
     ]);
-    expect(transition.effects).toEqual([{ type: 'persist-session' }]);
+    expect(transition.effects).toEqual([]);
   });
 
   it('surfaces a tagged rejection message when the tag has no dedicated copy', () => {

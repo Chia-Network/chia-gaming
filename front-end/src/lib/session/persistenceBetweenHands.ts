@@ -70,30 +70,18 @@ export function parsePendingProposals(value: unknown, label: string): PendingPro
     const id = requireString(saved.id, `${proposalLabel}.id`);
     if (seen.has(id)) throw new Error(`Garbled save: duplicate pending proposal ${id}`);
     seen.add(id);
-    const origin = saved.origin;
-    if (origin !== 'local' && origin !== 'peer') {
-      throw new Error(`Garbled save: invalid ${proposalLabel}.origin`);
-    }
-    const status = saved.status;
+    const lifecycle = saved.lifecycle;
     if (
-      status !== 'outgoing' &&
-      status !== 'incoming-cached' &&
-      status !== 'incoming-review' &&
-      status !== 'accepting' &&
-      status !== 'advisory-cancelling'
+      lifecycle !== 'local-outgoing' &&
+      lifecycle !== 'local-cancel-queued' &&
+      lifecycle !== 'peer-cached' &&
+      lifecycle !== 'peer-review' &&
+      lifecycle !== 'peer-accept-queued' &&
+      lifecycle !== 'peer-cancel-queued'
     ) {
-      throw new Error(`Garbled save: invalid ${proposalLabel}.status`);
+      throw new Error(`Garbled save: invalid ${proposalLabel}.lifecycle`);
     }
-    if ((status === 'outgoing' || status === 'advisory-cancelling') && origin !== 'local') {
-      throw new Error(`Garbled save: outgoing ${proposalLabel} is not local`);
-    }
-    if ((status === 'incoming-cached' || status === 'incoming-review') && origin !== 'peer') {
-      throw new Error(`Garbled save: incoming ${proposalLabel} is not peer-originated`);
-    }
-    if (
-      origin === 'local' &&
-      (status === 'outgoing' || status === 'accepting' || status === 'advisory-cancelling')
-    ) {
+    if (lifecycle === 'local-outgoing' || lifecycle === 'local-cancel-queued') {
       localOutgoing += 1;
     }
     const handProposal = parseHandProposalSnapshot(
@@ -103,8 +91,7 @@ export function parsePendingProposals(value: unknown, label: string): PendingPro
     return {
       id,
       handProposal,
-      origin,
-      status,
+      lifecycle,
     };
   });
   if (localOutgoing > 1) {
