@@ -1161,6 +1161,60 @@ describe('wallet fee attachment on submission', () => {
     );
   });
 
+  it('retains an unavailable fee request and requests the fee again after fresh sync', async () => {
+    const submission = {
+      id: 'fee-retry',
+      bundle: testSpendBundle('coin'),
+      fee_request: { target: feeTarget, amount: '10' },
+    };
+    const createFeeSpend = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'unavailable', reason: 'wallet transport disconnected' })
+      .mockResolvedValueOnce({ kind: 'offer', offer: 'offer1signed' });
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const blockchain = new BlockchainPoller(
+      { ...mockRpc, createFeeSpend, spend, isReadyForPlay: () => true },
+      60000,
+    );
+    const { blob, cradle } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+    (cradle.drain_submissions as jest.Mock)
+      .mockReturnValueOnce([submission])
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([submission]);
+    (cradle.finalize_submission as jest.Mock).mockReturnValue({
+      protocol_bundle: testSpendBundle('coin'),
+      bundle: protocolBundle,
+      applied_fee: '10',
+      warning: null,
+    });
+
+    blob.processResult(wasmResult());
+    await transactionSubmitQueue(blob);
+
+    expect(createFeeSpend).toHaveBeenCalledTimes(1);
+    expect(cradle.finalize_submission).not.toHaveBeenCalled();
+    expect(spend).not.toHaveBeenCalled();
+
+    blob.reportNewBlock(2n);
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(createFeeSpend).toHaveBeenCalledTimes(2);
+    expect(cradle.finalize_submission).toHaveBeenCalledWith(
+      submission.id,
+      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
+    );
+    expect(spend).toHaveBeenCalledWith(
+      expect.any(String),
+      protocolBundle,
+      '11'.repeat(32),
+      'submitTransaction',
+      10n,
+    );
+  });
+
   it('submits with zero fee and warns the user when the wallet cannot build a fee offer', async () => {
     const createFeeSpend = jest.fn().mockResolvedValue(null);
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });

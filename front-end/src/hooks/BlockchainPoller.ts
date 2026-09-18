@@ -12,6 +12,13 @@ import {
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
 
+class BlockchainRpcUnavailableError extends Error {
+  constructor(label: string) {
+    super(`RPC request discarded during disconnect: ${label}`);
+    this.name = 'BlockchainRpcUnavailableError';
+  }
+}
+
 /**
  * A cradle that the poller drives with raw chain state.  The transaction
  * manager inside the WASM cradle owns the durable watched-coin set and computes
@@ -127,19 +134,27 @@ export class BlockchainPoller {
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          if (/RPC request discarded during disconnect: spend/.test(detail)) {
+          if (error instanceof BlockchainRpcUnavailableError) {
             return { status: 'unavailable', detail };
           }
           throw error;
         }
       },
       createFeeSpend: adapter.createFeeSpend
-        ? (fee, concurrentSpendCoinId) =>
-            this.enqueueRpc(
-              'createFeeSpend',
-              () => adapter.createFeeSpend!(fee, concurrentSpendCoinId),
-              true,
-            )
+        ? async (fee, concurrentSpendCoinId) => {
+            try {
+              return await this.enqueueRpc(
+                'createFeeSpend',
+                () => adapter.createFeeSpend!(fee, concurrentSpendCoinId),
+                true,
+              );
+            } catch (error) {
+              if (error instanceof BlockchainRpcUnavailableError) {
+                return { kind: 'unavailable', reason: error.message };
+              }
+              throw error;
+            }
+          }
         : undefined,
       getAddress: () => this.enqueueRpc('getAddress', () => adapter.getAddress(), true),
       getBalance: () => this.enqueueRpc('getBalance', () => adapter.getBalance()),
@@ -182,13 +197,12 @@ export class BlockchainPoller {
 
   private enqueueRpc<T>(label: string, run: () => Promise<T> | T, foreground = false): Promise<T> {
     if (!this.isConnected()) {
-      return Promise.reject(new Error(`RPC request discarded during disconnect: ${label}`));
+      return Promise.reject(new BlockchainRpcUnavailableError(label));
     }
     const connectionEpoch = this.connectionEpoch;
     return new Promise<T>((resolve, reject) => {
       let settled = false;
-      const rejectForDisconnect = () =>
-        settle(reject, new Error(`RPC request discarded during disconnect: ${label}`));
+      const rejectForDisconnect = () => settle(reject, new BlockchainRpcUnavailableError(label));
       const settle = <V>(complete: (value: V) => void, value: V) => {
         if (settled) return;
         settled = true;

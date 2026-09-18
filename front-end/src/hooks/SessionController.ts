@@ -203,6 +203,7 @@ export class SessionController implements PollingGameSession {
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private transactionSubmitQueue: Promise<void> = Promise.resolve();
+  private queuedSubmissionIds = new Set<string>();
   private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
@@ -810,7 +811,12 @@ export class SessionController implements PollingGameSession {
         const { amount, target } = submission.fee_request;
         try {
           const feeSource = await blockchain.rpc.createFeeSpend?.(BigInt(amount), target);
-          if (feeSource) {
+          if (feeSource?.kind === 'unavailable') {
+            log(`[wasm] fee source unavailable id=${submission.id}: ${feeSource.reason}`);
+            this.deferSubmissionUntilFreshSync();
+            this.scheduleSave();
+            return;
+          } else if (feeSource) {
             feeSourceJson = jsonStringify(feeSource);
           } else {
             feeSourceJson = jsonStringify({
@@ -895,6 +901,11 @@ export class SessionController implements PollingGameSession {
 
   private submitTransaction(submission: TransactionSubmission) {
     if (this.transactionPublishNerfed) return;
+    if (this.queuedSubmissionIds.has(submission.id)) {
+      log(`[wasm] submitTransaction skipped duplicate queued submission id=${submission.id}`);
+      return;
+    }
+    this.queuedSubmissionIds.add(submission.id);
     // Guard the chain with a diagnostic catch: an unhandled rejection escaping
     // this promise is invisible in CI except as a bare empty-message test
     // failure, which is exactly the symptom we are chasing.
@@ -912,6 +923,9 @@ export class SessionController implements PollingGameSession {
       })
       .catch((e) => {
         diagStack('transactionSubmitQueue rejected', e);
+      })
+      .finally(() => {
+        this.queuedSubmissionIds.delete(submission.id);
       });
   }
 

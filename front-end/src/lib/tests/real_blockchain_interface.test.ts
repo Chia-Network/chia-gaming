@@ -727,12 +727,24 @@ describe('RealBlockchainInterface', () => {
     });
   });
 
-  it('propagates the wallet error when it cannot build a fee offer', async () => {
+  it('reports wallet rejection when it cannot build a fee offer', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockRejectedValue(new Error('wallet not synced'));
-    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).rejects.toThrow(
-      'wallet not synced',
+    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toEqual({
+      kind: 'failure',
+      reason: 'wallet not synced',
+    });
+  });
+
+  it('reports fee-offer transport failure as unavailable', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCreateOfferForIds.mockRejectedValue(
+      new WalletConnectTransportError('WalletConnect relayer disconnected'),
     );
+    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'WalletConnect relayer disconnected',
+    });
   });
 
   it('does not preselect or pin a fee parent coin', async () => {

@@ -676,6 +676,62 @@ describe('transaction submission', () => {
     blob.detachBlockchain(blockchain);
   });
 
+  it('suppresses a same-stack fresh-sync duplicate while its submission is queued', async () => {
+    const createFeeSpend = jest.fn().mockResolvedValue({
+      kind: 'bundle',
+      bundle: { coin_spends: [], aggregated_signature: '0x' },
+    });
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        createFeeSpend,
+        spend,
+        isReadyForPlay: () => true,
+      } as InternalBlockchainInterface,
+      60000,
+    );
+    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn([], []));
+    blob.rewardPuzzleHash = '11'.repeat(32);
+    const submission = {
+      id: 'same-id',
+      bundle: testSpendBundle('01'),
+      fee_request: { target: '22'.repeat(32), amount: '10' },
+    };
+    const finalizeSubmission = jest.fn(() => ({
+      protocol_bundle: testSpendBundle('01'),
+      bundle: {},
+      applied_fee: '10',
+      warning: null,
+    }));
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest
+        .fn()
+        .mockReturnValueOnce([submission])
+        .mockReturnValueOnce([submission])
+        .mockReturnValue([]),
+      finalize_submission: finalizeSubmission,
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+    blob.attachBlockchain(blockchain);
+
+    // report_coin_states queues the first copy in processResult, then the
+    // fresh-sync resubmit drains the same retained ID before promise jobs run.
+    blob.reportCoinStates(1n, []);
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(createFeeSpend).toHaveBeenCalledTimes(1);
+    expect(finalizeSubmission).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith(submission.id);
+    blob.detachBlockchain(blockchain);
+  });
+
   it('submits drained transactions sequentially', async () => {
     let resolveFirst: (() => void) | null = null;
     let markFirstStarted: (() => void) | null = null;

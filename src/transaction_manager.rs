@@ -681,11 +681,35 @@ impl<C> TransactionManager<C> {
         Ok(())
     }
 
-    pub fn reject_submission(&mut self, id: u64) -> Result<(), Error> {
-        if !self.submitted.iter().any(|tx| tx.id == id) {
-            return Err(Error::StrErr(format!("unknown submission id {id}")));
+    pub fn reject_submission(&mut self, id: u64) -> Result<(), Error>
+    where
+        C: ManagedGameSession,
+    {
+        let rejected = self
+            .submitted
+            .iter()
+            .find(|tx| tx.id == id)
+            .cloned()
+            .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))?;
+        let mut rearmed = Vec::new();
+        for watched in self.watched_coins.values_mut() {
+            if !watched.claim_submitted {
+                continue;
+            }
+            let Some(timeout_spend) = &watched.timeout_spend else {
+                continue;
+            };
+            if submission_intent_fingerprint(timeout_spend, &rejected.fee_intent)?
+                == rejected.intent_fingerprint
+            {
+                watched.claim_submitted = false;
+                if let Some(semantic) = watched.timeout_claim_semantic {
+                    rearmed.push(semantic);
+                }
+            }
         }
         self.retain_submitted(|tx| tx.id != id);
+        self.report_timeout_claim_rearms(rearmed)?;
         Ok(())
     }
 
@@ -1708,6 +1732,112 @@ mod tests {
         mgr.report_coin_states(&mut allocator, 16, &live)
             .expect("report");
         assert!(mgr.drain_submissions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejected_timeout_submission_rearms_only_matching_canonical_intent() {
+        let mut allocator = AllocEncoder::new();
+        let rejected_coin = test_coin(20);
+        let other_coin = test_coin(21);
+        let rejected_output = test_coin(22);
+        let other_output = test_coin(23);
+        let rejected_semantic = TimeoutClaimSemantic::ChannelTimeoutFinish;
+        let other_semantic = TimeoutClaimSemantic::GameOpponentTurn {
+            id: crate::common::types::GameID(42),
+        };
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![
+            watch_event_with_timeout_semantic(
+                &rejected_coin,
+                5,
+                test_bundle_spending_creating("rejected-timeout", &rejected_coin, &rejected_output),
+                rejected_semantic,
+            ),
+            watch_event_with_timeout_semantic(
+                &other_coin,
+                5,
+                test_bundle_spending_creating("other-timeout", &other_coin, &other_output),
+                other_semantic,
+            ),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.configure_fee(FeeConfiguration {
+            amount: Amount::new(10),
+            attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+        });
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        let live = vec![
+            CoinStateRecord {
+                coin: rejected_coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            },
+            CoinStateRecord {
+                coin: other_coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            },
+        ];
+        mgr.report_coin_states(&mut allocator, 15, &live)
+            .expect("mature claims");
+        let first = mgr.drain_submissions().unwrap();
+        assert_eq!(first.len(), 2);
+        let rejected = first
+            .iter()
+            .find(|submission| submission.bundle.name.as_deref() == Some("rejected-timeout"))
+            .expect("rejected timeout submission");
+
+        mgr.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: test_submission("unrelated", None),
+            fee_intent: SubmissionFeeIntent::AlreadyPaid,
+        });
+        let unrelated = mgr.drain_submissions().unwrap().remove(0);
+        mgr.reject_submission(unrelated.id).unwrap();
+        assert!(mgr.cradle().rearmed_timeout_claims.is_empty());
+        assert!(mgr.watched_coin(&rejected_coin).unwrap().claim_submitted);
+        assert!(mgr.watched_coin(&other_coin).unwrap().claim_submitted);
+
+        // Matching must use the fee intent captured at maturity, not the
+        // manager's current configuration.
+        mgr.configure_fee(FeeConfiguration {
+            amount: Amount::new(20),
+            attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+        });
+        mgr.reject_submission(rejected.id).unwrap();
+
+        assert!(!mgr.watched_coin(&rejected_coin).unwrap().claim_submitted);
+        assert!(mgr.watched_coin(&other_coin).unwrap().claim_submitted);
+        assert_eq!(mgr.cradle().rearmed_timeout_claims, vec![rejected_semantic]);
+
+        mgr.report_coin_states(&mut allocator, 15, &live)
+            .expect("same mature snapshot");
+        let retry = mgr.drain_submissions().unwrap();
+        assert_eq!(retry.len(), 1);
+        assert_ne!(retry[0].id, rejected.id);
+        assert_eq!(retry[0].bundle.name.as_deref(), Some("rejected-timeout"));
+        assert!(matches!(
+            &retry[0].fee_intent,
+            SubmissionFeeIntent::Attach { amount, .. } if amount == &Amount::new(20)
+        ));
+        let submitted = &mgr.cradle().submitted_timeout_claims;
+        assert_eq!(submitted.len(), 3);
+        assert_eq!(submitted.last(), Some(&rejected_semantic));
+        assert_eq!(
+            submitted[..2]
+                .iter()
+                .filter(|semantic| **semantic == rejected_semantic)
+                .count(),
+            1
+        );
+        assert_eq!(
+            submitted[..2]
+                .iter()
+                .filter(|semantic| **semantic == other_semantic)
+                .count(),
+            1
+        );
     }
 
     #[test]

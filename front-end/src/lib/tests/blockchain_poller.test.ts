@@ -564,9 +564,11 @@ describe('BlockchainPoller', () => {
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const height = deferred<bigint>();
     const selectCoins = jest.fn();
+    const createFeeSpend = jest.fn();
     const rpc = {
       getHeightInfo: () => height.promise,
       selectCoins,
+      createFeeSpend,
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
@@ -580,6 +582,7 @@ describe('BlockchainPoller', () => {
 
     await advanceLane(0);
     const walletRequest = poller.rpc.selectCoins('wallet', 1n);
+    const feeRequest = poller.rpc.createFeeSpend!(1n, 'fee-target');
 
     connected = false;
     onConnectionChange?.(false);
@@ -593,7 +596,12 @@ describe('BlockchainPoller', () => {
       status: 'unavailable',
       detail: 'RPC request discarded during disconnect: spend',
     });
+    await expect(feeRequest).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'RPC request discarded during disconnect: createFeeSpend',
+    });
     expect(selectCoins).not.toHaveBeenCalled();
+    expect(createFeeSpend).not.toHaveBeenCalled();
 
     height.resolve(100n);
     await advanceLane(0);

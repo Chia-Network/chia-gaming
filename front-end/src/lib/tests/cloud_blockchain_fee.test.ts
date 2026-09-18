@@ -165,12 +165,25 @@ describe('CloudBlockchainInterface fee support', () => {
     });
     const iface = new CloudBlockchainInterface();
     const protocolCoinId = 'ab'.repeat(32);
-    await expect(iface.createFeeSpend(500n, protocolCoinId)).rejects.toThrow(/popup/i);
+    await expect(iface.createFeeSpend(500n, protocolCoinId)).resolves.toEqual({
+      kind: 'failure',
+      reason: expect.stringMatching(/popup/i),
+    });
     const input = findSpendMutation(calls);
     expect(input.amount).toBe('0');
     expect(input.fee).toBe('500');
     expect(input.coinIds).toBeUndefined();
     expect(input.extraConditions).toEqual([{ opcode: '64', args: [protocolCoinId] }]);
+  });
+
+  it('reports fee-spend transport failure as unavailable', async () => {
+    setTestGlobal('fetch', jest.fn().mockRejectedValue(new TypeError('network disconnected')));
+    const iface = new CloudBlockchainInterface();
+
+    await expect(iface.createFeeSpend(500n, 'ab'.repeat(32))).resolves.toEqual({
+      kind: 'unavailable',
+      reason: expect.stringMatching(/network disconnected/i),
+    });
   });
 
   it('selectCoins treats the supplied amount as the exact requirement', async () => {

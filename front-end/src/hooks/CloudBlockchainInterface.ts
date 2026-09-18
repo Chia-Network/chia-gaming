@@ -2,6 +2,7 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
+  WalletFeeSourceOutcome,
   WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
@@ -710,18 +711,26 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   async createFeeSpend(
     fee: bigint,
     concurrentSpendCoinId: string,
-  ): Promise<{ kind: 'bundle'; bundle: WalletSpendBundle } | null> {
+  ): Promise<WalletFeeSourceOutcome | null> {
     if (fee <= 0n) return null;
     const targetCoinId = normalizeHex(concurrentSpendCoinId);
-    const bundle = await this.createDirectSpend(
-      0n,
-      [{ opcode: 64n, args: [targetCoinId] }],
-      undefined,
-      undefined,
-      fee,
-      'fee',
-    );
-    return { kind: 'bundle', bundle };
+    try {
+      const bundle = await this.createDirectSpend(
+        0n,
+        [{ opcode: 64n, args: [targetCoinId] }],
+        undefined,
+        undefined,
+        fee,
+        'fee',
+      );
+      return { kind: 'bundle', bundle };
+    } catch (error) {
+      const reason = cloudErrorDetail(error);
+      if (error instanceof CloudWalletTransportError) {
+        return { kind: 'unavailable', reason };
+      }
+      return { kind: 'failure', reason };
+    }
   }
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {

@@ -8,6 +8,7 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
+  WalletFeeSourceOutcome,
   WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 import { WalletType } from '../types/WalletType';
@@ -439,7 +440,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async createFeeSpend(
     fee: bigint,
     concurrentSpendCoinId: string,
-  ): Promise<{ kind: 'offer'; offer: string } | null> {
+  ): Promise<WalletFeeSourceOutcome | null> {
     if (fee <= 0n) return null;
     const protocolCoinId = concurrentSpendCoinId.startsWith('0x')
       ? concurrentSpendCoinId
@@ -470,7 +471,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       // insufficient balance.
       const text = collectErrorText(e);
       log(`[wc-blockchain] createFeeSpend failed: ${text}`);
-      throw e instanceof Error ? e : new Error(text);
+      if (e instanceof WalletConnectTransportError) {
+        return { kind: 'unavailable', reason: text };
+      }
+      return { kind: 'failure', reason: text };
     }
   }
 

@@ -232,6 +232,12 @@ export type WalletSubmitOutcome =
   | { status: 'unavailable'; detail: string }
   | { status: 'rejected'; detail: string };
 
+export type WalletFeeSourceOutcome =
+  | { kind: 'offer'; offer: string }
+  | { kind: 'bundle'; bundle: unknown }
+  | { kind: 'failure'; reason: string }
+  | { kind: 'unavailable'; reason: string };
+
 export interface WasmConnection {
   // System
   init: () => void;
@@ -553,7 +559,7 @@ export interface InternalBlockchainInterface {
   createFeeSpend?(
     fee: bigint,
     concurrentSpendCoinId: string,
-  ): Promise<{ kind: 'offer'; offer: string } | { kind: 'bundle'; bundle: unknown } | null>;
+  ): Promise<WalletFeeSourceOutcome | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
