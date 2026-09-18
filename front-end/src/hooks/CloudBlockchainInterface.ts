@@ -182,10 +182,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     return graphqlRequest<T>(query, safe, this.tokenProvider);
   }
 
-  private async coinset<T>(
-    endpoint: string,
-    request: Record<string, unknown>,
-  ): Promise<T> {
+  private async coinset<T>(endpoint: string, request: Record<string, unknown>): Promise<T> {
     if (!endpoint || endpoint.includes('/')) {
       throw new Error(`Coinset endpoint must be an unprefixed name: ${endpoint}`);
     }
@@ -674,10 +671,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           offered: [],
           requested: [],
           fee,
-          extraConditions: conditionsForGraphql(
-            [{ opcode: 64n, args: [targetCoinId] }],
-            undefined,
-          ),
+          extraConditions: conditionsForGraphql([{ opcode: 64n, args: [targetCoinId] }], undefined),
         },
         'fee',
       );

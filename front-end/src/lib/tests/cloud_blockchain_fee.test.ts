@@ -121,9 +121,7 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(input.offered).toEqual([{ amount: '1000' }]);
     expect(input.requested).toEqual([]);
     expect(input.fee).toBeUndefined();
-    expect(input.extraConditions).toEqual([
-      `ff43ff10ff80ffa0${preLauncherPuzzleHash}80`,
-    ]);
+    expect(input.extraConditions).toEqual([`ff43ff10ff80ffa0${preLauncherPuzzleHash}80`]);
   });
 
   it('adds ASSERT_BEFORE_HEIGHT_ABSOLUTE as a serialized condition', async () => {
@@ -199,9 +197,7 @@ describe('CloudBlockchainInterface fee support', () => {
       new CloudBlockchainInterface().createOfferForIds('uid', { '1': -1000n }),
     ).resolves.toEqual({ offer, tradeId: 'Offer_1' });
     const pollQuery = calls.find((call) => call.query.includes('transaction'))!.query;
-    expect(pollQuery.replace(/\s+/g, ' ')).toContain(
-      'transaction { offer { bech32 offerId } }',
-    );
+    expect(pollQuery.replace(/\s+/g, ' ')).toContain('transaction { offer { bech32 offerId } }');
   });
 
   it('cancels a persisted offer off chain by offerId', async () => {
@@ -392,10 +388,7 @@ describe('CloudBlockchainInterface fee support', () => {
   ])('classifies Cloud broadcast status %# as %s', async (status, expected) => {
     mockGraphql(() => ({
       coinset: {
-        response:
-          status === undefined
-            ? {}
-            : { success: false, status },
+        response: status === undefined ? {} : { success: false, status },
       },
     }));
     await expect(

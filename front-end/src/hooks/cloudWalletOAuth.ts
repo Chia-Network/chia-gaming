@@ -603,9 +603,7 @@ export async function graphqlRequest<T>(
   let payload = await readPayload(res);
   if (isUnauthenticated(payload)) {
     if (refreshed) {
-      throw new CloudWalletAuthError(
-        'Cloud Wallet rejected the OAuth grant (UNAUTHENTICATED)',
-      );
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (UNAUTHENTICATED)');
     }
     accessToken = await tokenProvider.getAccessToken({ forceRefresh: true });
     res = await run(accessToken);
@@ -614,9 +612,7 @@ export async function graphqlRequest<T>(
     }
     payload = await readPayload(res);
     if (isUnauthenticated(payload)) {
-      throw new CloudWalletAuthError(
-        'Cloud Wallet rejected the OAuth grant (UNAUTHENTICATED)',
-      );
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (UNAUTHENTICATED)');
     }
   }
 

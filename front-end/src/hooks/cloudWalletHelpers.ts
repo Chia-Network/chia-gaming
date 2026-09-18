@@ -36,10 +36,7 @@ function serializeClvmAtom(atomHex: string): string {
   throw new Error(`CLVM atom is too large: ${byteLength} bytes`);
 }
 
-export function serializeClvmCondition(condition: {
-  opcode: bigint;
-  args: string[];
-}): string {
+export function serializeClvmCondition(condition: { opcode: bigint; args: string[] }): string {
   const opcodeHex = encodeU64AsClvmHex(condition.opcode);
   return [opcodeHex, ...(condition.args ?? [])]
     .map((atom) => `ff${serializeClvmAtom(atom)}`)

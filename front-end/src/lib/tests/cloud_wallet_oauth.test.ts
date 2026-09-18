@@ -291,12 +291,7 @@ describe('graphqlRequest authentication retry', () => {
     setTestGlobal('fetch', jest.fn().mockImplementation(unauthenticated));
 
     await expect(
-      graphqlRequest(
-        'query { wallet { id } }',
-        undefined,
-        tokenProvider,
-        'https://api.example',
-      ),
+      graphqlRequest('query { wallet { id } }', undefined, tokenProvider, 'https://api.example'),
     ).rejects.toBeInstanceOf(CloudWalletAuthError);
     expect(tokenProvider.getAccessToken).toHaveBeenCalledTimes(2);
   });
@@ -543,10 +538,7 @@ describe('waitForGamingConsentWalletId grace period', () => {
     setTestGlobal('window', globalThis);
   });
 
-  const consentEvent = (
-    walletId: string,
-    origin = 'https://cw-review-3395.tailaecde.ts.net',
-  ) => ({
+  const consentEvent = (walletId: string, origin = 'https://cw-review-3395.tailaecde.ts.net') => ({
     origin,
     data: { type: GAMING_CONSENT_MESSAGE_TYPE, walletId },
   });
@@ -725,10 +717,7 @@ describe('CloudBlockchainInterface helpers', () => {
       [{ opcode: 51n, args: ['ab'.repeat(32), encodeU64AsClvmHex(100n)] }],
       4671865n,
     );
-    expect(conditions).toEqual([
-      `ff33ffa0${'ab'.repeat(32)}ff6480`,
-      'ff57ff8347497980',
-    ]);
+    expect(conditions).toEqual([`ff33ffa0${'ab'.repeat(32)}ff6480`, 'ff57ff8347497980']);
   });
 
   it('jsonSafeVariables converts bigint recursively', () => {
