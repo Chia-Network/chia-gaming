@@ -114,12 +114,11 @@ describe('session machine behavior sequences', () => {
           error: null,
         }),
 
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: '11',
-            member_ids: ['11'],
+            id: '11',
             origin: 'local',
-            disposition: 'outgoing',
+            status: 'outgoing',
             hand_proposal: {
               player_a_contribution: '10',
               player_b_contribution: '10',
@@ -139,7 +138,7 @@ describe('session machine behavior sequences', () => {
 
     expect(state.model.game.activeIds).toEqual(['7']);
 
-    expect(state.model.betweenHand.proposalGroups[0]?.memberIds).toEqual(['11']);
+    expect(state.model.betweenHand.pendingProposals[0]?.id).toBe('11');
 
     expect(state.model.game.currentHandOrigin).toBe('local');
   });

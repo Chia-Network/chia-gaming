@@ -15,33 +15,35 @@ see `OVERVIEW.md`. For on-chain dispute resolution, see `ON_CHAIN.md`.
 
 Games are initiated through a propose/accept flow:
 
-1. **Propose:** The caller submits one group request containing `game_type`
+1. **Propose:** The caller submits one scalar request containing `game_type`
    (the first generated member's first validation-program hash, not a factory
    hash or package name), game-specific `parameters`, and one shared `timeout`.
    The factory is not run and no games, contributions, referees, or member IDs
-   exist yet. The potato holder sends one `BatchAction::ProposeGroup` containing
-   a canonical proposal ID and the requested terms. Both endpoints use that
-   same ID. The receiver gets one
+   exist yet. Rust immediately allocates an endpoint-local `LocalProposalId`.
+   Only when the potato holder emits the request does it allocate the next
+   parity-sequenced `WireProposalId` and send `BatchAction::Propose`. The
+   receiver validates that wire ID, allocates its own fresh local ID, and gets one
    `ProposalMade` notification; the proposer does not.
    `ProposalMade` includes the structured Bencodex parameters so the UI can
    decode terms through the selected package without handling CLVM.
 2. **Accept:** The receiver sends one
-   `BatchAction::AcceptProposalGroup(origin_proposal_id)`. At execution time,
+   `BatchAction::AcceptProposal(origin_wire_id)`. At execution time,
    both sides run the factory with the current proposer reserve, current
    accepter reserve, and requested parameters. They assign shared sequential
    game IDs to the returned members and instantiate every referee and handler.
-3. **Cancel:** Either side cancels using the canonical proposal ID. If a
+3. **Cancel:** The local API uses the endpoint-local proposal ID; Rust maps it
+   to the origin wire ID. If a
    channel goes on-chain while a
    proposal is still pending, the unresolved proposal is cancelled.
 
 ### Receiver-Side Proposal Validation
 
-When an incoming `ProposeGroup` is processed, the receiver validates and stores
+When an incoming `Propose` is processed, the receiver validates and stores
 only the requested terms. Factory execution and all game-owned decoding are
 deferred until acceptance.
 
-- **Proposal ID parity and sequence:** Each origin has a strict parity sequence
-  for canonical proposal IDs. The next ID must match exactly; gaps, reuse, and
+- **Wire proposal ID parity and sequence:** Each origin has a strict parity
+  sequence. The next ID must match exactly; gaps, reuse, and
   wrong parity are protocol errors.
 - **Game timeout:** The proposal's `timeout` must be between 3 and 100
   blocks inclusive. The UX defaults to 15 blocks, but peers can propose
@@ -56,7 +58,7 @@ reserves before the next action is evaluated.
 
 ### Receiver-Side Acceptance Validation
 
-When an incoming `AcceptProposalGroup` is processed, its ID must identify a
+When an incoming `AcceptProposal` is processed, its wire ID must identify a
 proposal made by this endpoint. The factory receives
 `(proposer_reserve accepter_reserve parameters)`, with reserves taken from the
 current out-of-game balances at that exact point in the ordered batch.
@@ -74,24 +76,24 @@ the complete batch, including balances and game-ID allocation.
 Because cancel and accept requests are queued and only sent when the potato is
 held, several race conditions can occur:
 
-- **Stale cancel:** A player queues `CancelProposal` but by the time they hold
-the potato the proposal is already gone (accepted or cancelled by the peer).
-The cancel is silently discarded — `drain_queue_into_batch` checks
-`is_game_proposed()` and skips it. Note: cancellation by the **receiver** is
-authoritative (they are the only one who can accept, so deciding to cancel
-resolves it). Cancellation by the **proposer** is best-effort: the receiver
-may have already accepted on a previous potato pass, in which case the
-proposer's cancel evaporates and a `ProposalAcceptedGroup` arrives instead.
+- **Cancellation ordering:** Receiver-side rejection is locally definitive for
+presentation, but Rust retains the pending mapping until it can emit
+`CancelProposal`; that drain is silent locally. If the proposer's cancellation
+arrives first, Rust removes the obsolete queued rejection and emits neither a
+second wire action nor a duplicate local notification. Proposer-side
+cancellation remains advisory: an earlier peer acceptance can win potato order
+and produce `ProposalAcceptedGroup` instead.
 - **Stale accept:** A player queues `AcceptProposal` but the proposal was
 already cancelled by the peer before the accept is sent. The accept silently
 evaporates — the `ProposalCancelled` from the peer's cancel already resolved
 the proposal lifecycle (Rule A). Acceptance is advisory; no notification is
-emitted for the stale accept.
+emitted for the stale accept. Rust removes that queued intent when it applies
+the authoritative peer cancellation.
 - **Insufficient balance on accept:** Before any group member is accepted, the
   factory may return proposer/accepter shortage flags. Rust also sums all
   returned proposer and accepter contributions and compares both aggregates
   with current reserves. Locally, failure emits `InsufficientBalance`, removes
-  the proposal, and sends an explicit `CancelProposalGroup`; it does not emit a
+  the proposal, and sends an explicit `CancelProposal`; it does not emit a
   second local `ProposalCancelled`.
 
 ### Proposal Collision Handling
@@ -142,10 +144,9 @@ economics, first-turn ownership, validation programs, and one readable CLVM
 parameter value per member. The wire carries one accept or cancel action per
 proposal and never carries generated game IDs.
 
-**Notification:** The receiver gets exactly one `ProposalMade` for the group.
-Its `id` is the canonical proposal ID; pending `group_ids` is `[id]` because
-members do not exist yet. On acceptance, both sides receive one
-`ProposalAcceptedGroup` containing the same canonical proposal ID plus
+**Notification:** The receiver gets exactly one `ProposalMade` for the proposal.
+Its `id` is that endpoint's local proposal ID. On acceptance, both sides receive
+one `ProposalAcceptedGroup` containing their own endpoint-local proposal ID plus
 the generated members in factory order. Each member contains its generated
 game ID, approved player-A/player-B contributions, local turn ownership, and
 factory-approved readable parameters for frontend initialization.
@@ -153,14 +154,14 @@ factory-approved readable parameters for frontend initialization.
 ### Ordered Acceptance and Move
 
 The wire protocol needs no combined action for accepting and immediately
-moving. A batch may contain `AcceptProposalGroup` followed by `Move`; the
+moving. A batch may contain `AcceptProposal` followed by `Move`; the
 receiver processes them in order, so the generated game exists before the move
 is validated. The host API deliberately exposes the two operations separately
 and does not guess which factory-generated member should move.
 
-**Key code:** `src/session_phases/mod.rs` — `propose_games`,
+**Key code:** `src/session_phases/mod.rs` — `propose`,
 `accept_proposal`, `cancel_proposal`;
-`wasm/src/mod.rs` — `propose_games`, `accept_proposal`
+`wasm/src/mod.rs` — `propose`, `accept_proposal`
 
 ---
 
@@ -172,14 +173,14 @@ return formats, chaining), see `HANDLER_GUIDE.md`.
 A single game's lifecycle, independent of other concurrent games:
 
 ```
-1. Propose  (BatchAction::ProposeGroup)
+1. Propose  (BatchAction::Propose)
    → requested terms enter proposed_games on both sides
 
-2. Accept   (one BatchAction::AcceptProposalGroup for the canonical proposal ID)
+2. Accept   (one BatchAction::AcceptProposal for the origin wire ID)
    → factory runs against current proposer/accepter reserves
    → all referees + game handlers are instantiated atomically
    → each side receives exactly one ProposalAcceptedGroup
-     { id: proposal_id,
+     { id: endpoint_local_proposal_id,
        members: [{ id, player_a_contribution, player_b_contribution,
                    our_turn, readable_parameters }, ...] }
      in factory order

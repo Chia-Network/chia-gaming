@@ -3,7 +3,8 @@ use std::collections::VecDeque;
 use crate::channel_state::types::ReadableMove;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, GameID, GameType, Program, PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinString, GameID, GameType, LocalProposalId, Program, PuzzleHash,
+    SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
     CoinSpendRequest, HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadC,
@@ -258,30 +259,25 @@ pub enum GameNotification {
     },
 
     ProposalMade {
-        /// Canonical parity-namespaced proposal ID used locally and on the wire.
-        id: GameID,
-        /// Proposals are singleton requests; accepted game IDs arrive later.
-        group_ids: Vec<GameID>,
+        /// Endpoint-local proposal handle. Wire IDs are never exposed to the host.
+        id: LocalProposalId,
         sender_is_player_a: bool,
         timeout: Timeout,
         game_type: GameType,
         parameters: ProposalParameters,
     },
     ProposalAcceptedGroup {
-        /// Canonical ID of the pending proposal that became live.
-        id: GameID,
-        /// Members in the exact factory/wire order. The first member is canonical.
+        /// Endpoint-local ID of the consumed pending proposal.
+        id: LocalProposalId,
+        /// Generated games in exact factory order.
         members: Vec<AcceptedGameMember>,
     },
     ProposalCancelled {
-        /// Canonical first member of the cancelled proposal group.
-        id: GameID,
-        /// Members in exact factory order (singleton => `[id]`).
-        group_ids: Vec<GameID>,
+        id: LocalProposalId,
         reason: CancelReason,
     },
     InsufficientBalance {
-        id: GameID,
+        id: LocalProposalId,
         our_balance_short: bool,
         their_balance_short: bool,
     },

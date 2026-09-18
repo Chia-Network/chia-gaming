@@ -1671,22 +1671,17 @@ export class SessionController implements PollingGameSession {
 
   // --- Game actions (called by higher layer) ---
 
-  proposeGame(params: ProposeGameParams): string[] {
-    return this.proposeGames([params]);
-  }
-
-  proposeGames(paramsList: ProposeGameParams[]): string[] {
+  proposeGame(params: ProposeGameParams): string {
     if (!this.cradle) throw new Error('no cradle');
     if (!this.wc) throw new Error('no wasm');
-    if (paramsList.length !== 1) {
-      throw new Error(`proposeGames expects one atomic group request, got ${paramsList.length}`);
-    }
-    const result = this.cradle.propose_games(paramsList);
+    const result = this.cradle.propose(params);
     this.processCommandResult(result, 'propose game');
-    if (!result?.ids) {
-      throw new Error('proposeGames returned no ids');
+    const scalarId = (result as typeof result & { id?: string }).id;
+    if (scalarId !== undefined) return scalarId;
+    if (result?.ids?.length !== 1) {
+      throw new Error('propose game returned no scalar local proposal id');
     }
-    return result.ids;
+    return result.ids[0]!;
   }
 
   acceptProposal(gameId: string): void {

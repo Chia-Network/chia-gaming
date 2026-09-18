@@ -236,7 +236,7 @@ pub(in super::super) fn run_script(
                         } else {
                             parameters
                         };
-                        harness.propose_games(
+                        harness.propose(
                             allocator,
                             *who,
                             &[GameProposal {
@@ -249,7 +249,7 @@ pub(in super::super) fn run_script(
                         ()
                     }
                     SimScriptAction::ProposeKrunkGroup(who, _trigger) => {
-                        harness.propose_games(
+                        harness.propose(
                             allocator,
                             *who,
                             &[GameProposal {
@@ -273,8 +273,8 @@ pub(in super::super) fn run_script(
                         }
                         ()
                     }
-                    SimScriptAction::MalformedAcceptProposalGroup(who, local, wire) => {
-                        if !harness.malformed_accept_proposal_group(allocator, *who, local, wire)? {
+                    SimScriptAction::MalformedAcceptProposal(who, local, wire) => {
+                        if !harness.malformed_accept_proposal(allocator, *who, local, wire)? {
                             advance_script = false;
                         }
                         ()
@@ -420,7 +420,7 @@ pub(in super::super) fn run_script(
                         };
                         let parameters =
                             ProposalParameters::from_program_for_testing(allocator, &parameters)?;
-                        harness.propose_games(
+                        harness.propose(
                             allocator,
                             *who,
                             &[GameProposal {
@@ -431,7 +431,7 @@ pub(in super::super) fn run_script(
                             }],
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
-                            wire.origin_wire_id = GameID(wire.origin_wire_id.0 ^ 1);
+                            wire.origin_wire_id = WireProposalId(wire.origin_wire_id.0 ^ 1);
                             Ok(())
                         })?;
                         ()
@@ -446,7 +446,7 @@ pub(in super::super) fn run_script(
                         };
                         let parameters =
                             ProposalParameters::from_program_for_testing(allocator, &parameters)?;
-                        harness.propose_games(
+                        harness.propose(
                             allocator,
                             *who,
                             &[GameProposal {
@@ -475,7 +475,7 @@ pub(in super::super) fn run_script(
                         } else {
                             ProposalParameters::from_program_for_testing(allocator, extras)?
                         };
-                        harness.propose_games(
+                        harness.propose(
                             allocator,
                             *who,
                             &[GameProposal {
@@ -486,7 +486,7 @@ pub(in super::super) fn run_script(
                             }],
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
-                            wire.origin_wire_id = GameID(wire.origin_wire_id.0 + 2);
+                            wire.origin_wire_id = WireProposalId(wire.origin_wire_id.0 + 2);
                             Ok(())
                         })?;
                         ()
@@ -497,7 +497,7 @@ pub(in super::super) fn run_script(
                         } else {
                             ProposalParameters::from_program_for_testing(allocator, extras)?
                         };
-                        harness.propose_games(
+                        harness.propose(
                             allocator,
                             *who,
                             &[GameProposal {
@@ -508,7 +508,8 @@ pub(in super::super) fn run_script(
                             }],
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
-                            wire.origin_wire_id = GameID(wire.origin_wire_id.0.saturating_sub(2));
+                            wire.origin_wire_id =
+                                WireProposalId(wire.origin_wire_id.0.saturating_sub(2));
                             Ok(())
                         })?;
                         ()
@@ -521,7 +522,7 @@ pub(in super::super) fn run_script(
                         };
                         let parameters =
                             ProposalParameters::from_program_for_testing(allocator, &parameters)?;
-                        harness.propose_games(
+                        harness.propose(
                             allocator,
                             *who,
                             &[GameProposal {
@@ -548,7 +549,7 @@ pub(in super::super) fn run_script(
                         };
                         let parameters =
                             ProposalParameters::from_program_for_testing(allocator, &parameters)?;
-                        harness.propose_games(
+                        harness.propose(
                             allocator,
                             *who,
                             &[GameProposal {

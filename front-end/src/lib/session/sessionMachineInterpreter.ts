@@ -82,10 +82,10 @@ export class SessionMachineInterpreter {
               sender_is_player_a: effect.handProposal.senderIsPlayerA,
               parameters: effect.handProposal.parameters,
             }),
-          (ids) =>
+          (id) =>
             dependencies.dispatch({
               type: 'proposal-sent',
-              ids,
+              id,
               handProposal: effect.handProposal,
             }),
         );

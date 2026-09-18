@@ -202,9 +202,9 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
   await exchange();
   const review = lanes[1].runtime
     .getState()
-    .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-review');
   assert.ok(review);
-  lanes[1].runtime.dispatch({ type: 'accept-review', primaryId: review.primaryId });
+  lanes[1].runtime.dispatch({ type: 'accept-review', id: review.id });
   await exchange();
 
   const firstIds = [...lanes[0].runtime.getState().model.game.currentHandIds];
@@ -311,9 +311,9 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
   await exchange();
   const secondProposal = lanes[1].runtime
     .getState()
-    .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-cached');
   assert.ok(secondProposal);
-  assert.equal(secondProposal.memberIds.length, 1);
+  assert.equal(secondProposal.id.length > 0, true);
   lanes[1].runtime.dispatch({ type: 'choose-same-terms' });
   await exchange();
   const secondIds = lanes[0].runtime.getState().model.game.currentHandIds;

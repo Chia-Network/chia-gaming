@@ -208,7 +208,7 @@ export function useGameSession(
   };
   useEffect(() => {
     runtime.setRender(setMachineState);
-    return () => runtime.setRender(() => {});
+    return () => runtime.clearRender();
   }, [runtime]);
   const dispatchHostProjection = useCallback(() => {
     const status = controller.getRestoreStatus();
@@ -317,7 +317,7 @@ export function useGameSession(
     handSource: liveHandSource,
     appendGameLog,
     betweenHandMode: model.betweenHand.mode,
-    incomingProposalGroup: view.incomingProposalGroup,
+    incomingProposal: view.incomingProposal,
     lastHandProposal: model.betweenHand.lastHandProposal,
     composeDraftState: compose,
     chooseNewHandSameTerms: () => dispatch({ type: 'choose-same-terms' }),
@@ -328,7 +328,7 @@ export function useGameSession(
     composeProposalSent: compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: (handProposal) => dispatch({ type: 'submit-compose', handProposal }),
-    acceptReviewedProposal: (primaryId) => dispatch({ type: 'accept-review', primaryId }),
+    acceptReviewedProposal: (id) => dispatch({ type: 'accept-review', id }),
     rejectReviewedProposal: () => dispatch({ type: 'reject-review' }),
     startCleanShutdown: () => dispatch({ type: 'start-clean-shutdown' }),
     cleanShutdownStarted: model.channel.cleanShutdownStarted,

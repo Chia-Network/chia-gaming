@@ -43,8 +43,8 @@ mod sim_tests {
         sign_reward_payout, ChiaIdentity,
     };
     use crate::common::types::{
-        Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, Program, PublicKey, Puzzle,
-        PuzzleHash, Sha256tree,
+        Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, LocalProposalId, Program,
+        PublicKey, Puzzle, PuzzleHash, Sha256tree, WireProposalId,
     };
     use crate::simulator::Simulator;
 
@@ -174,14 +174,33 @@ mod sim_tests {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum ActionReadiness {
         Immediate,
-        GameCanMove { player: usize, game_id: GameID },
-        AcceptProposal { player: usize, game_id: GameID },
-        ChannelReady { player: usize },
-        ProposalExists { player: usize, game_id: GameID },
-        ProposalKnown { player: usize, game_id: GameID },
-        MoveApplied { player: usize, game_id: GameID },
+        GameCanMove {
+            player: usize,
+            game_id: GameID,
+        },
+        AcceptProposal {
+            player: usize,
+            proposal_id: LocalProposalId,
+        },
+        ChannelReady {
+            player: usize,
+        },
+        ProposalExists {
+            player: usize,
+            proposal_id: LocalProposalId,
+        },
+        ProposalKnown {
+            player: usize,
+            proposal_id: LocalProposalId,
+        },
+        MoveApplied {
+            player: usize,
+            game_id: GameID,
+        },
         NerfedTransactionAvailable,
-        AfterGame { game_id: GameID },
+        AfterGame {
+            game_id: GameID,
+        },
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -248,7 +267,7 @@ mod sim_tests {
         /// Wait until a player has observed channel creation.
         WaitForChannel(usize),
         /// Wait until a player has stored a proposal.
-        WaitForProposal(usize, GameID),
+        WaitForProposal(usize, LocalProposalId),
         /// Wait until a player's queued move has actually applied.
         WaitForMoveApplied(usize, GameID),
         /// Corrupt a player's state_number for testing edge cases.
@@ -268,16 +287,16 @@ mod sim_tests {
         NerfMessages(usize),
         /// Stop nerfing messages.
         UnNerfMessages,
-        /// Accept a proposed game. (player, game_id)
-        AcceptProposal(usize, GameID),
+        /// Accept a proposed game. (player, local proposal ID)
+        AcceptProposal(usize, LocalProposalId),
         /// Queue two proposal acceptances before flushing, preserving bundle order.
-        AcceptProposalPair(usize, GameID, GameID),
-        /// Accept locally by one member but replace the wire canonical group ID.
-        MalformedAcceptProposalGroup(usize, GameID, GameID),
+        AcceptProposalPair(usize, LocalProposalId, LocalProposalId),
+        /// Accept locally but replace the wire proposal ID.
+        MalformedAcceptProposal(usize, LocalProposalId, WireProposalId),
         /// Queue two acceptances and corrupt the second wire proposal ID.
-        MalformedSecondAcceptInPair(usize, GameID, GameID, GameID),
-        /// Cancel a proposed game (player, game_id).
-        CancelProposal(usize, GameID),
+        MalformedSecondAcceptInPair(usize, LocalProposalId, LocalProposalId, WireProposalId),
+        /// Cancel a proposed game (player, local proposal ID).
+        CancelProposal(usize, LocalProposalId),
         /// Snapshot the current unroll spend info for later stale unroll.
         SaveUnrollSnapshot(usize),
         /// Force-submit a stale unroll using a previously saved snapshot.
@@ -286,8 +305,8 @@ mod sim_tests {
         /// Used for testing message validation (e.g. oversized messages).
         InjectRawMessage(usize, Vec<u8>),
         /// Force a self-accept: bypass local parity check and send
-        /// AcceptProposal for our own game_id (SEC-975). (player, game_id)
-        SelfAcceptProposal(usize, GameID),
+        /// AcceptProposal for our own proposal (SEC-975). (player, local proposal ID)
+        SelfAcceptProposal(usize, LocalProposalId),
         /// Propose a game but tamper the outbound message to use a game_id
         /// with the wrong parity. Tests receiver-side parity rejection.
         WrongParityProposal(usize),
@@ -371,11 +390,8 @@ mod sim_tests {
                 SimScriptAction::AcceptProposalPair(p, first, second) => {
                     write!(formatter, "AcceptProposalPair({p},{first:?},{second:?})")
                 }
-                SimScriptAction::MalformedAcceptProposalGroup(p, local, wire) => {
-                    write!(
-                        formatter,
-                        "MalformedAcceptProposalGroup({p},{local:?},{wire:?})"
-                    )
+                SimScriptAction::MalformedAcceptProposal(p, local, wire) => {
+                    write!(formatter, "MalformedAcceptProposal({p},{local:?},{wire:?})")
                 }
                 SimScriptAction::MalformedSecondAcceptInPair(p, first, second, wire) => {
                     write!(
@@ -431,12 +447,12 @@ mod sim_tests {
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
                 },
-                Self::AcceptProposal(player, game_id)
-                | Self::AcceptProposalPair(player, game_id, _)
-                | Self::MalformedAcceptProposalGroup(player, game_id, _) => ActionSchedule {
+                Self::AcceptProposal(player, proposal_id)
+                | Self::AcceptProposalPair(player, proposal_id, _)
+                | Self::MalformedAcceptProposal(player, proposal_id, _) => ActionSchedule {
                     readiness: ActionReadiness::AcceptProposal {
                         player: *player,
-                        game_id: *game_id,
+                        proposal_id: *proposal_id,
                     },
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
@@ -461,10 +477,10 @@ mod sim_tests {
                     post_action_drain: PostActionDrain::None,
                     expects_on_chain_transition: false,
                 },
-                Self::WaitForProposal(player, game_id) => ActionSchedule {
+                Self::WaitForProposal(player, proposal_id) => ActionSchedule {
                     readiness: ActionReadiness::ProposalExists {
                         player: *player,
-                        game_id: *game_id,
+                        proposal_id: *proposal_id,
                     },
                     post_action_drain: PostActionDrain::None,
                     expects_on_chain_transition: false,
@@ -498,10 +514,10 @@ mod sim_tests {
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
                 },
-                Self::CancelProposal(player, game_id) => ActionSchedule {
+                Self::CancelProposal(player, proposal_id) => ActionSchedule {
                     readiness: ActionReadiness::ProposalKnown {
                         player: *player,
-                        game_id: *game_id,
+                        proposal_id: *proposal_id,
                     },
                     post_action_drain: PostActionDrain::OnChain,
                     expects_on_chain_transition: false,
@@ -650,11 +666,8 @@ mod sim_tests {
             timeout: timeout.clone(),
             parameters: crate::session_phases::proposal::ProposalParameters::Null,
         };
-        let local_0 = party.player(0).ch.allocate_my_proposal_id();
-        let wire_id = party
-            .player(0)
-            .ch
-            .record_sent_proposal(local_0, &proposal)?;
+        let local_0 = party.player(0).ch.create_outgoing_proposal(&proposal)?;
+        let wire_id = party.player(0).ch.emit_outgoing_proposal(local_0)?;
         let local_1 = party
             .player(1)
             .ch
@@ -669,12 +682,12 @@ mod sim_tests {
         party
             .player(1)
             .ch
-            .accept_proposal_games(env, &local_1, &[their_start], true)?;
+            .accept_proposal_games(env, local_1, &[their_start], true)?;
         let accept_sigs = party.player(1).ch.update_cached_unroll_state(env)?;
         party
             .player(0)
             .ch
-            .accept_proposal_games(env, &local_0, &[our_start], false)?;
+            .accept_proposal_games(env, local_0, &[our_start], false)?;
         let recv_accept = party
             .player(0)
             .ch
@@ -707,6 +720,7 @@ mod sim_tests {
         #[test]
         fn every_script_action_has_an_exhaustive_data_bearing_schedule() {
             let gid = GameID(7);
+            let proposal_id = LocalProposalId(7);
             let immediate_drain =
                 schedule(ActionReadiness::Immediate, PostActionDrain::OnChain, false);
             let immediate_no_drain =
@@ -726,7 +740,7 @@ mod sim_tests {
             let accept = schedule(
                 ActionReadiness::AcceptProposal {
                     player: 1,
-                    game_id: gid,
+                    proposal_id,
                 },
                 PostActionDrain::OnChain,
                 false,
@@ -744,7 +758,7 @@ mod sim_tests {
             let proposal = schedule(
                 ActionReadiness::ProposalExists {
                     player: 1,
-                    game_id: gid,
+                    proposal_id,
                 },
                 PostActionDrain::None,
                 false,
@@ -841,7 +855,7 @@ mod sim_tests {
                 (SimScriptAction::AcceptSettlement(1, gid), immediate_drain),
                 (SimScriptAction::CleanShutdown(1), immediate_drain),
                 (SimScriptAction::WaitForChannel(1), channel_no_drain),
-                (SimScriptAction::WaitForProposal(1, gid), proposal),
+                (SimScriptAction::WaitForProposal(1, proposal_id), proposal),
                 (SimScriptAction::WaitForMoveApplied(1, gid), move_applied),
                 (
                     SimScriptAction::CorruptStateNumber(1, 9),
@@ -862,25 +876,30 @@ mod sim_tests {
                 ),
                 (SimScriptAction::NerfMessages(1), immediate_no_drain),
                 (SimScriptAction::UnNerfMessages, immediate_no_drain),
-                (SimScriptAction::AcceptProposal(1, gid), accept),
+                (SimScriptAction::AcceptProposal(1, proposal_id), accept),
                 (
-                    SimScriptAction::AcceptProposalPair(1, gid, GameID(9)),
+                    SimScriptAction::AcceptProposalPair(1, proposal_id, LocalProposalId(9)),
                     accept,
                 ),
                 (
-                    SimScriptAction::MalformedAcceptProposalGroup(1, gid, GameID(9)),
+                    SimScriptAction::MalformedAcceptProposal(1, proposal_id, WireProposalId(9)),
                     accept,
                 ),
                 (
-                    SimScriptAction::MalformedSecondAcceptInPair(1, gid, GameID(9), GameID(11)),
+                    SimScriptAction::MalformedSecondAcceptInPair(
+                        1,
+                        proposal_id,
+                        LocalProposalId(9),
+                        WireProposalId(11),
+                    ),
                     immediate_drain,
                 ),
                 (
-                    SimScriptAction::CancelProposal(1, gid),
+                    SimScriptAction::CancelProposal(1, proposal_id),
                     schedule(
                         ActionReadiness::ProposalKnown {
                             player: 1,
-                            game_id: gid,
+                            proposal_id,
                         },
                         PostActionDrain::OnChain,
                         false,
@@ -892,7 +911,10 @@ mod sim_tests {
                     SimScriptAction::InjectRawMessage(1, vec![1]),
                     immediate_drain,
                 ),
-                (SimScriptAction::SelfAcceptProposal(1, gid), immediate_drain),
+                (
+                    SimScriptAction::SelfAcceptProposal(1, proposal_id),
+                    immediate_drain,
+                ),
                 (SimScriptAction::WrongParityProposal(1), immediate_drain),
                 (
                     SimScriptAction::InvalidProposalParameters(1),

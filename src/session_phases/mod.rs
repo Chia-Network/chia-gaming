@@ -14,8 +14,8 @@ use crate::channel_state::types::{
 };
 use crate::channel_state::ChannelState;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    ProgramRef, PuzzleHash, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    LocalProposalId, Program, ProgramRef, PuzzleHash, SpendBundle, Timeout, WireProposalId,
 };
 use crate::session_phases::effects::{
     format_coin, AcceptedGameMember, CancelReason, ChannelStatus, ChannelStatusSnapshot,
@@ -27,7 +27,7 @@ use crate::shutdown::{complete_shutdown_spend, get_conditions_with_channel_state
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::types::{
     validate_new_move_action, BatchAction, FromLocalUI, GameAction, PeerMessage, PeerMove,
-    PotatoState, WireProposalGroup,
+    PotatoState, WireProposal,
 };
 
 use crate::session_phases::proposal::GameProposal;
@@ -135,8 +135,8 @@ struct DrainQueueFailure {
 enum AcceptanceOutcome {
     Accepted(Vec<AcceptedGameMember>),
     Insufficient {
-        local_id: GameID,
-        origin_wire_id: GameID,
+        local_id: LocalProposalId,
+        origin_wire_id: WireProposalId,
         our_balance_short: bool,
         their_balance_short: bool,
     },
@@ -144,14 +144,14 @@ enum AcceptanceOutcome {
 
 fn format_batch_action(action: &BatchAction) -> String {
     match action {
-        BatchAction::ProposeGroup(group) => {
+        BatchAction::Propose(proposal) => {
             format!(
-                "ProposeGroup wire_id={} type={} timeout={}",
-                group.origin_wire_id, group.start.game_type, group.start.timeout,
+                "Propose wire_id={} type={} timeout={}",
+                proposal.origin_wire_id, proposal.start.game_type, proposal.start.timeout,
             )
         }
-        BatchAction::AcceptProposalGroup(id) => format!("AcceptProposalGroup id={id}"),
-        BatchAction::CancelProposalGroup(id) => format!("CancelProposalGroup id={id}"),
+        BatchAction::AcceptProposal(id) => format!("AcceptProposal id={id}"),
+        BatchAction::CancelProposal(id) => format!("CancelProposal id={id}"),
         BatchAction::Move(id, details) => {
             format!("Move id={id} mover_share={}", details.mover_share)
         }
@@ -219,16 +219,12 @@ impl OffChainPhase {
     fn execute_acceptance(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        local_id: GameID,
+        local_id: LocalProposalId,
         local_is_proposer: bool,
         cache_for_redo: bool,
     ) -> Result<AcceptanceOutcome, Error> {
-        let proposal = self
-            .channel_state()?
-            .find_proposal(&local_id)
-            .cloned()
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {local_id:?}")))?;
-        if self.channel_state()?.is_our_proposal(&local_id) != local_is_proposer {
+        let proposal = self.channel_state()?.find_proposal(local_id)?.clone();
+        if self.channel_state()?.is_our_proposal(local_id) != local_is_proposer {
             return Err(Error::StrErr(
                 "proposal accepter/origin mismatch".to_string(),
             ));
@@ -267,7 +263,9 @@ impl OffChainPhase {
                 accepter_balance_short,
             } => Ok(AcceptanceOutcome::Insufficient {
                 local_id,
-                origin_wire_id: proposal.id,
+                origin_wire_id: proposal
+                    .origin_wire_id
+                    .ok_or_else(|| Error::StrErr(format!("proposal {local_id} has no wire id")))?,
                 our_balance_short: if local_is_proposer {
                     proposer_balance_short
                 } else {
@@ -313,7 +311,9 @@ impl OffChainPhase {
                 if proposer_balance_short || accepter_balance_short {
                     return Ok(AcceptanceOutcome::Insufficient {
                         local_id,
-                        origin_wire_id: proposal.id,
+                        origin_wire_id: proposal.origin_wire_id.ok_or_else(|| {
+                            Error::StrErr(format!("proposal {local_id} has no wire id"))
+                        })?,
                         our_balance_short: if local_is_proposer {
                             proposer_balance_short
                         } else {
@@ -357,7 +357,7 @@ impl OffChainPhase {
                     .collect();
                 self.channel_state_mut()?.accept_proposal_games(
                     env,
-                    &local_id,
+                    local_id,
                     &starts,
                     cache_for_redo,
                 )?;
@@ -440,9 +440,10 @@ impl OffChainPhase {
     pub(crate) fn self_accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
-        let (_continued, effects) = self.do_game_action(GameAction::ForcedSelfAccept(*game_id))?;
+        let (_continued, effects) =
+            self.do_game_action(GameAction::ForcedSelfAccept(*proposal_id))?;
         Ok(effects)
     }
 
@@ -783,30 +784,22 @@ impl OffChainPhase {
 
         for action in actions.iter() {
             match action {
-                BatchAction::ProposeGroup(wire) => {
-                    let cancelled: Vec<GameID> = self
+                BatchAction::Propose(wire) => {
+                    let cancelled: Vec<LocalProposalId> = self
                         .game_action_queue
                         .iter()
                         .filter_map(|a| match a {
-                            GameAction::QueuedProposalGroup(local_id, _) => Some(*local_id),
+                            GameAction::QueuedProposal(local_id) => Some(*local_id),
                             _ => None,
-                        })
-                        .filter(|local_id| {
-                            !self.game_action_queue.iter().any(|action| {
-                                matches!(
-                                    action,
-                                    GameAction::QueuedCancelProposalGroupSilently(cancelled_id)
-                                        if cancelled_id == local_id
-                                )
-                            })
                         })
                         .collect();
                     for id in cancelled {
-                        self.game_action_queue
-                            .push_back(GameAction::QueuedCancelProposalGroupSilently(id));
+                        self.game_action_queue.retain(|action| {
+                            !matches!(action, GameAction::QueuedProposal(queued) if *queued == id)
+                        });
+                        self.channel_state_mut()?.remove_proposal(id)?;
                         effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                             id,
-                            group_ids: vec![id],
                             reason: CancelReason::SupersededByIncoming,
                         }));
                     }
@@ -821,11 +814,10 @@ impl OffChainPhase {
                             wire.start.game_type,
                         )));
                         self.game_action_queue
-                            .push_back(GameAction::QueuedCancelProposalGroupSilently(local_id));
+                            .push_back(GameAction::QueuedCancelProposalSilently(local_id));
                     } else {
                         effects.push(Effect::Notify(GameNotification::ProposalMade {
                             id: local_id,
-                            group_ids: vec![local_id],
                             sender_is_player_a: wire.start.sender_is_player_a,
                             timeout: wire.start.timeout.clone(),
                             game_type: wire.start.game_type.clone(),
@@ -833,10 +825,18 @@ impl OffChainPhase {
                         }));
                     }
                 }
-                BatchAction::AcceptProposalGroup(origin_wire_id) => {
-                    let local_id = *origin_wire_id;
+                BatchAction::AcceptProposal(origin_wire_id) => {
+                    let local_id = self.channel_state()?.local_proposal_id(*origin_wire_id)?;
                     match self.execute_acceptance(env, local_id, true, false)? {
                         AcceptanceOutcome::Accepted(members) => {
+                            self.game_action_queue.retain(|action| {
+                                !matches!(
+                                    action,
+                                    GameAction::QueuedCancelProposal(id)
+                                        | GameAction::QueuedCancelProposalSilently(id)
+                                        if *id == local_id
+                                )
+                            });
                             accepted_groups.push((local_id, members));
                         }
                         AcceptanceOutcome::Insufficient { .. } => {
@@ -846,21 +846,38 @@ impl OffChainPhase {
                         }
                     }
                 }
-                BatchAction::CancelProposalGroup(origin_wire_id) => {
-                    let proposal = self.channel_state_mut()?.remove_proposal(origin_wire_id)?;
+                BatchAction::CancelProposal(origin_wire_id) => {
+                    let local_id = self.channel_state()?.local_proposal_id(*origin_wire_id)?;
+                    let suppress_notification = self.game_action_queue.iter().any(|action| {
+                        matches!(
+                            action,
+                            GameAction::QueuedCancelProposalSilently(id) if *id == local_id
+                        )
+                    });
+                    self.game_action_queue.retain(|action| {
+                        !matches!(
+                            action,
+                            GameAction::QueuedAcceptProposal(id)
+                                | GameAction::QueuedCancelProposal(id)
+                                | GameAction::QueuedCancelProposalSilently(id)
+                                if *id == local_id
+                        )
+                    });
+                    let proposal = self
+                        .channel_state_mut()?
+                        .remove_wire_proposal(*origin_wire_id)?;
                     let transient_proposal = effects.iter().position(|effect| {
                         matches!(
                             effect,
                             Effect::Notify(GameNotification::ProposalMade { id, .. })
-                                if *id == proposal.id
+                                if *id == proposal.local_id
                         )
                     });
                     if let Some(index) = transient_proposal {
                         effects.remove(index);
-                    } else {
+                    } else if !suppress_notification {
                         effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                            id: proposal.id,
-                            group_ids: vec![proposal.id],
+                            id: proposal.local_id,
                             reason: CancelReason::CancelledByPeer,
                         }));
                     }
@@ -923,12 +940,9 @@ impl OffChainPhase {
             .iter()
             .any(|a| matches!(a, BatchAction::AcceptSettlement(..)));
 
-        let has_new_game = actions.iter().any(|a| {
-            matches!(
-                a,
-                BatchAction::ProposeGroup(_) | BatchAction::AcceptProposalGroup(_)
-            )
-        });
+        let has_new_game = actions
+            .iter()
+            .any(|a| matches!(a, BatchAction::Propose(_) | BatchAction::AcceptProposal(_)));
         if has_new_game {
             self.game_action_queue
                 .retain(|a| !matches!(a, GameAction::CleanShutdown));
@@ -990,10 +1004,9 @@ impl OffChainPhase {
 
         {
             let ch = self.channel_state_mut()?;
-            for group_ids in ch.cancel_all_proposals() {
+            for id in ch.cancel_all_proposals() {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id: group_ids[0],
-                    group_ids,
+                    id,
                     reason: CancelReason::CleanShutdown,
                 }));
             }
@@ -1153,20 +1166,29 @@ impl OffChainPhase {
                     batch_actions.push(BatchAction::AcceptSettlement(game_id, amount));
                     applied_actions.push((game_id, LocalActionKind::AcceptSettlement));
                 }
-                GameAction::QueuedProposalGroup(local_id, start) => {
-                    let origin_wire_id = self
-                        .channel_state_mut()?
-                        .record_sent_proposal(local_id, &start)?;
-                    batch_actions.push(BatchAction::ProposeGroup(WireProposalGroup {
+                GameAction::QueuedProposal(local_id) => {
+                    let start = {
+                        let channel = self.channel_state()?;
+                        let proposal = channel.find_proposal(local_id)?;
+                        GameProposal {
+                            sender_is_player_a: proposal.sender_is_player_a,
+                            game_type: proposal.game_type.clone(),
+                            timeout: proposal.timeout.clone(),
+                            parameters: proposal.parameters.clone(),
+                        }
+                    };
+                    let origin_wire_id =
+                        self.channel_state_mut()?.emit_outgoing_proposal(local_id)?;
+                    batch_actions.push(BatchAction::Propose(WireProposal {
                         origin_wire_id,
                         start,
                     }));
                 }
-                GameAction::QueuedAcceptProposalGroup(local_id) => {
-                    let origin_wire_id = local_id;
+                GameAction::QueuedAcceptProposal(local_id) => {
+                    let origin_wire_id = self.channel_state()?.proposal_wire_id(local_id)?;
                     match self.execute_acceptance(env, local_id, false, true)? {
                         AcceptanceOutcome::Accepted(members) => {
-                            batch_actions.push(BatchAction::AcceptProposalGroup(origin_wire_id));
+                            batch_actions.push(BatchAction::AcceptProposal(origin_wire_id));
                             effects.push(Effect::Notify(GameNotification::ProposalAcceptedGroup {
                                 id: local_id,
                                 members,
@@ -1183,25 +1205,32 @@ impl OffChainPhase {
                                 our_balance_short,
                                 their_balance_short,
                             }));
-                            self.channel_state_mut()?.remove_proposal(&local_id)?;
-                            batch_actions.push(BatchAction::CancelProposalGroup(origin_wire_id));
+                            self.channel_state_mut()?.remove_proposal(local_id)?;
+                            batch_actions.push(BatchAction::CancelProposal(origin_wire_id));
                             *current_action = None;
                             continue;
                         }
                     }
                 }
-                GameAction::QueuedCancelProposalGroup(local_id) => {
-                    let proposal = self.channel_state_mut()?.remove_proposal(&local_id)?;
+                GameAction::QueuedCancelProposal(local_id) => {
+                    let proposal = self.channel_state_mut()?.remove_proposal(local_id)?;
                     effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                         id: local_id,
-                        group_ids: vec![local_id],
                         reason: CancelReason::CancelledByUs,
                     }));
-                    batch_actions.push(BatchAction::CancelProposalGroup(proposal.id));
+                    batch_actions.push(BatchAction::CancelProposal(
+                        proposal.origin_wire_id.ok_or_else(|| {
+                            Error::StrErr(format!("proposal {local_id} has no wire id"))
+                        })?,
+                    ));
                 }
-                GameAction::QueuedCancelProposalGroupSilently(local_id) => {
-                    let proposal = self.channel_state_mut()?.remove_proposal(&local_id)?;
-                    batch_actions.push(BatchAction::CancelProposalGroup(proposal.id));
+                GameAction::QueuedCancelProposalSilently(local_id) => {
+                    let proposal = self.channel_state_mut()?.remove_proposal(local_id)?;
+                    batch_actions.push(BatchAction::CancelProposal(
+                        proposal.origin_wire_id.ok_or_else(|| {
+                            Error::StrErr(format!("proposal {local_id} has no wire id"))
+                        })?,
+                    ));
                 }
                 GameAction::CleanShutdown => {
                     if !batch_actions.is_empty() {
@@ -1221,11 +1250,10 @@ impl OffChainPhase {
                     }
                     {
                         let ch = self.channel_state_mut()?;
-                        let cancelled_groups = ch.cancel_all_proposals();
-                        for group_ids in cancelled_groups {
+                        let cancelled = ch.cancel_all_proposals();
+                        for id in cancelled {
                             effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                                id: group_ids[0],
-                                group_ids,
+                                id,
                                 reason: CancelReason::CleanShutdown,
                             }));
                         }
@@ -1255,8 +1283,9 @@ impl OffChainPhase {
                     return Ok((true, effects));
                 }
                 #[cfg(test)]
-                GameAction::ForcedSelfAccept(game_id) => {
-                    batch_actions.push(BatchAction::AcceptProposalGroup(game_id));
+                GameAction::ForcedSelfAccept(local_id) => {
+                    let wire_id = self.channel_state()?.proposal_wire_id(local_id)?;
+                    batch_actions.push(BatchAction::AcceptProposal(wire_id));
                 }
             }
             *current_action = None;
@@ -1456,11 +1485,10 @@ impl OffChainPhase {
 
         {
             let player_ch = self.channel_state_mut()?;
-            let cancelled_groups = player_ch.cancel_all_proposals();
-            for group_ids in cancelled_groups {
+            let cancelled = player_ch.cancel_all_proposals();
+            for id in cancelled {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id: group_ids[0],
-                    group_ids,
+                    id,
                     reason: CancelReason::WentOnChain,
                 }));
             }
@@ -1549,72 +1577,69 @@ impl OffChainPhase {
 }
 
 impl FromLocalUI for OffChainPhase {
-    fn propose_games(
+    fn propose(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        if games.len() != 1 {
-            return Err(Error::StrErr(format!(
-                "propose_games expects one atomic group request, got {}",
-                games.len()
-            )));
-        }
-        let start = &games[0];
-
+        proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
         self.game_action_queue
             .retain(|a| !matches!(a, GameAction::CleanShutdown));
 
+        let local_id = self
+            .channel_state_mut()?
+            .create_outgoing_proposal(proposal)?;
         let has_pending_peer = {
             let ch = self.channel_state()?;
             !ch.pending_peer_proposal_ids().is_empty()
         };
         if has_pending_peer {
-            let cancelled_id = self.channel_state_mut()?.allocate_my_proposal_id();
-            self.push_action(GameAction::QueuedProposalGroup(cancelled_id, start.clone()));
-            self.push_action(GameAction::QueuedCancelProposalGroupSilently(cancelled_id));
-            let (_has_potato, request_effect) = self.send_potato_request_if_needed()?;
-            let mut effects: Vec<Effect> = request_effect.into_iter().collect();
-            effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                id: cancelled_id,
-                group_ids: vec![cancelled_id],
+            self.channel_state_mut()?.remove_proposal(local_id)?;
+            let effects = vec![Effect::Notify(GameNotification::ProposalCancelled {
+                id: local_id,
                 reason: CancelReason::PeerProposalPending,
-            }));
-            return Ok((vec![cancelled_id], effects));
+            })];
+            return Ok((local_id, effects));
         }
 
-        let local_id = self.channel_state_mut()?.allocate_my_proposal_id();
-        self.push_action(GameAction::QueuedProposalGroup(local_id, start.clone()));
+        self.push_action(GameAction::QueuedProposal(local_id));
 
         let (_has_potato, effect) = self.send_potato_request_if_needed()?;
         let effects: Vec<Effect> = effect.into_iter().collect();
-        Ok((vec![local_id], effects))
+        Ok((local_id, effects))
     }
 
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         let (_continued, effects) =
-            self.do_game_action(GameAction::QueuedAcceptProposalGroup(*game_id))?;
+            self.do_game_action(GameAction::QueuedAcceptProposal(*proposal_id))?;
         Ok(effects)
     }
 
     fn cancel_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
-        let group_ids = {
-            let ch = self.channel_state()?;
-            ch.group_member_ids(game_id)?
+        let proposal = { self.channel_state()?.find_proposal(*proposal_id)?.clone() };
+        if proposal.originated_locally && proposal.origin_wire_id.is_none() {
+            self.game_action_queue.retain(
+                |action| !matches!(action, GameAction::QueuedProposal(id) if id == proposal_id),
+            );
+            self.channel_state_mut()?.remove_proposal(*proposal_id)?;
+            return Ok(vec![Effect::Notify(GameNotification::ProposalCancelled {
+                id: *proposal_id,
+                reason: CancelReason::CancelledByUs,
+            })]);
+        }
+        let action = if proposal.originated_locally {
+            GameAction::QueuedCancelProposal(*proposal_id)
+        } else {
+            GameAction::QueuedCancelProposalSilently(*proposal_id)
         };
-        let group_id = *group_ids
-            .first()
-            .ok_or_else(|| Error::StrErr("proposal group cannot be empty".to_string()))?;
-        let (_continued, effects) =
-            self.do_game_action(GameAction::QueuedCancelProposalGroup(group_id))?;
+        let (_continued, effects) = self.do_game_action(action)?;
         Ok(effects)
     }
 
@@ -1763,9 +1788,9 @@ impl PeerLifecyclePhase for OffChainPhase {
     fn self_accept_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
-        OffChainPhase::self_accept_proposal(self, env, game_id)
+        OffChainPhase::self_accept_proposal(self, env, proposal_id)
     }
     fn flush_pending_actions(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         OffChainPhase::flush_pending_actions(self, env)
@@ -1818,26 +1843,26 @@ impl PeerLifecyclePhase for OffChainPhase {
             "provide_coin_spend_bundle",
         ))
     }
-    fn propose_games(
+    fn propose(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        <Self as FromLocalUI>::propose_games(self, env, games)
+        proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
+        <Self as FromLocalUI>::propose(self, env, proposal)
     }
     fn accept_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
-        <Self as FromLocalUI>::accept_proposal(self, env, game_id)
+        <Self as FromLocalUI>::accept_proposal(self, env, proposal_id)
     }
     fn cancel_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
-        <Self as FromLocalUI>::cancel_proposal(self, env, game_id)
+        <Self as FromLocalUI>::cancel_proposal(self, env, proposal_id)
     }
     fn shut_down(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
         <Self as FromLocalUI>::shut_down(self, env)

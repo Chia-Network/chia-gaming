@@ -237,7 +237,7 @@ describe('validateSessionSaveEnvelope', () => {
     'betweenHandLastHandProposal',
     'betweenHandRejectedOnceHandProposal',
     'betweenHandPendingRetryHandProposal',
-    'proposalGroups',
+    'pendingProposals',
     'waitingStateEnteredAt',
     'cleanShutdownGraceStartedAt',
   ] satisfies Array<keyof SessionPresentationSave>)(
@@ -537,12 +537,11 @@ describe('validateSessionSaveEnvelope', () => {
     [
       'peer proposal',
       {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: 'proposal-1',
-            member_ids: [],
-            origin: 'peer',
-            disposition: 'incoming-cached',
+            id: 'proposal-1',
+            origin: 'local',
+            status: 'incoming-cached',
             hand_proposal: {
               sender_is_player_a: false,
               game_timeout: '15',
@@ -552,22 +551,32 @@ describe('validateSessionSaveEnvelope', () => {
           },
         ],
       },
-      'member_ids',
+      'peer-originated',
     ],
     [
-      'proposal groups',
+      'pending proposals',
       {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: 'proposal-1',
-            member_ids: ['proposal-1', 'proposal-1'],
+            id: 'proposal-1',
             origin: 'local',
-            disposition: 'outgoing',
+            status: 'outgoing',
             hand_proposal: {
               sender_is_player_a: true,
               game_timeout: '15',
               game_type: 'krunk',
               parameters: 100n,
+            },
+          },
+          {
+            id: 'proposal-1',
+            origin: 'peer',
+            status: 'incoming-cached',
+            hand_proposal: {
+              sender_is_player_a: false,
+              game_timeout: '15',
+              game_type: 'calpoker',
+              parameters: 10n,
             },
           },
         ],

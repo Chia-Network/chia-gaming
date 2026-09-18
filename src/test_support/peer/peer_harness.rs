@@ -621,26 +621,26 @@ pub fn test_peer_smoke() {
         pipe_sender[1].went_on_chain
     );
 
-    let game_ids = {
-        let (game_ids, effects1) = {
+    let proposal_id = {
+        let (proposal_id, effects1) = {
             let calpoker_type = game_collection::game_type_for_package(&mut allocator, "calpoker");
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
-            let (game_ids, effects1) = FromLocalUI::propose_games(
+            let (proposal_id, effects1) = FromLocalUI::propose(
                 &mut peers[1],
                 &mut env,
-                &[GameProposal {
+                &GameProposal {
                     sender_is_player_a: true,
                     game_type: calpoker_type,
                     timeout: Timeout::new(15),
                     parameters: ProposalParameters::Integer(100),
-                }],
+                },
             )
             .expect("should run");
-            (game_ids, effects1)
+            (proposal_id, effects1)
         };
         apply_effects(effects1, &mut allocator, &mut pipe_sender[1]).expect("should work");
 
-        game_ids
+        proposal_id
     };
 
     quiesce(
@@ -654,7 +654,7 @@ pub fn test_peer_smoke() {
     {
         let effects0 = {
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
-            FromLocalUI::accept_proposal(&mut peers[0], &mut env, &game_ids[0])
+            FromLocalUI::accept_proposal(&mut peers[0], &mut env, &proposal_id)
                 .expect("should accept")
         };
         apply_effects(effects0, &mut allocator, &mut pipe_sender[0]).expect("should work");
@@ -694,7 +694,7 @@ pub fn test_peer_smoke() {
             let entropy = rng.random();
             let mut env = ChannelEnv::new(&mut allocator).expect("should work");
             let effects =
-                FromLocalUI::make_move(&mut peers[who ^ 1], &mut env, &game_ids[0], &what, entropy)
+                FromLocalUI::make_move(&mut peers[who ^ 1], &mut env, &GameID(0), &what, entropy)
                     .expect("should work");
             apply_effects(effects, &mut allocator, &mut pipe_sender[who ^ 1]).expect("should work");
         }

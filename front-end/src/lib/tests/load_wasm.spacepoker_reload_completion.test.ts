@@ -288,7 +288,7 @@ class SpacepokerReloadDriver {
     const receiver = proposer ^ 1;
     const cached = this.lanes[receiver].runtime
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-cached');
     assert.ok(cached, 'same-terms receiver must cache the exact proposal');
     this.lanes[receiver].runtime.dispatch({ type: 'choose-same-terms' });
     await this.exchange();
@@ -359,9 +359,9 @@ async function runSpacepokerReloadCompletion(poller: BlockchainPoller): Promise<
     await driver.exchange();
     const review = lanes[1].runtime
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-review');
     assert.ok(review, 'Space Poker receiver must observe the real proposal');
-    lanes[1].runtime.dispatch({ type: 'accept-review', primaryId: review.primaryId });
+    lanes[1].runtime.dispatch({ type: 'accept-review', id: review.id });
     await driver.exchange();
 
     await driver.startHand();

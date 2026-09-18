@@ -56,6 +56,7 @@ export class SessionMachineRuntime {
   };
   private dispatching = false;
   private readonly pendingEvents: SessionMachineEvent[] = [];
+  private projectionTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
     this.state = initial;
@@ -89,6 +90,14 @@ export class SessionMachineRuntime {
     this.render = render;
   }
 
+  clearRender(): void {
+    this.render = () => {};
+    if (this.projectionTimer !== null) {
+      clearTimeout(this.projectionTimer);
+      this.projectionTimer = null;
+    }
+  }
+
   dispatch(event: SessionMachineEvent): void {
     this.pendingEvents.push(event);
     if (this.dispatching) return;
@@ -106,7 +115,7 @@ export class SessionMachineRuntime {
             clearDerivedGamePresentation: () => this.controller.clearDerivedGamePresentation(),
           },
           runCommand: (effect) => this.interpreter.run(effect),
-          render: this.render,
+          render: () => this.scheduleProjection(),
         });
       }
     } catch (error) {
@@ -223,6 +232,14 @@ export class SessionMachineRuntime {
 
   private restoreAndRender(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {
     this.restoreHandFrom(checkpoint);
-    this.render({ ...this.state });
+    this.scheduleProjection();
+  }
+
+  private scheduleProjection(): void {
+    if (this.projectionTimer !== null) return;
+    this.projectionTimer = setTimeout(() => {
+      this.projectionTimer = null;
+      this.render(this.state);
+    }, 0);
   }
 }

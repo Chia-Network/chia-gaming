@@ -1,6 +1,7 @@
 pub mod game;
 pub mod game_handler;
 pub mod game_start_info;
+mod proposal_ledger;
 #[cfg(test)]
 pub mod runner;
 pub mod types;
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::proposal_ledger::ProposalLedger;
 use crate::channel_state::types::{
     CachedAcceptSettlement, CachedRedoActions, CachedSendMove, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelEnv, ChannelInitiationResult, ChannelMoveResult,
@@ -33,8 +35,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
-    PuzzleHash, Sha256tree, Spend, Timeout,
+    CoinString, Error, GameID, Hash, IntoErr, LocalProposalId, Node, PrivateKey, Program,
+    PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout, WireProposalId,
 };
 use crate::referee::types::{GameMoveDetails, ParsedRefereeSolution, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
@@ -132,11 +134,7 @@ pub struct ChannelState {
 
     // Latest potato number. Incremented on every send and receive.
     state_number: usize,
-    // Proposal IDs are canonical locally and on the wire, with one parity
-    // namespace per origin. Locally allocated IDs may await ordered emission.
-    my_next_proposal_id: u64,
-    my_next_proposal_wire_id: u64,
-    their_next_proposal_id: u64,
+    proposal_ledger: ProposalLedger,
     // Accepted games use a shared, role-independent sequential namespace.
     next_game_id: u64,
 
@@ -161,10 +159,6 @@ pub struct ChannelState {
     // set_state_for_coins and build_game_timeout_claim_spend can find them
     // if the channel goes on-chain before the round-trip completes.
     pending_settlements: Vec<LiveGame>,
-    // Games that have been proposed but not yet accepted or cancelled.
-    // These are metadata only — they do not affect the unroll commitment
-    // or player balances until accepted.
-    proposed_games: Vec<ProposedGame>,
 }
 
 pub struct InitiatorGenesisTransition {
@@ -260,12 +254,6 @@ impl ChannelState {
         self.private_keys.my_unroll_coin_private_key.clone()
     }
 
-    pub fn allocate_my_proposal_id(&mut self) -> GameID {
-        let n = self.my_next_proposal_id;
-        self.my_next_proposal_id += 2;
-        GameID(n)
-    }
-
     pub fn allocate_game_ids(&mut self, count: usize) -> Result<Vec<GameID>, Error> {
         let end = self
             .next_game_id
@@ -278,102 +266,61 @@ impl ChannelState {
         Ok(ids)
     }
 
-    pub fn is_our_proposal(&self, id: &GameID) -> bool {
-        self.proposed_games
-            .iter()
-            .find(|proposal| proposal.id == *id)
-            .is_some_and(|proposal| proposal.id.0 % 2 == self.my_next_proposal_wire_id % 2)
-    }
-
-    fn allocate_my_proposal_wire_id(&mut self) -> GameID {
-        let n = self.my_next_proposal_wire_id;
-        self.my_next_proposal_wire_id += 2;
-        GameID(n)
+    pub fn is_our_proposal(&self, id: LocalProposalId) -> bool {
+        self.proposal_ledger
+            .find_local(id)
+            .is_some_and(|proposal| proposal.originated_locally)
     }
 
     pub fn next_game_id_for_testing(&self) -> GameID {
         GameID(self.next_game_id)
     }
 
-    pub fn next_proposal_wire_ids_for_testing(&self) -> (GameID, GameID) {
-        (
-            GameID(self.my_next_proposal_wire_id),
-            GameID(self.their_next_proposal_id),
-        )
+    pub fn create_outgoing_proposal(
+        &mut self,
+        start: &crate::session_phases::proposal::GameProposal,
+    ) -> Result<LocalProposalId, Error> {
+        validate_game_timeout(start.timeout.to_u64())?;
+        self.proposal_ledger.create_outgoing(start)
     }
 
-    pub fn record_sent_proposal(
-        &mut self,
-        id: GameID,
-        start: &crate::session_phases::proposal::GameProposal,
-    ) -> Result<GameID, Error> {
-        validate_game_timeout(start.timeout.to_u64())?;
-        if self.proposed_games.len() >= 100 {
-            return Err(Error::StrErr(
-                "too many outstanding proposals (max 100)".into(),
-            ));
-        }
-        if self.proposed_games.iter().any(|proposal| proposal.id == id) {
-            return Err(Error::StrErr(format!("duplicate proposal ID {id:?}")));
-        }
-        let origin_wire_id = self.allocate_my_proposal_wire_id();
-        game_assert_eq!(
-            origin_wire_id,
-            id,
-            "proposal ID must equal its canonical wire ID"
-        );
-        self.proposed_games.push(ProposedGame {
-            id,
-            game_type: start.game_type.clone(),
-            timeout: start.timeout.clone(),
-            parameters: start.parameters.clone(),
-            sender_is_player_a: start.sender_is_player_a,
-        });
-        Ok(origin_wire_id)
+    pub fn emit_outgoing_proposal(&mut self, id: LocalProposalId) -> Result<WireProposalId, Error> {
+        self.proposal_ledger.emit_outgoing(id)
     }
 
     pub fn record_received_proposal(
         &mut self,
-        origin_wire_id: GameID,
+        origin_wire_id: WireProposalId,
         start: &crate::session_phases::proposal::GameProposal,
-    ) -> Result<GameID, Error> {
+    ) -> Result<LocalProposalId, Error> {
         validate_game_timeout(start.timeout.to_u64())?;
-        if self.proposed_games.len() >= 100 {
-            return Err(Error::StrErr(
-                "too many outstanding proposals (max 100)".into(),
-            ));
-        }
-        if origin_wire_id.0 != self.their_next_proposal_id {
-            return Err(Error::StrErr(format!(
-                "received proposal wire id {} but strict next id is {}",
-                origin_wire_id.0, self.their_next_proposal_id
-            )));
-        }
-        self.their_next_proposal_id += 2;
-        let id = origin_wire_id;
-        self.proposed_games.push(ProposedGame {
-            id,
-            game_type: start.game_type.clone(),
-            timeout: start.timeout.clone(),
-            parameters: start.parameters.clone(),
-            sender_is_player_a: start.sender_is_player_a,
-        });
-        Ok(id)
+        self.proposal_ledger.record_incoming(origin_wire_id, start)
     }
 
-    pub fn remove_proposal(&mut self, id: &GameID) -> Result<ProposedGame, Error> {
-        let index = self
-            .proposed_games
-            .iter()
-            .position(|proposal| proposal.id == *id)
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {id:?}")))?;
-        Ok(self.proposed_games.remove(index))
+    pub fn remove_proposal(&mut self, id: LocalProposalId) -> Result<ProposedGame, Error> {
+        self.proposal_ledger.remove_local(id)
+    }
+
+    pub fn remove_wire_proposal(&mut self, id: WireProposalId) -> Result<ProposedGame, Error> {
+        self.proposal_ledger.remove_wire(id)
+    }
+
+    pub fn local_proposal_id(&self, id: WireProposalId) -> Result<LocalProposalId, Error> {
+        self.proposal_ledger
+            .local_for_wire(id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with wire id {id}")))
+    }
+
+    pub fn proposal_wire_id(&self, id: LocalProposalId) -> Result<WireProposalId, Error> {
+        self.find_proposal(id)?
+            .origin_wire_id
+            .ok_or_else(|| Error::StrErr(format!("proposal {id} has not been emitted")))
     }
 
     pub fn accept_proposal_games(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        local_id: &GameID,
+        local_id: LocalProposalId,
         starts: &[Rc<GameStartInfo>],
         cache_for_redo: bool,
     ) -> Result<(), Error> {
@@ -418,14 +365,6 @@ impl ChannelState {
         }
         let _ = proposal;
         Ok(())
-    }
-
-    pub fn allocate_my_nonce(&mut self) -> u64 {
-        self.allocate_my_proposal_id().0
-    }
-
-    pub fn is_our_nonce_parity(&self, game_id: &GameID) -> bool {
-        game_id.0 % 2 == self.my_next_proposal_id % 2
     }
 
     pub fn state_number(&self) -> usize {
@@ -839,9 +778,7 @@ impl ChannelState {
             cached_redo_actions: Vec::new(),
 
             state_number: 0,
-            my_next_proposal_id: if is_receiver { 0 } else { 1 },
-            my_next_proposal_wire_id: if is_receiver { 0 } else { 1 },
-            their_next_proposal_id: if is_receiver { 1 } else { 0 },
+            proposal_ledger: ProposalLedger::new(is_receiver),
             next_game_id: 0,
 
             channel_coin_spend: CoinSpend {
@@ -855,7 +792,6 @@ impl ChannelState {
 
             live_games: Vec::new(),
             pending_settlements: Vec::new(),
-            proposed_games: Vec::new(),
 
             private_keys,
         };
@@ -1239,52 +1175,31 @@ impl ChannelState {
         })
     }
 
-    pub fn cancel_all_proposals(&mut self) -> Vec<Vec<GameID>> {
-        let groups = self
-            .proposed_games
-            .iter()
-            .map(|proposal| vec![proposal.id])
-            .collect();
-        self.proposed_games.clear();
-        groups
+    pub fn cancel_all_proposals(&mut self) -> Vec<LocalProposalId> {
+        self.proposal_ledger.cancel_all()
     }
 
     pub fn has_our_outstanding_proposals(&self) -> bool {
-        self.proposed_games
-            .iter()
-            .any(|p| p.id.0 % 2 == self.my_next_proposal_wire_id % 2)
+        self.proposal_ledger.has_outgoing()
     }
 
-    pub fn find_proposal(&self, game_id: &GameID) -> Option<&ProposedGame> {
-        self.proposed_games.iter().find(|p| p.id == *game_id)
+    pub fn find_proposal(&self, id: LocalProposalId) -> Result<&ProposedGame, Error> {
+        self.proposal_ledger
+            .find_local(id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {id}")))
     }
 
     #[cfg(test)]
-    pub fn proposal_contributions_for_testing(&self) -> Vec<(GameID, Amount, Amount)> {
-        self.proposed_games
+    pub fn proposal_contributions_for_testing(&self) -> Vec<(LocalProposalId, Amount, Amount)> {
+        self.proposal_ledger
+            .pending()
             .iter()
-            .map(|proposal| (proposal.id, Amount::default(), Amount::default()))
+            .map(|proposal| (proposal.local_id, Amount::default(), Amount::default()))
             .collect()
     }
 
-    pub fn group_member_ids(&self, game_id: &GameID) -> Result<Vec<GameID>, Error> {
-        self.find_proposal(game_id)
-            .map(|_| vec![*game_id])
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))
-    }
-
-    /// Resolve a wire group ID to its members in factory insertion order.
-    /// Wire actions must name the canonical first member, never another member.
-    pub fn canonical_group_member_ids(&self, group_id: &GameID) -> Result<Vec<GameID>, Error> {
-        self.group_member_ids(group_id)
-    }
-
-    pub fn pending_peer_proposal_ids(&self) -> Vec<GameID> {
-        self.proposed_games
-            .iter()
-            .filter(|p| p.id.0 % 2 != self.my_next_proposal_wire_id % 2)
-            .map(|p| p.id)
-            .collect()
+    pub fn pending_peer_proposal_ids(&self) -> Vec<LocalProposalId> {
+        self.proposal_ledger.incoming_ids()
     }
 
     pub fn my_out_of_game_balance(&self) -> Amount {
@@ -1299,8 +1214,8 @@ impl ChannelState {
         self.my_allocated_balance.clone() + self.their_allocated_balance.clone()
     }
 
-    pub fn is_game_proposed(&self, game_id: &GameID) -> bool {
-        self.proposed_games.iter().any(|p| p.id == *game_id)
+    pub fn is_proposal_pending(&self, id: LocalProposalId) -> bool {
+        self.proposal_ledger.is_pending(id)
     }
 
     pub fn has_live_game(&self, game_id: &GameID) -> bool {

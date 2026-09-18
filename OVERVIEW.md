@@ -261,9 +261,9 @@ Every ordinary potato pass is a single `PeerMessage::Batch` containing:
 
 1. `**actions: Vec<BatchAction>`** — zero or more game operations to apply
   sequentially:
-  - `ProposeGroup` — propose one factory-derived atomic game group
-  - `AcceptProposalGroup` — accept one complete pending proposal group
-  - `CancelProposalGroup` — cancel one complete pending proposal group
+  - `Propose` — propose one factory-derived request
+  - `AcceptProposal` — accept one pending proposal
+  - `CancelProposal` — cancel one pending proposal
   - `Move` — make a game move
   - `AcceptSettlement` — accept a game result (end game)
 2. `**signatures: StateUpdateSignatures`** — two half-signatures covering the final
@@ -653,8 +653,8 @@ JavaScript is the browser host. It transports opaque peer bytes, persists and
 replays transport state, adapts wallet and chain APIs, forwards raw chain
 observations, and projects Rust facts into UI. It may enforce explicit product
 capability policy—for example, this client currently starts at most one
-concurrent proposal group—but proposal groups are atomic only at formation and
-acceptance: Krunk's paired games still progress and settle independently.
+concurrent local proposal—but a successful acceptance may create multiple
+games: Krunk's paired games still progress and settle independently.
 It does not maintain a game-move replay journal. Post-unroll redo is
 reconstructed from Rust-owned channel and on-chain state; after browser restore,
 a game's normal state-driven effect may resubmit an automatic action only when
@@ -676,9 +676,10 @@ does not promote game-owned state or grant the game permission to act.
 Proposal persistence stores the exact opaque Bencodex parameter value together
 with the generic player-A/player-B terms and sender orientation. Each package
 decodes that value only for its own form, display, and hand initialization;
-there are no game-specific proposal save keys. Proposal-group integrity remains
-a generic host concern, while each game asserts its factory topology when
-creating a fresh hand.
+there are no game-specific proposal save keys. The host tracks each pending
+proposal as one scalar endpoint-local record. Rust runs the factory at
+acceptance and reports the complete ordered generated-game list; each package
+asserts that accepted topology when creating a fresh hand.
 
 | Concern | Owner |
 | --- | --- |
@@ -778,7 +779,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | ------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `CoinString`                    | `common/types/coin_string.rs`                  | Serialized coin: `parent_id ‖ puzzle_hash ‖ amount`                                                          |
 | `PuzzleHash`                    | `common/types/puzzle_hash.rs`                  | 32-byte hash identifying a puzzle                                                                            |
-| `GameID`                        | `common/types/game_id.rs`                      | A `u64` nonce that uniquely identifies a game; see [Game IDs and Nonces](ON_CHAIN.md#game-ids-and-nonces)    |
+| `GameID`                        | `common/types/game_id.rs`                      | A `u64` nonce that identifies a factory-created live game; see [Game IDs and Nonces](ON_CHAIN.md#game-ids-and-nonces) |
+| `LocalProposalId` / `WireProposalId` | `common/types/proposal_id.rs`             | Endpoint-local pending handle and origin-assigned parity wire identifier; both retain compact integer encoding |
 | `SpendBundle`                   | (chia types)                                   | Collection of `CoinSpend`s forming an atomic transaction                                                     |
 | `RefereePuzzleArgs`             | `referee/types.rs`                             | All args curried into the referee puzzle                                                                     |
 | `Referee`                       | `referee/mod.rs`                               | Enum: `MyTurn` / `TheirTurn`                                                                                 |
@@ -791,8 +793,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedRedoActions` | `channel_state/types/potato.rs`              | Internal protocol replay entries: `CachedSendMove`, `CachedAcceptSettlement`, and per-ID `ProposalAccepted` (not the UI `ProposalAcceptedGroup`) |
-| `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, `AcceptProposalGroup`, `CancelProposalGroup`, plus per-game `Move` and `AcceptSettlement` |
-| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move(GameID, PreparedMove)`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposalGroup`, `QueuedCancelProposalGroup`, `QueuedCancelProposalGroupSilently`, `Cheat` |
+| `BatchAction`                   | `session_phases/types.rs`                      | Peer-level actions: proposal `Propose`, `AcceptProposal`, `CancelProposal`, plus per-game `Move` and `AcceptSettlement` |
+| `GameAction`                    | `session_phases/types.rs`                      | Local actions: game moves/settlements, scalar queued proposal intents, clean shutdown, and test-only cheat support |
 | `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
 | `OnChainGameState`              | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout` |
 | `SettlementOutcome`             | `session_phases/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |

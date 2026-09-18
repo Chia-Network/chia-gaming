@@ -48,7 +48,7 @@ const readableInteger = (value: bigint) => Program.fromBigInt(value).serialize()
 
 function stateWithProposals(
   groups: Array<{
-    memberIds: string[];
+    id: string;
     handProposal: typeof TERMS | typeof KRUNK_TERMS | typeof SPACEPOKER_TERMS;
     origin?: 'local' | 'peer';
   }>,
@@ -56,12 +56,11 @@ function stateWithProposals(
   return createSessionMachineState(
     createSessionModel({
       betweenHand: {
-        proposalGroups: groups.map(({ memberIds, handProposal, origin = 'local' }) => ({
-          primaryId: memberIds[0],
-          memberIds,
+        pendingProposals: groups.map(({ id, handProposal, origin = 'local' }) => ({
+          id,
           handProposal,
           origin,
-          disposition: origin === 'local' ? ('outgoing' as const) : ('incoming-cached' as const),
+          status: origin === 'local' ? ('outgoing' as const) : ('incoming-cached' as const),
         })),
       },
     }),
@@ -71,7 +70,7 @@ function stateWithProposals(
 function fakeController(overrides: Partial<SessionController> = {}): SessionController {
   return {
     isOffChainActive: () => true,
-    proposeGame: () => ['7'],
+    proposeGame: () => '7',
     acceptProposal: jest.fn(),
     cancel_proposal: jest.fn(),
     cleanShutdown: jest.fn(),
@@ -97,7 +96,7 @@ describe('session machine effect interpreter', () => {
     const controller = fakeController({
       proposeGame: () => {
         order.push('controller');
-        return ['7', '9'];
+        return '7';
       },
     });
     const state = createSessionMachineState(
@@ -125,7 +124,7 @@ describe('session machine effect interpreter', () => {
     interpreter.run({ type: 'controller-propose-game', handProposal: TERMS });
 
     expect(order).toEqual(['persist', 'controller', 'dispatch']);
-    expect(events).toEqual([{ type: 'proposal-sent', ids: ['7', '9'], handProposal: TERMS }]);
+    expect(events).toEqual([{ type: 'proposal-sent', id: '7', handProposal: TERMS }]);
   });
 });
 
@@ -160,7 +159,7 @@ describe('session machine causal sequences', () => {
       const runtime = new SessionMachineRuntime(
         stateWithProposals([
           {
-            memberIds: ['1', '2'],
+            id: '1',
             handProposal: KRUNK_TERMS,
             origin: weProposed ? 'local' : 'peer',
           },
@@ -241,8 +240,8 @@ describe('session machine causal sequences', () => {
   it('rejects stale hand notifications after a replacement hand starts', () => {
     const runtime = new SessionMachineRuntime(
       stateWithProposals([
-        { memberIds: ['1', '2'], handProposal: KRUNK_TERMS },
-        { memberIds: ['7'], handProposal: TERMS },
+        { id: '1', handProposal: KRUNK_TERMS },
+        { id: '7', handProposal: TERMS },
       ]),
       {
         controller: fakeController({ clearDerivedGamePresentation: jest.fn() }),
@@ -488,7 +487,7 @@ describe('session machine causal sequences', () => {
     expect(transition.effects.map((effect) => effect.type)).toEqual(['controller-propose-game']);
     state = reduceSessionMachine(state, {
       type: 'proposal-sent',
-      ids: ['7'],
+      id: '7',
       handProposal: TERMS,
     }).state;
     return state;
@@ -498,7 +497,6 @@ describe('session machine causal sequences', () => {
     return {
       ProposalMade: {
         id: '9',
-        group_ids: ['9'],
         sender_is_player_a: true,
         timeout: '15',
         game_type: testProtocolId('calpoker'),
@@ -512,7 +510,7 @@ describe('session machine causal sequences', () => {
       type: 'wasm-notification',
       iStarted: true,
       notification: {
-        ProposalCancelled: { id: '7', group_ids: ['7'], reason: 'CancelledByPeer' },
+        ProposalCancelled: { id: '7', reason: 'CancelledByPeer' },
       },
     });
     expect(transition.state.model.betweenHand).toMatchObject({
@@ -528,21 +526,20 @@ describe('session machine causal sequences', () => {
     expect(transition.effects.map((effect) => effect.type)).toEqual(['persist-session']);
   });
 
-  it('retains Krunk retry terms after one canonical group cancellation', () => {
-    const state = stateWithProposals([{ memberIds: ['7', '9'], handProposal: KRUNK_TERMS }]);
+  it('retains Krunk retry terms after proposal cancellation', () => {
+    const state = stateWithProposals([{ id: '7', handProposal: KRUNK_TERMS }]);
     const transition = reduceSessionMachine(state, {
       type: 'wasm-notification',
       iStarted: true,
       notification: {
         ProposalCancelled: {
           id: '7',
-          group_ids: ['7', '9'],
           reason: 'SupersededByIncoming',
         },
       },
     });
 
-    expect(transition.state.model.betweenHand.proposalGroups).toEqual([]);
+    expect(transition.state.model.betweenHand.pendingProposals).toEqual([]);
     expect(transition.state.model.betweenHand.pendingRetryHandProposal).toEqual(KRUNK_TERMS);
     expect(transition.effects.map((effect) => effect.type)).toEqual(['persist-session']);
   });
@@ -552,7 +549,7 @@ describe('session machine causal sequences', () => {
       type: 'wasm-notification',
       iStarted: true,
       notification: {
-        ProposalCancelled: { id: '7', group_ids: ['7'], reason: 'CancelledByPeer' },
+        ProposalCancelled: { id: '7', reason: 'CancelledByPeer' },
       },
     }).state;
     state = reduceSessionMachine(state, {
@@ -562,8 +559,8 @@ describe('session machine causal sequences', () => {
     }).state;
 
     expect(state.model.betweenHand.mode).toBe('review-incoming-proposal');
-    expect(state.model.betweenHand.proposalGroups).toEqual([
-      expect.objectContaining({ primaryId: '9', disposition: 'incoming-review' }),
+    expect(state.model.betweenHand.pendingProposals).toEqual([
+      expect.objectContaining({ id: '9', status: 'incoming-review' }),
     ]);
   });
 
@@ -582,7 +579,7 @@ describe('session machine causal sequences', () => {
   });
 
   it('clears every stale rejection notice after proposal acceptance', () => {
-    const base = stateWithProposals([{ memberIds: ['7'], handProposal: TERMS }]);
+    const base = stateWithProposals([{ id: '7', handProposal: TERMS }]);
     const state = {
       ...base,
       model: {
@@ -628,6 +625,8 @@ describe('session machine causal sequences', () => {
 });
 
 describe('session machine controller command failures', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
   function runtimeHarness(overrides: Partial<SessionController>) {
     const controller = fakeController(overrides);
     const initial = createSessionMachineState(
@@ -661,6 +660,8 @@ describe('session machine controller command failures', () => {
     const { persisted, rendered, runtime } = runtimeHarness({ proposeGame });
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
+    jest.runOnlyPendingTimers();
+    jest.runOnlyPendingTimers();
     expect(runtime.getState().model.betweenHand.compose.proposalSent).toBe(false);
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
@@ -671,6 +672,7 @@ describe('session machine controller command failures', () => {
     expect(persisted[0].model.betweenHand.compose.proposalSent).toBe(false);
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
+    jest.runOnlyPendingTimers();
     expect(proposeGame).toHaveBeenCalledTimes(2);
   });
 
@@ -704,13 +706,12 @@ describe('session machine controller command failures', () => {
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
         betweenHand: {
           mode: 'review-incoming-proposal',
-          proposalGroups: [
+          pendingProposals: [
             {
-              primaryId: '7',
-              memberIds: ['7'],
+              id: '7',
               handProposal: TERMS,
               origin: 'peer',
-              disposition: 'incoming-review',
+              status: 'incoming-review',
             },
           ],
         },
@@ -729,10 +730,10 @@ describe('session machine controller command failures', () => {
       persist: async () => persisted.push(runtime.getState()),
     });
 
-    runtime.dispatch({ type: 'accept-review', primaryId: '7' });
+    runtime.dispatch({ type: 'accept-review', id: '7' });
 
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
-    expect(runtime.getState().model.betweenHand.proposalGroups[0]?.primaryId).toBe('7');
+    expect(runtime.getState().model.betweenHand.pendingProposals[0]?.id).toBe('7');
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
       message: expect.stringContaining('proposal no longer exists'),
@@ -746,19 +747,19 @@ describe('session machine controller command failures', () => {
 
   it('confirms and persists a successful proposal exactly once', () => {
     const { persisted, rendered, runtime } = runtimeHarness({
-      proposeGame: jest.fn(() => ['7']),
+      proposeGame: jest.fn(() => '7'),
     });
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
+    jest.runOnlyPendingTimers();
 
     expect(runtime.getState().model.betweenHand.compose.proposalSent).toBe(true);
-    expect(runtime.getState().model.betweenHand.proposalGroups).toEqual([
+    expect(runtime.getState().model.betweenHand.pendingProposals).toEqual([
       {
-        primaryId: '7',
-        memberIds: ['7'],
+        id: '7',
         handProposal: TERMS,
         origin: 'local',
-        disposition: 'outgoing',
+        status: 'outgoing',
       },
     ]);
     expect(persisted).toHaveLength(1);
@@ -774,7 +775,7 @@ describe('session machine controller command failures', () => {
           throw new Error('accept failed');
         },
       },
-      { type: 'accept-review', primaryId: '7' } as const,
+      { type: 'accept-review', id: '7' } as const,
     ],
     [
       'cancel',
@@ -788,20 +789,20 @@ describe('session machine controller command failures', () => {
   ])('keeps review state retryable when %s throws', (_name, override, event) => {
     const { persisted, rendered, runtime } = runtimeHarness(override);
     const review = {
-      primaryId: '7',
-      memberIds: ['7'],
+      id: '7',
       handProposal: TERMS,
       origin: 'peer' as const,
-      disposition: 'incoming-review' as const,
+      status: 'incoming-review' as const,
     };
-    runtime.dispatch({ type: 'upsert-proposal-group', group: review });
+    runtime.dispatch({ type: 'upsert-pending-proposal', proposal: review });
     runtime.dispatch({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
     persisted.length = 0;
     rendered.length = 0;
 
     runtime.dispatch(event);
+    jest.runOnlyPendingTimers();
 
-    expect(runtime.getState().model.betweenHand.proposalGroups).toContainEqual(review);
+    expect(runtime.getState().model.betweenHand.pendingProposals).toContainEqual(review);
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
@@ -815,8 +816,8 @@ describe('session machine controller command failures', () => {
     [
       'accept',
       { acceptProposal: jest.fn() },
-      { type: 'accept-review', primaryId: '7' } as const,
-      'decision',
+      { type: 'accept-review', id: '7' } as const,
+      'review-incoming-proposal',
     ],
     [
       'cancel',
@@ -827,13 +828,12 @@ describe('session machine controller command failures', () => {
   ])('persists successful %s confirmation exactly once', (_name, override, event, mode) => {
     const { persisted, rendered, runtime } = runtimeHarness(override);
     runtime.dispatch({
-      type: 'upsert-proposal-group',
-      group: {
-        primaryId: '7',
-        memberIds: ['7'],
+      type: 'upsert-pending-proposal',
+      proposal: {
+        id: '7',
         handProposal: TERMS,
         origin: 'peer',
-        disposition: 'incoming-review',
+        status: 'incoming-review',
       },
     });
     runtime.dispatch({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
@@ -841,10 +841,11 @@ describe('session machine controller command failures', () => {
     rendered.length = 0;
 
     runtime.dispatch(event);
+    jest.runOnlyPendingTimers();
 
     expect(runtime.getState().model.betweenHand.mode).toBe(mode);
     if (event.type === 'reject-review') {
-      expect(runtime.getState().model.betweenHand.proposalGroups).toEqual([]);
+      expect(runtime.getState().model.betweenHand.pendingProposals).toEqual([]);
     }
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toBe(runtime.getState());
@@ -859,6 +860,7 @@ describe('session machine controller command failures', () => {
     });
 
     runtime.dispatch({ type: 'go-on-chain' });
+    jest.runOnlyPendingTimers();
 
     expect(runtime.getState().coordination.hostOnChain).toBe(false);
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
@@ -876,6 +878,7 @@ describe('session machine controller command failures', () => {
       },
     });
     failed.runtime.dispatch({ type: 'start-clean-shutdown' });
+    jest.runOnlyPendingTimers();
     expect(failed.runtime.getState().model.channel.cleanShutdownStarted).toBe(false);
     expect(failed.persisted).toHaveLength(1);
     expect(failed.persisted[0].model.channel.cleanShutdownStarted).toBe(false);
@@ -883,6 +886,7 @@ describe('session machine controller command failures', () => {
 
     const succeeded = runtimeHarness({ cleanShutdown: jest.fn() });
     succeeded.runtime.dispatch({ type: 'start-clean-shutdown' });
+    jest.runOnlyPendingTimers();
     expect(succeeded.runtime.getState().model.channel.cleanShutdownStarted).toBe(true);
     expect(succeeded.persisted).toHaveLength(1);
     expect(succeeded.persisted[0].model.channel.cleanShutdownStarted).toBe(true);
@@ -891,12 +895,14 @@ describe('session machine controller command failures', () => {
 });
 
 describe('session machine local game action boundary', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
   function localActionHarness(
     makeMove: SessionController['makeMove'],
     overrides: Partial<SessionController> = {},
   ) {
     const controller = fakeController({ makeMove, ...overrides });
-    const initial = stateWithProposals([{ memberIds: ['7'], handProposal: TERMS }]);
+    const initial = stateWithProposals([{ id: '7', handProposal: TERMS }]);
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const rendered: ReturnType<typeof createSessionMachineState>[] = [];
     const runtime = new SessionMachineRuntime(initial, {
@@ -940,7 +946,7 @@ describe('session machine local game action boundary', () => {
     makeMove: SessionController['makeMove'] = () => 'queued',
   ): SessionMachineRuntime {
     const runtime = new SessionMachineRuntime(
-      stateWithProposals([{ memberIds: ['2', '4'], handProposal: KRUNK_TERMS, origin: 'local' }]),
+      stateWithProposals([{ id: '2', handProposal: KRUNK_TERMS, origin: 'local' }]),
       {
         controller: fakeController({ makeMove }),
         iStarted: true,
@@ -990,7 +996,7 @@ describe('session machine local game action boundary', () => {
   it('uses ordered Rust authority for opposite-turn Krunk members before the first move', () => {
     const makeMove = jest.fn(() => 'queued' as const);
     const runtime = new SessionMachineRuntime(
-      stateWithProposals([{ memberIds: ['2', '4'], handProposal: KRUNK_TERMS, origin: 'local' }]),
+      stateWithProposals([{ id: '2', handProposal: KRUNK_TERMS, origin: 'local' }]),
       {
         controller: fakeController({ makeMove }),
         iStarted: true,
@@ -1147,7 +1153,7 @@ describe('session machine local game action boundary', () => {
   it('uses Rust acceptance authority for the first Space Poker action', () => {
     const makeMove = jest.fn(() => 'queued' as const);
     const runtime = new SessionMachineRuntime(
-      stateWithProposals([{ memberIds: ['7'], handProposal: SPACEPOKER_TERMS, origin: 'local' }]),
+      stateWithProposals([{ id: '7', handProposal: SPACEPOKER_TERMS, origin: 'local' }]),
       {
         controller: fakeController({ makeMove }),
         iStarted: true,
@@ -1186,7 +1192,7 @@ describe('session machine local game action boundary', () => {
     const hand = spacepokerStateCodec.decode(runtime.getState().model.game.handState)!;
     expect(hand.gameState.myTurn).toBe(true);
     expect(runtime.getState().model.game.instances['9'].presentation).toBe('off-chain-my-turn');
-    expect(runtime.getState().model.betweenHand.proposalGroups).toEqual([]);
+    expect(runtime.getState().model.betweenHand.pendingProposals).toEqual([]);
     expect(runtime.getState().model.game.currentHandIds).toEqual(['9']);
 
     (runtime.getGameHand() as SpacepokerHand).update((state) => ({
@@ -1219,13 +1225,14 @@ describe('session machine local game action boundary', () => {
         command: { type: 'make-move', readable: null },
       }),
     ).toThrow('rejected');
+    jest.runOnlyPendingTimers();
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(runtime.getState()).toBe(before);
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-my-turn');
     expect(persisted).toHaveLength(0);
     expect(rendered).toHaveLength(1);
-    expect(rendered[0]).not.toBe(before);
+    expect(rendered[0]).toBe(before);
     expect(runtime.getGameHand()?.getState()).toEqual(current);
   });
 
@@ -1257,6 +1264,7 @@ describe('session machine local game action boundary', () => {
       id: '7',
       command: { type: 'make-move', readable: null },
     });
+    jest.runOnlyPendingTimers();
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(rendered).toHaveLength(1);
@@ -1300,13 +1308,14 @@ describe('session machine local game action boundary', () => {
       id: '7',
       command: { type: 'make-move', readable: null },
     });
+    jest.runOnlyPendingTimers();
 
     expect(calpokerStateCodec.decode(runtime.getState().model.game.handState)).toMatchObject({
       moveNumber: 1n,
       isPlayerTurn: false,
     });
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
-    expect(harness.rendered).toHaveLength(2);
+    expect(harness.rendered).toHaveLength(1);
     expect(harness.persisted).toHaveLength(2);
   });
 

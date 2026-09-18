@@ -25,8 +25,8 @@ import type {
   GameTerminalModel,
   GameTurnState,
   HandStatus,
-  ProposalGroupDisposition,
-  ProposalGroupModel,
+  PendingProposalModel,
+  PendingProposalStatus,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
@@ -45,28 +45,28 @@ export const EMPTY_DASHBOARD_VIEW_BASE: Omit<
   lifecycleRows: [],
 };
 
-export function selectProposalGroupByMemberId(
+export function selectPendingProposal(
   model: SessionModel,
-  memberId: string,
-): ProposalGroupModel | null {
-  return (
-    model.betweenHand.proposalGroups.find((group) => group.memberIds.includes(memberId)) ?? null
-  );
+  id: string,
+): PendingProposalModel | null {
+  return model.betweenHand.pendingProposals.find((proposal) => proposal.id === id) ?? null;
 }
 
-export function selectProposalGroupByDisposition(
+export function selectProposalByStatus(
   model: SessionModel,
-  disposition: ProposalGroupDisposition,
-): ProposalGroupModel | null {
-  return (
-    model.betweenHand.proposalGroups.find((group) => group.disposition === disposition) ?? null
-  );
+  status: PendingProposalStatus,
+): PendingProposalModel | null {
+  return model.betweenHand.pendingProposals.find((proposal) => proposal.status === status) ?? null;
 }
 
-export function selectIncomingProposalGroup(model: SessionModel): ProposalGroupModel | null {
+export function selectIncomingProposal(model: SessionModel): PendingProposalModel | null {
   return (
-    selectProposalGroupByDisposition(model, 'incoming-review') ??
-    selectProposalGroupByDisposition(model, 'incoming-cached')
+    selectProposalByStatus(model, 'incoming-review') ??
+    selectProposalByStatus(model, 'incoming-cached') ??
+    model.betweenHand.pendingProposals.find(
+      (proposal) => proposal.origin === 'peer' && proposal.status === 'accepting',
+    ) ??
+    null
   );
 }
 
@@ -78,9 +78,11 @@ export function selectIProposedHand(model: SessionModel): boolean {
     throw new Error('Game model invariant broken: current hand is missing its origin');
   }
   const proposal =
-    selectProposalGroupByDisposition(model, 'incoming-review') ??
-    selectProposalGroupByDisposition(model, 'incoming-cached') ??
-    selectProposalGroupByDisposition(model, 'outgoing');
+    selectProposalByStatus(model, 'incoming-review') ??
+    selectProposalByStatus(model, 'incoming-cached') ??
+    selectProposalByStatus(model, 'accepting') ??
+    selectProposalByStatus(model, 'outgoing') ??
+    selectProposalByStatus(model, 'advisory-cancelling');
   return proposal?.origin === 'local';
 }
 
@@ -694,7 +696,7 @@ export interface GameSessionViewModel {
   betweenHands: boolean;
   channelQueue: QueuedNotificationModel[];
   gameQueue: QueuedNotificationModel[];
-  incomingProposalGroup: ProposalGroupModel | null;
+  incomingProposal: PendingProposalModel | null;
 }
 
 export function selectGameSessionView(model: SessionModel): GameSessionViewModel {
@@ -711,7 +713,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
     betweenHands: selectBetweenHands(model),
     channelQueue: model.channel.queue,
     gameQueue: model.game.queue,
-    incomingProposalGroup: selectIncomingProposalGroup(model),
+    incomingProposal: selectIncomingProposal(model),
   };
 }
 

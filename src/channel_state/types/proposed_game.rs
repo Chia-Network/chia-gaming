@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::common::types::{GameID, GameType, Timeout};
+use crate::common::types::{GameType, LocalProposalId, Timeout, WireProposalId};
 use crate::session_phases::proposal::ProposalParameters;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProposedGame {
-    /// Canonical parity-namespaced proposal ID used locally and on the wire.
-    pub id: GameID,
+    pub local_id: LocalProposalId,
+    pub origin_wire_id: Option<WireProposalId>,
+    pub originated_locally: bool,
     pub game_type: GameType,
     pub timeout: Timeout,
     pub parameters: ProposalParameters,

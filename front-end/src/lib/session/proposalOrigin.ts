@@ -1,1 +1,1 @@
-export type ProposalGroupOrigin = 'local' | 'peer';
+export type ProposalOrigin = 'local' | 'peer';

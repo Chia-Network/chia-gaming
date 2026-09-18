@@ -253,9 +253,6 @@ describe('protocol identity loading', () => {
           Notification: {
             ProposalMade: {
               id: '7',
-              group_ids: ['7'],
-              my_contribution: '100',
-              their_contribution: '100',
               timeout: '15',
               game_type: testProtocolId('calpoker'),
               parameters: null,
@@ -289,9 +286,6 @@ describe('protocol identity loading', () => {
           Notification: {
             ProposalMade: {
               id: '7',
-              group_ids: ['7'],
-              my_contribution: '100',
-              their_contribution: '100',
               timeout: '15',
               game_type: testProtocolId('calpoker'),
               parameters: null,
@@ -341,9 +335,6 @@ describe('protocol identity loading', () => {
           Notification: {
             ProposalMade: {
               id: '7',
-              group_ids: ['7'],
-              my_contribution: '100',
-              their_contribution: '100',
               timeout: '15',
               game_type: testProtocolId('calpoker'),
               parameters: null,
@@ -400,7 +391,7 @@ describe('SessionController WASM action results', () => {
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     Object.assign(cradle, {
-      propose_games: jest.fn(() => ({ ...failedResult(`${name} domain error`), ids: ['7'] })),
+      propose: jest.fn(() => ({ ...failedResult(`${name} domain error`), id: '7' })),
       accept_proposal: jest.fn(() => failedResult(`${name} domain error`)),
       cancel_proposal: jest.fn(() => failedResult(`${name} domain error`)),
       shut_down: jest.fn(() => failedResult(`${name} domain error`)),
@@ -485,13 +476,12 @@ describe('active game tracking', () => {
       };
       let machine = createSessionMachineState(createSessionModel());
       machine = reduceSessionMachine(machine, {
-        type: 'upsert-proposal-group',
-        group: {
-          primaryId: '1',
-          memberIds: ['1', '3'],
+        type: 'upsert-pending-proposal',
+        proposal: {
+          id: '1',
           handProposal: terms,
           origin: 'local',
-          disposition: 'outgoing',
+          status: 'outgoing',
         },
       }).state;
       const settledIds: string[] = [];

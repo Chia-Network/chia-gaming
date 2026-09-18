@@ -672,7 +672,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
 
   // Rising edge: proposal cached in decision mode, or replaced while reviewing.
   // Combined id so promoting cache → review does not double-fire.
-  const attentionProposalId = session.incomingProposalGroup?.primaryId ?? null;
+  const attentionProposalId = session.incomingProposal?.id ?? null;
   const prevAttentionProposalId = useRef(attentionProposalId);
   useEffect(() => {
     const prev = prevAttentionProposalId.current;
@@ -716,7 +716,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   const handEverStarted = session.handKey > 0;
   const setupCoverCopy = channelSetupCoverCopy(handEverStarted, session.channelStatus);
   const hasPersistedGameState = !!session.gameSpecificView.handState;
-  const hasReviewPeerProposal = session.incomingProposalGroup?.disposition === 'incoming-review';
+  const hasReviewPeerProposal =
+    session.incomingProposal?.status === 'incoming-review' ||
+    session.incomingProposal?.status === 'accepting';
   const showBetweenHandOverlay =
     session.betweenHands &&
     session.channelStatus.state === 'Active' &&
@@ -851,7 +853,8 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
             <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
           )}
           {session.betweenHandMode === 'review-incoming-proposal' &&
-            session.incomingProposalGroup?.disposition === 'incoming-review' && (
+            (session.incomingProposal?.status === 'incoming-review' ||
+              session.incomingProposal?.status === 'accepting') && (
               <ReviewProposalDialog session={session} />
             )}
         </BetweenHandOverlay>

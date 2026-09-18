@@ -2,11 +2,11 @@ import type { ProposalMadePayload } from '../../types/ChiaGaming';
 import { catalogGameTypeFromWire } from '../gameIdentities';
 import { isProposalParameterValue, packageFor } from '../gameRegistry';
 import { isValidGameTimeoutBlocks } from './gameTimeout';
-import type { ProposalGroupModel } from './types';
+import type { PendingProposalModel } from './types';
 
-export function proposalGroupFromProposalMade(
+export function pendingProposalFromProposalMade(
   payload: ProposalMadePayload | undefined,
-): ProposalGroupModel | null {
+): PendingProposalModel | null {
   if (!payload) return null;
   const gameType =
     typeof payload.game_type === 'string' ? catalogGameTypeFromWire(payload.game_type) : null;
@@ -16,14 +16,12 @@ export function proposalGroupFromProposalMade(
   } catch {
     return null;
   }
-  const memberIds = Array.isArray(payload.group_ids) ? payload.group_ids.map(String) : [];
   if (
     !gameType ||
     !isValidGameTimeoutBlocks(timeout) ||
     typeof payload.sender_is_player_a !== 'boolean' ||
     !isProposalParameterValue(payload.parameters) ||
-    payload.id == null ||
-    memberIds.length === 0
+    payload.id == null
   ) {
     return null;
   }
@@ -31,8 +29,7 @@ export function proposalGroupFromProposalMade(
     return null;
   }
   return {
-    primaryId: String(payload.id),
-    memberIds,
+    id: String(payload.id),
     handProposal: {
       gameType,
       senderIsPlayerA: payload.sender_is_player_a,
@@ -40,6 +37,6 @@ export function proposalGroupFromProposalMade(
       parameters: payload.parameters,
     },
     origin: 'peer',
-    disposition: 'incoming-cached',
+    status: 'incoming-cached',
   };
 }

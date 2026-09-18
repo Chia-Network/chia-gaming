@@ -11,7 +11,7 @@ import {
   REGISTERED_GAMES,
 } from '../gameRegistry';
 import { PRODUCTION_PACKAGE_KEYS } from '../../generated/gamePresets';
-import { proposalGroupFromProposalMade } from '../session/incomingProposal';
+import { pendingProposalFromProposalMade } from '../session/incomingProposal';
 import { MAX_GAME_TIMEOUT_BLOCKS, MIN_GAME_TIMEOUT_BLOCKS } from '../session/gameTimeout';
 import type { HandProposal } from '../session/types';
 
@@ -119,49 +119,47 @@ describe('game package proposal adapters', () => {
 
   it('parses ProposalMade as a generic A/B-oriented opaque proposal', () => {
     const parameters = 30n;
-    const group = proposalGroupFromProposalMade({
+    const proposal = pendingProposalFromProposalMade({
       id: 4n,
-      group_ids: [4n],
       sender_is_player_a: false,
       timeout: '21',
       game_type: protocolIdForCatalog('calpoker'),
       parameters,
     });
-    expect(group?.handProposal).toEqual({
+    expect(proposal?.id).toBe('4');
+    expect(proposal?.handProposal).toEqual({
       gameType: 'calpoker',
       senderIsPlayerA: false,
       gameTimeout: 21n,
       parameters,
     });
-    expect(group?.handProposal.parameters).toBe(parameters);
+    expect(proposal?.handProposal.parameters).toBe(parameters);
   });
 
   it('rejects malformed generic and package-specific peer parameters', () => {
     const base = {
       id: 4n,
-      group_ids: [4n],
       sender_is_player_a: true,
       timeout: '21',
       game_type: protocolIdForCatalog('spacepoker'),
       parameters: [3n, 10n],
     };
-    expect(proposalGroupFromProposalMade({ ...base, group_ids: [] })).toBeNull();
-    expect(proposalGroupFromProposalMade({ ...base, sender_is_player_a: 1 })).toBeNull();
-    expect(proposalGroupFromProposalMade({ ...base, parameters: '10' })).toBeNull();
-    expect(proposalGroupFromProposalMade({ ...base, parameters: Uint8Array.of(10) })).toBeNull();
+    expect(pendingProposalFromProposalMade({ ...base, id: null as never })).toBeNull();
+    expect(pendingProposalFromProposalMade({ ...base, sender_is_player_a: 1 })).toBeNull();
+    expect(pendingProposalFromProposalMade({ ...base, parameters: '10' })).toBeNull();
+    expect(pendingProposalFromProposalMade({ ...base, parameters: Uint8Array.of(10) })).toBeNull();
   });
 
   it('accepts only bounded peer game timeouts', () => {
     const base = {
       id: 4n,
-      group_ids: [4n],
       sender_is_player_a: true,
       game_type: protocolIdForCatalog('calpoker'),
       parameters: 30n,
     };
     for (const timeout of [MIN_GAME_TIMEOUT_BLOCKS, MAX_GAME_TIMEOUT_BLOCKS]) {
       expect(
-        proposalGroupFromProposalMade({ ...base, timeout: timeout.toString() }),
+        pendingProposalFromProposalMade({ ...base, timeout: timeout.toString() }),
       ).not.toBeNull();
     }
     for (const timeout of [
@@ -169,7 +167,7 @@ describe('game package proposal adapters', () => {
       MAX_GAME_TIMEOUT_BLOCKS + 1n,
       4_294_967_296n,
     ]) {
-      expect(proposalGroupFromProposalMade({ ...base, timeout: timeout.toString() })).toBeNull();
+      expect(pendingProposalFromProposalMade({ ...base, timeout: timeout.toString() })).toBeNull();
     }
   });
 });

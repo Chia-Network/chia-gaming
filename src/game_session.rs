@@ -15,8 +15,9 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    LocalProposalId, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout,
+    ToQuotedProgram,
 };
 use crate::session_phases::effects::{
     apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
@@ -104,7 +105,7 @@ pub trait PeerLifecyclePhase {
     fn self_accept_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>>;
     fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error>;
@@ -130,20 +131,20 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error>;
-    fn propose_games(
+    fn propose(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
+        proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error>;
     fn accept_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
     fn cancel_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
     fn shut_down(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
     fn go_on_chain(
@@ -490,7 +491,7 @@ impl GameSession {
     #[cfg(test)]
     pub fn proposal_contributions_for_testing(
         &self,
-    ) -> Result<Vec<(GameID, Amount, Amount)>, Error> {
+    ) -> Result<Vec<(LocalProposalId, Amount, Amount)>, Error> {
         let channel = self.peer.channel_state()?;
         Ok(channel.proposal_contributions_for_testing())
     }
@@ -1192,12 +1193,12 @@ impl GameSession {
     pub fn self_accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.self_accept_proposal(&mut env, game_id)?
+            self.peer.self_accept_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1258,15 +1259,15 @@ impl GameSession {
         self.peer.handshake_finished()
     }
 
-    pub fn propose_games(
+    pub fn propose(
         &mut self,
         allocator: &mut AllocEncoder,
-        games: &[GameProposal],
-    ) -> Result<Vec<GameID>, Error> {
+        proposal: &GameProposal,
+    ) -> Result<LocalProposalId, Error> {
         let (result, reported_effects) = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.propose_games(&mut env, games)?
+            self.peer.propose(&mut env, proposal)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(result)
@@ -1275,12 +1276,12 @@ impl GameSession {
     pub fn accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.accept_proposal(&mut env, game_id)?
+            self.peer.accept_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1289,12 +1290,12 @@ impl GameSession {
     pub fn cancel_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.cancel_proposal(&mut env, game_id)?
+            self.peer.cancel_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1799,13 +1800,19 @@ mod genesis_challenge_tests {
         session
             .start_handshake(&mut allocator, Amount::default())
             .expect("receiver start is an intentional no-op");
+        let proposal = GameProposal {
+            sender_is_player_a: true,
+            game_type: GameType::from_hash(Hash::default()),
+            timeout: Timeout::new(10),
+            parameters: crate::session_phases::proposal::ProposalParameters::Null,
+        };
         let error = session
-            .propose_games(&mut allocator, &[])
+            .propose(&mut allocator, &proposal)
             .expect_err("receiver cannot propose games during handshake");
         assert!(matches!(
             error,
             Error::StrErr(message)
-                if message == "propose_games is not available in handshake receiver phase"
+                if message == "propose is not available in handshake receiver phase"
         ));
     }
 }

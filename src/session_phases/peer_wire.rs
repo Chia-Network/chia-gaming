@@ -5,13 +5,13 @@ use bencodex::Value;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
-    PublicKey, Puzzle, PuzzleHash, Spend, SpendBundle, Timeout,
+    PublicKey, Puzzle, PuzzleHash, Spend, SpendBundle, Timeout, WireProposalId,
 };
 use crate::session_phases::handshake::{
     HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadC, HandshakePayloadD,
 };
 use crate::session_phases::proposal::{GameProposal, ProposalParameters};
-use crate::session_phases::types::{BatchAction, PeerMessage, PeerMove, WireProposalGroup};
+use crate::session_phases::types::{BatchAction, PeerMessage, PeerMove, WireProposal};
 
 pub fn encode_peer_message(message: &PeerMessage) -> Result<Vec<u8>, Error> {
     bencodex::encode(&peer_message_to_value(message)?).map_err(wire_error)
@@ -317,17 +317,17 @@ fn proposal_from_value(value: Value) -> Result<GameProposal, Error> {
     })
 }
 
-fn proposal_group_to_value(value: &WireProposalGroup) -> Result<Value, Error> {
+fn wire_proposal_to_value(value: &WireProposal) -> Result<Value, Error> {
     Ok(dict([
         ("i", integer(value.origin_wire_id.0)),
         ("s", proposal_to_value(&value.start)?),
     ]))
 }
 
-fn proposal_group_from_value(value: Value) -> Result<WireProposalGroup, Error> {
+fn wire_proposal_from_value(value: Value) -> Result<WireProposal, Error> {
     let mut map = expect_exact(value, ["i", "s"])?;
-    Ok(WireProposalGroup {
-        origin_wire_id: GameID(expect_u64(take(&mut map, "i")?)?),
+    Ok(WireProposal {
+        origin_wire_id: WireProposalId(expect_u64(take(&mut map, "i")?)?),
         start: proposal_from_value(take(&mut map, "s")?)?,
     })
 }
@@ -353,9 +353,9 @@ fn peer_move_from_value(value: Value) -> Result<PeerMove, Error> {
 
 fn batch_action_to_value(value: &BatchAction) -> Result<Value, Error> {
     Ok(match value {
-        BatchAction::ProposeGroup(group) => tagged("P", proposal_group_to_value(group)?),
-        BatchAction::AcceptProposalGroup(id) => tagged("AP", integer(id.0)),
-        BatchAction::CancelProposalGroup(id) => tagged("CP", integer(id.0)),
+        BatchAction::Propose(proposal) => tagged("P", wire_proposal_to_value(proposal)?),
+        BatchAction::AcceptProposal(id) => tagged("AP", integer(id.0)),
+        BatchAction::CancelProposal(id) => tagged("CP", integer(id.0)),
         BatchAction::Move(id, peer_move) => tagged(
             "M",
             Value::List(vec![integer(id.0), peer_move_to_value(peer_move)]),
@@ -370,9 +370,13 @@ fn batch_action_to_value(value: &BatchAction) -> Result<Value, Error> {
 fn batch_action_from_value(value: Value) -> Result<BatchAction, Error> {
     let (tag, value) = expect_tag(value)?;
     match tag.as_str() {
-        "P" => Ok(BatchAction::ProposeGroup(proposal_group_from_value(value)?)),
-        "AP" => Ok(BatchAction::AcceptProposalGroup(GameID(expect_u64(value)?))),
-        "CP" => Ok(BatchAction::CancelProposalGroup(GameID(expect_u64(value)?))),
+        "P" => Ok(BatchAction::Propose(wire_proposal_from_value(value)?)),
+        "AP" => Ok(BatchAction::AcceptProposal(WireProposalId(expect_u64(
+            value,
+        )?))),
+        "CP" => Ok(BatchAction::CancelProposal(WireProposalId(expect_u64(
+            value,
+        )?))),
         "M" => {
             let mut values = expect_list(value)?;
             if values.len() != 2 {
@@ -676,8 +680,8 @@ mod tests {
             my_contribution: Amount::new(1),
             their_contribution: Amount::new(2),
         };
-        let group = WireProposalGroup {
-            origin_wire_id: GameID(5),
+        let proposal = WireProposal {
+            origin_wire_id: WireProposalId(5),
             start: GameProposal {
                 sender_is_player_a: true,
                 game_type: GameType::from_hash(Hash::default()),
@@ -686,9 +690,9 @@ mod tests {
             },
         };
         let actions = vec![
-            BatchAction::ProposeGroup(group),
-            BatchAction::AcceptProposalGroup(GameID(1)),
-            BatchAction::CancelProposalGroup(GameID(2)),
+            BatchAction::Propose(proposal),
+            BatchAction::AcceptProposal(WireProposalId(1)),
+            BatchAction::CancelProposal(WireProposalId(2)),
             BatchAction::Move(
                 GameID(3),
                 PeerMove {

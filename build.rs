@@ -15,6 +15,9 @@ use chialisp::classic::platform::argparse::ArgumentValue;
 use chialisp::compiler::comptypes::CompileErr;
 use chialisp::compiler::srcloc::Srcloc;
 
+#[path = "src/factory_abi.rs"]
+#[allow(dead_code)]
+mod factory_abi;
 #[path = "src/game_package_key.rs"]
 mod game_package_key;
 
@@ -208,50 +211,6 @@ fn proper_list(allocator: &Allocator, mut node: NodePtr) -> Option<Vec<NodePtr>>
     }
 }
 
-fn validate_factory_records(
-    allocator: &Allocator,
-    key: &str,
-    records: &[NodePtr],
-) -> Result<NodePtr, String> {
-    let mut first_validator = None;
-    for (record_index, record) in records.iter().enumerate() {
-        let fields = proper_list(allocator, *record)
-            .ok_or_else(|| format!("factory {key} game {record_index} is not a proper list"))?;
-        if fields.len() != 11 {
-            return Err(format!(
-                "factory {key} game {record_index} has {} fields, expected 11",
-                fields.len()
-            ));
-        }
-        let validators = proper_list(allocator, fields[9]).ok_or_else(|| {
-            format!("factory {key} game {record_index} validators are not a proper list")
-        })?;
-        if validators.is_empty() {
-            return Err(format!(
-                "factory {key} game {record_index} returned no validators"
-            ));
-        }
-        let mut hashes = std::collections::BTreeSet::new();
-        for (validator_index, validator) in validators.iter().enumerate() {
-            if *validator == NodePtr::NIL {
-                return Err(format!(
-                    "factory {key} game {record_index} validator {validator_index} is nil"
-                ));
-            }
-            let hash = clvm_utils::tree_hash(allocator, *validator).to_bytes();
-            if !hashes.insert(hash) {
-                return Err(format!(
-                    "factory {key} game {record_index} validator {validator_index} is duplicated"
-                ));
-            }
-        }
-        if first_validator.is_none() {
-            first_validator = validators.first().copied();
-        }
-    }
-    first_validator.ok_or_else(|| format!("factory {key} returned no games"))
-}
-
 fn list_from_nodes(allocator: &mut Allocator, nodes: &[NodePtr]) -> Result<NodePtr, String> {
     let mut tail = NodePtr::NIL;
     for node in nodes.iter().rev() {
@@ -349,16 +308,17 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
         )
         .map_err(|e| format!("running prepared factory for {key}: {e:?}"))?
         .1;
-        let envelope = proper_list(&allocator, factory_result)
-            .ok_or_else(|| format!("factory {key} did not return a proper result"))?;
-        if envelope.len() != 2 || allocator.atom(envelope[0]).as_ref() != [1] {
-            return Err(format!(
-                "factory {key} probe did not return a successful (1 records) result"
-            ));
-        }
-        let records = proper_list(&allocator, envelope[1])
-            .ok_or_else(|| format!("factory {key} success games are not a proper list"))?;
-        let initial_validator = validate_factory_records(&allocator, key, &records)?;
+        let parsed = factory_abi::parse_factory_result(
+            &allocator,
+            factory_result,
+            &format!("factory {key} probe"),
+        )?;
+        let initial_validator = match parsed {
+            factory_abi::FactoryResultNodes::Success(records) => records[0].validation_programs[0],
+            factory_abi::FactoryResultNodes::InsufficientBalance { .. } => {
+                return Err(format!("factory {key} probe returned insufficient balance"));
+            }
+        };
         let id = clvm_utils::tree_hash(&allocator, initial_validator).to_bytes();
 
         package_ids.insert(key.clone(), id);
@@ -590,6 +550,7 @@ fn main() {
     println!("cargo:rerun-if-changed=chialisp.toml");
     println!("cargo:rerun-if-changed=games/registry.json");
     println!("cargo:rerun-if-changed=shared/protocol-constants/constants.json");
+    println!("cargo:rerun-if-changed=src/factory_abi.rs");
     println!("cargo:rerun-if-env-changed=CHIALISP_COMPILE");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());

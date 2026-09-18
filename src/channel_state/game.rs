@@ -3,8 +3,6 @@ use std::rc::Rc;
 use clvm_traits::ToClvm;
 use clvmr::run_program;
 
-use crate::utils::proper_list;
-
 use crate::channel_state::game_handler::GameHandler;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{StateUpdateProgram, ValidationInfo, ValidationProgramRegistry};
@@ -12,6 +10,9 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     GameID, Hash, IntoErr, Program, Puzzle, Timeout, MAX_BLOCK_COST_CLVM,
 };
+
+#[path = "../factory_abi.rs"]
+mod factory_abi;
 
 /// One canonical game returned by a proposal factory.
 ///
@@ -143,86 +144,33 @@ impl Game {
         .into_gen()
         .map_err(|e| Error::StrErr(format!("proposal factory failed: error={e:?}")))?
         .1;
-        let envelope = proper_list(allocator.allocator(), result, true).ok_or_else(|| {
-            Error::StrErr("proposal factory did not return a proper result".into())
-        })?;
-        let tag = envelope
-            .first()
-            .and_then(|node| atom_from_clvm(allocator, *node))
-            .ok_or_else(|| Error::StrErr("proposal factory result tag is not an atom".into()))?;
-        if tag.is_empty() {
-            if envelope.len() != 3 {
-                return Err(Error::StrErr(
-                    "proposal factory insufficient result must have 3 fields".into(),
-                ));
+        let records = match factory_abi::parse_factory_result(
+            allocator.allocator(),
+            result,
+            "proposal factory",
+        )
+        .map_err(Error::StrErr)?
+        {
+            factory_abi::FactoryResultNodes::Success(records) => records,
+            factory_abi::FactoryResultNodes::InsufficientBalance {
+                proposer_balance_short,
+                accepter_balance_short,
+            } => {
+                return Ok(FactoryResult::InsufficientBalance {
+                    proposer_balance_short,
+                    accepter_balance_short,
+                });
             }
-            let flag = |node, name| -> Result<bool, Error> {
-                match atom_from_clvm(allocator, node).as_deref() {
-                    Some([]) => Ok(false),
-                    Some([1]) => Ok(true),
-                    _ => Err(Error::StrErr(format!(
-                        "proposal factory {name} flag is not canonical boolean"
-                    ))),
-                }
-            };
-            return Ok(FactoryResult::InsufficientBalance {
-                proposer_balance_short: flag(envelope[1], "proposer shortage")?,
-                accepter_balance_short: flag(envelope[2], "accepter shortage")?,
-            });
-        }
-        if tag.as_slice() != [1] || envelope.len() != 2 {
-            return Err(Error::StrErr(
-                "proposal factory success result must be (1 records)".into(),
-            ));
-        }
-        let records = proper_list(allocator.allocator(), envelope[1], true)
-            .ok_or_else(|| Error::StrErr("proposal factory games are not a proper list".into()))?;
-        if records.is_empty() {
-            return Err(Error::StrErr(
-                "proposal factory returned no games".to_string(),
-            ));
-        }
+        };
 
         let mut games = Vec::with_capacity(records.len());
         for (index, record) in records.into_iter().enumerate() {
-            let fields = proper_list(allocator.allocator(), record, true).ok_or_else(|| {
-                Error::StrErr(format!(
-                    "proposal factory game {index} is not a proper list"
-                ))
-            })?;
-            if fields.len() != 11 {
-                return Err(Error::StrErr(format!(
-                    "proposal factory game {index} has {} fields, expected 11",
-                    fields.len()
-                )));
-            }
-
-            let turn_atom = atom_from_clvm(allocator, fields[2]).ok_or_else(|| {
-                Error::StrErr(format!(
-                    "proposal factory game {index} proposer_goes_first is not an atom"
-                ))
-            })?;
-            let proposer_goes_first = match turn_atom.as_slice() {
-                [] => false,
-                [1] => true,
-                _ => {
-                    return Err(Error::StrErr(format!(
-                        "proposal factory game {index} proposer_goes_first is not canonical boolean"
-                    )));
-                }
-            };
-
+            let fields = record.fields;
             let proposer_contribution = Amount::from_clvm(allocator, fields[0])?;
             let accepter_contribution = Amount::from_clvm(allocator, fields[1])?;
             let amount = proposer_contribution.clone() + accepter_contribution.clone();
-            let validation_program_nodes = proper_list(allocator.allocator(), fields[9], true)
-                .ok_or_else(|| {
-                    Error::StrErr(format!(
-                        "proposal factory game {index} validation programs are not a proper list"
-                    ))
-                })?;
-            let mut validation_programs = Vec::with_capacity(validation_program_nodes.len());
-            for node in validation_program_nodes {
+            let mut validation_programs = Vec::with_capacity(record.validation_programs.len());
+            for node in record.validation_programs {
                 validation_programs.push(Rc::new(Program::from_nodeptr(allocator, node)?));
             }
             let validation_programs =
@@ -245,7 +193,7 @@ impl Game {
                 proposer_contribution,
                 accepter_contribution,
                 amount,
-                proposer_goes_first,
+                proposer_goes_first: record.proposer_goes_first,
                 initial_move: atom_from_clvm(allocator, fields[3])
                     .ok_or_else(|| {
                         Error::StrErr(format!(

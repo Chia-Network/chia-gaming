@@ -10,7 +10,7 @@ export type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
 import type { HandProposal } from './session/types';
 import { isValidGameTimeoutBlocks } from './session/gameTimeout';
 import type { SessionModel } from './session/types';
-import type { ProposalGroupOrigin } from './session/proposalOrigin';
+import type { ProposalOrigin } from './session/proposalOrigin';
 
 export type { CatalogGameType } from '../generated/gamePresets';
 export type RegisteredGameType = CatalogGameType;
@@ -130,9 +130,9 @@ function proposalParameterValuesEqual(
 
 export function handProposalsEqual(
   a: HandProposal | null,
-  aOrigin: ProposalGroupOrigin | null,
+  aOrigin: ProposalOrigin | null,
   b: HandProposal | null,
-  bOrigin: ProposalGroupOrigin | null,
+  bOrigin: ProposalOrigin | null,
 ): boolean {
   if (!a || !b || !aOrigin || !bOrigin || a.gameType !== b.gameType) return false;
   const localIsPlayerAForA = (aOrigin === 'local') === a.senderIsPlayerA;

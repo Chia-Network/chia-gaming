@@ -1,7 +1,7 @@
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { runSessionMachineTransition } from '../session/sessionMachineEffects';
-import type { HandProposal, ProposalGroupOrigin } from '../session/types';
+import type { HandProposal, ProposalOrigin } from '../session/types';
 
 export const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
@@ -26,18 +26,17 @@ export function send(
 
 export function trackProposal(
   state: ReturnType<typeof createSessionMachineState>,
-  memberIds: string[],
+  id: string,
   handProposal: HandProposal,
-  origin: ProposalGroupOrigin = 'local',
+  origin: ProposalOrigin = 'local',
 ) {
   return send(state, {
-    type: 'upsert-proposal-group',
-    group: {
-      primaryId: memberIds[0],
-      memberIds,
+    type: 'upsert-pending-proposal',
+    proposal: {
+      id,
       handProposal,
       origin,
-      disposition: origin === 'local' ? 'outgoing' : 'incoming-cached',
+      status: origin === 'local' ? 'outgoing' : 'incoming-cached',
     },
   });
 }

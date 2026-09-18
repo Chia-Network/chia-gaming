@@ -7,8 +7,7 @@ import {
 } from '../gameRegistry';
 import { Program } from 'clvm-lib';
 import type { GameHandInitialization, GameUpdate, PersistedGameState } from '@games/host';
-import { clearProposalIds } from './sessionMachineProposals';
-import { selectProposalGroupByMemberId } from './selectors';
+import { selectPendingProposal } from './selectors';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -22,7 +21,6 @@ export type DurableGameEvent = Extract<
   | { type: 'notification-accepted-group' }
   | { type: 'notification-game-status' }
   | { type: 'notification-game-terminal' }
-  | { type: 'notification-insufficient-balance' }
   | { type: 'notification-abandoned' }
   | { type: 'hand-state-changed' }
   | { type: 'local-game-action-committed' }
@@ -141,14 +139,12 @@ export function reduceDurableGameEvent(
       const firstMember = event.members[0];
       if (!firstMember) throw new Error('ProposalAcceptedGroup has no members');
       const acceptedIds = event.members.map((member) => member.id);
-      const proposal = selectProposalGroupByMemberId(state.model, event.proposalId);
+      const proposal = selectPendingProposal(state.model, event.proposalId);
       if (!proposal) {
-        throw new Error(
-          `ProposalAcceptedGroup ${event.proposalId} missing normalized proposal group`,
-        );
+        throw new Error(`ProposalAcceptedGroup ${event.proposalId} missing pending proposal`);
       }
-      const proposalGroups = state.model.betweenHand.proposalGroups.filter(
-        (group) => group.primaryId !== proposal.primaryId,
+      const pendingProposals = state.model.betweenHand.pendingProposals.filter(
+        (candidate) => candidate.id !== proposal.id,
       );
       const game = gameSliceReducer(gameSliceFromModel(state.model), {
         type: 'accepted-group',
@@ -168,7 +164,7 @@ export function reduceDurableGameEvent(
           game: { ...modelWithGame.game, handState: null },
           betweenHand: {
             ...state.model.betweenHand,
-            proposalGroups,
+            pendingProposals,
             mode: 'decision' as const,
             rejectedOnceHandProposal: null,
             pendingRetryHandProposal: null,
@@ -255,50 +251,6 @@ export function reduceDurableGameEvent(
         outcome: event.terminal.outcome,
       };
       return reduceHandUpdateAcrossSnapshots(base, update, event.handState, activeHand);
-    }
-    case 'notification-insufficient-balance': {
-      const proposal = selectProposalGroupByMemberId(state.model, event.id);
-      if (!proposal) {
-        throw new Error(`InsufficientBalance ${event.id} missing normalized proposal group`);
-      }
-      const game = gameSliceReducer(gameSliceFromModel(state.model), {
-        type: 'remove-group',
-        groupIds: proposal.memberIds,
-      });
-      const modelWithGame = withGameSlice(state.model, game);
-      const cleared = clearProposalIds(
-        {
-          ...state,
-          model: {
-            ...modelWithGame,
-            betweenHand: {
-              ...state.model.betweenHand,
-              mode: 'compose-proposal',
-            },
-            game: {
-              ...modelWithGame.game,
-              queue: [...state.model.game.queue, event.notification],
-            },
-          },
-        },
-        proposal.memberIds,
-      );
-      const removesCurrentHand = proposal.memberIds.some((id) =>
-        state.model.game.currentHandIds.includes(id),
-      );
-      if (removesCurrentHand) activeHand?.clear();
-      return removesCurrentHand
-        ? {
-            state: {
-              ...cleared,
-              model: {
-                ...cleared.model,
-                game: { ...cleared.model.game, handState: null },
-              },
-            },
-            effects: [],
-          }
-        : { state: cleared, effects: [] };
     }
     case 'notification-abandoned': {
       activeHand?.clear();

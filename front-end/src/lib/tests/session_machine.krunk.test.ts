@@ -8,7 +8,7 @@ import { CALPOKER_TERMS, KRUNK_TERMS, run, send, trackProposal } from './session
 describe('session machine behavior sequences', () => {
   it('atomically replaces Krunk authority when the next group arrives after one member settles', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['1', '2'], KRUNK_TERMS, 'peer');
+    state = trackProposal(state, '1', KRUNK_TERMS, 'peer');
 
     state = send(state, {
       type: 'notification-accepted-group',
@@ -31,7 +31,7 @@ describe('session machine behavior sequences', () => {
       ],
     });
 
-    state = trackProposal(state, ['7'], CALPOKER_TERMS);
+    state = trackProposal(state, '7', CALPOKER_TERMS);
     state = send(state, {
       type: 'notification-game-terminal',
 
@@ -88,7 +88,7 @@ describe('session machine behavior sequences', () => {
 
   it('ignores replayed readables after one Krunk game settles without suppressing its sibling', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
+    state = trackProposal(state, '1', KRUNK_TERMS);
 
     state = send(state, {
       type: 'notification-accepted-group',
@@ -223,7 +223,7 @@ describe('session machine behavior sequences', () => {
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       }),
     );
-    state = trackProposal(state, ['7', '9'], KRUNK_TERMS);
+    state = trackProposal(state, '7', KRUNK_TERMS);
 
     state = run(state, {
       type: 'notification-accepted-group',
@@ -343,7 +343,7 @@ describe('session machine behavior sequences', () => {
 
   it('commits complete Krunk hands while preserving sibling members', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
+    state = trackProposal(state, '1', KRUNK_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
       proposalId: '1',

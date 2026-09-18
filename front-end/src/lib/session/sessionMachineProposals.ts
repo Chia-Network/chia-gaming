@@ -7,8 +7,8 @@ import type {
 
 export type ProposalEvent = Extract<
   SessionMachineEvent,
-  | { type: 'upsert-proposal-group' }
-  | { type: 'set-proposal-disposition' }
+  | { type: 'upsert-pending-proposal' }
+  | { type: 'set-proposal-status' }
   | { type: 'clear-proposals' }
   | { type: 'request-accept-proposal' }
   | { type: 'request-cancel-proposal' }
@@ -29,10 +29,8 @@ export function clearProposalIds(
       ...state.model,
       betweenHand: {
         ...betweenHand,
-        proposalGroups: tracked
-          ? betweenHand.proposalGroups.filter(
-              (group) => !group.memberIds.some((id) => tracked.has(id)),
-            )
+        pendingProposals: tracked
+          ? betweenHand.pendingProposals.filter((proposal) => !tracked.has(proposal.id))
           : [],
       },
     },
@@ -48,27 +46,25 @@ export function reduceProposalEvent(
   event: ProposalEvent,
 ): SessionMachineTransition {
   switch (event.type) {
-    case 'upsert-proposal-group': {
-      const groups = state.model.betweenHand.proposalGroups;
-      const existing = groups.findIndex((group) =>
-        group.memberIds.some((id) => event.group.memberIds.includes(id)),
-      );
-      const proposalGroups =
+    case 'upsert-pending-proposal': {
+      const proposals = state.model.betweenHand.pendingProposals;
+      const existing = proposals.findIndex((proposal) => proposal.id === event.proposal.id);
+      const pendingProposals =
         existing < 0
-          ? [...groups, event.group]
-          : groups.map((group, index) => (index === existing ? event.group : group));
+          ? [...proposals, event.proposal]
+          : proposals.map((proposal, index) => (index === existing ? event.proposal : proposal));
       return {
         state: {
           ...state,
           model: {
             ...state.model,
-            betweenHand: { ...state.model.betweenHand, proposalGroups },
+            betweenHand: { ...state.model.betweenHand, pendingProposals },
           },
         },
         effects: [],
       };
     }
-    case 'set-proposal-disposition':
+    case 'set-proposal-status':
       return {
         state: {
           ...state,
@@ -76,10 +72,8 @@ export function reduceProposalEvent(
             ...state.model,
             betweenHand: {
               ...state.model.betweenHand,
-              proposalGroups: state.model.betweenHand.proposalGroups.map((group) =>
-                group.primaryId === event.primaryId
-                  ? { ...group, disposition: event.disposition }
-                  : group,
+              pendingProposals: state.model.betweenHand.pendingProposals.map((proposal) =>
+                proposal.id === event.id ? { ...proposal, status: event.status } : proposal,
               ),
             },
           },
@@ -98,14 +92,13 @@ export function reduceProposalEvent(
         effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],
       };
     case 'proposal-sent': {
-      const group = {
-        primaryId: event.ids[0],
-        memberIds: [...event.ids],
+      const proposal = {
+        id: event.id,
         handProposal: event.handProposal,
         origin: 'local' as const,
-        disposition: 'outgoing' as const,
+        status: 'outgoing' as const,
       };
-      const tracked = reduceProposalEvent(state, { type: 'upsert-proposal-group', group });
+      const tracked = reduceProposalEvent(state, { type: 'upsert-pending-proposal', proposal });
       return {
         state: {
           ...tracked.state,
@@ -131,11 +124,10 @@ export function reduceProposalEvent(
                 ...state.model,
                 betweenHand: {
                   ...betweenHand,
-                  mode: 'decision',
-                  proposalGroups: betweenHand.proposalGroups.map((group) =>
-                    group.primaryId === event.id
-                      ? { ...group, disposition: 'incoming-cached' as const }
-                      : group,
+                  pendingProposals: betweenHand.pendingProposals.map((proposal) =>
+                    proposal.id === event.id
+                      ? { ...proposal, status: 'accepting' as const }
+                      : proposal,
                   ),
                 },
               },
@@ -149,7 +141,15 @@ export function reduceProposalEvent(
               ...state,
               model: {
                 ...state.model,
-                betweenHand: { ...betweenHand, newHandRequested: false },
+                betweenHand: {
+                  ...betweenHand,
+                  newHandRequested: false,
+                  pendingProposals: betweenHand.pendingProposals.map((proposal) =>
+                    proposal.id === event.id
+                      ? { ...proposal, status: 'accepting' as const }
+                      : proposal,
+                  ),
+                },
               },
               coordination: { ...state.coordination, sameTermsRequested: false },
             },
@@ -164,8 +164,8 @@ export function reduceProposalEvent(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                proposalGroups: betweenHand.proposalGroups.filter(
-                  (group) => group.primaryId !== event.id,
+                pendingProposals: betweenHand.pendingProposals.filter(
+                  (proposal) => proposal.id !== event.id,
                 ),
                 rejectedOnceHandProposal: betweenHand.lastHandProposal,
                 compose: applyHandProposalToComposeDraft(
@@ -186,8 +186,8 @@ export function reduceProposalEvent(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                proposalGroups: betweenHand.proposalGroups.filter(
-                  (group) => group.primaryId !== event.id,
+                pendingProposals: betweenHand.pendingProposals.filter(
+                  (proposal) => proposal.id !== event.id,
                 ),
                 compose: { ...betweenHand.compose, proposalSent: false },
                 mode: 'compose-proposal',
@@ -196,6 +196,45 @@ export function reduceProposalEvent(
           },
           effects: [{ type: 'persist-session' }],
         };
+      }
+      if (event.command === 'cancel-proposal') {
+        const proposal = betweenHand.pendingProposals.find(({ id }) => id === event.id);
+        if (proposal?.origin === 'peer') {
+          return {
+            state: {
+              ...state,
+              model: {
+                ...state.model,
+                betweenHand: {
+                  ...betweenHand,
+                  pendingProposals: betweenHand.pendingProposals.filter(
+                    (candidate) => candidate.id !== event.id,
+                  ),
+                },
+              },
+            },
+            effects: [{ type: 'persist-session' }],
+          };
+        }
+        if (proposal?.origin === 'local') {
+          return {
+            state: {
+              ...state,
+              model: {
+                ...state.model,
+                betweenHand: {
+                  ...betweenHand,
+                  pendingProposals: betweenHand.pendingProposals.map((candidate) =>
+                    candidate.id === event.id
+                      ? { ...candidate, status: 'advisory-cancelling' as const }
+                      : candidate,
+                  ),
+                },
+              },
+            },
+            effects: [{ type: 'persist-session' }],
+          };
+        }
       }
       return { state, effects: [] };
     }

@@ -12,7 +12,7 @@ const readableInteger = (value: bigint) => Program.fromBigInt(value).serialize()
 describe('session machine behavior sequences', () => {
   it('rejects an inbound protocol ID outside the accepted hand', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['7'], CALPOKER_TERMS);
+    state = trackProposal(state, '7', CALPOKER_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
       proposalId: '7',
@@ -42,7 +42,7 @@ describe('session machine behavior sequences', () => {
 
   it('rejects malformed serialized readables at the package boundary', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['7'], CALPOKER_TERMS);
+    state = trackProposal(state, '7', CALPOKER_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
       proposalId: '7',
@@ -72,9 +72,9 @@ describe('session machine behavior sequences', () => {
 
   it('rejects duplicate acceptance and resets durable state for a new proposal', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['7'], CALPOKER_TERMS);
+    state = trackProposal(state, '7', CALPOKER_TERMS);
 
-    state = trackProposal(state, ['9'], CALPOKER_TERMS, 'peer');
+    state = trackProposal(state, '9', CALPOKER_TERMS, 'peer');
     state = send(state, {
       type: 'notification-accepted-group',
       proposalId: '7',
@@ -140,7 +140,7 @@ describe('session machine behavior sequences', () => {
           },
         ],
       }),
-    ).toThrow('ProposalAcceptedGroup 7 missing normalized proposal group');
+    ).toThrow('ProposalAcceptedGroup 7 missing pending proposal');
 
     expect(state.model.game.handState).toEqual(progressed);
 
@@ -191,7 +191,7 @@ describe('session machine behavior sequences', () => {
     ]).serialize();
 
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['7'], CALPOKER_TERMS, 'peer');
+    state = trackProposal(state, '7', CALPOKER_TERMS, 'peer');
 
     state = send(state, {
       type: 'notification-accepted-group',
@@ -356,7 +356,7 @@ describe('session machine behavior sequences', () => {
           channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
         }),
       );
-      state = trackProposal(state, ids, handProposal);
+      state = trackProposal(state, ids[0]!, handProposal);
 
       const acceptedOrder: string[] = [];
 
@@ -449,23 +449,20 @@ describe('session machine behavior sequences', () => {
       }
 
       if (gameType === 'krunk') {
-        state = trackProposal(state, ['11'], handProposal);
+        state = trackProposal(state, '11', handProposal);
         state = run(state, {
-          type: 'notification-insufficient-balance',
-
-          id: '11',
+          type: 'wasm-notification',
+          iStarted: false,
           notification: {
-            id: 1n,
-
-            kind: 'insufficient-bal',
-
-            title: 'Notice',
-
-            message: 'Insufficient balance',
+            InsufficientBalance: {
+              id: 11n,
+              our_balance_short: true,
+              their_balance_short: false,
+            },
           },
         });
 
-        expect(state.model.betweenHand.proposalGroups).toEqual([]);
+        expect(state.model.betweenHand.pendingProposals).toEqual([]);
         expect(krunkStateCodec.decode(state.model.game.handState)?.members[1]).toBeDefined();
         expect(state.model.game.activeIds).toEqual([ids[1]]);
       }
@@ -507,7 +504,7 @@ describe('session machine behavior sequences', () => {
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Unrolling' } },
       }),
     );
-    state = trackProposal(state, ['7'], handProposal);
+    state = trackProposal(state, '7', handProposal);
 
     state = run(state, {
       type: 'notification-accepted-group',
@@ -563,7 +560,7 @@ describe('session machine behavior sequences', () => {
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       }),
     );
-    initial = trackProposal(initial, ['7'], CALPOKER_TERMS);
+    initial = trackProposal(initial, '7', CALPOKER_TERMS);
 
     const state = send(initial, {
       type: 'notification-accepted-group',

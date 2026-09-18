@@ -164,8 +164,8 @@ generic Bencodex list wherever the schema requires semantic bytes.
 
 ### 3.3 Common wire types
 
-- `Amount`, `GameID`, and `Timeout` are non-negative Bencodex integers limited
-  to `u64`.
+- `Amount`, `GameID`, `WireProposalId`, and `Timeout` are non-negative
+  Bencodex integers limited to `u64`. `LocalProposalId` never crosses this wire.
 - Wire move-size fields are non-negative Bencodex integers limited to `u32`.
 - `Hash`, `PuzzleHash`, and `CoinID` are byte strings containing exactly 32
   bytes.
@@ -758,14 +758,14 @@ descriptive names while the wire uses the following compact tags and exact
 outer shapes:
 
 ```text
-ProposeGroup (`P`):
-  d u1:P <WireProposalGroup struct> e
+Propose (`P`):
+  d u1:P <WireProposal struct> e
 
-AcceptProposalGroup (`AP`):
-  d u2:AP i<game_id>e e
+AcceptProposal (`AP`):
+  d u2:AP i<wire_proposal_id>e e
 
-CancelProposalGroup (`CP`):
-  d u2:CP i<game_id>e e
+CancelProposal (`CP`):
+  d u2:CP i<wire_proposal_id>e e
 
 Move (`M`):
   d u1:M l i<game_id>e <PeerMove struct> e e
@@ -774,13 +774,13 @@ AcceptSettlement (`AS`):
   d u2:AS l i<game_id>e i<amount>e e e
 ```
 
-### 11.1 `ProposeGroup`
+### 11.1 `Propose`
 
 ```text
-ProposeGroup(WireProposalGroup)
+Propose(WireProposal)
 
-WireProposalGroup {
-  origin_wire_id: GameID,
+WireProposal {
+  origin_wire_id: WireProposalId,
   start: GameProposal
 }
 
@@ -803,9 +803,10 @@ Dictionaries are not valid proposal parameters.
 `game_type` is the first generated member's initial validation program hash.
 It is not a package name or factory hash.
 
-The receiver stores the requested terms under `origin_wire_id`, which is also
-the ID exposed locally and to the frontend. It does not run the factory or
-create game members at proposal time.
+The receiver stores the requested terms and wire mapping under a freshly
+allocated endpoint-local `LocalProposalId`. Only that local ID is exposed to
+the host/frontend. It does not run the factory or create game members at
+proposal time.
 
 Pending proposals are metadata. They do not alter balances or the signed
 unroll commitment until accepted.
@@ -817,21 +818,22 @@ If the game type is unknown, the current receiver logs a soft decline and does
 not retain the proposal. Parameter decoding belongs to the factory and is
 deferred until acceptance.
 
-Receiving a proposal group marks locally queued proposals as superseded. Those
-local proposals are still emitted and immediately cancelled in order, so their
-canonical IDs are consumed by both peers. Any queued clean-shutdown action is
+Receiving a proposal marks locally queued, un-emitted proposals as superseded.
+Their local IDs remain consumed, but no wire ID is allocated and no wire gap is
+created. Any queued clean-shutdown action is
 removed when a batch contains a proposal or proposal acceptance.
 The receiver suppresses notifications for a propose/cancel pair in the same
 atomic batch because no pending proposal exists at the notification boundary.
 
-Canonical proposal IDs use role parity and a strict next-by-two sequence; gaps,
-reuse, and wrong parity are hard errors. The two parity sets are separate from
-the shared sequential accepted-game namespace.
+Origin-assigned wire proposal IDs use role parity and a strict next-by-two
+sequence; gaps, reuse, and wrong parity are hard errors. Each endpoint maps
+those wire IDs to its own local proposal handles. Both proposal namespaces are
+separate from the shared sequential accepted-game namespace.
 
-### 11.2 `AcceptProposalGroup`
+### 11.2 `AcceptProposal`
 
 ```text
-AcceptProposalGroup(GameID)
+AcceptProposal(WireProposalId)
 ```
 
 The ID is the origin proposal ID. At this exact position in batch order, both
@@ -842,12 +844,12 @@ becomes part of the signed final channel state. Game IDs are not transmitted.
 
 An unknown, self-origin-mismatched, malformed, or unaffordable acceptance is a
 hard received-batch error. Local unaffordability instead emits
-`InsufficientBalance` and sends `CancelProposalGroup`.
+`InsufficientBalance` and sends `CancelProposal`.
 
-### 11.3 `CancelProposalGroup`
+### 11.3 `CancelProposal`
 
 ```text
-CancelProposalGroup(GameID)
+CancelProposal(WireProposalId)
 ```
 
 The ID is the origin proposal ID. The receiver removes that pending proposal.
@@ -855,6 +857,12 @@ Cancellation changes proposal metadata but does not change balances or the
 unroll commitment.
 
 An unknown proposal is a hard batch error.
+
+Rejecting a peer-origin proposal is locally definitive presentation: the host
+may remove it once Rust queues the intent. Rust retains the local/wire mapping
+until it emits this action and emits no second local cancellation notification.
+If an origin-side cancellation arrives before that queued rejection drains,
+the obsolete local rejection is removed without another wire action.
 
 ### 11.4 `Move`
 

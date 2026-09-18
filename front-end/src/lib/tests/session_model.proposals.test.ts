@@ -9,7 +9,7 @@ import {
   selectGameDashboardView,
   selectGameSessionView,
   selectGameSpecificView,
-  selectProposalGroupByMemberId,
+  selectPendingProposal,
   sessionModelFromSave,
   snapshotFromSessionModel,
   gameCoinIdentityForGameStatus,
@@ -42,7 +42,7 @@ describe('session model proposal and normalization contracts', () => {
         gameTimeout: 15n,
         parameters: 10n,
       },
-      ['cal-1'],
+      'cal-1',
     ],
     [
       'Space Poker singleton',
@@ -52,7 +52,7 @@ describe('session model proposal and normalization contracts', () => {
         gameTimeout: 16n,
         parameters: [10n, 2n],
       },
-      ['space-1'],
+      'space-1',
     ],
     [
       'Krunk ordered pair',
@@ -62,33 +62,28 @@ describe('session model proposal and normalization contracts', () => {
         gameTimeout: 17n,
         parameters: 100n,
       },
-      ['krunk-picker', 'krunk-guesser'],
+      'krunk-proposal',
     ],
-  ])('round-trips a normalized %s proposal group', (_label, terms, memberIds) => {
+  ])('round-trips a normalized %s pending proposal', (_label, terms, id) => {
     const model = createSessionModel({
       betweenHand: {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primaryId: memberIds[0],
-            memberIds: [...memberIds],
+            id,
             handProposal: terms,
             origin: 'local',
-            disposition: 'outgoing',
+            status: 'outgoing',
           },
         ],
       },
     });
     const snapshot = snapshotFromSessionModel(model);
     const restored = sessionModelFromSave(
-      liveEnvelope({ activeGameIds: [], proposalGroups: snapshot.proposalGroups }),
+      liveEnvelope({ activeGameIds: [], pendingProposals: snapshot.pendingProposals }),
     );
 
-    expect(restored.betweenHand.proposalGroups).toEqual(model.betweenHand.proposalGroups);
-    for (const id of memberIds) {
-      expect(selectProposalGroupByMemberId(restored, id)).toBe(
-        restored.betweenHand.proposalGroups[0],
-      );
-    }
+    expect(restored.betweenHand.pendingProposals).toEqual(model.betweenHand.pendingProposals);
+    expect(selectPendingProposal(restored, id)).toBe(restored.betweenHand.pendingProposals[0]);
   });
 
   it('omits every deprecated parallel proposal ledger', () => {
@@ -116,34 +111,31 @@ describe('session model proposal and normalization contracts', () => {
     }
   });
 
-  it('retains generic group membership through acceptance until insufficient balance clears every member', () => {
+  it('stores advisory proposal status without generated member IDs', () => {
     const terms = {
       gameType: 'krunk',
       senderIsPlayerA: true,
       gameTimeout: 15n,
       parameters: 100n,
     } as const;
-    const groupIds = ['11', '13'];
     const model = createSessionModel({
       betweenHand: {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primaryId: '11',
-            memberIds: groupIds,
+            id: '11',
             handProposal: terms,
             origin: 'local',
-            disposition: 'accepted',
+            status: 'advisory-cancelling',
           },
         ],
       },
     });
-    expect(selectProposalGroupByMemberId(model, '11')).toBe(
-      selectProposalGroupByMemberId(model, '13'),
-    );
-    expect(selectProposalGroupByMemberId(model, '13')).toMatchObject({
-      memberIds: groupIds,
+    expect(selectPendingProposal(model, '11')).toMatchObject({
+      id: '11',
+      status: 'advisory-cancelling',
       handProposal: terms,
     });
+    expect(selectPendingProposal(model, '13')).toBeNull();
   });
 
   it('round-trips live games without retaining their accepted proposal', () => {
@@ -177,7 +169,7 @@ describe('session model proposal and normalization contracts', () => {
           gameTimeout: 15n,
           parameters: 100n,
         },
-        proposalGroups: [],
+        pendingProposals: [],
       },
     });
     const snapshot = snapshotFromSessionModel(model);
@@ -188,7 +180,7 @@ describe('session model proposal and normalization contracts', () => {
         currentHandOrigin: snapshot.currentHandOrigin,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
-        proposalGroups: snapshot.proposalGroups,
+        pendingProposals: snapshot.pendingProposals,
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: krunkStateCodec.encode({
           perPlayerStake: 100n,
@@ -196,7 +188,7 @@ describe('session model proposal and normalization contracts', () => {
         }),
       }),
     );
-    expect(selectProposalGroupByMemberId(restored, '13')).toBeNull();
+    expect(selectPendingProposal(restored, '13')).toBeNull();
     expect(restored.game.currentHandIds).toEqual(['11', '13']);
   });
 
@@ -216,12 +208,11 @@ describe('session model proposal and normalization contracts', () => {
     const restored = sessionModelFromSave(
       liveEnvelope({
         activeGameIds: [],
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: '11',
-            member_ids: ['11'],
+            id: '11',
             origin: 'local',
-            disposition: 'outgoing',
+            status: 'outgoing',
             hand_proposal: {
               sender_is_player_a: false,
               game_timeout: '15',
@@ -230,10 +221,9 @@ describe('session model proposal and normalization contracts', () => {
             },
           },
           {
-            primary_id: '23',
-            member_ids: ['23'],
+            id: '23',
             origin: 'peer',
-            disposition: 'incoming-review',
+            status: 'incoming-review',
             hand_proposal: {
               sender_is_player_a: false,
               game_timeout: '25',
@@ -244,10 +234,10 @@ describe('session model proposal and normalization contracts', () => {
         ],
       }),
     );
-    expect(restored.betweenHand.proposalGroups).toHaveLength(2);
-    expect(selectProposalGroupByMemberId(restored, '11')?.handProposal).toEqual(firstTerms);
-    expect(selectProposalGroupByMemberId(restored, '23')?.handProposal).toEqual(inboundTerms);
-    expect(snapshotFromSessionModel(restored).proposalGroups).toHaveLength(2);
+    expect(restored.betweenHand.pendingProposals).toHaveLength(2);
+    expect(selectPendingProposal(restored, '11')?.handProposal).toEqual(firstTerms);
+    expect(selectPendingProposal(restored, '23')?.handProposal).toEqual(inboundTerms);
+    expect(snapshotFromSessionModel(restored).pendingProposals).toHaveLength(2);
   });
 
   it('restores every current-hand member for resolved-unroll lifecycle rows', () => {
@@ -808,7 +798,7 @@ describe('session model proposal and normalization contracts', () => {
 
     dispatchWasmNotification(
       {
-        ProposalMade: { id: '7', group_ids: ['7'] },
+        ProposalMade: { id: '7' },
       },
       handle,
       (error) => {

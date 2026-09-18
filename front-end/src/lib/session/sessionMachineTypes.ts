@@ -5,8 +5,8 @@ import type {
   GameTerminalModel,
   HandProposal,
   LocalActionKind,
-  ProposalGroupDisposition,
-  ProposalGroupModel,
+  PendingProposalModel,
+  PendingProposalStatus,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
@@ -96,11 +96,11 @@ export type SessionMachineEvent =
   | { type: 'dismiss-channel' }
   | { type: 'dismiss-game-notification' }
   | { type: 'set-between-hand-mode'; mode: BetweenHandModeModel }
-  | { type: 'upsert-proposal-group'; group: ProposalGroupModel }
+  | { type: 'upsert-pending-proposal'; proposal: PendingProposalModel }
   | {
-      type: 'set-proposal-disposition';
-      primaryId: string;
-      disposition: ProposalGroupDisposition;
+      type: 'set-proposal-status';
+      id: string;
+      status: PendingProposalStatus;
     }
   | { type: 'set-rejected-terms'; handProposal: HandProposal | null }
   | { type: 'set-last-terms'; handProposal: HandProposal }
@@ -140,11 +140,6 @@ export type SessionMachineEvent =
       terminal: GameTerminalModel;
       handState?: PersistedGameState;
     }
-  | {
-      type: 'notification-insufficient-balance';
-      id: string;
-      notification: QueuedNotificationModel;
-    }
   | { type: 'notification-abandoned' }
   | {
       type: 'hand-state-changed';
@@ -163,7 +158,7 @@ export type SessionMachineEvent =
   | { type: 'request-accept-proposal'; id: string }
   | { type: 'request-cancel-proposal'; id: string }
   | { type: 'request-propose-game'; handProposal: HandProposal }
-  | { type: 'proposal-sent'; ids: string[]; handProposal: HandProposal }
+  | { type: 'proposal-sent'; id: string; handProposal: HandProposal }
   | {
       type: 'proposal-command-succeeded';
       command: 'accept-proposal' | 'cancel-proposal';
@@ -176,7 +171,7 @@ export type SessionMachineEvent =
   | { type: 'reject-current-proposal' }
   | { type: 'open-compose' }
   | { type: 'submit-compose'; handProposal: HandProposal }
-  | { type: 'accept-review'; primaryId: string }
+  | { type: 'accept-review'; id: string }
   | { type: 'reject-review' }
   | { type: 'start-clean-shutdown' }
   | { type: 'go-on-chain' }

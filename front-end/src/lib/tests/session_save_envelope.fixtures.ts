@@ -76,7 +76,7 @@ const PRESENTATION_KEYS = new Set([
   'betweenHandLastHandProposal',
   'betweenHandRejectedOnceHandProposal',
   'betweenHandPendingRetryHandProposal',
-  'proposalGroups',
+  'pendingProposals',
   'waitingStateEnteredAt',
   'cleanShutdownGraceStartedAt',
 ]);
@@ -146,7 +146,7 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
     },
     betweenHandRejectedOnceHandProposal: null,
     betweenHandPendingRetryHandProposal: null,
-    proposalGroups: [],
+    pendingProposals: [],
     waitingStateEnteredAt: null,
     cleanShutdownGraceStartedAt: null,
   };

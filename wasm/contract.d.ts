@@ -144,7 +144,6 @@ export type ProposalParameterValue =
 
 export interface ProposalMadePayload {
   id: bigint;
-  group_ids: bigint[];
   sender_is_player_a: unknown;
   timeout: unknown;
   game_type: unknown;
@@ -176,7 +175,6 @@ export type CancelReason =
 
 export interface ProposalCancelledPayload {
   id: bigint;
-  group_ids: bigint[];
   reason: CancelReason;
 }
 

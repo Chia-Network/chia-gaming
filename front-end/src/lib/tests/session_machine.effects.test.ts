@@ -7,6 +7,7 @@ import { send } from './session_machine.harness';
 
 describe('session machine behavior sequences', () => {
   it('queues dispatches requested during a React projection instead of re-entering it', () => {
+    jest.useFakeTimers();
     const controller = {
       clearDerivedGamePresentation: () => {},
     } as unknown as SessionController;
@@ -48,6 +49,7 @@ describe('session machine behavior sequences', () => {
     });
 
     runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
+    jest.runAllTimers();
 
     expect(maxRenderDepth).toBe(1);
 
@@ -58,6 +60,7 @@ describe('session machine behavior sequences', () => {
 
       sameTermsRequested: true,
     });
+    jest.useRealTimers();
   });
 
   it('publishes machine authority before commands and React', () => {

@@ -1,13 +1,12 @@
 import { isCatalogGameType, isProposalParameterValue, validateHandProposal } from '../gameRegistry';
 import type { ComposeDraftState } from './composeDraft';
 import type { SessionPresentationSave } from './saveEnvelope';
-import type { HandProposal, ProposalGroupModel } from './types';
+import type { HandProposal, PendingProposalModel } from './types';
 import {
   parseDecimalString,
   requireBoolean,
   requireRecord,
   requireString,
-  requireUniqueIds,
 } from './persistencePrimitives';
 
 export function encodeComposeDraftState(
@@ -61,58 +60,55 @@ export function parseOptionalHandProposalSnapshot(
   return saved === null ? null : parseHandProposalSnapshot(saved, label);
 }
 
-export function parseProposalGroups(value: unknown, label: string): ProposalGroupModel[] {
+export function parsePendingProposals(value: unknown, label: string): PendingProposalModel[] {
   if (!Array.isArray(value)) throw new Error(`Garbled save: invalid ${label}`);
   const seen = new Set<string>();
   let localOutgoing = 0;
-  const groups = value.map((entry, index): ProposalGroupModel => {
-    const groupLabel = `${label}[${index}]`;
-    const saved = requireRecord(entry, groupLabel);
-    const primaryId = requireString(saved.primary_id, `${groupLabel}.primary_id`);
-    const memberIds = requireUniqueIds(saved.member_ids, `${groupLabel}.member_ids`, true);
-    if (primaryId !== memberIds[0]) {
-      throw new Error(`Garbled save: ${groupLabel}.primary_id is not the first member`);
-    }
-    for (const id of memberIds) {
-      if (seen.has(id)) throw new Error(`Garbled save: proposal member ${id} appears twice`);
-      seen.add(id);
-    }
+  const proposals = value.map((entry, index): PendingProposalModel => {
+    const proposalLabel = `${label}[${index}]`;
+    const saved = requireRecord(entry, proposalLabel);
+    const id = requireString(saved.id, `${proposalLabel}.id`);
+    if (seen.has(id)) throw new Error(`Garbled save: duplicate pending proposal ${id}`);
+    seen.add(id);
     const origin = saved.origin;
     if (origin !== 'local' && origin !== 'peer') {
-      throw new Error(`Garbled save: invalid ${groupLabel}.origin`);
+      throw new Error(`Garbled save: invalid ${proposalLabel}.origin`);
     }
-    const disposition = saved.disposition;
+    const status = saved.status;
     if (
-      disposition !== 'outgoing' &&
-      disposition !== 'incoming-cached' &&
-      disposition !== 'incoming-review'
+      status !== 'outgoing' &&
+      status !== 'incoming-cached' &&
+      status !== 'incoming-review' &&
+      status !== 'accepting' &&
+      status !== 'advisory-cancelling'
     ) {
-      throw new Error(`Garbled save: invalid ${groupLabel}.disposition`);
+      throw new Error(`Garbled save: invalid ${proposalLabel}.status`);
     }
-    if (disposition === 'outgoing' && origin !== 'local') {
-      throw new Error(`Garbled save: outgoing ${groupLabel} is not local`);
+    if ((status === 'outgoing' || status === 'advisory-cancelling') && origin !== 'local') {
+      throw new Error(`Garbled save: outgoing ${proposalLabel} is not local`);
+    }
+    if ((status === 'incoming-cached' || status === 'incoming-review') && origin !== 'peer') {
+      throw new Error(`Garbled save: incoming ${proposalLabel} is not peer-originated`);
     }
     if (
-      (disposition === 'incoming-cached' || disposition === 'incoming-review') &&
-      origin !== 'peer'
+      origin === 'local' &&
+      (status === 'outgoing' || status === 'accepting' || status === 'advisory-cancelling')
     ) {
-      throw new Error(`Garbled save: incoming ${groupLabel} is not peer-originated`);
+      localOutgoing += 1;
     }
-    if (origin === 'local' && disposition === 'outgoing') localOutgoing += 1;
     const handProposal = parseHandProposalSnapshot(
       saved.hand_proposal,
-      `${groupLabel}.hand_proposal`,
+      `${proposalLabel}.hand_proposal`,
     );
     return {
-      primaryId,
-      memberIds,
+      id,
       handProposal,
       origin,
-      disposition,
+      status,
     };
   });
   if (localOutgoing > 1) {
     throw new Error('Garbled save: multiple local outgoing proposal groups');
   }
-  return groups;
+  return proposals;
 }

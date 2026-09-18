@@ -1,6 +1,6 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
 import { handProposalsEqual } from '../gameRegistry';
-import { selectProposalGroupByDisposition } from './selectors';
+import { selectProposalByStatus } from './selectors';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -24,7 +24,7 @@ export function reduceSessionCommand(
   const betweenHand = state.model.betweenHand;
   switch (event.type) {
     case 'choose-same-terms': {
-      const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
+      const cached = selectProposalByStatus(state.model, 'incoming-cached');
       if (cached) {
         if (
           handProposalsEqual(
@@ -39,7 +39,7 @@ export function reduceSessionCommand(
             effects: [
               {
                 type: 'controller-accept-proposal',
-                id: cached.primaryId,
+                id: cached.id,
                 context: 'choose-same-terms',
               },
             ],
@@ -52,10 +52,10 @@ export function reduceSessionCommand(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                proposalGroups: betweenHand.proposalGroups.map((group) =>
-                  group.primaryId === cached.primaryId
-                    ? { ...group, disposition: 'incoming-review' as const }
-                    : group,
+                pendingProposals: betweenHand.pendingProposals.map((proposal) =>
+                  proposal.id === cached.id
+                    ? { ...proposal, status: 'incoming-review' as const }
+                    : proposal,
                 ),
                 mode: 'review-incoming-proposal',
               },
@@ -94,7 +94,7 @@ export function reduceSessionCommand(
       };
     }
     case 'reject-current-proposal': {
-      const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
+      const cached = selectProposalByStatus(state.model, 'incoming-cached');
       if (
         cached &&
         !handProposalsEqual(
@@ -111,10 +111,10 @@ export function reduceSessionCommand(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                proposalGroups: betweenHand.proposalGroups.map((group) =>
-                  group.primaryId === cached.primaryId
-                    ? { ...group, disposition: 'incoming-review' as const }
-                    : group,
+                pendingProposals: betweenHand.pendingProposals.map((proposal) =>
+                  proposal.id === cached.id
+                    ? { ...proposal, status: 'incoming-review' as const }
+                    : proposal,
                 ),
                 mode: 'review-incoming-proposal',
               },
@@ -145,7 +145,7 @@ export function reduceSessionCommand(
           ? [
               {
                 type: 'controller-cancel-proposal',
-                id: cached.primaryId,
+                id: cached.id,
                 context: 'reject-current-proposal',
               },
             ]
@@ -176,21 +176,21 @@ export function reduceSessionCommand(
         effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],
       };
     case 'accept-review': {
-      const review = selectProposalGroupByDisposition(state.model, 'incoming-review');
-      if (!review || review.primaryId !== event.primaryId) return { state, effects: [] };
+      const review = selectProposalByStatus(state.model, 'incoming-review');
+      if (!review || review.id !== event.id) return { state, effects: [] };
       return {
         state,
         effects: [
           {
             type: 'controller-accept-proposal',
-            id: review.primaryId,
+            id: review.id,
             context: 'accept-review',
           },
         ],
       };
     }
     case 'reject-review': {
-      const review = selectProposalGroupByDisposition(state.model, 'incoming-review');
+      const review = selectProposalByStatus(state.model, 'incoming-review');
       if (!review) {
         return {
           state: {
@@ -212,7 +212,7 @@ export function reduceSessionCommand(
         effects: [
           {
             type: 'controller-cancel-proposal',
-            id: review.primaryId,
+            id: review.id,
             context: 'reject-review',
           },
         ],

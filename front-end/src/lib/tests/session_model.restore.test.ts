@@ -153,12 +153,11 @@ describe('session model restore, schema, and event contracts', () => {
         game_type: 'spacepoker',
         parameters: [10n, 1n],
       },
-      proposalGroups: [
+      pendingProposals: [
         {
-          primary_id: '42',
-          member_ids: ['42'],
+          id: '42',
           origin: 'peer',
-          disposition: 'incoming-review',
+          status: 'incoming-review',
           hand_proposal: {
             sender_is_player_a: false,
             game_timeout: '31',
@@ -188,12 +187,11 @@ describe('session model restore, schema, and event contracts', () => {
       },
       betweenHand: {
         mode: 'review-incoming-proposal',
-        proposalGroups: [
+        pendingProposals: [
           {
-            primaryId: '42',
-            memberIds: ['42'],
+            id: '42',
             origin: 'peer',
-            disposition: 'incoming-review',
+            status: 'incoming-review',
             handProposal: {
               gameType: 'spacepoker',
               senderIsPlayerA: false,
@@ -221,7 +219,7 @@ describe('session model restore, schema, and event contracts', () => {
 
     expect(selectGameSessionView(restored).betweenHands).toBe(true);
     expect(selectGameSessionView(restored).currentHandAmount).toBe(0n);
-    expect(restored.betweenHand.proposalGroups).toEqual(live.betweenHand.proposalGroups);
+    expect(restored.betweenHand.pendingProposals).toEqual(live.betweenHand.pendingProposals);
     expect(restored.betweenHand.mode).toBe(live.betweenHand.mode);
   });
 

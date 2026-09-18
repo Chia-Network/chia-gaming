@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::channel_state::types::ReadableMove;
-use crate::common::types::GameID;
+use crate::common::types::{GameID, LocalProposalId};
 use crate::common::types::{AllocEncoder, Program};
 use crate::game_session::GameSession;
 use crate::test_support::sim_script::SimScriptAction;
@@ -104,7 +104,7 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
             let num_moves = moves.len();
@@ -130,7 +130,7 @@ mod sim_tests {
                 let mut allocator = AllocEncoder::new();
                 let mut moves = vec![
                     SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                    SimScriptAction::AcceptProposal(1, GameID(1)),
+                    SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
                 ];
                 moves.extend(
                     prefix_test_moves(&mut allocator, GameID(0))
@@ -220,7 +220,7 @@ mod sim_tests {
             };
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, LocalProposalId(1)),
                 move_for(0), // Alice commit
                 move_for(1), // Bob commit
                 move_for(0), // Alice pong; Bob opens

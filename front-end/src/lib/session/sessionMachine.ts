@@ -101,8 +101,8 @@ export function reduceSessionMachine(
     case 'set-first-game-accepted':
       return reduceBetweenHandEvent(state, event);
 
-    case 'upsert-proposal-group':
-    case 'set-proposal-disposition':
+    case 'upsert-pending-proposal':
+    case 'set-proposal-status':
     case 'clear-proposals':
     case 'request-accept-proposal':
     case 'request-cancel-proposal':
@@ -115,7 +115,6 @@ export function reduceSessionMachine(
     case 'notification-accepted-group':
     case 'notification-game-status':
     case 'notification-game-terminal':
-    case 'notification-insufficient-balance':
     case 'notification-abandoned':
     case 'hand-state-changed':
     case 'local-game-action-committed':

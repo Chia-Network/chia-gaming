@@ -444,7 +444,7 @@ are grouped under those phase-owned payloads:
 | `betweenHandLastHandProposal`          | `SavedHandProposal \| null`                                                                                   | Last agreed generic A/B-oriented hand proposal, including the exact opaque `parameters`. Null when there is no agreed hand yet. |
 | `betweenHandRejectedOnceHandProposal`  | `SavedHandProposal \| null`                                                                                   | Hand proposal already rejected once, used to avoid repeated automatic retries.                                                                                                                                                                                                                                          |
 | `betweenHandPendingRetryHandProposal`  | `SavedHandProposal \| null`                                                                                   | Local hand proposal waiting for retry after a proposal collision.                                                                                                                                                                                                                                              |
-| `proposalGroups`                | `Array<{ primary_id, member_ids, hand_proposal, origin, disposition }>`                                            | Normalized proposal projection. Each group owns its canonical first ID, ordered factory members, one HandProposal object, local/peer origin, and outgoing/incoming-cached/incoming-review/accepted disposition. Member lookup is derived rather than persisted.                                                            |
+| `pendingProposals`              | `Array<{ id, hand_proposal, origin, status }>`                                                                    | Scalar pending proposals keyed by endpoint-local ID. Status is outgoing, incoming-cached, incoming-review, accepting, or advisory-cancelling; generated game members never enter this collection. |
 | `waitingStateEnteredAt`         | `bigint \| null`                                                                                           | Epoch ms when the channel entered an abandon-eligible waiting state.                                                                                                                                                                                                                                            |
 | `cleanShutdownGraceStartedAt`   | `bigint \| null`                                                                                           | Epoch ms when the clean-shutdown grace timer started.                                                                                                                                                                                                                                                           |
 
@@ -524,17 +524,14 @@ inbound update clones the full hand, replaces only the addressed member, and
 leaves its sibling's move/handler state untouched; the persisted opaque hand
 state still contains both members.
 
-Proposal state is one normalized `proposalGroups` collection. Each entry owns
-its canonical first ID, ordered members, one HandProposal object, origin, and explicit
-UI/lifecycle disposition. Member-ID lookup scans this collection as a pure
-derivation; there are no per-ID terms/group maps or parallel outgoing/accepted
-ledgers to rebuild on restore. Product policy permits at most one outgoing local
-group while one incoming collision may coexist. During an acceptance wave the
-same entry changes to `accepted`, preserving terms and ordered Krunk membership
-across the single ordered `ProposalAcceptedGroup`. An `InsufficientBalance` removes
-the affected group atomically; successful Krunk members still settle
-independently, and the accepted entry is removed only after the hand is fully
-settled. The current v21 envelope makes
+Proposal state is one normalized `pendingProposals` collection. Each entry owns
+one endpoint-local proposal ID, one `HandProposal`, its local/peer origin, and
+an explicit advisory UI status. Rust alone maps that local ID to the origin's
+parity-sequenced wire ID while the proposal remains pending. Acceptance removes
+the proposal and creates factory-ordered game members in `GameSlice`;
+`InsufficientBalance` and proposal cancellation remove only the proposal.
+Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
+independently by `GameID`. The current v25 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
@@ -1463,7 +1460,7 @@ The cohesive session modules own those responsibilities:
 - `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
 - `session/incomingProposal.ts` validates the generic `ProposalMade` bridge,
   retains its exact opaque Bencodex parameters, and assembles
-  `ProposalGroupModel`. Rust alone applies factory semantics.
+  `PendingProposalModel`. Rust alone applies factory semantics.
 
 The controller still waits for its normal macrotask boundary, then drains one
 active FIFO to quiescence so synchronously re-entrant WASM effects enter the
@@ -1585,13 +1582,11 @@ These drive game proposal and acceptance flow. They are consumed by
 the notification reducer and never forwarded raw to the game UI:
 
 - `ProposalMade` — one notification per pending terms record; carries an
-  canonical parity-namespaced proposal ID (`group_ids` is `[id]` before members
-  exist), and
-  triggers proposal auto-accept
+  endpoint-local proposal ID and triggers proposal auto-accept
 - `ProposalAcceptedGroup` — creates one game-owned hand from all ordered
   `{ id, player_a_contribution, player_b_contribution, our_turn,
-  readable_parameters }` members, consumes the canonical proposal ID, and
-  advances `handKey`
+  readable_parameters }` members, identifies and consumes the endpoint-local
+  proposal ID, and advances `handKey`
 
 ### Normalized game inputs
 
@@ -1662,14 +1657,14 @@ Two proposal constraints live in WASM because they arise from the potato
 protocol's asynchronous nature and cannot be deferred to JS:
 
 1. **`SupersededByIncoming`** — When a batch arrives containing a
-   `ProposeGroup` from the peer, any locally queued `QueuedProposalGroup`
-   actions are removed from the `game_action_queue`. The queued groups were
+   `Propose` from the peer, any locally queued `QueuedProposal`
+   actions are removed from the `game_action_queue`. The queued proposals were
    built against a now-stale state (the incoming batch carries the potato and
    the definitive state). WASM emits one `ProposalCancelled { reason:
-SupersededByIncoming }` for each removed group, keyed by its first ID.
+SupersededByIncoming }` for each removed proposal, keyed by endpoint-local ID.
 
-2. **`PeerProposalPending`** — When JS calls `propose_games` while an
-   unresolved peer proposal exists in `proposed_games`, WASM rejects
+2. **`PeerProposalPending`** — When JS calls `propose` while an
+   unresolved peer proposal exists in the proposal ledger, WASM rejects
    immediately with `ProposalCancelled { reason: PeerProposalPending }`.
    This prevents silently cancelling the peer's proposal as a side effect
    of proposing our own.
@@ -1679,14 +1674,14 @@ proposal intent and the peer's — hitting at different points in the potato
 cycle. In case 1, our proposal was queued but unsent when the peer's batch
 arrived. In case 2, the peer's proposal was already recorded when JS tried to
 propose. The frontend handles both identically: stash the cancelled terms in
-the machine-owned durable `betweenHand.pendingRetryTerms` field and wait for the
+the machine-owned durable `betweenHand.pendingRetryHandProposal` field and wait for the
 incoming peer proposal to surface
 before deciding what to do (see
 [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)).
 
 Everything else in WASM — `MAX_PROPOSALS` (100), nonce parity/monotonicity,
 factory/member consistency, positive shared timeout validation, aggregate
-balance preflight, and all-or-none group acceptance — are validation/safety
+balance preflight, and all-or-none generation of accepted members — are validation/safety
 checks, not single-hand enforcement. They exist to prevent protocol violations,
 not to limit concurrency.
 
@@ -1698,10 +1693,10 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v21 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v21 presentation snapshot encoder                                                            |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v25 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v25 presentation snapshot encoder                                                            |
 | `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                    |
-| `front-end/src/lib/session/incomingProposal.ts`  | Generic opaque `ProposalMade` bridge validation and proposal-group assembly                                 |
+| `front-end/src/lib/session/incomingProposal.ts`  | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                        |
 | `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                               |
 | `games/calpoker/ui/useCalpokerHand.ts`          | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
 | `front-end/src/hooks/SessionController.ts`       | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence   |

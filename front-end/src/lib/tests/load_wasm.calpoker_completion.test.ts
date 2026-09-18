@@ -160,10 +160,10 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     await exchange();
     const review = runtimes[1]
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-review');
     assert.ok(review, 'calpoker initial deal receiver must observe the real proposal');
 
-    runtimes[1].dispatch({ type: 'accept-review', primaryId: review.primaryId });
+    runtimes[1].dispatch({ type: 'accept-review', id: review.id });
     await exchange();
     const gameId = runtimes[0].getState().model.game.currentHandIds[0]!;
     assert.deepEqual(hand(0).playerHand, []);
@@ -254,7 +254,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     );
     const secondProposal = runtimes[1]
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-cached');
     assert.ok(secondProposal, 'second Calpoker hand receiver must cache the same-terms proposal');
     runtimes[1].dispatch({ type: 'choose-same-terms' });
     assert.equal(

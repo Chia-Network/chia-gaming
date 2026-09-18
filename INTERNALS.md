@@ -380,14 +380,14 @@ Atomicity is enforced at three boundaries:
 1. **Propose:** Derive cardinality, IDs, economics, roles, and wire commitments
    from one factory run. Proposals may exceed current balances; funding is
    checked when the receiver chooses to accept.
-2. **Receive:** Re-run the factory and require `ProposeGroup`'s ordered retained
+2. **Receive:** Re-run the factory and require `Propose`'s ordered retained
    member commitments and cardinality to match exactly; raw state, handlers,
    validator registry, derived amount, and a separate group ID are not sent.
 3. **Accept/cancel:** Expand any member ID to the complete group. Acceptance
    repeats the aggregate balance preflight before queueing one
-   `AcceptProposalGroup` with the canonical first-member ID. The receiver
+   `AcceptProposal` with the mapped origin wire ID. The receiver
    validates that ID and applies every member in factory insertion order.
-   Cancellation similarly queues one `CancelProposalGroup`.
+   Cancellation similarly queues one `CancelProposal`.
 
 These checks compose with batch rollback: if group hydration, member validation,
 or canonical group validation fails, none of the received batch's proposal

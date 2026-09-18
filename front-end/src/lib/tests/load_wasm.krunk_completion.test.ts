@@ -179,10 +179,10 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     await exchangeAndPersist();
     const review = runtimes[1]
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-review');
     assert.ok(review, 'krunk completion receiver must observe the real proposal');
 
-    runtimes[1].dispatch({ type: 'accept-review', primaryId: review.primaryId });
+    runtimes[1].dispatch({ type: 'accept-review', id: review.id });
     await exchangeAndPersist();
     const ids = runtimes[0].getState().model.game.currentHandIds;
     assert.equal(ids.length, 2);
@@ -349,9 +349,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     );
     const cachedSecondProposal = runtimes[0]
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'incoming-cached');
     assert.ok(cachedSecondProposal, 'krunk completion receiver must cache the same-terms proposal');
-    assert.equal(cachedSecondProposal.memberIds.length, 1);
+    assert.equal(cachedSecondProposal.id.length > 0, true);
 
     runtimes[0].dispatch({ type: 'choose-same-terms' });
     assert.equal(

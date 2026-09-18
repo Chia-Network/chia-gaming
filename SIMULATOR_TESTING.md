@@ -30,20 +30,19 @@ the new mover after Alice's move, receives on timeout; Alice receives
 
 ## Explicit Game IDs
 
-`SimScriptAction` variants reference games by explicit `GameID` values, not ordinal
-positions in a test script. `GameID` values are deterministic nonces assigned
-when proposing a game; each player's nonce counter increments independently.
+`SimScriptAction` distinguishes endpoint-local `LocalProposalId` values from
+accepted-game `GameID` values. Proposal IDs are allocated when terms are queued;
+shared sequential game IDs are generated only when acceptance succeeds.
 
 Typical examples:
 
 - `Move(player, game_id, readable, was_received)` moves in the specified game.
-- `AcceptProposal(player, game_id)` accepts the proposal group containing that
-  member ID; the production boundary resolves it to the canonical first member
-  and queues one group action.
+- `AcceptProposal(player, proposal_id)` queues acceptance of that endpoint-local
+  pending proposal.
 - `AcceptSettlement(player, game_id)` accepts the current game result for that exact game
   ID (off-chain voluntary accept or on-chain timeout-claim intent).
-- `ProposeNewGame(player, trigger)` creates a proposal; the resulting `GameID`
-  is determined by the proposer's nonce counter at proposal time.
+- `ProposeNewGame(player, trigger)` creates a scalar pending proposal. Factory
+  member `GameID`s do not exist yet.
 
 ## ProposeTrigger
 
@@ -62,8 +61,8 @@ The full `sim-tests` enum lives in `src/test_support/sim_script.rs`.
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ProposeNewGame(player, trigger)`                     | Player proposes a new game with `my_turn = true` when the trigger fires.                                                                                                                                                                                                                           |
 | `ProposeNewGameTheirTurn(player, trigger)`            | Player proposes a new game with `my_turn = false` when the trigger fires.                                                                                                                                                                                                                          |
-| `AcceptProposal(player, game_id)`                     | Player accepts the pending proposal group containing that member. The sim loop handles this as a two-phase action because acceptance may need a potato round trip.                                                                                                                                 |
-| `CancelProposal(player, game_id)`                     | Player cancels the pending proposal group containing that member.                                                                                                                                                                                                                                  |
+| `AcceptProposal(player, proposal_id)`                 | Player queues acceptance of the endpoint-local pending proposal. The sim loop handles this as a two-phase action because acceptance may need a potato round trip.                                                                                                                                   |
+| `CancelProposal(player, proposal_id)`                 | Player cancels the endpoint-local pending proposal.                                                                                                                                                                                                                                                  |
 | `Move(player, game_id, readable, was_received)`       | Submit a normal move for the specified game. The final boolean records whether the move was received.                                                                                                                                                                                              |
 | `FakeMove(player, game_id, readable, sabotage_bytes)` | Submit a move with custom sabotage bytes for validation/error-path tests.                                                                                                                                                                                                                          |
 | `Cheat(player, game_id, mover_share)`                 | Queue a move with invalid game data, leaving `mover_share` to the victim on timeout.                                                                                                                                                                                                               |

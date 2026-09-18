@@ -11,9 +11,9 @@ import type { ComposeDraftState } from './composeDraft';
 import type { PersistedGameState, SettlementOutcome } from '@games/host';
 
 export type { HandProposalBase } from '@games/host';
-export type { ProposalGroupOrigin } from './proposalOrigin';
+export type { ProposalOrigin } from './proposalOrigin';
 import type { HandProposal as HostHandProposal } from '@games/host';
-import type { ProposalGroupOrigin } from './proposalOrigin';
+import type { ProposalOrigin } from './proposalOrigin';
 import type { CatalogGameType } from '../../generated/gamePresets';
 
 export type RegisteredGameType = CatalogGameType;
@@ -148,14 +148,18 @@ export interface QueuedNotificationModel {
   payload?: ChannelStatusModel;
 }
 
-export type ProposalGroupDisposition = 'outgoing' | 'incoming-cached' | 'incoming-review';
+export type PendingProposalStatus =
+  | 'outgoing'
+  | 'incoming-cached'
+  | 'incoming-review'
+  | 'accepting'
+  | 'advisory-cancelling';
 
-export interface ProposalGroupModel {
-  primaryId: string;
-  memberIds: string[];
+export interface PendingProposalModel {
+  id: string;
   handProposal: HandProposal;
-  origin: ProposalGroupOrigin;
-  disposition: ProposalGroupDisposition;
+  origin: ProposalOrigin;
+  status: PendingProposalStatus;
 }
 
 export type BetweenHandModeModel = 'decision' | 'compose-proposal' | 'review-incoming-proposal';
@@ -183,7 +187,7 @@ export interface GameModel {
   handKey: number;
   activeIds: string[];
   currentHandIds: string[];
-  currentHandOrigin: ProposalGroupOrigin | null;
+  currentHandOrigin: ProposalOrigin | null;
   instances: Record<string, GameInstanceModel>;
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
@@ -193,7 +197,7 @@ export interface GameModel {
 
 export interface BetweenHandModel {
   mode: BetweenHandModeModel;
-  proposalGroups: ProposalGroupModel[];
+  pendingProposals: PendingProposalModel[];
   rejectedOnceHandProposal: HandProposal | null;
   lastHandProposal: HandProposal | null;
   compose: ComposeDraftState;

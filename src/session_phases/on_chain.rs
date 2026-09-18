@@ -12,8 +12,8 @@ use crate::channel_state::types::{
 };
 use crate::channel_state::ChannelState;
 use crate::common::types::{
-    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program, PuzzleHash, Spend,
-    SpendBundle, Timeout,
+    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, LocalProposalId, Program,
+    PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::referee::types::{
@@ -1801,10 +1801,10 @@ impl OnChainPhase {
                 Ok(effects)
             }
             GameAction::CleanShutdown => Ok(Vec::new()),
-            GameAction::QueuedProposalGroup(_, _)
-            | GameAction::QueuedAcceptProposalGroup(_)
-            | GameAction::QueuedCancelProposalGroup(_)
-            | GameAction::QueuedCancelProposalGroupSilently(_) => Ok(vec![]),
+            GameAction::QueuedProposal(_)
+            | GameAction::QueuedAcceptProposal(_)
+            | GameAction::QueuedCancelProposal(_)
+            | GameAction::QueuedCancelProposalSilently(_) => Ok(vec![]),
             #[cfg(test)]
             GameAction::ForcedSelfAccept(_) => Ok(vec![]),
         }
@@ -2022,7 +2022,7 @@ impl PeerLifecyclePhase for OnChainPhase {
     fn self_accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(
             self.phase_name(),
@@ -2073,24 +2073,24 @@ impl PeerLifecyclePhase for OnChainPhase {
             "provide_coin_spend_bundle",
         ))
     }
-    fn propose_games(
+    fn propose(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        Err(phase_operation_error(self.phase_name(), "propose_games"))
+        _proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
+        Err(phase_operation_error(self.phase_name(), "propose"))
     }
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "accept_proposal"))
     }
     fn cancel_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "cancel_proposal"))
     }

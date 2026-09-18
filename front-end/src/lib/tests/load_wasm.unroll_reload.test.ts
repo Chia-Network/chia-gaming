@@ -87,10 +87,10 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
   lane.runtime.dispatch({ type: 'submit-compose', handProposal });
   const outgoing = lane.runtime
     .getState()
-    .model.betweenHand.proposalGroups.find((group) => group.disposition === 'outgoing');
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.status === 'outgoing');
   assert.ok(outgoing);
   await exchangeUntilIdle(adapters);
-  adapters[1].blob!.acceptProposal(outgoing.primaryId);
+  adapters[1].blob!.acceptProposal(outgoing.id);
   await exchangeUntilIdle(adapters);
   const ids = [...lane.controller.activeGameIds];
   assert.equal(ids.length, 1);

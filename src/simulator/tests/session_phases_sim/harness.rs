@@ -6,7 +6,7 @@ use super::*;
 const MAX_QUIESCENCE_ROUNDS: usize = 8;
 
 type ProposalMutation =
-    Box<dyn FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>>;
+    Box<dyn FnOnce(&mut crate::session_phases::types::WireProposal) -> Result<(), Error>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MoveReadinessBoundary {
@@ -108,6 +108,27 @@ impl SimulationHarness {
             .get(&requested)
             .copied()
             .unwrap_or(requested)
+    }
+
+    fn local_proposal_id(
+        &self,
+        player: usize,
+        requested: LocalProposalId,
+    ) -> Result<LocalProposalId, Error> {
+        if let Some(id) = self.local_uis[player].proposed_local_ids.get(&requested) {
+            return Ok(*id);
+        }
+        let pending = self.cradles[player].proposal_contributions_for_testing()?;
+        if let Some((id, _, _)) = pending.iter().find(|(id, _, _)| *id == requested) {
+            return Ok(*id);
+        }
+        if let [(id, _, _)] = pending.as_slice() {
+            return Ok(*id);
+        }
+        Err(Error::StrErr(format!(
+            "cannot resolve script proposal {requested:?} among {:?}",
+            pending.iter().map(|(id, _, _)| *id).collect::<Vec<_>>()
+        )))
     }
 
     pub(super) fn new(
@@ -217,42 +238,66 @@ impl SimulationHarness {
                         .opponent_moved_in_game
                         .contains(&game_id)
             }
-            ActionReadiness::AcceptProposal { player, game_id } => {
+            ActionReadiness::AcceptProposal {
+                player,
+                proposal_id,
+            } => {
                 if self.local_uis[player]
                     .accepted_proposal_ids
-                    .contains(&game_id)
+                    .contains(&proposal_id)
                 {
-                    self.local_uis[player].game_id_aliases.contains_key(&game_id)
+                    let local_id = self.local_uis[player]
+                        .proposed_local_ids
+                        .get(&proposal_id)
+                        .copied();
+                    let script_game_id = GameID(proposal_id.0);
+                    self.local_uis[player]
+                        .game_id_aliases
+                        .contains_key(&script_game_id)
                         || self.local_uis[player].notifications.iter().any(|n| {
-                            matches!(n, GameNotification::InsufficientBalance { id, .. } if id == &game_id)
+                            matches!(n, GameNotification::InsufficientBalance { id, .. } if Some(*id) == local_id)
                                 || matches!(
                                     n,
-                                    GameNotification::ProposalCancelled { group_ids, .. }
-                                        if group_ids.contains(&game_id)
+                                    GameNotification::ProposalCancelled { id, .. }
+                                        if Some(*id) == local_id
                                 )
-                                || is_terminal_for_id(n, &game_id)
+                                || is_terminal_for_id(n, &script_game_id)
                         })
                 } else {
                     self.local_uis[player]
                         .received_proposal_ids
-                        .contains(&game_id)
+                        .contains(&proposal_id)
+                        || self.cradles[player]
+                            .proposal_contributions_for_testing()
+                            .is_ok_and(|pending| pending.len() == 1)
                 }
             }
             ActionReadiness::ChannelReady { player } => self.local_uis[player].channel_created,
-            ActionReadiness::ProposalExists { player, game_id } => self.cradles[player]
+            ActionReadiness::ProposalExists {
+                player,
+                proposal_id,
+            } => self.cradles[player]
                 .proposal_contributions_for_testing()
-                .is_ok_and(|proposals| proposals.iter().any(|(id, _, _)| id == &game_id)),
-            ActionReadiness::ProposalKnown { player, game_id } => {
-                let runtime_game_id = self.runtime_game_id(player, game_id);
+                .is_ok_and(|proposals| {
+                    proposals.len() == 1 || proposals.iter().any(|(id, _, _)| *id == proposal_id)
+                }),
+            ActionReadiness::ProposalKnown {
+                player,
+                proposal_id,
+            } => {
+                let runtime_game_id = self.runtime_game_id(player, GameID(proposal_id.0));
                 self.cradles[player]
                     .proposal_contributions_for_testing()
-                    .is_ok_and(|proposals| proposals.iter().any(|(id, _, _)| id == &game_id))
+                    .is_ok_and(|proposals| {
+                        proposals.len() == 1
+                            || proposals.iter().any(|(id, _, _)| *id == proposal_id)
+                    })
                     || self.local_uis[player]
                         .game_accepted_ids
                         .contains(&runtime_game_id)
                     || self.local_uis[player]
                         .accepted_proposal_ids
-                        .contains(&game_id)
+                        .contains(&proposal_id)
             }
             ActionReadiness::MoveApplied { player, game_id } => {
                 let game_id = self.runtime_game_id(player, game_id);
@@ -464,16 +509,25 @@ impl SimulationHarness {
         Ok(())
     }
 
-    pub(super) fn propose_games(
+    pub(super) fn propose(
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
         proposals: &[GameProposal],
     ) -> Result<(), Error> {
-        let ids = self.cradles[player].propose_games(allocator, proposals)?;
+        let [proposal] = proposals else {
+            return Err(Error::StrErr(format!(
+                "simulator proposal helper expects one request, got {}",
+                proposals.len()
+            )));
+        };
+        let local_id = self.cradles[player].propose(allocator, proposal)?;
+        let proposal_number = self.local_uis[player].proposed_game_ids.len() as u64;
+        let script_id = LocalProposalId((if player == 0 { 1 } else { 0 }) + 2 * proposal_number);
+        self.local_uis[player].proposed_game_ids.push(script_id);
         self.local_uis[player]
-            .proposed_game_ids
-            .extend(ids.iter().copied());
+            .proposed_local_ids
+            .insert(script_id, local_id);
         Ok(())
     }
 
@@ -481,16 +535,22 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<bool, Error> {
         if self.local_uis[player]
             .accepted_proposal_ids
-            .contains(game_id)
+            .contains(proposal_id)
         {
             return Ok(false);
         }
-        self.cradles[player].accept_proposal(allocator, game_id)?;
-        self.local_uis[player].accepted_proposal_ids.push(*game_id);
+        let local_id = self.local_proposal_id(player, *proposal_id)?;
+        self.cradles[player].accept_proposal(allocator, &local_id)?;
+        self.local_uis[player]
+            .proposed_local_ids
+            .insert(*proposal_id, local_id);
+        self.local_uis[player]
+            .accepted_proposal_ids
+            .push(*proposal_id);
         Ok(true)
     }
 
@@ -498,8 +558,8 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        first: &GameID,
-        second: &GameID,
+        first: &LocalProposalId,
+        second: &LocalProposalId,
     ) -> Result<bool, Error> {
         if self.local_uis[player].accepted_proposal_ids.contains(first)
             && self.local_uis[player]
@@ -515,22 +575,30 @@ impl SimulationHarness {
                     .contains(second),
             "paired acceptance was only partially queued"
         );
-        self.cradles[player].accept_proposal(allocator, first)?;
-        self.cradles[player].accept_proposal(allocator, second)?;
+        let pending = self.cradles[player].proposal_contributions_for_testing()?;
+        let mut pending_ids = pending.iter().map(|(id, _, _)| *id);
+        let first_local = pending_ids
+            .next()
+            .ok_or_else(|| Error::StrErr("first proposal is not pending".into()))?;
+        let second_local = pending_ids
+            .next()
+            .ok_or_else(|| Error::StrErr("second proposal is not pending".into()))?;
+        self.cradles[player].accept_proposal(allocator, &first_local)?;
+        self.cradles[player].accept_proposal(allocator, &second_local)?;
         self.local_uis[player]
             .accepted_proposal_ids
             .extend([*first, *second]);
         Ok(true)
     }
 
-    pub(super) fn malformed_accept_proposal_group(
+    pub(super) fn malformed_accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        local_member_id: &GameID,
-        wire_group_id: &GameID,
+        local_proposal_id: &LocalProposalId,
+        wire_proposal_id: &WireProposalId,
     ) -> Result<bool, Error> {
-        if !self.accept_proposal(allocator, player, local_member_id)? {
+        if !self.accept_proposal(allocator, player, local_proposal_id)? {
             return Ok(false);
         }
         self.cradles[player].flush_pending(allocator)?;
@@ -545,16 +613,16 @@ impl SimulationHarness {
                 )));
             };
             let mut actions = actions.clone();
-            let group_id = actions.iter_mut().find_map(|action| match action {
-                BatchAction::AcceptProposalGroup(group_id) => Some(group_id),
+            let proposal_id = actions.iter_mut().find_map(|action| match action {
+                BatchAction::AcceptProposal(id) => Some(id),
                 _ => None,
             });
-            let Some(group_id) = group_id else {
+            let Some(proposal_id) = proposal_id else {
                 return Err(Error::StrErr(
-                    "malformed accept found no AcceptProposalGroup".to_string(),
+                    "malformed accept found no AcceptProposal".to_string(),
                 ));
             };
-            *group_id = *wire_group_id;
+            *proposal_id = *wire_proposal_id;
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
@@ -567,9 +635,9 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        first: &GameID,
-        second: &GameID,
-        replacement_wire_id: &GameID,
+        first: &LocalProposalId,
+        second: &LocalProposalId,
+        replacement_wire_id: &WireProposalId,
     ) -> Result<bool, Error> {
         if !self.accept_proposal_pair(allocator, player, first, second)? {
             return Ok(false);
@@ -586,10 +654,10 @@ impl SimulationHarness {
                 )));
             };
             let mut actions = actions.clone();
-            let second_group_id = actions
+            let second_proposal_id = actions
                 .iter_mut()
                 .filter_map(|action| match action {
-                    BatchAction::AcceptProposalGroup(group_id) => Some(group_id),
+                    BatchAction::AcceptProposal(id) => Some(id),
                     _ => None,
                 })
                 .nth(1)
@@ -598,7 +666,7 @@ impl SimulationHarness {
                         "malformed paired accept found fewer than two acceptances".to_string(),
                     )
                 })?;
-            *second_group_id = *replacement_wire_id;
+            *second_proposal_id = *replacement_wire_id;
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
@@ -611,9 +679,18 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
-        self.cradles[player].cancel_proposal(allocator, game_id)
+        let local_id = self.local_proposal_id(player, *proposal_id)?;
+        if !self.local_uis[player]
+            .proposed_game_ids
+            .contains(proposal_id)
+        {
+            self.local_uis[player]
+                .silently_rejected_proposal_ids
+                .insert(*proposal_id);
+        }
+        self.cradles[player].cancel_proposal(allocator, &local_id)
     }
 
     pub(super) fn go_on_chain(
@@ -865,15 +942,16 @@ impl SimulationHarness {
         &mut self,
         allocator: &mut AllocEncoder,
         player: usize,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
-        self.cradles[player].self_accept_proposal(allocator, game_id)
+        let local_id = self.local_proposal_id(player, *proposal_id)?;
+        self.cradles[player].self_accept_proposal(allocator, &local_id)
     }
 
     pub(super) fn mutate_last_proposal(
         &mut self,
         player: usize,
-        mutation: impl FnOnce(&mut crate::session_phases::types::WireProposalGroup) -> Result<(), Error>
+        mutation: impl FnOnce(&mut crate::session_phases::types::WireProposal) -> Result<(), Error>
             + 'static,
     ) -> Result<(), Error> {
         game_assert!(
@@ -990,9 +1068,9 @@ impl SimulationHarness {
                             } = &mut peer_message
                             {
                                 if self.pending_proposal_mutations[player_index].is_some()
-                                    && actions.iter().any(|action| {
-                                        matches!(action, BatchAction::ProposeGroup(_))
-                                    })
+                                    && actions
+                                        .iter()
+                                        .any(|action| matches!(action, BatchAction::Propose(_)))
                                 {
                                     let mutation = self.pending_proposal_mutations[player_index]
                                         .take()
@@ -1000,7 +1078,7 @@ impl SimulationHarness {
                                     let proposal = actions
                                         .iter_mut()
                                         .find_map(|action| match action {
-                                            BatchAction::ProposeGroup(wire) => Some(wire),
+                                            BatchAction::Propose(wire) => Some(wire),
                                             _ => None,
                                         })
                                         .expect("proposal action checked as present");
