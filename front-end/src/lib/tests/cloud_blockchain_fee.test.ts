@@ -354,7 +354,7 @@ describe('CloudBlockchainInterface fee support', () => {
       new CloudBlockchainInterface().getPuzzleAndSolution('00'.repeat(72)),
     ).resolves.toEqual(['aa', 'bb']);
     expect((calls[1]!.variables.input as any).endpoint).toBe('get_puzzle_and_solution');
-    expect((calls[1]!.variables.input as any).request.height).toBe('25');
+    expect((calls[1]!.variables.input as any).request.height).toBe(25);
   });
 
   function sampleBundle() {

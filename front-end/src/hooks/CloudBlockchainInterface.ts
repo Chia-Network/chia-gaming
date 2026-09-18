@@ -356,7 +356,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         coin_solution?: { puzzle_reveal?: unknown; solution?: unknown } | null;
       }>('get_puzzle_and_solution', {
         coin_id: coinName,
-        height: record.spentBlockIndex,
+        height: Number(record.spentBlockIndex),
       });
       const payload = response.coin_solution;
       if (response.success !== true || !payload?.puzzle_reveal || !payload.solution) return null;
