@@ -120,6 +120,7 @@ export function useGameSession(
   const { iStarted, perGameAmount } = params;
   const terminalState = useTerminalSessionPresentation(terminalPresentation);
   const terminalMode = terminalState.presentation != null;
+  const [fundingRetryError, setFundingRetryError] = useState<string | null>(null);
 
   const restoredModel = useMemo(
     () => (sessionSave ? sessionModelFromSave(sessionSave) : null),
@@ -259,6 +260,9 @@ export function useGameSession(
           case 'error':
             dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
             break;
+          case 'funding-retry':
+            setFundingRetryError(event.error);
+            break;
           case 'game-action-error':
             dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
             break;
@@ -343,6 +347,11 @@ export function useGameSession(
     gameQueue: view.gameQueue,
     dismissChannel: () => dispatch({ type: 'dismiss-channel' }),
     dismissGame: () => dispatch({ type: 'dismiss-game-notification' }),
+    fundingRetryError,
+    retryFunding: () => {
+      if (controller.retryFundingOffer()) setFundingRetryError(null);
+    },
+    dismissFundingRetry: () => setFundingRetryError(null),
     gameSpecificView,
   };
   return terminalState.presentation

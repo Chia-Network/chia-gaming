@@ -95,6 +95,9 @@ function bindRuntime(
         case 'error':
           runtime.dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
           break;
+        case 'funding-retry':
+          runtime.dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
+          break;
         case 'game-action-error':
           runtime.dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
           break;

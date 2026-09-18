@@ -192,6 +192,7 @@ export type WasmNotification = WasmContract.WasmNotification;
 export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
+  | { type: 'funding-retry'; error: string }
   | {
       type: 'game-action-error';
       gameId: string;

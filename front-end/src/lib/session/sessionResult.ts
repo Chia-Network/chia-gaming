@@ -68,6 +68,9 @@ export interface UseGameSessionResult {
   gameQueue: QueuedNotificationModel[];
   dismissChannel: () => void;
   dismissGame: () => void;
+  fundingRetryError: string | null;
+  retryFunding: () => void;
+  dismissFundingRetry: () => void;
   gameSpecificView: ReturnType<typeof selectGameSpecificView>;
 }
 
@@ -179,6 +182,9 @@ export function projectTerminalSessionResult(
     gameQueue: view.gameQueue,
     dismissChannel: dismissals?.dismissChannel ?? NOOP,
     dismissGame: dismissals?.dismissGame ?? NOOP,
+    fundingRetryError: null,
+    retryFunding: NOOP,
+    dismissFundingRetry: NOOP,
     gameSpecificView: selectTerminalGameSpecificView(model),
   };
 }
