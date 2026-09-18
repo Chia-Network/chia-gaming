@@ -27,6 +27,7 @@ import {
   getCloudWalletApiUrl,
   getCloudWalletClientId,
   getCloudWalletUiUrl,
+  loadCloudWalletConfig,
   saveCloudWalletConfig,
 } from './cloudWalletConfig';
 import {
@@ -35,24 +36,11 @@ import {
   saveCloudWalletAuth,
   type CloudWalletAuthState,
 } from './cloudWalletAuth';
-import {
-  CLOUD_WALLET_API_URL,
-  CLOUD_WALLET_CLIENT_ID,
-  CLOUD_WALLET_UI_URL,
-} from '../constants/env';
-import {
-  absAmountFromOffer,
-  conditionsForGraphql,
-  jsonSafeVariables,
-  serializeClvmCondition,
-} from './cloudWalletHelpers';
+import { absAmountFromOffer, conditionsForGraphql, jsonSafeVariables } from './cloudWalletHelpers';
 
-export {
-  absAmountFromOffer,
-  conditionsForGraphql,
-  jsonSafeVariables,
-  serializeClvmCondition,
-} from './cloudWalletHelpers';
+export { serializeClvmCondition } from './cloudWalletHelpers';
+
+export { absAmountFromOffer, conditionsForGraphql, jsonSafeVariables };
 
 const APPROVE_TIMEOUT_MS = 10 * 60 * 1000;
 const SR_POLL_MS = 1500;
@@ -709,11 +697,6 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       this.auth = null;
       this.monitoringReady = false;
       this.fireConnectionChange(false);
-      saveCloudWalletConfig({
-        clientId: CLOUD_WALLET_CLIENT_ID,
-        apiUrl: CLOUD_WALLET_API_URL,
-        uiUrl: CLOUD_WALLET_UI_URL,
-      });
     }
 
     const existing = loadCloudWalletAuth();
@@ -745,16 +728,37 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       };
     }
 
+    const stored = loadCloudWalletConfig();
     return {
       qrUri: 'cloud-wallet://oauth',
       skipQr: true,
       title: 'Cloud Wallet',
-      description: 'Sign in through the Cloud Wallet popup.',
-      finalize: async () => {
-        const clientId = getCloudWalletClientId();
+      description: 'Enter your Cloud Wallet OAuth settings, then sign in via the popup.',
+      fields: {
+        clientId: {
+          type: 'string',
+          label: 'OAuth client ID',
+          default: stored?.clientId ?? getCloudWalletClientId(),
+        },
+        apiUrl: {
+          type: 'string',
+          label: 'Cloud Wallet API URL',
+          default: getCloudWalletApiUrl(),
+        },
+        uiUrl: {
+          type: 'string',
+          label: 'Cloud Wallet UI URL',
+          default: getCloudWalletUiUrl(),
+        },
+      },
+      finalize: async (values) => {
+        const clientId = String(values?.clientId ?? getCloudWalletClientId()).trim();
+        const apiUrl = String(values?.apiUrl ?? getCloudWalletApiUrl()).trim();
+        const uiUrl = String(values?.uiUrl ?? getCloudWalletUiUrl()).trim();
         if (!clientId) {
           throw new Error('Cloud Wallet OAuth client ID is required');
         }
+        saveCloudWalletConfig({ clientId, apiUrl, uiUrl });
 
         const tokens = await beginOAuthPopupLogin();
         this.auth = {

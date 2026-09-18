@@ -334,17 +334,29 @@ describe('CloudBlockchainInterface beginConnect', () => {
     clearCloudWalletAuth();
   });
 
-  it('fresh connect uses configured OAuth values without setup fields', async () => {
+  it('fresh connect requests the Cloud Wallet OAuth configuration', async () => {
     const iface = new CloudBlockchainInterface();
     const setup = await iface.beginConnect('uid', true);
     expect(setup.skipQr).toBe(true);
     expect(setup.title).toBe('Cloud Wallet');
-    expect(setup.fields).toBeUndefined();
-    expect(loadCloudWalletConfig()).toEqual({
-      clientId: 'k6r62t7a3lybvzl60din10ol',
-      apiUrl: 'https://cw-review-api-3395.tailaecde.ts.net',
-      uiUrl: 'https://cw-review-3395.tailaecde.ts.net',
+    expect(setup.fields).toEqual({
+      clientId: {
+        type: 'string',
+        label: 'OAuth client ID',
+        default: 'k6r62t7a3lybvzl60din10ol',
+      },
+      apiUrl: {
+        type: 'string',
+        label: 'Cloud Wallet API URL',
+        default: 'https://cw-review-api-3395.tailaecde.ts.net',
+      },
+      uiUrl: {
+        type: 'string',
+        label: 'Cloud Wallet UI URL',
+        default: 'https://cw-review-3395.tailaecde.ts.net',
+      },
     });
+    expect(loadCloudWalletConfig()).toBeNull();
   });
 
   it('stored auth skips setup fields so silent reconnect can finalize', async () => {
@@ -360,15 +372,21 @@ describe('CloudBlockchainInterface beginConnect', () => {
     expect(setup.fields).toBeUndefined();
   });
 
-  it('finalize uses the configured OAuth values', async () => {
+  it('finalize persists the submitted OAuth values', async () => {
     const iface = new CloudBlockchainInterface();
     const setup = await iface.beginConnect('uid', true);
     // OAuth cannot complete in the test environment because there is no popup.
-    await expect(setup.finalize()).rejects.toBeTruthy();
+    await expect(
+      setup.finalize({
+        clientId: 'client-1',
+        apiUrl: 'http://api.local/',
+        uiUrl: 'http://ui.local/',
+      }),
+    ).rejects.toBeTruthy();
     expect(loadCloudWalletConfig()).toEqual({
-      clientId: 'k6r62t7a3lybvzl60din10ol',
-      apiUrl: 'https://cw-review-api-3395.tailaecde.ts.net',
-      uiUrl: 'https://cw-review-3395.tailaecde.ts.net',
+      clientId: 'client-1',
+      apiUrl: 'http://api.local',
+      uiUrl: 'http://ui.local',
     });
   });
 });
