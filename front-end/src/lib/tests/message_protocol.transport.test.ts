@@ -1027,6 +1027,39 @@ describe('WASM wallet funding requests', () => {
     expect(blob.retryFundingOffer()).toBe(false);
   });
 
+  it('fails the handshake when a retained funding retry is dismissed', async () => {
+    expectConsoleError('handleNeedCoinSpend error');
+    const request: NeedCoinSpendRequest = {
+      amount: 100,
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['launcher'] }],
+      coin_id: 'funding-coin',
+      max_height: 123,
+    };
+    const createOfferForIds = jest
+      .fn()
+      .mockRejectedValue(
+        new Error('Balance is not high enough to create offer, available balances: 0 TXCH'),
+      );
+    const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds }, 60000);
+    const { blob, cradle } = createReadyBlob();
+    const walletCallbackFailed = jest.fn().mockReturnValue(wasmResult());
+    (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
+      walletCallbackFailed;
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    await blob.flushPendingWork();
+
+    expect(blob.abandonFundingRetry()).toBe(true);
+    expect(walletCallbackFailed).toHaveBeenCalledWith(
+      'Wallet reports insufficient funds. Add funds or unlock wallet coins, then retry funding.',
+    );
+    expect(blob.retryFundingOffer()).toBe(false);
+    expect(blob.abandonFundingRetry()).toBe(false);
+  });
+
   it('cancels a rejected persisted offer before creating its retry', async () => {
     const request: NeedCoinSpendRequest = {
       amount: 100,

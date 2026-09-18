@@ -214,7 +214,7 @@ export class SessionController implements PollingGameSession {
   private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
-  private pendingFundingRetry: NeedCoinSpendRequest | null = null;
+  private pendingFundingRetry: { request: NeedCoinSpendRequest; reason: string } | null = null;
   private fundingRequestInFlight = false;
   private protocolStopped = false;
   private retired = false;
@@ -763,7 +763,7 @@ export class SessionController implements PollingGameSession {
       if (isInsufficientWalletBalanceError(msg)) {
         msg =
           'Wallet reports insufficient funds. Add funds or unlock wallet coins, then retry funding.';
-        this.pendingFundingRetry = request;
+        this.pendingFundingRetry = { request, reason: msg };
         this.rxjsEmitter?.next({ type: 'funding-retry', error: msg });
         return;
       }
@@ -785,9 +785,21 @@ export class SessionController implements PollingGameSession {
     ) {
       return false;
     }
-    const request = this.pendingFundingRetry;
+    const { request } = this.pendingFundingRetry;
     this.pendingFundingRetry = null;
     this.trackEffect(this.handleNeedCoinSpend(request));
+    return true;
+  }
+
+  abandonFundingRetry(): boolean {
+    if (this.retired || this.protocolStopped || !this.pendingFundingRetry) {
+      return false;
+    }
+    const { reason } = this.pendingFundingRetry;
+    this.pendingFundingRetry = null;
+    if (this.cradle) {
+      this.processResult(this.cradle.wallet_callback_failed(reason));
+    }
     return true;
   }
 

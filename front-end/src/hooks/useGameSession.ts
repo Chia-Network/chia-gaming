@@ -351,7 +351,9 @@ export function useGameSession(
     retryFunding: () => {
       if (controller.retryFundingOffer()) setFundingRetryError(null);
     },
-    dismissFundingRetry: () => setFundingRetryError(null),
+    dismissFundingRetry: () => {
+      if (controller.abandonFundingRetry()) setFundingRetryError(null);
+    },
     gameSpecificView,
   };
   return terminalState.presentation
