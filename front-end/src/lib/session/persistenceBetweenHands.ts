@@ -2,6 +2,7 @@ import { isCatalogGameType, isProposalParameterValue, validateHandProposal } fro
 import type { ComposeDraftState } from './composeDraft';
 import type { SessionPresentationSave } from './saveEnvelope';
 import type { HandProposal, PendingProposalModel } from './types';
+import { isUncancelledProposalLifecycle } from './proposalPolicy';
 import {
   parseDecimalString,
   requireBoolean,
@@ -63,7 +64,7 @@ export function parseOptionalHandProposalSnapshot(
 export function parsePendingProposals(value: unknown, label: string): PendingProposalModel[] {
   if (!Array.isArray(value)) throw new Error(`Garbled save: invalid ${label}`);
   const seen = new Set<string>();
-  let localOutgoing = 0;
+  let uncancelled = 0;
   const proposals = value.map((entry, index): PendingProposalModel => {
     const proposalLabel = `${label}[${index}]`;
     const saved = requireRecord(entry, proposalLabel);
@@ -81,9 +82,7 @@ export function parsePendingProposals(value: unknown, label: string): PendingPro
     ) {
       throw new Error(`Garbled save: invalid ${proposalLabel}.lifecycle`);
     }
-    if (lifecycle === 'local-outgoing' || lifecycle === 'local-cancel-queued') {
-      localOutgoing += 1;
-    }
+    if (isUncancelledProposalLifecycle(lifecycle)) uncancelled += 1;
     const handProposal = parseHandProposalSnapshot(
       saved.hand_proposal,
       `${proposalLabel}.hand_proposal`,
@@ -94,8 +93,8 @@ export function parsePendingProposals(value: unknown, label: string): PendingPro
       lifecycle,
     };
   });
-  if (localOutgoing > 1) {
-    throw new Error('Garbled save: multiple local outgoing proposal groups');
+  if (uncancelled > 1) {
+    throw new Error('Garbled save: multiple uncancelled proposals');
   }
   return proposals;
 }

@@ -68,8 +68,6 @@ export class SessionMachineRuntime {
   private commitActivityPending = false;
   private durabilityDirty = false;
   private projectionPending = false;
-  private projectionOnlyLocalRejection = false;
-  private projectionOnlyDurabilityBaseline = false;
   private commitScheduled = false;
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
   private commitPromise: Promise<void> = Promise.resolve();
@@ -143,12 +141,8 @@ export class SessionMachineRuntime {
         const transition = reduceSessionMachine(previous, next, this.activeHandContext);
         this.state = transition.state;
         if (this.state !== previous) {
-          if (this.projectionOnlyLocalRejection && this.isMoveRejectedEvent(next)) {
-            this.durabilityDirty = this.projectionOnlyDurabilityBaseline;
-            this.projectionOnlyLocalRejection = false;
-          } else {
-            this.durabilityDirty = true;
-          }
+          this.projectionPending = true;
+          if (transition.durability === 'durable') this.durabilityDirty = true;
         }
         for (const effect of transition.effects) {
           if (effect.type === 'clear-derived-game-presentation') {
@@ -183,7 +177,6 @@ export class SessionMachineRuntime {
 
   commitLocalGameAction(request: LocalGameActionRequest): void {
     const checkpoint = structuredClone(this.state.model.game.handState);
-    const durabilityBaseline = this.durabilityDirty;
     try {
       this.runTransaction(() => {
         const game = this.state.model.game;
@@ -214,9 +207,6 @@ export class SessionMachineRuntime {
         }
         const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
         if (disposition === 'rejected') {
-          this.projectionOnlyLocalRejection = true;
-          this.projectionOnlyDurabilityBaseline = durabilityBaseline;
-          this.durabilityDirty = durabilityBaseline;
           this.restoreAndProject(checkpoint);
           return;
         }
@@ -228,9 +218,7 @@ export class SessionMachineRuntime {
           state: accepted.state,
         });
       });
-      this.projectionOnlyLocalRejection = false;
     } catch (error) {
-      this.projectionOnlyLocalRejection = false;
       this.restoreAndProject(checkpoint);
       throw error;
     }
@@ -263,14 +251,6 @@ export class SessionMachineRuntime {
       default:
         return event;
     }
-  }
-
-  private isMoveRejectedEvent(event: SessionMachineEvent): boolean {
-    return (
-      event.type === 'wasm-notification' &&
-      'MoveRejected' in event.notification &&
-      event.notification.MoveRejected != null
-    );
   }
 
   private restoreHandFrom(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {

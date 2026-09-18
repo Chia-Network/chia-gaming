@@ -3,6 +3,7 @@ import type { SavedHandProposal, SessionPresentationSave } from './saveEnvelope'
 import { encodeComposeDraftState } from './persistenceBetweenHands';
 import { isCatalogGameType, validateHandProposal } from '../gameRegistry';
 import { channelStatusPayloadFromModel } from './normalization';
+import { isUncancelledProposal } from './proposalPolicy';
 import type { HandProposal, RegisteredGameType, SessionModel } from './types';
 
 export interface SessionPresentationFacts {
@@ -60,18 +61,16 @@ export function snapshotFromSessionModel(
     );
   }
   const proposalIds = new Set<string>();
-  let localOutgoingProposals = 0;
+  let uncancelledProposals = 0;
   for (const proposal of model.betweenHand.pendingProposals) {
     if (proposalIds.has(proposal.id)) {
       throw new Error(`Session invariant broken: pending proposal ${proposal.id} appears twice`);
     }
     proposalIds.add(proposal.id);
-    if (proposal.lifecycle === 'local-outgoing' || proposal.lifecycle === 'local-cancel-queued') {
-      localOutgoingProposals += 1;
-    }
+    if (isUncancelledProposal(proposal)) uncancelledProposals += 1;
   }
-  if (localOutgoingProposals > 1) {
-    throw new Error('Session invariant broken: multiple local outgoing proposals');
+  if (uncancelledProposals > 1) {
+    throw new Error('Session invariant broken: multiple uncancelled proposals');
   }
 
   if (model.game.handState !== null) {

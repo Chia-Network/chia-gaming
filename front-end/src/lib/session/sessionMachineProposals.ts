@@ -4,6 +4,8 @@ import type {
   SessionMachineState,
   SessionMachineTransition,
 } from './sessionMachineTypes';
+import { isUncancelledProposal } from './proposalPolicy';
+export { isUncancelledProposal, isUncancelledProposalLifecycle } from './proposalPolicy';
 import type { PendingProposalLifecycle, PendingProposalModel, ProposalOrigin } from './types';
 
 export type ProposalEvent = Extract<
@@ -27,12 +29,6 @@ export function proposalHasLifecycle(
   lifecycle: PendingProposalLifecycle,
 ): boolean {
   return proposal.lifecycle === lifecycle;
-}
-
-export function isUncancelledProposal(proposal: PendingProposalModel): boolean {
-  return (
-    proposal.lifecycle !== 'local-cancel-queued' && proposal.lifecycle !== 'peer-cancel-queued'
-  );
 }
 
 export function clearProposalIds(

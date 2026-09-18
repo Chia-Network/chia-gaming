@@ -190,50 +190,63 @@ describe('session model proposal and normalization contracts', () => {
     expect(restored.game.currentHandIds).toEqual(['11', '13']);
   });
 
-  it('round-trips one outgoing group alongside an incoming collision', () => {
-    const firstTerms = {
+  it('round-trips a cancellation tombstone beside its outgoing replacement', () => {
+    const cancelledTerms = {
       gameType: 'calpoker',
       senderIsPlayerA: false,
       gameTimeout: 15n,
       parameters: 10n,
     } as const;
-    const inboundTerms = {
+    const replacementTerms = {
       gameType: 'calpoker',
-      senderIsPlayerA: false,
+      senderIsPlayerA: true,
       gameTimeout: 25n,
       parameters: 30n,
     } as const;
-    const restored = sessionModelFromSave(
-      liveEnvelope({
-        activeGameIds: [],
+    const model = createSessionModel({
+      betweenHand: {
         pendingProposals: [
           {
             id: '11',
-            lifecycle: 'local-outgoing',
-            hand_proposal: {
-              sender_is_player_a: false,
-              game_timeout: '15',
-              game_type: 'calpoker',
-              parameters: 10n,
-            },
+            lifecycle: 'local-cancel-queued',
+            handProposal: cancelledTerms,
           },
           {
-            id: '23',
-            lifecycle: 'peer-review',
-            hand_proposal: {
-              sender_is_player_a: false,
-              game_timeout: '25',
-              game_type: 'calpoker',
-              parameters: 30n,
-            },
+            id: '13',
+            lifecycle: 'local-outgoing',
+            handProposal: replacementTerms,
           },
         ],
+      },
+    });
+    const snapshot = snapshotFromSessionModel(model);
+    const restored = sessionModelFromSave(
+      liveEnvelope({
+        activeGameIds: [],
+        pendingProposals: snapshot.pendingProposals,
       }),
     );
-    expect(restored.betweenHand.pendingProposals).toHaveLength(2);
-    expect(selectPendingProposal(restored, '11')?.handProposal).toEqual(firstTerms);
-    expect(selectPendingProposal(restored, '23')?.handProposal).toEqual(inboundTerms);
-    expect(snapshotFromSessionModel(restored).pendingProposals).toHaveLength(2);
+    expect(restored.betweenHand.pendingProposals).toEqual(model.betweenHand.pendingProposals);
+    expect(snapshotFromSessionModel(restored).pendingProposals).toEqual(snapshot.pendingProposals);
+  });
+
+  it('rejects persistence with more than one uncancelled proposal', () => {
+    const terms = {
+      gameType: 'calpoker',
+      senderIsPlayerA: false,
+      gameTimeout: 15n,
+      parameters: 10n,
+    } as const;
+    const model = createSessionModel({
+      betweenHand: {
+        pendingProposals: [
+          { id: '11', lifecycle: 'local-outgoing', handProposal: terms },
+          { id: '13', lifecycle: 'peer-review', handProposal: terms },
+        ],
+      },
+    });
+
+    expect(() => snapshotFromSessionModel(model)).toThrow('multiple uncancelled proposals');
   });
 
   it('restores every current-hand member for resolved-unroll lifecycle rows', () => {

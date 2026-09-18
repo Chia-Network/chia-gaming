@@ -183,3 +183,7 @@ export interface SessionMachineTransition {
   state: SessionMachineState;
   effects: SessionMachineEffect[];
 }
+
+export interface ClassifiedSessionMachineTransition extends SessionMachineTransition {
+  durability: 'durable' | 'projection-only';
+}

@@ -235,10 +235,11 @@ describe('scalar advisory proposal lifecycle', () => {
       expect(reduceSessionMachine(state, { type: 'submit-compose', handProposal: TERMS })).toEqual({
         state,
         effects: [],
+        durability: 'durable',
       });
       expect(
         reduceSessionMachine(state, { type: 'request-propose-game', handProposal: TERMS }),
-      ).toEqual({ state, effects: [] });
+      ).toEqual({ state, effects: [], durability: 'durable' });
     },
   );
 
@@ -257,6 +258,7 @@ describe('scalar advisory proposal lifecycle', () => {
     expect(reduceSessionMachine(state, { type: 'choose-same-terms' })).toEqual({
       state,
       effects: [],
+      durability: 'durable',
     });
   });
 
@@ -313,7 +315,7 @@ describe('scalar advisory proposal lifecycle', () => {
         command: 'cancel-proposal',
         id: '9',
       }),
-    ).toEqual({ state, effects: [] });
+    ).toEqual({ state, effects: [], durability: 'durable' });
   });
 
   it('cancels a matching cached retry before proposing its replacement', () => {
