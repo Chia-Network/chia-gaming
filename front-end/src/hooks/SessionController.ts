@@ -10,6 +10,7 @@ import {
   CoinStateRecord,
   WasmResult,
   TransactionSubmission,
+  FinalizedSubmission,
   ProposeGameParams,
   WasmEvent,
   WasmNotification,
@@ -765,6 +766,22 @@ export class SessionController implements PollingGameSession {
     log(`[wasm] cancelled rejected persisted funding offer trade_id=${tradeId}`);
   }
 
+  private async releaseFeeOfferReservation(tradeId: string, reason: string): Promise<void> {
+    const cancelOffer = this.blockchain?.rpc.cancelOffer;
+    if (!cancelOffer) {
+      log(`[wasm] cannot release fee offer ${tradeId}: wallet has no cancelOffer`);
+      return;
+    }
+    try {
+      await cancelOffer(tradeId);
+      log(`[wasm] cancelled fee offer trade_id=${tradeId} reason=${reason}`);
+    } catch (error) {
+      log(
+        `[wasm] failed to cancel fee offer trade_id=${tradeId} reason=${reason}: ${extractErrorMessage(error)}`,
+      );
+    }
+  }
+
   emitRewardAddress() {
     if (!this.rewardPuzzleHash) {
       throw new Error('emitRewardAddress: rewardPuzzleHash is not set');
@@ -807,6 +824,7 @@ export class SessionController implements PollingGameSession {
         throw new Error('submitTransactionNow: rewardPuzzleHash is not set');
       }
       let feeSourceJson: string | undefined;
+      let feeOfferTradeId: string | undefined;
       if (submission.fee_request) {
         const { amount, target } = submission.fee_request;
         try {
@@ -817,7 +835,12 @@ export class SessionController implements PollingGameSession {
             this.scheduleSave();
             return;
           } else if (feeSource) {
-            feeSourceJson = jsonStringify(feeSource);
+            if (feeSource.kind === 'offer') {
+              feeOfferTradeId = feeSource.tradeId;
+              feeSourceJson = jsonStringify({ kind: feeSource.kind, offer: feeSource.offer });
+            } else {
+              feeSourceJson = jsonStringify(feeSource);
+            }
           } else {
             feeSourceJson = jsonStringify({
               kind: 'failure',
@@ -829,13 +852,28 @@ export class SessionController implements PollingGameSession {
         }
       }
       if (!this.cradle) {
+        if (feeOfferTradeId) {
+          await this.releaseFeeOfferReservation(feeOfferTradeId, 'cradle unavailable');
+        }
         throw new Error('WASM cradle became unavailable before submission finalization');
       }
-      const finalized = this.cradle.finalize_submission(submission.id, feeSourceJson);
+      let finalized: FinalizedSubmission;
+      try {
+        finalized = this.cradle.finalize_submission(submission.id, feeSourceJson);
+      } catch (error) {
+        if (feeOfferTradeId) {
+          await this.releaseFeeOfferReservation(feeOfferTradeId, 'Rust rejected fee offer');
+        }
+        throw error;
+      }
       const blob = spend_bundle_to_clvm(finalized.protocol_bundle);
       const appliedFee = BigInt(finalized.applied_fee);
       log(`[wasm] submitTransaction blobLen=${blob.length}`);
       if (finalized.warning) {
+        if (feeOfferTradeId) {
+          await this.releaseFeeOfferReservation(feeOfferTradeId, 'fee attachment failed');
+          feeOfferTradeId = undefined;
+        }
         log(`[wasm] submitTransaction: ${finalized.warning}`);
         this.rxjsEmitter?.next({ type: 'error', error: finalized.warning });
       }
@@ -868,6 +906,9 @@ export class SessionController implements PollingGameSession {
         return;
       }
       this.cradle.reject_submission(submission.id);
+      if (feeOfferTradeId) {
+        await this.releaseFeeOfferReservation(feeOfferTradeId, 'network rejected transaction');
+      }
       const message = rewriteFeeRateRejection(outcome.detail);
       log(`[wasm] submitTransaction rejected id=${submission.id}: ${message}`);
       this.rxjsEmitter?.next({

@@ -554,9 +554,11 @@ offer-based wallets, the funding transaction contains seven logical spends:
 The two wallet inputs provide both contributions plus both opening fees; the
 launcher creates a channel worth the contributions, leaving exactly the two
 declared fees. Opening bundles are marked so submission does not attach a
-second fee. Cloud Wallet's direct-spend API omits the two settlement coins and
-creates the same pre-launcher or contribution child directly from its wallet
-spend.
+second fee. Cloud Wallet uses the same persisted-offer settlement shape as
+WalletConnect, including the protocol-provided CLVM conditions. Its wallet and
+offer operations use the Cloud Wallet GraphQL API, while peak, coin, puzzle,
+and transaction-submission traffic is relayed unchanged through that API's
+Coinset proxy.
 
 **Key code:** `src/session_phases/handshake_initiator.rs`,
 `src/session_phases/handshake_receiver.rs`,

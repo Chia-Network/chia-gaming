@@ -1172,15 +1172,31 @@ Shell manages wallet connections through two abstractions defined in
   endpoints at call time through `getCloudWallet*` getters, so UI-entered config
   takes effect without a rebuild.
 
-  Cloud Wallet's `createSpendWithExtraConditions` path directly creates the
-  message-bound pre-launcher or contribution coin; it does not insert an
-  OFFER_MOD settlement coin. The protocol child has amount
-  `contribution + opening fee` and emits `RESERVE_FEE`, so the mutation does
-  not also declare a native wallet fee. For later transactions, its
-  `createFeeSpend` call instead requests an amount-zero direct spend with the
-  native `fee` field and `ASSERT_CONCURRENT_SPEND` of the known protocol coin.
-  Cloud Wallet supplies the reserve-fee condition and deficit directly, so
-  there is no OFFER_MOD settlement or nil-puzzle child.
+  Cloud Wallet funding uses persisted `createOffer` requests, matching the
+  WalletConnect funding contract: `offered` contains the requested funding
+  amount, `requested` is empty, and the protocol's conditions are serialized as
+  complete CLVM condition programs. Once the signature request is `SUBMITTED`,
+  the adapter returns both the bech32 offer and its offer ID. Rust decodes and
+  validates the offer; if validation requests another funding attempt, the
+  controller cancels the rejected persisted offer off chain to release its
+  wallet reservation. The wallet chooses the offer inputs, so Cloud no longer
+  selects or pins a funding coin in JavaScript.
+
+  Cloud fee attachment is also offer-based. `createFeeSpend` creates a fee-only
+  offer with empty `offered`/`requested` arrays, the native `fee` field, and one
+  serialized `ASSERT_CONCURRENT_SPEND` targeting Rust's protocol coin. Unlike a
+  WalletConnect settlement offer, this shape already contains the reserve-fee
+  condition and fee deficit, so Rust normalizes it without adding a settlement
+  or nil-puzzle spend. Both shapes then pass through the same Rust checks for
+  target, amount, deficit, input overlap, aggregate signatures, expiry, and
+  combined consensus validity. Rejected or unusable Cloud fee offers are
+  cancelled off chain using their offer IDs.
+
+  Cloud's wallet address, balance, consent, and offer operations remain on the
+  wallet GraphQL API. Full-node reads and final `push_tx` calls use its typed
+  Coinset GraphQL proxy and preserve the Coinset request and response shapes:
+  `get_blockchain_state`, `get_coin_record_by_name` /
+  `get_coin_records_by_names`, and `get_puzzle_and_solution`.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
@@ -1195,7 +1211,7 @@ Shell manages wallet connections through two abstractions defined in
   work, not a guarantee of inclusion. For ordinary WalletConnect submissions,
   `createFeeSpend` makes a validate-only offer whose wallet spend asserts the
   Rust-specified target coin is spent concurrently and reserves the fee. Cloud
-  Wallet returns its direct amount-zero fee spend instead. JavaScript passes
+  Wallet returns its native-fee offer instead. JavaScript passes
   either tagged provider result opaquely to one Rust/WASM attachment operation.
   Rust captures the configured amount, target, and explicit
   `SubmitWithoutFee` attachment-failure policy when the intent is first emitted,

@@ -68,17 +68,6 @@ function mockGraphql(handler: (query: string, variables: Record<string, unknown>
   return calls;
 }
 
-function mockGraphqlError(message: string) {
-  setTestGlobal(
-    'fetch',
-    jest.fn(async () => ({
-      status: 200,
-      ok: true,
-      text: async () => JSON.stringify({ errors: [{ message }] }),
-    })),
-  );
-}
-
 describe('CloudBlockchainInterface fee support', () => {
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
@@ -101,17 +90,17 @@ describe('CloudBlockchainInterface fee support', () => {
     setTestGlobal('fetch', undefined);
   });
 
-  function findSpendMutation(calls: Array<{ query: string; variables: Record<string, unknown> }>) {
-    const call = calls.find((c) => c.query.includes('createSpendWithExtraConditions'));
+  function findOfferMutation(calls: Array<{ query: string; variables: Record<string, unknown> }>) {
+    const call = calls.find((c) => c.query.includes('createOffer'));
     expect(call).toBeDefined();
     return (call!.variables.input ?? {}) as Record<string, unknown>;
   }
 
-  it('createOfferForIds directly creates the message-bound funding child', async () => {
+  it('serializes each funding condition as one CLVM program', async () => {
     const calls = mockGraphql((query) => {
-      if (query.includes('createSpendWithExtraConditions')) {
+      if (query.includes('createOffer')) {
         return {
-          createSpendWithExtraConditions: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
+          createOffer: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
         };
       }
       return {};
@@ -128,37 +117,36 @@ describe('CloudBlockchainInterface fee support', () => {
         500n,
       ),
     ).rejects.toThrow(/popup/i);
-    const input = findSpendMutation(calls);
-    expect(input.amount).toBe('1000');
+    const input = findOfferMutation(calls);
+    expect(input.offered).toEqual([{ amount: '1000' }]);
+    expect(input.requested).toEqual([]);
     expect(input.fee).toBeUndefined();
     expect(input.extraConditions).toEqual([
-      { opcode: '67', args: ['10', '', preLauncherPuzzleHash] },
-      { opcode: '51', args: [preLauncherPuzzleHash, '1000'] },
+      `ff43ff10ff80ffa0${preLauncherPuzzleHash}80`,
     ]);
   });
 
-  it('createOfferForIds omits the fee when zero', async () => {
-    mockFee = 0n;
+  it('adds ASSERT_BEFORE_HEIGHT_ABSOLUTE as a serialized condition', async () => {
     const calls = mockGraphql((query) => {
-      if (query.includes('createSpendWithExtraConditions')) {
+      if (query.includes('createOffer')) {
         return {
-          createSpendWithExtraConditions: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
+          createOffer: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
         };
       }
       return {};
     });
     const iface = new CloudBlockchainInterface();
-    await expect(iface.createOfferForIds('uid', { '1': -1000n })).rejects.toThrow(/popup/i);
-    const input = findSpendMutation(calls);
-    expect(input.amount).toBe('1000');
-    expect(input.fee).toBeUndefined();
+    await expect(
+      iface.createOfferForIds('uid', { '1': -1000n }, undefined, undefined, 500n),
+    ).rejects.toThrow(/popup/i);
+    expect(findOfferMutation(calls).extraConditions).toEqual(['ff57ff8201f480']);
   });
 
-  it('createFeeSpend uses the native fee and binds directly to the protocol coin', async () => {
+  it('createFeeSpend uses a fee-only offer bound to the protocol coin', async () => {
     const calls = mockGraphql((query) => {
-      if (query.includes('createSpendWithExtraConditions')) {
+      if (query.includes('createOffer')) {
         return {
-          createSpendWithExtraConditions: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
+          createOffer: { signatureRequest: { id: 'SR_1', status: 'PENDING' } },
         };
       }
       return {};
@@ -169,11 +157,11 @@ describe('CloudBlockchainInterface fee support', () => {
       kind: 'failure',
       reason: expect.stringMatching(/popup/i),
     });
-    const input = findSpendMutation(calls);
-    expect(input.amount).toBe('0');
+    const input = findOfferMutation(calls);
+    expect(input.offered).toEqual([]);
+    expect(input.requested).toEqual([]);
     expect(input.fee).toBe('500');
-    expect(input.coinIds).toBeUndefined();
-    expect(input.extraConditions).toEqual([{ opcode: '64', args: [protocolCoinId] }]);
+    expect(input.extraConditions).toEqual([`ff40ffa0${protocolCoinId}80`]);
   });
 
   it('reports fee-spend transport failure as unavailable', async () => {
@@ -186,42 +174,53 @@ describe('CloudBlockchainInterface fee support', () => {
     });
   });
 
-  it('selectCoins treats the supplied amount as the exact requirement', async () => {
-    const nodeA = { name: '11'.repeat(32), amount: '100', puzzleHash: 'bb'.repeat(32) };
-    const nodeB = { name: '22'.repeat(32), amount: '150', puzzleHash: 'dd'.repeat(32) };
-    const records = [
-      {
-        name: '11'.repeat(32),
-        amount: '100',
-        puzzleHash: 'bb'.repeat(32),
-        parentCoinName: 'aa'.repeat(32),
-        spentBlockHeight: null,
-      },
-      {
-        name: '22'.repeat(32),
-        amount: '150',
-        puzzleHash: 'dd'.repeat(32),
-        parentCoinName: 'cc'.repeat(32),
-        spentBlockHeight: null,
-      },
-    ];
-    const handler = (query: string) => {
-      if (query.includes('coinRecordsByNames')) return { coinRecordsByNames: records };
-      return { coins: { edges: [{ node: nodeA }, { node: nodeB }] } };
-    };
+  it('returns the signed persisted offer after the request is submitted', async () => {
+    const offer = `offer1${'a'.repeat(80)}`;
+    (globalThis as unknown as { open: () => unknown }).open = () => ({ close: jest.fn() });
+    setTestGlobal('addEventListener', jest.fn());
+    setTestGlobal('removeEventListener', jest.fn());
+    mockGraphql((query) => {
+      if (query.includes('createOffer')) {
+        return { createOffer: { signatureRequest: { id: 'SR_1', status: 'PENDING' } } };
+      }
+      if (query.includes('signatureRequest')) {
+        return {
+          signatureRequest: {
+            id: 'SR_1',
+            status: 'SUBMITTED',
+            transaction: { offer, offerId: 'Offer_1' },
+          },
+        };
+      }
+      return {};
+    });
 
-    mockGraphql(handler);
-    const contributionCoin = await new CloudBlockchainInterface().selectCoins('uid', 100n);
-    expect(contributionCoin?.startsWith('aa'.repeat(32) + 'bb'.repeat(32))).toBe(true);
+    await expect(
+      new CloudBlockchainInterface().createOfferForIds('uid', { '1': -1000n }),
+    ).resolves.toEqual({ offer, tradeId: 'Offer_1' });
+  });
 
-    mockGraphql(handler);
-    const feeCoin = await new CloudBlockchainInterface().selectCoins('uid', 150n);
-    expect(feeCoin?.startsWith('cc'.repeat(32) + 'dd'.repeat(32))).toBe(true);
+  it('cancels a persisted offer off chain by offerId', async () => {
+    const calls = mockGraphql(() => ({ cancelOffer: { id: 'SR_cancel' } }));
+    await new CloudBlockchainInterface().cancelOffer('Offer_1');
+    const input = calls[0]!.variables.input as Record<string, unknown>;
+    expect(input).toEqual({
+      walletId: 'Wallet_1',
+      offerId: 'Offer_1',
+      fee: '0',
+      cancelOffChain: true,
+    });
+  });
+
+  it('does not preselect or pin Cloud wallet coins', async () => {
+    const calls = mockGraphql(() => ({}));
+    await expect(new CloudBlockchainInterface().selectCoins('uid', 100n)).resolves.toBeNull();
+    expect(calls).toEqual([]);
   });
 
   it('rejects coin-record batches when the Cloud query fails', async () => {
-    mockGraphql((query) => {
-      if (query.includes('coinRecordsByNames')) {
+    mockGraphql((_query, variables) => {
+      if ((variables.input as { endpoint?: string })?.endpoint === 'get_coin_record_by_name') {
         throw new Error('cloud unavailable');
       }
       return {};
@@ -232,53 +231,126 @@ describe('CloudBlockchainInterface fee support', () => {
   });
 
   it('rejects coin-record batches containing incomplete identities', async () => {
-    mockGraphql((query) => {
-      if (query.includes('coinRecordsByNames')) {
+    mockGraphql((_query, variables) => {
+      if ((variables.input as { endpoint?: string })?.endpoint === 'get_coin_record_by_name') {
         return {
-          coinRecordsByNames: [
-            {
-              name: 'aa'.repeat(32),
-              amount: '1',
-              puzzleHash: 'bb',
-              parentCoinName: 'cc'.repeat(32),
-              createdBlockHeight: 1,
-              spentBlockHeight: null,
+          coinset: {
+            response: {
+              success: true,
+              coin_record: {
+                coin: {
+                  amount: '1',
+                  puzzle_hash: 'bb',
+                  parent_coin_info: 'cc'.repeat(32),
+                },
+                confirmed_block_index: 1,
+                spent_block_index: 0,
+                spent: false,
+                coinbase: false,
+                timestamp: 0,
+              },
             },
-          ],
+          },
         };
       }
       return {};
     });
     await expect(
       new CloudBlockchainInterface().getCoinRecordsByNames(['aa'.repeat(32)]),
-    ).rejects.toThrow(/incomplete coin identity/i);
+    ).rejects.toThrow(/incomplete coin record/i);
   });
 
-  it('finalize rejects a sub-floor fee before starting OAuth', async () => {
-    mockGraphql(() => ({}));
-    const iface = new CloudBlockchainInterface();
-    // fresh=true clears stored auth so beginConnect returns the OAuth-config
-    // path whose finalize collects the fee.
-    const setup = await iface.beginConnect('uid', true);
-    await expect(setup.finalize?.({ clientId: 'client-x', fee: 500n })).rejects.toThrow(
-      /treated as zero/i,
-    );
+  it('reads peak height from get_blockchain_state', async () => {
+    const calls = mockGraphql(() => ({
+      coinset: {
+        response: {
+          success: true,
+          blockchain_state: { peak: { height: 1234 } },
+        },
+      },
+    }));
+    await expect(new CloudBlockchainInterface().getHeightInfo()).resolves.toBe(1234n);
+    expect(calls[0]!.variables.input).toEqual({
+      walletId: 'Wallet_1',
+      endpoint: 'get_blockchain_state',
+      request: {},
+    });
   });
 
-  it('finalize accepts zero and a floor fee (failing later in OAuth, not the fee check)', async () => {
-    mockGraphql(() => ({}));
+  it('uses singular and batch Coinset coin-record requests without reshaping the request', async () => {
+    const record = {
+      coin: {
+        parent_coin_info: '11'.repeat(32),
+        puzzle_hash: '22'.repeat(32),
+        amount: '50',
+      },
+      confirmed_block_index: 10,
+      spent_block_index: 0,
+      spent: false,
+      coinbase: false,
+      timestamp: 123,
+    };
+    const calls = mockGraphql((_query, variables) => {
+      const endpoint = (variables.input as { endpoint: string }).endpoint;
+      return {
+        coinset: {
+          response:
+            endpoint === 'get_coin_record_by_name'
+              ? { success: true, coin_record: record }
+              : { success: true, coin_records: [record] },
+        },
+      };
+    });
     const iface = new CloudBlockchainInterface();
-    // A fee that clears the floor check falls through to the OAuth flow, so the
-    // rejection is some downstream OAuth error, never the fee-floor error.
-    const setupZero = await iface.beginConnect('uid', true);
-    await expect(setupZero.finalize?.({ clientId: 'client-x', fee: 0n })).rejects.not.toThrow(
-      /treated as zero/i,
-    );
-
-    const setupFloor = await iface.beginConnect('uid', true);
+    await expect(iface.getCoinRecordsByNames(['aa'.repeat(32)])).resolves.toHaveLength(1);
     await expect(
-      setupFloor.finalize?.({ clientId: 'client-x', fee: 100_000_000n }),
-    ).rejects.not.toThrow(/treated as zero/i);
+      iface.getCoinRecordsByNames(['aa'.repeat(32), 'bb'.repeat(32)]),
+    ).resolves.toHaveLength(1);
+    expect((calls[0]!.variables.input as any).request).toEqual({ name: 'aa'.repeat(32) });
+    expect((calls[1]!.variables.input as any).request).toEqual({
+      names: ['aa'.repeat(32), 'bb'.repeat(32)],
+      include_spent_coins: true,
+    });
+  });
+
+  it('resolves spent height before requesting puzzle and solution', async () => {
+    const calls = mockGraphql((_query, variables) => {
+      const endpoint = (variables.input as { endpoint: string }).endpoint;
+      if (endpoint === 'get_coin_record_by_name') {
+        return {
+          coinset: {
+            response: {
+              success: true,
+              coin_record: {
+                coin: {
+                  parent_coin_info: '11'.repeat(32),
+                  puzzle_hash: '22'.repeat(32),
+                  amount: '50',
+                },
+                confirmed_block_index: 10,
+                spent_block_index: 25,
+                spent: true,
+                coinbase: false,
+                timestamp: 123,
+              },
+            },
+          },
+        };
+      }
+      return {
+        coinset: {
+          response: {
+            success: true,
+            coin_solution: { puzzle_reveal: '0xaa', solution: '0xbb' },
+          },
+        },
+      };
+    });
+    await expect(
+      new CloudBlockchainInterface().getPuzzleAndSolution('00'.repeat(72)),
+    ).resolves.toEqual(['aa', 'bb']);
+    expect((calls[1]!.variables.input as any).endpoint).toBe('get_puzzle_and_solution');
+    expect((calls[1]!.variables.input as any).request.height).toBe('25');
   });
 
   function sampleBundle() {
@@ -299,12 +371,9 @@ describe('CloudBlockchainInterface fee support', () => {
   }
 
   it('classifies a non-accepted broadcast status as rejected', async () => {
-    mockGraphql((query) => {
-      if (query.includes('broadcastSpendBundle')) {
-        return { broadcastSpendBundle: { status: 'FAILED' } };
-      }
-      return {};
-    });
+    mockGraphql(() => ({
+      coinset: { response: { success: false, status: 'FAILED' } },
+    }));
     const iface = new CloudBlockchainInterface();
     await expect(iface.spend('', sampleBundle(), '', 'test')).resolves.toEqual({
       status: 'rejected',
@@ -317,12 +386,14 @@ describe('CloudBlockchainInterface fee support', () => {
     ['MYSTERY', 'rejected'],
     ['REJECTED', 'rejected'],
   ])('classifies Cloud broadcast status %# as %s', async (status, expected) => {
-    mockGraphql((query) => {
-      if (query.includes('broadcastSpendBundle')) {
-        return { broadcastSpendBundle: status === undefined ? {} : { status } };
-      }
-      return {};
-    });
+    mockGraphql(() => ({
+      coinset: {
+        response:
+          status === undefined
+            ? {}
+            : { success: false, status },
+      },
+    }));
     await expect(
       new CloudBlockchainInterface().spend('', sampleBundle(), '', 'test'),
     ).resolves.toMatchObject({ status: expected });
@@ -338,7 +409,9 @@ describe('CloudBlockchainInterface fee support', () => {
     ['full node rejected spend: INVALID_FEE_LOW_FEE', 'rejected'],
     ['opaque Cloud Wallet failure', 'rejected'],
   ])('classifies Cloud service error "%s" as %s', async (message, expected) => {
-    mockGraphqlError(message);
+    mockGraphql(() => ({
+      coinset: { response: { success: false, error: message } },
+    }));
     await expect(
       new CloudBlockchainInterface().spend('', sampleBundle(), '', 'test'),
     ).resolves.toMatchObject({ status: expected });
@@ -357,13 +430,10 @@ describe('CloudBlockchainInterface fee support', () => {
     });
   });
 
-  it('spend broadcasts a bundle carrying a direct fee', async () => {
-    mockGraphql((query) => {
-      if (query.includes('broadcastSpendBundle')) {
-        return { broadcastSpendBundle: { status: 'SUCCESS' } };
-      }
-      return {};
-    });
+  it('spend submits the finalized bundle through Coinset', async () => {
+    mockGraphql(() => ({
+      coinset: { response: { success: true, status: 'SUCCESS' } },
+    }));
     const iface = new CloudBlockchainInterface();
     await expect(iface.spend('', sampleBundle(), '', 'test', 500n)).resolves.toEqual({
       status: 'acknowledged',

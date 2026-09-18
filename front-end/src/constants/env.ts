@@ -35,18 +35,24 @@ export const GENESIS_CHALLENGE_OVERRIDE: string | undefined =
 
 /** Cloud Wallet API origin (authorize, token, graphql). */
 export const CLOUD_WALLET_API_URL: string =
-  _win.__CLOUD_WALLET_API_URL__ || _env.CHIA_GAMING_CLOUD_WALLET_API_URL || 'http://127.0.0.1:3001';
+  _win.__CLOUD_WALLET_API_URL__ ||
+  _env.CHIA_GAMING_CLOUD_WALLET_API_URL ||
+  'https://cw-review-api-3395.tailaecde.ts.net';
 
 /** Cloud Wallet UI origin (consent, signature-request approve popup). */
 export const CLOUD_WALLET_UI_URL: string =
-  _win.__CLOUD_WALLET_UI_URL__ || _env.CHIA_GAMING_CLOUD_WALLET_UI_URL || 'http://127.0.0.1:3000';
+  _win.__CLOUD_WALLET_UI_URL__ ||
+  _env.CHIA_GAMING_CLOUD_WALLET_UI_URL ||
+  'https://cw-review-3395.tailaecde.ts.net';
 
 /** OAuth client_id registered for Chia Gaming. */
 export const CLOUD_WALLET_CLIENT_ID: string =
-  _win.__CLOUD_WALLET_CLIENT_ID__ || _env.CHIA_GAMING_CLOUD_WALLET_CLIENT_ID || '';
+  _win.__CLOUD_WALLET_CLIENT_ID__ ||
+  _env.CHIA_GAMING_CLOUD_WALLET_CLIENT_ID ||
+  'k6r62t7a3lybvzl60din10ol';
 
 /** Fixed OAuth redirect path on the gaming origin. */
 export const CLOUD_WALLET_OAUTH_CALLBACK_PATH = '/oauth/callback';
 
 export const CLOUD_WALLET_OAUTH_SCOPES =
-  'wallet.read transfer.create signatureRequest.submit offline_access';
+  'wallet.read offer.create offer.read offer.cancel signatureRequest.submit offline_access';
