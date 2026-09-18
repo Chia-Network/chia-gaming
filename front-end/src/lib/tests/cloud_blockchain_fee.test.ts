@@ -179,7 +179,7 @@ describe('CloudBlockchainInterface fee support', () => {
     (globalThis as unknown as { open: () => unknown }).open = () => ({ close: jest.fn() });
     setTestGlobal('addEventListener', jest.fn());
     setTestGlobal('removeEventListener', jest.fn());
-    mockGraphql((query) => {
+    const calls = mockGraphql((query) => {
       if (query.includes('createOffer')) {
         return { createOffer: { signatureRequest: { id: 'SR_1', status: 'PENDING' } } };
       }
@@ -188,7 +188,7 @@ describe('CloudBlockchainInterface fee support', () => {
           signatureRequest: {
             id: 'SR_1',
             status: 'SUBMITTED',
-            transaction: { offer, offerId: 'Offer_1' },
+            transaction: { offer: { bech32: offer, offerId: 'Offer_1' } },
           },
         };
       }
@@ -198,6 +198,10 @@ describe('CloudBlockchainInterface fee support', () => {
     await expect(
       new CloudBlockchainInterface().createOfferForIds('uid', { '1': -1000n }),
     ).resolves.toEqual({ offer, tradeId: 'Offer_1' });
+    const pollQuery = calls.find((call) => call.query.includes('transaction'))!.query;
+    expect(pollQuery.replace(/\s+/g, ' ')).toContain(
+      'transaction { offer { bech32 offerId } }',
+    );
   });
 
   it('cancels a persisted offer off chain by offerId', async () => {

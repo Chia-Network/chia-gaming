@@ -537,8 +537,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           id: string;
           status: string;
           transaction: {
-            offer: string | null;
-            offerId: string | null;
+            offer: {
+              bech32: string;
+              offerId: string;
+            } | null;
           } | null;
         } | null;
       }>(
@@ -546,7 +548,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           signatureRequest(id: $id) {
             id
             status
-            transaction { offer offerId }
+            transaction {
+              offer { bech32 offerId }
+            }
           }
         }`,
         { id: signatureRequestId },
@@ -557,8 +561,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       }
       const status = sr.status;
       log(`[cloud-blockchain] signatureRequest id=${sr.id} status=${status}`);
-      const offer = sr.transaction?.offer;
-      const offerId = sr.transaction?.offerId;
+      const offer = sr.transaction?.offer?.bech32;
+      const offerId = sr.transaction?.offer?.offerId;
       if (
         status === 'SUBMITTED' &&
         typeof offer === 'string' &&
