@@ -130,6 +130,7 @@ export async function injectSessionReload(
   lane: ReloadableSessionLane,
   poller: BlockchainPoller,
   wasmStateInit = new WasmStateInit(fetchPreset),
+  whileReloaded?: () => Promise<void>,
 ): Promise<{ lane: ReloadableSessionLane; save: LiveSessionSave }> {
   await lane.controller.flushPendingWork();
   if (reloadBarrier) await reloadBarrier;
@@ -161,6 +162,7 @@ export async function injectSessionReload(
   }
 
   const uniqueId = lane.controller.uniqueId;
+  await whileReloaded?.();
   lane.subscription.unsubscribe();
   lane.runtime.setRender(() => {});
   lane.controller.cleanup();

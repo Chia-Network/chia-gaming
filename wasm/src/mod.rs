@@ -3,7 +3,9 @@ mod gaming_wasm {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
     use std::convert::TryFrom;
-    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    #[cfg(target_family = "wasm")]
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicI32, Ordering};
 
     use hex::FromHexError;
 
@@ -108,6 +110,7 @@ mod gaming_wasm {
         fn __wasm_call_ctors();
     }
 
+    #[cfg(target_family = "wasm")]
     static WASM_CTORS_RAN: AtomicBool = AtomicBool::new(false);
 
     /// Hosts may call this more than once; constructors must run at most once.
@@ -836,10 +839,6 @@ mod gaming_wasm {
         timeout: u64,
         sender_is_player_a: bool,
         parameters: ProposalParameters,
-    }
-
-    fn game_id_to_string(id: &GameID) -> String {
-        id.0.to_string()
     }
 
     fn string_to_game_id(id: &str) -> Result<GameID, JsValue> {

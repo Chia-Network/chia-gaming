@@ -176,6 +176,63 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
   );
 }
 
+async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<void> {
+  const adapters = await createAsymmetricActivePair(poller, 11);
+  const initiatorIndex = adapters[0].blob!.lastChannelStatus?.have_potato ? 0 : 1;
+  const reloadingIndex = initiatorIndex ^ 1;
+  const controller = adapters[reloadingIndex].blob!;
+  const status = controller.lastChannelStatus;
+  assert.ok(status, 'clean shutdown reload lane must begin Active');
+  let lane = createReloadableSessionLane(
+    adapters[reloadingIndex],
+    controller,
+    createSessionModel({
+      channel: { status: channelStatusModelFromPayload(status) },
+    }),
+  );
+
+  adapters[initiatorIndex].blob!.cleanShutdown();
+  await flushWrapperDrain(adapters);
+  const shutdownRequests = adapters[initiatorIndex].outbound_messages();
+  assert.equal(shutdownRequests.length, 1);
+  for (const request of shutdownRequests) {
+    adapters[reloadingIndex].deliver_message(request.msgno, request.msg);
+  }
+  await flushWrapperDrain(adapters);
+  assert.equal(lane.controller.lastChannelStatus?.state, 'ShutdownTransactionPending');
+
+  lane = (
+    await injectSessionReload(lane, poller, undefined, async () => {
+      const shutdownResponses = adapters[reloadingIndex].outbound_messages();
+      assert.equal(shutdownResponses.length, 1);
+      for (const response of shutdownResponses) {
+        adapters[initiatorIndex].deliver_message(response.msgno, response.msg);
+      }
+      await flushWrapperDrain(adapters);
+      await fakeBlockchainInfo.farmBlock();
+    })
+  ).lane;
+  assert.equal(lane.controller.getRestoreStatus(), 'restored');
+  await flushWrapperDrain(adapters);
+  for (
+    let block = 0;
+    block < 10 && lane.controller.lastChannelStatus?.state !== 'ResolvedClean';
+    block++
+  ) {
+    await fakeBlockchainInfo.farmBlock();
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+  }
+  assert.equal(
+    lane.controller.lastChannelStatus?.state,
+    'ResolvedClean',
+    `clean landing failed: advisory=${lane.controller.lastChannelStatus?.advisory ?? 'none'}\n${lane.controller.diagnosticLog.join('\n')}`,
+  );
+  await lane.runtime.persist();
+  await flushSessionSave();
+  assert.equal((await peekSession())?.phase, 'terminal');
+}
+
 it(
   'restores a real unilateral unroll and advances on later chain observations',
   async () => {
@@ -185,6 +242,22 @@ it(
       await runUnrollReloadAndAdvance(poller);
     } catch (error) {
       throw new Error(`[load_wasm unroll reload injection failed]\n${String(error)}`, {
+        cause: error,
+      });
+    }
+  },
+  120 * 1000,
+);
+
+it(
+  'restores during cooperative shutdown and persists the clean landing',
+  async () => {
+    try {
+      const poller = await startSimulator(['cafe00011', 'dead00011']);
+      if (!poller) return;
+      await runCleanShutdownReloadAndLand(poller);
+    } catch (error) {
+      throw new Error(`[load_wasm clean shutdown reload injection failed]\n${String(error)}`, {
         cause: error,
       });
     }
