@@ -70,7 +70,7 @@ describe('session machine behavior sequences', () => {
     ).toThrow();
   });
 
-  it('resets durable state only when an accepted group starts a new hand', () => {
+  it('rejects duplicate acceptance and resets durable state for a new proposal', () => {
     let state = createSessionMachineState(createSessionModel());
     state = trackProposal(state, ['7'], CALPOKER_TERMS);
 
@@ -126,19 +126,21 @@ describe('session machine behavior sequences', () => {
       firstGameAccepted: true,
     });
 
-    state = send(state, {
-      type: 'notification-accepted-group',
-      proposalId: '7',
-      members: [
-        {
-          id: '7',
-          playerAContribution: 10n,
-          playerBContribution: 10n,
-          ourTurn: false,
-          readableParameters: readableInteger(10n),
-        },
-      ],
-    });
+    expect(() =>
+      send(state, {
+        type: 'notification-accepted-group',
+        proposalId: '7',
+        members: [
+          {
+            id: '7',
+            playerAContribution: 10n,
+            playerBContribution: 10n,
+            ourTurn: false,
+            readableParameters: readableInteger(10n),
+          },
+        ],
+      }),
+    ).toThrow('ProposalAcceptedGroup 7 missing normalized proposal group');
 
     expect(state.model.game.handState).toEqual(progressed);
 

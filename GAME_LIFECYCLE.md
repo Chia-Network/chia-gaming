@@ -150,16 +150,17 @@ the generated members in factory order. Each member contains its generated
 game ID, approved player-A/player-B contributions, local turn ownership, and
 factory-approved readable parameters for frontend initialization.
 
-### WASM Accept-and-Move Convenience
+### Ordered Acceptance and Move
 
-The WASM layer exposes an `accept_proposal_and_move` function that atomically
-accepts a proposal and makes the first move. Internally this translates into
-two distinct `BatchAction`s (`AcceptProposalGroup` followed by `Move`) in the
-same batch.
+The wire protocol needs no combined action for accepting and immediately
+moving. A batch may contain `AcceptProposalGroup` followed by `Move`; the
+receiver processes them in order, so the generated game exists before the move
+is validated. The host API deliberately exposes the two operations separately
+and does not guess which factory-generated member should move.
 
 **Key code:** `src/session_phases/mod.rs` — `propose_games`,
 `accept_proposal`, `cancel_proposal`;
-`wasm/src/mod.rs` — `propose_games`, `accept_proposal_and_move`
+`wasm/src/mod.rs` — `propose_games`, `accept_proposal`
 
 ---
 

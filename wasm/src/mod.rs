@@ -1006,27 +1006,6 @@ mod gaming_wasm {
         )
     }
 
-    #[wasm_bindgen]
-    pub fn accept_proposal_and_move(
-        cid: i32,
-        id: &str,
-        readable: &[u8],
-    ) -> Result<JsValue, JsValue> {
-        let game_id = string_to_game_id(id)?;
-        let readable_move = ReadableMove::from_program(std::rc::Rc::new(
-            Program::from_bytes(readable).into_js()?,
-        ));
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            let entropy: Hash = cradle.rng.0.random();
-            cradle.cradle.accept_proposal_and_move(
-                &mut cradle.allocator,
-                &game_id,
-                readable_move,
-                entropy,
-            )
-        })
-    }
-
     /// Pull the protocol-level peer state, rendered as indented text for the
     /// dashboard. This reads directly out of Rust (borrow-safe) rather than
     /// being pushed through notifications.

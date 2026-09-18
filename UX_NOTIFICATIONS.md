@@ -681,11 +681,10 @@ These are not lifecycle invariants but important rules enforced in the code:
 - **Accept only on our turn.** Calling `accept_settlement()` when it is not our
   turn is an assert failure. `AcceptSettlement` is an alternative to moving when
   we choose to settle at the current `mover_share`.
-- **Accepted + opponent move is an untested path.** Since accept_settlement only
-  happens on our turn, and only the mover can advance a game coin, the opponent
-  cannot move on a coin where we already accepted. The `accept_proposal_and_move` API exists but has
-  not been tested end-to-end; Calpoker's move direction may prevent it from
-  triggering in practice.
+- **Acceptance and a first move remain separate actions.** The wire batch may
+  order `AcceptProposalGroup` immediately before `Move`; the receiver creates
+  the generated game before validating the following move. There is no
+  specialized host API that guesses which generated member should move.
 - **No phantom game-map entries.** During the on-chain transition,
   `finish_on_chain_transition` filters out both our and the opponent's reward
   puzzle hashes from the created-coins list before calling

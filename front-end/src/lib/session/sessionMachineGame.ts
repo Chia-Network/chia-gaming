@@ -141,19 +141,12 @@ export function reduceDurableGameEvent(
       const firstMember = event.members[0];
       if (!firstMember) throw new Error('ProposalAcceptedGroup has no members');
       const acceptedIds = event.members.map((member) => member.id);
-      const alreadyApplied =
-        state.model.game.currentHandIds.length === acceptedIds.length &&
-        state.model.game.currentHandIds.every((id, index) => id === acceptedIds[index]);
-      if (alreadyApplied) return { state, effects: [] };
       const proposal = selectProposalGroupByMemberId(state.model, event.proposalId);
       if (!proposal) {
         throw new Error(
           `ProposalAcceptedGroup ${event.proposalId} missing normalized proposal group`,
         );
       }
-      const first =
-        state.model.game.currentHandIds.length !== acceptedIds.length ||
-        state.model.game.currentHandIds.some((id, index) => id !== acceptedIds[index]);
       const proposalGroups = state.model.betweenHand.proposalGroups.filter(
         (group) => group.primaryId !== proposal.primaryId,
       );
@@ -172,36 +165,27 @@ export function reduceDurableGameEvent(
         ...state,
         model: {
           ...modelWithGame,
-          game: first ? { ...modelWithGame.game, handState: null } : modelWithGame.game,
+          game: { ...modelWithGame.game, handState: null },
           betweenHand: {
             ...state.model.betweenHand,
             proposalGroups,
-            ...(first
-              ? {
-                  mode: 'decision' as const,
-                  rejectedOnceHandProposal: null,
-                  pendingRetryHandProposal: null,
-                  newHandRequested: false,
-                  lastHandProposal: proposal.handProposal,
-                  compose: applyHandProposalToComposeDraft(
-                    state.model.betweenHand.compose,
-                    proposal.handProposal,
-                  ),
-                }
-              : {}),
+            mode: 'decision' as const,
+            rejectedOnceHandProposal: null,
+            pendingRetryHandProposal: null,
+            newHandRequested: false,
+            lastHandProposal: proposal.handProposal,
+            compose: applyHandProposalToComposeDraft(
+              state.model.betweenHand.compose,
+              proposal.handProposal,
+            ),
           },
         },
         coordination: {
           ...state.coordination,
-          ...(first
-            ? {
-                firstGameAccepted: true,
-                sameTermsRequested: false,
-              }
-            : {}),
+          firstGameAccepted: true,
+          sameTermsRequested: false,
         },
       };
-      if (!first) return { state: initialized, effects: [] };
       const init: GameHandInitialization = {
         members: event.members.map((member) => ({
           playerAContribution: member.playerAContribution,

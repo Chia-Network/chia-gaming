@@ -252,7 +252,6 @@ export interface WasmConnection {
   // Game
   propose_games: (cid: number, games: ProposeGameParams[]) => WasmResult;
   accept_proposal: (cid: number, game_id: string) => WasmResult;
-  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
   cancel_proposal: (cid: number, game_id: string) => WasmResult;
   make_move_with_entropy_for_testing: (
     cid: number,
@@ -302,10 +301,6 @@ export class ChiaGame {
 
   accept_proposal(game_id: string): WasmResult {
     return this.wasm.accept_proposal(this.session, game_id);
-  }
-
-  accept_proposal_and_move(game_id: string, readable: Uint8Array): WasmResult {
-    return this.wasm.accept_proposal_and_move(this.session, game_id, readable);
   }
 
   cancel_proposal(game_id: string): WasmResult {

@@ -1803,7 +1803,6 @@ impl OnChainPhase {
             GameAction::CleanShutdown => Ok(Vec::new()),
             GameAction::QueuedProposalGroup(_, _)
             | GameAction::QueuedAcceptProposalGroup(_)
-            | GameAction::QueuedAcceptProposalGroupAndMove(_, _, _)
             | GameAction::QueuedCancelProposalGroup(_)
             | GameAction::QueuedCancelProposalGroupSilently(_) => Ok(vec![]),
             #[cfg(test)]
