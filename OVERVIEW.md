@@ -438,12 +438,10 @@ coin reserves the opening fee and asserts the singleton launcher's
 announcement. The initiator sends the completed half and state-1 signatures
 in C.
 
-Each role initially watches its known local wallet funding input, not the
-predicted channel coin. The funding coin's ordinary live observation does
-nothing. Once that exact coin is observed spent, Rust registers the predicted
-channel coin; only that coin's later creation completes activation. This avoids
-asking WalletConnect for a coin record before the channel coin can exist and
-keeps the missing-coin quirk out of ordinary handshake polling.
+Once each role knows the predicted channel coin, Rust registers it directly.
+The channel coin's later creation completes activation; the local wallet
+funding input is validated as part of the assembled transaction but is not an
+intermediate protocol watch.
 
 On C, the receiver first validates the complete assembled funding transaction
 and verifies state 1 against a staged channel-state clone. Only after every

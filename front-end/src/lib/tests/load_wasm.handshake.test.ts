@@ -109,11 +109,11 @@ it(
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
       assert.deepEqual(
         wasm_blob2.getCoinsOfInterest().map((coin) => coin.label),
-        ['Funding coin'],
+        ['Channel coin'],
       );
-      const receiverFundingWatch = wasm_blob2.snapshotWatchedCoins();
-      assert.equal(receiverFundingWatch.length, 1);
-      assert.equal(receiverFundingWatch[0].coin_name, wasm_blob2.getCoinsOfInterest()[0].id);
+      const receiverChannelWatch = wasm_blob2.snapshotWatchedCoins();
+      assert.equal(receiverChannelWatch.length, 1);
+      assert.equal(receiverChannelWatch[0].coin_name, wasm_blob2.getCoinsOfInterest()[0].id);
       const sentB = cradle2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
@@ -126,11 +126,11 @@ it(
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
       assert.deepEqual(
         wasm_blob1.getCoinsOfInterest().map((coin) => coin.label),
-        ['Funding coin'],
+        ['Channel coin'],
       );
-      const initiatorFundingWatch = wasm_blob1.snapshotWatchedCoins();
-      assert.equal(initiatorFundingWatch.length, 1);
-      assert.equal(initiatorFundingWatch[0].coin_name, wasm_blob1.getCoinsOfInterest()[0].id);
+      const initiatorChannelWatch = wasm_blob1.snapshotWatchedCoins();
+      assert.equal(initiatorChannelWatch.length, 1);
+      assert.equal(initiatorChannelWatch[0].coin_name, wasm_blob1.getCoinsOfInterest()[0].id);
       const sentC = cradle1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
@@ -201,8 +201,8 @@ it(
       assert.equal(restoredWatches.length, 1);
       assert.equal(
         restoredWatches[0].coin_name,
-        receiverFundingWatch[0].coin_name,
-        'reload before funding spend must preserve the funding watch',
+        receiverChannelWatch[0].coin_name,
+        'reload before channel creation must preserve the channel watch',
       );
 
       await flushWrapperDrain([cradle2]);

@@ -107,9 +107,6 @@ pub struct HandshakeInitiatorPhase {
 
     channel_state: Option<ChannelState>,
     channel_initiation_transaction: Option<SpendBundle>,
-    funding_coin: Option<CoinString>,
-    #[serde(default)]
-    channel_watch_started: bool,
     #[serde(default)]
     opening_fee: Amount,
 
@@ -147,8 +144,6 @@ impl HandshakeInitiatorPhase {
             state: InitiatorState::WaitingForStart,
             channel_state: None,
             channel_initiation_transaction: None,
-            funding_coin: None,
-            channel_watch_started: false,
             opening_fee: Amount::default(),
             private_keys: phi.private_keys,
             game_types: phi.game_types,
@@ -616,16 +611,6 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
         _env: &mut ChannelEnv<'_>,
         coin: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        if self.funding_coin.as_ref() == Some(coin) {
-            return Ok(Some(vec![Effect::Log(format!(
-                "[initiator-handshake:funding-live] {}",
-                format_coin(coin),
-            ))]));
-        }
-        if self.funding_coin.is_none() && !self.channel_watch_started {
-            return Ok(None);
-        }
-
         let channel_coin = self.channel_state()?.channel_coin().clone();
         if *coin != channel_coin {
             return Err(Error::StrErr(format!(
@@ -633,10 +618,6 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
                 format_coin(coin),
             )));
         }
-        game_assert!(
-            self.channel_watch_started,
-            "initiator observed channel coin before funding spend started its watch"
-        );
         if !self.waiting_to_start {
             return Ok(None);
         }
@@ -663,29 +644,6 @@ impl SpendWalletReceiver for HandshakeInitiatorPhase {
         _env: &mut ChannelEnv<'_>,
         coin: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        if self.funding_coin.as_ref() == Some(coin) {
-            if self.channel_watch_started {
-                return Ok(vec![Effect::Log(format!(
-                    "[initiator-handshake:funding-spent-again] {}",
-                    format_coin(coin),
-                ))]);
-            }
-            self.channel_watch_started = true;
-            return Ok(vec![Effect::RegisterCoin {
-                coin: self.channel_state()?.channel_coin().clone(),
-                timeout: Timeout::new(1_000_000),
-                name: Some("channel"),
-                spend: None,
-                semantic: None,
-            }]);
-        }
-        if self.funding_coin.is_none() && !self.channel_watch_started {
-            return Ok(vec![Effect::Log(format!(
-                "[initiator-handshake:pre-watch-coin-spent] {}",
-                format_coin(coin),
-            ))]);
-        }
-
         if self.channel_state()?.channel_coin() == coin {
             return Ok(vec![Effect::Log(format!(
                 "[initiator-handshake:channel-spent] {}",
@@ -883,13 +841,11 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         let bundle = if matches!(self.state, InitiatorState::WaitingForOffer(_, _)) {
             let mut request = self.build_alice_coin_spend_request(env)?;
             request.max_height = self.channel_deadline;
-            let funding_coin =
-                validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)?;
-            self.funding_coin = Some(funding_coin.clone());
+            validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)?;
             effects.push(Effect::RegisterCoin {
-                coin: funding_coin,
+                coin: self.channel_state()?.channel_coin().clone(),
                 timeout: Timeout::new(1_000_000),
-                name: Some("funding"),
+                name: Some("channel"),
                 spend: None,
                 semantic: None,
             });
@@ -1104,16 +1060,9 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        if self.channel_watch_started {
-            return self
-                .channel_state
-                .as_ref()
-                .map(|ch| vec![(CoinOfInterest::Channel, ch.channel_coin().clone())])
-                .unwrap_or_default();
-        }
-        self.funding_coin
+        self.channel_state
             .as_ref()
-            .map(|coin| vec![(CoinOfInterest::Funding, coin.clone())])
+            .map(|ch| vec![(CoinOfInterest::Channel, ch.channel_coin().clone())])
             .unwrap_or_default()
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {

@@ -723,8 +723,8 @@ Game-associated entries use the accepted group's stable hand ordinal rather
 than the private protocol game ID. A current game coin disappears when that
 hand settles because the coin has been spent, while a newly created reward coin
 can remain visible. During handshake this list includes the predicted channel
-coin and, once available, the local funding coin whose spend emitted the extra
-conditions. Coin parent IDs are protocol ancestry and are not displayed.
+coin as soon as Rust can derive it. Coin parent IDs are protocol ancestry and
+are not displayed.
 
 During the short interval after the user accepts a session — before
 `GameSession` has reported its first live model, and also while a prior finished
@@ -1363,11 +1363,10 @@ successful sweep. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those
 observations. The browser never decides that a watch has become terminal.
 
-During channel opening, each handshake role first registers its known local
-wallet funding input. Only after that input is observed spent does Rust replace
-the protocol's active interest with the predicted channel coin. A live funding
-observation cannot activate the channel, and the host does not query the
-predicted child before its parent spend has occurred.
+During channel opening, each handshake role registers the predicted channel
+coin as soon as its identity is known. The wallet funding input is validated as
+part of the assembled transaction but is not used as an intermediate watch.
+Only observing the channel coin itself activates the channel.
 
 When WASM processing registers new watched coins, `SessionController` applies
 the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized

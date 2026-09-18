@@ -502,65 +502,6 @@ where
             }
 
             {
-                if let Some(funding_coin) =
-                    handlers[who]
-                        .coins_of_interest()
-                        .into_iter()
-                        .find_map(|(kind, coin)| {
-                            (kind == crate::session_phases::effects::CoinOfInterest::Funding)
-                                .then_some(coin)
-                        })
-                {
-                    let created = {
-                        let mut env = ChannelEnv::new(allocator)?;
-                        handlers[who]
-                            .coin_created(&mut env, &funding_coin)?
-                            .unwrap_or_default()
-                    };
-                    apply_effects_with_handshake_callbacks(
-                        allocator, handlers, pipes, who, created,
-                    )?;
-
-                    let spent = {
-                        let mut env = ChannelEnv::new(allocator)?;
-                        handlers[who].coin_spent(&mut env, &funding_coin)?
-                    };
-                    assert!(
-                        spent
-                            .iter()
-                            .any(|effect| matches!(effect, Effect::RegisterCoin { coin, .. } if coin == handlers[who].channel_state().expect("channel state after wallet offer").channel_coin())),
-                        "funding spend must register the predicted channel coin"
-                    );
-                    apply_effects_with_handshake_callbacks(allocator, handlers, pipes, who, spent)?;
-
-                    let reappeared = {
-                        let mut env = ChannelEnv::new(allocator)?;
-                        handlers[who]
-                            .coin_created(&mut env, &funding_coin)?
-                            .unwrap_or_default()
-                    };
-                    apply_effects_with_handshake_callbacks(
-                        allocator, handlers, pipes, who, reappeared,
-                    )?;
-                    let repeated_spend = {
-                        let mut env = ChannelEnv::new(allocator)?;
-                        handlers[who].coin_spent(&mut env, &funding_coin)?
-                    };
-                    assert!(
-                        !repeated_spend
-                            .iter()
-                            .any(|effect| matches!(effect, Effect::RegisterCoin { .. })),
-                        "re-observed funding spend must not duplicate channel registration"
-                    );
-                    apply_effects_with_handshake_callbacks(
-                        allocator,
-                        handlers,
-                        pipes,
-                        who,
-                        repeated_spend,
-                    )?;
-                }
-
                 if let Ok(channel_coin) = get_channel_coin_for_handler(&*handlers[who]) {
                     let effects = {
                         let mut env = ChannelEnv::new(allocator)?;
