@@ -135,6 +135,56 @@ describe('scalar advisory proposal lifecycle', () => {
     expect(state.model.betweenHand.mode).toBe('compose-proposal');
   });
 
+  it('ignores a later cancellation after definitive receiver-side removal', () => {
+    const removed = reduceSessionMachine(withProposal(pending('7', 'peer', 'incoming-review')), {
+      type: 'proposal-command-succeeded',
+      command: 'cancel-proposal',
+      id: '7',
+      context: 'reject-review',
+    }).state;
+    const transition = reduceSessionNotification(
+      removed,
+      { ProposalCancelled: { id: 7n, reason: 'WentOnChain' } },
+      false,
+      reduceSessionMachine,
+    );
+    expect(transition.state).toBe(removed);
+    expect(transition.effects).toEqual([]);
+  });
+
+  it('keeps missing insufficient-balance correlations as an invariant failure', () => {
+    expect(() =>
+      reduceSessionNotification(
+        createSessionMachineState(createSessionModel()),
+        {
+          InsufficientBalance: {
+            id: 7n,
+            our_balance_short: true,
+            their_balance_short: false,
+          },
+        },
+        false,
+        reduceSessionMachine,
+      ),
+    ).toThrow('InsufficientBalance 7 missing normalized pending proposal');
+  });
+
+  it('does not propose again while same-terms acceptance is pending', () => {
+    const state = createSessionMachineState(
+      createSessionModel({
+        game: { currentHandOrigin: 'local' },
+        betweenHand: {
+          mode: 'decision',
+          lastHandProposal: TERMS,
+          pendingProposals: [pending('7', 'peer', 'accepting')],
+        },
+      }),
+    );
+    const transition = reduceSessionMachine(state, { type: 'choose-same-terms' });
+    expect(transition.state).toBe(state);
+    expect(transition.effects).toEqual([]);
+  });
+
   it.each(['accepting', 'advisory-cancelling'] as const)(
     'restores a pending %s proposal',
     (status) => {

@@ -24,6 +24,9 @@ export function reduceSessionCommand(
   const betweenHand = state.model.betweenHand;
   switch (event.type) {
     case 'choose-same-terms': {
+      if (selectProposalByStatus(state.model, 'accepting')) {
+        return { state, effects: [] };
+      }
       const cached = selectProposalByStatus(state.model, 'incoming-cached');
       if (cached) {
         if (

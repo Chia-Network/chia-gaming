@@ -486,6 +486,9 @@ export function reduceSessionNotification(
     const cancelled = notification.ProposalCancelled;
     const id = String(cancelled?.id ?? '');
     const reason = String(cancelled?.reason ?? '');
+    if (!selectPendingProposal(current.model, id)) {
+      return { state: current, effects };
+    }
     resolveProposalCancellation(id, reason);
     return { state: current, effects };
   }
