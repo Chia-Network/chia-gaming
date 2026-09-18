@@ -12,7 +12,6 @@ import {
   MAX_GAME_TIMEOUT_BLOCKS,
   MIN_GAME_TIMEOUT_BLOCKS,
 } from '../lib/session/gameTimeout';
-import { proposalContributionForOrigin } from '../lib/session/proposalOrigin';
 import { Button } from './button';
 
 export function ComposeProposalDialog({
@@ -31,15 +30,9 @@ export function ComposeProposalDialog({
   const initialParameters = initialProposal
     ? pkg.decodeProposalParameters(initialProposal.parameters)
     : null;
-  const previousOrigin = session.iProposedHand ? 'local' : 'peer';
   const initialValues =
     initialProposal && initialParameters !== null
       ? {
-          senderContribution: proposalContributionForOrigin(initialProposal, previousOrigin),
-          receiverContribution: proposalContributionForOrigin(
-            initialProposal,
-            previousOrigin === 'local' ? 'peer' : 'local',
-          ),
           parameters: initialParameters,
         }
       : null;
@@ -52,12 +45,6 @@ export function ComposeProposalDialog({
     const parameters = pkg.encodeProposalParameters(result.parameters);
     session.submitComposedProposal({
       gameType: compose.selectedGame,
-      playerAContribution: senderIsPlayerA
-        ? result.senderContribution
-        : result.receiverContribution,
-      playerBContribution: senderIsPlayerA
-        ? result.receiverContribution
-        : result.senderContribution,
       senderIsPlayerA,
       gameTimeout: compose.gameTimeout,
       parameters,

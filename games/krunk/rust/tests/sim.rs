@@ -280,9 +280,13 @@ mod sim_tests {
         );
     }
 
-    fn run_cached_nil_redo_case(picker: usize, game_id: GameID) {
+    fn run_cached_nil_redo_case(
+        picker: usize,
+        script_game_id: GameID,
+        accepted_game_id: GameID,
+    ) {
         let mut allocator = AllocEncoder::new();
-        let mut round = first_wrong_guess_moves(&mut allocator, game_id, picker);
+        let mut round = first_wrong_guess_moves(&mut allocator, script_game_id, picker);
         let nil_move = round.pop().expect("nil clue");
         let mut moves = vec![
             SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
@@ -293,7 +297,7 @@ mod sim_tests {
         moves.push(nil_move);
         moves.push(SimScriptAction::GoOnChain(picker));
         moves.push(SimScriptAction::WaitBlocks(45, 0));
-        assert_single_scripted_nil(&moves, picker, game_id);
+        assert_single_scripted_nil(&moves, picker, script_game_id);
 
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -302,7 +306,7 @@ mod sim_tests {
             None,
         )
         .expect("cached Krunk nil must redo on chain");
-        assert_cached_nil_redo(&outcome, picker, game_id);
+        assert_cached_nil_redo(&outcome, picker, accepted_game_id);
     }
 
     pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
@@ -332,7 +336,7 @@ mod sim_tests {
                             matches!(
                                 notification,
                                 GameNotification::LocalActionApplied {
-                                    id: GameID(1),
+                                    id: GameID(0),
                                     action: LocalActionKind::MakeMove,
                                 }
                             )
@@ -345,7 +349,7 @@ mod sim_tests {
                             matches!(
                                 notification,
                                 GameNotification::LocalActionApplied {
-                                    id: GameID(1),
+                                    id: GameID(0),
                                     action: LocalActionKind::MakeMove,
                                 }
                             )
@@ -387,7 +391,7 @@ mod sim_tests {
             assert!(notifications.iter().any(|notification| matches!(
                 notification,
                 GameNotification::MoveRejected { id, tag, message }
-                    if *id == GameID(1)
+                    if *id == GameID(0)
                         && tag == "not_in_dictionary"
                         && message == "XXXXX"
             )));
@@ -397,7 +401,7 @@ mod sim_tests {
             assert!(!notifications.iter().any(|notification| matches!(
                 notification,
                 GameNotification::LocalActionApplied {
-                    id: GameID(1),
+                    id: GameID(0),
                     action: LocalActionKind::MakeMove,
                 }
             )));
@@ -448,7 +452,7 @@ mod sim_tests {
                         .filter(|notification| matches!(
                             notification,
                             GameNotification::LocalActionApplied {
-                                id: GameID(1),
+                                id: GameID(0),
                                 action: LocalActionKind::MakeMove,
                             }
                         ))
@@ -495,7 +499,7 @@ mod sim_tests {
                         matches!(
                             notification,
                             GameNotification::LocalActionApplied {
-                                id: GameID(1),
+                                id: GameID(0),
                                 action: LocalActionKind::MakeMove,
                             }
                         )
@@ -567,7 +571,7 @@ mod sim_tests {
                     .filter(|notification| matches!(
                         notification,
                         GameNotification::LocalActionApplied {
-                            id: GameID(3),
+                            id: GameID(1),
                             action: LocalActionKind::MakeMove,
                         }
                     ))
@@ -671,7 +675,7 @@ mod sim_tests {
             assert!(notifications.iter().any(|notification| matches!(
                 notification,
                 GameNotification::MoveRejected { id, tag, message }
-                    if *id == GameID(1)
+                    if *id == GameID(0)
                         && tag == "not_in_dictionary"
                         && message == "XXXXX"
             )));
@@ -681,7 +685,7 @@ mod sim_tests {
             assert!(!notifications.iter().any(|notification| matches!(
                 notification,
                 GameNotification::LocalActionApplied {
-                    id: GameID(1),
+                    id: GameID(0),
                     action: LocalActionKind::MakeMove,
                 }
             )));
@@ -742,17 +746,17 @@ mod sim_tests {
                     [
                         (
                             true,
-                            GameID(1),
+                            GameID(0),
                             SettlementOutcome::TimedOutWaitingForOurMove,
                         ),
-                        (true, GameID(3), SettlementOutcome::OpponentTimedOut),
+                        (true, GameID(1), SettlementOutcome::OpponentTimedOut),
                     ]
                 } else {
                     [
-                        (true, GameID(1), SettlementOutcome::OpponentTimedOut),
+                        (true, GameID(0), SettlementOutcome::OpponentTimedOut),
                         (
                             true,
-                            GameID(3),
+                            GameID(1),
                             SettlementOutcome::TimedOutWaitingForOurMove,
                         ),
                     ]
@@ -796,7 +800,7 @@ mod sim_tests {
                     "player {who} should not fail unroll recognition: {:?}",
                     ui.notifications
                 );
-                for game_id in [GameID(1), GameID(3)] {
+                for game_id in [GameID(0), GameID(1)] {
                     let terminal_count = ui
                         .notifications
                         .iter()
@@ -817,20 +821,21 @@ mod sim_tests {
         }));
 
         res.push(("test_krunk_player_0_picker_cached_nil_redo_id_1", &|| {
-            run_cached_nil_redo_case(0, GameID(1));
+            run_cached_nil_redo_case(0, GameID(1), GameID(0));
         }));
 
         res.push(("test_krunk_player_1_picker_cached_nil_redo_id_3", &|| {
-            run_cached_nil_redo_case(1, GameID(3));
+            run_cached_nil_redo_case(1, GameID(3), GameID(1));
         }));
 
         res.push((
             "test_krunk_nil_queued_during_channel_spend_executes_once",
             &|| {
                 let picker = 0;
-                let game_id = GameID(1);
+                let script_game_id = GameID(1);
+                let accepted_game_id = GameID(0);
                 let mut allocator = AllocEncoder::new();
-                let mut round = first_wrong_guess_moves(&mut allocator, game_id, picker);
+                let mut round = first_wrong_guess_moves(&mut allocator, script_game_id, picker);
                 let nil_move = round.pop().expect("nil clue");
                 let mut moves = vec![
                     SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
@@ -840,7 +845,7 @@ mod sim_tests {
                 moves.push(SimScriptAction::GoOnChain(picker));
                 moves.push(nil_move);
                 moves.push(SimScriptAction::WaitBlocks(45, 0));
-                assert_single_scripted_nil(&moves, picker, game_id);
+                assert_single_scripted_nil(&moves, picker, script_game_id);
 
                 let outcome = run_krunk_container_with_action_list_with_success_predicate(
                     &mut allocator,
@@ -857,7 +862,7 @@ mod sim_tests {
                             id,
                             status: GameStatusKind::Replaying,
                             ..
-                        } if *id == game_id
+                        } if *id == accepted_game_id
                     )),
                     "a newly queued move must not be labeled cached replay"
                 );
@@ -869,7 +874,7 @@ mod sim_tests {
                             status: GameStatusKind::OnChainMyTurn,
                             coin_id: Some(coin),
                             ..
-                        } if *id == game_id => Some(coin),
+                        } if *id == accepted_game_id => Some(coin),
                         _ => None,
                     })
                     .expect("queued move must first expose its actionable game coin");
@@ -888,7 +893,7 @@ mod sim_tests {
                                 status: GameStatusKind::OnChainTheirTurn,
                                 other_params: Some(params),
                                 ..
-                            } if *id == game_id && params.moved_by_us == Some(true)
+                            } if *id == accepted_game_id && params.moved_by_us == Some(true)
                         ))
                         .count(),
                     1,
@@ -948,7 +953,7 @@ mod sim_tests {
                         status: GameStatusKind::FinishingWaitingTimeout,
                         other_params: Some(params),
                         ..
-                    } if *id == GameID(1) && params.game_finished == Some(true)
+                    } if *id == GameID(0) && params.game_finished == Some(true)
                 )),
                 "picker should mark the terminal coin as finishing: {picker:?}"
             );
@@ -960,7 +965,7 @@ mod sim_tests {
                         status: GameStatusKind::FinishingWaitingTimeout,
                         other_params: Some(params),
                         ..
-                    } if *id == GameID(1) && params.game_finished == Some(true)
+                    } if *id == GameID(0) && params.game_finished == Some(true)
                 )),
                 "guesser should mark the terminal coin as finishing: {guesser:?}"
             );
@@ -972,7 +977,7 @@ mod sim_tests {
                             id,
                             our_share,
                             ..
-                        } if *id == GameID(1)
+                        } if *id == GameID(0)
                             && *our_share > crate::common::types::Amount::default()
                     )),
                     "{side} should receive its positive terminal payout: {notifications:?}"

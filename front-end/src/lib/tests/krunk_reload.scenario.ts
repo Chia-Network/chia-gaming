@@ -136,11 +136,9 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
   const adapters = await createActivePair(poller, 11);
   const proposal: HandProposal = {
     gameType: 'krunk',
-    playerAContribution: 100n,
-    playerBContribution: 100n,
     senderIsPlayerA: true,
     gameTimeout: 15n,
-    parameters: null,
+    parameters: 100n,
   };
   const lanes = adapters.map((adapter) => {
     const controller = adapter.blob!;
@@ -315,11 +313,12 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
     .getState()
     .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
   assert.ok(secondProposal);
-  const secondIds = secondProposal.memberIds;
-  assert.equal(secondIds.length, 2);
-  assert.notDeepEqual(secondIds, firstIds);
+  assert.equal(secondProposal.memberIds.length, 1);
   lanes[1].runtime.dispatch({ type: 'choose-same-terms' });
   await exchange();
+  const secondIds = lanes[0].runtime.getState().model.game.currentHandIds;
+  assert.equal(secondIds.length, 2);
+  assert.notDeepEqual(secondIds, firstIds);
 
   assert.deepEqual(lanes[0].runtime.getState().model.game.currentHandIds, secondIds);
   assert.equal(hand(lanes[0]).members.length, 2);

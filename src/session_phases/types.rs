@@ -1,10 +1,7 @@
-use std::collections::BTreeMap;
-use std::rc::Rc;
-
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::channel_state::game_handler::PreparedMove;
-use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
 };
@@ -22,22 +19,9 @@ pub use crate::session_phases::wallet_traits::{
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct WireGameSpec {
-    pub game_id: GameID,
-    pub player_a_contribution: Amount,
-    pub player_b_contribution: Amount,
-    pub player_a_goes_first: bool,
-    pub initial_validation_program_hash: Hash,
-    pub initial_validation_info_hash: Hash,
-    pub initial_move: Vec<u8>,
-    pub initial_max_move_size: u32,
-    pub initial_mover_share: Amount,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct WireProposalGroup {
+    pub origin_wire_id: GameID,
     pub start: GameProposal,
-    pub members: Vec<WireGameSpec>,
 }
 
 pub trait ToLocalUI {
@@ -151,7 +135,7 @@ pub enum GameAction {
     Move(GameID, PreparedMove),
     AcceptSettlement(GameID),
     CleanShutdown,
-    QueuedProposalGroup(Vec<Rc<GameStartInfo>>, WireProposalGroup),
+    QueuedProposalGroup(GameID, GameProposal),
     QueuedAcceptProposalGroup(GameID),
     QueuedCancelProposalGroup(GameID),
     QueuedCancelProposalGroupSilently(GameID),

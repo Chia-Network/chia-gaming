@@ -98,10 +98,6 @@ export function isProposalParameterValue(value: unknown): value is ProposalParam
 export function validateHandProposal(handProposal: HandProposal): boolean {
   return (
     isCatalogGameType(handProposal.gameType) &&
-    typeof handProposal.playerAContribution === 'bigint' &&
-    handProposal.playerAContribution > 0n &&
-    typeof handProposal.playerBContribution === 'bigint' &&
-    handProposal.playerBContribution > 0n &&
     typeof handProposal.senderIsPlayerA === 'boolean' &&
     typeof handProposal.gameTimeout === 'bigint' &&
     isValidGameTimeoutBlocks(handProposal.gameTimeout) &&
@@ -142,8 +138,6 @@ export function handProposalsEqual(
   const localIsPlayerAForA = (aOrigin === 'local') === a.senderIsPlayerA;
   const localIsPlayerAForB = (bOrigin === 'local') === b.senderIsPlayerA;
   return (
-    a.playerAContribution === b.playerAContribution &&
-    a.playerBContribution === b.playerBContribution &&
     localIsPlayerAForA === localIsPlayerAForB &&
     a.gameTimeout === b.gameTimeout &&
     proposalParameterValuesEqual(a.parameters, b.parameters)

@@ -260,12 +260,15 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
     }
     .to_clvm(allocator)
     .unwrap();
-    let arguments = (BET_SIZE, (BET_SIZE, ((), ()))).to_clvm(allocator).unwrap();
+    let arguments = (BET_SIZE, (BET_SIZE, (BET_SIZE, ())))
+        .to_clvm(allocator)
+        .unwrap();
     let result = run_clvm(allocator, factory_curried, arguments);
-    let records = proper_list(allocator.allocator(), result, true).unwrap();
+    let envelope = proper_list(allocator.allocator(), result, true).unwrap();
+    let records = proper_list(allocator.allocator(), envelope[1], true).unwrap();
     assert_eq!(records.len(), 2, "Krunk factory must return two records");
     let game_spec = proper_list(allocator.allocator(), records[0], true).unwrap();
-    assert_eq!(game_spec.len(), 10, "factory record must have 10 fields");
+    assert_eq!(game_spec.len(), 11, "factory record must have 11 fields");
     let validators = proper_list(allocator.allocator(), game_spec[9], true)
         .expect("factory validators must be a proper list");
     assert!(
@@ -418,15 +421,16 @@ fn test_krunk_guesser_funds_zero() {
     let mut allocator = AllocEncoder::new();
     let factory = factory_puzzle(&mut allocator, &test_dictionary());
     let factory_clvm = factory.to_clvm(&mut allocator).unwrap();
-    let arguments = (BET_SIZE, (BET_SIZE, ((), ())))
+    let arguments = (BET_SIZE, (BET_SIZE, (BET_SIZE, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     let result = run_clvm(&mut allocator, factory_clvm, arguments);
-    let records = proper_list(allocator.allocator(), result, true).unwrap();
+    let envelope = proper_list(allocator.allocator(), result, true).unwrap();
+    let records = proper_list(allocator.allocator(), envelope[1], true).unwrap();
     let slot0 = proper_list(allocator.allocator(), records[0], true).unwrap();
     let slot1 = proper_list(allocator.allocator(), records[1], true).unwrap();
-    assert_eq!(slot0.len(), 10);
-    assert_eq!(slot1.len(), 10);
+    assert_eq!(slot0.len(), 11);
+    assert_eq!(slot1.len(), 11);
     assert_eq!(int_from_node(&mut allocator, slot0[0]), BET_SIZE);
     assert_eq!(int_from_node(&mut allocator, slot0[1]), 0);
     assert_eq!(
@@ -480,7 +484,9 @@ fn test_krunk_rejects_malformed_economics() {
     let factory = factory_puzzle(&mut allocator, &dictionary);
     let factory_clvm = factory.to_clvm(&mut allocator).unwrap();
 
-    let zero = (0i64, (0i64, ((), ()))).to_clvm(&mut allocator).unwrap();
+    let zero = (BET_SIZE, (BET_SIZE, (0i64, ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(run_program(
         allocator.allocator(),
         &chia_dialect(),
@@ -490,7 +496,7 @@ fn test_krunk_rejects_malformed_economics() {
     )
     .is_err());
 
-    let non_multiple = (101i64, (101i64, ((), ())))
+    let non_multiple = (BET_SIZE, (BET_SIZE, (101i64, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(run_program(
@@ -502,7 +508,7 @@ fn test_krunk_rejects_malformed_economics() {
     )
     .is_err());
 
-    let unequal = (BET_SIZE, (BET_SIZE + 100, ((), ())))
+    let unequal = (BET_SIZE - 1, (BET_SIZE, (BET_SIZE, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(run_program(
@@ -512,7 +518,7 @@ fn test_krunk_rejects_malformed_economics() {
         unequal,
         0,
     )
-    .is_err());
+    .is_ok());
 }
 
 fn assert_not_in_dictionary_rejection(

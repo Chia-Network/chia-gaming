@@ -415,14 +415,21 @@ export function postMoveHandState(
   handProposal: HandProposal,
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
+  const stake =
+    handProposal.gameType === 'spacepoker'
+      ? (handProposal.parameters as readonly bigint[])[0]! *
+        (handProposal.parameters as readonly bigint[])[1]!
+      : (handProposal.parameters as bigint);
+  const readableParameters =
+    handProposal.gameType === 'spacepoker'
+      ? Program.fromList((handProposal.parameters as readonly bigint[]).map(Program.fromBigInt))
+      : Program.fromBigInt(stake);
   const hand = createRegisteredGameHand(handProposal.gameType, {
-    parameters: handProposal.parameters,
     members: ids.map((_, index) => ({
-      playerAContribution:
-        handProposal.gameType === 'krunk' && index !== 0 ? 0n : handProposal.playerAContribution,
-      playerBContribution:
-        handProposal.gameType === 'krunk' && index === 0 ? 0n : handProposal.playerBContribution,
+      playerAContribution: handProposal.gameType === 'krunk' && index !== 0 ? 0n : stake,
+      playerBContribution: handProposal.gameType === 'krunk' && index === 0 ? 0n : stake,
       ourTurn: handProposal.gameType === 'krunk' ? index === 1 : true,
+      readableParameters,
     })),
   });
   const accepted = snapshotRegisteredGameHand(handProposal.gameType, hand);

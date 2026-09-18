@@ -128,11 +128,9 @@ export function useGameSession(
   const initialState = useMemo(() => {
     const handProposal: HandProposal = {
       gameType: DEFAULT_CATALOG_GAME_TYPE,
-      playerAContribution: perGameAmount,
-      playerBContribution: perGameAmount,
       senderIsPlayerA: !iStarted,
       gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
-      parameters: null,
+      parameters: perGameAmount,
     };
     return createSessionMachineState(
       restoredModel ??

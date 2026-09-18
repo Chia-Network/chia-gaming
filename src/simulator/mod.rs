@@ -981,11 +981,6 @@ thread_local! {
 }
 
 #[cfg(test)]
-pub(crate) fn current_test_name() -> Option<String> {
-    CURRENT_TEST_NAME.with(|cell| cell.borrow().clone())
-}
-
-#[cfg(test)]
 pub fn run_simulation_tests() {
     use std::backtrace::Backtrace;
     // Process-global hook shared with cargo's parallel unit tests (including

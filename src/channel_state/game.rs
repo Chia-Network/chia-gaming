@@ -15,14 +15,13 @@ use crate::common::types::{
 
 /// One canonical game returned by a proposal factory.
 ///
-/// Contributions and `player_a_goes_first` use the factory's stable player A/B
-/// orientation. Rust projects that orientation to either local player.
+/// Contributions and turn ownership are relative to the proposal origin.
 #[derive(Clone)]
 pub struct FactoryGame {
-    pub player_a_contribution: Amount,
-    pub player_b_contribution: Amount,
+    pub proposer_contribution: Amount,
+    pub accepter_contribution: Amount,
     pub amount: Amount,
-    pub player_a_goes_first: bool,
+    pub proposer_goes_first: bool,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_state: Rc<Program>,
@@ -30,6 +29,15 @@ pub struct FactoryGame {
     pub my_turn_handler: Program,
     pub their_turn_handler: Program,
     pub validation_programs: ValidationProgramRegistry,
+    pub readable_parameters: Program,
+}
+
+pub enum FactoryResult {
+    Success(Vec<FactoryGame>),
+    InsufficientBalance {
+        proposer_balance_short: bool,
+        accepter_balance_short: bool,
+    },
 }
 
 impl FactoryGame {
@@ -55,9 +63,21 @@ impl FactoryGame {
         &self,
         game_id: &GameID,
         timeout: &Timeout,
+        sender_is_player_a: bool,
         local_is_player_a: bool,
     ) -> GameStartInfo {
-        let is_my_turn = local_is_player_a == self.player_a_goes_first;
+        let player_a_contribution = if sender_is_player_a {
+            self.proposer_contribution.clone()
+        } else {
+            self.accepter_contribution.clone()
+        };
+        let player_b_contribution = if sender_is_player_a {
+            self.accepter_contribution.clone()
+        } else {
+            self.proposer_contribution.clone()
+        };
+        let player_a_goes_first = self.proposer_goes_first == sender_is_player_a;
+        let is_my_turn = local_is_player_a == player_a_goes_first;
         let handler_program = if is_my_turn {
             self.my_turn_handler.clone()
         } else {
@@ -69,15 +89,9 @@ impl FactoryGame {
             GameHandler::TheirTurnHandler(handler_program.into())
         };
         let (my_contribution, their_contribution) = if local_is_player_a {
-            (
-                self.player_a_contribution.clone(),
-                self.player_b_contribution.clone(),
-            )
+            (player_a_contribution.clone(), player_b_contribution.clone())
         } else {
-            (
-                self.player_b_contribution.clone(),
-                self.player_a_contribution.clone(),
-            )
+            (player_b_contribution.clone(), player_a_contribution.clone())
         };
 
         GameStartInfo {
@@ -85,8 +99,8 @@ impl FactoryGame {
             amount: self.amount.clone(),
             game_handler,
             timeout: timeout.clone(),
-            player_a_contribution: self.player_a_contribution.clone(),
-            player_b_contribution: self.player_b_contribution.clone(),
+            player_a_contribution,
+            player_b_contribution,
             my_contribution_this_game: my_contribution,
             their_contribution_this_game: their_contribution,
             validation_programs: self.validation_programs.clone(),
@@ -105,17 +119,18 @@ impl Game {
     /// Run the canonical atomic proposal factory.
     ///
     /// `arguments` is the uniform proper list
-    /// `(player_a_contribution player_b_contribution game_parameters)`.
-    /// The result is a
-    /// non-empty proper list of 10-field game records:
-    /// (player_a_contribution player_b_contribution player_a_goes_first initial_move
+    /// `(proposer_reserve accepter_reserve game_parameters)`.
+    /// Success is `(1 records)`, where records is a non-empty proper list of
+    /// 11-field proposal-relative game records:
+    /// (proposer_contribution accepter_contribution proposer_goes_first initial_move
     ///  initial_max_move_size initial_state initial_mover_share my_turn_handler
-    ///  their_turn_handler validation_programs)
+    ///  their_turn_handler validation_programs readable_parameters).
+    /// Insufficient balance is `(0 proposer_short accepter_short)`.
     pub fn run_factory(
         allocator: &mut AllocEncoder,
         factory_program: Puzzle,
         arguments: &Program,
-    ) -> Result<Vec<FactoryGame>, Error> {
+    ) -> Result<FactoryResult, Error> {
         let args = arguments.to_clvm(allocator).into_gen()?;
         let factory_clvm = factory_program.to_clvm(allocator).into_gen()?;
         let result = run_program(
@@ -128,8 +143,40 @@ impl Game {
         .into_gen()
         .map_err(|e| Error::StrErr(format!("proposal factory failed: error={e:?}")))?
         .1;
-        let records = proper_list(allocator.allocator(), result, true)
-            .ok_or_else(|| Error::StrErr("proposal factory did not return a proper list".into()))?;
+        let envelope = proper_list(allocator.allocator(), result, true).ok_or_else(|| {
+            Error::StrErr("proposal factory did not return a proper result".into())
+        })?;
+        let tag = envelope
+            .first()
+            .and_then(|node| atom_from_clvm(allocator, *node))
+            .ok_or_else(|| Error::StrErr("proposal factory result tag is not an atom".into()))?;
+        if tag.is_empty() {
+            if envelope.len() != 3 {
+                return Err(Error::StrErr(
+                    "proposal factory insufficient result must have 3 fields".into(),
+                ));
+            }
+            let flag = |node, name| -> Result<bool, Error> {
+                match atom_from_clvm(allocator, node).as_deref() {
+                    Some([]) => Ok(false),
+                    Some([1]) => Ok(true),
+                    _ => Err(Error::StrErr(format!(
+                        "proposal factory {name} flag is not canonical boolean"
+                    ))),
+                }
+            };
+            return Ok(FactoryResult::InsufficientBalance {
+                proposer_balance_short: flag(envelope[1], "proposer shortage")?,
+                accepter_balance_short: flag(envelope[2], "accepter shortage")?,
+            });
+        }
+        if tag.as_slice() != [1] || envelope.len() != 2 {
+            return Err(Error::StrErr(
+                "proposal factory success result must be (1 records)".into(),
+            ));
+        }
+        let records = proper_list(allocator.allocator(), envelope[1], true)
+            .ok_or_else(|| Error::StrErr("proposal factory games are not a proper list".into()))?;
         if records.is_empty() {
             return Err(Error::StrErr(
                 "proposal factory returned no games".to_string(),
@@ -143,31 +190,31 @@ impl Game {
                     "proposal factory game {index} is not a proper list"
                 ))
             })?;
-            if fields.len() != 10 {
+            if fields.len() != 11 {
                 return Err(Error::StrErr(format!(
-                    "proposal factory game {index} has {} fields, expected 10",
+                    "proposal factory game {index} has {} fields, expected 11",
                     fields.len()
                 )));
             }
 
             let turn_atom = atom_from_clvm(allocator, fields[2]).ok_or_else(|| {
                 Error::StrErr(format!(
-                    "proposal factory game {index} player_a_goes_first is not an atom"
+                    "proposal factory game {index} proposer_goes_first is not an atom"
                 ))
             })?;
-            let player_a_goes_first = match turn_atom.as_slice() {
+            let proposer_goes_first = match turn_atom.as_slice() {
                 [] => false,
                 [1] => true,
                 _ => {
                     return Err(Error::StrErr(format!(
-                        "proposal factory game {index} player_a_goes_first is not canonical boolean"
+                        "proposal factory game {index} proposer_goes_first is not canonical boolean"
                     )));
                 }
             };
 
-            let player_a_contribution = Amount::from_clvm(allocator, fields[0])?;
-            let player_b_contribution = Amount::from_clvm(allocator, fields[1])?;
-            let amount = player_a_contribution.clone() + player_b_contribution.clone();
+            let proposer_contribution = Amount::from_clvm(allocator, fields[0])?;
+            let accepter_contribution = Amount::from_clvm(allocator, fields[1])?;
+            let amount = proposer_contribution.clone() + accepter_contribution.clone();
             let validation_program_nodes = proper_list(allocator.allocator(), fields[9], true)
                 .ok_or_else(|| {
                     Error::StrErr(format!(
@@ -195,10 +242,10 @@ impl Game {
             }
 
             games.push(FactoryGame {
-                player_a_contribution,
-                player_b_contribution,
+                proposer_contribution,
+                accepter_contribution,
                 amount,
-                player_a_goes_first,
+                proposer_goes_first,
                 initial_move: atom_from_clvm(allocator, fields[3])
                     .ok_or_else(|| {
                         Error::StrErr(format!(
@@ -218,10 +265,11 @@ impl Game {
                 my_turn_handler: Program::from_nodeptr(allocator, fields[7])?,
                 their_turn_handler: Program::from_nodeptr(allocator, fields[8])?,
                 validation_programs,
+                readable_parameters: Program::from_nodeptr(allocator, fields[10])?,
             });
         }
 
-        Ok(games)
+        Ok(FactoryResult::Success(games))
     }
 }
 
@@ -262,11 +310,14 @@ mod atomic_factory_tests {
                 NodePtr::NIL,
                 NodePtr::NIL,
                 validation_programs,
+                NodePtr::NIL,
             ],
         );
         let records = list_from_nodes(allocator, &[record]);
+        let success = 1u64.to_clvm(allocator).unwrap();
+        let envelope = list_from_nodes(allocator, &[success, records]);
         let quote = allocator.allocator().one();
-        let factory_node = allocator.allocator().new_pair(quote, records).unwrap();
+        let factory_node = allocator.allocator().new_pair(quote, envelope).unwrap();
         Puzzle::from_nodeptr(allocator, factory_node).unwrap()
     }
 
@@ -317,17 +368,20 @@ mod atomic_factory_tests {
         let validators = list_from_nodes(&mut allocator, &[first, second]);
         let factory = quoted_factory(&mut allocator, 0, validators);
 
-        let games = Game::run_factory(&mut allocator, factory, &Program::nil()).unwrap();
+        let games = match Game::run_factory(&mut allocator, factory, &Program::nil()).unwrap() {
+            FactoryResult::Success(games) => games,
+            FactoryResult::InsufficientBalance { .. } => panic!("unexpected shortage"),
+        };
         assert_eq!(games[0].initial_validation_program_hash(), &expected);
         assert_eq!(games[0].validation_programs.len(), 2);
     }
 
     fn factory_game(player_a_goes_first: bool) -> FactoryGame {
         FactoryGame {
-            player_a_contribution: Amount::new(10),
-            player_b_contribution: Amount::new(20),
+            proposer_contribution: Amount::new(10),
+            accepter_contribution: Amount::new(20),
             amount: Amount::new(30),
-            player_a_goes_first,
+            proposer_goes_first: player_a_goes_first,
             initial_move: vec![],
             initial_max_move_size: 32,
             initial_state: Rc::new(Program::nil()),
@@ -341,26 +395,34 @@ mod atomic_factory_tests {
                 )],
             )
             .expect("validator registry"),
+            readable_parameters: Program::nil(),
         }
     }
 
     #[test]
     fn factory_game_selects_handlers_and_contributions_for_both_sides() {
         for player_a_goes_first in [false, true] {
-            let game = factory_game(player_a_goes_first);
-            let player_a = game.game_start(&GameID(1), &Timeout::new(15), true);
-            let player_b = game.game_start(&GameID(1), &Timeout::new(15), false);
+            for sender_is_player_a in [false, true] {
+                let game = factory_game(player_a_goes_first);
+                let player_a =
+                    game.game_start(&GameID(1), &Timeout::new(15), sender_is_player_a, true);
+                let player_b =
+                    game.game_start(&GameID(1), &Timeout::new(15), sender_is_player_a, false);
+                let expected_a = Amount::new(if sender_is_player_a { 10 } else { 20 });
+                let expected_b = Amount::new(if sender_is_player_a { 20 } else { 10 });
+                let a_goes_first = player_a_goes_first == sender_is_player_a;
 
-            assert_eq!(player_a.is_my_turn(), player_a_goes_first);
-            assert_eq!(player_b.is_my_turn(), !player_a_goes_first);
-            assert_eq!(player_a.player_a_contribution, Amount::new(10));
-            assert_eq!(player_a.player_b_contribution, Amount::new(20));
-            assert_eq!(player_b.player_a_contribution, Amount::new(10));
-            assert_eq!(player_b.player_b_contribution, Amount::new(20));
-            assert_eq!(player_a.my_contribution_this_game, Amount::new(10));
-            assert_eq!(player_a.their_contribution_this_game, Amount::new(20));
-            assert_eq!(player_b.my_contribution_this_game, Amount::new(20));
-            assert_eq!(player_b.their_contribution_this_game, Amount::new(10));
+                assert_eq!(player_a.is_my_turn(), a_goes_first);
+                assert_eq!(player_b.is_my_turn(), !a_goes_first);
+                assert_eq!(player_a.player_a_contribution, expected_a);
+                assert_eq!(player_a.player_b_contribution, expected_b);
+                assert_eq!(player_b.player_a_contribution, expected_a);
+                assert_eq!(player_b.player_b_contribution, expected_b);
+                assert_eq!(player_a.my_contribution_this_game, expected_a);
+                assert_eq!(player_a.their_contribution_this_game, expected_b);
+                assert_eq!(player_b.my_contribution_this_game, expected_b);
+                assert_eq!(player_b.their_contribution_this_game, expected_a);
+            }
         }
     }
 }

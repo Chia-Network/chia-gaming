@@ -41,11 +41,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   ];
   const handProposal: HandProposal = {
     gameType: 'krunk',
-    playerAContribution: 100n,
-    playerBContribution: 100n,
     senderIsPlayerA: true,
     gameTimeout: 15n,
-    parameters: null,
+    parameters: 100n,
   };
   const traces: Array<
     Array<{ currentHandIds: string[]; payloadMemberCount: number; activeIds: string[] }>
@@ -183,11 +181,11 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       .getState()
       .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
     assert.ok(review, 'krunk completion receiver must observe the real proposal');
-    const ids = review.memberIds;
-    assert.equal(ids.length, 2);
 
     runtimes[1].dispatch({ type: 'accept-review', primaryId: review.primaryId });
     await exchangeAndPersist();
+    const ids = runtimes[0].getState().model.game.currentHandIds;
+    assert.equal(ids.length, 2);
 
     for (const [index, groups] of acceptedGroups.entries()) {
       assert.equal(groups.length, 1, `krunk completion player ${index}: one real acceptance`);
@@ -353,9 +351,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       .getState()
       .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
     assert.ok(cachedSecondProposal, 'krunk completion receiver must cache the same-terms proposal');
-    const secondIds = cachedSecondProposal.memberIds;
-    assert.equal(secondIds.length, 2);
-    assert.notDeepEqual(secondIds, ids);
+    assert.equal(cachedSecondProposal.memberIds.length, 1);
 
     runtimes[0].dispatch({ type: 'choose-same-terms' });
     assert.equal(
@@ -364,6 +360,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       'Krunk repeat acceptance must bypass the compose form',
     );
     await exchangeAndPersist();
+    const secondIds = runtimes[0].getState().model.game.currentHandIds;
+    assert.equal(secondIds.length, 2);
+    assert.notDeepEqual(secondIds, ids);
 
     for (const [index, runtime] of runtimes.entries()) {
       assert.deepEqual(runtime.getState().model.game.currentHandIds, secondIds);

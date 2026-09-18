@@ -17,11 +17,9 @@ import type { HandProposal } from '../session/types';
 
 const SPACE_PROPOSAL: HandProposal = {
   gameType: 'spacepoker',
-  playerAContribution: 100n,
-  playerBContribution: 100n,
   senderIsPlayerA: false,
   gameTimeout: 15n,
-  parameters: 10n,
+  parameters: [10n, 10n],
 };
 
 describe('game package proposal adapters', () => {
@@ -41,18 +39,24 @@ describe('game package proposal adapters', () => {
   });
 
   it('uses one exact package-owned codec per game', () => {
-    expect(calpokerProposalParameters.encode({})).toBeNull();
-    expect(calpokerProposalParameters.decode(null)).toEqual({});
+    expect(calpokerProposalParameters.encode(25n)).toBe(25n);
+    expect(calpokerProposalParameters.decode(25n)).toBe(25n);
     expect(calpokerProposalParameters.decode(false)).toBeNull();
 
-    expect(spacepokerProposalParameters.encode({ betUnitMojos: 10n })).toBe(10n);
-    expect(spacepokerProposalParameters.decode(10n)).toEqual({ betUnitMojos: 10n });
+    expect(spacepokerProposalParameters.encode({ stackSize: 0n, betUnitMojos: 10n })).toEqual([
+      0n,
+      10n,
+    ]);
+    expect(spacepokerProposalParameters.decode([0n, 10n])).toEqual({
+      stackSize: 0n,
+      betUnitMojos: 10n,
+    });
     expect(spacepokerProposalParameters.decode('10')).toBeNull();
     expect(spacepokerProposalParameters.decode(Uint8Array.of(49, 48))).toBeNull();
     expect(spacepokerProposalParameters.decode(true)).toBeNull();
 
-    expect(krunkProposalParameters.encode({})).toBeNull();
-    expect(krunkProposalParameters.decode(null)).toEqual({});
+    expect(krunkProposalParameters.encode(100n)).toBe(100n);
+    expect(krunkProposalParameters.decode(100n)).toBe(100n);
     expect(krunkProposalParameters.decode(0n)).toBeNull();
   });
 
@@ -107,19 +111,17 @@ describe('game package proposal adapters', () => {
   });
 
   it('projects display text through the package codec', () => {
-    expect(describeReceivedProposal(SPACE_PROPOSAL)).toContain('bet unit 10 mojos');
+    expect(describeReceivedProposal(SPACE_PROPOSAL)).toContain('minimum raise 10 mojos');
     expect(() => describeReceivedProposal({ ...SPACE_PROPOSAL, parameters: '10' })).toThrow(
       'parameters are invalid',
     );
   });
 
   it('parses ProposalMade as a generic A/B-oriented opaque proposal', () => {
-    const parameters = null;
+    const parameters = 30n;
     const group = proposalGroupFromProposalMade({
       id: 4n,
       group_ids: [4n],
-      player_a_contribution: '30',
-      player_b_contribution: '40',
       sender_is_player_a: false,
       timeout: '21',
       game_type: protocolIdForCatalog('calpoker'),
@@ -127,8 +129,6 @@ describe('game package proposal adapters', () => {
     });
     expect(group?.handProposal).toEqual({
       gameType: 'calpoker',
-      playerAContribution: 30n,
-      playerBContribution: 40n,
       senderIsPlayerA: false,
       gameTimeout: 21n,
       parameters,
@@ -140,16 +140,12 @@ describe('game package proposal adapters', () => {
     const base = {
       id: 4n,
       group_ids: [4n],
-      player_a_contribution: '30',
-      player_b_contribution: '30',
       sender_is_player_a: true,
       timeout: '21',
       game_type: protocolIdForCatalog('spacepoker'),
-      parameters: 10n,
+      parameters: [3n, 10n],
     };
-    expect(
-      proposalGroupFromProposalMade({ ...base, player_a_contribution: 'not-an-amount' }),
-    ).toBeNull();
+    expect(proposalGroupFromProposalMade({ ...base, group_ids: [] })).toBeNull();
     expect(proposalGroupFromProposalMade({ ...base, sender_is_player_a: 1 })).toBeNull();
     expect(proposalGroupFromProposalMade({ ...base, parameters: '10' })).toBeNull();
     expect(proposalGroupFromProposalMade({ ...base, parameters: Uint8Array.of(10) })).toBeNull();
@@ -159,11 +155,9 @@ describe('game package proposal adapters', () => {
     const base = {
       id: 4n,
       group_ids: [4n],
-      player_a_contribution: '30',
-      player_b_contribution: '30',
       sender_is_player_a: true,
       game_type: protocolIdForCatalog('calpoker'),
-      parameters: null,
+      parameters: 30n,
     };
     for (const timeout of [MIN_GAME_TIMEOUT_BLOCKS, MAX_GAME_TIMEOUT_BLOCKS]) {
       expect(

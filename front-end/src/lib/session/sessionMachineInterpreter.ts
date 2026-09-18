@@ -79,8 +79,6 @@ export class SessionMachineInterpreter {
             dependencies.controller.proposeGame({
               game_type: protocolIdForCatalog(effect.handProposal.gameType),
               timeout: effect.handProposal.gameTimeout,
-              player_a_contribution: effect.handProposal.playerAContribution,
-              player_b_contribution: effect.handProposal.playerBContribution,
               sender_is_player_a: effect.handProposal.senderIsPlayerA,
               parameters: effect.handProposal.parameters,
             }),

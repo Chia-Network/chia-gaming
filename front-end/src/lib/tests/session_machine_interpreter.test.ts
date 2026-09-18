@@ -27,28 +27,24 @@ import { wasmResult } from './message_protocol.harness';
 
 const TERMS = {
   gameType: 'calpoker' as const,
-  playerAContribution: 10n,
-  playerBContribution: 10n,
-  senderIsPlayerA: false,
-  gameTimeout: 15n,
-  parameters: null,
-};
-const KRUNK_TERMS = {
-  gameType: 'krunk' as const,
-  playerAContribution: 100n,
-  playerBContribution: 100n,
-  senderIsPlayerA: true,
-  gameTimeout: 15n,
-  parameters: null,
-};
-const SPACEPOKER_TERMS = {
-  gameType: 'spacepoker' as const,
-  playerAContribution: 100n,
-  playerBContribution: 100n,
   senderIsPlayerA: false,
   gameTimeout: 15n,
   parameters: 10n,
 };
+const KRUNK_TERMS = {
+  gameType: 'krunk' as const,
+  senderIsPlayerA: true,
+  gameTimeout: 15n,
+  parameters: 100n,
+};
+const SPACEPOKER_TERMS = {
+  gameType: 'spacepoker' as const,
+  senderIsPlayerA: false,
+  gameTimeout: 15n,
+  parameters: [10n, 10n],
+};
+
+const readableInteger = (value: bigint) => Program.fromBigInt(value).serialize();
 
 function stateWithProposals(
   groups: Array<{
@@ -184,11 +180,13 @@ describe('session machine causal sequences', () => {
       const ids = ['1', '2'];
       runtime.dispatch({
         type: 'notification-accepted-group',
+        proposalId: ids[0],
         members: ids.map((id, index) => ({
           id,
           playerAContribution: index === 0 ? 100n : 0n,
           playerBContribution: index === 0 ? 0n : 100n,
           ourTurn: id === pickerId,
+          readableParameters: readableInteger(100n),
         })),
       });
 
@@ -260,9 +258,22 @@ describe('session machine causal sequences', () => {
     );
     runtime.dispatch({
       type: 'notification-accepted-group',
+      proposalId: '1',
       members: [
-        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          id: '1',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: readableInteger(100n),
+        },
+        {
+          id: '2',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: readableInteger(100n),
+        },
       ],
     });
     runtime.dispatch({
@@ -278,7 +289,16 @@ describe('session machine causal sequences', () => {
     });
     runtime.dispatch({
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: true,
+          readableParameters: readableInteger(10n),
+        },
+      ],
     });
     const authority = runtime.getState();
     expect(() => runtime.commitHandStateChanged('krunk')).toThrow('gameType');
@@ -290,8 +310,14 @@ describe('session machine causal sequences', () => {
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
     const hand = createRegisteredGameHand('calpoker', {
-      parameters: TERMS.parameters,
-      members: [{ playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
+      members: [
+        {
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(10n),
+        },
+      ],
     });
     const handState = snapshotRegisteredGameHand('calpoker', hand);
     const runtime = new SessionMachineRuntime(
@@ -473,12 +499,10 @@ describe('session machine causal sequences', () => {
       ProposalMade: {
         id: '9',
         group_ids: ['9'],
-        player_a_contribution: '10',
-        player_b_contribution: '10',
         sender_is_player_a: true,
         timeout: '15',
         game_type: testProtocolId('calpoker'),
-        parameters: null,
+        parameters: 10n,
       },
     };
   }
@@ -583,12 +607,14 @@ describe('session machine causal sequences', () => {
       iStarted: true,
       notification: {
         ProposalAcceptedGroup: {
+          id: '7',
           members: [
             {
               id: '7',
               player_a_contribution: '10',
               player_b_contribution: '10',
               our_turn: true,
+              readable_parameters: readableInteger(10n),
             },
           ],
         },
@@ -887,7 +913,16 @@ describe('session machine local game action boundary', () => {
     runtime.setRender((state) => rendered.push(state));
     runtime.dispatch({
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: true,
+          readableParameters: readableInteger(10n),
+        },
+      ],
     });
     persisted.length = 0;
     rendered.length = 0;
@@ -920,9 +955,22 @@ describe('session machine local game action boundary', () => {
     );
     runtime.dispatch({
       type: 'notification-accepted-group',
+      proposalId: '2',
       members: [
-        { id: '2', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { id: '4', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          id: '2',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: readableInteger(100n),
+        },
+        {
+          id: '4',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: readableInteger(100n),
+        },
       ],
     });
     (runtime.getGameHand() as KrunkHand).updateGame(0, (game) => ({
@@ -961,18 +1009,21 @@ describe('session machine local game action boundary', () => {
       iStarted: true,
       notification: {
         ProposalAcceptedGroup: {
+          id: '2',
           members: [
             {
               id: '2',
               player_a_contribution: '100',
               player_b_contribution: '0',
               our_turn: true,
+              readable_parameters: readableInteger(100n),
             },
             {
               id: '4',
               player_a_contribution: '0',
               player_b_contribution: '100',
               our_turn: false,
+              readable_parameters: readableInteger(100n),
             },
           ],
         },
@@ -1115,12 +1166,17 @@ describe('session machine local game action boundary', () => {
       iStarted: true,
       notification: {
         ProposalAcceptedGroup: {
+          id: '7',
           members: [
             {
-              id: '7',
+              id: '9',
               player_a_contribution: '100',
               player_b_contribution: '100',
               our_turn: true,
+              readable_parameters: Program.fromList([
+                Program.fromBigInt(10n),
+                Program.fromBigInt(10n),
+              ]).serialize(),
             },
           ],
         },
@@ -1129,7 +1185,12 @@ describe('session machine local game action boundary', () => {
 
     const hand = spacepokerStateCodec.decode(runtime.getState().model.game.handState)!;
     expect(hand.gameState.myTurn).toBe(true);
-    expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-my-turn');
+    expect(runtime.getState().model.game.instances['9'].presentation).toBe('off-chain-my-turn');
+    expect(runtime.getState().model.betweenHand.proposalGroups[0]).toMatchObject({
+      primaryId: '9',
+      memberIds: ['9'],
+      disposition: 'accepted',
+    });
 
     (runtime.getGameHand() as SpacepokerHand).update((state) => ({
       ...state,
@@ -1138,11 +1199,11 @@ describe('session machine local game action boundary', () => {
     expect(() =>
       runtime.commitLocalGameAction({
         gameType: 'spacepoker',
-        id: '7',
+        id: '9',
         command: { type: 'make-move', readable: null },
       }),
     ).not.toThrow();
-    expect(makeMove).toHaveBeenCalledWith('7', null);
+    expect(makeMove).toHaveBeenCalledWith('9', null);
   });
 
   it('leaves feature state, history, turn, and saves unchanged when Rust rejects synchronously', () => {

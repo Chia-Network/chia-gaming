@@ -217,9 +217,9 @@ fn validate_factory_records(
     for (record_index, record) in records.iter().enumerate() {
         let fields = proper_list(allocator, *record)
             .ok_or_else(|| format!("factory {key} game {record_index} is not a proper list"))?;
-        if fields.len() != 10 {
+        if fields.len() != 11 {
             return Err(format!(
-                "factory {key} game {record_index} has {} fields, expected 10",
+                "factory {key} game {record_index} has {} fields, expected 11",
                 fields.len()
             ));
         }
@@ -349,8 +349,15 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
         )
         .map_err(|e| format!("running prepared factory for {key}: {e:?}"))?
         .1;
-        let records = proper_list(&allocator, factory_result)
-            .ok_or_else(|| format!("factory {key} did not return a proper list"))?;
+        let envelope = proper_list(&allocator, factory_result)
+            .ok_or_else(|| format!("factory {key} did not return a proper result"))?;
+        if envelope.len() != 2 || allocator.atom(envelope[0]).as_ref() != [1] {
+            return Err(format!(
+                "factory {key} probe did not return a successful (1 records) result"
+            ));
+        }
+        let records = proper_list(&allocator, envelope[1])
+            .ok_or_else(|| format!("factory {key} success games are not a proper list"))?;
         let initial_validator = validate_factory_records(&allocator, key, &records)?;
         let id = clvm_utils::tree_hash(&allocator, initial_validator).to_bytes();
 

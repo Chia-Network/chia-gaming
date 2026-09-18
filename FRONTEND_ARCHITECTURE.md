@@ -1584,12 +1584,13 @@ in host dashboard/status surfaces rather than creating a second queue entry.
 These drive game proposal and acceptance flow. They are consumed by
 the notification reducer and never forwarded raw to the game UI:
 
-- `ProposalMade` — one notification per factory group; carries the first ID and
-  always-non-empty ordered `group_ids` (singleton ⇒ `[id]`), and triggers
-  group auto-accept
+- `ProposalMade` — one notification per pending terms record; carries an
+  endpoint-local proposal ID (`group_ids` is `[id]` before members exist), and
+  triggers proposal auto-accept
 - `ProposalAcceptedGroup` — creates one game-owned hand from all ordered
-  `{ id, player_a_contribution, player_b_contribution, our_turn }` members and
-  advances `handKey`
+  `{ id, player_a_contribution, player_b_contribution, our_turn,
+  readable_parameters }` members, correlates them through the local proposal
+  ID, and advances `handKey`
 
 ### Normalized game inputs
 
@@ -1603,6 +1604,9 @@ Raw move and message readables remain serialized bytes through the WASM
 notification and session-event layers. When constructing a package update, the
 host maps the private protocol game ID to its stable factory-ordered
 `memberIndex` and deserializes the readable once into a CLVM `Program`.
+Factory-approved `readable_parameters` follows the same byte-to-`Program`
+boundary and initializes each accepted member; requested proposal parameters
+are not reused as approved economics.
 `hand-ended` contains only that member index and normalized settlement outcome.
 Reward amounts, coin IDs, labels, and abnormal-termination explanations remain
 in the host's keyed instances and status surfaces. The package stores the

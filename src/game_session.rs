@@ -505,6 +505,11 @@ impl GameSession {
     }
 
     #[cfg(test)]
+    pub fn next_game_id_for_testing(&self) -> Result<GameID, Error> {
+        Ok(self.peer.channel_state()?.next_game_id_for_testing())
+    }
+
+    #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
         self.peer.corrupt_state_for_testing(new_sn)
     }

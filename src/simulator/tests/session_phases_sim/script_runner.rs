@@ -80,17 +80,6 @@ impl AssertionScheduler {
     }
 }
 
-fn gid_diag_enabled() -> bool {
-    std::env::var("SIM_GID_DIAG").is_ok()
-}
-
-fn gid_diag(test_name: &str, action_idx: usize, label: &str, requested: &GameID, runtime: &GameID) {
-    eprintln!(
-        "GID-DIAG test={test_name} action={action_idx} op={label} requested={:?} runtime={:?}",
-        requested, runtime
-    );
-}
-
 fn process_assertions(
     harness: &SimulationHarness,
     actions: &[SimScriptAction],
@@ -130,8 +119,6 @@ pub(in super::super) fn run_script(
 ) -> Result<(SimulationHarness, bool), Error> {
     let mut move_number = 0;
     let mut handshake_done = false;
-    let gid_diag_on = gid_diag_enabled();
-    let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
     let mut ending = None;
     let mut assertion_scheduler = AssertionScheduler::default();
     let proposal_type =
@@ -210,14 +197,10 @@ pub(in super::super) fn run_script(
             if move_number < moves_input.len() {
                 let ga = &moves_input[move_number];
                 let schedule = ga.schedule();
-                let action_idx = move_number;
                 let mut advance_script = true;
 
                 match ga {
                     SimScriptAction::Move(who, gid, readable, _share) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "Move", gid, gid);
-                        }
                         harness.make_move(allocator, *who, gid, readable.clone(), rng.random())?;
                         ()
                     }
@@ -234,7 +217,8 @@ pub(in super::super) fn run_script(
                             _ => 15,
                         };
                         let parameters = if package_key == "calpoker" || package_key == "krunk" {
-                            Program::nil()
+                            let stake = 100u64.to_clvm(allocator).into_gen()?;
+                            Program::from_nodeptr(allocator, stake)?
                         } else if package_key == "spacepoker" {
                             extras.clone()
                         } else if package_key == "debug" {
@@ -244,12 +228,18 @@ pub(in super::super) fn run_script(
                         };
                         let parameters =
                             ProposalParameters::from_program_for_testing(allocator, &parameters)?;
+                        let parameters = if package_key == "spacepoker" {
+                            ProposalParameters::List(vec![
+                                ProposalParameters::Integer(10),
+                                parameters,
+                            ])
+                        } else {
+                            parameters
+                        };
                         harness.propose_games(
                             allocator,
                             *who,
                             &[GameProposal {
-                                player_a_contribution: Amount::new(100),
-                                player_b_contribution: Amount::new(100),
                                 sender_is_player_a: my_turn,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(timeout),
@@ -263,21 +253,22 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                player_a_contribution: Amount::new(100),
-                                player_b_contribution: Amount::new(100),
                                 sender_is_player_a: true,
                                 game_type: krunk_type.clone(),
                                 timeout: Timeout::new(15),
-                                parameters: ProposalParameters::Null,
+                                parameters: ProposalParameters::Integer(100),
                             }],
                         )?;
                         ()
                     }
                     SimScriptAction::AcceptProposal(who, gid) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "AcceptProposal", gid, gid);
-                        }
                         if harness.accept_proposal(allocator, *who, gid)? {
+                            advance_script = false;
+                        }
+                        ()
+                    }
+                    SimScriptAction::AcceptProposalPair(who, first, second) => {
+                        if harness.accept_proposal_pair(allocator, *who, first, second)? {
                             advance_script = false;
                         }
                         ()
@@ -288,10 +279,24 @@ pub(in super::super) fn run_script(
                         }
                         ()
                     }
-                    SimScriptAction::CancelProposal(who, gid) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "CancelProposal", gid, gid);
+                    SimScriptAction::MalformedSecondAcceptInPair(
+                        who,
+                        first,
+                        second,
+                        replacement_wire_id,
+                    ) => {
+                        if !harness.malformed_second_accept_in_pair(
+                            allocator,
+                            *who,
+                            first,
+                            second,
+                            replacement_wire_id,
+                        )? {
+                            advance_script = false;
                         }
+                        ()
+                    }
+                    SimScriptAction::CancelProposal(who, gid) => {
                         harness.cancel_proposal(allocator, *who, gid)?;
                         ()
                     }
@@ -302,9 +307,6 @@ pub(in super::super) fn run_script(
                         ()
                     }
                     SimScriptAction::FakeMove(who, gid, readable, move_data) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "FakeMove", gid, gid);
-                        }
                         let entropy = rng.random();
                         harness.sabotage_move(
                             allocator,
@@ -317,25 +319,16 @@ pub(in super::super) fn run_script(
                         ()
                     }
                     SimScriptAction::BadSignatureMove(who, gid, readable) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "BadSignatureMove", gid, gid);
-                        }
                         harness.tamper_next_batch_signature(*who);
                         let entropy = rng.random();
                         harness.make_move(allocator, *who, gid, readable.clone(), entropy)?;
                         ()
                     }
                     SimScriptAction::Cheat(who, gid, cheat_share) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "Cheat", gid, gid);
-                        }
                         harness.cheat(allocator, *who, gid, cheat_share.clone())?;
                         ()
                     }
                     SimScriptAction::ForceDestroyCoin(who, gid) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "ForceDestroyCoin", gid, gid);
-                        }
                         if !harness.force_destroy_coin(*who, gid) {
                             continue;
                         }
@@ -378,9 +371,6 @@ pub(in super::super) fn run_script(
                         ()
                     }
                     SimScriptAction::AcceptSettlement(who, gid) => {
-                        if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "AcceptSettlement", gid, gid);
-                        }
                         harness.accept_settlement(allocator, *who, gid)?;
                         ()
                     }
@@ -434,8 +424,6 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                player_a_contribution: Amount::new(100),
-                                player_b_contribution: Amount::new(100),
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
@@ -443,7 +431,7 @@ pub(in super::super) fn run_script(
                             }],
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
-                            wire.members[0].game_id = GameID(wire.members[0].game_id.0 ^ 1);
+                            wire.origin_wire_id = GameID(wire.origin_wire_id.0 ^ 1);
                             Ok(())
                         })?;
                         ()
@@ -462,8 +450,6 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                player_a_contribution: Amount::new(100),
-                                player_b_contribution: Amount::new(100),
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
@@ -481,7 +467,7 @@ pub(in super::super) fn run_script(
                         })?;
                         ()
                     }
-                    SimScriptAction::InvalidProposalArguments(who) => {
+                    SimScriptAction::SkippedProposalWireId(who) => {
                         let parameters = if package_key == "calpoker" {
                             ProposalParameters::Null
                         } else if package_key == "spacepoker" {
@@ -493,8 +479,6 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                player_a_contribution: Amount::new(100),
-                                player_b_contribution: Amount::new(100),
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
@@ -502,13 +486,34 @@ pub(in super::super) fn run_script(
                             }],
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
-                            wire.members[0].player_a_contribution =
-                                wire.members[0].player_a_contribution.clone() + Amount::new(1);
+                            wire.origin_wire_id = GameID(wire.origin_wire_id.0 + 2);
                             Ok(())
                         })?;
                         ()
                     }
-                    SimScriptAction::InvalidProposalValidationInfoHash(who) => {
+                    SimScriptAction::ReusedProposalWireId(who) => {
+                        let parameters = if package_key == "calpoker" {
+                            ProposalParameters::Integer(1)
+                        } else {
+                            ProposalParameters::from_program_for_testing(allocator, extras)?
+                        };
+                        harness.propose_games(
+                            allocator,
+                            *who,
+                            &[GameProposal {
+                                sender_is_player_a: true,
+                                game_type: proposal_type.clone(),
+                                timeout: Timeout::new(15),
+                                parameters,
+                            }],
+                        )?;
+                        harness.mutate_last_proposal(*who, |wire| {
+                            wire.origin_wire_id = GameID(wire.origin_wire_id.0.saturating_sub(2));
+                            Ok(())
+                        })?;
+                        ()
+                    }
+                    SimScriptAction::UnknownProposalGameType(who) => {
                         let parameters = if package_key == "calpoker" {
                             Program::nil()
                         } else {
@@ -520,8 +525,6 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                player_a_contribution: Amount::new(100),
-                                player_b_contribution: Amount::new(100),
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),
@@ -529,8 +532,8 @@ pub(in super::super) fn run_script(
                             }],
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
-                            wire.members[0].initial_validation_info_hash =
-                                Hash::from_bytes([0x5a; 32]);
+                            wire.start.game_type =
+                                GameType::from_hash(Hash::from_bytes([0x5a; 32]));
                             Ok(())
                         })?;
                         ()
@@ -549,8 +552,6 @@ pub(in super::super) fn run_script(
                             allocator,
                             *who,
                             &[GameProposal {
-                                player_a_contribution: Amount::new(100),
-                                player_b_contribution: Amount::new(100),
                                 sender_is_player_a: true,
                                 game_type: proposal_type.clone(),
                                 timeout: Timeout::new(15),

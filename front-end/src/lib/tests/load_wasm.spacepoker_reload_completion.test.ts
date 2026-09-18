@@ -334,11 +334,9 @@ async function runSpacepokerReloadCompletion(poller: BlockchainPoller): Promise<
   const adapters = await createActivePair(poller, 12);
   const handProposal: HandProposal = {
     gameType: 'spacepoker',
-    playerAContribution: 20n,
-    playerBContribution: 20n,
     senderIsPlayerA: true,
     gameTimeout: 15n,
-    parameters: 10n,
+    parameters: [2n, 10n],
   };
   const lanes = adapters.map((adapter) => {
     const controller = adapter.blob!;

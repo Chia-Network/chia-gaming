@@ -148,12 +148,10 @@ describe('session model restore, schema, and event contracts', () => {
       },
       betweenHandMode: 'review-incoming-proposal',
       betweenHandLastHandProposal: {
-        player_a_contribution: '10',
-        player_b_contribution: '10',
         sender_is_player_a: false,
         game_timeout: '23',
         game_type: 'spacepoker',
-        parameters: 1n,
+        parameters: [10n, 1n],
       },
       proposalGroups: [
         {
@@ -162,12 +160,10 @@ describe('session model restore, schema, and event contracts', () => {
           origin: 'peer',
           disposition: 'incoming-review',
           hand_proposal: {
-            player_a_contribution: '20',
-            player_b_contribution: '20',
             sender_is_player_a: false,
             game_timeout: '31',
             game_type: 'spacepoker',
-            parameters: 2n,
+            parameters: [10n, 2n],
           },
         },
       ],
@@ -200,22 +196,18 @@ describe('session model restore, schema, and event contracts', () => {
             disposition: 'incoming-review',
             handProposal: {
               gameType: 'spacepoker',
-              playerAContribution: 20n,
-              playerBContribution: 20n,
               senderIsPlayerA: false,
               gameTimeout: 31n,
-              parameters: 2n,
+              parameters: [10n, 2n],
             },
           },
         ],
         rejectedOnceHandProposal: null,
         lastHandProposal: {
           gameType: 'spacepoker',
-          playerAContribution: 10n,
-          playerBContribution: 10n,
           senderIsPlayerA: false,
           gameTimeout: 23n,
-          parameters: 1n,
+          parameters: [10n, 1n],
         },
         compose: {
           selectedGame: 'spacepoker',
@@ -228,7 +220,7 @@ describe('session model restore, schema, and event contracts', () => {
     });
 
     expect(selectGameSessionView(restored).betweenHands).toBe(true);
-    expect(selectGameSessionView(restored).currentHandAmount).toBe(10n);
+    expect(selectGameSessionView(restored).currentHandAmount).toBe(0n);
     expect(restored.betweenHand.proposalGroups).toEqual(live.betweenHand.proposalGroups);
     expect(restored.betweenHand.mode).toBe(live.betweenHand.mode);
   });

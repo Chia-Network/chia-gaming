@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
@@ -25,7 +25,7 @@ use crate::session_phases::handshake::{raw_coin_conditions_to_clvm, CoinSpendReq
 use crate::session_phases::proposal::{GameProposal, ProposalParameters};
 use crate::session_phases::types::{
     BatchAction, ChannelFundingWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
-    WireGameSpec, WireProposalGroup,
+    WireProposalGroup,
 };
 use crate::transaction_manager::TransactionManager;
 use crate::utils::proper_list;
@@ -331,7 +331,7 @@ fn is_terminal_game_status(status: &GameStatusKind) -> bool {
 fn proposal_accepted_contains(notification: &GameNotification, id: &GameID) -> bool {
     matches!(
         notification,
-        GameNotification::ProposalAcceptedGroup { members }
+        GameNotification::ProposalAcceptedGroup { members, .. }
             if members.iter().any(|member| member.id == *id)
     )
 }
@@ -348,7 +348,7 @@ fn accepted_game_ids(notifications: &[GameNotification]) -> HashSet<GameID> {
     notifications
         .iter()
         .flat_map(|notification| match notification {
-            GameNotification::ProposalAcceptedGroup { members } => {
+            GameNotification::ProposalAcceptedGroup { members, .. } => {
                 members.iter().map(|member| member.id).collect::<Vec<_>>()
             }
             _ => Vec::new(),
@@ -553,7 +553,7 @@ fn event_shape(actual: &TestEvent) -> String {
                 format!("Notif(GameSettled(id={id:?},outcome={outcome:?},share={our_share:?}))")
             }
             GameNotification::ProposalMade { id, .. } => format!("Notif(ProposalMade(id={id:?}))"),
-            GameNotification::ProposalAcceptedGroup { members } => {
+            GameNotification::ProposalAcceptedGroup { members, .. } => {
                 format!(
                     "Notif(ProposalAcceptedGroup(ids={:?}))",
                     members.iter().map(|member| member.id).collect::<Vec<_>>()
@@ -703,6 +703,8 @@ pub struct LocalTestUIReceiver {
     pub accepted_proposal_ids: Vec<GameID>,
     pub received_proposal_ids: Vec<GameID>,
     pub game_accepted_ids: HashSet<GameID>,
+    /// Script-facing proposal/member handles mapped to shared accepted game IDs.
+    pub game_id_aliases: HashMap<GameID, GameID>,
     pub opponent_moved_in_game: HashSet<GameID>,
     pub game_finished_ids: HashSet<GameID>,
 }
@@ -834,8 +836,15 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
-            GameNotification::ProposalAcceptedGroup { members } => {
+            GameNotification::ProposalAcceptedGroup {
+                id: proposal_id,
+                members,
+            } => {
                 self.assert_channel_created("game_proposal_accepted");
+                for (index, member) in members.iter().enumerate() {
+                    self.game_id_aliases
+                        .insert(GameID(proposal_id.0 + 2 * index as u64), member.id);
+                }
                 self.game_accepted_ids
                     .extend(members.iter().map(|member| member.id));
                 self.notifications.push(notification.clone());
@@ -1081,11 +1090,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     // Rule A for proposer side:
     for (i, lui) in local_uis.iter().enumerate() {
         for id in lui.proposed_game_ids.iter() {
-            let accepted = lui
-                .notifications
-                .iter()
-                .filter(|n| proposal_accepted_contains(n, id))
-                .count();
+            let accepted = usize::from(lui.game_id_aliases.contains_key(id));
             let cancelled = lui
                 .notifications
                 .iter()
@@ -1105,11 +1110,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     for (i, lui) in local_uis.iter().enumerate() {
         for n in lui.notifications.iter() {
             if let GameNotification::ProposalMade { id, .. } = n {
-                let accepted = lui
-                    .notifications
-                    .iter()
-                    .filter(|n2| proposal_accepted_contains(n2, id))
-                    .count();
+                let accepted = usize::from(lui.game_id_aliases.contains_key(id));
                 let cancelled = lui
                     .notifications
                     .iter()
@@ -1134,7 +1135,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     // Rule B forward: every ProposalAcceptedGroup member has one terminal.
     for (i, lui) in local_uis.iter().enumerate() {
         for n in lui.notifications.iter() {
-            if let GameNotification::ProposalAcceptedGroup { members } = n {
+            if let GameNotification::ProposalAcceptedGroup { members, .. } = n {
                 for member in members {
                     let id = &member.id;
                     let terminal_count = lui
@@ -1685,16 +1686,16 @@ pub fn setup_debug_test(
     let pid2 = ChiaIdentity::new(allocator, private_keys[1].my_referee_private_key.clone())?;
     let private_identities: [ChiaIdentity; 2] = [pid1, pid2];
 
-    // Player 0 (have_potato=true) allocates odd nonces in this harness.
-    // The first proposal from player 0 is therefore GameID(1).
-    let first_game_nonce: u64 = 1;
-    let mut debug_games = make_debug_games(allocator, rng, &private_identities, first_game_nonce)?;
+    // The first proposal handle is 1, while accepted games receive shared IDs
+    // from a separate sequence starting at 0.
+    let first_proposal_handle: u64 = 1;
+    let mut debug_games = make_debug_games(allocator, rng, &private_identities, 0)?;
 
     let mut game_actions = Vec::new();
     game_actions.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
     game_actions.push(SimScriptAction::AcceptProposal(
         1,
-        GameID(first_game_nonce as u64),
+        GameID(first_proposal_handle),
     ));
 
     for (i, do_move) in moves.iter().enumerate() {
@@ -1722,7 +1723,7 @@ pub fn setup_debug_test(
 
         game_actions.push(SimScriptAction::Move(
             i % 2,
-            GameID(first_game_nonce as u64),
+            GameID(first_proposal_handle),
             the_move.ui_move.clone(),
             true,
         ));
@@ -1763,22 +1764,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     .proposal_contributions_for_testing()
                     .unwrap_or_default();
 
-                if move_number == 1 && proposer.len() == 2 && receiver.len() == 2 {
+                if move_number == 1 && proposer.len() == 1 && receiver.len() == 1 {
                     assert_eq!(
                         proposer,
-                        vec![
-                            (GameID(1), Amount::new(100), Amount::new(0)),
-                            (GameID(3), Amount::new(0), Amount::new(100)),
-                        ],
-                        "proposer must store proposer-relative contributions",
+                        vec![(GameID(1), Amount::default(), Amount::default())],
+                        "proposer must store one origin proposal handle",
                     );
                     assert_eq!(
                         receiver,
-                        vec![
-                            (GameID(1), Amount::new(0), Amount::new(100)),
-                            (GameID(3), Amount::new(100), Amount::new(0)),
-                        ],
-                        "receiver must store mirrored contributions",
+                        vec![(GameID(1), Amount::default(), Amount::default())],
+                        "receiver must store one origin proposal handle",
                     );
                 }
 
@@ -1808,18 +1803,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ui.notifications,
             );
             assert!(
-                [GameID(1), GameID(3)]
+                [GameID(0), GameID(1)]
                     .iter()
                     .all(|id| ui.game_accepted_ids.contains(id)),
                 "player {player} did not accept both grouped games",
             );
         }
     }));
-    res.push(("krunk_group_accepts_by_non_primary_local_member", &|| {
+    res.push(("krunk_group_accepts_by_origin_proposal_id", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = [
             SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(1, GameID(3)),
+            SimScriptAction::AcceptProposal(1, GameID(1)),
         ];
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -1834,23 +1829,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             }),
             Some(100),
         )
-        .expect("non-primary local member should resolve to the canonical group");
+        .expect("origin proposal ID should accept the generated group");
 
         for (player, ui) in outcome.local_uis.iter().enumerate() {
             assert!(
-                [GameID(1), GameID(3)]
+                [GameID(0), GameID(1)]
                     .iter()
                     .all(|id| ui.game_accepted_ids.contains(id)),
-                "player {player} did not accept the complete canonical group: {:?}",
+                "player {player} did not accept the complete generated group: {:?}",
                 ui.notifications,
             );
         }
     }));
-    res.push(("krunk_group_cancels_by_non_primary_local_member", &|| {
+    res.push(("krunk_group_cancels_by_origin_proposal_id", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = [
             SimScriptAction::ProposeKrunkGroup(0, ProposeTrigger::Channel),
-            SimScriptAction::CancelProposal(1, GameID(3)),
+            SimScriptAction::CancelProposal(1, GameID(1)),
             SimScriptAction::CleanShutdown(0),
         ];
         let outcome = run_krunk_container_with_action_list_with_success_predicate(
@@ -1859,7 +1854,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             None,
             Some(100),
         )
-        .expect("non-primary local member should cancel the canonical group");
+        .expect("origin proposal ID should cancel the proposal");
 
         for (player, ui) in outcome.local_uis.iter().enumerate() {
             let cancelled: Vec<GameID> = ui
@@ -1910,6 +1905,156 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "failed group acceptance must not emit an accepted-group fact",
         );
     }));
+    res.push(("proposal_local_and_wire_ids_diverge_without_consuming_game_id", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = [
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            // This local attempt is rejected while player 1 holds player 0's proposal,
+            // consuming local handle 0 without consuming player 1's wire ID 0.
+            SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
+            SimScriptAction::CancelProposal(1, GameID(1)),
+            SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
+            SimScriptAction::AcceptProposal(0, GameID(0)),
+        ];
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|move_number, _| move_number >= moves.len()),
+            None,
+        )
+        .expect("mismatched local and wire proposal IDs should resolve");
+
+        let accepted = |player: usize, proposal_id: GameID| {
+            outcome.local_uis[player]
+                .notifications
+                .iter()
+                .find_map(|notification| match notification {
+                    GameNotification::ProposalAcceptedGroup { id, members }
+                        if *id == proposal_id =>
+                    {
+                        Some(members)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "player {player} missing acceptance for local proposal {proposal_id:?}: {:?}",
+                        outcome.local_uis[player].notifications
+                    )
+                })
+        };
+        assert_eq!(accepted(0, GameID(0))[0].id, GameID(0));
+        assert_eq!(accepted(1, GameID(2))[0].id, GameID(0));
+    }));
+    res.push((
+        "ordered_acceptances_recalculate_against_remaining_reserves",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut rng = ChaCha8Rng::from_seed([41; 32]);
+            let mut setup = setup_debug_test(&mut allocator, &mut rng, &[]).expect("debug setup");
+            setup.game_actions = vec![
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposalPair(1, GameID(1), GameID(3)),
+            ];
+
+            let outcome = run_game_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &mut rng,
+                setup.private_keys,
+                &setup.identities,
+                "debug",
+                &setup.args_program,
+                &setup.game_actions,
+                Some(&|_, cradles| {
+                    cradles.iter().all(|cradle| {
+                        cradle
+                            .allocated_balances_for_testing()
+                            .is_ok_and(|balances| balances == (Amount::new(150), Amount::new(150)))
+                    })
+                }),
+                Some(150),
+            )
+            .expect("paired acceptances should be processed in one ordered batch");
+
+            for (player, ui) in outcome.local_uis.iter().enumerate() {
+                let groups: Vec<_> = ui
+                    .notifications
+                    .iter()
+                    .filter_map(|notification| match notification {
+                        GameNotification::ProposalAcceptedGroup { members, .. } => Some(members),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(groups.len(), 2, "player {player} accepted group count");
+                assert_eq!(groups[0][0].id, GameID(0));
+                assert_eq!(groups[0][0].player_a_contribution, Amount::new(100));
+                assert_eq!(groups[0][0].player_b_contribution, Amount::new(100));
+                assert_eq!(groups[1][0].id, GameID(1));
+                assert_eq!(groups[1][0].player_a_contribution, Amount::new(50));
+                assert_eq!(groups[1][0].player_b_contribution, Amount::new(50));
+                assert_eq!(
+                    outcome.cradles[player]
+                        .allocated_balances_for_testing()
+                        .expect("off-chain balances"),
+                    (Amount::new(150), Amount::new(150)),
+                );
+            }
+        },
+    ));
+    res.push((
+        "later_invalid_acceptance_rolls_back_received_bundle",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut rng = ChaCha8Rng::from_seed([42; 32]);
+            let mut setup = setup_debug_test(&mut allocator, &mut rng, &[]).expect("debug setup");
+            setup.game_actions = vec![
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::MalformedSecondAcceptInPair(1, GameID(1), GameID(3), GameID(99)),
+            ];
+
+            let outcome = run_game_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &mut rng,
+                setup.private_keys,
+                &setup.identities,
+                "debug",
+                &setup.args_program,
+                &setup.game_actions,
+                Some(&|_, cradles| cradles[0].is_peer_disconnected()),
+                Some(200),
+            )
+            .expect("malformed later acceptance should trigger peer recovery");
+
+            assert!(
+                outcome.cradles[0].is_peer_disconnected(),
+                "proposal owner should reject the malformed acceptance batch"
+            );
+            assert!(
+                !outcome.local_uis[0]
+                    .notifications
+                    .iter()
+                    .any(|notification| matches!(
+                        notification,
+                        GameNotification::ProposalAcceptedGroup { .. }
+                    )),
+                "receiver must not emit staged acceptance notifications"
+            );
+            assert_eq!(
+                outcome.cradles[0]
+                    .allocated_balances_for_testing()
+                    .expect("rolled-back channel"),
+                (Amount::default(), Amount::default()),
+            );
+            assert_eq!(
+                outcome.cradles[0]
+                    .next_game_id_for_testing()
+                    .expect("rolled-back game counter"),
+                GameID(0),
+            );
+        },
+    ));
     res.push(("test_peer_in_sim", &|| {
         let mut allocator = AllocEncoder::new();
 
@@ -3115,8 +3260,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let result1 = outcome.cradles[0].propose_games(
             &mut allocator,
             &[GameProposal {
-                player_a_contribution: Amount::new(1000),
-                player_b_contribution: Amount::new(1000),
                 sender_is_player_a: true,
                 game_type: debug_type.clone(),
                 timeout: Timeout::new(15),
@@ -3132,8 +3275,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let result2 = outcome.cradles[1].propose_games(
             &mut allocator,
             &[GameProposal {
-                player_a_contribution: Amount::new(1000),
-                player_b_contribution: Amount::new(1000),
                 sender_is_player_a: true,
                 game_type: debug_type,
                 timeout: Timeout::new(15),
@@ -3785,9 +3926,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     "player {player} must not fail after internal redo plus queued move"
                 );
             }
+            let accepted_game_id = outcome.local_uis[0]
+                .game_id_aliases
+                .get(&GameID(1))
+                .copied()
+                .expect("proposal handle 1 should resolve to an accepted game");
             assert!(
             outcome.local_uis[0].notifications.iter().any(|notification| {
-                matches!(notification, GameNotification::GameSettled { id, .. } if *id == GameID(1))
+                matches!(notification, GameNotification::GameSettled { id, .. } if *id == accepted_game_id)
             }),
             "Alice should observe the game settle after her queued final move"
         );
@@ -4113,12 +4259,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
 
         let p1_notifs = &outcome.local_uis[1].notifications;
+        let accepted_game_id = outcome.local_uis[1]
+            .game_id_aliases
+            .get(&GameID(1))
+            .copied()
+            .expect("proposal handle 1 should resolve to an accepted game");
         assert!(p1_notifs.iter().any(|notification| matches!(
             notification,
             GameNotification::LocalActionApplied {
-                id: GameID(1),
+                id,
                 action: LocalActionKind::Cheat,
-            }
+            } if *id == accepted_game_id
         )));
         assert!(
             p1_notifs
@@ -4312,6 +4463,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
 
+            let accepted_game_id = outcome.local_uis[1]
+                .game_id_aliases
+                .get(&GameID(1))
+                .copied()
+                .expect("proposal handle 1 should resolve to an accepted game");
             let host_events = &outcome.host_events[1];
             let (playing_index, spent_coin, notification_coin_in_mempool) = host_events
                 .iter()
@@ -4326,7 +4482,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                                 ..
                             },
                         notification_coin_in_mempool,
-                    } if *id == GameID(1) => {
+                    } if *id == accepted_game_id => {
                         Some((index, coin.clone(), *notification_coin_in_mempool))
                     }
                     _ => None,
@@ -4342,11 +4498,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 event,
                 HostBoundaryEvent::Notification {
                     notification: GameNotification::LocalActionApplied {
-                        id: GameID(1),
+                        id,
                         action: LocalActionKind::MakeMove,
                     },
                     ..
-                }
+                } if *id == accepted_game_id
             )));
             assert!(
                 host_events[..playing_index].iter().any(|event| {
@@ -4375,7 +4531,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                         coin_id: Some(coin),
                         other_params: Some(params),
                         ..
-                    }) if *id == GameID(1) && params.moved_by_us == Some(true) => {
+                    }) if *id == accepted_game_id && params.moved_by_us == Some(true) => {
                         Some(coin.clone())
                     }
                     _ => None,
@@ -4412,21 +4568,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         let p1_notifs = &outcome.local_uis[1].notifications;
+        let accepted_game_id = outcome.local_uis[0]
+            .game_id_aliases
+            .get(&GameID(1))
+            .copied()
+            .expect("proposal handle 1 should resolve to an accepted game");
         let applied_index = p0_notifs
             .iter()
             .position(|notification| matches!(
                 notification,
                 GameNotification::LocalActionApplied {
-                    id: GameID(1),
+                    id,
                     action: LocalActionKind::AcceptSettlement,
-                }
+                } if *id == accepted_game_id
             ))
             .expect("on-chain accept should emit LocalActionApplied");
         let terminal_index = p0_notifs
             .iter()
             .position(|notification| matches!(
                 notification,
-                GameNotification::GameSettled { id: GameID(1), .. }
+                GameNotification::GameSettled { id, .. } if *id == accepted_game_id
             ))
             .expect("on-chain accept should eventually settle");
         assert!(
@@ -6015,6 +6176,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 .any(|n| matches!(n, GameNotification::InsufficientBalance { .. })),
             "Bob should get InsufficientBalance, got: {p1_notifs:?}"
         );
+        assert!(
+            !p1_notifs.iter().any(
+                |n| matches!(n, GameNotification::ProposalCancelled { group_ids, .. } if group_ids.contains(&GameID(3)))
+            ),
+            "failed local acceptance must not emit a local ProposalCancelled: {p1_notifs:?}"
+        );
+        assert!(
+            outcome.local_uis[0].notifications.iter().any(
+                |n| matches!(n, GameNotification::ProposalCancelled { group_ids, reason: CancelReason::CancelledByPeer, .. } if group_ids.contains(&GameID(3)))
+            ),
+            "failed local acceptance must send an explicit peer cancellation"
+        );
     }));
 
     res.push(("test_stale_cancel_after_accept", &|| {
@@ -7071,25 +7244,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let invalid_integer = (i128::MAX as u128 + 1).to_string();
         let message = PeerMessage::Batch {
             actions: vec![BatchAction::ProposeGroup(WireProposalGroup {
+                origin_wire_id: GameID(1),
                 start: GameProposal {
-                    player_a_contribution: Amount::new(1),
-                    player_b_contribution: Amount::new(1),
                     sender_is_player_a: true,
                     game_type: GameType::from_hash(Hash::default()),
                     timeout: Timeout::new(15),
                     parameters: ProposalParameters::Integer(i128::MAX),
                 },
-                members: vec![WireGameSpec {
-                    game_id: GameID(1),
-                    player_a_contribution: Amount::new(1),
-                    player_b_contribution: Amount::new(1),
-                    player_a_goes_first: true,
-                    initial_validation_program_hash: Hash::default(),
-                    initial_validation_info_hash: Hash::default(),
-                    initial_move: vec![],
-                    initial_max_move_size: 1,
-                    initial_mover_share: Amount::new(1),
-                }],
             })],
             signatures: Default::default(),
         };
@@ -7211,11 +7372,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
 
-    res.push(("test_generated_proposal_arguments_are_reverified", &|| {
+    res.push(("test_skipped_proposal_wire_id_rejected", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = vec![
             SimScriptAction::WaitBlocks(5, 0),
-            SimScriptAction::InvalidProposalArguments(0),
+            SimScriptAction::SkippedProposalWireId(0),
             SimScriptAction::WaitBlocks(20, 0),
         ];
 
@@ -7229,15 +7390,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         assert!(
             outcome.cradles[1].is_peer_disconnected(),
-            "receiver should reject proposal arguments that differ from its factory output"
+            "receiver should reject a proposal that skips its strict next wire ID"
         );
     }));
 
-    res.push(("test_initial_validation_info_hash_is_reverified", &|| {
+    res.push(("test_reused_proposal_wire_id_rejected", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = vec![
-            SimScriptAction::WaitBlocks(5, 0),
-            SimScriptAction::InvalidProposalValidationInfoHash(0),
+            SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            SimScriptAction::ReusedProposalWireId(0),
             SimScriptAction::WaitBlocks(20, 0),
         ];
 
@@ -7251,7 +7412,39 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         assert!(
             outcome.cradles[1].is_peer_disconnected(),
-            "receiver should reject a validation-info hash that differs from its factory output"
+            "receiver should reject reuse of the preceding proposal wire ID"
+        );
+    }));
+
+    res.push(("test_unknown_proposal_game_type_is_declined", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            SimScriptAction::WaitBlocks(5, 0),
+            SimScriptAction::UnknownProposalGameType(0),
+            SimScriptAction::WaitBlocks(20, 0),
+            SimScriptAction::CleanShutdown(1),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            None,
+        )
+        .expect("should finish");
+
+        assert!(
+            outcome.local_uis[0].notifications.iter().any(
+                |n| matches!(n, GameNotification::ProposalCancelled { group_ids, reason: CancelReason::CancelledByPeer, .. } if group_ids.contains(&GameID(1)))
+            ),
+            "sender should receive an explicit cancellation for the unknown game type"
+        );
+        assert!(
+            !outcome.local_uis[1]
+                .notifications
+                .iter()
+                .any(|n| matches!(n, GameNotification::ProposalMade { .. })),
+            "receiver must not expose an unknown game type as an actionable proposal"
         );
     }));
 

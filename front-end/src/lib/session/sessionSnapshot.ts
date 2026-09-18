@@ -27,8 +27,6 @@ export function snapshotFromSessionModel(
       throw new Error(`Session invariant broken: invalid ${handProposal.gameType} hand proposal`);
     }
     return {
-      player_a_contribution: handProposal.playerAContribution.toString(),
-      player_b_contribution: handProposal.playerBContribution.toString(),
       sender_is_player_a: handProposal.senderIsPlayerA,
       game_timeout: handProposal.gameTimeout.toString(),
       game_type: requireCatalogGameType(handProposal.gameType, 'handProposal.gameType'),

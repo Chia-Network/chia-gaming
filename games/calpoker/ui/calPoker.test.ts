@@ -113,7 +113,7 @@ function liveSource(port: TestLiveGamePort): GameMountView<CalpokerHand> {
 
 describe('Calpoker bigint domain helpers', () => {
   it('owns proposal form state and exposes it through getProposal', () => {
-    const ref = createRef<GameProposalFormHandle<Record<string, never>>>();
+    const ref = createRef<GameProposalFormHandle<bigint>>();
     let renderer: ReactTestRenderer;
     act(() => {
       renderer = create(
@@ -129,9 +129,7 @@ describe('Calpoker bigint domain helpers', () => {
     });
     expect(ref.current?.getProposal()).toEqual({
       ok: true,
-      senderContribution: 100n,
-      receiverContribution: 100n,
-      parameters: {},
+      parameters: 100n,
     });
     act(() => renderer!.unmount());
   });

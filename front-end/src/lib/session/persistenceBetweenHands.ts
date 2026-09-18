@@ -44,16 +44,6 @@ export function parseHandProposalSnapshot(value: unknown, label: string): HandPr
   }
   const terms: HandProposal = {
     gameType,
-    playerAContribution: parseDecimalString(
-      saved.player_a_contribution,
-      `${label}.player_a_contribution`,
-      1n,
-    ),
-    playerBContribution: parseDecimalString(
-      saved.player_b_contribution,
-      `${label}.player_b_contribution`,
-      1n,
-    ),
     senderIsPlayerA: requireBoolean(saved.sender_is_player_a, `${label}.sender_is_player_a`),
     gameTimeout: parseDecimalString(saved.game_timeout, `${label}.game_timeout`, 1n),
     parameters: saved.parameters,

@@ -1,3 +1,4 @@
+import { Program } from 'clvm-lib';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
@@ -12,12 +13,14 @@ describe('session machine behavior sequences', () => {
     expect(() =>
       reduceSessionMachine(state, {
         type: 'notification-accepted-group',
+        proposalId: 'missing',
         members: [
           {
             id: 'missing',
             playerAContribution: 10n,
             playerBContribution: 10n,
             ourTurn: false,
+            readableParameters: Program.fromBigInt(10n).serialize(),
           },
         ],
       }),
@@ -48,12 +51,14 @@ describe('session machine behavior sequences', () => {
       state,
       {
         ProposalAcceptedGroup: {
+          id: 7n,
           members: [
             {
               id: '7',
               player_a_contribution: '10',
               player_b_contribution: '10',
               our_turn: true,
+              readable_parameters: Program.fromBigInt(10n).serialize(),
             },
           ],
         },
@@ -65,12 +70,14 @@ describe('session machine behavior sequences', () => {
 
     expect(events[0]).toEqual({
       type: 'notification-accepted-group',
+      proposalId: '7',
       members: [
         {
           id: '7',
           playerAContribution: 10n,
           playerBContribution: 10n,
           ourTurn: true,
+          readableParameters: Program.fromBigInt(10n).serialize(),
         },
       ],
     });
@@ -177,18 +184,21 @@ describe('session machine behavior sequences', () => {
 
       {
         ProposalAcceptedGroup: {
+          id: '1',
           members: [
             {
               id: '1',
               player_a_contribution: '100',
               player_b_contribution: '0',
               our_turn: false,
+              readable_parameters: Program.fromBigInt(100n).serialize(),
             },
             {
               id: '2',
               player_a_contribution: '0',
               player_b_contribution: '100',
               our_turn: true,
+              readable_parameters: Program.fromBigInt(100n).serialize(),
             },
           ],
         },
@@ -265,7 +275,7 @@ describe('session machine behavior sequences', () => {
       group: {
         primaryId: '23',
         memberIds: ['23'],
-        handProposal: { ...CALPOKER_TERMS, playerAContribution: 500n },
+        handProposal: { ...CALPOKER_TERMS, parameters: 500n },
         origin: 'peer',
         disposition: 'incoming-review',
       },
@@ -320,11 +330,9 @@ describe('session machine behavior sequences', () => {
     try {
       const terms = {
         gameType: 'spacepoker' as const,
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: false,
         gameTimeout: 15n,
-        parameters: 10n,
+        parameters: [10n, 10n],
       };
       const state = createSessionMachineState(
         createSessionModel({
@@ -338,8 +346,6 @@ describe('session machine behavior sequences', () => {
           ProposalMade: {
             id: '9',
             group_ids: ['9'],
-            player_a_contribution: '100',
-            player_b_contribution: '100',
             sender_is_player_a: false,
             timeout: '15',
             game_type: testProtocolId('spacepoker'),
@@ -362,8 +368,6 @@ describe('session machine behavior sequences', () => {
           ProposalMade: {
             id: '9',
             group_ids: ['9'],
-            player_a_contribution: '100',
-            player_b_contribution: '100',
             sender_is_player_a: false,
             timeout: '15',
             game_type: testProtocolId('spacepoker'),
@@ -386,8 +390,6 @@ describe('session machine behavior sequences', () => {
           ProposalMade: {
             id: '9',
             group_ids: ['9'],
-            player_a_contribution: '100',
-            player_b_contribution: '100',
             sender_is_player_a: false,
             timeout: '15',
             game_type: testProtocolId('spacepoker'),

@@ -824,8 +824,6 @@ mod gaming_wasm {
         // First generated member's initial validation puzzle hash, as 32-byte hex.
         game_type: String,
         timeout: u64,
-        player_a_contribution: u64,
-        player_b_contribution: u64,
         sender_is_player_a: bool,
         parameters: ProposalParameters,
     }
@@ -884,8 +882,6 @@ mod gaming_wasm {
                 let game_type = parse_game_type_hex(&g.game_type)
                     .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
                 game_starts.push(GameProposal {
-                    player_a_contribution: Amount::new(g.player_a_contribution),
-                    player_b_contribution: Amount::new(g.player_b_contribution),
                     sender_is_player_a: g.sender_is_player_a,
                     game_type,
                     timeout: Timeout::new(g.timeout),

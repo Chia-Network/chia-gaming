@@ -185,15 +185,22 @@ impl BareDebugGameHandler {
             .to_clvm(allocator)
             .into_gen()?;
         let parameters = Program::from_nodeptr(allocator, args_node)?;
-        let games = Game::run_factory(allocator, curried_prog.into(), &parameters)?;
+        let games = match Game::run_factory(allocator, curried_prog.into(), &parameters)? {
+            crate::channel_state::game::FactoryResult::Success(games) => games,
+            crate::channel_state::game::FactoryResult::InsufficientBalance { .. } => {
+                return Err(Error::StrErr(
+                    "debug factory unexpectedly reported insufficient balance".to_string(),
+                ));
+            }
+        };
         if games.len() != 1 {
             return Err(Error::StrErr(format!(
                 "debug factory returned {} games, expected one",
                 games.len()
             )));
         }
-        let start_a = games[0].game_start(&game_id, &timeout, true);
-        let start_b = games[0].game_start(&game_id, &timeout, false);
+        let start_a = games[0].game_start(&game_id, &timeout, true, true);
+        let start_b = games[0].game_start(&game_id, &timeout, true, false);
         assert_ne!(start_a.amount, Amount::default());
         assert_ne!(start_b.amount, Amount::default());
         let make_bare_handler = |game_start: &GameStartInfo| -> BareDebugGameHandler {

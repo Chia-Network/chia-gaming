@@ -70,11 +70,9 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
   assert.ok(status, 'unroll reload lane must begin Active');
   const handProposal: HandProposal = {
     gameType: 'calpoker',
-    playerAContribution: 20n,
-    playerBContribution: 20n,
     senderIsPlayerA: false,
     gameTimeout: 15n,
-    parameters: null,
+    parameters: 20n,
   };
   let lane = createReloadableSessionLane(
     adapters[0],
@@ -91,12 +89,15 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
     .getState()
     .model.betweenHand.proposalGroups.find((group) => group.disposition === 'outgoing');
   assert.ok(outgoing);
-  const ids = outgoing.memberIds;
   await exchangeUntilIdle(adapters);
-  adapters[1].blob!.acceptProposal(ids[0]);
+  adapters[1].blob!.acceptProposal(outgoing.primaryId);
   await exchangeUntilIdle(adapters);
-  assert.deepEqual(lane.controller.activeGameIds, ids);
+  const ids = [...lane.controller.activeGameIds];
+  assert.equal(ids.length, 1);
+  assert.deepEqual(adapters[1].blob!.activeGameIds, ids);
 
+  lane.controller.makeMove(ids[0], null);
+  await exchangeUntilIdle(adapters);
   assert.equal(lane.controller.goOnChain(), true);
   await flushWrapperDrain(adapters);
   assert.equal(lane.controller.lastChannelStatus?.state, 'GoingOnChain');
@@ -135,6 +136,16 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
     'Unrolling',
     'restored unroll lane must observe a later chain lifecycle state',
   );
+  for (
+    let block = 0;
+    block < 40 &&
+    lane.runtime.getState().model.game.instances[ids[0]]?.presentation === 'replaying-move';
+    block++
+  ) {
+    await fakeBlockchainInfo.farmBlock();
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+  }
   const onChainPresentation = lane.runtime.getState().model.game.instances[ids[0]]?.presentation;
   assert.ok(
     onChainPresentation === 'on-chain-my-turn' || onChainPresentation === 'on-chain-their-turn',

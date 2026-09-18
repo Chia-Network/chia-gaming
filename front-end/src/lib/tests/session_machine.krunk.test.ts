@@ -12,9 +12,22 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
+      proposalId: '1',
       members: [
-        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: false },
-        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: true },
+        {
+          id: '1',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '2',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
       ],
     });
 
@@ -48,7 +61,16 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(10n).serialize(),
+        },
+      ],
     });
 
     expect(state.model.game.activeIds).toEqual(['7']);
@@ -70,9 +92,22 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
+      proposalId: '1',
       members: [
-        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          id: '1',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '2',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
       ],
     });
 
@@ -192,9 +227,22 @@ describe('session machine behavior sequences', () => {
 
     state = run(state, {
       type: 'notification-accepted-group',
+      proposalId: '7',
       members: [
-        { id: '7', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { id: '9', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          id: '7',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '9',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
       ],
     });
 
@@ -298,9 +346,22 @@ describe('session machine behavior sequences', () => {
     state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
+      proposalId: '1',
       members: [
-        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          id: '1',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '2',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
       ],
     });
     const hand = krunkStateCodec.decode(state.model.game.handState)!;

@@ -102,6 +102,14 @@ pub(super) struct SimulationHarness {
 }
 
 impl SimulationHarness {
+    fn runtime_game_id(&self, player: usize, requested: GameID) -> GameID {
+        self.local_uis[player]
+            .game_id_aliases
+            .get(&requested)
+            .copied()
+            .unwrap_or(requested)
+    }
+
     pub(super) fn new(
         cradles: [TransactionManager<GameSession>; 2],
         simulator: Simulator,
@@ -186,6 +194,7 @@ impl SimulationHarness {
         {
             return;
         }
+        let game_id = self.runtime_game_id(player, game_id);
         self.move_readiness_boundary = Some(MoveReadinessBoundary::capture(
             action_index,
             player,
@@ -202,6 +211,7 @@ impl SimulationHarness {
         match readiness {
             ActionReadiness::Immediate => true,
             ActionReadiness::GameCanMove { player, game_id } => {
+                let game_id = self.runtime_game_id(player, game_id);
                 self.local_uis[player].game_accepted_ids.contains(&game_id)
                     || self.local_uis[player]
                         .opponent_moved_in_game
@@ -212,7 +222,7 @@ impl SimulationHarness {
                     .accepted_proposal_ids
                     .contains(&game_id)
                 {
-                    self.local_uis[player].game_accepted_ids.contains(&game_id)
+                    self.local_uis[player].game_id_aliases.contains_key(&game_id)
                         || self.local_uis[player].notifications.iter().any(|n| {
                             matches!(n, GameNotification::InsufficientBalance { id, .. } if id == &game_id)
                                 || matches!(
@@ -233,15 +243,19 @@ impl SimulationHarness {
                 .proposal_contributions_for_testing()
                 .is_ok_and(|proposals| proposals.iter().any(|(id, _, _)| id == &game_id)),
             ActionReadiness::ProposalKnown { player, game_id } => {
+                let runtime_game_id = self.runtime_game_id(player, game_id);
                 self.cradles[player]
                     .proposal_contributions_for_testing()
                     .is_ok_and(|proposals| proposals.iter().any(|(id, _, _)| id == &game_id))
-                    || self.local_uis[player].game_accepted_ids.contains(&game_id)
+                    || self.local_uis[player]
+                        .game_accepted_ids
+                        .contains(&runtime_game_id)
                     || self.local_uis[player]
                         .accepted_proposal_ids
                         .contains(&game_id)
             }
             ActionReadiness::MoveApplied { player, game_id } => {
+                let game_id = self.runtime_game_id(player, game_id);
                 let boundary = self
                     .move_readiness_boundary
                     .expect("move readiness boundary must be established before evaluation");
@@ -253,10 +267,10 @@ impl SimulationHarness {
                 boundary.is_satisfied(&self.local_uis[player])
             }
             ActionReadiness::NerfedTransactionAvailable => !self.nerfed_tx_backlog.is_empty(),
-            ActionReadiness::AfterGame { game_id } => self
-                .local_uis
-                .iter()
-                .any(|ui| ui.game_finished_ids.contains(&game_id)),
+            ActionReadiness::AfterGame { game_id } => self.local_uis.iter().any(|ui| {
+                let runtime_game_id = ui.game_id_aliases.get(&game_id).copied().unwrap_or(game_id);
+                ui.game_finished_ids.contains(&runtime_game_id)
+            }),
         }
     }
 
@@ -374,6 +388,7 @@ impl SimulationHarness {
         player: usize,
         game_id: GameID,
     ) -> (CoinString, usize) {
+        let game_id = self.runtime_game_id(player, game_id);
         let coin = self.cradles[player]
             .get_game_coin(&game_id)
             .unwrap_or_else(|| panic!("player {player} has no current coin for game {game_id:?}"));
@@ -391,6 +406,7 @@ impl SimulationHarness {
         parent: &CoinString,
         submitted_height: usize,
     ) {
+        let game_id = self.runtime_game_id(player, game_id);
         let current_height = self.simulator.get_current_height();
         assert_eq!(
             current_height,
@@ -416,6 +432,7 @@ impl SimulationHarness {
     }
 
     pub(super) fn assert_game_coin_timeout_registered(&self, player: usize, game_id: GameID) {
+        let game_id = self.runtime_game_id(player, game_id);
         let coin = self.cradles[player]
             .get_game_coin(&game_id)
             .unwrap_or_else(|| panic!("player {player} has no current coin for game {game_id:?}"));
@@ -436,13 +453,14 @@ impl SimulationHarness {
         readable: ReadableMove,
         entropy: Hash,
     ) -> Result<(), Error> {
-        self.cradles[player].make_move(allocator, game_id, readable, entropy)?;
+        let game_id = self.runtime_game_id(player, *game_id);
+        self.cradles[player].make_move(allocator, &game_id, readable, entropy)?;
         for ui in &mut self.local_uis {
-            ui.game_accepted_ids.remove(game_id);
+            ui.game_accepted_ids.remove(&game_id);
         }
         self.local_uis[player]
             .opponent_moved_in_game
-            .remove(game_id);
+            .remove(&game_id);
         Ok(())
     }
 
@@ -473,6 +491,35 @@ impl SimulationHarness {
         }
         self.cradles[player].accept_proposal(allocator, game_id)?;
         self.local_uis[player].accepted_proposal_ids.push(*game_id);
+        Ok(true)
+    }
+
+    pub(super) fn accept_proposal_pair(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        player: usize,
+        first: &GameID,
+        second: &GameID,
+    ) -> Result<bool, Error> {
+        if self.local_uis[player].accepted_proposal_ids.contains(first)
+            && self.local_uis[player]
+                .accepted_proposal_ids
+                .contains(second)
+        {
+            return Ok(false);
+        }
+        game_assert!(
+            !self.local_uis[player].accepted_proposal_ids.contains(first)
+                && !self.local_uis[player]
+                    .accepted_proposal_ids
+                    .contains(second),
+            "paired acceptance was only partially queued"
+        );
+        self.cradles[player].accept_proposal(allocator, first)?;
+        self.cradles[player].accept_proposal(allocator, second)?;
+        self.local_uis[player]
+            .accepted_proposal_ids
+            .extend([*first, *second]);
         Ok(true)
     }
 
@@ -508,6 +555,50 @@ impl SimulationHarness {
                 ));
             };
             *group_id = *wire_group_id;
+            Ok(PeerMessage::Batch {
+                actions,
+                signatures: signatures.clone(),
+            })
+        })?;
+        Ok(true)
+    }
+
+    pub(super) fn malformed_second_accept_in_pair(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        player: usize,
+        first: &GameID,
+        second: &GameID,
+        replacement_wire_id: &GameID,
+    ) -> Result<bool, Error> {
+        if !self.accept_proposal_pair(allocator, player, first, second)? {
+            return Ok(false);
+        }
+        self.cradles[player].flush_pending(allocator)?;
+        self.cradles[player].replace_last_message(|message| {
+            let PeerMessage::Batch {
+                actions,
+                signatures,
+            } = message
+            else {
+                return Err(Error::StrErr(format!(
+                    "malformed paired accept expected Batch, got {message:?}"
+                )));
+            };
+            let mut actions = actions.clone();
+            let second_group_id = actions
+                .iter_mut()
+                .filter_map(|action| match action {
+                    BatchAction::AcceptProposalGroup(group_id) => Some(group_id),
+                    _ => None,
+                })
+                .nth(1)
+                .ok_or_else(|| {
+                    Error::StrErr(
+                        "malformed paired accept found fewer than two acceptances".to_string(),
+                    )
+                })?;
+            *second_group_id = *replacement_wire_id;
             Ok(PeerMessage::Batch {
                 actions,
                 signatures: signatures.clone(),
@@ -595,11 +686,13 @@ impl SimulationHarness {
         game_id: &GameID,
         share: Amount,
     ) -> Result<(), Error> {
-        self.cradles[player].cheat(allocator, game_id, share)
+        let game_id = self.runtime_game_id(player, *game_id);
+        self.cradles[player].cheat(allocator, &game_id, share)
     }
 
     pub(super) fn force_destroy_coin(&mut self, player: usize, game_id: &GameID) -> bool {
-        let Some(coin) = self.cradles[player].get_game_coin(game_id) else {
+        let game_id = self.runtime_game_id(player, *game_id);
+        let Some(coin) = self.cradles[player].get_game_coin(&game_id) else {
             return false;
         };
         self.force_destroyed_coins.push(coin);
@@ -712,7 +805,8 @@ impl SimulationHarness {
         player: usize,
         game_id: &GameID,
     ) -> Result<(), Error> {
-        self.cradles[player].accept_settlement(allocator, game_id)
+        let game_id = self.runtime_game_id(player, *game_id);
+        self.cradles[player].accept_settlement(allocator, &game_id)
     }
 
     pub(super) fn clean_shutdown(

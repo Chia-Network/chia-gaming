@@ -114,11 +114,13 @@ export type SessionMachineEvent =
   | { type: 'set-first-game-accepted'; accepted: boolean }
   | {
       type: 'notification-accepted-group';
+      proposalId: string;
       members: readonly {
         id: string;
         playerAContribution: bigint;
         playerBContribution: bigint;
         ourTurn: boolean;
+        readableParameters: Uint8Array;
       }[];
       handState?: PersistedGameState;
     }

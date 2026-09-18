@@ -30,9 +30,11 @@ const registration: GamePackageRegistration<
     if (!params) {
       throw new Error('Space Poker proposal parameters are invalid');
     }
-    const stake = handProposal.playerAContribution;
-    const stack = stake / params.betUnitMojos;
-    return `Stake ${formatSpacepokerMojos(stake)} each · bet unit ${formatSpacepokerMojos(params.betUnitMojos)} · stack ${String(stack)}`;
+    if (params.stackSize === 0n) {
+      return `No limit · minimum raise ${formatSpacepokerMojos(params.betUnitMojos)}`;
+    }
+    const stake = params.stackSize * params.betUnitMojos;
+    return `Stake ${formatSpacepokerMojos(stake)} each · minimum raise ${formatSpacepokerMojos(params.betUnitMojos)} · stack ${String(params.stackSize)}`;
   },
 };
 

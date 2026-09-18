@@ -971,21 +971,30 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
 
             let mut moves = Vec::new();
-            // Game 0: player 1 proposes, plays through all calpoker moves.
-            moves.push(SimScriptAction::ProposeNewGameTheirTurn(
+            // Game 0: player 1 proposes and therefore moves first.
+            moves.push(SimScriptAction::ProposeNewGame(
                 1,
                 ProposeTrigger::Channel,
             ));
             moves.push(SimScriptAction::AcceptProposal(0, GameID(0)));
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.extend(
+                prefix_test_moves(&mut allocator, GameID(0))
+                    .into_iter()
+                    .map(|action| match action {
+                        SimScriptAction::Move(player, id, readable, received) => {
+                            SimScriptAction::Move(player ^ 1, id, readable, received)
+                        }
+                        _ => unreachable!("calpoker prefix contains only moves"),
+                    }),
+            );
             // Game 1: player 1 proposes again after game 0 finishes.
-            moves.push(SimScriptAction::ProposeNewGameTheirTurn(
+            moves.push(SimScriptAction::ProposeNewGame(
                 1,
                 ProposeTrigger::AfterGame(GameID(0)),
             ));
             moves.push(SimScriptAction::AcceptProposal(0, GameID(2)));
             moves.push(SimScriptAction::WaitBlocks(11, 0));
-            moves.push(SimScriptAction::AcceptSettlement(0, GameID(2)));
+            moves.push(SimScriptAction::AcceptSettlement(1, GameID(1)));
             moves.push(SimScriptAction::CleanShutdown(0));
 
             let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(300))

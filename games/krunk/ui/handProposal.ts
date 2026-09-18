@@ -12,11 +12,11 @@ import { formatKrunkMojos } from './formatting';
 
 export { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './serialize';
 
-export type KrunkFactoryParameters = Record<string, never>;
+export type KrunkFactoryParameters = bigint;
 
 export const krunkProposalParameters: ProposalParameterCodec<KrunkFactoryParameters> = {
-  decode: (value) => (value === null ? {} : null),
-  encode: () => null,
+  decode: (value) => (typeof value === 'bigint' && isValidKrunkStake(value) ? value : null),
+  encode: (value) => value,
 };
 
 export function isValidKrunkStake(stake: bigint): boolean {
@@ -33,10 +33,11 @@ const registration: GamePackageRegistration<
   restoreHand: restoreKrunkHand,
   proposalParameters: krunkProposalParameters,
   describeHandProposal(handProposal) {
-    if (krunkProposalParameters.decode(handProposal.parameters) === null) {
+    const stake = krunkProposalParameters.decode(handProposal.parameters);
+    if (stake === null) {
       throw new Error('Krunk proposal parameters are invalid');
     }
-    return `Stake ${formatKrunkMojos(handProposal.playerAContribution)} each`;
+    return `Stake ${formatKrunkMojos(stake)} each`;
   },
 };
 

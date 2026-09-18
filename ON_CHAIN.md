@@ -629,23 +629,22 @@ they are revealed at timeout or slash via `AGG_SIG_UNSAFE` (see
 
 ### Game IDs and Nonces
 
-A `GameID` *is* the nonce — a `u64` that serves as both the referee puzzle
-differentiator and the canonical identifier used by the API and UI. When
+A live `GameID` *is* the referee nonce — a `u64` that serves as both the
+referee puzzle differentiator and the canonical identifier used by the API and UI. When
 serialized to CLVM for referee puzzle hashes, it goes through the standard
 CLVM integer encoding (the same encoding `usize::to_clvm` uses).
 
-Nonces are **role-namespaced**: the initiator (the player who starts with the
-potato) allocates even nonces (0, 2, 4, …) and the responder allocates odd
-nonces (1, 3, 5, …). Each player increments by 2, so their nonces never
-collide with the opponent's. Because the nonce is curried into the referee
-puzzle, distinct nonces guarantee distinct puzzle hashes even for otherwise
-identical game parameters.
+Live game IDs come from one shared sequential counter on both peers. The
+factory runs only when an acceptance executes, and each ordered returned member
+receives the next ID. Failed acceptance consumes no IDs. Because all actions are
+serialized by the potato protocol and received batches are replayed in wire
+order, both peers derive the same IDs without transmitting them.
 
-When receiving a proposal, the `ChannelState` validates that the incoming
-nonce has the correct parity for the sender's role and is monotonically
-increasing (nonces may be skipped if the sender proposed and cancelled
-a game before the potato arrived). Both players use the same `GameID` to
-refer to the game for its entire lifecycle.
+Pending proposals use a separate identity namespace. Each origin allocates
+strict parity-sequenced wire proposal IDs, while each endpoint exposes its own
+local proposal handle. Accept/cancel wire actions target the origin proposal
+ID; `ProposalAcceptedGroup` correlates generated game IDs back to the local
+proposal handle.
 
 ### On-Chain Referee Actions
 

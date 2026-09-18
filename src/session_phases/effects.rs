@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::channel_state::types::ReadableMove;
 use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, GameID, GameType, PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinString, GameID, GameType, Program, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::session_phases::handshake::{
     CoinSpendRequest, HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadC,
@@ -234,6 +234,8 @@ pub struct AcceptedGameMember {
     pub player_a_contribution: Amount,
     pub player_b_contribution: Amount,
     pub our_turn: bool,
+    /// Factory-approved game-readable initialization value.
+    pub readable_parameters: Program,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -257,16 +259,16 @@ pub enum GameNotification {
 
     ProposalMade {
         id: GameID,
-        /// Full ordered member list; always non-empty (singleton ⇒ `[id]`).
+        /// Pending proposals have one local handle; accepted member IDs arrive later.
         group_ids: Vec<GameID>,
-        player_a_contribution: Amount,
-        player_b_contribution: Amount,
         sender_is_player_a: bool,
         timeout: Timeout,
         game_type: GameType,
         parameters: ProposalParameters,
     },
     ProposalAcceptedGroup {
+        /// Endpoint-local handle of the pending proposal that became live.
+        id: GameID,
         /// Members in the exact factory/wire order. The first member is canonical.
         members: Vec<AcceptedGameMember>,
     },

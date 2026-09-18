@@ -35,8 +35,6 @@ export function isSettlementOutcome(value: unknown): value is SettlementOutcome 
   return typeof value === 'string' && ALL_OUTCOMES.has(value);
 }
 export interface HandProposalBase {
-  playerAContribution: bigint;
-  playerBContribution: bigint;
   senderIsPlayerA: boolean;
   gameTimeout: bigint;
   parameters: ProposalParameterValue;
@@ -72,11 +70,11 @@ export type GameIntent =
   | { type: 'cheat'; memberIndex: number; moverShare: bigint };
 
 export interface GameHandInitialization {
-  parameters: ProposalParameterValue;
   members: readonly {
     playerAContribution: bigint;
     playerBContribution: bigint;
     ourTurn: boolean;
+    readableParameters: Program;
   }[];
 }
 
@@ -101,8 +99,6 @@ export interface GameHand<TState> extends GameHandState<TState> {
 export type GameProposalFormResult<TParams> =
   | {
       ok: true;
-      senderContribution: bigint;
-      receiverContribution: bigint;
       parameters: TParams;
     }
   | { ok: false; error: string };
@@ -112,8 +108,6 @@ export interface GameProposalFormHandle<TParams> {
 }
 
 export interface GameProposalFormInitialValues<TParams> {
-  senderContribution: bigint;
-  receiverContribution: bigint;
   parameters: TParams;
 }
 

@@ -7,7 +7,6 @@ import {
   type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
-import { spacepokerProposalParameters } from './unitSize';
 
 function isForfeitOutcome(outcome: SettlementOutcome): boolean {
   return outcome === 'forfeited_skipped_reveal' || outcome === 'forfeited_we_accepted';
@@ -584,11 +583,20 @@ export function createSpacepokerHand(init: GameHandInitialization): SpacepokerHa
   if (init.members.length !== 1) {
     throw new Error('Space Poker hand requires one game');
   }
-  const parameters = spacepokerProposalParameters.decode(init.parameters);
-  if (!parameters) {
-    throw new Error('Space Poker hand requires valid proposal parameters');
+  const readableParameters = init.members[0]!.readableParameters.toList();
+  if (readableParameters.length !== 2) {
+    throw new Error('Space Poker hand requires two readable parameters');
   }
-  return spacepokerHandFromState(initialState(init, parameters.betUnitMojos));
+  const stackSize = readableParameters[0]!.toBigInt();
+  const betUnitMojos = readableParameters[1]!.toBigInt();
+  if (
+    stackSize <= 0n ||
+    betUnitMojos <= 0n ||
+    stackSize * betUnitMojos !== init.members[0]!.playerAContribution
+  ) {
+    throw new Error('Space Poker hand received invalid resolved parameters');
+  }
+  return spacepokerHandFromState(initialState(init, betUnitMojos));
 }
 
 export function restoreSpacepokerHand(savedState: unknown): SpacepokerHand {

@@ -629,12 +629,10 @@ pub fn test_peer_smoke() {
                 &mut peers[1],
                 &mut env,
                 &[GameProposal {
-                    player_a_contribution: Amount::new(100),
-                    player_b_contribution: Amount::new(100),
                     sender_is_player_a: true,
                     game_type: calpoker_type,
                     timeout: Timeout::new(15),
-                    parameters: ProposalParameters::Null,
+                    parameters: ProposalParameters::Integer(100),
                 }],
             )
             .expect("should run");

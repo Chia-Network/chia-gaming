@@ -132,14 +132,14 @@ between the key and protocol ID at the WASM boundary.
 
 ## Step 2: Implement the CLVM rules
 
-The factory is invoked once with this exact proper list:
+The factory is invoked at acceptance with this exact proper list:
 
 ```clojure
-(player_a_contribution player_b_contribution game_parameters)
+(proposer_reserve accepter_reserve game_parameters)
 ```
 
 It returns the game or games that the peers will run. It must be deterministic:
-both peers run the same factory with the same A/B contributions and parameters
+both peers run the same factory with the same current reserves and parameters
 and must get the same result.
 
 Most factories create one game. A factory may create several games that must
@@ -160,21 +160,21 @@ Module paths start at a repository include root, so package modules use names
 such as `games.<key>.clsp.<module>`. The factory implementation may live in a
 `.clinc` module so handlers and tests can import the same definitions.
 
-The result is a nonempty proper list. Every member is a proper list with exactly
-these 10 fields:
+Success is `(1 records)`, where `records` is nonempty and every member has
+exactly these 11 fields:
 
 ```clojure
-(player_a_contribution player_b_contribution player_a_goes_first initial_move
+(proposer_contribution accepter_contribution proposer_goes_first initial_move
  initial_max_move_size initial_state initial_mover_share my_turn_handler
- their_turn_handler validation_programs)
+ their_turn_handler validation_programs readable_parameters)
 ```
 
 The fields mean:
 
 | Field | Required value |
 | --- | --- |
-| `player_a_contribution`, `player_b_contribution` | Factory-approved mojo contributions for this member. |
-| `player_a_goes_first` | Canonical nil or `1`. |
+| `proposer_contribution`, `accepter_contribution` | Factory-approved mojo contributions for this member. |
+| `proposer_goes_first` | Canonical nil or `1`. |
 | `initial_move` | The first committed move as a CLVM atom; use nil when there is no pre-existing move. |
 | `initial_max_move_size` | Maximum byte length accepted for that move. |
 | `initial_state` | Initial validator state; normally canonical nil, or another CLVM value when the first transition genuinely needs pre-existing state. |
@@ -182,10 +182,12 @@ The fields mean:
 | `my_turn_handler` | Off-chain program for the player who starts. |
 | `their_turn_handler` | Off-chain program for the waiting player. |
 | `validation_programs` | Proper, nonempty list of all validator programs. The first is initially current; later order is irrelevant because programs are selected by tree hash. |
+| `readable_parameters` | Opaque per-member CLVM initialization value reported to the host. |
 
 The handler fields are program values, not names. Curry secrets or
-role-specific data into them when needed. California Poker validates equal
-positive contributions and nil parameters, then emits one record:
+role-specific data into them when needed. California Poker validates a positive
+requested stake, reports reserve shortages without raising, and emits one
+record on success:
 
 ```clojure
 (import games.calpoker.clsp.onchain.a exposing (program as pokera))
@@ -199,19 +201,22 @@ positive contributions and nil parameters, then emits one record:
 (import std.deep_compare)
 
 (defun calpoker_factory
-    (@ _args (player_a_contribution player_b_contribution game_parameters))
+    (@ _args (proposer_reserve accepter_reserve requested_stake))
     (assert
-        (> player_a_contribution 0)
-        (= player_a_contribution player_b_contribution)
-        (not game_parameters)
-        (deep= _args (li player_a_contribution player_b_contribution game_parameters))
-        (li
-            (li player_a_contribution player_b_contribution 1
-                0 32 0 0
-                calpoker_alice_handler_a
-                calpoker_bob_handler_a
-                (li pokera pokerb pokerc pokerd pokere)
-            )
+        (> requested_stake 0)
+        (if (or (> requested_stake proposer_reserve)
+                (> requested_stake accepter_reserve))
+            (li 0
+                (> requested_stake proposer_reserve)
+                (> requested_stake accepter_reserve))
+            (li 1
+                (li
+                    (li requested_stake requested_stake 1
+                        0 32 0 0
+                        calpoker_alice_handler_a
+                        calpoker_bob_handler_a
+                        (li pokera pokerb pokerc pokerd pokere)
+                        requested_stake)))
         )
     )
 )
@@ -223,14 +228,15 @@ user-facing check. See the complete
 [`calpoker_generate.clinc`](games/calpoker/clsp/calpoker_generate.clinc) for
 handler currying and the remaining move sequence.
 
-The proposal sender is mapped to A or B once by the proposal-wide
+The proposer is mapped to A or B once by the proposal-wide
 `senderIsPlayerA`/`sender_is_player_a` value. Rust uses that mapping to project
-A/B contributions and turns into each peer's local perspective; it does not
+A/B contributions and turns from proposal-relative records into each peer's
+local perspective; it does not
 reinterpret or reorder factory members. Krunk always returns two members in
 fixed order: member 0 has player A first and member 1 has player B first.
 
-Return each player's contribution separately; the host derives the total
-amount. Return every validator program in field 9's proper, nonempty registry;
+Return proposer and accepter contributions separately; the host derives the
+total amount. Return every validator program in field 9's proper, nonempty registry;
 the host derives their tree hashes. Its first program is initially current and
 later programs are resolved by tree hash, independent of list order. The first
 member's first-validator hash is the package's protocol identity. See
@@ -408,17 +414,17 @@ nil-move, evidence, and conditional-slash examples,
 
 Add `games/<key>/clsp/factory_probe.clsp`, a no-argument Chialisp program that
 returns one representative valid complete factory argument list: contributions
-for A and B followed by the game parameters. Calpoker's current probe is:
+for the proposer and accepter reserves followed by the game parameters.
+Calpoker's current probe is:
 
 ```clojure
 (include *standard-cl-23*)
 
-(export () (list 1 1 ()))
+(export () (list 1 1 1))
 ```
 
-The final `()` is Calpoker's nil parameter value; it is not an omitted
-argument. Krunk uses `(list 100 100 ())`, while Space Poker supplies its positive
-integer bet unit as the third item. The build compiles both files, curries any
+Krunk uses `(list 100 100 100)`, while Space Poker uses
+`(list 1 1 (list 1 1))`. The build compiles both files, curries any
 `factory_args.clvm.bin` into the factory, and runs the probe against that
 prepared factory. It records the first returned game's first validation-program
 hash as the protocol ID and emits one prepared binary factory for
@@ -492,12 +498,11 @@ mounted form state → typed package parameters → opaque HandProposal
 Keeping these representations separate makes each boundary clear:
 
 - The mounted React form owns temporary controls and validation presentation.
-- Its imperative handle returns sender/receiver contributions plus typed,
-  package-owned parameters.
+- Its imperative handle returns typed, package-owned parameters.
 - The host immediately encodes those parameters to `ProposalParameterValue` and
   constructs the final `HandProposal`, which contains catalog `gameType`,
-  player-A/player-B contributions, sender orientation, timeout, and the exact
-  opaque Bencodex value. Rust is the semantic authority for the factory input.
+  sender orientation, timeout, and the exact opaque Bencodex value. Rust runs
+  the factory against current reserves at acceptance.
 
 Implement the React form in `handProposalForm.tsx` with `forwardRef`. It owns
 its editable state and exposes `GameProposalFormHandle<TParams>`. Export it as:
@@ -515,12 +520,7 @@ export const HandProposalForm = forwardRef<
   useImperativeHandle(ref, () => ({
     getProposal: () =>
       amount > 0n && (maxPerHandMojos === null || amount <= maxPerHandMojos)
-        ? {
-            ok: true,
-            senderContribution: amount,
-            receiverContribution: amount,
-            parameters: {} as MyParams,
-          }
+        ? { ok: true, parameters: { requestedStake: amount } as MyParams }
         : { ok: false, error: 'Enter a positive affordable stake.' },
   }));
   return (
@@ -545,8 +545,6 @@ interface HandProposalFormProps<TParams> {
   maxPerHandMojos: bigint | null;
   defaultContribution: bigint;
   initialValues: {
-    senderContribution: bigint;
-    receiverContribution: bigint;
     parameters: TParams;
   } | null;
   onSubmit: () => void;
@@ -572,19 +570,17 @@ remaining fields, including `onSubmit`, are ordinary props.
   in mojos. `null` means the host cannot provide a balance-derived limit; it
   does not make an otherwise invalid draft valid.
 - `defaultContribution` seeds a fresh mounted form. `initialValues` may seed a
-  counter/retry form. Its parameters are already decoded to `TParams`, and its
-  contributions are oriented to the proposal being composed now: `sender` is
-  the local proposer and `receiver` is the peer, regardless of who proposed the
-  previous hand. These values initialize local `useState` when the form mounts;
+  counter/retry form. Its parameters are already decoded to `TParams`. These
+  values initialize local `useState` when the form mounts;
   they do not continuously overwrite edits if the parent later rerenders.
 - `onSubmit()` asks the host to call the active handle. `getProposal()` returns
-  either `{ ok: true, senderContribution, receiverContribution, parameters }`
+  either `{ ok: true, parameters }`
   or `{ ok: false, error }`. The form displays its own validation error.
 
-The result uses the same orientation: `senderContribution` is what the local
-proposer commits and `receiverContribution` is what the accepting peer commits.
-The host maps those values to stable factory player A/B fields and supplies the
-proposal-wide sender-orientation bit. Games never inspect that bit.
+The parameters request economics but do not reserve balances. The acceptance
+factory receives proposer/accepter reserves, and Rust maps approved
+proposal-relative results to stable player A/B using the proposal-wide
+sender-orientation bit.
 
 The host owns the game selector and `gameTimeout`; they are deliberately absent
 from this interface. The game form owns only game-specific draft fields. A form
@@ -615,15 +611,14 @@ typed parameter codec. `describeHandProposal` decodes
 cannot project the Rust-approved value. `handProposal.ts` must default-export
 this object because the generated registry imports that default.
 
-California Poker has no game-specific proposal parameter, so its complete
-codec and registration are small:
+California Poker stores its requested per-player stake directly in parameters:
 
 ```ts
-type CalpokerFactoryParameters = Record<string, never>;
+type CalpokerFactoryParameters = bigint;
 
 const proposalParameters: ProposalParameterCodec<CalpokerFactoryParameters> = {
-  decode: (value) => (value === null ? {} : null),
-  encode: () => null,
+  decode: (value) => (typeof value === 'bigint' && value > 0n ? value : null),
+  encode: (value) => value,
 };
 
 const registration: GamePackageRegistration<
@@ -636,10 +631,11 @@ const registration: GamePackageRegistration<
   restoreHand: restoreCalpokerHand,
   proposalParameters,
   describeHandProposal(proposal) {
-    if (proposalParameters.decode(proposal.parameters) === null) {
+    const stake = proposalParameters.decode(proposal.parameters);
+    if (stake === null) {
       throw new Error('California Poker proposal parameters are invalid');
     }
-    return `Stake ${proposal.playerAContribution} mojos each`;
+    return `Stake ${stake} mojos each`;
   },
 };
 

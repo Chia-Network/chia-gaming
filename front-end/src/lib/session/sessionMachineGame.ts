@@ -140,32 +140,31 @@ export function reduceDurableGameEvent(
     case 'notification-accepted-group': {
       const firstMember = event.members[0];
       if (!firstMember) throw new Error('ProposalAcceptedGroup has no members');
-      const proposal = selectProposalGroupByMemberId(state.model, firstMember.id);
+      const proposal = selectProposalGroupByMemberId(state.model, event.proposalId);
       if (!proposal) {
         throw new Error(
-          `ProposalAcceptedGroup ${firstMember.id} missing normalized proposal group`,
+          `ProposalAcceptedGroup ${event.proposalId} missing normalized proposal group`,
         );
       }
       const acceptedIds = event.members.map((member) => member.id);
-      if (
-        acceptedIds.length !== proposal.memberIds.length ||
-        acceptedIds.some((id, index) => id !== proposal.memberIds[index])
-      ) {
-        throw new Error('ProposalAcceptedGroup members do not match normalized proposal order');
-      }
       const first =
-        state.model.game.currentHandIds.length !== proposal.memberIds.length ||
-        state.model.game.currentHandIds.some((id, index) => id !== proposal.memberIds[index]);
-      const acceptedGroup = { ...proposal, disposition: 'accepted' as const };
+        state.model.game.currentHandIds.length !== acceptedIds.length ||
+        state.model.game.currentHandIds.some((id, index) => id !== acceptedIds[index]);
+      const acceptedGroup = {
+        ...proposal,
+        primaryId: acceptedIds[0]!,
+        memberIds: acceptedIds,
+        disposition: 'accepted' as const,
+      };
       const proposalGroups = [
         ...state.model.betweenHand.proposalGroups.filter(
-          (group) => !group.memberIds.some((id) => acceptedGroup.memberIds.includes(id)),
+          (group) => group.primaryId !== proposal.primaryId,
         ),
         acceptedGroup,
       ];
       const game = gameSliceReducer(gameSliceFromModel(state.model), {
         type: 'accepted-group',
-        groupIds: proposal.memberIds,
+        groupIds: acceptedIds,
         members: event.members.map((member) => ({
           amount: (member.playerAContribution + member.playerBContribution).toString(),
           startTurn: member.ourTurn ? 'my-turn' : 'their-turn',
@@ -209,11 +208,11 @@ export function reduceDurableGameEvent(
       };
       if (!first) return { state: initialized, effects: [] };
       const init: GameHandInitialization = {
-        parameters: proposal.handProposal.parameters,
         members: event.members.map((member) => ({
           playerAContribution: member.playerAContribution,
           playerBContribution: member.playerBContribution,
           ourTurn: member.ourTurn,
+          readableParameters: Program.deserialize(member.readableParameters),
         })),
       };
       const handState =

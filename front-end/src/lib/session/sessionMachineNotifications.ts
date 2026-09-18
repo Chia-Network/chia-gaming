@@ -283,6 +283,9 @@ export function reduceSessionNotification(
     if (!Array.isArray(accepted.members) || accepted.members.length === 0) {
       throw new Error('ProposalAcceptedGroup missing members');
     }
+    if (accepted.id == null) {
+      throw new Error('ProposalAcceptedGroup missing proposal id');
+    }
     const members = accepted.members.map((member) => {
       const id = String(member.id);
       const playerAContribution = parseAmount(member.player_a_contribution);
@@ -293,7 +296,16 @@ export function reduceSessionNotification(
       if (typeof member.our_turn !== 'boolean') {
         throw new Error(`ProposalAcceptedGroup ${id} missing Rust turn authority`);
       }
-      return { id, playerAContribution, playerBContribution, ourTurn: member.our_turn };
+      if (!(member.readable_parameters instanceof Uint8Array)) {
+        throw new Error(`ProposalAcceptedGroup ${id} missing readable parameters`);
+      }
+      return {
+        id,
+        playerAContribution,
+        playerBContribution,
+        ourTurn: member.our_turn,
+        readableParameters: member.readable_parameters,
+      };
     });
     if (new Set(members.map((member) => member.id)).size !== members.length) {
       throw new Error('ProposalAcceptedGroup contains duplicate member IDs');
@@ -302,6 +314,7 @@ export function reduceSessionNotification(
     const previousHandIds = current.model.game.currentHandIds;
     step({
       type: 'notification-accepted-group',
+      proposalId: String(accepted.id),
       members,
     });
     step({ type: 'remove-game-notifications', kind: 'proposal-rejected' });

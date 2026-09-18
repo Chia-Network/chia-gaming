@@ -32,11 +32,9 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
   const adapters = await createActivePair(poller, 5);
   const handProposal: HandProposal = {
     gameType: 'calpoker',
-    playerAContribution: 20n,
-    playerBContribution: 20n,
     senderIsPlayerA: false,
     gameTimeout: 15n,
-    parameters: null,
+    parameters: 20n,
   };
   const lanes = adapters.map((adapter) => {
     const controller = adapter.blob!;
@@ -189,7 +187,6 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       .getState()
       .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
     assert.ok(review, 'Calpoker reload receiver must observe the real proposal');
-    const gameId = review.memberIds[0];
 
     const incomingReviewCheckpoint = structuredClone(lanes[1].runtime.getState().model.betweenHand);
     lanes[1] = (await injectSessionReload(lanes[1], poller)).lane;
@@ -200,6 +197,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
     );
     lanes[1].runtime.dispatch({ type: 'accept-review', primaryId: review.primaryId });
     await exchange();
+    const gameId = lanes[0].runtime.getState().model.game.currentHandIds[0]!;
 
     const openingCheckpoints = [
       await reloadAt(0, 'move 0 opening player 0', 0n),
@@ -207,13 +205,13 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
     ];
     assert.deepEqual(
       [hand(0).isPlayerTurn, hand(1).isPlayerTurn],
-      [false, true],
+      [true, false],
       'move 0 restore must preserve the opening turn',
     );
     remountHooks();
-    assert.deepEqual(submittedMoves, [0, 1], 'only the opening mover may autofire after restore');
+    assert.deepEqual(submittedMoves, [1, 0], 'only the opening mover may autofire after restore');
     remountHooks();
-    assert.deepEqual(submittedMoves, [0, 1], 'opening autofire must not duplicate after remount');
+    assert.deepEqual(submittedMoves, [1, 0], 'opening autofire must not duplicate after remount');
     await exchange();
     renderHooks();
     assert.deepEqual(submittedMoves, [1, 1], 'the peer must autofire exactly one opening move');
@@ -227,31 +225,31 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       [1n, 1n],
       'both players must naturally reach selection',
     );
-    assert.equal(hand(1).isPlayerTurn, true, 'Alice must select first');
+    assert.equal(hand(0).isPlayerTurn, true, 'Bob must select first');
     const selectionCheckpoints = [
       await reloadAt(0, 'move 1 selection player 0', 1n),
       await reloadAt(1, 'move 1 selection player 1', 1n),
     ];
     remountHooks();
     assert.deepEqual(submittedMoves, [1, 1], 'selection restore must not autofire without input');
-    act(() => hookHands[1]!.setCardSelections(hand(1).playerHand.slice(0, 4)));
-    renderHooks();
-    act(() => hookHands[1]!.handleMakeMove());
-    recordStages();
-    assert.equal(hand(1).moveNumber, 2n, 'Alice selection must durably project move 2');
-
-    const alicePostSelection = await reloadAt(1, 'move 2 post-selection player 1', 2n);
-    remountHooks();
-    assert.deepEqual(submittedMoves, [1, 2], 'post-selection restore must not duplicate the move');
-    await exchange();
-    renderHooks();
-    assert.equal(hand(0).isPlayerTurn, true, 'Bob must receive the selection turn');
     act(() => hookHands[0]!.setCardSelections(hand(0).playerHand.slice(0, 4)));
     renderHooks();
     act(() => hookHands[0]!.handleMakeMove());
     recordStages();
     assert.equal(hand(0).moveNumber, 2n, 'Bob selection must durably project move 2');
+
     const bobPostSelection = await reloadAt(0, 'move 2 post-selection player 0', 2n);
+    remountHooks();
+    assert.deepEqual(submittedMoves, [2, 1], 'post-selection restore must not duplicate the move');
+    await exchange();
+    renderHooks();
+    assert.equal(hand(1).isPlayerTurn, true, 'Alice must receive the selection turn');
+    act(() => hookHands[1]!.setCardSelections(hand(1).playerHand.slice(0, 4)));
+    renderHooks();
+    act(() => hookHands[1]!.handleMakeMove());
+    recordStages();
+    assert.equal(hand(1).moveNumber, 2n, 'Alice selection must durably project move 2');
+    const alicePostSelection = await reloadAt(1, 'move 2 post-selection player 1', 2n);
     remountHooks();
     assert.deepEqual(
       submittedMoves,
@@ -262,28 +260,28 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
     selectionCheckpoints.forEach((checkpoint, index) =>
       assertAdvanced(index, checkpoint, `move 1 selection player ${index}`),
     );
-    assertAdvanced(1, alicePostSelection, 'move 2 post-selection player 1');
+    assertAdvanced(0, bobPostSelection, 'move 2 post-selection player 0');
 
-    assert.ok(hand(1).outcome, 'Alice must naturally reach the final projection');
-    assert.equal(hand(1).moveNumber, 2n, 'final projection must retain the submitted stage');
-    const beforeFinalAutofire = submittedMoves[1];
-    const finalProjection = await reloadAt(1, 'final projection player 1', 2n);
-    assert.ok(hand(1).outcome, 'final projection must survive reload');
+    assert.ok(hand(0).outcome, 'Bob must naturally reach the final projection');
+    assert.equal(hand(0).moveNumber, 2n, 'final projection must retain the submitted stage');
+    const beforeFinalAutofire = submittedMoves[0];
+    const finalProjection = await reloadAt(0, 'final projection player 0', 2n);
+    assert.ok(hand(0).outcome, 'final projection must survive reload');
     remountHooks();
     assert.equal(
-      submittedMoves[1],
+      submittedMoves[0],
       beforeFinalAutofire + 1,
       'restored final projection must autofire exactly once',
     );
     remountHooks();
     assert.equal(
-      submittedMoves[1],
+      submittedMoves[0],
       beforeFinalAutofire + 1,
       'terminal autofire must not duplicate after remount',
     );
     await exchange();
-    assertAdvanced(0, bobPostSelection, 'move 2 post-selection player 0');
-    assertAdvanced(1, finalProjection, 'final projection player 1');
+    assertAdvanced(1, alicePostSelection, 'move 2 post-selection player 1');
+    assertAdvanced(0, finalProjection, 'final projection player 0');
 
     for (const [index, lane] of lanes.entries()) {
       const game = lane.runtime.getState().model.game;
@@ -296,7 +294,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       await reloadAt(1, 'terminal player 1'),
     ];
     remountHooks();
-    assert.deepEqual(submittedMoves, [2, 3], 'terminal restore must not submit another move');
+    assert.deepEqual(submittedMoves, [3, 2], 'terminal restore must not submit another move');
 
     const firstHandKeys = lanes.map((lane) => lane.runtime.getState().model.game.handKey);
     lanes[0].runtime.dispatch({ type: 'choose-same-terms' });
@@ -305,9 +303,9 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       .getState()
       .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
     assert.ok(secondProposal, 'terminal reload must advance to a cached same-terms proposal');
-    const secondGameId = secondProposal.memberIds[0];
     lanes[1].runtime.dispatch({ type: 'choose-same-terms' });
     await exchange();
+    const secondGameId = lanes[0].runtime.getState().model.game.currentHandIds[0]!;
     terminalCheckpoints.forEach((checkpoint, index) =>
       assertAdvanced(index, checkpoint, `terminal player ${index}`),
     );
@@ -331,9 +329,9 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       await reloadAt(1, 'terminal to same-terms startup player 1', 0n),
     ];
     remountHooks();
-    assert.deepEqual(submittedMoves, [2, 4], 'next-hand opening must autofire exactly once');
+    assert.deepEqual(submittedMoves, [4, 2], 'next-hand opening must autofire exactly once');
     remountHooks();
-    assert.deepEqual(submittedMoves, [2, 4], 'next-hand opening autofire must not duplicate');
+    assert.deepEqual(submittedMoves, [4, 2], 'next-hand opening autofire must not duplicate');
     await exchange();
     renderHooks();
     await exchange();

@@ -308,8 +308,8 @@ Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
 state — any failure is a protocol violation by the peer, not a benign race.
 
-The sender is responsible for ordering actions correctly (e.g., game acceptances
-before proposal acceptances to ensure funds are available).
+The sender is responsible for ordering actions correctly. Proposal acceptances
+run in batch order against the balances left by earlier actions.
 
 Only one move per game is allowed per batch, enforced by the existing turn-taking
 rules (you can't move on your opponent's turn).
@@ -786,7 +786,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `OffChainPhase`                 | `session_phases/mod.rs`                        | Turn-taking protocol over the wire                                                                           |
 | `OnChainPhase`            | `session_phases/on_chain.rs`                   | Drives on-chain dispute flow                                                                                 |
 | `LiveGame`                      | `channel_state/types/live_game.rs`           | Wraps referee for a single active game                                                                       |
-| `ProposedGame`                  | `channel_state/types/proposed_game.rs`       | One pending member of a factory-derived atomic group stored in `proposed_games` |
+| `ProposedGame`                  | `channel_state/types/proposed_game.rs`       | Lightweight pending terms plus local-handle/origin-wire-ID mapping; members are created at acceptance |
 | `UnrollCoin`                    | `channel_state/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
 | `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
 | `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |

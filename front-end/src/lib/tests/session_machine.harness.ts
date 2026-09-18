@@ -5,20 +5,16 @@ import type { HandProposal, ProposalGroupOrigin } from '../session/types';
 
 export const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
-  playerAContribution: 10n,
-  playerBContribution: 10n,
   senderIsPlayerA: false,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 10n,
 };
 
 export const KRUNK_TERMS = {
   gameType: 'krunk' as const,
-  playerAContribution: 100n,
-  playerBContribution: 100n,
   senderIsPlayerA: true,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 100n,
 };
 
 export function send(

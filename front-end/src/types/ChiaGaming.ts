@@ -137,8 +137,6 @@ export interface ProposeGameParams {
   /** First generated member's initial validation puzzle hash (32-byte hex). */
   game_type: ProtocolGameId;
   timeout: bigint;
-  player_a_contribution: bigint;
-  player_b_contribution: bigint;
   sender_is_player_a: boolean;
   parameters: ProposalParameterValue;
 }

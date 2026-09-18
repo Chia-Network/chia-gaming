@@ -1,6 +1,5 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
 import { handProposalsEqual } from '../gameRegistry';
-import { proposalContributionForOrigin } from './proposalOrigin';
 import { selectProposalGroupByDisposition } from './selectors';
 import type {
   SessionMachineEvent,
@@ -17,15 +16,6 @@ type CommandEvent = Extract<
   | { type: 'accept-review' }
   | { type: 'reject-review' }
 >;
-
-function canCover(balance: string | null, amount: bigint): boolean {
-  if (balance == null) return true;
-  try {
-    return BigInt(balance) >= amount;
-  } catch {
-    return true;
-  }
-}
 
 export function reduceSessionCommand(
   state: SessionMachineState,
@@ -83,36 +73,6 @@ export function reduceSessionCommand(
               ...state.model,
               betweenHand: { ...betweenHand, mode: 'compose-proposal' },
             },
-          },
-          effects: [{ type: 'persist-session' }],
-        };
-      }
-      const enough =
-        canCover(
-          state.model.channel.status.ourBalance,
-          proposalContributionForOrigin(terms, state.model.game.currentHandOrigin ?? 'local'),
-        ) &&
-        canCover(
-          state.model.channel.status.theirBalance,
-          proposalContributionForOrigin(
-            terms,
-            state.model.game.currentHandOrigin === 'local' ? 'peer' : 'local',
-          ),
-        );
-      if (!enough) {
-        return {
-          state: {
-            ...state,
-            model: {
-              ...state.model,
-              betweenHand: {
-                ...betweenHand,
-                compose: applyHandProposalToComposeDraft(betweenHand.compose, terms),
-                mode: 'compose-proposal',
-                newHandRequested: false,
-              },
-            },
-            coordination: { ...state.coordination, sameTermsRequested: false },
           },
           effects: [{ type: 'persist-session' }],
         };

@@ -780,29 +780,15 @@ AcceptSettlement (`AS`):
 ProposeGroup(WireProposalGroup)
 
 WireProposalGroup {
-  start: GameProposal,
-  members: List<WireGameSpec>
+  origin_wire_id: GameID,
+  start: GameProposal
 }
 
 GameProposal {
-  player_a_contribution: Amount,
-  player_b_contribution: Amount,
   sender_is_player_a: Bool,
   game_type: GameType,
   timeout: Timeout,
   parameters: ProposalParameters
-}
-
-WireGameSpec {
-  game_id: GameID,
-  player_a_contribution: Amount,
-  player_b_contribution: Amount,
-  player_a_goes_first: Bool,
-  initial_validation_program_hash: Hash,
-  initial_validation_info_hash: Hash,
-  initial_move: Bytes,
-  initial_max_move_size: u32,
-  initial_mover_share: Amount
 }
 ```
 
@@ -817,30 +803,27 @@ Dictionaries are not valid proposal parameters.
 `game_type` is the first generated member's initial validation program hash.
 It is not a package name or factory hash.
 
-The receiver runs its locally registered factory using `start.parameters`,
-checks that the generated group agrees with `members`, and stores the proposals
-as one atomic group. The first member's `game_id` is the canonical group ID.
+The receiver stores the requested terms under an endpoint-local proposal
+handle. It does not run the factory or create game members at proposal time.
+Local handles need not equal `origin_wire_id`.
 
 Pending proposals are metadata. They do not alter balances or the signed
 unroll commitment until accepted.
 
-At most 100 individual proposed games may be outstanding. Attempting to add
+At most 100 proposals may be outstanding. Attempting to add
 another after the limit is reached is a hard batch error.
 
-If the game type is unknown or the local factory rejects the parameters, the
-current receiver logs a soft decline and does not store the proposal. It may
-still accept the batch and potato transfer because an unaccepted proposal is
-not part of the signed channel commitment. Structural disagreement between a
-successful local factory result and `members` is a hard batch error.
+If the game type is unknown, the current receiver logs a soft decline and does
+not retain the proposal. Parameter decoding belongs to the factory and is
+deferred until acceptance.
 
 Receiving a proposal group supersedes locally queued, not-yet-sent proposal
 groups. Any queued clean-shutdown action is also removed when a batch contains
 a proposal or proposal acceptance.
 
-Game IDs use role parity: the initiator allocates even IDs and the receiver
-allocates odd IDs. Received IDs must have the peer's parity, must not move
-backwards, and must be no more than 1,000 above the receiver's minimum expected
-nonce.
+Origin proposal IDs use role parity and a strict next-by-two sequence; gaps,
+reuse, and wrong parity are hard errors. Accepted game IDs use a separate
+shared sequential counter.
 
 ### 11.2 `AcceptProposalGroup`
 
@@ -848,13 +831,15 @@ nonce.
 AcceptProposalGroup(GameID)
 ```
 
-The ID must be the canonical group ID: the first member of a complete pending
-group. The receiver accepts every member in factory insertion order. Acceptance
-allocates each member's contributions, creates live games, and makes those
-games part of the signed final channel state.
+The ID is the origin proposal ID. At this exact position in batch order, both
+peers run the registered factory with
+`(proposer_reserve accepter_reserve parameters)`. Each factory member receives
+the next shared game ID, its contributions are allocated immediately, and it
+becomes part of the signed final channel state. Game IDs are not transmitted.
 
-An unknown, non-canonical, incomplete, or unaffordable group is a hard batch
-error.
+An unknown, self-origin-mismatched, malformed, or unaffordable acceptance is a
+hard received-batch error. Local unaffordability instead emits
+`InsufficientBalance` and sends `CancelProposalGroup`.
 
 ### 11.3 `CancelProposalGroup`
 
@@ -862,11 +847,11 @@ error.
 CancelProposalGroup(GameID)
 ```
 
-The ID must be the canonical first member of a pending group. The receiver
-removes every group member. Cancellation changes proposal metadata but does not
-change balances or the unroll commitment.
+The ID is the origin proposal ID. The receiver removes that pending proposal.
+Cancellation changes proposal metadata but does not change balances or the
+unroll commitment.
 
-An unknown or non-canonical group is a hard batch error.
+An unknown proposal is a hard batch error.
 
 ### 11.4 `Move`
 

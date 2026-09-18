@@ -6,7 +6,6 @@ import type {
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { PersistedGameState } from '@games/host';
-import { proposalContributionForOrigin } from './proposalOrigin';
 import {
   DEFAULT_GAME_COIN_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
@@ -701,17 +700,11 @@ export interface GameSessionViewModel {
 
 export function selectGameSessionView(model: SessionModel): GameSessionViewModel {
   const displayed = selectDisplayedGameInstance(model);
-  const lastProposal = model.betweenHand.lastHandProposal;
   return {
     channelStatus: model.channel.status,
     gameCoin: displayed?.coin ?? DEFAULT_GAME_COIN_MODEL,
     gameTerminal: displayed?.terminal ?? INITIAL_GAME_TERMINAL_MODEL,
-    currentHandAmount:
-      lastProposal === null
-        ? 0n
-        : model.game.currentHandOrigin
-          ? proposalContributionForOrigin(lastProposal, model.game.currentHandOrigin)
-          : lastProposal.playerAContribution,
+    currentHandAmount: displayed ? BigInt(displayed.amount) : 0n,
     activeGameId: model.game.activeIds[0] ?? null,
     activeGameIds: model.game.activeIds,
     activeGameType: model.game.activeGameType,

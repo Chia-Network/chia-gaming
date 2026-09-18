@@ -1,4 +1,5 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
+import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import type { NeedCoinSpendRequest, WasmResult } from '../../types/ChiaGaming';
 import { requireWasmResult } from '../../types/ChiaGaming';
@@ -507,18 +508,21 @@ describe('active game tracking', () => {
           {
             Notification: {
               ProposalAcceptedGroup: {
+                id: 1n,
                 members: [
                   {
                     id: '1',
                     player_a_contribution: '100',
                     player_b_contribution: '0',
                     our_turn: true,
+                    readable_parameters: Program.fromBigInt(100n).serialize(),
                   },
                   {
                     id: '3',
                     player_a_contribution: '0',
                     player_b_contribution: '100',
                     our_turn: false,
+                    readable_parameters: Program.fromBigInt(100n).serialize(),
                   },
                 ],
               },

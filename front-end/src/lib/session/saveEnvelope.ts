@@ -85,8 +85,6 @@ export interface SavedGameInstance {
 }
 
 interface SavedHandProposalBase {
-  player_a_contribution: string;
-  player_b_contribution: string;
   sender_is_player_a: boolean;
   game_timeout: string;
 }

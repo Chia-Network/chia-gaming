@@ -145,8 +145,6 @@ export type ProposalParameterValue =
 export interface ProposalMadePayload {
   id: bigint;
   group_ids: bigint[];
-  player_a_contribution: unknown;
-  player_b_contribution: unknown;
   sender_is_player_a: unknown;
   timeout: unknown;
   game_type: unknown;
@@ -158,9 +156,11 @@ export interface AcceptedGameMember {
   player_a_contribution: unknown;
   player_b_contribution: unknown;
   our_turn: boolean;
+  readable_parameters: Uint8Array;
 }
 
 export interface ProposalAcceptedGroupPayload {
+  id: bigint;
   members: AcceptedGameMember[];
 }
 

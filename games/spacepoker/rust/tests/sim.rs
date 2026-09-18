@@ -106,7 +106,7 @@ mod sim_tests {
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
                 SimScriptAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
             let num_moves = moves.len();
             let result = run_spacepoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -133,13 +133,13 @@ mod sim_tests {
                     SimScriptAction::AcceptProposal(1, GameID(1)),
                 ];
                 moves.extend(
-                    prefix_test_moves(&mut allocator, GameID(1))
+                    prefix_test_moves(&mut allocator, GameID(0))
                         .into_iter()
                         .take(3),
                 );
                 moves.push(SimScriptAction::GoOnChain(1));
                 moves.push(SimScriptAction::WaitBlocks(6, 0));
-                moves.push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+                moves.push(SimScriptAction::AcceptSettlement(1, GameID(0)));
                 moves.push(SimScriptAction::WaitBlocks(20, 0));
                 moves.push(SimScriptAction::WaitBlocks(5, 1));
 
@@ -158,7 +158,7 @@ mod sim_tests {
                         matches!(
                             notification,
                             GameNotification::GameStatus {
-                                id: GameID(1),
+                                id: GameID(0),
                                 status: GameStatusKind::FinishingWaitingTimeout,
                                 other_params: Some(params),
                                 ..
@@ -175,7 +175,7 @@ mod sim_tests {
                         .any(|notification| matches!(
                             notification,
                             GameNotification::GameStatus {
-                                id: GameID(1),
+                                id: GameID(0),
                                 status: GameStatusKind::PlayingMove,
                                 ..
                             }
@@ -186,7 +186,7 @@ mod sim_tests {
                     accepter.iter().any(|notification| matches!(
                         notification,
                         GameNotification::GameSettled {
-                            id: GameID(1),
+                            id: GameID(0),
                             outcome: SettlementOutcome::WeAccepted,
                             ..
                         }
@@ -197,7 +197,7 @@ mod sim_tests {
                     winner.iter().any(|notification| matches!(
                         notification,
                         GameNotification::GameSettled {
-                            id: GameID(1),
+                            id: GameID(0),
                             outcome: SettlementOutcome::OpponentTimedOut,
                             ..
                         }
@@ -213,7 +213,7 @@ mod sim_tests {
             let move_for = |player| {
                 SimScriptAction::Move(
                     player,
-                    GameID(1),
+                    GameID(0),
                     ReadableMove::from_program(Rc::new(nil_move.clone())),
                     true,
                 )
@@ -249,7 +249,7 @@ mod sim_tests {
                 bob.iter().any(|notification| matches!(
                     notification,
                     GameNotification::GameSettled {
-                        id: GameID(1),
+                        id: GameID(0),
                         outcome: SettlementOutcome::SettledCleanly,
                         ..
                     }
@@ -260,7 +260,7 @@ mod sim_tests {
                 !bob.iter().any(|notification| matches!(
                     notification,
                     GameNotification::GameSettled {
-                        id: GameID(1),
+                        id: GameID(0),
                         outcome: SettlementOutcome::ForfeitedSkippedReveal,
                         ..
                     }

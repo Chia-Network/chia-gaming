@@ -27,12 +27,10 @@ use crate::shutdown::{complete_shutdown_spend, get_conditions_with_channel_state
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::types::{
     validate_new_move_action, BatchAction, FromLocalUI, GameAction, PeerMessage, PeerMove,
-    PotatoState, WireGameSpec, WireProposalGroup,
+    PotatoState, WireProposalGroup,
 };
 
 use crate::session_phases::proposal::GameProposal;
-#[cfg(test)]
-use crate::session_phases::proposal::ProposalParameters;
 
 pub mod effects;
 pub mod game_collection;
@@ -134,14 +132,22 @@ struct DrainQueueFailure {
     source: Error,
 }
 
+enum AcceptanceOutcome {
+    Accepted(Vec<AcceptedGameMember>),
+    Insufficient {
+        local_id: GameID,
+        origin_wire_id: GameID,
+        our_balance_short: bool,
+        their_balance_short: bool,
+    },
+}
+
 fn format_batch_action(action: &BatchAction) -> String {
     match action {
         BatchAction::ProposeGroup(group) => {
             format!(
-                "ProposeGroup ids={:?} type={} timeout={}",
-                group.members.iter().map(|m| m.game_id).collect::<Vec<_>>(),
-                group.start.game_type,
-                group.start.timeout,
+                "ProposeGroup wire_id={} type={} timeout={}",
+                group.origin_wire_id, group.start.game_type, group.start.timeout,
             )
         }
         BatchAction::AcceptProposalGroup(id) => format!("AcceptProposalGroup id={id}"),
@@ -160,32 +166,6 @@ fn peer_move_from_result(move_result: MoveResult) -> Result<PeerMove, Error> {
         move_made: move_result.game_move.basic.move_made,
         mover_share: move_result.game_move.basic.mover_share,
     })
-}
-
-fn validate_wire_group_structure(
-    wire: &WireProposalGroup,
-    expected_members: usize,
-) -> Result<Vec<GameID>, Error> {
-    if wire.members.len() != expected_members {
-        return Err(Error::StrErr(format!(
-            "proposal group has {} members but factory returned {expected_members}",
-            wire.members.len()
-        )));
-    }
-    if wire.members.is_empty() {
-        return Err(Error::StrErr("proposal group is empty".to_string()));
-    }
-    let ids: Vec<GameID> = wire.members.iter().map(|member| member.game_id).collect();
-    if ids
-        .iter()
-        .enumerate()
-        .any(|(index, id)| ids[..index].contains(id))
-    {
-        return Err(Error::StrErr(
-            "proposal group contains duplicate game ids".to_string(),
-        ));
-    }
-    Ok(ids)
 }
 
 pub(crate) fn format_reward_coin(label: &str, ph: &PuzzleHash, amount: &Amount) -> Option<String> {
@@ -236,81 +216,154 @@ impl OffChainPhase {
         }
     }
 
-    fn factory_games(
+    fn execute_acceptance(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        start: &GameProposal,
-    ) -> Result<Vec<game::FactoryGame>, Error> {
+        local_id: GameID,
+        local_is_proposer: bool,
+        cache_for_redo: bool,
+    ) -> Result<AcceptanceOutcome, Error> {
+        let proposal = self
+            .channel_state()?
+            .find_proposal(&local_id)
+            .cloned()
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {local_id:?}")))?;
+        if self.channel_state()?.is_our_proposal(&local_id) != local_is_proposer {
+            return Err(Error::StrErr(
+                "proposal accepter/origin mismatch".to_string(),
+            ));
+        }
         self.ensure_game_types(env.allocator);
         let factory = self
             .game_types
-            .get(&start.game_type)
-            .ok_or_else(|| Error::StrErr(format!("no such game {:?}", start.game_type)))?;
-        let game_parameters = start.parameters.to_program(env.allocator)?;
+            .get(&proposal.game_type)
+            .ok_or_else(|| Error::StrErr(format!("no such game {:?}", proposal.game_type)))?;
+        let game_parameters = proposal.parameters.to_program(env.allocator)?;
         let game_parameters = game_parameters.to_clvm(env.allocator).into_gen()?;
-        let arguments = (
-            start.player_a_contribution.clone(),
+        let (proposer_reserve, accepter_reserve) = if local_is_proposer {
             (
-                start.player_b_contribution.clone(),
+                self.channel_state()?.my_out_of_game_balance(),
+                self.channel_state()?.their_out_of_game_balance(),
+            )
+        } else {
+            (
+                self.channel_state()?.their_out_of_game_balance(),
+                self.channel_state()?.my_out_of_game_balance(),
+            )
+        };
+        let arguments = (
+            proposer_reserve.clone(),
+            (
+                accepter_reserve.clone(),
                 (crate::common::types::Node(game_parameters), ()),
             ),
         )
             .to_clvm(env.allocator)
             .into_gen()?;
         let arguments = Program::from_nodeptr(env.allocator, arguments)?;
-        let games = game::Game::run_factory(env.allocator, factory.clone().into(), &arguments)?;
-        let first_hash = games
-            .first()
-            .map(|g| g.initial_validation_program_hash().clone())
-            .ok_or_else(|| Error::StrErr("proposal factory returned no games".to_string()))?;
-        if &first_hash != start.game_type.hash() {
-            return Err(Error::StrErr(format!(
-                "factory for {} returned first validator hash {}, expected {}",
-                start.game_type, first_hash, start.game_type
-            )));
-        }
-        Ok(games)
-    }
-
-    fn hydrate_wire_proposal_group(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        wire: &WireProposalGroup,
-        factory_games: Vec<game::FactoryGame>,
-    ) -> Result<(Vec<Rc<GameStartInfo>>, GameType), Error> {
-        let ids = validate_wire_group_structure(wire, factory_games.len())?;
-
-        let mut receiver_starts = Vec::with_capacity(factory_games.len());
-        for (index, ((factory_game, member), game_id)) in factory_games
-            .iter()
-            .zip(&wire.members)
-            .zip(ids.iter())
-            .enumerate()
-        {
-            let expected_share = Amount::new(factory_game.initial_mover_share);
-            if member.player_a_contribution != factory_game.player_a_contribution
-                || member.player_b_contribution != factory_game.player_b_contribution
-                || member.player_a_goes_first != factory_game.player_a_goes_first
-                || member.initial_validation_program_hash
-                    != *factory_game.initial_validation_program_hash()
-                || member.initial_validation_info_hash
-                    != factory_game.initial_validation_info_hash(allocator)
-                || member.initial_move != factory_game.initial_move
-                || member.initial_max_move_size as usize != factory_game.initial_max_move_size
-                || member.initial_mover_share != expected_share
-            {
-                return Err(Error::StrErr(format!(
-                    "proposal group member {index} does not match factory output"
-                )));
+        match game::Game::run_factory(env.allocator, factory.clone().into(), &arguments)? {
+            game::FactoryResult::InsufficientBalance {
+                proposer_balance_short,
+                accepter_balance_short,
+            } => Ok(AcceptanceOutcome::Insufficient {
+                local_id,
+                origin_wire_id: proposal.origin_wire_id,
+                our_balance_short: if local_is_proposer {
+                    proposer_balance_short
+                } else {
+                    accepter_balance_short
+                },
+                their_balance_short: if local_is_proposer {
+                    accepter_balance_short
+                } else {
+                    proposer_balance_short
+                },
+            }),
+            game::FactoryResult::Success(games) => {
+                let first_hash = games[0].initial_validation_program_hash().clone();
+                if &first_hash != proposal.game_type.hash() {
+                    return Err(Error::StrErr(format!(
+                        "factory for {} returned first validator hash {}, expected {}",
+                        proposal.game_type, first_hash, proposal.game_type
+                    )));
+                }
+                let (proposer_required, accepter_required) =
+                    games
+                        .iter()
+                        .try_fold((0u64, 0u64), |(proposer, accepter), game| {
+                            Ok::<_, Error>((
+                                proposer
+                                    .checked_add(game.proposer_contribution.to_u64())
+                                    .ok_or_else(|| {
+                                        Error::StrErr(
+                                            "factory proposer contributions overflow".into(),
+                                        )
+                                    })?,
+                                accepter
+                                    .checked_add(game.accepter_contribution.to_u64())
+                                    .ok_or_else(|| {
+                                        Error::StrErr(
+                                            "factory accepter contributions overflow".into(),
+                                        )
+                                    })?,
+                            ))
+                        })?;
+                let proposer_balance_short = proposer_required > proposer_reserve.to_u64();
+                let accepter_balance_short = accepter_required > accepter_reserve.to_u64();
+                if proposer_balance_short || accepter_balance_short {
+                    return Ok(AcceptanceOutcome::Insufficient {
+                        local_id,
+                        origin_wire_id: proposal.origin_wire_id,
+                        our_balance_short: if local_is_proposer {
+                            proposer_balance_short
+                        } else {
+                            accepter_balance_short
+                        },
+                        their_balance_short: if local_is_proposer {
+                            accepter_balance_short
+                        } else {
+                            proposer_balance_short
+                        },
+                    });
+                }
+                let ids = self.channel_state_mut()?.allocate_game_ids(games.len())?;
+                let local_is_player_a = if local_is_proposer {
+                    proposal.sender_is_player_a
+                } else {
+                    !proposal.sender_is_player_a
+                };
+                let starts: Vec<Rc<GameStartInfo>> = games
+                    .iter()
+                    .zip(&ids)
+                    .map(|(factory_game, id)| {
+                        Rc::new(factory_game.game_start(
+                            id,
+                            &proposal.timeout,
+                            proposal.sender_is_player_a,
+                            local_is_player_a,
+                        ))
+                    })
+                    .collect();
+                let members = starts
+                    .iter()
+                    .zip(&games)
+                    .map(|(start, factory_game)| AcceptedGameMember {
+                        id: start.game_id,
+                        player_a_contribution: start.player_a_contribution.clone(),
+                        player_b_contribution: start.player_b_contribution.clone(),
+                        our_turn: start.is_my_turn(),
+                        readable_parameters: factory_game.readable_parameters.clone(),
+                    })
+                    .collect();
+                self.channel_state_mut()?.accept_proposal_games(
+                    env,
+                    &local_id,
+                    &starts,
+                    cache_for_redo,
+                )?;
+                Ok(AcceptanceOutcome::Accepted(members))
             }
-            receiver_starts.push(Rc::new(factory_game.game_start(
-                game_id,
-                &wire.start.timeout,
-                !wire.start.sender_is_player_a,
-            )));
         }
-
-        Ok((receiver_starts, wire.start.game_type.clone()))
     }
 
     pub fn from_completed_handshake(
@@ -735,13 +788,8 @@ impl OffChainPhase {
                         .game_action_queue
                         .iter()
                         .filter_map(|a| match a {
-                            GameAction::QueuedProposalGroup(games, _) => {
-                                games.first().map(|first| {
-                                    (
-                                        first.game_id,
-                                        games.iter().map(|game| game.game_id).collect(),
-                                    )
-                                })
+                            GameAction::QueuedProposalGroup(local_id, _) => {
+                                Some((*local_id, vec![*local_id]))
                             }
                             _ => None,
                         })
@@ -756,89 +804,50 @@ impl OffChainPhase {
                         }));
                     }
 
+                    let local_id = self
+                        .channel_state_mut()?
+                        .record_received_proposal(wire.origin_wire_id, &wire.start)?;
                     self.ensure_game_types(env.allocator);
                     if !self.game_types.contains_key(&wire.start.game_type) {
                         effects.push(Effect::Log(format!(
                             "declining proposal for unknown game type {:?}",
                             wire.start.game_type,
                         )));
+                        self.game_action_queue
+                            .push_back(GameAction::QueuedCancelProposalGroupSilently(local_id));
                     } else {
-                        let factory_games = match self.factory_games(env, &wire.start) {
-                            Ok(games) => games,
-                            Err(error) => {
-                                effects.push(Effect::Log(format!(
-                                    "declining proposal because local factory rejected it: {error:?}"
-                                )));
-                                continue;
-                            }
-                        };
-                        let (games, resolved_game_type) =
-                            self.hydrate_wire_proposal_group(env.allocator, wire, factory_games)?;
-                        let group_id = games
-                            .first()
-                            .ok_or_else(|| {
-                                Error::StrErr("factory returned empty proposal group".to_string())
-                            })?
-                            .game_id;
-                        for gsi in &games {
-                            let ch = self.channel_state_mut()?;
-                            ch.apply_received_proposal(env, gsi, group_id)?;
-                        }
-                        let first = games.first().ok_or_else(|| {
-                            Error::StrErr("factory returned empty proposal group".to_string())
-                        })?;
-                        let game_id = first.game_id;
-                        let group_ids: Vec<GameID> = games.iter().map(|g| g.game_id).collect();
                         effects.push(Effect::Notify(GameNotification::ProposalMade {
-                            id: game_id,
-                            group_ids,
-                            player_a_contribution: wire.start.player_a_contribution.clone(),
-                            player_b_contribution: wire.start.player_b_contribution.clone(),
+                            id: local_id,
+                            group_ids: vec![local_id],
                             sender_is_player_a: wire.start.sender_is_player_a,
-                            timeout: first.timeout.clone(),
-                            game_type: resolved_game_type,
+                            timeout: wire.start.timeout.clone(),
+                            game_type: wire.start.game_type.clone(),
                             parameters: wire.start.parameters.clone(),
                         }));
                     }
                 }
-                BatchAction::AcceptProposalGroup(group_id) => {
-                    let group_ids = self.channel_state()?.canonical_group_member_ids(group_id)?;
-                    let members = {
-                        let ch = self.channel_state()?;
-                        group_ids
-                            .iter()
-                            .map(|id| {
-                                let proposal = ch.find_proposal(id).ok_or_else(|| {
-                                    Error::StrErr(format!("missing accepted proposal {id}"))
-                                })?;
-                                let our_turn = ch.game_is_my_turn(id).ok_or_else(|| {
-                                    Error::StrErr(format!(
-                                        "accepted game {id} has no turn authority"
-                                    ))
-                                })?;
-                                Ok(AcceptedGameMember {
-                                    id: *id,
-                                    player_a_contribution: proposal.player_a_contribution.clone(),
-                                    player_b_contribution: proposal.player_b_contribution.clone(),
-                                    our_turn,
-                                })
-                            })
-                            .collect::<Result<Vec<_>, Error>>()?
-                    };
-                    for id in group_ids {
-                        self.channel_state_mut()?
-                            .apply_received_accept_proposal(&id)?;
+                BatchAction::AcceptProposalGroup(origin_wire_id) => {
+                    let local_id = self
+                        .channel_state()?
+                        .local_proposal_id_for_wire(origin_wire_id)?;
+                    match self.execute_acceptance(env, local_id, true, false)? {
+                        AcceptanceOutcome::Accepted(members) => {
+                            accepted_groups.push((local_id, members));
+                        }
+                        AcceptanceOutcome::Insufficient { .. } => {
+                            return Err(Error::StrErr(format!(
+                                "peer accepted proposal {origin_wire_id:?} that factory reports insufficient"
+                            )));
+                        }
                     }
-                    accepted_groups.push(members);
                 }
-                BatchAction::CancelProposalGroup(group_id) => {
-                    let group_ids = self.channel_state()?.canonical_group_member_ids(group_id)?;
-                    for id in &group_ids {
-                        self.channel_state_mut()?.received_cancel_proposal(id)?;
-                    }
+                BatchAction::CancelProposalGroup(origin_wire_id) => {
+                    let proposal = self
+                        .channel_state_mut()?
+                        .remove_proposal_by_wire(origin_wire_id)?;
                     effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                        id: *group_id,
-                        group_ids,
+                        id: proposal.local_id,
+                        group_ids: vec![proposal.local_id],
                         reason: CancelReason::CancelledByPeer,
                     }));
                 }
@@ -946,11 +955,9 @@ impl OffChainPhase {
             &spend_info,
             received_accept_settlement,
         )?);
-        effects.extend(
-            accepted_groups
-                .into_iter()
-                .map(|members| Effect::Notify(GameNotification::ProposalAcceptedGroup { members })),
-        );
+        effects.extend(accepted_groups.into_iter().map(|(id, members)| {
+            Effect::Notify(GameNotification::ProposalAcceptedGroup { id, members })
+        }));
 
         Ok(effects)
     }
@@ -1132,116 +1139,56 @@ impl OffChainPhase {
                     batch_actions.push(BatchAction::AcceptSettlement(game_id, amount));
                     applied_actions.push((game_id, LocalActionKind::AcceptSettlement));
                 }
-                GameAction::QueuedProposalGroup(my_games, their_wire) => {
-                    let saved_channel = self.channel_state.clone();
-                    let result = (|| {
-                        let group_id = their_wire
-                            .members
-                            .first()
-                            .ok_or_else(|| {
-                                Error::StrErr("queued proposal group is empty".to_string())
-                            })?
-                            .game_id;
-                        for game in &my_games {
-                            let ch = self.channel_state_mut()?;
-                            ch.send_propose_game(env, game, group_id)?;
-                        }
-                        Ok::<(), Error>(())
-                    })();
-                    if let Err(error) = result {
-                        self.channel_state = saved_channel;
-                        return Err(error);
-                    }
-                    batch_actions.push(BatchAction::ProposeGroup(their_wire));
-                }
-                GameAction::QueuedAcceptProposalGroup(group_id) => {
-                    let group_ids = self
-                        .channel_state()?
-                        .canonical_group_member_ids(&group_id)?;
-                    let (our_short, their_short, members) = {
-                        let ch = self.channel_state()?;
-                        let mut our_required = Amount::default();
-                        let mut their_required = Amount::default();
-                        let mut members = Vec::with_capacity(group_ids.len());
-                        for id in &group_ids {
-                            let proposal = ch.find_proposal(id).ok_or_else(|| {
-                                Error::StrErr(format!("queued accept for missing proposal {id:?}"))
-                            })?;
-                            if ch.is_our_nonce_parity(id) {
-                                return Err(Error::StrErr(
-                                    "cannot accept own proposal".to_string(),
-                                ));
-                            }
-                            our_required += proposal.my_contribution.clone();
-                            their_required += proposal.their_contribution.clone();
-                            members.push(AcceptedGameMember {
-                                id: *id,
-                                player_a_contribution: proposal.player_a_contribution.clone(),
-                                player_b_contribution: proposal.player_b_contribution.clone(),
-                                our_turn: ch.game_is_my_turn(id).ok_or_else(|| {
-                                    Error::StrErr(format!(
-                                        "accepted game {id} has no turn authority"
-                                    ))
-                                })?,
-                            });
-                        }
-                        (
-                            our_required > ch.my_out_of_game_balance(),
-                            their_required > ch.their_out_of_game_balance(),
-                            members,
-                        )
-                    };
-                    if our_short || their_short {
-                        effects.push(Effect::Notify(GameNotification::InsufficientBalance {
-                            id: group_id,
-                            our_balance_short: our_short,
-                            their_balance_short: their_short,
-                        }));
-                        for id in &group_ids {
-                            self.channel_state_mut()?.send_cancel_proposal(id)?;
-                        }
-                        batch_actions.push(BatchAction::CancelProposalGroup(group_id));
-                        *current_action = None;
-                        continue;
-                    }
-                    let saved_channel = self.channel_state.clone();
-                    let result = (|| {
-                        for id in &group_ids {
-                            self.channel_state_mut()?.send_accept_proposal(id)?;
-                        }
-                        Ok::<(), Error>(())
-                    })();
-                    if let Err(error) = result {
-                        self.channel_state = saved_channel;
-                        return Err(error);
-                    }
-                    batch_actions.push(BatchAction::AcceptProposalGroup(group_id));
-                    effects.push(Effect::Notify(GameNotification::ProposalAcceptedGroup {
-                        members,
+                GameAction::QueuedProposalGroup(local_id, start) => {
+                    let origin_wire_id = self
+                        .channel_state_mut()?
+                        .record_sent_proposal(local_id, &start)?;
+                    batch_actions.push(BatchAction::ProposeGroup(WireProposalGroup {
+                        origin_wire_id,
+                        start,
                     }));
                 }
-                GameAction::QueuedCancelProposalGroup(group_id) => {
-                    let group_ids = self
-                        .channel_state()?
-                        .canonical_group_member_ids(&group_id)?;
-                    for id in &group_ids {
-                        self.channel_state_mut()?.send_cancel_proposal(id)?;
+                GameAction::QueuedAcceptProposalGroup(local_id) => {
+                    let origin_wire_id =
+                        self.channel_state()?.proposal_origin_wire_id(&local_id)?;
+                    match self.execute_acceptance(env, local_id, false, true)? {
+                        AcceptanceOutcome::Accepted(members) => {
+                            batch_actions.push(BatchAction::AcceptProposalGroup(origin_wire_id));
+                            effects.push(Effect::Notify(GameNotification::ProposalAcceptedGroup {
+                                id: local_id,
+                                members,
+                            }));
+                        }
+                        AcceptanceOutcome::Insufficient {
+                            local_id,
+                            origin_wire_id,
+                            our_balance_short,
+                            their_balance_short,
+                        } => {
+                            effects.push(Effect::Notify(GameNotification::InsufficientBalance {
+                                id: local_id,
+                                our_balance_short,
+                                their_balance_short,
+                            }));
+                            self.channel_state_mut()?.remove_proposal(&local_id)?;
+                            batch_actions.push(BatchAction::CancelProposalGroup(origin_wire_id));
+                            *current_action = None;
+                            continue;
+                        }
                     }
+                }
+                GameAction::QueuedCancelProposalGroup(local_id) => {
+                    let proposal = self.channel_state_mut()?.remove_proposal(&local_id)?;
                     effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                        id: group_id,
-                        group_ids,
+                        id: local_id,
+                        group_ids: vec![local_id],
                         reason: CancelReason::CancelledByUs,
                     }));
-                    batch_actions.push(BatchAction::CancelProposalGroup(group_id));
+                    batch_actions.push(BatchAction::CancelProposalGroup(proposal.origin_wire_id));
                 }
-                GameAction::QueuedCancelProposalGroupSilently(group_id) => {
-                    let group_ids = self
-                        .channel_state()?
-                        .canonical_group_member_ids(&group_id)?;
-                    for id in group_ids {
-                        self.channel_state_mut()?.send_cancel_proposal(&id)?;
-                    }
-                    batch_actions.push(BatchAction::CancelProposalGroup(group_id));
+                GameAction::QueuedCancelProposalGroupSilently(local_id) => {
+                    let proposal = self.channel_state_mut()?.remove_proposal(&local_id)?;
+                    batch_actions.push(BatchAction::CancelProposalGroup(proposal.origin_wire_id));
                 }
                 GameAction::CleanShutdown => {
                     if !batch_actions.is_empty() {
@@ -1296,9 +1243,8 @@ impl OffChainPhase {
                 }
                 #[cfg(test)]
                 GameAction::ForcedSelfAccept(game_id) => {
-                    let ch = self.channel_state_mut()?;
-                    ch.send_accept_proposal(&game_id)?;
-                    batch_actions.push(BatchAction::AcceptProposalGroup(game_id));
+                    let origin_wire_id = self.channel_state()?.proposal_origin_wire_id(&game_id)?;
+                    batch_actions.push(BatchAction::AcceptProposalGroup(origin_wire_id));
                 }
             }
             *current_action = None;
@@ -1593,7 +1539,7 @@ impl OffChainPhase {
 impl FromLocalUI for OffChainPhase {
     fn propose_games(
         &mut self,
-        env: &mut ChannelEnv<'_>,
+        _env: &mut ChannelEnv<'_>,
         games: &[GameProposal],
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         if games.len() != 1 {
@@ -1614,7 +1560,7 @@ impl FromLocalUI for OffChainPhase {
         if has_pending_peer {
             let cancelled_id = {
                 let ch = self.channel_state_mut()?;
-                GameID(ch.allocate_my_nonce())
+                ch.allocate_my_proposal_handle()
             };
             return Ok((
                 vec![cancelled_id],
@@ -1626,58 +1572,12 @@ impl FromLocalUI for OffChainPhase {
             ));
         }
 
-        let factory_games = self.factory_games(env, start)?;
-        if factory_games.is_empty() {
-            return Err(Error::StrErr(
-                "propose_games: factory returned empty proposal group".to_string(),
-            ));
-        }
-
-        let mut all_ids = Vec::with_capacity(factory_games.len());
-        for _ in &factory_games {
-            let game_id = {
-                let ch = self.channel_state_mut()?;
-                GameID(ch.allocate_my_nonce())
-            };
-            all_ids.push(game_id);
-        }
-        let my_games: Vec<Rc<GameStartInfo>> = factory_games
-            .iter()
-            .zip(&all_ids)
-            .map(|(game, id)| {
-                Rc::new(game.game_start(id, &start.timeout, start.sender_is_player_a))
-            })
-            .collect();
-        let members = factory_games
-            .iter()
-            .zip(&all_ids)
-            .map(|(game, id)| {
-                Ok(WireGameSpec {
-                    game_id: *id,
-                    player_a_contribution: game.player_a_contribution.clone(),
-                    player_b_contribution: game.player_b_contribution.clone(),
-                    player_a_goes_first: game.player_a_goes_first,
-                    initial_validation_program_hash: game.initial_validation_program_hash().clone(),
-                    initial_validation_info_hash: game.initial_validation_info_hash(env.allocator),
-                    initial_move: game.initial_move.clone(),
-                    initial_max_move_size: u32::try_from(game.initial_max_move_size).map_err(
-                        |_| Error::StrErr("proposal initial max move size exceeds u32".to_string()),
-                    )?,
-                    initial_mover_share: Amount::new(game.initial_mover_share),
-                })
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-        self.push_action(GameAction::QueuedProposalGroup(
-            my_games,
-            WireProposalGroup {
-                start: start.clone(),
-                members,
-            },
-        ));
+        let local_id = self.channel_state_mut()?.allocate_my_proposal_handle();
+        self.push_action(GameAction::QueuedProposalGroup(local_id, start.clone()));
 
         let (_has_potato, effect) = self.send_potato_request_if_needed()?;
         let effects: Vec<Effect> = effect.into_iter().collect();
-        Ok((all_ids, effects))
+        Ok((vec![local_id], effects))
     }
 
     fn accept_proposal(
@@ -1685,48 +1585,9 @@ impl FromLocalUI for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        let group_ids = {
-            let ch = self.channel_state()?;
-            ch.group_member_ids(game_id)?
-        };
-        let (our_short, their_short) = {
-            let ch = self.channel_state()?;
-            let mut our_required = Amount::default();
-            let mut their_required = Amount::default();
-            for id in &group_ids {
-                let proposal = ch
-                    .find_proposal(id)
-                    .ok_or_else(|| Error::StrErr(format!("missing proposal group member {id}")))?;
-                our_required += proposal.my_contribution.clone();
-                their_required += proposal.their_contribution.clone();
-            }
-            (
-                our_required > ch.my_out_of_game_balance(),
-                their_required > ch.their_out_of_game_balance(),
-            )
-        };
-        let mut all_effects = Vec::new();
-        if our_short || their_short {
-            let group_id = *group_ids
-                .first()
-                .ok_or_else(|| Error::StrErr("proposal group cannot be empty".to_string()))?;
-            all_effects.push(Effect::Notify(GameNotification::InsufficientBalance {
-                id: group_id,
-                our_balance_short: our_short,
-                their_balance_short: their_short,
-            }));
-            let (_continued, effects) =
-                self.do_game_action(GameAction::QueuedCancelProposalGroupSilently(group_id))?;
-            all_effects.extend(effects);
-            return Ok(all_effects);
-        }
-        let primary_id = *group_ids
-            .first()
-            .ok_or_else(|| Error::StrErr("proposal group cannot be empty".to_string()))?;
         let (_continued, effects) =
-            self.do_game_action(GameAction::QueuedAcceptProposalGroup(primary_id))?;
-        all_effects.extend(effects);
-        Ok(all_effects)
+            self.do_game_action(GameAction::QueuedAcceptProposalGroup(*game_id))?;
+        Ok(effects)
     }
 
     fn cancel_proposal(
@@ -2069,53 +1930,6 @@ mod atomic_group_tests {
                 Hash::default(),
             )),
             Some((GameID(7), FailedGameAction::Cheat)),
-        );
-    }
-
-    fn member(id: u64) -> WireGameSpec {
-        WireGameSpec {
-            game_id: GameID(id),
-            player_a_contribution: Amount::new(100),
-            player_b_contribution: Amount::new(100),
-            player_a_goes_first: true,
-            initial_validation_program_hash: Hash::default(),
-            initial_validation_info_hash: Hash::default(),
-            initial_move: vec![],
-            initial_max_move_size: 32,
-            initial_mover_share: Amount::default(),
-        }
-    }
-
-    fn group(members: Vec<WireGameSpec>) -> WireProposalGroup {
-        WireProposalGroup {
-            start: GameProposal {
-                player_a_contribution: Amount::new(100),
-                player_b_contribution: Amount::new(100),
-                sender_is_player_a: true,
-                game_type: GameType::from_hash(Hash::default()),
-                timeout: Timeout::new(15),
-                parameters: ProposalParameters::Null,
-            },
-            members,
-        }
-    }
-
-    #[test]
-    fn atomic_group_structure_rejects_malformed_membership() {
-        assert!(validate_wire_group_structure(&group(vec![]), 1).is_err());
-        assert!(validate_wire_group_structure(&group(vec![member(1), member(1)]), 2).is_err());
-        assert!(validate_wire_group_structure(&group(vec![member(1), member(3)]), 1).is_err());
-    }
-
-    #[test]
-    fn atomic_group_structure_accepts_canonical_single_and_multi_member_groups() {
-        assert_eq!(
-            validate_wire_group_structure(&group(vec![member(1)]), 1).unwrap(),
-            vec![GameID(1)]
-        );
-        assert_eq!(
-            validate_wire_group_structure(&group(vec![member(1), member(3)]), 2).unwrap(),
-            vec![GameID(1), GameID(3)]
         );
     }
 }

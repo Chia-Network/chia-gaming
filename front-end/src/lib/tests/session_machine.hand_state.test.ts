@@ -7,13 +7,24 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { CALPOKER_TERMS, run, send, trackProposal } from './session_machine.harness';
 
+const readableInteger = (value: bigint) => Program.fromBigInt(value).serialize();
+
 describe('session machine behavior sequences', () => {
   it('rejects an inbound protocol ID outside the accepted hand', () => {
     let state = createSessionMachineState(createSessionModel());
     state = trackProposal(state, ['7'], CALPOKER_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: false,
+          readableParameters: readableInteger(10n),
+        },
+      ],
     });
 
     expect(() =>
@@ -34,7 +45,16 @@ describe('session machine behavior sequences', () => {
     state = trackProposal(state, ['7'], CALPOKER_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: false,
+          readableParameters: readableInteger(10n),
+        },
+      ],
     });
 
     expect(() =>
@@ -57,7 +77,16 @@ describe('session machine behavior sequences', () => {
     state = trackProposal(state, ['9'], CALPOKER_TERMS, 'peer');
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: false,
+          readableParameters: readableInteger(10n),
+        },
+      ],
     });
 
     expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
@@ -99,7 +128,16 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: false,
+          readableParameters: readableInteger(10n),
+        },
+      ],
     });
 
     expect(state.model.game.handState).toEqual(progressed);
@@ -108,7 +146,16 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '9', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
+      proposalId: '9',
+      members: [
+        {
+          id: '9',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: false,
+          readableParameters: readableInteger(10n),
+        },
+      ],
     });
 
     expect(calpokerStateCodec.decode(state.model.game.handState)).toMatchObject({
@@ -146,7 +193,16 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: false }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: false,
+          readableParameters: readableInteger(10n),
+        },
+      ],
     });
 
     state = send(state, {
@@ -265,14 +321,9 @@ describe('session machine behavior sequences', () => {
 
       handProposal: {
         gameType: 'spacepoker' as const,
-
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: false,
-
         gameTimeout: 15n,
-
-        parameters: 10n,
+        parameters: [5n, 10n],
       },
 
       moved: (state: ReturnType<typeof createSessionMachineState>) =>
@@ -286,13 +337,9 @@ describe('session machine behavior sequences', () => {
 
       handProposal: {
         gameType: 'krunk' as const,
-
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: true,
-
         gameTimeout: 15n,
-        parameters: null,
+        parameters: 100n,
       },
 
       moved: (state: ReturnType<typeof createSessionMachineState>) =>
@@ -316,11 +363,16 @@ describe('session machine behavior sequences', () => {
 
         {
           type: 'notification-accepted-group',
+          proposalId: ids[0],
           members: ids.map((id, index) => ({
             id,
             playerAContribution: gameType === 'krunk' ? (index === 0 ? 100n : 0n) : 50n,
             playerBContribution: gameType === 'krunk' ? (index === 0 ? 0n : 100n) : 50n,
             ourTurn: gameType === 'krunk' ? index === 0 : true,
+            readableParameters:
+              gameType === 'spacepoker'
+                ? Program.fromList([Program.fromBigInt(5n), Program.fromBigInt(10n)]).serialize()
+                : readableInteger(gameType === 'krunk' ? 100n : 50n),
           })),
         },
 
@@ -441,14 +493,9 @@ describe('session machine behavior sequences', () => {
 
       handProposal: {
         gameType: 'spacepoker' as const,
-
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: false,
-
         gameTimeout: 15n,
-
-        parameters: 10n,
+        parameters: [5n, 10n],
       },
     },
   ])('does not invent $gameType durable turns from chain progress statuses', ({ handProposal }) => {
@@ -461,7 +508,19 @@ describe('session machine behavior sequences', () => {
 
     state = run(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 50n, playerBContribution: 50n, ourTurn: true }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 50n,
+          playerBContribution: 50n,
+          ourTurn: true,
+          readableParameters:
+            handProposal.gameType === 'spacepoker'
+              ? Program.fromList([Program.fromBigInt(5n), Program.fromBigInt(10n)]).serialize()
+              : readableInteger(50n),
+        },
+      ],
     });
 
     const accepted = state.model.game.handState;
@@ -505,7 +564,16 @@ describe('session machine behavior sequences', () => {
 
     const state = send(initial, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 5n, playerBContribution: 5n, ourTurn: true }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 5n,
+          playerBContribution: 5n,
+          ourTurn: true,
+          readableParameters: readableInteger(5n),
+        },
+      ],
     });
 
     expect(() =>
