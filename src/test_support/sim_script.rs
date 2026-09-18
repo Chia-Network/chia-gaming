@@ -650,7 +650,7 @@ mod sim_tests {
             timeout: timeout.clone(),
             parameters: crate::session_phases::proposal::ProposalParameters::Null,
         };
-        let local_0 = party.player(0).ch.allocate_my_proposal_handle();
+        let local_0 = party.player(0).ch.allocate_my_proposal_id();
         let wire_id = party
             .player(0)
             .ch

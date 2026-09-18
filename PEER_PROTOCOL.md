@@ -803,9 +803,9 @@ Dictionaries are not valid proposal parameters.
 `game_type` is the first generated member's initial validation program hash.
 It is not a package name or factory hash.
 
-The receiver stores the requested terms under an endpoint-local proposal
-handle. It does not run the factory or create game members at proposal time.
-Local handles need not equal `origin_wire_id`.
+The receiver stores the requested terms under `origin_wire_id`, which is also
+the ID exposed locally and to the frontend. It does not run the factory or
+create game members at proposal time.
 
 Pending proposals are metadata. They do not alter balances or the signed
 unroll commitment until accepted.
@@ -817,13 +817,16 @@ If the game type is unknown, the current receiver logs a soft decline and does
 not retain the proposal. Parameter decoding belongs to the factory and is
 deferred until acceptance.
 
-Receiving a proposal group supersedes locally queued, not-yet-sent proposal
-groups. Any queued clean-shutdown action is also removed when a batch contains
-a proposal or proposal acceptance.
+Receiving a proposal group marks locally queued proposals as superseded. Those
+local proposals are still emitted and immediately cancelled in order, so their
+canonical IDs are consumed by both peers. Any queued clean-shutdown action is
+removed when a batch contains a proposal or proposal acceptance.
+The receiver suppresses notifications for a propose/cancel pair in the same
+atomic batch because no pending proposal exists at the notification boundary.
 
-Origin proposal IDs use role parity and a strict next-by-two sequence; gaps,
-reuse, and wrong parity are hard errors. Accepted game IDs use a separate
-shared sequential counter.
+Canonical proposal IDs use role parity and a strict next-by-two sequence; gaps,
+reuse, and wrong parity are hard errors. The two parity sets are separate from
+the shared sequential accepted-game namespace.
 
 ### 11.2 `AcceptProposalGroup`
 

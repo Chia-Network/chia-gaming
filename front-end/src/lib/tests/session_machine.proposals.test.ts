@@ -165,7 +165,7 @@ describe('session machine behavior sequences', () => {
     });
   });
 
-  it('retains Krunk group terms through one ordered group acceptance notification', () => {
+  it('consumes a Krunk proposal while retaining its terms as the last hand', () => {
     let state = createSessionMachineState(createSessionModel());
 
     state = send(state, {
@@ -209,17 +209,14 @@ describe('session machine behavior sequences', () => {
       reduceSessionMachine,
     ).state;
 
-    expect(state.model.betweenHand.proposalGroups[0]?.handProposal).toEqual(KRUNK_TERMS);
-
+    expect(state.model.betweenHand.proposalGroups).toEqual([]);
+    expect(state.model.betweenHand.lastHandProposal).toEqual(KRUNK_TERMS);
     expect(state.model.game.activeIds).toEqual(['1', '2']);
 
     const restored = createSessionMachineState(state.model);
 
-    expect(restored.model.betweenHand.proposalGroups[0]).toMatchObject({
-      memberIds: ['1', '2'],
-      handProposal: KRUNK_TERMS,
-      disposition: 'accepted',
-    });
+    expect(restored.model.betweenHand.proposalGroups).toEqual([]);
+    expect(restored.model.game.currentHandIds).toEqual(['1', '2']);
   });
 
   it('characterizes incoming proposal review and cancellation cleanup', () => {

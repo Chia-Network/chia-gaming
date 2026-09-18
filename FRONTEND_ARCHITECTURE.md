@@ -1585,12 +1585,13 @@ These drive game proposal and acceptance flow. They are consumed by
 the notification reducer and never forwarded raw to the game UI:
 
 - `ProposalMade` — one notification per pending terms record; carries an
-  endpoint-local proposal ID (`group_ids` is `[id]` before members exist), and
+  canonical parity-namespaced proposal ID (`group_ids` is `[id]` before members
+  exist), and
   triggers proposal auto-accept
 - `ProposalAcceptedGroup` — creates one game-owned hand from all ordered
   `{ id, player_a_contribution, player_b_contribution, our_turn,
-  readable_parameters }` members, correlates them through the local proposal
-  ID, and advances `handKey`
+  readable_parameters }` members, consumes the canonical proposal ID, and
+  advances `handKey`
 
 ### Normalized game inputs
 

@@ -641,10 +641,10 @@ serialized by the potato protocol and received batches are replayed in wire
 order, both peers derive the same IDs without transmitting them.
 
 Pending proposals use a separate identity namespace. Each origin allocates
-strict parity-sequenced wire proposal IDs, while each endpoint exposes its own
-local proposal handle. Accept/cancel wire actions target the origin proposal
-ID; `ProposalAcceptedGroup` correlates generated game IDs back to the local
-proposal handle.
+strict parity-sequenced proposal IDs, and both endpoints expose that same
+canonical ID to their frontends. Accept/cancel wire actions target it directly;
+`ProposalAcceptedGroup` identifies the consumed proposal and reports the
+generated game IDs from the separate shared game namespace.
 
 ### On-Chain Referee Actions
 

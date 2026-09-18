@@ -140,28 +140,23 @@ export function reduceDurableGameEvent(
     case 'notification-accepted-group': {
       const firstMember = event.members[0];
       if (!firstMember) throw new Error('ProposalAcceptedGroup has no members');
+      const acceptedIds = event.members.map((member) => member.id);
+      const alreadyApplied =
+        state.model.game.currentHandIds.length === acceptedIds.length &&
+        state.model.game.currentHandIds.every((id, index) => id === acceptedIds[index]);
+      if (alreadyApplied) return { state, effects: [] };
       const proposal = selectProposalGroupByMemberId(state.model, event.proposalId);
       if (!proposal) {
         throw new Error(
           `ProposalAcceptedGroup ${event.proposalId} missing normalized proposal group`,
         );
       }
-      const acceptedIds = event.members.map((member) => member.id);
       const first =
         state.model.game.currentHandIds.length !== acceptedIds.length ||
         state.model.game.currentHandIds.some((id, index) => id !== acceptedIds[index]);
-      const acceptedGroup = {
-        ...proposal,
-        primaryId: acceptedIds[0]!,
-        memberIds: acceptedIds,
-        disposition: 'accepted' as const,
-      };
-      const proposalGroups = [
-        ...state.model.betweenHand.proposalGroups.filter(
-          (group) => group.primaryId !== proposal.primaryId,
-        ),
-        acceptedGroup,
-      ];
+      const proposalGroups = state.model.betweenHand.proposalGroups.filter(
+        (group) => group.primaryId !== proposal.primaryId,
+      );
       const game = gameSliceReducer(gameSliceFromModel(state.model), {
         type: 'accepted-group',
         groupIds: acceptedIds,
@@ -266,9 +261,6 @@ export function reduceDurableGameEvent(
             ? {
                 ...state.model.betweenHand,
                 mode: 'decision' as const,
-                proposalGroups: state.model.betweenHand.proposalGroups.filter(
-                  (group) => group.disposition !== 'accepted',
-                ),
               }
             : state.model.betweenHand,
         },

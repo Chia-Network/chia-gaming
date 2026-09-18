@@ -78,7 +78,6 @@ export function selectIProposedHand(model: SessionModel): boolean {
     throw new Error('Game model invariant broken: current hand is missing its origin');
   }
   const proposal =
-    selectProposalGroupByDisposition(model, 'accepted') ??
     selectProposalGroupByDisposition(model, 'incoming-review') ??
     selectProposalGroupByDisposition(model, 'incoming-cached') ??
     selectProposalGroupByDisposition(model, 'outgoing');

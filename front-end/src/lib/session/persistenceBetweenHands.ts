@@ -85,8 +85,7 @@ export function parseProposalGroups(value: unknown, label: string): ProposalGrou
     if (
       disposition !== 'outgoing' &&
       disposition !== 'incoming-cached' &&
-      disposition !== 'incoming-review' &&
-      disposition !== 'accepted'
+      disposition !== 'incoming-review'
     ) {
       throw new Error(`Garbled save: invalid ${groupLabel}.disposition`);
     }

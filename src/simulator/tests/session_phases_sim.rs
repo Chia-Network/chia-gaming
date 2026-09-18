@@ -1905,16 +1905,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "failed group acceptance must not emit an accepted-group fact",
         );
     }));
-    res.push(("proposal_local_and_wire_ids_diverge_without_consuming_game_id", &|| {
+    res.push(("proposal_ids_are_canonical_locally_and_on_wire", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = [
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            // This local attempt is rejected while player 1 holds player 0's proposal,
-            // consuming local handle 0 without consuming player 1's wire ID 0.
+            // The rejected attempt still travels as propose-then-cancel so its
+            // canonical parity ID is consumed by both endpoints.
             SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
             SimScriptAction::CancelProposal(1, GameID(1)),
             SimScriptAction::ProposeNewGame(1, ProposeTrigger::Channel),
-            SimScriptAction::AcceptProposal(0, GameID(0)),
+            SimScriptAction::AcceptProposal(0, GameID(2)),
         ];
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -1922,7 +1922,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             Some(&|move_number, _| move_number >= moves.len()),
             None,
         )
-        .expect("mismatched local and wire proposal IDs should resolve");
+        .expect("canonical proposal IDs should resolve");
 
         let accepted = |player: usize, proposal_id: GameID| {
             outcome.local_uis[player]
@@ -1943,7 +1943,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     )
                 })
         };
-        assert_eq!(accepted(0, GameID(0))[0].id, GameID(0));
+        assert_eq!(accepted(0, GameID(2))[0].id, GameID(0));
         assert_eq!(accepted(1, GameID(2))[0].id, GameID(0));
     }));
     res.push((

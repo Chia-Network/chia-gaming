@@ -48,6 +48,14 @@ pub trait FromLocalUI {
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
 
+    fn accept_proposal_and_move(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        game_id: &GameID,
+        readable: ReadableMove,
+        new_entropy: Hash,
+    ) -> Result<Vec<Effect>, Error>;
+
     fn cancel_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -137,6 +145,7 @@ pub enum GameAction {
     CleanShutdown,
     QueuedProposalGroup(GameID, GameProposal),
     QueuedAcceptProposalGroup(GameID),
+    QueuedAcceptProposalGroupAndMove(GameID, ReadableMove, Hash),
     QueuedCancelProposalGroup(GameID),
     QueuedCancelProposalGroupSilently(GameID),
     Cheat(GameID, Amount, Hash),
@@ -177,6 +186,9 @@ impl std::fmt::Debug for GameAction {
             GameAction::QueuedProposalGroup(_, _) => write!(formatter, "QueuedProposalGroup(..)"),
             GameAction::QueuedAcceptProposalGroup(gi) => {
                 write!(formatter, "QueuedAcceptProposalGroup({gi:?})")
+            }
+            GameAction::QueuedAcceptProposalGroupAndMove(gi, ..) => {
+                write!(formatter, "QueuedAcceptProposalGroupAndMove({gi:?})")
             }
             GameAction::QueuedCancelProposalGroup(gi) => {
                 write!(formatter, "QueuedCancelProposalGroup({gi:?})")

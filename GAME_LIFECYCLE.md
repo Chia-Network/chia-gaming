@@ -20,8 +20,8 @@ Games are initiated through a propose/accept flow:
    hash or package name), game-specific `parameters`, and one shared `timeout`.
    The factory is not run and no games, contributions, referees, or member IDs
    exist yet. The potato holder sends one `BatchAction::ProposeGroup` containing
-   an origin proposal ID and the requested terms. Each endpoint records those
-   terms under its own local proposal handle. The receiver gets one
+   a canonical proposal ID and the requested terms. Both endpoints use that
+   same ID. The receiver gets one
    `ProposalMade` notification; the proposer does not.
    `ProposalMade` includes the structured Bencodex parameters so the UI can
    decode terms through the selected package without handling CLVM.
@@ -30,8 +30,8 @@ Games are initiated through a propose/accept flow:
    both sides run the factory with the current proposer reserve, current
    accepter reserve, and requested parameters. They assign shared sequential
    game IDs to the returned members and instantiate every referee and handler.
-3. **Cancel:** Either side cancels using its local proposal handle. The wire
-   action contains the origin proposal ID. If a channel goes on-chain while a
+3. **Cancel:** Either side cancels using the canonical proposal ID. If a
+   channel goes on-chain while a
    proposal is still pending, the unresolved proposal is cancelled.
 
 ### Receiver-Side Proposal Validation
@@ -41,9 +41,8 @@ only the requested terms. Factory execution and all game-owned decoding are
 deferred until acceptance.
 
 - **Proposal ID parity and sequence:** Each origin has a strict parity sequence
-  for wire proposal IDs. The next ID must match exactly; gaps and reuse are
-  protocol errors. Local proposal handles are endpoint-local and need not equal
-  the origin wire ID.
+  for canonical proposal IDs. The next ID must match exactly; gaps, reuse, and
+  wrong parity are protocol errors.
 - **Game timeout:** The proposal's `timeout` must be between 3 and 100
   blocks inclusive. The UX defaults to 15 blocks, but peers can propose
   different values within that safe range.
@@ -144,9 +143,9 @@ parameter value per member. The wire carries one accept or cancel action per
 proposal and never carries generated game IDs.
 
 **Notification:** The receiver gets exactly one `ProposalMade` for the group.
-Its `id` is a local proposal handle; pending `group_ids` is `[id]` because
+Its `id` is the canonical proposal ID; pending `group_ids` is `[id]` because
 members do not exist yet. On acceptance, both sides receive one
-`ProposalAcceptedGroup` containing that endpoint's local proposal handle plus
+`ProposalAcceptedGroup` containing the same canonical proposal ID plus
 the generated members in factory order. Each member contains its generated
 game ID, approved player-A/player-B contributions, local turn ownership, and
 factory-approved readable parameters for frontend initialization.
@@ -175,11 +174,11 @@ A single game's lifecycle, independent of other concurrent games:
 1. Propose  (BatchAction::ProposeGroup)
    → requested terms enter proposed_games on both sides
 
-2. Accept   (one BatchAction::AcceptProposalGroup for the origin proposal ID)
+2. Accept   (one BatchAction::AcceptProposalGroup for the canonical proposal ID)
    → factory runs against current proposer/accepter reserves
    → all referees + game handlers are instantiated atomically
    → each side receives exactly one ProposalAcceptedGroup
-     { id: local_proposal_id,
+     { id: proposal_id,
        members: [{ id, player_a_contribution, player_b_contribution,
                    our_turn, readable_parameters }, ...] }
      in factory order

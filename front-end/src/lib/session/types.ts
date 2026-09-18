@@ -148,11 +148,7 @@ export interface QueuedNotificationModel {
   payload?: ChannelStatusModel;
 }
 
-export type ProposalGroupDisposition =
-  | 'outgoing'
-  | 'incoming-cached'
-  | 'incoming-review'
-  | 'accepted';
+export type ProposalGroupDisposition = 'outgoing' | 'incoming-cached' | 'incoming-review';
 
 export interface ProposalGroupModel {
   primaryId: string;

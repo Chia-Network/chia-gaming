@@ -146,7 +146,7 @@ describe('session model proposal and normalization contracts', () => {
     });
   });
 
-  it('round-trips accepted in-flight groups for a later insufficient-balance cleanup', () => {
+  it('round-trips live games without retaining their accepted proposal', () => {
     const model = createSessionModel({
       game: {
         activeGameType: 'krunk',
@@ -177,20 +177,7 @@ describe('session model proposal and normalization contracts', () => {
           gameTimeout: 15n,
           parameters: 100n,
         },
-        proposalGroups: [
-          {
-            primaryId: '11',
-            memberIds: ['11', '13'],
-            handProposal: {
-              gameType: 'krunk',
-              senderIsPlayerA: true,
-              gameTimeout: 15n,
-              parameters: 100n,
-            },
-            origin: 'local',
-            disposition: 'accepted',
-          },
-        ],
+        proposalGroups: [],
       },
     });
     const snapshot = snapshotFromSessionModel(model);
@@ -209,11 +196,8 @@ describe('session model proposal and normalization contracts', () => {
         }),
       }),
     );
-    expect(selectProposalGroupByMemberId(restored, '13')).toMatchObject({
-      primaryId: '11',
-      memberIds: ['11', '13'],
-      disposition: 'accepted',
-    });
+    expect(selectProposalGroupByMemberId(restored, '13')).toBeNull();
+    expect(restored.game.currentHandIds).toEqual(['11', '13']);
   });
 
   it('round-trips one outgoing group alongside an incoming collision', () => {

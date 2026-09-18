@@ -58,14 +58,12 @@ export function reduceSessionNotification(
     };
     return id;
   };
-  const cancelStale = (exceptId?: string) => {
+  const cancelStale = () => {
     const proposals = current.model.betweenHand.proposalGroups.filter(
-      (group) => group.origin === 'peer' && group.disposition !== 'accepted',
+      (group) => group.origin === 'peer',
     );
     for (const proposal of proposals) {
-      if (proposal.primaryId !== exceptId) {
-        effects.push({ type: 'controller-cancel-proposal', id: proposal.primaryId });
-      }
+      effects.push({ type: 'controller-cancel-proposal', id: proposal.primaryId });
     }
   };
 
@@ -310,7 +308,6 @@ export function reduceSessionNotification(
     if (new Set(members.map((member) => member.id)).size !== members.length) {
       throw new Error('ProposalAcceptedGroup contains duplicate member IDs');
     }
-    const id = members[0]!.id;
     const previousHandIds = current.model.game.currentHandIds;
     step({
       type: 'notification-accepted-group',
@@ -323,7 +320,7 @@ export function reduceSessionNotification(
       previousHandIds.some(
         (groupId, index) => groupId !== current.model.game.currentHandIds[index],
       );
-    if (first) cancelStale(id);
+    if (first) cancelStale();
     return { state: current, effects };
   }
 

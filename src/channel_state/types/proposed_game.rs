@@ -5,10 +5,8 @@ use crate::session_phases::proposal::ProposalParameters;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProposedGame {
-    /// Endpoint-local proposal handle exposed to this host.
-    pub local_id: GameID,
-    /// Strict parity-sequenced ID chosen by the proposal's origin.
-    pub origin_wire_id: GameID,
+    /// Canonical parity-namespaced proposal ID used locally and on the wire.
+    pub id: GameID,
     pub game_type: GameType,
     pub timeout: Timeout,
     pub parameters: ProposalParameters,

@@ -258,8 +258,9 @@ pub enum GameNotification {
     },
 
     ProposalMade {
+        /// Canonical parity-namespaced proposal ID used locally and on the wire.
         id: GameID,
-        /// Pending proposals have one local handle; accepted member IDs arrive later.
+        /// Proposals are singleton requests; accepted game IDs arrive later.
         group_ids: Vec<GameID>,
         sender_is_player_a: bool,
         timeout: Timeout,
@@ -267,7 +268,7 @@ pub enum GameNotification {
         parameters: ProposalParameters,
     },
     ProposalAcceptedGroup {
-        /// Endpoint-local handle of the pending proposal that became live.
+        /// Canonical ID of the pending proposal that became live.
         id: GameID,
         /// Members in the exact factory/wire order. The first member is canonical.
         members: Vec<AcceptedGameMember>,

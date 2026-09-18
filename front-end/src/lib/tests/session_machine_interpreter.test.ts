@@ -1186,11 +1186,8 @@ describe('session machine local game action boundary', () => {
     const hand = spacepokerStateCodec.decode(runtime.getState().model.game.handState)!;
     expect(hand.gameState.myTurn).toBe(true);
     expect(runtime.getState().model.game.instances['9'].presentation).toBe('off-chain-my-turn');
-    expect(runtime.getState().model.betweenHand.proposalGroups[0]).toMatchObject({
-      primaryId: '9',
-      memberIds: ['9'],
-      disposition: 'accepted',
-    });
+    expect(runtime.getState().model.betweenHand.proposalGroups).toEqual([]);
+    expect(runtime.getState().model.game.currentHandIds).toEqual(['9']);
 
     (runtime.getGameHand() as SpacepokerHand).update((state) => ({
       ...state,

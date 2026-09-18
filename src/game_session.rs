@@ -140,6 +140,27 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
+    fn accept_proposal_and_move(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        game_id: &GameID,
+        readable: ReadableMove,
+        new_entropy: Hash,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = self.accept_proposal(env, game_id)?;
+        match self.make_move(env, game_id, &readable, new_entropy) {
+            Ok(move_effects) => effects.extend(move_effects),
+            Err(Error::GameMoveRejected { tag, message }) => {
+                effects.push(Effect::Notify(GameNotification::MoveRejected {
+                    id: *game_id,
+                    tag: String::from_utf8_lossy(&tag).into_owned(),
+                    message: String::from_utf8_lossy(&message).into_owned(),
+                }));
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(effects)
+    }
     fn cancel_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
@@ -1341,19 +1362,8 @@ impl GameSession {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            let mut effects = self.peer.accept_proposal(&mut env, id)?;
-            match self.peer.make_move(&mut env, id, &readable, new_entropy) {
-                Ok(move_effects) => effects.extend(move_effects),
-                Err(Error::GameMoveRejected { tag, message }) => {
-                    effects.push(Effect::Notify(GameNotification::MoveRejected {
-                        id: *id,
-                        tag: String::from_utf8_lossy(&tag).into_owned(),
-                        message: String::from_utf8_lossy(&message).into_owned(),
-                    }));
-                }
-                Err(error) => return Err(error),
-            }
-            effects
+            self.peer
+                .accept_proposal_and_move(&mut env, id, readable, new_entropy)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())

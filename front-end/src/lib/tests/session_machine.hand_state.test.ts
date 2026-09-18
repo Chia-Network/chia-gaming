@@ -447,10 +447,11 @@ describe('session machine behavior sequences', () => {
       }
 
       if (gameType === 'krunk') {
+        state = trackProposal(state, ['11'], handProposal);
         state = run(state, {
           type: 'notification-insufficient-balance',
 
-          id: ids[1],
+          id: '11',
           notification: {
             id: 1n,
 
@@ -462,9 +463,9 @@ describe('session machine behavior sequences', () => {
           },
         });
 
-        expect(state.model.game.handState).toBeNull();
-
-        expect(state.model.game.activeIds).toEqual([]);
+        expect(state.model.betweenHand.proposalGroups).toEqual([]);
+        expect(krunkStateCodec.decode(state.model.game.handState)?.members[1]).toBeDefined();
+        expect(state.model.game.activeIds).toEqual([ids[1]]);
       }
 
       state = run(state, {
