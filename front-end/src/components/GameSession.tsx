@@ -363,8 +363,6 @@ function ChannelStatusContent({ info }: { info: ChannelStatusModel }) {
 function NotificationOverlay({
   notification,
   onDismiss,
-  actionLabel,
-  onAction,
   boundsRef,
   zClass,
   focusBoundaryPriority,
@@ -372,8 +370,6 @@ function NotificationOverlay({
 }: {
   notification: QueuedNotification;
   onDismiss: () => void;
-  actionLabel?: string;
-  onAction?: () => void;
   boundsRef: RefObject<HTMLElement | null>;
   zClass: string;
   focusBoundaryPriority: number;
@@ -383,7 +379,7 @@ function NotificationOverlay({
     top: 8,
   });
   const dragControls = useDragControls();
-  const primaryButtonRef = useRef<HTMLButtonElement>(null);
+  const dismissButtonRef = useRef<HTMLButtonElement>(null);
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
   const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
@@ -393,7 +389,7 @@ function NotificationOverlay({
     if (!ownsKeyboard) return;
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    primaryButtonRef.current?.focus();
+    dismissButtonRef.current?.focus();
     const unbind = bindNotificationOverlayDismissKeys(() => onDismissRef.current());
     return () => {
       unbind();
@@ -443,22 +439,15 @@ function NotificationOverlay({
               {notification.message}
             </p>
           )}
-          <div className="flex justify-center gap-2">
-            {onAction && actionLabel && (
-              <Button ref={primaryButtonRef} variant="solid" size="sm" onClick={onAction}>
-                {actionLabel}
-              </Button>
-            )}
-            <Button
-              ref={onAction ? undefined : primaryButtonRef}
-              variant="solid"
-              size="sm"
-              onClick={onDismiss}
-              className="min-w-[96px]"
-            >
-              Dismiss
-            </Button>
-          </div>
+          <Button
+            ref={dismissButtonRef}
+            variant="solid"
+            size="sm"
+            onClick={onDismiss}
+            className="self-center min-w-[96px]"
+          >
+            Dismiss
+          </Button>
         </CardContent>
       </Card>
     </motion.div>
@@ -762,7 +751,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           boundsRef={channelOverlayBoundsRef}
           zClass="z-40"
           focusBoundaryPriority={40}
-          ownsKeyboard={!session.channelQueue[0] && !session.fundingRetryError}
+          ownsKeyboard={!session.channelQueue[0]}
         />
       )}
       {/* Main content area */}
@@ -875,23 +864,6 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
           boundsRef={channelOverlayBoundsRef}
           zClass="z-50"
           focusBoundaryPriority={50}
-          ownsKeyboard={!session.fundingRetryError}
-        />
-      )}
-      {session.fundingRetryError && (
-        <NotificationOverlay
-          notification={{
-            id: -1n,
-            kind: 'infra-error',
-            title: 'Funding unavailable',
-            message: session.fundingRetryError,
-          }}
-          onDismiss={session.dismissFundingRetry}
-          actionLabel="Retry funding"
-          onAction={session.retryFunding}
-          boundsRef={channelOverlayBoundsRef}
-          zClass="z-[60]"
-          focusBoundaryPriority={60}
           ownsKeyboard
         />
       )}

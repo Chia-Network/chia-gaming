@@ -143,12 +143,6 @@ export function rewriteFeeRateRejection(message: string): string {
   return message;
 }
 
-function isInsufficientWalletBalanceError(message: string): boolean {
-  return /insufficient funds|balance is not high enough to create offer|not enough balance/i.test(
-    message,
-  );
-}
-
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
 
 export class SessionController implements PollingGameSession {
@@ -214,8 +208,6 @@ export class SessionController implements PollingGameSession {
   private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
-  private pendingFundingRetry: { request: NeedCoinSpendRequest; reason: string } | null = null;
-  private fundingRequestInFlight = false;
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: {
@@ -430,7 +422,6 @@ export class SessionController implements PollingGameSession {
     this.terminalHandoff = null;
     this.eventQueue = [];
     this.heldProposalNotifications = [];
-    this.pendingFundingRetry = null;
     if (!retainRejectedTransport) this.unackedMessages = [];
     this.reorderQueue.clear();
     this.storedMessages = [];
@@ -679,11 +670,6 @@ export class SessionController implements PollingGameSession {
       this.rxjsEmitter?.next({ type: 'error', error: 'Blockchain is not connected' });
       return;
     }
-    if (this.fundingRequestInFlight) {
-      throw new Error('funding offer request is already in flight');
-    }
-    this.fundingRequestInFlight = true;
-    this.pendingFundingRetry = null;
     try {
       const offerAmount = -BigInt(request.amount);
       const extraConditions = request.conditions.map(({ opcode, args }) => ({
@@ -760,47 +746,15 @@ export class SessionController implements PollingGameSession {
       diagStack('handleNeedCoinSpend error', e);
       log(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
       let msg = extractErrorMessage(e);
-      if (isInsufficientWalletBalanceError(msg)) {
+      if (/insufficient funds/i.test(msg)) {
         msg =
-          'Wallet reports insufficient funds. Add funds or unlock wallet coins, then retry funding.';
-        this.pendingFundingRetry = { request, reason: msg };
-        this.rxjsEmitter?.next({ type: 'funding-retry', error: msg });
-        return;
+          'Wallet reports insufficient funds. It may be that your wallet has enough balance but some coins are locked. Free up locked coins in your wallet and try again.';
       }
       this.rxjsEmitter?.next({ type: 'error', error: msg });
       if (this.cradle) {
         this.processResult(this.cradle.wallet_callback_failed(msg));
       }
-    } finally {
-      this.fundingRequestInFlight = false;
     }
-  }
-
-  retryFundingOffer(): boolean {
-    if (
-      this.retired ||
-      this.protocolStopped ||
-      this.fundingRequestInFlight ||
-      !this.pendingFundingRetry
-    ) {
-      return false;
-    }
-    const { request } = this.pendingFundingRetry;
-    this.pendingFundingRetry = null;
-    this.trackEffect(this.handleNeedCoinSpend(request));
-    return true;
-  }
-
-  abandonFundingRetry(): boolean {
-    if (this.retired || this.protocolStopped || !this.pendingFundingRetry) {
-      return false;
-    }
-    const { reason } = this.pendingFundingRetry;
-    this.pendingFundingRetry = null;
-    if (this.cradle) {
-      this.processResult(this.cradle.wallet_callback_failed(reason));
-    }
-    return true;
   }
 
   private async cancelRejectedFundingOffer(tradeId: string): Promise<void> {
