@@ -27,6 +27,7 @@ pub const ASSERT_CONCURRENT_SPEND_ATOM: [u8; 1] = [64];
 pub const SEND_MESSAGE_ATOM: [u8; 1] = [66];
 pub const RECEIVE_MESSAGE_ATOM: [u8; 1] = [67];
 pub const ASSERT_HEIGHT_RELATIVE_ATOM: [u8; 1] = [82];
+pub const ASSERT_BEFORE_HEIGHT_ABSOLUTE_ATOM: [u8; 1] = [87];
 
 pub const GROUP_ORDER: [u8; 32] = [
     0x73, 0xED, 0xA7, 0x53, 0x29, 0x9D, 0x7D, 0x48, 0x33, 0x39, 0xD8, 0x08, 0x09, 0xA1, 0xD8, 0x05,

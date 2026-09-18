@@ -471,6 +471,43 @@ pub fn complete_fee_offer_bundle(
     Ok(maker_bundle)
 }
 
+/// Normalize either wallet fee-offer shape into a complete fee bundle.
+///
+/// WalletConnect offers create a settlement coin which this crate must spend
+/// through a nil output. Cloud Wallet's native `fee` field instead returns an
+/// already-complete maker bundle with the fee deficit and RESERVE_FEE directly.
+/// The common aggregation boundary below validates either result identically.
+pub fn normalize_fee_offer_bundle(
+    maker_bundle: SpendBundle,
+    fee: u64,
+    protocol_coin_id: &CoinID,
+) -> Result<SpendBundle, Error> {
+    let settlement_puzzle_hash = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+    let mut matching_settlement_outputs = 0_usize;
+    let mut allocator = AllocEncoder::new();
+    for coin_spend in &maker_bundle.spends {
+        let conditions = CoinCondition::from_puzzle_and_solution(
+            &mut allocator,
+            coin_spend.bundle.puzzle.to_program().as_ref(),
+            coin_spend.bundle.solution.pref(),
+        )?;
+        matching_settlement_outputs += conditions
+            .iter()
+            .filter(|condition| {
+                matches!(
+                    condition,
+                    CoinCondition::CreateCoin(puzzle_hash, amount)
+                        if *puzzle_hash == settlement_puzzle_hash && amount.to_u64() == fee
+                )
+            })
+            .count();
+    }
+    if matching_settlement_outputs == 0 {
+        return Ok(maker_bundle);
+    }
+    complete_fee_offer_bundle(maker_bundle, fee, protocol_coin_id)
+}
+
 /// Validate a wallet-produced fee bundle, aggregate it with the protocol
 /// bundle, and run intrinsic consensus validation over the exact transaction.
 ///
@@ -516,6 +553,7 @@ pub fn aggregate_wallet_fee_bundle(
     let mut total_outputs = 0_u128;
     let mut reserved_fee = 0_u64;
     let mut target_assertions = 0_usize;
+    let mut expiry = None;
     for coin_spend in &fee_bundle.spends {
         let (_, _, amount) = coin_spend.coin.get_coin_string_parts()?;
         total_inputs = total_inputs
@@ -543,6 +581,13 @@ pub fn aggregate_wallet_fee_bundle(
                 CoinCondition::AssertConcurrentSpend(coin_id) if coin_id == *protocol_coin_id => {
                     target_assertions += 1;
                 }
+                CoinCondition::AssertBeforeHeightAbsolute(max_height) => {
+                    expiry = Some(
+                        expiry
+                            .map(|current: u64| current.min(max_height))
+                            .unwrap_or(max_height),
+                    );
+                }
                 _ => {}
             }
         }
@@ -556,6 +601,12 @@ pub fn aggregate_wallet_fee_bundle(
     if target_assertions != 1 {
         return Err(Error::StrErr(format!(
             "fee bundle contained {target_assertions} target ASSERT_CONCURRENT_SPEND conditions, expected 1"
+        )));
+    }
+    if matches!(expiry, Some(max_height) if height >= max_height) {
+        return Err(Error::StrErr(format!(
+            "fee bundle ASSERT_BEFORE_HEIGHT_ABSOLUTE expired at height {} (current height {height})",
+            expiry.expect("matched Some expiry"),
         )));
     }
     let deficit = total_inputs.checked_sub(total_outputs).ok_or_else(|| {
@@ -859,7 +910,7 @@ mod consensus_validation_tests {
         };
 
         let completed =
-            complete_fee_offer_bundle(maker_bundle, fee, &protocol_coin_id).expect("completion");
+            normalize_fee_offer_bundle(maker_bundle, fee, &protocol_coin_id).expect("completion");
         assert_eq!(completed.spends.len(), 3);
         assert_eq!(completed.spends[1].coin, settlement_coin);
         assert_eq!(completed.spends[2].coin, nil_coin);
@@ -885,6 +936,13 @@ mod consensus_validation_tests {
     fn validates_and_aggregates_canonical_wallet_fee_bundle() {
         let mut allocator = AllocEncoder::new();
         let (protocol, fee_bundle, target) = protocol_and_fee_bundles(&mut allocator, 10);
+        let fee_bundle =
+            normalize_fee_offer_bundle(fee_bundle, 10, &target).expect("native fee normalization");
+        assert_eq!(
+            fee_bundle.spends.len(),
+            1,
+            "native-fee offers are already complete"
+        );
         let combined = aggregate_wallet_fee_bundle(
             protocol,
             fee_bundle,
@@ -896,6 +954,59 @@ mod consensus_validation_tests {
         .expect("canonical fee aggregate");
         assert_eq!(combined.name.as_deref(), Some("protocol"));
         assert_eq!(combined.spends.len(), 2);
+    }
+
+    #[test]
+    fn rejects_native_fee_offer_with_invalid_signature() {
+        let mut allocator = AllocEncoder::new();
+        let output_ph = PuzzleHash::from_bytes([0x77; 32]);
+        let protocol_conditions = vec![(51_u8, (output_ph.clone(), (Amount::new(100), ())))
+            .to_clvm(&mut allocator)
+            .expect("protocol CREATE_COIN")];
+        let protocol_spend = quoted_condition_spend(&mut allocator, 0x31, 100, protocol_conditions);
+        let target = protocol_spend.coin.to_coin_id();
+        let public_key =
+            private_to_public_key(&PrivateKey::from_bytes(&[3; 32]).expect("private key"));
+        let message = Node(
+            allocator
+                .encode_atom(clvm_traits::Atom::Borrowed(b"fee authorization"))
+                .expect("message atom"),
+        );
+        let fee_conditions = vec![
+            (51_u8, (output_ph, (Amount::new(90), ())))
+                .to_clvm(&mut allocator)
+                .expect("fee CREATE_COIN"),
+            (52_u8, (Amount::new(10), ()))
+                .to_clvm(&mut allocator)
+                .expect("RESERVE_FEE"),
+            (64_u8, (target.clone(), ()))
+                .to_clvm(&mut allocator)
+                .expect("ASSERT_CONCURRENT_SPEND"),
+            (49_u8, (public_key, (message, ())))
+                .to_clvm(&mut allocator)
+                .expect("AGG_SIG_UNSAFE"),
+        ];
+        let error = aggregate_wallet_fee_bundle(
+            SpendBundle {
+                name: Some("protocol".to_string()),
+                spends: vec![protocol_spend],
+            },
+            SpendBundle {
+                name: None,
+                spends: vec![quoted_condition_spend(
+                    &mut allocator,
+                    0x41,
+                    100,
+                    fee_conditions,
+                )],
+            },
+            10,
+            &target,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .expect_err("invalid fee signature");
+        assert!(format!("{error:?}").contains("invalid aggregate signature"));
     }
 
     #[test]
@@ -1007,5 +1118,51 @@ mod consensus_validation_tests {
         )
         .expect_err("protocol input overlap");
         assert!(format!("{overlap_error:?}").contains("reuses protocol input"));
+    }
+
+    #[test]
+    fn rejects_expired_native_fee_offer() {
+        let mut allocator = AllocEncoder::new();
+        let output_ph = PuzzleHash::from_bytes([0x77; 32]);
+        let protocol_conditions = vec![(51_u8, (output_ph.clone(), (Amount::new(100), ())))
+            .to_clvm(&mut allocator)
+            .expect("protocol CREATE_COIN")];
+        let protocol_spend = quoted_condition_spend(&mut allocator, 0x31, 100, protocol_conditions);
+        let target = protocol_spend.coin.to_coin_id();
+        let fee_conditions = vec![
+            (51_u8, (output_ph, (Amount::new(90), ())))
+                .to_clvm(&mut allocator)
+                .expect("fee CREATE_COIN"),
+            (52_u8, (Amount::new(10), ()))
+                .to_clvm(&mut allocator)
+                .expect("RESERVE_FEE"),
+            (64_u8, (target.clone(), ()))
+                .to_clvm(&mut allocator)
+                .expect("ASSERT_CONCURRENT_SPEND"),
+            (87_u8, (10_u64, ()))
+                .to_clvm(&mut allocator)
+                .expect("ASSERT_BEFORE_HEIGHT_ABSOLUTE"),
+        ];
+        let error = aggregate_wallet_fee_bundle(
+            SpendBundle {
+                name: Some("protocol".to_string()),
+                spends: vec![protocol_spend],
+            },
+            SpendBundle {
+                name: None,
+                spends: vec![quoted_condition_spend(
+                    &mut allocator,
+                    0x41,
+                    100,
+                    fee_conditions,
+                )],
+            },
+            10,
+            &target,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            10,
+        )
+        .expect_err("expired fee offer");
+        assert!(format!("{error:?}").contains("ASSERT_BEFORE_HEIGHT_ABSOLUTE"));
     }
 }

@@ -23,11 +23,10 @@ mod gaming_wasm {
     use chia_gaming::channel_state::types::ReadableMove;
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
-        complete_fee_offer_bundle, convert_coinset_org_spend_to_spend, Aggsig, AllocEncoder, Amount,
-        CoinID, CoinSpend, CoinString, CoinsetCoin,
-        CoinsetSpendBundle, CoinsetSpendRecord, GameID, GameType, Hash, Node, PrivateKey, Program,
-        ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle,
-        Timeout, ToQuotedProgram,
+        convert_coinset_org_spend_to_spend, normalize_fee_offer_bundle, Aggsig, AllocEncoder,
+        Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
+        CoinsetSpendRecord, GameID, GameType, Hash, Node, PrivateKey, Program, ProgramRef, PublicKey,
+        Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
     };
     use chia_gaming::game_session::{GameSession, GameSessionConfig, TerminalHandoffCommand};
     use chia_gaming::session_phases::effects::{
@@ -807,7 +806,7 @@ mod gaming_wasm {
                         decode_offer_to_spend_bundle(&offer)
                             .map_err(|e| format!("fee offer decode error: {e}"))
                             .and_then(|maker_bundle| {
-                                complete_fee_offer_bundle(
+                                normalize_fee_offer_bundle(
                                     maker_bundle,
                                     amount.to_u64(),
                                     &target,

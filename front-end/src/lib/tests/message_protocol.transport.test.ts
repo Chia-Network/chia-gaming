@@ -1114,7 +1114,7 @@ describe('wallet fee attachment on submission', () => {
     );
   });
 
-  it('aggregates a direct Cloud Wallet fee bundle without offer completion', async () => {
+  it('passes through an already-complete provider fee bundle', async () => {
     const feeSpend = {
       coin_spends: [
         {
@@ -1262,7 +1262,12 @@ describe('wallet fee attachment on submission', () => {
   });
 
   it('surfaces Rust fallback warning when a fee source reuses a protocol input coin', async () => {
-    const createFeeSpend = jest.fn().mockResolvedValue({ kind: 'offer', offer: 'offer1signed' });
+    const createFeeSpend = jest.fn().mockResolvedValue({
+      kind: 'offer',
+      offer: 'offer1signed',
+      tradeId: 'Offer_fee',
+    });
+    const cancelOffer = jest.fn().mockResolvedValue(undefined);
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const finalize = jest.fn().mockReturnValue({
       protocol_bundle: testSpendBundle('coin'),
@@ -1271,7 +1276,10 @@ describe('wallet fee attachment on submission', () => {
       warning:
         'Configured fee was not applied: fee bundle reuses protocol input coin. The transaction will be attempted without a fee.',
     });
-    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
+    const blockchain = new BlockchainPoller(
+      { ...mockRpc, createFeeSpend, cancelOffer, spend },
+      60000,
+    );
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
@@ -1300,6 +1308,37 @@ describe('wallet fee attachment on submission', () => {
     );
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/reuses protocol input coin/i);
+    expect(cancelOffer).toHaveBeenCalledWith('Offer_fee');
+  });
+
+  it('cancels a Cloud fee offer when the finalized transaction is rejected', async () => {
+    const createFeeSpend = jest.fn().mockResolvedValue({
+      kind: 'offer',
+      offer: 'offer1signed',
+      tradeId: 'Offer_fee',
+    });
+    const cancelOffer = jest.fn().mockResolvedValue(undefined);
+    const spend = jest.fn().mockResolvedValue({ status: 'rejected', detail: 'invalid spend' });
+    const finalize = jest.fn().mockReturnValue({
+      protocol_bundle: testSpendBundle('coin'),
+      bundle: protocolBundle,
+      applied_fee: '10',
+      warning: null,
+    });
+    const blockchain = new BlockchainPoller(
+      { ...mockRpc, createFeeSpend, cancelOffer, spend },
+      60000,
+    );
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+    blob.getFee = () => 10n;
+    setFinalizer(blob, finalize);
+
+    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    await transactionSubmitQueue(blob);
+
+    expect(cancelOffer).toHaveBeenCalledWith('Offer_fee');
   });
 
   it('surfaces the real wallet error in the warning when the fee offer fails', async () => {

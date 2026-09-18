@@ -497,7 +497,10 @@ export function handleOAuthCallbackPage(): {
 
 export interface GraphQLResponse<T> {
   data?: T;
-  errors?: Array<{ message?: string }>;
+  errors?: Array<{
+    message?: string;
+    extensions?: { code?: string };
+  }>;
 }
 
 export type TokenProvider = {
@@ -563,32 +566,54 @@ export async function graphqlRequest<T>(
     }
   };
 
+  const readPayload = async (res: Response): Promise<GraphQLResponse<T>> => {
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (error) {
+      throw new CloudWalletTransportError('Cloud Wallet GraphQL response transport failed', error);
+    }
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (error) {
+      throw new CloudWalletResponseError(
+        `Cloud Wallet GraphQL returned non-JSON (${res.status})`,
+        error,
+      );
+    }
+  };
+
+  const isUnauthenticated = (payload: GraphQLResponse<T>): boolean =>
+    payload.errors?.some((error) => error.extensions?.code === 'UNAUTHENTICATED') === true;
+
   let accessToken = await tokenProvider.getAccessToken();
   let res = await run(accessToken);
+  let refreshed = false;
 
   if (res.status === 401) {
     accessToken = await tokenProvider.getAccessToken({ forceRefresh: true });
     res = await run(accessToken);
+    refreshed = true;
     if (res.status === 401) {
       // A freshly refreshed token was still rejected: the grant itself is dead.
       throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (401)');
     }
   }
 
-  let text: string;
-  try {
-    text = await res.text();
-  } catch (error) {
-    throw new CloudWalletTransportError('Cloud Wallet GraphQL response transport failed', error);
-  }
-  let payload: GraphQLResponse<T>;
-  try {
-    payload = text ? JSON.parse(text) : {};
-  } catch (error) {
-    throw new CloudWalletResponseError(
-      `Cloud Wallet GraphQL returned non-JSON (${res.status})`,
-      error,
-    );
+  let payload = await readPayload(res);
+  if (isUnauthenticated(payload)) {
+    if (refreshed) {
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (UNAUTHENTICATED)');
+    }
+    accessToken = await tokenProvider.getAccessToken({ forceRefresh: true });
+    res = await run(accessToken);
+    if (res.status === 401) {
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (401)');
+    }
+    payload = await readPayload(res);
+    if (isUnauthenticated(payload)) {
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (UNAUTHENTICATED)');
+    }
   }
 
   if (!res.ok || payload.errors?.length) {

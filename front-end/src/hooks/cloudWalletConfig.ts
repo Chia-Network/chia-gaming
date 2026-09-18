@@ -1,8 +1,8 @@
 /**
- * User-editable Cloud Wallet connection config (OAuth client id + endpoints).
+ * Runtime Cloud Wallet connection config (OAuth client id + endpoints).
  *
  * Persisted separately from auth tokens so the whole OAuth flow can be set up
- * from the player UI. Values are resolved at call time in the following order:
+ * Values are resolved at call time in the following order:
  * persisted value -> window.__CLOUD_WALLET_* / process.env (via constants/env)
  * -> hardcoded default.
  */

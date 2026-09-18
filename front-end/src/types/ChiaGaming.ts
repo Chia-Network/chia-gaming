@@ -233,7 +233,7 @@ export type WalletSubmitOutcome =
   | { status: 'rejected'; detail: string };
 
 export type WalletFeeSourceOutcome =
-  | { kind: 'offer'; offer: string }
+  | { kind: 'offer'; offer: string; tradeId?: string }
   | { kind: 'bundle'; bundle: unknown }
   | { kind: 'failure'; reason: string }
   | { kind: 'unavailable'; reason: string };
@@ -544,7 +544,7 @@ export interface ConnectionSetup {
 
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
-  fundingMode?: 'offer-settlement' | 'direct';
+  fundingMode?: 'offer-settlement';
   getRegistrationScopeKey?(): string | undefined;
   spend(
     blob: string,
@@ -554,8 +554,8 @@ export interface InternalBlockchainInterface {
     fee?: bigint,
   ): Promise<WalletSubmitOutcome>;
   // Build the wallet half of a fee-bearing aggregate spend, bound to the known
-  // protocol coin. WalletConnect returns an offer for the host to complete;
-  // direct-spend backends return an already complete signed bundle.
+  // protocol coin. Offer-producing backends may include the persisted trade ID
+  // so the host can release the reservation when Rust rejects it.
   createFeeSpend?(
     fee: bigint,
     concurrentSpendCoinId: string,

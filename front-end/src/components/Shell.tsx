@@ -2744,7 +2744,7 @@ const Shell = () => {
           }
         }
         // Retain the setup whenever we need the user to act on it: QR pairing or
-        // a setup-fields modal (which may be skipQr, e.g. Cloud Wallet OAuth).
+        // a setup-fields modal.
         if (!setup.skipQr || setup.fields) setConnectionSetup(setup);
         // skipQr + fields: always collect config (Cloud Wallet OAuth). Silent
         // reconnect must not call finalize() without values.
@@ -3412,8 +3412,7 @@ const Shell = () => {
             setWalletAlert(true);
             return;
           }
-          // skipQr + fields: Cloud Wallet needs OAuth config. Do not finalize
-          // without values — that would open a popup or fail with no client id.
+          // Do not finalize a setup requiring fields without user-provided values.
           if (needsConnectionSetupPrompt(setup)) {
             setConnectionSetup(setup);
             setShowConnectionSetupModal(true);
@@ -4605,12 +4604,13 @@ const Shell = () => {
                   >
                     Link Wallet
                   </Button>
-                  <div className="flex flex-col gap-1">
-                    <Button variant="solid" fullWidth disabled title="Coming soon">
-                      Cloud Wallet
-                    </Button>
-                    <p className="text-xs text-canvas-text text-center">Coming soon</p>
-                  </div>
+                  <Button
+                    variant="solid"
+                    fullWidth
+                    onClick={() => handleConnect('cloud', false, true)}
+                  >
+                    Cloud Wallet
+                  </Button>
                 </div>
                 {connectError ? (
                   <p className="w-full max-w-sm text-sm text-alert-text text-center break-words">

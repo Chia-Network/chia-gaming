@@ -645,9 +645,8 @@ initiator wallet -> OFFER_MOD(initiator contribution + fee)
 
 The aggregate input/output difference is exactly both declared opening fees.
 The locally named `channel-opening` submission already contains them, so the
-host must not attach its ordinary separate fee offer. A direct-spend wallet
-may create the pre-launcher or quoted contribution coin directly, omitting
-only the corresponding OFFER_MOD settlement hop.
+host must not attach its ordinary separate fee offer. Both WalletConnect and
+Cloud Wallet funding offers retain the corresponding OFFER_MOD settlement hop.
 
 Channel activation is driven by a local channel-coin observation outside this
 wire protocol. D and activation may be observed in either order, but transition
