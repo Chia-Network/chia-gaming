@@ -538,9 +538,13 @@ Rejection retires only its exact ID. The manager separately retains wallet
 delivery acknowledgement and chain finality. JavaScript makes one wallet call
 and reports a typed `acknowledged`, `unavailable`, or `rejected` result:
 acknowledgement ends ordinary app rebroadcast, while unavailability remains
-eligible for replay after fresh chain synchronization. Any detected reorg
-resets every retained, unexpired transaction to awaiting delivery and queues it
-once, including transactions the wallet previously acknowledged.
+eligible for replay after fresh chain synchronization. A lower-tip rollback
+queues every surviving retained transaction once for that epoch. An
+equal-or-higher replacement tip queues only the retained transaction whose
+watched output is explicitly absent and whose own input is explicitly live.
+Rollback replay uses the exact wallet-finalized bundle without rebuilding its
+fee. Successful poll batches represent every queried interest explicitly;
+failed or malformed batches are not reported as authoritative snapshots.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
 frontend does not persist a move journal or receive replay instructions.
 Following browser restore, an ordinary game effect may submit an automatic move

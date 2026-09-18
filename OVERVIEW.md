@@ -690,7 +690,11 @@ deduplication: different transactions that spend the same inputs receive
 different IDs, and rejection retires only the named intent. Wallet delivery
 acknowledgement and chain finality are separate. Ordinary reconnect replay is
 limited to unacknowledged submissions, but any detected reorg resets and queues
-every retained, unexpired transaction once, including wallet-acknowledged ones.
+retained, unexpired transactions once per rollback epoch, including
+wallet-acknowledged ones. A lower tip replays the surviving retained set; an
+equal-or-higher replacement tip replays only a transaction whose watched output
+is explicitly absent while an input from that same bundle is explicitly live.
+All replay paths reuse the exact wallet-finalized bundle and original fee.
 
 Rust captures the configured fee amount, target, and explicit
 `SubmitWithoutFee` attachment-failure policy when an intent is emitted.

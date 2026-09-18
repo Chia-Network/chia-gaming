@@ -46,7 +46,6 @@ export class BlockchainPoller {
   private sessions = new Set<PollingGameSession>();
   private sessionCoins = new Map<PollingGameSession, CoinPollInterest[]>();
   private registeredNames = new Set<string>();
-  private observedNames = new Set<string>();
   private running = false;
   private pollIntervalMs: number;
   private maxBackoffMs: number;
@@ -516,18 +515,17 @@ export class BlockchainPoller {
       }
     }
     if (!this.isConnectionEpochActive(connectionEpoch)) return null;
-    for (const name of recordByName.keys()) this.observedNames.add(name);
     return hasUnmappedRecord ? null : recordByName;
   }
 
-  // Hand each cradle its coin-state snapshot for `height`, applying the
-  // partial-snapshot guards that keep transient RPC misses from looking like
-  // deletions to the transaction manager.
+  // Hand each cradle its complete coin-state snapshot for `height`. A
+  // successful query explicitly represents every registered interest:
+  // omitted records are authoritative absences, not partial results.
   private reportToCradles(
     perSession: Array<{ c: PollingGameSession; coins: CoinPollInterest[] }>,
     recordByName: Map<string, CoinRecord>,
     height: bigint,
-    previousPeak: bigint,
+    _previousPeak: bigint,
   ): void {
     for (const { c, coins } of perSession) {
       if (coins.length === 0) {
@@ -542,22 +540,13 @@ export class BlockchainPoller {
       if (coins.some(({ coin_name }) => !this.registeredNames.has(coin_name))) {
         continue;
       }
-      // If a coin has previously appeared, a same-height/forward-height response
-      // that omits it is ambiguous and can be a transient RPC miss.  Do not turn
-      // that into a deletion.  Height decreases are different: they are the reorg
-      // signal the transaction manager needs, so omissions must be forwarded.
-      if (
-        height >= previousPeak &&
-        coins.some(
-          ({ coin_name }) => this.observedNames.has(coin_name) && !recordByName.has(coin_name),
-        )
-      ) {
-        continue;
-      }
       const csr: CoinStateRecord[] = [];
       for (const { coin_name, coin_string } of coins) {
         const rec = recordByName.get(coin_name);
-        if (!rec) continue; // not on chain yet
+        if (!rec) {
+          csr.push({ coin: coin_string, created_height: null, spent_height: null });
+          continue;
+        }
         // A returned record means the coin exists on chain, so confirmedBlockIndex
         // is its true creation height (including height 0); the record's presence,
         // not confirmedBlockIndex > 0, is what marks it created.

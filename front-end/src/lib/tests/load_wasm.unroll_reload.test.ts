@@ -234,6 +234,131 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
   assert.equal((await peekSession())?.phase, 'terminal');
 }
 
+async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<void> {
+  const adapters = await createAsymmetricActivePair(poller, 12);
+  const controller = adapters[0].blob!;
+  const status = controller.lastChannelStatus;
+  assert.ok(status, 'offline-reorg lane must begin Active');
+  const handProposal: HandProposal = {
+    gameType: 'calpoker',
+    senderIsPlayerA: false,
+    gameTimeout: 15n,
+    parameters: 20n,
+  };
+  let lane = createReloadableSessionLane(
+    adapters[0],
+    controller,
+    createSessionModel({
+      channel: { status: channelStatusModelFromPayload(status) },
+      game: { handKey: 1 },
+      betweenHand: { mode: 'compose-proposal', lastHandProposal: handProposal },
+    }),
+  );
+
+  lane.runtime.dispatch({ type: 'submit-compose', handProposal });
+  const outgoing = lane.runtime
+    .getState()
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'local-outgoing');
+  assert.ok(outgoing);
+  await exchangeUntilIdle(adapters);
+  adapters[1].blob!.acceptProposal(outgoing.id);
+  await exchangeUntilIdle(adapters);
+  const [gameId] = [...lane.controller.activeGameIds];
+  assert.ok(gameId);
+  lane.controller.makeMove(gameId, null);
+  await exchangeUntilIdle(adapters);
+
+  const submittedBlobs: string[] = [];
+  const puzzleSolutionCoins: string[] = [];
+  const originalSpend = fakeBlockchainInfo.spend;
+  const originalGetPuzzleAndSolution = fakeBlockchainInfo.getPuzzleAndSolution;
+  fakeBlockchainInfo.spend = async (...args: Parameters<typeof originalSpend>) => {
+    submittedBlobs.push(args[0]);
+    return originalSpend.apply(fakeBlockchainInfo, args);
+  };
+  fakeBlockchainInfo.getPuzzleAndSolution = async (
+    ...args: Parameters<typeof originalGetPuzzleAndSolution>
+  ) => {
+    puzzleSolutionCoins.push(args[0]);
+    return originalGetPuzzleAndSolution.apply(fakeBlockchainInfo, args);
+  };
+
+  try {
+    assert.equal(lane.controller.goOnChain(), true);
+    await flushWrapperDrain(adapters);
+    assert.equal(submittedBlobs.length, 1, 'unilateral spend must be submitted once');
+    const finalizedBlob = submittedBlobs[0];
+
+    lane = (await injectSessionReload(lane, poller)).lane;
+    assert.equal(lane.controller.getRestoreStatus(), 'restored');
+    assert.equal(lane.controller.lastChannelStatus?.state, 'GoingOnChain');
+
+    const preLandingHeight = await fakeBlockchainInfo.getHeightInfo();
+    for (
+      let block = 0;
+      block < 10 && lane.controller.lastChannelStatus?.state === 'GoingOnChain';
+      block++
+    ) {
+      await fakeBlockchainInfo.farmBlock();
+      await pollOnce(poller);
+      await flushWrapperDrain(adapters);
+    }
+    assert.equal(
+      lane.controller.lastChannelStatus?.state,
+      'Unrolling',
+      'the retained unilateral spend must land before the offline reorg',
+    );
+    const landedHeight = await fakeBlockchainInfo.getHeightInfo();
+    const rollbackDepth = Number(landedHeight - preLandingHeight);
+    assert.ok(rollbackDepth > 0, 'landing must advance the simulator tip');
+    const spendsBeforeReload = submittedBlobs.length;
+    const puzzleRequestsBeforeReload = puzzleSolutionCoins.length;
+
+    lane = (
+      await injectSessionReload(lane, poller, undefined, async () => {
+        const replacementHeight = await fakeBlockchainInfo.replaceChain(
+          rollbackDepth,
+          landedHeight,
+        );
+        assert.equal(
+          replacementHeight,
+          landedHeight,
+          'replacement chain must reach the persisted tip',
+        );
+      })
+    ).lane;
+    assert.equal(lane.controller.getRestoreStatus(), 'restored');
+
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+    const replayed = submittedBlobs.slice(spendsBeforeReload);
+    assert.deepEqual(
+      replayed,
+      [finalizedBlob],
+      `restore must rebroadcast exact bytes once: count=${replayed.length} expectedLength=${finalizedBlob.length} actualLengths=${replayed.map((blob) => blob.length).join(',')}`,
+    );
+    assert.equal(
+      puzzleSolutionCoins.length,
+      puzzleRequestsBeforeReload,
+      'vanished output must not request a nonexistent puzzle and solution',
+    );
+    assert.equal((await peekSession())?.phase, 'live');
+    assert.notEqual(lane.controller.lastChannelStatus?.state, 'ResolvedClean');
+    assert.notEqual(lane.controller.lastChannelStatus?.state, 'ResolvedAborted');
+
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+    assert.deepEqual(
+      submittedBlobs.slice(spendsBeforeReload),
+      [finalizedBlob],
+      'a repeated replacement snapshot must not rebroadcast again',
+    );
+  } finally {
+    fakeBlockchainInfo.spend = originalSpend;
+    fakeBlockchainInfo.getPuzzleAndSolution = originalGetPuzzleAndSolution;
+  }
+}
+
 it(
   'restores a real unilateral unroll and advances on later chain observations',
   async () => {
@@ -264,4 +389,20 @@ it(
     }
   },
   120 * 1000,
+);
+
+it(
+  'restores after an offline equal-tip replacement and rebroadcasts exactly once',
+  async () => {
+    try {
+      const poller = await startSimulator(['cafe00012', 'dead00012']);
+      if (!poller) return;
+      await runOfflineReplacementRestore(poller);
+    } catch (error) {
+      throw new Error(`[load_wasm offline replacement restore failed]\n${String(error)}`, {
+        cause: error,
+      });
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
 );

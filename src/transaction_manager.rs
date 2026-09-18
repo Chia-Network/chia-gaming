@@ -474,14 +474,27 @@ impl<C> TransactionManager<C> {
     fn reconciliation_input_coins(&self) -> std::collections::BTreeSet<CoinString> {
         self.submitted
             .iter()
-            .filter(|tx| !tx.landed)
+            .filter(|tx| {
+                if !tx.landed {
+                    return true;
+                }
+                tx.expected_output_coins.iter().any(|coin| {
+                    self.watched_coins
+                        .get(coin)
+                        .and_then(|watched| watched.birthday)
+                        .is_some_and(|birthday| {
+                            birthday.saturating_add(self.confirmation_depth) > self.last_height
+                        })
+                })
+            })
             .flat_map(|tx| tx.bundle.spends.iter().map(|spend| spend.coin.clone()))
             .collect()
     }
 
     /// Durable poll-interest snapshot for seeding the host poller. In addition
-    /// to protocol-watched coins, an unlanded retained transaction's inputs
-    /// must be queried so fresh sync can prove whether replay is still valid.
+    /// to protocol-watched coins, retained transaction inputs are queried while
+    /// their outcome is unresolved or a watched landed output remains inside
+    /// the confirmation-depth rollback window.
     pub fn snapshot_watched_coins(&self) -> Vec<CoinString> {
         self.watched_coins
             .keys()
@@ -770,10 +783,23 @@ impl<C> TransactionManager<C> {
     /// epoch. The replayed-id set deliberately outlives drain and wallet
     /// acknowledgement until forward progress ends the epoch.
     fn collect_rollback_epoch_replay(&mut self) {
+        let ids = self.submitted.iter().map(|tx| tx.id).collect();
+        self.collect_rollback_replay_ids(&ids);
+    }
+
+    fn collect_rollback_replay_ids(&mut self, ids: &HashSet<u64>) {
         for tx in &mut self.submitted {
+            if !ids.contains(&tx.id) {
+                continue;
+            }
             if !self.rollback_replayed_ids.insert(tx.id) {
                 continue;
             }
+            // A rollback invalidates prior chain-landing evidence even when the
+            // height report arrives before the authoritative coin snapshot.
+            // Keeping `landed` set here would make a drained-but-unresolved
+            // replay disappear across a reload in that interval.
+            tx.landed = false;
             tx.delivery_state = SubmissionDeliveryState::AwaitingWalletAck;
             if self
                 .pending_submissions
@@ -1031,6 +1057,12 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 }
             }
         }
+        let reconciliation_inputs_before = self.reconciliation_input_coins();
+        let reconciliation_only_inputs = reconciliation_inputs_before
+            .iter()
+            .filter(|coin| !self.watched_coins.contains_key(*coin))
+            .cloned()
+            .collect::<HashSet<_>>();
 
         // A decrease in confirmed height means the chain rolled back.  Any
         // creation/spend we recorded above the new tip is no longer valid: it
@@ -1065,6 +1097,57 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             }
         }
 
+        let explicitly_absent = records
+            .iter()
+            .filter(|rec| rec.created_height.is_none() && rec.spent_height.is_none())
+            .map(|rec| rec.coin.clone())
+            .collect::<HashSet<_>>();
+        let explicitly_live_input_ids = records
+            .iter()
+            .filter(|rec| rec.created_height.is_some() && rec.spent_height.is_none())
+            .map(|rec| rec.coin.to_coin_id())
+            .collect::<HashSet<_>>();
+        let causally_rolled_back_ids = self
+            .submitted
+            .iter()
+            .filter(|tx| {
+                tx.landed
+                    && tx
+                        .expected_output_coins
+                        .iter()
+                        .any(|coin| explicitly_absent.contains(coin))
+                    && tx
+                        .spent_coin_ids
+                        .iter()
+                        .any(|coin_id| explicitly_live_input_ids.contains(coin_id))
+            })
+            .map(|tx| tx.id)
+            .collect::<HashSet<_>>();
+        for tx in self
+            .submitted
+            .iter()
+            .filter(|tx| causally_rolled_back_ids.contains(&tx.id))
+        {
+            for coin in tx
+                .expected_output_coins
+                .iter()
+                .filter(|coin| explicitly_absent.contains(*coin))
+            {
+                self.vanished_coins.insert(coin.clone());
+                if let Some(watched) = self.watched_coins.get_mut(coin) {
+                    let was_claim_submitted = watched.claim_submitted;
+                    watched.birthday = None;
+                    watched.spent_confirmed_at = None;
+                    watched.claim_submitted = false;
+                    if was_claim_submitted {
+                        if let Some(semantic) = watched.timeout_claim_semantic {
+                            rearmed_timeout_claims.push(semantic);
+                        }
+                    }
+                }
+            }
+        }
+
         // Build the live set and reconcile per-watched-coin bookkeeping.  A
         // coin's birthday can *shift* under a reorg (re-mined at a new height),
         // so we update it rather than only setting it once.
@@ -1075,6 +1158,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         // produce it -- but the handler still needs the spend forwarded.  See
         // where these are merged into `deleted_watched`.
         let mut first_seen_spent: Vec<CoinString> = Vec::new();
+        let mut reappeared_vanished = HashSet::new();
         for rec in records {
             // A coin that reappears with a creation height during a reorg is live
             // again, so clear any vanished flag here rather than relying solely on
@@ -1083,11 +1167,15 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             // it never left `present_coins` and so never shows up in that diff --
             // leaving it stuck in `vanished_coins`, which would later suppress
             // forwarding a genuine spend via `deleted_watched.retain`.
-            if reorg && rec.created_height.is_some() {
-                self.vanished_coins.remove(&rec.coin);
+            if rec.created_height.is_some() && self.vanished_coins.remove(&rec.coin) {
+                reappeared_vanished.insert(rec.coin.clone());
             }
             let live = rec.created_height.is_some() && rec.spent_height.is_none();
-            if live {
+            // Retained transaction inputs are queried for landing/reorg
+            // reconciliation, but they are not protocol watches. Keep their raw
+            // records available to the manager without forwarding their lifecycle
+            // to the inner cradle.
+            if live && !reconciliation_only_inputs.contains(&rec.coin) {
                 present_now.insert(rec.coin.clone());
             }
             let was_present = self.present_coins.contains(&rec.coin);
@@ -1141,7 +1229,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         // same input-spent report, but the host necessarily queried the older
         // scope; treating that first report as evidence would prematurely drop
         // our own transaction before its wallet acknowledgement arrives.
-        let reconciliation_inputs_before = self.reconciliation_input_coins();
         let observed_created: std::collections::HashSet<CoinString> = records
             .iter()
             .filter(|rec| rec.created_height.is_some())
@@ -1152,6 +1239,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             .filter(|rec| rec.spent_height.is_some())
             .map(|rec| rec.coin.to_coin_id())
             .collect();
+        let mut newly_landed_ids = Vec::new();
         for tx in self.submitted.iter_mut() {
             if !tx.expected_output_coins.is_empty() {
                 let output_observed = tx
@@ -1160,10 +1248,14 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                     .any(|coin| observed_created.contains(coin));
                 if output_observed {
                     tx.landed = true;
-                } else if reorg || spend_reversal {
+                    newly_landed_ids.push(tx.id);
+                } else if reorg || spend_reversal || causally_rolled_back_ids.contains(&tx.id) {
                     tx.landed = false;
                 }
             }
+        }
+        for id in newly_landed_ids {
+            self.rollback_replayed_ids.remove(&id);
         }
         let current_height = height;
         let watched_outputs = self
@@ -1192,8 +1284,10 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             true
         });
 
-        if reorg || spend_reversal {
+        if reorg {
             self.collect_rollback_epoch_replay();
+        } else if !causally_rolled_back_ids.is_empty() {
+            self.collect_rollback_replay_ids(&causally_rolled_back_ids);
         }
         let reconciliation_inputs_after = self.reconciliation_input_coins();
         for coin in reconciliation_inputs_before.difference(&reconciliation_inputs_after) {
@@ -1209,11 +1303,13 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             .difference(&self.present_coins)
             .cloned()
             .collect();
+        created_watched.retain(|coin| !reappeared_vanished.contains(coin));
         let mut deleted_watched: std::collections::HashSet<CoinString> = self
             .present_coins
             .difference(&present_now)
             .cloned()
             .collect();
+        deleted_watched.retain(|coin| !reconciliation_only_inputs.contains(coin));
         self.present_coins = present_now;
 
         // A coin whose creation was rolled back by a reorg (flagged vanished by
@@ -2600,6 +2696,71 @@ mod tests {
     }
 
     #[test]
+    fn reconciliation_only_inputs_are_not_forwarded_to_the_cradle() {
+        let mut allocator = AllocEncoder::new();
+        let input = test_coin(36);
+        let watched_child = CoinString::from_parts(
+            &input.to_coin_id(),
+            &PuzzleHash::from_bytes([37; 32]),
+            &Amount::new(1),
+        );
+        let spend_tx =
+            test_bundle_spending_creating("create-watched-child", &input, &watched_child);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![
+            watch_event(&watched_child, 50),
+            GameSessionEvent::OutboundTransaction(TransactionSubmission::already_paid(
+                spend_tx, None,
+            )),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+        let submission = mgr.drain_submissions().unwrap().remove(0);
+        mgr.acknowledge_submission(submission.id).unwrap();
+
+        mgr.report_coin_states(
+            &mut allocator,
+            10,
+            &[
+                CoinStateRecord {
+                    coin: input.clone(),
+                    created_height: Some(5),
+                    spent_height: None,
+                },
+                CoinStateRecord {
+                    coin: watched_child.clone(),
+                    created_height: None,
+                    spent_height: None,
+                },
+            ],
+        )
+        .expect("unlanded report");
+        assert!(mgr.cradle().seen_observations[0].1.is_empty());
+
+        mgr.report_coin_states(
+            &mut allocator,
+            11,
+            &[
+                CoinStateRecord {
+                    coin: input,
+                    created_height: Some(5),
+                    spent_height: Some(11),
+                },
+                CoinStateRecord {
+                    coin: watched_child.clone(),
+                    created_height: Some(11),
+                    spent_height: None,
+                },
+            ],
+        )
+        .expect("landed report");
+        assert_eq!(
+            mgr.cradle().seen_observations[1].1,
+            vec![CoinObservation::Created(watched_child)]
+        );
+    }
+
+    #[test]
     fn out_of_range_height_is_rejected_without_touching_state() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(7);
@@ -3255,6 +3416,100 @@ mod tests {
     }
 
     #[test]
+    fn height_only_rollback_replay_survives_drain_failure_and_restore() {
+        let input = test_coin(64);
+        let output = CoinString::from_parts(
+            &input.to_coin_id(),
+            &PuzzleHash::from_bytes([65; 32]),
+            &Amount::new(1),
+        );
+        let protocol_bundle = test_bundle_spending_creating("rollback-protocol", &input, &output);
+        let finalized_bundle = test_bundle_spending_creating("rollback-finalized", &input, &output);
+        let mut mgr = TransactionManager::new(PersistableMockGameSession);
+        mgr.register_watch(output.clone(), Timeout::new(50), None, None);
+        mgr.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: TransactionSubmission::already_paid(protocol_bundle, None),
+            fee_intent: SubmissionFeeIntent::AlreadyPaid,
+        });
+        let first = mgr.drain_submissions().unwrap().remove(0);
+        let retained = mgr
+            .submitted
+            .iter_mut()
+            .find(|tx| tx.id == first.id)
+            .expect("retained submission");
+        retained.finalized_bundle = Some(finalized_bundle.clone());
+        retained.finalized_applied_fee = 42;
+        mgr.acknowledge_submission(first.id).unwrap();
+
+        let mut allocator = AllocEncoder::new();
+        mgr.report_coin_states(
+            &mut allocator,
+            20,
+            &[
+                CoinStateRecord {
+                    coin: input.clone(),
+                    created_height: Some(10),
+                    spent_height: Some(20),
+                },
+                CoinStateRecord {
+                    coin: output.clone(),
+                    created_height: Some(20),
+                    spent_height: None,
+                },
+            ],
+        )
+        .unwrap();
+        assert!(mgr.submitted[0].landed);
+
+        mgr.report_height(&mut allocator, 19).unwrap();
+        let rollback_replay = mgr.drain_submissions().unwrap().remove(0);
+        assert_eq!(rollback_replay.id, first.id);
+        assert_eq!(rollback_replay.bundle, finalized_bundle);
+        assert_eq!(rollback_replay.fee_intent, SubmissionFeeIntent::AlreadyPaid);
+        assert!(!mgr.submitted[0].landed);
+
+        // The host failed to complete submission and reloads before the
+        // authoritative same-tip coin snapshot arrives.
+        let encoded = bencodex::to_vec(&mgr).expect("serialize manager");
+        let mut restored: TransactionManager<PersistableMockGameSession> =
+            bencodex::from_slice(&encoded).expect("restore manager");
+        assert!(restored.snapshot_watched_coins().contains(&input));
+
+        restored
+            .report_coin_states(
+                &mut allocator,
+                19,
+                &[CoinStateRecord {
+                    coin: input,
+                    created_height: Some(10),
+                    spent_height: None,
+                }],
+            )
+            .unwrap();
+        restored.requeue_submitted();
+        let replay_after_restore = restored.drain_submissions().unwrap();
+        assert_eq!(replay_after_restore.len(), 1);
+        assert_eq!(replay_after_restore[0].id, first.id);
+        assert_eq!(replay_after_restore[0].bundle, finalized_bundle);
+        assert_eq!(
+            replay_after_restore[0].fee_intent,
+            SubmissionFeeIntent::AlreadyPaid
+        );
+        restored
+            .acknowledge_submission(replay_after_restore[0].id)
+            .unwrap();
+        restored.requeue_submitted();
+        assert!(restored.drain_submissions().unwrap().is_empty());
+
+        let encoded = bencodex::to_vec(&restored).expect("serialize acknowledged replay");
+        let mut restored_again: TransactionManager<PersistableMockGameSession> =
+            bencodex::from_slice(&encoded).expect("restore acknowledged replay");
+        restored_again.requeue_submitted();
+        assert!(restored_again.drain_submissions().unwrap().is_empty());
+    }
+
+    #[test]
     fn equal_or_higher_tip_spend_reversal_replays_acknowledged_intent() {
         for replacement_height in [11, 12] {
             let input = test_coin(replacement_height as u8 + 70);
@@ -3266,6 +3521,7 @@ mod tests {
             let mut mock = MockGameSession::default();
             mock.queue_drain(vec![
                 watch_event(&input, 50),
+                watch_event(&output, 50),
                 GameSessionEvent::OutboundTransaction(TransactionSubmission::already_paid(
                     test_bundle_spending_creating("spend-reversal", &input, &output),
                     None,
@@ -3299,28 +3555,159 @@ mod tests {
             mgr.report_coin_states(
                 &mut allocator,
                 replacement_height,
-                &[CoinStateRecord {
-                    coin: input.clone(),
-                    created_height: Some(10),
-                    spent_height: None,
-                }],
+                &[
+                    CoinStateRecord {
+                        coin: input.clone(),
+                        created_height: Some(10),
+                        spent_height: None,
+                    },
+                    CoinStateRecord {
+                        coin: output.clone(),
+                        created_height: None,
+                        spent_height: None,
+                    },
+                ],
             )
             .unwrap();
             let replay = mgr.drain_submissions().unwrap();
             assert_eq!(replay.len(), 1);
             assert_eq!(replay[0].id, first.id);
+            assert_eq!(
+                mgr.cradle().seen_observations.last().unwrap().1,
+                vec![CoinObservation::Created(input.clone())]
+            );
 
             mgr.report_coin_states(
                 &mut allocator,
                 replacement_height,
-                &[CoinStateRecord {
-                    coin: input,
-                    created_height: Some(10),
-                    spent_height: None,
-                }],
+                &[
+                    CoinStateRecord {
+                        coin: input,
+                        created_height: Some(10),
+                        spent_height: None,
+                    },
+                    CoinStateRecord {
+                        coin: output,
+                        created_height: None,
+                        spent_height: None,
+                    },
+                ],
             )
             .unwrap();
             assert!(mgr.drain_submissions().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn restored_equal_or_higher_tip_reorg_replays_exact_finalized_bundle_per_epoch() {
+        for replacement_height in [21, 22] {
+            let input = test_coin(replacement_height as u8 + 70);
+            let output = CoinString::from_parts(
+                &input.to_coin_id(),
+                &PuzzleHash::from_bytes([replacement_height as u8 + 80; 32]),
+                &Amount::new(1),
+            );
+            let protocol_bundle =
+                test_bundle_spending_creating("offline-protocol", &input, &output);
+            let finalized_bundle =
+                test_bundle_spending_creating("offline-finalized", &input, &output);
+            let mut mgr = TransactionManager::new(PersistableMockGameSession);
+            mgr.register_watch(input.clone(), Timeout::new(50), None, None);
+            mgr.register_watch(output.clone(), Timeout::new(50), None, None);
+            mgr.pending_submissions.push(PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::already_paid(protocol_bundle, None),
+                fee_intent: SubmissionFeeIntent::AlreadyPaid,
+            });
+            let first = mgr.drain_submissions().unwrap().remove(0);
+            let retained = mgr
+                .submitted
+                .iter_mut()
+                .find(|tx| tx.id == first.id)
+                .unwrap();
+            retained.finalized_bundle = Some(finalized_bundle.clone());
+            retained.finalized_applied_fee = 42;
+            mgr.acknowledge_submission(first.id).unwrap();
+
+            let mut allocator = AllocEncoder::new();
+            mgr.report_coin_states(
+                &mut allocator,
+                21,
+                &[
+                    CoinStateRecord {
+                        coin: input.clone(),
+                        created_height: Some(20),
+                        spent_height: Some(21),
+                    },
+                    CoinStateRecord {
+                        coin: output.clone(),
+                        created_height: Some(21),
+                        spent_height: None,
+                    },
+                ],
+            )
+            .unwrap();
+
+            let encoded = bencodex::to_vec(&mgr).unwrap();
+            let mut restored: TransactionManager<PersistableMockGameSession> =
+                bencodex::from_slice(&encoded).unwrap();
+            assert!(restored.snapshot_watched_coins().contains(&input));
+
+            let replacement = [
+                CoinStateRecord {
+                    coin: input.clone(),
+                    created_height: Some(20),
+                    spent_height: None,
+                },
+                CoinStateRecord {
+                    coin: output.clone(),
+                    created_height: None,
+                    spent_height: None,
+                },
+            ];
+            restored
+                .report_coin_states(&mut allocator, replacement_height, &replacement)
+                .unwrap();
+            let first_epoch = restored.drain_submissions().unwrap();
+            assert_eq!(first_epoch.len(), 1);
+            assert_eq!(first_epoch[0].id, first.id);
+            assert_eq!(first_epoch[0].bundle, finalized_bundle);
+            assert_eq!(first_epoch[0].fee_intent, SubmissionFeeIntent::AlreadyPaid);
+            restored.acknowledge_submission(first.id).unwrap();
+
+            restored
+                .report_coin_states(&mut allocator, replacement_height, &replacement)
+                .unwrap();
+            assert!(restored.drain_submissions().unwrap().is_empty());
+
+            let remine_height = replacement_height + 1;
+            restored
+                .report_coin_states(
+                    &mut allocator,
+                    remine_height,
+                    &[
+                        CoinStateRecord {
+                            coin: input.clone(),
+                            created_height: Some(20),
+                            spent_height: Some(remine_height),
+                        },
+                        CoinStateRecord {
+                            coin: output.clone(),
+                            created_height: Some(remine_height),
+                            spent_height: None,
+                        },
+                    ],
+                )
+                .unwrap();
+            assert!(restored.submitted[0].landed);
+
+            restored
+                .report_coin_states(&mut allocator, remine_height, &replacement)
+                .unwrap();
+            let second_epoch = restored.drain_submissions().unwrap();
+            assert_eq!(second_epoch.len(), 1);
+            assert_eq!(second_epoch[0].id, first.id);
+            assert_eq!(second_epoch[0].bundle, finalized_bundle);
         }
     }
 
@@ -3864,11 +4251,39 @@ mod tests {
             .expect("fresh report");
         restored.requeue_submitted();
         assert!(restored.drain_submissions().unwrap().is_empty());
-        assert_eq!(restored.snapshot_watched_coins(), vec![child]);
+        assert_eq!(
+            restored.snapshot_watched_coins(),
+            vec![input.clone(), child.clone()]
+        );
 
         let drain = restored
             .flush_and_collect(&mut allocator)
             .expect("drain unwatch");
+        assert!(drain.unwatch_coins.is_empty());
+
+        let depth = restored.confirmation_depth();
+        restored
+            .report_coin_states(
+                &mut allocator,
+                12 + depth,
+                &[
+                    CoinStateRecord {
+                        coin: input.clone(),
+                        created_height: Some(10),
+                        spent_height: Some(12),
+                    },
+                    CoinStateRecord {
+                        coin: child.clone(),
+                        created_height: Some(12),
+                        spent_height: None,
+                    },
+                ],
+            )
+            .expect("buried fresh report");
+        assert_eq!(restored.snapshot_watched_coins(), vec![child]);
+        let drain = restored
+            .flush_and_collect(&mut allocator)
+            .expect("drain bounded input unwatch");
         assert_eq!(drain.unwatch_coins, vec![input]);
     }
 

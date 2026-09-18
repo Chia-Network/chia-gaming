@@ -481,10 +481,10 @@ mod gaming_wasm {
         })
     }
 
-    /// Re-queue every transaction the manager has retained for resubmission.
-    /// Called on session restore so transactions that were drained but may not
-    /// have reached the network before a reload are submitted again.  The host
-    /// should call `drain_submissions` afterwards to pick them up.
+    /// Re-queue unlanded transactions still awaiting wallet acknowledgement.
+    /// Called only after fresh chain synchronization on restore/reconnect;
+    /// rollback-specific replay is queued while reporting chain evidence. The
+    /// host should call `drain_submissions` afterwards to pick up either path.
     #[wasm_bindgen]
     pub fn resubmit_submitted(cid: i32) -> Result<(), JsValue> {
         with_game(cid, move |cradle: &mut JsGameSession| {

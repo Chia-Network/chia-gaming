@@ -31,19 +31,36 @@ export class SimulatorTransportError extends Error {
 }
 
 export function classifyFakeBlockchainSubmitResult(result: unknown): WalletSubmitOutcome {
-  if (!Array.isArray(result) || typeof result[0] !== 'number') {
+  if (!Array.isArray(result)) {
     return { status: 'rejected', detail: 'Malformed simulator spend response' };
   }
-  if (result[0] === 1) {
+  const status =
+    typeof result[0] === 'bigint'
+      ? Number(result[0])
+      : typeof result[0] === 'number'
+        ? result[0]
+        : null;
+  if (status === 1) {
     return { status: 'acknowledged' };
   }
-  if (result[0] !== 3) {
-    return { status: 'rejected', detail: `Unknown simulator spend status=${result[0]}` };
+  if (status !== 3) {
+    return {
+      status: 'rejected',
+      detail:
+        status === null
+          ? 'Malformed simulator spend response'
+          : `Unknown simulator spend status=${status}`,
+    };
   }
-  if (result.length < 2 || typeof result[1] !== 'number') {
+  const detail =
+    typeof result[1] === 'bigint'
+      ? Number(result[1])
+      : typeof result[1] === 'number'
+        ? result[1]
+        : null;
+  if (detail === null) {
     return { status: 'rejected', detail: 'Malformed simulator spend rejection' };
   }
-  const detail = result[1];
   const diagnostic = typeof result[2] === 'string' ? result[2] : '';
   const message = `spend rejected: status=[${result[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
   return { status: 'rejected', detail: message };
@@ -324,6 +341,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   async farmBlock(): Promise<bigint> {
     return this.sendRequest('farm_block');
+  }
+
+  async replaceChain(depth: number, targetHeight: bigint): Promise<bigint> {
+    return this.sendRequest('replace_chain', {
+      depth,
+      targetHeight: Number(targetHeight),
+    });
   }
 
   waitForNextBlock(timeoutMs = 15_000): Promise<void> {

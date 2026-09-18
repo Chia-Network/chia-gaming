@@ -3727,10 +3727,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(SimScriptAction::WaitBlocks(4, 0));
         // Un-nerf only messages so the clean-shutdown response can flow; keep
         // BOTH managers' transactions nerfed across the channel-coin unroll
-        // race.  Otherwise the per-block rebroadcast resurrects player 0's own
-        // "Create unroll" (it has no relative timelock and creates an output),
-        // which lands first, spends the channel coin, and advances player 0 out
-        // of the force-unrollable phase before ForceUnroll runs.
+        // race. Otherwise releasing player 0's previously nerfed "Create
+        // unroll" lets it land first, spend the channel coin, and advance player
+        // 0 out of the force-unrollable phase before ForceUnroll runs.
         moves.push(SimScriptAction::UnNerfMessages);
         // Alice force-submits the unroll.  Both still nerfed, so this is the
         // sole channel-coin spend.
@@ -6388,12 +6387,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(2, 2));
         // Un-nerf only player 1 (the forcer) so its unroll-timeout claim drives
         // the stale resolution.  Keep player 0 nerfed: the channel coin is now
-        // spent, but the per-block rebroadcast would otherwise resurrect player
-        // 0's "preempt unroll" of the freshly-created unroll coin, which (having
-        // no relative timelock) lands before the timeout matures and overrides
-        // the stale state with player 0's current state -- making the live
-        // second game present again and suppressing its GameError.  Player 0
-        // stays nerfed and merely observes the stale resolution.
+        // spent, but releasing player 0's previously nerfed "preempt unroll" of
+        // the freshly-created unroll coin lets it land before the timeout
+        // matures and override the stale state with player 0's current state --
+        // making the live second game present again and suppressing its
+        // GameError. Player 0 stays nerfed and merely observes the stale
+        // resolution.
         sim_setup.game_actions.push(SimScriptAction::UnNerfTransactionsFor(1));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 2));
         sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));

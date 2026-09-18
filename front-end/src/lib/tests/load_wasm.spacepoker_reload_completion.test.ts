@@ -123,13 +123,14 @@ class SpacepokerReloadDriver {
       this.lanes[index].controller.getWasmFields()!.serializedGameSession,
     );
     this.unmount(index);
-    this.lanes[index] = (await injectSessionReload(this.lanes[index], this.poller)).lane;
+    const restored = await injectSessionReload(this.lanes[index], this.poller);
+    this.lanes[index] = restored.lane;
     assert.equal(this.lanes[index].controller.getRestoreStatus(), 'restored', `${label}: restore`);
     assert.deepEqual(this.state(index), before, `${label}: host hand state must round-trip`);
     assert.deepEqual(
-      this.lanes[index].controller.getWasmFields()!.serializedGameSession,
+      restored.save.live.serializedGameSession,
       beforeWasm,
-      `${label}: WASM state must round-trip`,
+      `${label}: persisted WASM checkpoint must match pre-reload state`,
     );
   }
 

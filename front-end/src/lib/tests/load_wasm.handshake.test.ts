@@ -198,10 +198,16 @@ it(
         coin_name: string;
         coin_string: string;
       }>;
-      assert.equal(restoredWatches.length, 1);
+      // This fixture's funding bundle has seven creating inputs. They remain
+      // bounded reconciliation interests until its watched channel output lands.
+      assert.ok(
+        restoredWatches.length <= 8,
+        `restored handshake poll interests must stay bounded, got ${restoredWatches.length}`,
+      );
       assert.equal(
-        restoredWatches[0].coin_name,
-        receiverChannelWatch[0].coin_name,
+        restoredWatches.filter((watch) => watch.coin_name === receiverChannelWatch[0].coin_name)
+          .length,
+        1,
         'reload before channel creation must preserve the channel watch',
       );
 

@@ -471,7 +471,9 @@ describe('BlockchainPoller', () => {
     expect(getCoinRecordsByNames).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
     expect(reportNewBlock).toHaveBeenCalledWith(101n);
-    expect(reportCoinStates).toHaveBeenCalledWith(101n, []);
+    expect(reportCoinStates).toHaveBeenCalledWith(101n, [
+      { coin: 'coin-a', created_height: null, spent_height: null },
+    ]);
     await expect(spendResult).resolves.toEqual({ status: 'acknowledged' });
     jest.useRealTimers();
   });
@@ -698,7 +700,7 @@ describe('BlockchainPoller', () => {
     expect(queriedNames).toEqual([[name], [name]]);
   });
 
-  it('skips transient partial snapshots for coins that were previously observed', async () => {
+  it('reports explicit absence for every omitted coin in a successful batch', async () => {
     const recordA = makeCoinRecord(1);
     const recordB = makeCoinRecord(2);
     const nameA = await coinRecordToName(recordA);
@@ -751,6 +753,13 @@ describe('BlockchainPoller', () => {
         records: [
           { coin: 'coin-a', created_height: 10n, spent_height: null },
           { coin: 'coin-b', created_height: 10n, spent_height: null },
+        ],
+      },
+      {
+        peak: 100n,
+        records: [
+          { coin: 'coin-a', created_height: 10n, spent_height: null },
+          { coin: 'coin-b', created_height: null, spent_height: null },
         ],
       },
     ];

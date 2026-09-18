@@ -105,87 +105,57 @@ output coins that transaction should create from its `CREATE_COIN` conditions.
 Those expected outputs are replay/conflict metadata only. They do not become host
 poll targets unless a protocol handler separately registers the coin as watched.
 After the wallet accepts the transaction, the host acknowledges that retained
-entry and stores the exact wallet-finalized aggregate bundle. A normal fresh-sync
-pass requeues only entries that have not been acknowledged, preventing a
-successful unroll submission from prompting for the same fee again. If an
-expected output later vanishes in a reorg, the manager clears the acknowledgement
-and explicitly requeues that finalized bundle unchanged; it does not ask the
-wallet to construct a new fee spend.
+entry and stores the exact wallet-finalized aggregate bundle. Wallet delivery and
+chain landing are independent durable facts.
 
-The replay rule is deliberately narrow:
+There are exactly two replay paths:
 
-- If one of the retained transaction's expected outputs is observed on-chain,
-  that transaction is considered to have won. It remains retained so a later
-  reload or reorg can replay it if its output vanishes.
-- If an input coin is observed spent and a later complete snapshot that
-  includes an already-watched expected output still does not contain it, a
-  conflicting transaction won. The retained local intent is forgotten and
-  must not be replayed after reload or reorg. The first input-spent report
-  cannot prove this when the handler only registers the output in reaction to
-  that report, because the host queried the older watch scope.
+- **Ordinary fresh synchronization.** Restore or reconnect first obtains a
+  complete coin snapshot, then calls `resubmit_submitted`. Only unexpired,
+  unlanded entries still awaiting wallet acknowledgement are requeued.
+  Acknowledged entries are not ordinarily rebroadcast, and block reports do not
+  create a per-block retry loop. An unavailable wallet call remains awaiting
+  acknowledgement for a later fresh-sync retry; an explicit rejection retires
+  only that stable submission ID.
+- **Rollback replay.** A lower tip opens a rollback epoch and queues every
+  surviving retained transaction at most once. At an equal or higher restored
+  tip, replay requires causal evidence for one retained transaction: a
+  previously landed watched expected output is explicitly absent while an input
+  from that same atomic bundle is explicitly live again. Only the matching
+  transaction is queued. Opening either replay path invalidates stale landing
+  evidence and sets delivery back to awaiting acknowledgement, so a replay
+  drained but unavailable before another reload remains recoverable.
 
-This prevents stale local intentions from being resurrected after the protocol
-has already accepted a different chain path. For example, if we were trying to
-clean-shutdown but an unroll spend wins the channel coin, the clean-shutdown
-transaction is no longer a replay candidate.
+Every rollback replay reuses the exact stored wallet-finalized bundle and
+`AlreadyPaid` fee intent; it never asks the wallet to construct a second fee
+spend. `rollback_replayed_ids` survives drain and acknowledgement for the current
+epoch, preventing the height report and its following same-tip snapshot from
+duplicating a replay. Re-observing the expected output closes that transaction's
+epoch so a later independent rollback can replay it once again.
 
-**Reorg strategy: replay, not general conflict resolution.** The manager's job is
-still not to solve every possible reorg/conflict rabbit hole. It handles
-retained transaction replay, output-vanish replay, timeout-claim re-arming, and
-the narrow "conflicting spend won, forget our obsolete local intent" cache
-pruning above. There is not yet a general recovery mechanism for deeper
-**true invalidation** cases where handler state would need to be rebuilt from an
-earlier point or a new chain path needs protocol-specific interpretation beyond
-the observed coin lifecycle. Those paths are future protocol/error-handling work
-rather than part of the current transaction manager replay model.
+The host poller makes this evidence explicit. Once all interests are registered
+and a coin-record request succeeds, every queried coin produces a
+`CoinStateRecord`; an omitted provider record becomes null creation and spend
+heights. Registration failures, provider failures, and malformed records suppress
+the snapshot instead of fabricating absence. Retained inputs remain reconciliation
+interests while their transaction is unlanded and, after landing, only while a
+watched expected output remains inside the manager's confirmation-depth recovery
+window. They are then unwatched rather than polled indefinitely.
 
-Coverage for this replay model lives in `src/transaction_manager.rs`: creator
-transactions are resubmitted when output coins vanish
-(`reorged_out_output_resubmits_creating_transaction`), timeout claims are
-re-armed when a watched coin's birthday rolls back
-(`eager_timeout_spend_resubmitted_after_birthday_rollback`), conflicting
-retained submissions are pruned after their spent input and watched missing
-output prove another transaction won
-(`conflicting_spend_prunes_once_expected_output_is_watched`), winning submissions
-remain replayable after their expected output appears
-(`winning_spend_retains_submission_for_replay`), and re-mined coins clear stale
-vanished flags before later genuine spends are forwarded
-(`reorg_remine_in_same_report_clears_vanished_and_allows_later_spend`).
+Conflict pruning and absolute expiry still apply before either replay. If an
+input is spent and a complete snapshot already covered a watched missing
+expected output, another transaction won and the obsolete local intent is
+forgotten. The first input-spent report cannot prove that when the handler only
+registers the output in reaction to that report, because the host queried the
+older scope.
 
-**Per-block rebroadcast for dropped broadcasts.** Reorg-driven replay (above)
-only re-submits a transaction when one of its outputs is observed and then
-vanishes. That does not cover a broadcast that simply never reached the network
-in the first place — e.g. an unroll *preempt*, which has no relative timelock and
-no other resubmission path, and would otherwise strand the protocol waiting for a
-coin spend that never comes. So on every block `resubmit_pending` rebroadcasts
-each retained submission that is
-
-- flagged `auto_resubmit` — it creates an observable output coin (so we can tell
-  when it lands) **and** carries no relative timelock (so rebroadcasting it at a
-  later height stays valid even after a reorg; `bundle_has_relative_timelock`
-  decides this, treating an unanalyzable bundle as timelocked);
-- not yet observed to land; and
-- still has at least one input coin present (unspent).
-
-The **input-present gate** is what keeps this safe against abandoned intents:
-once a transaction's input is spent — whether because our own spend landed or a
-conflicting spend won — it is never rebroadcast again. Rebroadcasting an
-*identical* bundle is harmless (the mempool de-duplicates by fingerprint), and a
-cross-party conflict (the opponent spending the same coin with a *different*
-bundle) is expected on a real chain and resolves naturally, since only one spend
-of a coin can confirm. On the browser side, a response identifying the exact
-same transaction as duplicate or `ALREADY_INCLUDING_TRANSACTION` is treated as
-idempotent success: both peers push the byte-identical funding bundle at channel
-creation, so the second arrival must not surface as an error. Other wallet
-errors are not interpreted through a consensus-code taxonomy; the adapter
-distinguishes only failure to complete wallet communication from an error
-returned by the wallet. Eager timeout claims are deliberately excluded from this
-path (they carry a relative timelock) because the ripeness logic above already
-resubmits them in a reorg-aware way. Coverage:
-`auto_resubmits_dropped_output_bearing_spend_until_it_lands`,
-`auto_resubmit_stops_when_input_spent_by_conflict`,
-`auto_resubmit_skips_timelocked_spend`,
-`auto_resubmit_skips_when_input_not_present`.
+Focused coverage lives in `src/transaction_manager.rs`, including
+`height_only_rollback_replay_survives_drain_failure_and_restore`,
+`restored_equal_or_higher_tip_reorg_replays_exact_finalized_bundle_per_epoch`,
+`conflicting_spend_prunes_once_expected_output_is_watched`, and
+`requeue_submitted_discards_expired_transactions`. The browser/simulator restore
+boundary is covered by the offline equal-tip replacement case in
+`front-end/src/lib/tests/load_wasm.unroll_reload.test.ts`.
 
 **Spends first observed as already-spent are still forwarded.** A watched coin
 whose very first observation already carries a spend height (an opponent's coin

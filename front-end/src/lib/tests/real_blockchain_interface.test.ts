@@ -883,7 +883,11 @@ describe('RealBlockchainInterface', () => {
 
   it('applies conservative simulator outcome defaults', () => {
     expect(classifyFakeBlockchainSubmitResult([1])).toEqual({ status: 'acknowledged' });
+    expect(classifyFakeBlockchainSubmitResult([1n])).toEqual({ status: 'acknowledged' });
     expect(classifyFakeBlockchainSubmitResult([3, 5])).toMatchObject({
+      status: 'rejected',
+    });
+    expect(classifyFakeBlockchainSubmitResult([3n, 5n])).toMatchObject({
       status: 'rejected',
     });
     expect(classifyFakeBlockchainSubmitResult([3, 9])).toMatchObject({
