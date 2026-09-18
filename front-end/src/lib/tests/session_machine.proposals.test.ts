@@ -6,6 +6,7 @@ import { parsePendingProposals } from '../session/persistenceBetweenHands';
 import { snapshotFromSessionModel } from '../session/sessionSnapshot';
 import type { PendingProposalModel } from '../session/types';
 import { selectIncomingProposal } from '../session/selectors';
+import { isUncancelledProposal } from '../session/sessionMachineProposals';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
 
@@ -24,6 +25,18 @@ function withProposal(proposal: PendingProposalModel) {
   return createSessionMachineState(
     createSessionModel({ betweenHand: { pendingProposals: [proposal] } }),
   );
+}
+
+function incomingProposal(id: string, parameters: bigint = 10n, senderIsPlayerA = false) {
+  return {
+    ProposalMade: {
+      id,
+      game_type: testProtocolId('calpoker'),
+      timeout: 15n,
+      sender_is_player_a: senderIsPlayerA,
+      parameters,
+    },
+  };
 }
 
 describe('scalar advisory proposal lifecycle', () => {
@@ -182,6 +195,156 @@ describe('scalar advisory proposal lifecycle', () => {
     const transition = reduceSessionMachine(state, { type: 'choose-same-terms' });
     expect(transition.state).toBe(state);
     expect(transition.effects).toEqual([]);
+  });
+
+  it.each([
+    ['local-outgoing', true],
+    ['peer-cached', true],
+    ['peer-review', true],
+    ['peer-accept-queued', true],
+    ['local-cancel-queued', false],
+    ['peer-cancel-queued', false],
+  ] as const)('classifies %s as uncancelled=%s', (lifecycle, expected) => {
+    expect(isUncancelledProposal(pending('7', lifecycle))).toBe(expected);
+  });
+
+  it.each(['peer-cached', 'local-outgoing'] as const)(
+    'cancels a second incoming proposal without admitting it beside %s',
+    (lifecycle) => {
+      const state = withProposal(pending('7', lifecycle));
+      const transition = reduceSessionNotification(
+        state,
+        incomingProposal('9'),
+        false,
+        reduceSessionMachine,
+      );
+
+      expect(transition.state).toBe(state);
+      expect(transition.state.model.betweenHand.pendingProposals).toEqual([
+        pending('7', lifecycle),
+      ]);
+      expect(transition.effects).toEqual([{ type: 'controller-cancel-proposal', id: '9' }]);
+    },
+  );
+
+  it.each(['peer-cached', 'local-outgoing'] as const)(
+    'blocks local proposal commands while %s occupies the slot',
+    (lifecycle) => {
+      const state = withProposal(pending('7', lifecycle));
+
+      expect(reduceSessionMachine(state, { type: 'submit-compose', handProposal: TERMS })).toEqual({
+        state,
+        effects: [],
+      });
+      expect(
+        reduceSessionMachine(state, { type: 'request-propose-game', handProposal: TERMS }),
+      ).toEqual({ state, effects: [] });
+    },
+  );
+
+  it('blocks choose-same-terms from proposing beside an outgoing proposal', () => {
+    const state = createSessionMachineState(
+      createSessionModel({
+        game: { currentHandOrigin: 'local' },
+        betweenHand: {
+          mode: 'decision',
+          lastHandProposal: TERMS,
+          pendingProposals: [pending('7', 'local-outgoing')],
+        },
+      }),
+    );
+
+    expect(reduceSessionMachine(state, { type: 'choose-same-terms' })).toEqual({
+      state,
+      effects: [],
+    });
+  });
+
+  it.each(['local-cancel-queued', 'peer-cancel-queued'] as const)(
+    'allows a replacement once the existing proposal is %s',
+    (lifecycle) => {
+      const state = withProposal(pending('7', lifecycle));
+      expect(
+        reduceSessionMachine(state, { type: 'submit-compose', handProposal: TERMS }).effects,
+      ).toEqual([{ type: 'controller-propose-game', handProposal: TERMS }]);
+      expect(
+        reduceSessionMachine(state, { type: 'request-propose-game', handProposal: TERMS }).effects,
+      ).toEqual([{ type: 'controller-propose-game', handProposal: TERMS }]);
+    },
+  );
+
+  it('queues automatic cached-peer cancellation without explicit-rejection UX facts', () => {
+    const state = createSessionMachineState(
+      createSessionModel({
+        game: { activeIds: ['101'] },
+        betweenHand: { mode: 'decision', rejectedOnceHandProposal: null },
+      }),
+    );
+    const queued = reduceSessionNotification(
+      state,
+      incomingProposal('9'),
+      false,
+      reduceSessionMachine,
+    );
+
+    expect(queued.state.model.betweenHand.pendingProposals).toEqual([
+      pending('9', 'peer-cancel-queued'),
+    ]);
+    expect(queued.state.model.betweenHand.mode).toBe('decision');
+    expect(queued.state.model.betweenHand.rejectedOnceHandProposal).toBeNull();
+    expect(queued.effects).toEqual([{ type: 'controller-cancel-proposal', id: '9' }]);
+
+    const succeeded = reduceSessionMachine(queued.state, {
+      type: 'proposal-command-succeeded',
+      command: 'cancel-proposal',
+      id: '9',
+    });
+    expect(succeeded.state.model.betweenHand.pendingProposals).toEqual([]);
+    expect(succeeded.state.model.betweenHand.mode).toBe('decision');
+    expect(succeeded.state.model.betweenHand.rejectedOnceHandProposal).toBeNull();
+    expect(succeeded.effects).toEqual([]);
+  });
+
+  it('accepts definitive cancellation success for an intentionally untracked proposal', () => {
+    const state = createSessionMachineState(createSessionModel());
+    expect(
+      reduceSessionMachine(state, {
+        type: 'proposal-command-succeeded',
+        command: 'cancel-proposal',
+        id: '9',
+      }),
+    ).toEqual({ state, effects: [] });
+  });
+
+  it('cancels a matching cached retry before proposing its replacement', () => {
+    const state = createSessionMachineState(
+      createSessionModel({
+        game: { handKey: 1, currentHandOrigin: 'local' },
+        betweenHand: {
+          mode: 'compose-proposal',
+          lastHandProposal: TERMS,
+          pendingRetryHandProposal: TERMS,
+        },
+      }),
+    );
+    const transition = reduceSessionNotification(
+      state,
+      incomingProposal('9', 10n, true),
+      false,
+      reduceSessionMachine,
+    );
+
+    expect(transition.state.model.betweenHand.pendingProposals).toEqual([
+      {
+        ...pending('9', 'peer-cancel-queued'),
+        handProposal: { ...TERMS, senderIsPlayerA: true },
+      },
+    ]);
+    expect(transition.state.model.betweenHand.pendingRetryHandProposal).toBeNull();
+    expect(transition.effects).toEqual([
+      { type: 'controller-cancel-proposal', id: '9' },
+      { type: 'controller-propose-game', handProposal: TERMS },
+    ]);
   });
 
   it.each(['peer-accept-queued', 'local-cancel-queued'] as const)(

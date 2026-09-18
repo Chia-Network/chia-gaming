@@ -5,28 +5,8 @@ lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(15);
 }
 
-#[cfg(test)]
+#[cfg(feature = "sim-tests")]
 use crate::channel_state::types::ReadableMove;
-
-// In unit tests (without the `sim-tests` feature), we only need `Timeout` and `Move`.
-#[cfg(all(test, not(feature = "sim-tests")))]
-#[derive(Clone)]
-pub enum SimScriptAction {
-    /// Do a timeout
-    Timeout(usize),
-    /// Move (player, game_id, clvm readable move, was received)
-    Move(usize, crate::common::types::GameID, ReadableMove, bool),
-}
-
-#[cfg(all(test, not(feature = "sim-tests")))]
-impl std::fmt::Debug for SimScriptAction {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            SimScriptAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-            SimScriptAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g:?},{n:?},{r})"),
-        }
-    }
-}
 
 #[cfg(feature = "sim-tests")]
 mod sim_tests {

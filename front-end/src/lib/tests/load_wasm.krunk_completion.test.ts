@@ -129,7 +129,6 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       },
     );
     runtimes.push(runtime);
-    controller.onSaveNeeded = persist;
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
         if (event.type === 'notification') {
@@ -392,9 +391,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       }
     }
   } finally {
-    controllers.forEach((controller) => {
-      controller.onSaveNeeded = null;
-    });
+    controllers.forEach((controller) => controller.cleanup());
   }
 }
 

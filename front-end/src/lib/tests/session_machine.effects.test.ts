@@ -1,9 +1,8 @@
 import type { SessionController } from '../../hooks/SessionController';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { runSessionMachineTransition } from '../session/sessionMachineEffects';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { send } from './session_machine.harness';
+import { runSessionMachineTransition, send } from './session_machine.harness';
 
 describe('session machine behavior sequences', () => {
   it('queues dispatches requested during a React projection instead of re-entering it', async () => {

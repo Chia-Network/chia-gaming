@@ -212,8 +212,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
       onError: jest.fn(),
-      persist: async () => {
-        writes.push(runtime.getState().model.betweenHand.compose.gameTimeout);
+      persist: async (state) => {
+        writes.push(state.model.betweenHand.compose.gameTimeout);
         if (writes.length === 1) await firstWrite;
       },
     });
@@ -232,5 +232,132 @@ describe('SessionMachineRuntime quiescent projection', () => {
 
     expect(writes).toEqual([20n, 30n]);
     expect(renders).toEqual([20n, 30n]);
+  });
+
+  it('keeps captured WASM and model fields exact while the next action arrives', async () => {
+    let releaseFirst!: () => void;
+    const firstWrite = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let wasmBytes = new Uint8Array([1, 1, 1]);
+    const captured: Array<{
+      bytes: Uint8Array;
+      timeout: string;
+    }> = [];
+    const mockController = controller(jest.fn());
+    (mockController as SessionController).getWasmFields = jest.fn(() => ({
+      serializedGameSession: wasmBytes,
+      gameSessionSchemaVersion: 4n,
+      pairingToken: 'pairing',
+      gameSessionId: '00'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 0n,
+      iStarted: false,
+      myContribution: '100',
+      theirContribution: '100',
+      perGameAmount: '10',
+      rewardPuzzleHash: '11'.repeat(32),
+      unackedMessages: [],
+      wasmNotificationHistory: [],
+      diagnosticLog: [],
+      durabilityWarning: undefined,
+      transportDisposition: 'active',
+      activeGameIds: [],
+      channelStatus: null,
+      myAlias: undefined,
+      opponentAlias: undefined,
+    }));
+    const runtime = new SessionMachineRuntime(initialState(), {
+      controller: mockController,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: jest.fn(),
+      save: async (update) => {
+        captured.push({
+          bytes: update.live.serializedGameSession,
+          timeout: update.presentation.betweenHandCompose.game_timeout,
+        });
+        if (captured.length === 1) await firstWrite;
+      },
+    });
+
+    runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+    expect(captured).toEqual([{ bytes: new Uint8Array([1, 1, 1]), timeout: '20' }]);
+
+    wasmBytes = new Uint8Array([2, 2, 2]);
+    runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
+    releaseFirst();
+    await runtime.persist();
+
+    expect(captured).toEqual([
+      { bytes: new Uint8Array([1, 1, 1]), timeout: '20' },
+      { bytes: new Uint8Array([2, 2, 2]), timeout: '30' },
+    ]);
+  });
+
+  it('does not retry a permanent write failure without later activity or flush', async () => {
+    const persist = jest.fn(async () => {
+      throw new Error('disk remains unavailable');
+    });
+    const reportDurabilityError = jest.fn();
+    const mockController = controller(jest.fn());
+    (mockController as SessionController).reportDurabilityError = reportDurabilityError;
+    const runtime = new SessionMachineRuntime(initialState(), {
+      controller: mockController,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: jest.fn(),
+      persist,
+    });
+
+    runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(reportDurabilityError).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(reportDurabilityError).toHaveBeenCalledTimes(1);
+  });
+
+  it('finishes a reentrant terminal drain before preparing persistence', async () => {
+    const order: string[] = [];
+    let drainPass = 0;
+    const mockController = controller(jest.fn());
+    (mockController.flushDeferredWork as jest.Mock).mockImplementation(() => {
+      drainPass += 1;
+      order.push(`drain-${drainPass}`);
+      if (drainPass === 1) {
+        runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
+      }
+    });
+    (mockController.prepareReliableCommit as jest.Mock).mockImplementation(() => {
+      order.push('prepare-transport');
+      return { generation: 1, outboundCount: 1, ackCount: 0, remoteNumber: 0n };
+    });
+    const runtime = new SessionMachineRuntime(initialState(), {
+      controller: mockController,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: jest.fn(),
+      persist: async (state) => {
+        order.push(`persist-${state.model.betweenHand.compose.gameTimeout}`);
+      },
+    });
+
+    runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
+    await runtime.persist();
+
+    expect(order).toEqual(['drain-1', 'drain-2', 'drain-3', 'prepare-transport', 'persist-30']);
   });
 });

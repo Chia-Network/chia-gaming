@@ -94,7 +94,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         });
       },
     });
-    controller.onSaveNeeded = () => Promise.resolve();
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
         if (event.type !== 'notification') return;
@@ -404,9 +403,6 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     }
   } finally {
     if (hookRenderer) act(() => hookRenderer?.unmount());
-    controllers.forEach((controller) => {
-      controller.onSaveNeeded = null;
-    });
   }
 }
 

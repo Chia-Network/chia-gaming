@@ -416,7 +416,6 @@ async function runHandshakeRoleReload(
   controllers.forEach((controller, index) => {
     controller.pairingToken = `reload-handshake-${suffix}-${index}`;
     controller.perGameAmount = 100n;
-    controller.onSaveNeeded = () => Promise.resolve();
     adapters[index].set_blob(controller);
   });
   await flushWrapperDrain(adapters);

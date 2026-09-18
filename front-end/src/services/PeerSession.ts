@@ -390,28 +390,9 @@ export class ReliablePeerTransport {
   private async performFlushPass(): Promise<void> {
     const consumer = this.consumer;
     if (!consumer) throw new Error('Reliable transport has no durability consumer');
-    const generation = this.durabilityGeneration;
-    const outboundCount = this.pendingOutbound.length;
-    const ackCount = this.pendingAcks.length;
-    const remoteNumber = this.state.remoteNumber;
+    const commit = this.prepareCommit();
     await consumer.persist();
-    const outbound = this.pendingOutbound.splice(0, outboundCount);
-    const acks = this.pendingAcks.splice(0, ackCount);
-    this.persistedGeneration = generation;
-    this.durableRemoteNumber = remoteNumber;
-    for (const { msgno } of outbound) this.unsentDurableOutbound.add(msgno);
-    const failedOutbound = outbound.filter(({ msgno, msg }) => {
-      const sent = this.sendData(msgno, msg);
-      if (sent) {
-        this.unsentDurableOutbound.delete(msgno);
-        this.consumer?.sent?.(msgno);
-      }
-      return !sent;
-    });
-    const failedAcks = acks.filter((ack) => !this.sendAck(ack));
-    for (const { msgno } of failedOutbound) this.unsentDurableOutbound.add(msgno);
-    this.durableAckRetries = [...new Set([...this.durableAckRetries, ...failedAcks])];
-    consumer.committed?.();
+    this.completeCommit(commit);
   }
 
   prepareCommit(): PreparedReliableCommit {

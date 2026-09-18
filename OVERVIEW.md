@@ -286,22 +286,28 @@ If actions are queued before shutdown, they are first flushed in an ordinary
 Batch and the sender requests the potato back.
 
 The receiver processes actions sequentially and rejects the entire batch if any
-action fails validation. `OffChainPhase` runs every mutating entry point against
-a cloneable working state containing channel state, local actions, incoming
-messages, potato ownership, peer-potato intent, clean-shutdown correlation,
-last spend commitment, and height. If any action or signature verification
-fails, the complete working state is discarded and no effects or replacement
-phase are published. This prevents intermediate proposal, game, balance,
-signature, potato, shutdown, or queue mutations from leaking out of a failed
-peer batch. The error then triggers go-on-chain (the peer sent a bad batch, so
-we dispute on-chain).
+action fails validation. Untrusted `PeerMessage::Batch` processing runs against
+an explicit cloneable rollback snapshot containing channel state, local actions,
+incoming messages, potato ownership, peer-potato intent, clean-shutdown
+correlation, last spend commitment, and height. If any action or signature
+verification fails, the complete working state is restored and no effects or
+replacement phase are published. A separate narrow snapshot protects received
+`CleanShutdown`, which cancels proposals before its peer signature is
+validated. Other trusted local mutations fail loudly instead of paying for a
+broad transactional wrapper. Invalid peer data triggers go-on-chain only after
+rollback.
 
-Local queue draining uses a nested complete-state savepoint. A failure restores
-the whole working state before returning diagnostic context to its caller; the
-caller may then remove exactly the failed local action and retry or notify the
-UI. This applies both while responding to a received batch and during the
-host's ordinary pending-action flush, so no unsent prefix of a failed drain
-remains applied locally.
+After a valid received batch commits, queued local game actions are reconciled
+once against the new peer state. Known stale moves, settlements, and cheats are
+removed with `ActionFailed`; the remaining queue is drained once. An unexpected
+local drain failure is an internal error, not a retryable peer-batch condition.
+
+This rollback scope is an architectural invariant. Core atomicity exists to
+isolate mutations made while validating untrusted peer input; it is not a
+general transaction abstraction for trusted local UI calls, height updates,
+coin observations, ordinary queue drains, or `go_on_chain`. Do not widen the
+snapshot boundary to those paths. A valid peer batch must commit before stale
+local intents are reconciled.
 
 Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
@@ -377,12 +383,12 @@ return validator programs; non-nil next hashes are resolved in the local
 registry.
 
 The `game_action_queue` is populated only by local API calls (user/UI actions),
-never directly by received peer messages. Received batches can still make
-queued local actions stale as a side effect of valid peer state changes, so the
-queue is part of the complete `OffChainPhase` transaction. Separately,
-`drain_queue_into_batch` processes the local queue when we hold the potato; any
-errors during local draining reflect bugs or stale local intents, not a normal
-peer-data recovery path.
+never directly by received peer messages. A valid received batch commits its
+peer-authored state first. Rust then reconciles queued local intents against
+that committed state; stale intents produce `ActionFailed` without rejecting or
+rolling back the valid peer batch. Separately, `drain_queue_into_batch`
+processes the local queue when we hold the potato; errors during local draining
+reflect bugs or stale local intents, not a peer-data recovery path.
 
 ### Non-Potato Messages
 
@@ -650,10 +656,11 @@ outcome.
 
 JavaScript is the browser host. It transports opaque peer bytes, persists and
 replays transport state, adapts wallet and chain APIs, forwards raw chain
-observations, and projects Rust facts into UI. It may enforce explicit product
-capability policy—for example, this client currently starts at most one
-concurrent local proposal—but a successful acceptance may create multiple
-games: Krunk's paired games still progress and settle independently.
+observations, and projects Rust facts into UI. It enforces an intentional
+one-uncancelled-proposal admission policy across local and peer proposals.
+Rust's protocol model still supports multiple pending proposals, and a
+successful acceptance may create multiple games: Krunk's paired games still
+progress and settle independently.
 It does not maintain a game-move replay journal. Post-unroll redo is
 reconstructed from Rust-owned channel and on-chain state; after browser restore,
 a game's normal state-driven effect may resubmit an automatic action only when
@@ -680,11 +687,34 @@ proposal as one scalar endpoint-local record. Rust runs the factory at
 acceptance and reports the complete ordered generated-game list; each package
 asserts that accepted topology when creating a fresh hand.
 
+The current browser admits exactly one uncancelled proposal across both origins.
+A second incoming proposal is definitively cancelled without being admitted to
+the frontend model; a cancellation-queued proposal no longer occupies the
+slot. This is a temporary UI capability while the product presents one hand at
+a time, not a protocol restriction. Rust deliberately retains multi-proposal
+support so future multi-hand UX can lift the admission policy without changing
+the wire or core ledger.
+
 | Concern | Owner |
-| --- | --- |
+| ------------------------------------------------------------------------------------------------ | --------------- |
 | Protocol phases, game/channel facts, validation, lifecycle, spends; watch lifecycle and ordering | Rust |
 | Raw peer bytes, ACK durability, wallet RPC, chain polling | JavaScript host |
 | UI projection, notification presentation, client capability constraints | JavaScript UI |
+
+`SessionMachineRuntime` is the sole active browser durability coordinator. It
+drains every consequence of a stimulus to a fixed point: reducer work, commands,
+controller/WASM results, generated events, UX-model updates, and reliable
+transport changes. It then synchronously captures one combined
+machine/WASM/reliable boundary, performs one atomic write, projects React state,
+and only then releases sends/ACKs. This same rule applies while completing work
+after rehydration. React projection is not part of the drain and must never
+precede persistence; withholding it until commit prevents transient UX states
+and flicker. A failed write keeps staged work for an explicit later retry
+without rendering or sending and without spinning.
+
+No active-session adapter, reducer effect, or protocol callback may establish a
+competing save, render, or send boundary. New event sources must enter the same
+fixed-point drain.
 
 The browser also separates three lifetimes that end at different moments.
 Protocol lifetime ends only after queued terminal reductions and the durable

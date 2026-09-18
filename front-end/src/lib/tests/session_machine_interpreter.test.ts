@@ -572,18 +572,25 @@ describe('session machine causal sequences', () => {
     ]);
   });
 
-  it('keeps the direct same-terms short circuit for a normally arriving match', () => {
-    const transition = reduceSessionMachine(sameTermsProposalState(), {
+  it('cancels a crossed same-terms proposal while the local proposal remains pending', () => {
+    const state = sameTermsProposalState();
+    const transition = reduceSessionMachine(state, {
       type: 'wasm-notification',
       iStarted: true,
       notification: matchingIncomingProposal(),
     });
 
+    expect(transition.state).toBe(state);
     expect(transition.state.model.betweenHand.mode).toBe('decision');
-    expect(transition.effects).toContainEqual({
-      type: 'controller-accept-proposal',
-      id: '9',
-    });
+    expect(transition.state.model.betweenHand.pendingProposals).toEqual([
+      expect.objectContaining({ id: '7', lifecycle: 'local-outgoing' }),
+    ]);
+    expect(transition.effects).toEqual([
+      {
+        type: 'controller-cancel-proposal',
+        id: '9',
+      },
+    ]);
   });
 
   it('clears every stale rejection notice after proposal acceptance', () => {
@@ -1257,6 +1264,37 @@ describe('session machine local game action boundary', () => {
     expect(runtime.getState().model.game.handState).toBe(canonical);
     expect(runtime.getGameHand()?.getState()).toEqual(checkpoint);
     expect(persisted).toHaveLength(0);
+  });
+
+  it('projects the synchronous tagged rejection notice without making durability dirty', async () => {
+    const runtimeRef: { current?: SessionMachineRuntime } = {};
+    const makeMove = jest.fn(() => {
+      runtimeRef.current!.dispatch({
+        type: 'wasm-notification',
+        iStarted: false,
+        notification: {
+          MoveRejected: { id: 7n, tag: 'illegal_move', message: 'not allowed' },
+        },
+      });
+      return 'rejected' as const;
+    });
+    const { runtime, persisted, rendered } = await localActionHarness(makeMove);
+    runtimeRef.current = runtime;
+
+    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
+    runtime.commitLocalGameAction({
+      gameType: 'calpoker',
+      id: '7',
+      command: { type: 'make-move', readable: null },
+    });
+    await runtime.persist();
+
+    expect(persisted).toHaveLength(0);
+    expect(rendered).toHaveLength(1);
+    expect(runtime.getState().model.game.queue.at(-1)).toMatchObject({
+      kind: 'move-rejected',
+      message: 'not allowed',
+    });
   });
 
   it('commits queued success as canonical and persists it immediately', async () => {

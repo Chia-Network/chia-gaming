@@ -28,7 +28,7 @@ import {
 import { log, diagStack } from '../services/log';
 import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
 import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
-import { clearSession, flushSessionSave } from './save';
+import { clearSession } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendRecent,
@@ -85,7 +85,6 @@ function clvmToBytes(value: Program | null): Uint8Array {
   return value.serialize();
 }
 
-const SAVE_DEBOUNCE_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 15_000;
 /** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
 /** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
@@ -234,7 +233,6 @@ export class SessionController implements PollingGameSession {
   diagnosticLog: string[] = [];
   private readonly receivePolicy: ReadonlySessionReceivePolicy;
   private pendingPeerFailure: string | null = null;
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private transactionCoordinator: ReliableCommitCoordinator | null = null;
   private restoreStatus: RestoreStatus = 'idle';
   private restoreError: string | null = null;
@@ -245,6 +243,7 @@ export class SessionController implements PollingGameSession {
   private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
+  private fundingOfferCancellation: Promise<void> = Promise.resolve();
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: {
@@ -258,7 +257,6 @@ export class SessionController implements PollingGameSession {
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
   durabilityWarning: string | undefined = undefined;
-  onSaveNeeded: (() => void | Promise<void>) | null = null;
   getFee: () => bigint = () => 0n;
 
   constructor(
@@ -300,7 +298,10 @@ export class SessionController implements PollingGameSession {
         !this.inboundSessionRejected &&
         !this.retired,
       deliver: (msgno, body) => this.deliverOrderedMessage(msgno, body),
-      persist: () => this.persistReliableBoundary(),
+      persist: () =>
+        Promise.reject(
+          new Error('Active-session persistence requires SessionMachineRuntime coordination'),
+        ),
       failure: (reason) => this.failPeerProcessing(reason),
       acknowledged: (ack) => this.handleReliableAcknowledgement(ack),
       sent: (msgno) => this.noteTerminalHandoffSent(msgno),
@@ -484,17 +485,12 @@ export class SessionController implements PollingGameSession {
     this.blockchain?.detachGameSession(this);
     this.blockchainAttached = false;
     this.blockchain = null;
-    this.onSaveNeeded = null;
     if (this.transactionCoordinator) {
       this.reliableTransport.detachCommitCoordinator(this.transactionCoordinator);
       this.transactionCoordinator = null;
     }
     this.persistInboundSessionReject = null;
     this.inboundSessionRejectHandler = null;
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
     if (this.drainTimer) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
@@ -511,7 +507,8 @@ export class SessionController implements PollingGameSession {
 
   reportDurabilityError(error: unknown): void {
     const detail = extractErrorMessage(error);
-    const warning = `Session storage failed: ${detail}. Terminal session remains live so saving can be retried.`;
+    const warning = `Session storage failed: ${detail}. Protocol messages remain queued until storage succeeds.`;
+    if (this.durabilityWarning === warning) return;
     this.durabilityWarning = warning;
     this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
   }
@@ -723,6 +720,7 @@ export class SessionController implements PollingGameSession {
       return;
     }
     try {
+      await this.fundingOfferCancellation;
       const offerAmount = -BigInt(request.amount);
       const extraConditions = request.conditions.map(({ opcode, args }) => ({
         opcode: BigInt(opcode),
@@ -786,6 +784,15 @@ export class SessionController implements PollingGameSession {
                 }
                 const result = requireWasmResult(this.cradle.provide_offer_bech32(offerString));
                 needsCancel = result.events.some((event) => 'NeedCoinSpend' in event);
+                if (persistedTradeId && needsCancel) {
+                  const cancellation = this.cancelRejectedFundingOffer(persistedTradeId);
+                  const barrier = cancellation.finally(() => {
+                    if (this.fundingOfferCancellation === barrier) {
+                      this.fundingOfferCancellation = Promise.resolve();
+                    }
+                  });
+                  this.fundingOfferCancellation = barrier;
+                }
                 this.processResult(result);
                 resolve();
               } catch (error) {
@@ -800,7 +807,7 @@ export class SessionController implements PollingGameSession {
           throw error;
         }
         if (persistedTradeId && needsCancel) {
-          await this.cancelRejectedFundingOffer(persistedTradeId);
+          await this.fundingOfferCancellation;
         }
       } else {
         if (!this.cradle) {
@@ -995,7 +1002,7 @@ export class SessionController implements PollingGameSession {
         this.enqueueStimulus(() => {
           if (!this.cradle) return;
           this.cradle.acknowledge_submission(blob!, jsonStringify(bundleToSubmit));
-          this.scheduleSave();
+          this.requestCommit();
         });
       }
     } catch (e) {
@@ -1011,7 +1018,7 @@ export class SessionController implements PollingGameSession {
           this.enqueueStimulus(() => {
             if (!this.cradle) return;
             this.cradle.acknowledge_submission(blob!, jsonStringify(bundleToSubmit));
-            this.scheduleSave();
+            this.requestCommit();
           });
         }
         log(`[wasm] submitTransaction ignored benign rejection: ${message}`);
@@ -1178,7 +1185,7 @@ export class SessionController implements PollingGameSession {
         : result;
     this.processResult(processed);
     this.assertActionSucceeded(result, action);
-    this.scheduleSave();
+    this.requestCommit();
   }
 
   private processGameCommandResult(
@@ -1283,7 +1290,7 @@ export class SessionController implements PollingGameSession {
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
     if (!this.retired) {
-      this.scheduleSave();
+      this.requestCommit();
     }
   }
 
@@ -1302,6 +1309,10 @@ export class SessionController implements PollingGameSession {
         Math.max(ACTIVE_DRAIN_EVENT_BUDGET, this.eventQueue.length),
       );
     }
+  }
+
+  hasDeferredWork(): boolean {
+    return this.eventQueue.length > 0 || this.drainScheduled;
   }
 
   async flushPendingWork(): Promise<void> {
@@ -1332,9 +1343,6 @@ export class SessionController implements PollingGameSession {
         msg.every((byte, index) => byte === command.message[index]),
     );
     const msgno = existing?.msgno ?? this.reliableTransport.allocateOutbound(command.message);
-    if (!existing) {
-      void this.reliableTransport.flushPending();
-    }
     this.terminalHandoff = { id: command.id, msgno, sent: false, acknowledged: false };
   }
 
@@ -1582,30 +1590,8 @@ export class SessionController implements PollingGameSession {
 
   // --- Persistence ---
 
-  scheduleSave() {
-    if (!this.cradle) return;
-    if (this.transactionCoordinator) {
-      this.transactionCoordinator.requestCommit();
-      return;
-    }
-    if (this.saveTimer) return;
-    const timer = setTimeout(() => {
-      this.saveTimer = null;
-      if (this.drainScheduled || this.eventQueue.length > 0) {
-        this.scheduleSave();
-        return;
-      }
-      try {
-        const save = this.reliableTransport.hasPendingDurability()
-          ? this.reliableTransport.flushPending()
-          : Promise.resolve(this.onSaveNeeded?.());
-        void save.catch((error) => this.reportBackgroundSaveError(error));
-      } catch (error) {
-        this.reportBackgroundSaveError(error);
-      }
-    }, SAVE_DEBOUNCE_MS);
-    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
-    this.saveTimer = timer;
+  private requestCommit(): void {
+    this.transactionCoordinator?.requestCommit();
   }
 
   async flushPendingSave(): Promise<void> {
@@ -1617,65 +1603,26 @@ export class SessionController implements PollingGameSession {
     // Move every event into its durable JS representation (message counters,
     // unacked messages, notifications) before taking the lifecycle snapshot.
     this.flushDeferredWork();
-
-    let saveRequested = false;
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-      saveRequested = true;
-    }
-
     if (this.reliableTransport.hasPendingDurability()) {
       await this.reliableTransport.flushPending();
-    } else if (saveRequested) {
-      const saveRequest = Promise.resolve(this.onSaveNeeded?.());
-      void saveRequest.catch(() => {});
-      await flushSessionSave();
-      await saveRequest;
-      return;
     }
-    // React may have queued a full-session save without this controller's
-    // debounce being set.
-    await flushSessionSave();
   }
 
-  private async persistReliableBoundary(): Promise<void> {
-    this.flushDeferredWork();
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
-    if (this.inboundSessionRejected) {
-      if (this.persistInboundSessionReject) {
-        await this.persistInboundSessionReject(
-          this.reliableState.sessionId,
-          this.reliableState.remoteNumber,
-        );
-      } else {
-        await clearSession();
-      }
-      this.inboundSessionRejectCommitted = true;
-      return;
-    }
-    if (!this.onSaveNeeded) {
-      throw new Error(
-        'Session persistence callback is unavailable at a protocol delivery boundary',
-      );
-    }
-    try {
-      const saveRequest = Promise.resolve(this.onSaveNeeded());
-      void saveRequest.catch(() => {});
-      await flushSessionSave();
-      await saveRequest;
-    } catch (error) {
-      const detail = extractErrorMessage(error);
-      const warning = `Session storage failed: ${detail}. Protocol messages remain queued until storage succeeds.`;
-      if (this.durabilityWarning !== warning) {
-        this.durabilityWarning = warning;
-        this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
-      }
-      throw error;
-    }
+  prepareInboundSessionRejectPersistence(): { write(): Promise<void> } | null {
+    if (!this.inboundSessionRejected) return null;
+    const persist = this.persistInboundSessionReject;
+    const sessionId = this.reliableState.sessionId;
+    const remoteNumber = this.reliableState.remoteNumber;
+    return {
+      write: async () => {
+        if (persist) {
+          await persist(sessionId, remoteNumber);
+        } else {
+          await clearSession();
+        }
+        this.inboundSessionRejectCommitted = true;
+      },
+    };
   }
 
   private completeOutboundTerminalHandoffAfterAck(commandId: string): void {
@@ -1757,7 +1704,7 @@ export class SessionController implements PollingGameSession {
    */
   clearDerivedGamePresentation(): void {
     this.activeGameIds = [];
-    this.scheduleSave();
+    this.requestCommit();
   }
 
   // --- Game actions (called by higher layer) ---

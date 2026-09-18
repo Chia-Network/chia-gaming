@@ -6,13 +6,15 @@ import {
   _resetForTests as resetSaveState,
   flushSessionSave,
   peekSession,
+  saveSession,
+  saveTerminalSession,
   type LiveSessionSave,
 } from '../../hooks/save';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { sessionModelFromSave } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { persistSessionSnapshot } from '../session/sessionMachinePersist';
+import { prepareSessionPersistence } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionModel } from '../session/types';
 import {
@@ -45,16 +47,6 @@ function bindRuntime(
   iStarted: boolean,
   restoring: boolean,
 ): ReloadableSessionLane {
-  const persist = () =>
-    persistOutsideReload(controller, () =>
-      persistSessionSnapshot({
-        controller,
-        getState: () => runtime.getState(),
-        restoring,
-        getRestoreStatus: () => controller.getRestoreStatus(),
-        getRestoreError: () => controller.getRestoreError(),
-      }),
-    );
   const runtime = new SessionMachineRuntime(
     createSessionMachineState(model, {
       firstGameAccepted: model.channel.status.state === 'Active',
@@ -66,7 +58,8 @@ function bindRuntime(
       getRestoreStatus: () => controller.getRestoreStatus(),
       getRestoreError: () => controller.getRestoreError(),
       onError: (error) => controller.reportRuntimeError(error),
-      persist,
+      save: (update) => persistOutsideReload(controller, () => saveSession(update)),
+      saveTerminal: (update) => persistOutsideReload(controller, () => saveTerminalSession(update)),
     },
   );
   const dispatchHostProjection = () => {
@@ -84,7 +77,6 @@ function bindRuntime(
     });
   };
   dispatchHostProjection();
-  controller.onSaveNeeded = persist;
   const subscription = addActiveSubscription(
     controller.getObservable().subscribe((event) => {
       switch (event.type) {
@@ -149,7 +141,13 @@ export async function injectSessionReload(
   let save: Awaited<ReturnType<typeof peekSession>>;
   try {
     await lane.runtime.persist();
-    await lane.controller.onSaveNeeded?.();
+    await prepareSessionPersistence({
+      controller: lane.controller,
+      getState: () => lane.runtime.getState(),
+      restoring: lane.controller.getRestoreStatus() !== 'idle',
+      getRestoreStatus: () => lane.controller.getRestoreStatus(),
+      getRestoreError: () => lane.controller.getRestoreError(),
+    })?.write();
     await flushSessionSave();
     resetSaveState();
     save = await peekSession();
@@ -165,7 +163,6 @@ export async function injectSessionReload(
   const uniqueId = lane.controller.uniqueId;
   lane.subscription.unsubscribe();
   lane.runtime.setRender(() => {});
-  lane.controller.onSaveNeeded = null;
   lane.controller.cleanup();
 
   const controller = new SessionController(

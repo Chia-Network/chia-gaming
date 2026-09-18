@@ -56,7 +56,6 @@ async function createAsymmetricActivePair(
   controllers.forEach((activeController, index) => {
     activeController.pairingToken = `reload-asymmetric-${suffix}-${index}`;
     activeController.perGameAmount = 100n;
-    activeController.onSaveNeeded = () => Promise.resolve();
     adapters[index].set_blob(activeController);
   });
   await action_with_messages(poller, adapters[0], adapters[1]);

@@ -2051,7 +2051,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
     res.push((
-        "later_invalid_acceptance_rolls_back_received_bundle",
+        "complete_malformed_peer_batch_rolls_back_working_state",
         &|| {
             let mut allocator = AllocEncoder::new();
             let mut rng = ChaCha8Rng::from_seed([42; 32]);
@@ -2108,7 +2108,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             );
         },
     ));
-    res.push(("test_peer_in_sim", &|| {
+    res.push(("valid_peer_batch_reconciles_stale_local_intent", &|| {
         let mut allocator = AllocEncoder::new();
 
         // Play moves

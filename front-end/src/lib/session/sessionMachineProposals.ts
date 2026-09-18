@@ -29,6 +29,12 @@ export function proposalHasLifecycle(
   return proposal.lifecycle === lifecycle;
 }
 
+export function isUncancelledProposal(proposal: PendingProposalModel): boolean {
+  return (
+    proposal.lifecycle !== 'local-cancel-queued' && proposal.lifecycle !== 'peer-cancel-queued'
+  );
+}
+
 export function clearProposalIds(
   state: SessionMachineState,
   requestedIds?: readonly string[],
@@ -99,6 +105,9 @@ export function reduceProposalEvent(
     case 'request-cancel-proposal':
       return { state, effects: [{ type: 'controller-cancel-proposal', id: event.id }] };
     case 'request-propose-game':
+      if (state.model.betweenHand.pendingProposals.some(isUncancelledProposal)) {
+        return { state, effects: [] };
+      }
       return {
         state,
         effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],
@@ -128,6 +137,9 @@ export function reduceProposalEvent(
       const betweenHand = state.model.betweenHand;
       const proposal = betweenHand.pendingProposals.find(({ id }) => id === event.id);
       if (!proposal) {
+        if (event.command === 'cancel-proposal') {
+          return { state, effects: [] };
+        }
         throw new Error(`Proposal command succeeded for unknown proposal ${event.id}`);
       }
       if (event.command === 'accept-proposal') {

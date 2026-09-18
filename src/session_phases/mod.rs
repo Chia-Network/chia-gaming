@@ -125,12 +125,6 @@ fn failed_game_action_context(action: &GameAction) -> Option<(GameID, FailedGame
     }
 }
 
-struct DrainQueueFailure {
-    queue_index: Option<usize>,
-    action: Option<GameAction>,
-    source: Error,
-}
-
 enum AcceptanceOutcome {
     Accepted(Vec<AcceptedGameMember>),
     Insufficient {
@@ -140,6 +134,13 @@ enum AcceptanceOutcome {
         their_balance_short: bool,
     },
 }
+
+type AppliedPeerBatch = (
+    Vec<Effect>,
+    ChannelCoinSpendInfo,
+    bool,
+    Vec<(LocalProposalId, Vec<AcceptedGameMember>)>,
+);
 
 fn format_batch_action(action: &BatchAction) -> String {
     match action {
@@ -209,34 +210,6 @@ pub(crate) fn make_send_log(
 }
 
 impl OffChainPhase {
-    fn transaction<T>(
-        &mut self,
-        operation: impl FnOnce(&mut Self) -> Result<T, Error>,
-    ) -> Result<T, Error> {
-        let snapshot = self.state.clone();
-        let previous_next_phase = self.channel_spend_next_phase.take();
-        match operation(self) {
-            Ok(value) => {
-                if self.channel_spend_next_phase.is_some() && previous_next_phase.is_some() {
-                    self.state = snapshot;
-                    self.channel_spend_next_phase = previous_next_phase;
-                    return Err(Error::StrErr(
-                        "off-chain transaction replaced an unpublished next phase".to_string(),
-                    ));
-                }
-                if self.channel_spend_next_phase.is_none() {
-                    self.channel_spend_next_phase = previous_next_phase;
-                }
-                Ok(value)
-            }
-            Err(error) => {
-                self.state = snapshot;
-                self.channel_spend_next_phase = previous_next_phase;
-                Err(error)
-            }
-        }
-    }
-
     fn ensure_game_types(&mut self, allocator: &mut AllocEncoder) {
         if self.game_types.is_empty() {
             self.game_types = crate::session_phases::game_collection::game_collection(allocator);
@@ -460,11 +433,9 @@ impl OffChainPhase {
         mover_share: Amount,
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            let (_continued, effects) =
-                phase.do_game_action(GameAction::Cheat(*game_id, mover_share, entropy))?;
-            Ok(effects)
-        })
+        let (_continued, effects) =
+            self.do_game_action(GameAction::Cheat(*game_id, mover_share, entropy))?;
+        Ok(effects)
     }
 
     #[cfg(test)]
@@ -473,11 +444,9 @@ impl OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            let (_continued, effects) =
-                phase.do_game_action(GameAction::ForcedSelfAccept(*proposal_id))?;
-            Ok(effects)
-        })
+        let (_continued, effects) =
+            self.do_game_action(GameAction::ForcedSelfAccept(*proposal_id))?;
+        Ok(effects)
     }
 
     pub fn has_queued_message(&self) -> bool {
@@ -523,39 +492,44 @@ impl OffChainPhase {
     }
 
     #[cfg(test)]
-    pub fn assert_complete_transaction_rollback_for_testing(&mut self, proposal: &GameProposal) {
-        let before = bencodex::to_vec(&self.state).expect("serialize working state");
-        let result: Result<(), Error> = self.transaction(|phase| {
-            phase.state.have_potato = PotatoState::Requested;
-            phase
-                .state
-                .game_action_queue
-                .push_back(GameAction::CleanShutdown);
-            phase
-                .state
-                .incoming_messages
-                .push_back(Rc::new(PeerMessage::RequestPotato(())));
-            phase.state.peer_wants_potato = !phase.state.peer_wants_potato;
-            phase.state.last_channel_coin_spend_info = None;
-            let coin = phase.channel_state()?.channel_coin().clone();
-            phase.state.pending_clean_shutdown = Some((coin, Program::nil().into()));
-            phase.state.last_height = phase.state.last_height.saturating_add(1);
-            phase
-                .channel_state_mut()?
-                .create_outgoing_proposal(proposal)?;
-            Err(Error::StrErr("intentional transaction failure".to_string()))
-        });
+    pub fn queue_stale_game_action_for_testing(&mut self, game_id: GameID) {
+        self.state.game_action_queue.push_back(GameAction::Cheat(
+            game_id,
+            Amount::default(),
+            Hash::default(),
+        ));
+    }
 
-        assert!(result.is_err());
+    #[cfg(test)]
+    pub fn assert_invalid_clean_shutdown_rollback_for_testing(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        proposal: &GameProposal,
+    ) {
+        let base_state = self.state.clone();
+        self.channel_state_mut()
+            .expect("channel state")
+            .create_outgoing_proposal(proposal)
+            .expect("create rollback probe proposal");
+        let before = bencodex::to_vec(&self.state).expect("serialize working state with proposal");
+
+        let result = self.pass_on_channel_state_message(
+            env,
+            Rc::new(PeerMessage::CleanShutdown {
+                channel_half_sig: Aggsig::default(),
+            }),
+        );
+        assert!(result.is_err(), "invalid clean shutdown must fail");
         assert_eq!(
             bencodex::to_vec(&self.state).expect("serialize restored working state"),
             before,
-            "failed operation must restore the complete off-chain working state"
+            "invalid clean shutdown must restore proposal cancellation and complete working state"
         );
         assert!(
             self.channel_spend_next_phase.is_none(),
-            "failed operation must not publish a phase transition"
+            "invalid clean shutdown must not publish a phase transition"
         );
+        self.state = base_state;
     }
 
     /// Tell whether this peer has the potato.  If it has been sent but not received yet
@@ -572,28 +546,8 @@ impl OffChainPhase {
         if !self.has_potato() || self.state.game_action_queue.is_empty() {
             return Ok(vec![]);
         }
-        match self.drain_queue_into_batch(env) {
-            Ok((_sent, effects)) => Ok(effects),
-            Err(failure) => {
-                let DrainQueueFailure {
-                    queue_index,
-                    action,
-                    source,
-                } = *failure;
-                self.last_failed_queued_action =
-                    action.as_ref().and_then(failed_game_action_context);
-                if let Some(failed_index) = queue_index {
-                    if failed_index >= self.state.game_action_queue.len() {
-                        return Err(Error::StrErr(
-                            "failed queued action index exceeds restored local drain queue"
-                                .to_string(),
-                        ));
-                    }
-                    self.state.game_action_queue.remove(failed_index);
-                }
-                Err(source)
-            }
-        }
+        let (_sent, effects) = self.drain_queue_into_batch(env)?;
+        Ok(effects)
     }
 
     pub fn take_failed_queued_action(&mut self) -> Option<(GameID, FailedGameAction)> {
@@ -605,29 +559,32 @@ impl OffChainPhase {
         player_ch.get_reward_puzzle_hash(env)
     }
 
-    fn update_channel_coin_after_receive(
+    fn commit_received_batch_state(
         &mut self,
-        env: &mut ChannelEnv<'_>,
         spend: &ChannelCoinSpendInfo,
-        send_back: bool,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         self.state.have_potato = PotatoState::Present;
-
         self.state.last_channel_coin_spend_info = Some(spend.clone());
-
+        for (id, amount, _game_finished) in
+            self.channel_state_mut()?.drain_cached_accept_settlements()
         {
-            let ch = self.channel_state_mut()?;
-            for (id, amount, _game_finished) in ch.drain_cached_accept_settlements() {
-                effects.push(Effect::Notify(GameNotification::game_settled(
-                    id,
-                    SettlementOutcome::AcceptSettlement,
-                    amount,
-                    None,
-                )));
-            }
+            effects.push(Effect::Notify(GameNotification::game_settled(
+                id,
+                SettlementOutcome::AcceptSettlement,
+                amount,
+                None,
+            )));
         }
+        Ok(effects)
+    }
 
+    fn drain_local_actions_after_receive(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        send_back: bool,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
         if send_back
             && self.channel_state()?.get_their_current_share() == Amount::default()
             && !self.channel_state()?.has_active_games()
@@ -637,36 +594,14 @@ impl OffChainPhase {
                 .push_back(GameAction::CleanShutdown);
         }
 
-        let (sent, batch_effects) = loop {
-            match self.drain_queue_into_batch(env) {
-                Ok(result) => break result,
-                Err(failure) => {
-                    let DrainQueueFailure {
-                        queue_index,
-                        action: failed_action,
-                        source,
-                    } = *failure;
-                    let Some((failed_index, failed_action)) =
-                        queue_index.zip(failed_action.as_ref())
-                    else {
-                        return Err(source);
-                    };
-                    let Some((id, action)) = failed_game_action_context(failed_action) else {
-                        return Err(source);
-                    };
-                    if failed_index >= self.state.game_action_queue.len() {
-                        return Err(Error::StrErr(
-                            "failed queued action index exceeds restored local drain queue"
-                                .to_string(),
-                        ));
-                    }
-                    self.state.game_action_queue.remove(failed_index);
-                    effects.push(Effect::Notify(GameNotification::ActionFailed {
-                        id: Some(id),
-                        action: Some(action),
-                        reason: format!("{source:?}"),
-                    }));
-                }
+        let (sent, batch_effects) = match self.drain_queue_into_batch(env) {
+            Ok(result) => result,
+            Err(error) => {
+                game_assert!(
+                    false,
+                    "unexpected local action failure after valid peer batch: {error:?}"
+                );
+                unreachable!("game_assert returns on failure");
             }
         };
         effects.extend(batch_effects);
@@ -728,7 +663,21 @@ impl OffChainPhase {
                 effects.extend(self.process_received_batch(env, &timeout, actions, signatures)?);
             }
             PeerMessage::CleanShutdown { channel_half_sig } => {
-                effects.extend(self.process_received_clean_shutdown(env, channel_half_sig)?);
+                game_assert!(
+                    self.channel_spend_next_phase.is_none(),
+                    "clean shutdown received with an unpublished next phase"
+                );
+                let state_snapshot = self.state.clone();
+                match self.process_received_clean_shutdown(env, channel_half_sig) {
+                    Ok(shutdown_effects) => {
+                        effects.extend(shutdown_effects);
+                    }
+                    Err(error) => {
+                        self.state = state_snapshot;
+                        self.channel_spend_next_phase = None;
+                        return Err(error);
+                    }
+                }
             }
             PeerMessage::Message(game_id, message) => {
                 let decoded_message = {
@@ -834,6 +783,38 @@ impl OffChainPhase {
         actions: &[BatchAction],
         signatures: &StateUpdateSignatures,
     ) -> Result<Vec<Effect>, Error> {
+        let state_snapshot = self.state.clone();
+        let peer_result = self
+            .apply_received_batch(env, actions, signatures)
+            .and_then(
+                |(mut effects, spend_info, received_accept_settlement, accepted_groups)| {
+                    effects.extend(self.commit_received_batch_state(&spend_info)?);
+                    Ok((effects, received_accept_settlement, accepted_groups))
+                },
+            );
+        let (mut effects, received_accept_settlement, accepted_groups) = match peer_result {
+            Ok(result) => result,
+            Err(error) => {
+                self.state = state_snapshot;
+                return Err(error);
+            }
+        };
+
+        effects.extend(self.reconcile_stale_game_actions()?);
+        effects.extend(self.drain_local_actions_after_receive(env, received_accept_settlement)?);
+        effects.extend(accepted_groups.into_iter().map(|(id, members)| {
+            Effect::Notify(GameNotification::ProposalAcceptedGroup { id, members })
+        }));
+
+        Ok(effects)
+    }
+
+    fn apply_received_batch(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        actions: &[BatchAction],
+        signatures: &StateUpdateSignatures,
+    ) -> Result<AppliedPeerBatch, Error> {
         let mut effects = Vec::new();
         let mut accepted_groups = Vec::new();
 
@@ -1037,14 +1018,38 @@ impl OffChainPhase {
             effects.push(Effect::Log(parts.join("\n")));
         }
 
-        effects.extend(self.update_channel_coin_after_receive(
-            env,
-            &spend_info,
+        Ok((
+            effects,
+            spend_info,
             received_accept_settlement,
-        )?);
-        effects.extend(accepted_groups.into_iter().map(|(id, members)| {
-            Effect::Notify(GameNotification::ProposalAcceptedGroup { id, members })
-        }));
+            accepted_groups,
+        ))
+    }
+
+    fn reconcile_stale_game_actions(&mut self) -> Result<Vec<Effect>, Error> {
+        let queued = std::mem::take(&mut self.state.game_action_queue);
+        let mut effects = Vec::new();
+
+        for action in queued {
+            let stale = match &action {
+                GameAction::Move(id, _) | GameAction::AcceptSettlement(id) => {
+                    self.channel_state()?.game_is_my_turn(id) != Some(true)
+                }
+                GameAction::Cheat(id, ..) => self.channel_state()?.game_is_my_turn(id).is_none(),
+                _ => false,
+            };
+            if stale {
+                let (id, action_kind) = failed_game_action_context(&action)
+                    .expect("stale game action must have failure context");
+                effects.push(Effect::Notify(GameNotification::ActionFailed {
+                    id: Some(id),
+                    action: Some(action_kind),
+                    reason: "local action became stale after applying peer batch".to_string(),
+                }));
+            } else {
+                self.state.game_action_queue.push_back(action);
+            }
+        }
 
         Ok(effects)
     }
@@ -1143,28 +1148,6 @@ impl OffChainPhase {
     fn drain_queue_into_batch(
         &mut self,
         env: &mut ChannelEnv<'_>,
-    ) -> Result<(bool, Vec<Effect>), Box<DrainQueueFailure>> {
-        let state_snapshot = self.state.clone();
-        let mut current_action = None;
-        let result = self.drain_queue_into_batch_inner(env, &mut current_action);
-        result.map_err(|source| {
-            self.state = state_snapshot;
-            let (queue_index, action) = match current_action {
-                Some((index, action)) => (Some(index), Some(action)),
-                None => (None, None),
-            };
-            Box::new(DrainQueueFailure {
-                queue_index,
-                action,
-                source,
-            })
-        })
-    }
-
-    fn drain_queue_into_batch_inner(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        current_action: &mut Option<(usize, GameAction)>,
     ) -> Result<(bool, Vec<Effect>), Error> {
         game_assert!(
             matches!(self.state.have_potato, PotatoState::Present),
@@ -1175,11 +1158,9 @@ impl OffChainPhase {
         let mut deferred = VecDeque::new();
         let mut applied_actions = Vec::new();
         let mut request_potato_back = false;
-        let mut queue_index = 0;
 
         while let Some(action) = self.state.game_action_queue.pop_front() {
-            *current_action = Some((queue_index, action.clone()));
-            queue_index += 1;
+            self.last_failed_queued_action = failed_game_action_context(&action);
             match action {
                 GameAction::Move(game_id, prepared) => {
                     let ch = self.channel_state_mut()?;
@@ -1264,7 +1245,7 @@ impl OffChainPhase {
                             }));
                             self.channel_state_mut()?.remove_proposal(local_id)?;
                             batch_actions.push(BatchAction::CancelProposal(origin_wire_id));
-                            *current_action = None;
+                            self.last_failed_queued_action = None;
                             continue;
                         }
                     }
@@ -1294,7 +1275,7 @@ impl OffChainPhase {
                         deferred.push_back(GameAction::CleanShutdown);
                         deferred.append(&mut self.state.game_action_queue);
                         request_potato_back = true;
-                        *current_action = None;
+                        self.last_failed_queued_action = None;
                         break;
                     }
                     {
@@ -1345,7 +1326,7 @@ impl OffChainPhase {
                     batch_actions.push(BatchAction::AcceptProposal(wire_id));
                 }
             }
-            *current_action = None;
+            self.last_failed_queued_action = None;
         }
 
         self.state.game_action_queue = deferred;
@@ -1385,6 +1366,7 @@ impl OffChainPhase {
 
         // Packaging and delivery intent succeeded. Later failures cannot be
         // attributed to a still-pending local action from this flush.
+        self.last_failed_queued_action = None;
         Ok((true, effects))
     }
 
@@ -1405,13 +1387,10 @@ impl OffChainPhase {
             peer_wire::decode_peer_message(&msg)
         };
         let incoming_result = decoded.and_then(|msg_envelope| {
-            self.transaction(|phase| {
-                phase
-                    .state
-                    .incoming_messages
-                    .push_back(Rc::new(msg_envelope));
-                phase.process_queued_message_raw(env)
-            })
+            self.state
+                .incoming_messages
+                .push_back(Rc::new(msg_envelope));
+            self.process_queued_message_raw(env)
         });
         match incoming_result {
             Ok(effects) => Ok(effects),
@@ -1428,7 +1407,7 @@ impl OffChainPhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| phase.process_queued_message_raw(env))
+        self.process_queued_message_raw(env)
     }
 
     fn process_queued_message_raw(
@@ -1555,7 +1534,7 @@ impl OffChainPhase {
         env: &mut ChannelEnv<'_>,
         got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| phase.go_on_chain_raw(env, got_error))
+        self.go_on_chain_raw(env, got_error)
     }
 
     fn go_on_chain_raw(
@@ -1672,32 +1651,29 @@ impl FromLocalUI for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         proposal: &GameProposal,
     ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
-        self.transaction(|phase| {
-            phase
-                .state
-                .game_action_queue
-                .retain(|a| !matches!(a, GameAction::CleanShutdown));
+        self.state
+            .game_action_queue
+            .retain(|a| !matches!(a, GameAction::CleanShutdown));
 
-            let local_id = phase
-                .channel_state_mut()?
-                .create_outgoing_proposal(proposal)?;
-            let has_pending_peer = {
-                let ch = phase.channel_state()?;
-                !ch.pending_peer_proposal_ids().is_empty()
-            };
-            if has_pending_peer {
-                phase.channel_state_mut()?.remove_proposal(local_id)?;
-                let effects = vec![Effect::Notify(GameNotification::ProposalCancelled {
-                    id: local_id,
-                    reason: CancelReason::PeerProposalPending,
-                })];
-                return Ok((local_id, effects));
-            }
+        let local_id = self
+            .channel_state_mut()?
+            .create_outgoing_proposal(proposal)?;
+        let has_pending_peer = {
+            let ch = self.channel_state()?;
+            !ch.pending_peer_proposal_ids().is_empty()
+        };
+        if has_pending_peer {
+            self.channel_state_mut()?.remove_proposal(local_id)?;
+            let effects = vec![Effect::Notify(GameNotification::ProposalCancelled {
+                id: local_id,
+                reason: CancelReason::PeerProposalPending,
+            })];
+            return Ok((local_id, effects));
+        }
 
-            phase.push_action(GameAction::QueuedProposal(local_id));
-            let (_has_potato, effect) = phase.send_potato_request_if_needed()?;
-            Ok((local_id, effect.into_iter().collect()))
-        })
+        self.push_action(GameAction::QueuedProposal(local_id));
+        let (_has_potato, effect) = self.send_potato_request_if_needed()?;
+        Ok((local_id, effect.into_iter().collect()))
     }
 
     fn accept_proposal(
@@ -1705,11 +1681,9 @@ impl FromLocalUI for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            let (_continued, effects) =
-                phase.do_game_action(GameAction::QueuedAcceptProposal(*proposal_id))?;
-            Ok(effects)
-        })
+        let (_continued, effects) =
+            self.do_game_action(GameAction::QueuedAcceptProposal(*proposal_id))?;
+        Ok(effects)
     }
 
     fn cancel_proposal(
@@ -1717,26 +1691,24 @@ impl FromLocalUI for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            let proposal = { phase.channel_state()?.find_proposal(*proposal_id)?.clone() };
-            if matches!(proposal.lifecycle, ProposalLifecycle::LocalDraft) {
-                phase.state.game_action_queue.retain(
-                    |action| !matches!(action, GameAction::QueuedProposal(id) if id == proposal_id),
-                );
-                phase.channel_state_mut()?.remove_proposal(*proposal_id)?;
-                return Ok(vec![Effect::Notify(GameNotification::ProposalCancelled {
-                    id: *proposal_id,
-                    reason: CancelReason::CancelledByUs,
-                })]);
-            }
-            let action = if proposal.lifecycle.originated_locally() {
-                GameAction::QueuedCancelProposal(*proposal_id)
-            } else {
-                GameAction::QueuedCancelProposalSilently(*proposal_id)
-            };
-            let (_continued, effects) = phase.do_game_action(action)?;
-            Ok(effects)
-        })
+        let proposal = { self.channel_state()?.find_proposal(*proposal_id)?.clone() };
+        if matches!(proposal.lifecycle, ProposalLifecycle::LocalDraft) {
+            self.state.game_action_queue.retain(
+                |action| !matches!(action, GameAction::QueuedProposal(id) if id == proposal_id),
+            );
+            self.channel_state_mut()?.remove_proposal(*proposal_id)?;
+            return Ok(vec![Effect::Notify(GameNotification::ProposalCancelled {
+                id: *proposal_id,
+                reason: CancelReason::CancelledByUs,
+            })]);
+        }
+        let action = if proposal.lifecycle.originated_locally() {
+            GameAction::QueuedCancelProposal(*proposal_id)
+        } else {
+            GameAction::QueuedCancelProposalSilently(*proposal_id)
+        };
+        let (_continued, effects) = self.do_game_action(action)?;
+        Ok(effects)
     }
 
     fn make_move(
@@ -1746,19 +1718,17 @@ impl FromLocalUI for OffChainPhase {
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            validate_new_move_action(
-                id,
-                phase.channel_state()?.game_is_my_turn(id),
-                &phase.state.game_action_queue,
-                false,
-            )?;
-            let prepared = phase
-                .channel_state()?
-                .prepare_move(_env, id, readable, new_entropy)?;
-            let (_continued, effects) = phase.do_game_action(GameAction::Move(*id, prepared))?;
-            Ok(effects)
-        })
+        validate_new_move_action(
+            id,
+            self.channel_state()?.game_is_my_turn(id),
+            &self.state.game_action_queue,
+            false,
+        )?;
+        let prepared = self
+            .channel_state()?
+            .prepare_move(_env, id, readable, new_entropy)?;
+        let (_continued, effects) = self.do_game_action(GameAction::Move(*id, prepared))?;
+        Ok(effects)
     }
 
     fn accept_settlement(
@@ -1766,17 +1736,13 @@ impl FromLocalUI for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            let (_continued, effects) = phase.do_game_action(GameAction::AcceptSettlement(*id))?;
-            Ok(effects)
-        })
+        let (_continued, effects) = self.do_game_action(GameAction::AcceptSettlement(*id))?;
+        Ok(effects)
     }
 
     fn shut_down(&mut self, _env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            let (_continued, effects) = phase.do_game_action(GameAction::CleanShutdown)?;
-            Ok(effects)
-        })
+        let (_continued, effects) = self.do_game_action(GameAction::CleanShutdown)?;
+        Ok(effects)
     }
 }
 
@@ -1794,10 +1760,8 @@ impl SpendWalletReceiver for OffChainPhase {
         _env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            let (_matched_ch, effects) = phase.check_channel_spent(coin_id)?;
-            Ok(effects)
-        })
+        let (_matched_ch, effects) = self.check_channel_spent(coin_id)?;
+        Ok(effects)
     }
 
     fn coin_puzzle_and_solution(
@@ -1905,10 +1869,8 @@ impl PeerLifecyclePhase for OffChainPhase {
             .map(|h| h as Box<dyn PeerLifecyclePhase>)
     }
     fn new_block(&mut self, _env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error> {
-        self.transaction(|phase| {
-            phase.state.last_height = height;
-            Ok(vec![])
-        })
+        self.state.last_height = height;
+        Ok(vec![])
     }
     fn handshake_finished(&self) -> bool {
         OffChainPhase::handshake_finished(self)

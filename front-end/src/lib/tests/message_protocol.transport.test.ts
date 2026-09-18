@@ -10,6 +10,7 @@ import { reduceSessionNotification } from '../session/sessionMachineNotification
 import { createSessionModel } from '../session/model';
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
 import {
+  attachTestCommitCoordinator,
   channelStatus,
   createReadyBlob,
   createUnreadyBlob,
@@ -19,6 +20,7 @@ import {
   mockRpc,
   mockWasmConnection,
   setActiveBlob,
+  setTestPersistence,
   submitTransaction,
   testSpendBundle,
   transactionSubmitQueue,
@@ -126,7 +128,7 @@ describe('in-order delivery', () => {
     expect(reasons).toEqual(['first', 'second']);
   });
 
-  it('yields a self-replenishing active FIFO after the event budget', async () => {
+  it('drains a self-replenishing active FIFO to the commit fixed point', async () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     let delivered = 0;
@@ -148,10 +150,7 @@ describe('in-order delivery', () => {
       events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
     });
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(delivered).toBe(100);
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await blob.flushPendingWork();
     expect(delivered).toBe(101);
   });
 
@@ -629,7 +628,7 @@ describe('game action failure events', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { blob, cradle } = createReadyBlob();
     const save = jest.fn();
-    blob.onSaveNeeded = save;
+    setTestPersistence(blob, save);
     (
       cradle as unknown as {
         make_move: (gameId: string, readable: Uint8Array) => WasmResult;
@@ -877,7 +876,8 @@ describe('outbound message numbering', () => {
     const blob = new SessionController(null, 'test', 100n, 100n, peer);
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(makeMockCradle());
-    blob.onSaveNeeded = jest.fn();
+    attachTestCommitCoordinator(blob);
+    setTestPersistence(blob, jest.fn());
 
     expect(blob.queueHostMessage(enc('handshake A'))).toBe(2n);
     await blob.flushPendingWork();

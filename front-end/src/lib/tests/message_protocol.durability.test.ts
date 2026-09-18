@@ -14,7 +14,6 @@ import { writeSessionRecord } from '../session/indexedDb';
 import { liveSave } from './session_save_envelope.fixtures';
 import {
   channelStatus,
-  clearTestGlobal,
   createReadyBlob,
   enc,
   makeMockCradle,
@@ -23,37 +22,28 @@ import {
   mockWasmConnection,
   saveLiveSession,
   setActiveBlob,
-  setTestGlobal,
-  testIndexedDb,
+  setTestPersistence,
   wasmResult,
 } from './message_protocol.harness';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 describe('WASM command persistence', () => {
-  it('debounces successful eventless mutations and ignores read-only polling', async () => {
-    jest.useFakeTimers();
+  it('coalesces successful eventless mutations and ignores read-only polling', async () => {
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     const save = jest.fn();
-    blob.onSaveNeeded = save;
+    setTestPersistence(blob, save);
     (cradle as unknown as { make_move: jest.Mock }).make_move = jest.fn(() => wasmResult());
 
-    try {
-      expect(blob.makeMove('7', null)).toBe('queued');
-      expect(blob.makeMove('7', null)).toBe('queued');
-      expect(save).not.toHaveBeenCalled();
+    expect(blob.makeMove('7', null)).toBe('queued');
+    expect(blob.makeMove('7', null)).toBe('queued');
+    expect(save).not.toHaveBeenCalled();
+    await blob.flushPendingWork();
+    expect(save).toHaveBeenCalledTimes(1);
 
-      await jest.advanceTimersByTimeAsync(499);
-      expect(save).not.toHaveBeenCalled();
-      await jest.advanceTimersByTimeAsync(1);
-      expect(save).toHaveBeenCalledTimes(1);
-
-      blob.reportNewBlock(2n);
-      await jest.advanceTimersByTimeAsync(500);
-      expect(save).toHaveBeenCalledTimes(1);
-    } finally {
-      jest.useRealTimers();
-    }
+    blob.reportNewBlock(2n);
+    await blob.flushPendingWork();
+    expect(save).toHaveBeenCalledTimes(1);
   });
 
   it('keeps outbound delivery behind one immediate durability flush', async () => {
@@ -65,7 +55,7 @@ describe('WASM command persistence', () => {
       expect(sentMessages).toEqual([]);
       expect(sentAcks).toEqual([]);
     });
-    blob.onSaveNeeded = save;
+    setTestPersistence(blob, save);
     (cradle as unknown as { make_move: jest.Mock }).make_move = jest.fn(() =>
       wasmResult({ events: [{ OutboundMessage: outbound }] }),
     );
@@ -90,52 +80,45 @@ describe('WASM command persistence', () => {
 describe('durability failures', () => {
   it('routes a rejected background save to the durability channel', async () => {
     jest.useFakeTimers();
-    const { blob } = createReadyBlob();
+    const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     const warnings: string[] = [];
     const sub = blob.getObservable().subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
-    blob.onSaveNeeded = () => Promise.reject(new Error('background write failed'));
+    let fail = true;
+    setTestPersistence(blob, () =>
+      fail ? Promise.reject(new Error('background write failed')) : Promise.resolve(),
+    );
+    (cradle as unknown as { make_move: jest.Mock }).make_move = jest.fn(() => wasmResult());
 
     try {
-      blob.scheduleSave();
-      await jest.advanceTimersByTimeAsync(500);
-      expect(warnings).toEqual(['Session storage failed: background write failed.']);
+      blob.makeMove('7', null);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(warnings).toEqual([
+        'Session storage failed: background write failed. Protocol messages remain queued until storage succeeds.',
+      ]);
+      fail = false;
     } finally {
       sub.unsubscribe();
       jest.useRealTimers();
     }
   });
 
-  it('defers a background snapshot until queued WASM events drain', async () => {
-    jest.useFakeTimers();
+  it('drains queued WASM events before the coordinated snapshot', async () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     const save = jest.fn(() => {
       expect((blob as any).eventQueue).toEqual([]);
     });
-    blob.onSaveNeeded = save;
+    setTestPersistence(blob, save);
 
-    try {
-      blob.scheduleSave();
-      await jest.advanceTimersByTimeAsync(499);
-      blob.processResult({
-        ...wasmResult(),
-        events: [{ Notification: { ActionFailed: { reason: 'late rejection' } } }],
-      });
-      clearTimeout((blob as any).drainTimer);
-      (blob as any).drainTimer = null;
-
-      await jest.advanceTimersByTimeAsync(1);
-      expect(save).not.toHaveBeenCalled();
-
-      blob.flushDeferredWork();
-      await jest.advanceTimersByTimeAsync(500);
-      expect(save).toHaveBeenCalledTimes(1);
-    } finally {
-      jest.useRealTimers();
-    }
+    blob.processResult({
+      ...wasmResult(),
+      events: [{ Notification: { ActionFailed: { reason: 'late rejection' } } }],
+    });
+    await blob.flushPendingWork();
+    expect(save).toHaveBeenCalledTimes(1);
   });
 
   it('warns the user and keeps messages and ACKs queued', async () => {
@@ -148,8 +131,10 @@ describe('durability failures', () => {
     const sub = blob.getObservable().subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    clearTestGlobal('indexedDB');
+    let fail = true;
+    setTestPersistence(blob, () =>
+      fail ? Promise.reject(new Error('permanent write failure')) : Promise.resolve(),
+    );
     try {
       blob.deliverMessage(1n, enc('trigger'));
       blob.flushDeferredWork();
@@ -160,10 +145,8 @@ describe('durability failures', () => {
       expect(sentMessages).toEqual([]);
       expect(sentAcks).toEqual([]);
       expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
-      expect(errorSpy).toHaveBeenCalled();
     } finally {
-      errorSpy.mockRestore();
-      setTestGlobal('indexedDB', testIndexedDb);
+      fail = false;
     }
 
     await blob.flushPendingSave();
@@ -174,7 +157,7 @@ describe('durability failures', () => {
     sub.unsubscribe();
   });
 
-  it('requires onSaveNeeded to update cached synchronously before returning', async () => {
+  it('requires the prepared save to update cached synchronously before returning', async () => {
     const { loadState } = await import('../../hooks/save');
     const outbound = enc('outbound');
     const { blob, cradle, sentMessages } = createReadyBlob(() => ({
@@ -185,7 +168,7 @@ describe('durability failures', () => {
     const cradleBytes = new Uint8Array([7, 7, 7, 7]);
     (cradle.serialize as jest.Mock).mockReturnValue(cradleBytes);
     let saveReturned = false;
-    blob.onSaveNeeded = () => {
+    setTestPersistence(blob, () => {
       const fields = blob.getWasmFields();
       if (!fields) throw new Error('expected save fields');
       const pending = saveLiveSession({
@@ -194,13 +177,13 @@ describe('durability failures', () => {
         pairingToken: 'sync-cradle',
       });
       // Cached must already contain the cradle before the returned Promise
-      // settles — durability flushes immediately after starting onSaveNeeded.
+      // settles — durability flushes immediately after starting the prepared save.
       expect(loadState().phase === 'live' && loadState().live.serializedGameSession).toEqual(
         cradleBytes,
       );
       saveReturned = true;
       return pending;
-    };
+    });
 
     blob.deliverMessage(1n, enc('trigger'));
     await blob.flushPendingWork();
@@ -230,12 +213,12 @@ describe('durability failures', () => {
     (cradle.serialize as jest.Mock).mockImplementation(() => {
       throw new Error('malformed cradle serialization');
     });
-    blob.onSaveNeeded = () => {
+    setTestPersistence(blob, () => {
       // Serialize failures throw from getWasmFields; null means not ready yet.
       const fields = blob.getWasmFields();
       if (!fields) return Promise.resolve();
       return saveLiveSession(fields as unknown as Record<string, unknown>);
-    };
+    });
 
     blob.deliverMessage(1n, enc('trigger'));
     await expect(blob.flushPendingWork()).rejects.toThrow('malformed cradle serialization');

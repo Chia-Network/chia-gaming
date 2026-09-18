@@ -14,7 +14,7 @@ import { parseGameStatusTerminalInfo, terminalInfoFromGameSettled } from './game
 import { channelStatusModelFromPayload } from './normalization';
 import { isTerminalGameStatus, type NonTerminalGameStatusPayload } from './presentation';
 import { selectPendingProposal, selectProposalByLifecycle } from './selectors';
-import { proposalOrigin } from './sessionMachineProposals';
+import { isUncancelledProposal, proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEffect,
   SessionMachineEvent,
@@ -64,8 +64,18 @@ export function reduceSessionNotification(
       (proposal) => proposalOrigin(proposal) === 'peer',
     );
     for (const proposal of proposals) {
-      effects.push({ type: 'controller-cancel-proposal', id: proposal.id });
+      cancelPeerProposalAutomatically(proposal.id);
     }
+  };
+  const cancelPeerProposalAutomatically = (id: string) => {
+    const proposal = selectPendingProposal(current.model, id);
+    if (!proposal || proposalOrigin(proposal) !== 'peer') {
+      throw new Error(`Automatic peer proposal cancellation ${id} missing peer proposal`);
+    }
+    if (proposal.lifecycle !== 'peer-cancel-queued') {
+      step({ type: 'set-proposal-lifecycle', id, lifecycle: 'peer-cancel-queued' });
+    }
+    effects.push({ type: 'controller-cancel-proposal', id });
   };
   const resolveProposalCancellation = (
     id: string,
@@ -224,16 +234,20 @@ export function reduceSessionNotification(
       });
       return { state: current, effects };
     }
+    if (current.model.betweenHand.pendingProposals.some(isUncancelledProposal)) {
+      effects.push({ type: 'controller-cancel-proposal', id: incoming.id });
+      return { state: current, effects };
+    }
     step({
       type: 'upsert-pending-proposal',
       proposal: incoming,
     });
     if (incoming.lifecycle === 'peer-cancel-queued') {
-      effects.push({ type: 'controller-cancel-proposal', id: incoming.id });
+      cancelPeerProposalAutomatically(incoming.id);
       return { state: current, effects };
     }
     if (current.model.game.activeIds.length > 0) {
-      effects.push({ type: 'controller-cancel-proposal', id: incoming.id });
+      cancelPeerProposalAutomatically(incoming.id);
       return { state: current, effects };
     }
     if (current.model.game.handKey === 0) {
@@ -285,10 +299,8 @@ export function reduceSessionNotification(
         const retry = between.pendingRetryHandProposal;
         step({ type: 'set-pending-retry-terms', handProposal: null });
         if (matchesLast) {
-          effects.push(
-            { type: 'controller-cancel-proposal', id: incoming.id },
-            { type: 'controller-propose-game', handProposal: retry },
-          );
+          cancelPeerProposalAutomatically(incoming.id);
+          effects.push({ type: 'controller-propose-game', handProposal: retry });
         } else {
           step({
             type: 'set-proposal-lifecycle',
@@ -305,10 +317,8 @@ export function reduceSessionNotification(
         const retry = between.pendingRetryHandProposal;
         step({ type: 'set-pending-retry-terms', handProposal: null });
         if (matchesLast) {
-          effects.push(
-            { type: 'controller-cancel-proposal', id: incoming.id },
-            { type: 'controller-propose-game', handProposal: retry },
-          );
+          cancelPeerProposalAutomatically(incoming.id);
+          effects.push({ type: 'controller-propose-game', handProposal: retry });
         } else {
           step({ type: 'set-compose-proposal-sent', sent: false });
           step({
@@ -326,7 +336,7 @@ export function reduceSessionNotification(
           current.model.game.currentHandOrigin,
         )
       ) {
-        effects.push({ type: 'controller-cancel-proposal', id: incoming.id });
+        cancelPeerProposalAutomatically(incoming.id);
         step({ type: 'set-rejected-terms', handProposal: null });
       } else {
         step({

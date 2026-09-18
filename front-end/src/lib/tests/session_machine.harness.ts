@@ -1,7 +1,39 @@
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
-import { runSessionMachineTransition } from '../session/sessionMachineEffects';
+import type {
+  SessionMachineEffect,
+  SessionMachineState,
+  SessionMachineTransition,
+} from '../session/sessionMachineTypes';
 import type { HandProposal, ProposalOrigin } from '../session/types';
+
+interface SessionMachineEffectRunner {
+  setAuthority(state: SessionMachineState): void;
+  getAuthority(): SessionMachineState;
+  controller: { clearDerivedGamePresentation(): void };
+  runCommand(
+    effect: Exclude<SessionMachineEffect, { type: 'clear-derived-game-presentation' }>,
+  ): void;
+  render(state: SessionMachineState): void;
+}
+
+export function runSessionMachineTransition(
+  transition: SessionMachineTransition,
+  runner: SessionMachineEffectRunner,
+): void {
+  runner.setAuthority(transition.state);
+  try {
+    for (const effect of transition.effects) {
+      if (effect.type === 'clear-derived-game-presentation') {
+        runner.controller.clearDerivedGamePresentation();
+      } else {
+        runner.runCommand(effect);
+      }
+    }
+  } finally {
+    runner.render(runner.getAuthority());
+  }
+}
 
 export const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,

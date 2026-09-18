@@ -1,7 +1,7 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
 import { handProposalsEqual } from '../gameRegistry';
 import { selectProposalByLifecycle } from './selectors';
-import { proposalOrigin } from './sessionMachineProposals';
+import { isUncancelledProposal, proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -74,6 +74,9 @@ export function reduceSessionCommand(
           },
           effects: [],
         };
+      }
+      if (betweenHand.pendingProposals.some(isUncancelledProposal)) {
+        return { state, effects: [] };
       }
       const localTerms =
         state.model.game.currentHandOrigin === 'peer'
@@ -161,6 +164,9 @@ export function reduceSessionCommand(
         effects: [],
       };
     case 'submit-compose':
+      if (betweenHand.pendingProposals.some(isUncancelledProposal)) {
+        return { state, effects: [] };
+      }
       return {
         state,
         effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],

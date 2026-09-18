@@ -72,7 +72,17 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 10;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 11;
+
+    #[cfg(test)]
+    mod serialization_schema_tests {
+        use super::*;
+
+        #[test]
+        fn exported_game_session_serialization_schema_is_current() {
+            assert_eq!(game_session_serialization_schema(), 11);
+        }
+    }
 
     #[derive(Serialize)]
     struct JsWatchCoinEntry {

@@ -54,8 +54,8 @@ transitions themselves.
 
 `go_on_chain` builds a `SpendBundle` from `last_channel_coin_spend_info`
 (a `ChannelCoinSpendInfo` containing the solution, conditions, and aggregate
-signature). This info is updated by `update_channel_coin_after_receive` on
-every potato exchange, so it always reflects the latest co-signed state.
+signature). This info is updated by `commit_received_batch_state` on every
+potato exchange, so it always reflects the latest co-signed state.
 The spend creates the unroll coin on-chain.
 
 When the channel coin spend is detected (by either player), a `ChannelStatus`
