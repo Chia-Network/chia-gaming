@@ -76,7 +76,7 @@ const PRESENTATION_KEYS = new Set([
   'betweenHandLastHandProposal',
   'betweenHandRejectedOnceHandProposal',
   'betweenHandPendingRetryHandProposal',
-  'proposalGroups',
+  'pendingProposals',
   'waitingStateEnteredAt',
   'cleanShutdownGraceStartedAt',
 ]);
@@ -101,6 +101,7 @@ function common(fields: LegacyFields) {
       walletAlert: fields.walletAlert,
       hubAlert: fields.hubAlert,
       blockchainType: fields.blockchainType,
+      network: fields.network,
     },
     history: {
       humanHistory: fields.humanHistory,
@@ -138,16 +139,14 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
       proposal_sent: false,
     },
     betweenHandLastHandProposal: {
-      player_a_contribution: perGameAmount,
-      player_b_contribution: perGameAmount,
       sender_is_player_a: false,
       game_timeout: '15',
       game_type: 'calpoker',
-      parameters: null,
+      parameters: BigInt(perGameAmount),
     },
     betweenHandRejectedOnceHandProposal: null,
     betweenHandPendingRetryHandProposal: null,
-    proposalGroups: [],
+    pendingProposals: [],
     waitingStateEnteredAt: null,
     cleanShutdownGraceStartedAt: null,
   };
@@ -255,12 +254,10 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
       error: null,
     }),
     betweenHandLastHandProposal: {
-      player_a_contribution: '20',
-      player_b_contribution: '20',
       sender_is_player_a: false,
       game_timeout: '15',
       game_type: 'calpoker',
-      parameters: null,
+      parameters: 20n,
     },
     ...fields,
   };

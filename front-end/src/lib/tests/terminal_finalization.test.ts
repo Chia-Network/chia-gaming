@@ -129,11 +129,9 @@ const model = createSessionModel({
   betweenHand: {
     lastHandProposal: {
       gameType: 'calpoker',
-      playerAContribution: 10n,
-      playerBContribution: 10n,
       senderIsPlayerA: false,
       gameTimeout: 15n,
-      parameters: null,
+      parameters: 10n,
     },
   },
 });
@@ -767,11 +765,9 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
     betweenHand: {
       lastHandProposal: {
         gameType: 'krunk',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: true,
         gameTimeout: 15n,
-        parameters: null,
+        parameters: 100n,
       },
     },
   });

@@ -117,10 +117,12 @@ The replay rule is deliberately narrow:
 - If one of the retained transaction's expected outputs is observed on-chain,
   that transaction is considered to have won. It remains retained so a later
   reload or reorg can replay it if its output vanishes.
-- If an input coin is observed spent but the retained transaction's expected
-  output does not appear, a conflicting transaction won. The retained local
-  intent is forgotten immediately and must not be replayed after reload or
-  reorg.
+- If an input coin is observed spent and a later complete snapshot that
+  includes an already-watched expected output still does not contain it, a
+  conflicting transaction won. The retained local intent is forgotten and
+  must not be replayed after reload or reorg. The first input-spent report
+  cannot prove this when the handler only registers the output in reaction to
+  that report, because the host queried the older watch scope.
 
 This prevents stale local intentions from being resurrected after the protocol
 has already accepted a different chain path. For example, if we were trying to
@@ -142,8 +144,9 @@ transactions are resubmitted when output coins vanish
 (`reorged_out_output_resubmits_creating_transaction`), timeout claims are
 re-armed when a watched coin's birthday rolls back
 (`eager_timeout_spend_resubmitted_after_birthday_rollback`), conflicting
-retained submissions are pruned when their input is spent by another transaction
-(`conflicting_spend_prunes_retained_submission_immediately`), winning submissions
+retained submissions are pruned after their spent input and watched missing
+output prove another transaction won
+(`conflicting_spend_prunes_once_expected_output_is_watched`), winning submissions
 remain replayable after their expected output appears
 (`winning_spend_retains_submission_for_replay`), and re-mined coins clear stale
 vanished flags before later genuine spends are forwarded
@@ -306,9 +309,10 @@ indicate programming bugs — the queue was populated by our own UI/logic.
 
 The cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
-Every `drain_queue_into_batch` call has its own transaction boundary: a failure
-restores the channel and queue snapshots before returning diagnostic context.
-The caller removes only the failed action. A post-receive drain retries the
+Every `drain_queue_into_batch` call has its own complete-working-state
+savepoint: a failure restores all mutable off-chain protocol fields before
+returning diagnostic context. The caller removes only the failed action. A
+post-receive drain retries the
 remaining queue immediately; an ordinary pending-action flush reports
 `ActionFailed` and leaves earlier valid actions queued for a later retry. This
 preserves accepted peer state without retaining an unsent partial local
@@ -320,12 +324,14 @@ throws and surface them through the UI error dialog.
 
 ## Batch Rollback Scope
 
-When a `PeerMessage::Batch` is received, `pass_on_channel_state_message`
-snapshots both `channel_state` and `game_action_queue` before calling
-`process_received_batch` and restores them on error. This makes the peer's batch
-actions atomic across the state that matters for later dispute recovery: if any
-action in the batch fails validation or signature verification fails, channel
-state and queued local actions both revert to the pre-batch state.
+Untrusted `PeerMessage::Batch` processing takes an explicit cloneable
+`OffChainWorkingState` rollback snapshot. It contains channel state, queued
+local and incoming messages, potato state, peer-potato intent, clean-shutdown
+correlation, latest spend commitment, and height. If a peer action or signature
+check fails, the snapshot is restored and no effects or replacement phase are
+published. Received `CleanShutdown` has its own narrow snapshot because it
+cancels proposals before the peer signature is validated; trusted local entry
+points do not use a blanket transaction wrapper.
 
 The queue snapshot matters even though the peer cannot directly enqueue local
 actions. A valid prefix of a malicious peer batch can make our pre-existing
@@ -334,26 +340,64 @@ that stale queue leaked into `go_on_chain`, the on-chain handler could attempt
 local responses that were only stale because the failed peer batch partially ran.
 The invariant is therefore:
 
-- **Peer batch failure is atomic.** No `ChannelState` mutations and no
-  peer-induced `game_action_queue` changes survive a failed received batch.
+- **Peer batch failure is atomic.** No proposal, game, balance, signature,
+  potato, shutdown, message, or queue mutation survives a failed received
+  batch.
 - **Bad peer data escalates.** Ordinary `OffChainPhase::received_message` errors
   call `go_on_chain(..., true)` after rollback. That is the protocol response to
   invalid peer data.
 - **Local queue drain errors are internal/local problems.**
   `drain_queue_into_batch` processes user/UI actions queued through local APIs.
-  Those errors are not a normal peer-message recovery path. Every failed drain
-  restores its own channel and queue snapshots before the caller removes the
-  attributed failed action. A post-receive failure therefore does not reject a
-  valid peer batch, while an ordinary flush cannot retain an unsent prefix.
+  Those errors are not a normal peer-message recovery path. A valid peer batch
+  commits before explicit reconciliation removes known stale game actions and
+  emits `ActionFailed`; the remaining queue drains once. Unexpected local
+  failures stay fail-fast rather than restoring a nested snapshot and retrying.
 
-Fields updated after successful signature verification, such as `have_potato`
-and `last_channel_coin_spend_info`, are outside the rollback problem because
-they are only advanced after the received batch is valid.
+Do not generalize this rollback mechanism. Its purpose is to quarantine
+partially applied, untrusted peer input. Local UI calls, block-height and coin
+observations, `go_on_chain`, and ordinary local drains are trusted entry points
+and must not acquire nested snapshots or retry loops. If a new peer message
+mutates state before all of its peer-controlled data is validated, give that
+message the narrowest complete rollback boundary that covers those mutations.
 
-**Key code:** `src/session_phases/mod.rs` — `pass_on_channel_state_message`
-(snapshot/restore), `process_received_batch`, `update_channel_coin_after_receive`,
-`drain_queue_into_batch`; regression:
-`failed_final_move_bad_signature_does_not_queue_accept_settlement`
+**Key code:** `src/session_phases/mod.rs` — `OffChainWorkingState`,
+`process_received_batch`, `commit_received_batch_state`,
+`drain_local_actions_after_receive`,
+`assert_invalid_clean_shutdown_rollback_for_testing`, and
+`drain_queue_into_batch`; regressions:
+`test_peer_smoke` and
+`failed_final_move_bad_signature_does_not_queue_accept_settlement`.
+
+---
+
+## Browser Commit Boundary
+
+For an active or rehydrated browser session, `SessionMachineRuntime` is the only
+commit owner. One stimulus is not finished merely because its first reducer or
+WASM call returned. The runtime must continue through reducer effects,
+controller/WASM callbacks, generated events, UX-model changes, and reliable
+transport changes until the whole event graph is quiescent.
+
+The required order is:
+
+1. Drain all internal and UX-model work to a fixed point.
+2. Synchronously freeze the final JS model, serialized WASM cradle, and reliable
+   transport generation.
+3. Complete exactly one awaited persistence operation.
+4. Publish the captured model to React.
+5. Release captured peer messages, acknowledgements, and completion callbacks.
+
+React rendering is a projection after durability, not another participant in
+the event drain. Intermediate models remain unpublished; this is both the
+atomicity mechanism and the general flicker-avoidance mechanism. Work arriving
+during the write belongs to the next commit and cannot change the captured
+payload. On write failure, retain dirty and staged work without rendering,
+sending, acknowledging, or starting an automatic retry loop.
+
+Do not add active-session save timers, direct reducer/effect persistence,
+mid-drain React updates, or eager peer sends. Every new event source must feed
+the same coordinator. Pre-runtime negotiation may use the standalone reliable
+transport flush, but it must preserve the same persist-before-send ordering.
 
 ---
 
@@ -377,23 +421,33 @@ This avoids peer-specific factory runs or proposal parsers while ensuring both
 peers commit to the same ordered records. Calpoker and Space Poker factories
 return one record; Krunk returns two.
 
+Rust supports multiple pending proposals. The browser intentionally admits only
+one uncancelled proposal at a time across local and peer origins as a product
+policy; a second incoming proposal is definitively cancelled without frontend
+admission, while cancelling an existing entry releases the slot. This is a
+temporary single-hand UX constraint. Future multi-hand work should replace the
+frontend admission and presentation policy, not narrow Rust's ledger or wire
+protocol.
+
 Atomicity is enforced at three boundaries:
 
-1. **Propose:** Derive cardinality, IDs, economics, roles, and wire commitments
-   from one factory run. Proposals may exceed current balances; funding is
-   checked when the receiver chooses to accept.
-2. **Receive:** Re-run the factory and require `ProposeGroup`'s ordered retained
-   member commitments and cardinality to match exactly; raw state, handlers,
-   validator registry, derived amount, and a separate group ID are not sent.
-3. **Accept/cancel:** Expand any member ID to the complete group. Acceptance
-   repeats the aggregate balance preflight before queueing one
-   `AcceptProposalGroup` with the canonical first-member ID. The receiver
-   validates that ID and applies every member in factory insertion order.
-   Cancellation similarly queues one `CancelProposalGroup`.
+1. **Propose:** Store and send only the proposal ID, game type, opaque
+   parameters, timeout, and player orientation. Factory execution, economics,
+   member cardinality, and game IDs remain deferred.
+2. **Accept:** When a queued acceptance executes, run the factory with the
+   proposer and accepter reserves remaining after all earlier batch actions.
+   Validate the result, deduct its contributions immediately, allocate ordered
+   `GameID`s, and continue to the next action. A cancellation addresses the
+   proposal ID and creates no games.
+3. **Receive:** Replay acceptances in wire order with the same reserve
+   orientation and calculations. The enclosing untrusted peer-batch rollback
+   withholds every mutation and effect until all actions and signatures
+   validate.
 
-These checks compose with batch rollback: if group hydration, member validation,
-or canonical group validation fails, none of the received batch's proposal
-mutations survive.
+Do not move factory execution or game-ID allocation back to proposal time, and
+do not add frontend group/member proposal identities. The accepted notification
+is the correlation point between one endpoint-local proposal ID and its ordered
+generated games.
 
 ---
 
@@ -446,8 +500,8 @@ unroll handling to distinguish in-flight proposal accepts (which get
 and `received_empty_potato` (the opponent's response acknowledges our moves).
 - `ProposalAccepted` entries are also cleared on potato receive.
 - `CachedAcceptSettlement` entries are **retained** across those clears and only drained
-later by `drain_cached_accept_settlements` during `update_channel_coin_after_receive` or
-clean shutdown, when `GameSettled` notifications are emitted.
+  later by `drain_cached_accept_settlements` during `commit_received_batch_state` or clean
+  shutdown, when `GameSettled` notifications are emitted.
 
 ### How Redo Works
 

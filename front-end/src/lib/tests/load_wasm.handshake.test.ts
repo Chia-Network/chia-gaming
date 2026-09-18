@@ -68,18 +68,6 @@ it(
         wasm_init1,
       );
       wasm_blob1.getFee = () => 10n;
-      wasm_blob1.onSaveNeeded = () => {
-        const fields = wasm_blob1.getWasmFields();
-        if (!fields) {
-          return Promise.reject(
-            new Error('Cannot persist session: WASM cradle serialization failed'),
-          );
-        }
-        return saveLiveFields({
-          ...fields,
-          pairingToken: 'reload-regression-p1',
-        });
-      };
       cradle1.set_blob(wasm_blob1);
 
       const peer_conn2: PeerConnectionResult = {
@@ -101,18 +89,6 @@ it(
         peer_conn2,
         wasm_init2,
       );
-      wasm_blob2.onSaveNeeded = () => {
-        const fields = wasm_blob2.getWasmFields();
-        if (!fields) {
-          return Promise.reject(
-            new Error('Cannot persist session: WASM cradle serialization failed'),
-          );
-        }
-        return saveLiveFields({
-          ...fields,
-          pairingToken: 'reload-regression-p2',
-        });
-      };
       cradle2.set_blob(wasm_blob2);
 
       await flushWrapperDrain([cradle1, cradle2]);
@@ -180,10 +156,6 @@ it(
       await pollOnce(poller);
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('initiator-observed-channel', wasm_blob1);
-      // Stop live durability saves before the explicit snapshot so a late
-      // onSaveNeeded cannot overwrite the cradle under test.
-      wasm_blob1.onSaveNeeded = () => Promise.resolve();
-      wasm_blob2.onSaveNeeded = () => Promise.resolve();
       const receiverFields = wasm_blob2.getWasmFields();
       assert.ok(receiverFields);
       void saveLiveFields({

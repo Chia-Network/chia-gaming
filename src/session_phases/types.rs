@@ -1,15 +1,13 @@
-use std::collections::BTreeMap;
-use std::rc::Rc;
-
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::channel_state::game_handler::PreparedMove;
-use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     ChannelEnv, ChannelPrivateKeys, ReadableMove, StateUpdateSignatures,
 };
 use crate::common::types::{
-    Aggsig, Amount, Error, GameID, GameType, Hash, ProgramRef, PuzzleHash, Timeout,
+    Aggsig, Amount, Error, GameID, GameType, Hash, LocalProposalId, ProgramRef, PuzzleHash,
+    Timeout, WireProposalId,
 };
 use crate::session_phases::effects::Effect;
 use crate::session_phases::handshake::{
@@ -22,22 +20,9 @@ pub use crate::session_phases::wallet_traits::{
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct WireGameSpec {
-    pub game_id: GameID,
-    pub player_a_contribution: Amount,
-    pub player_b_contribution: Amount,
-    pub player_a_goes_first: bool,
-    pub initial_validation_program_hash: Hash,
-    pub initial_validation_info_hash: Hash,
-    pub initial_move: Vec<u8>,
-    pub initial_max_move_size: u32,
-    pub initial_mover_share: Amount,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct WireProposalGroup {
+pub struct WireProposal {
+    pub origin_wire_id: WireProposalId,
     pub start: GameProposal,
-    pub members: Vec<WireGameSpec>,
 }
 
 pub trait ToLocalUI {
@@ -52,22 +37,22 @@ pub trait ToLocalUI {
 }
 
 pub trait FromLocalUI {
-    fn propose_games(
+    fn propose(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
+        proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error>;
 
     fn accept_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
 
     fn cancel_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
 
     fn make_move(
@@ -95,9 +80,9 @@ pub struct PeerMove {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub enum BatchAction {
-    ProposeGroup(WireProposalGroup),
-    AcceptProposalGroup(GameID),
-    CancelProposalGroup(GameID),
+    Propose(WireProposal),
+    AcceptProposal(WireProposalId),
+    CancelProposal(WireProposalId),
     Move(GameID, PeerMove),
     AcceptSettlement(GameID, Amount),
 }
@@ -151,13 +136,13 @@ pub enum GameAction {
     Move(GameID, PreparedMove),
     AcceptSettlement(GameID),
     CleanShutdown,
-    QueuedProposalGroup(Vec<Rc<GameStartInfo>>, WireProposalGroup),
-    QueuedAcceptProposalGroup(GameID),
-    QueuedCancelProposalGroup(GameID),
-    QueuedCancelProposalGroupSilently(GameID),
+    QueuedProposal(LocalProposalId),
+    QueuedAcceptProposal(LocalProposalId),
+    QueuedCancelProposal(LocalProposalId),
+    QueuedCancelProposalSilently(LocalProposalId),
     Cheat(GameID, Amount, Hash),
     #[cfg(test)]
-    ForcedSelfAccept(GameID),
+    ForcedSelfAccept(LocalProposalId),
 }
 
 pub(crate) fn validate_new_move_action<'a>(
@@ -190,15 +175,15 @@ impl std::fmt::Debug for GameAction {
             GameAction::Move(gi, prepared) => write!(formatter, "Move({gi:?},{prepared:?})"),
             GameAction::AcceptSettlement(gi) => write!(formatter, "AcceptSettlement({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
-            GameAction::QueuedProposalGroup(_, _) => write!(formatter, "QueuedProposalGroup(..)"),
-            GameAction::QueuedAcceptProposalGroup(gi) => {
-                write!(formatter, "QueuedAcceptProposalGroup({gi:?})")
+            GameAction::QueuedProposal(_) => write!(formatter, "QueuedProposal(..)"),
+            GameAction::QueuedAcceptProposal(id) => {
+                write!(formatter, "QueuedAcceptProposal({id:?})")
             }
-            GameAction::QueuedCancelProposalGroup(gi) => {
-                write!(formatter, "QueuedCancelProposalGroup({gi:?})")
+            GameAction::QueuedCancelProposal(id) => {
+                write!(formatter, "QueuedCancelProposal({id:?})")
             }
-            GameAction::QueuedCancelProposalGroupSilently(gi) => {
-                write!(formatter, "QueuedCancelProposalGroupSilently({gi:?})")
+            GameAction::QueuedCancelProposalSilently(id) => {
+                write!(formatter, "QueuedCancelProposalSilently({id:?})")
             }
             GameAction::Cheat(gi, ms, _) => write!(formatter, "Cheat({gi:?},{ms:?})"),
             #[cfg(test)]

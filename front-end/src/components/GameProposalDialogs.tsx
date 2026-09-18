@@ -12,7 +12,6 @@ import {
   MAX_GAME_TIMEOUT_BLOCKS,
   MIN_GAME_TIMEOUT_BLOCKS,
 } from '../lib/session/gameTimeout';
-import { proposalContributionForOrigin } from '../lib/session/proposalOrigin';
 import { Button } from './button';
 
 export function ComposeProposalDialog({
@@ -31,15 +30,9 @@ export function ComposeProposalDialog({
   const initialParameters = initialProposal
     ? pkg.decodeProposalParameters(initialProposal.parameters)
     : null;
-  const previousOrigin = session.iProposedHand ? 'local' : 'peer';
   const initialValues =
     initialProposal && initialParameters !== null
       ? {
-          senderContribution: proposalContributionForOrigin(initialProposal, previousOrigin),
-          receiverContribution: proposalContributionForOrigin(
-            initialProposal,
-            previousOrigin === 'local' ? 'peer' : 'local',
-          ),
           parameters: initialParameters,
         }
       : null;
@@ -52,12 +45,6 @@ export function ComposeProposalDialog({
     const parameters = pkg.encodeProposalParameters(result.parameters);
     session.submitComposedProposal({
       gameType: compose.selectedGame,
-      playerAContribution: senderIsPlayerA
-        ? result.senderContribution
-        : result.receiverContribution,
-      playerBContribution: senderIsPlayerA
-        ? result.receiverContribution
-        : result.senderContribution,
       senderIsPlayerA,
       gameTimeout: compose.gameTimeout,
       parameters,
@@ -124,12 +111,15 @@ export function ComposeProposalDialog({
 }
 
 export function ReviewProposalDialog({ session }: { session: UseGameSessionResult }) {
-  const review = session.incomingProposalGroup;
+  const review = session.incomingProposal;
   if (!review) return null;
+  const accepting = review.lifecycle === 'peer-accept-queued';
   return (
     <div className="mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4">
       <div className="flex flex-col gap-3 text-center">
-        <p className="text-sm text-canvas-text-contrast">Do you want to accept this hand?</p>
+        <p className="text-sm text-canvas-text-contrast">
+          {accepting ? 'Accepting this hand…' : 'Do you want to accept this hand?'}
+        </p>
         <p className="text-xs text-canvas-text">
           Game: {gameDisplayName(review.handProposal.gameType)}
         </p>
@@ -142,11 +132,17 @@ export function ReviewProposalDialog({ session }: { session: UseGameSessionResul
             variant="solid"
             color="primary"
             size="sm"
-            onClick={() => session.acceptReviewedProposal(review.primaryId)}
+            disabled={accepting}
+            onClick={() => session.acceptReviewedProposal(review.id)}
           >
-            Yes
+            {accepting ? 'Accepting…' : 'Yes'}
           </Button>
-          <Button variant="solid" size="sm" onClick={session.rejectReviewedProposal}>
+          <Button
+            variant="solid"
+            size="sm"
+            disabled={accepting}
+            onClick={session.rejectReviewedProposal}
+          >
             No
           </Button>
         </div>

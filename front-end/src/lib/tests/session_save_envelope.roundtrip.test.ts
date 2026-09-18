@@ -43,6 +43,14 @@ describe('durable game envelope round trips', () => {
         our_balance: '20',
         their_balance: '20',
         game_allocated: '0',
+        have_potato: undefined,
+        zero_payout: undefined,
+        session_disposition: undefined,
+        semantic_phase: undefined,
+        state_number: undefined,
+        unrolling_state_number: undefined,
+        preempting_state_number: undefined,
+        unroll_initiator: undefined,
       },
       waitingStateEnteredAt: null,
       cleanShutdownGraceStartedAt: null,
@@ -153,12 +161,11 @@ describe('durable game envelope round trips', () => {
         gameInstances,
         handState,
         betweenHandLastHandProposal: {
-          player_a_contribution: contribution,
-          player_b_contribution: contribution,
           sender_is_player_a: gameType === 'krunk',
           game_timeout: '15',
           game_type: gameType,
-          parameters: gameType === 'spacepoker' ? 10n : null,
+          parameters:
+            gameType === 'spacepoker' ? [BigInt(contribution) / 10n, 10n] : BigInt(contribution),
         },
       });
       await saveLiveEnvelope(save);
@@ -227,8 +234,6 @@ describe('durable game envelope round trips', () => {
       betweenHand: {
         lastHandProposal: {
           gameType: 'calpoker',
-          playerAContribution: 25n,
-          playerBContribution: 25n,
           senderIsPlayerA: false,
           gameTimeout: 15n,
           parameters,
@@ -245,11 +250,9 @@ describe('durable game envelope round trips', () => {
   it('keeps lastHandProposal independently of transient package controls', () => {
     const lastHandProposal = {
       gameType: 'calpoker' as const,
-      playerAContribution: 25n,
-      playerBContribution: 25n,
       senderIsPlayerA: false,
       gameTimeout: 15n,
-      parameters: null,
+      parameters: 25n,
     };
     const model = createSessionModel({
       betweenHand: {

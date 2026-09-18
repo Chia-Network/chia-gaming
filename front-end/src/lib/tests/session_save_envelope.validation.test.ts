@@ -237,7 +237,7 @@ describe('validateSessionSaveEnvelope', () => {
     'betweenHandLastHandProposal',
     'betweenHandRejectedOnceHandProposal',
     'betweenHandPendingRetryHandProposal',
-    'proposalGroups',
+    'pendingProposals',
     'waitingStateEnteredAt',
     'cleanShutdownGraceStartedAt',
   ] satisfies Array<keyof SessionPresentationSave>)(
@@ -526,54 +526,54 @@ describe('validateSessionSaveEnvelope', () => {
       'between-hand terms',
       {
         betweenHandLastHandProposal: {
-          player_a_contribution: 'not-an-amount',
-          player_b_contribution: '10',
           sender_is_player_a: false,
           game_timeout: '15',
           game_type: 'calpoker',
-          parameters: null,
+          parameters: 10,
         },
       },
-      'betweenHandLastHandProposal.player_a_contribution',
+      'betweenHandLastHandProposal.parameters',
     ],
     [
-      'peer proposal',
+      'proposal lifecycle',
       {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: 'proposal-1',
-            member_ids: [],
-            origin: 'peer',
-            disposition: 'incoming-cached',
+            id: 'proposal-1',
+            lifecycle: 'local-cached',
             hand_proposal: {
-              player_a_contribution: '10',
-              player_b_contribution: '10',
               sender_is_player_a: false,
               game_timeout: '15',
               game_type: 'calpoker',
-              parameters: null,
+              parameters: 10n,
             },
           },
         ],
       },
-      'member_ids',
+      'lifecycle',
     ],
     [
-      'proposal groups',
+      'pending proposals',
       {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: 'proposal-1',
-            member_ids: ['proposal-1', 'proposal-1'],
-            origin: 'local',
-            disposition: 'outgoing',
+            id: 'proposal-1',
+            lifecycle: 'local-outgoing',
             hand_proposal: {
-              player_a_contribution: '100',
-              player_b_contribution: '100',
               sender_is_player_a: true,
               game_timeout: '15',
               game_type: 'krunk',
-              parameters: null,
+              parameters: 100n,
+            },
+          },
+          {
+            id: 'proposal-1',
+            lifecycle: 'peer-cached',
+            hand_proposal: {
+              sender_is_player_a: false,
+              game_timeout: '15',
+              game_type: 'calpoker',
+              parameters: 10n,
             },
           },
         ],

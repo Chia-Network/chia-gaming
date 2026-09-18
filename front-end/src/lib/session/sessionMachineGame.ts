@@ -7,8 +7,8 @@ import {
 } from '../gameRegistry';
 import { Program } from 'clvm-lib';
 import type { GameHandInitialization, GameUpdate, PersistedGameState } from '@games/host';
-import { clearProposalIds } from './sessionMachineProposals';
-import { selectProposalGroupByMemberId } from './selectors';
+import { selectPendingProposal } from './selectors';
+import { proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -22,7 +22,6 @@ export type DurableGameEvent = Extract<
   | { type: 'notification-accepted-group' }
   | { type: 'notification-game-status' }
   | { type: 'notification-game-terminal' }
-  | { type: 'notification-insufficient-balance' }
   | { type: 'notification-abandoned' }
   | { type: 'hand-state-changed' }
   | { type: 'local-game-action-committed' }
@@ -140,37 +139,22 @@ export function reduceDurableGameEvent(
     case 'notification-accepted-group': {
       const firstMember = event.members[0];
       if (!firstMember) throw new Error('ProposalAcceptedGroup has no members');
-      const proposal = selectProposalGroupByMemberId(state.model, firstMember.id);
-      if (!proposal) {
-        throw new Error(
-          `ProposalAcceptedGroup ${firstMember.id} missing normalized proposal group`,
-        );
-      }
       const acceptedIds = event.members.map((member) => member.id);
-      if (
-        acceptedIds.length !== proposal.memberIds.length ||
-        acceptedIds.some((id, index) => id !== proposal.memberIds[index])
-      ) {
-        throw new Error('ProposalAcceptedGroup members do not match normalized proposal order');
+      const proposal = selectPendingProposal(state.model, event.proposalId);
+      if (!proposal) {
+        throw new Error(`ProposalAcceptedGroup ${event.proposalId} missing pending proposal`);
       }
-      const first =
-        state.model.game.currentHandIds.length !== proposal.memberIds.length ||
-        state.model.game.currentHandIds.some((id, index) => id !== proposal.memberIds[index]);
-      const acceptedGroup = { ...proposal, disposition: 'accepted' as const };
-      const proposalGroups = [
-        ...state.model.betweenHand.proposalGroups.filter(
-          (group) => !group.memberIds.some((id) => acceptedGroup.memberIds.includes(id)),
-        ),
-        acceptedGroup,
-      ];
+      const pendingProposals = state.model.betweenHand.pendingProposals.filter(
+        (candidate) => candidate.id !== proposal.id,
+      );
       const game = gameSliceReducer(gameSliceFromModel(state.model), {
         type: 'accepted-group',
-        groupIds: proposal.memberIds,
+        groupIds: acceptedIds,
         members: event.members.map((member) => ({
           amount: (member.playerAContribution + member.playerBContribution).toString(),
           startTurn: member.ourTurn ? 'my-turn' : 'their-turn',
         })),
-        origin: proposal.origin,
+        origin: proposalOrigin(proposal),
         gameType: proposal.handProposal.gameType,
       });
       const modelWithGame = withGameSlice(state.model, game);
@@ -178,42 +162,33 @@ export function reduceDurableGameEvent(
         ...state,
         model: {
           ...modelWithGame,
-          game: first ? { ...modelWithGame.game, handState: null } : modelWithGame.game,
+          game: { ...modelWithGame.game, handState: null },
           betweenHand: {
             ...state.model.betweenHand,
-            proposalGroups,
-            ...(first
-              ? {
-                  mode: 'decision' as const,
-                  rejectedOnceHandProposal: null,
-                  pendingRetryHandProposal: null,
-                  newHandRequested: false,
-                  lastHandProposal: proposal.handProposal,
-                  compose: applyHandProposalToComposeDraft(
-                    state.model.betweenHand.compose,
-                    proposal.handProposal,
-                  ),
-                }
-              : {}),
+            pendingProposals,
+            mode: 'decision' as const,
+            rejectedOnceHandProposal: null,
+            pendingRetryHandProposal: null,
+            newHandRequested: false,
+            lastHandProposal: proposal.handProposal,
+            compose: applyHandProposalToComposeDraft(
+              state.model.betweenHand.compose,
+              proposal.handProposal,
+            ),
           },
         },
         coordination: {
           ...state.coordination,
-          ...(first
-            ? {
-                firstGameAccepted: true,
-                sameTermsRequested: false,
-              }
-            : {}),
+          firstGameAccepted: true,
+          sameTermsRequested: false,
         },
       };
-      if (!first) return { state: initialized, effects: [] };
       const init: GameHandInitialization = {
-        parameters: proposal.handProposal.parameters,
         members: event.members.map((member) => ({
           playerAContribution: member.playerAContribution,
           playerBContribution: member.playerBContribution,
           ourTurn: member.ourTurn,
+          readableParameters: Program.deserialize(member.readableParameters),
         })),
       };
       const handState =
@@ -267,9 +242,6 @@ export function reduceDurableGameEvent(
             ? {
                 ...state.model.betweenHand,
                 mode: 'decision' as const,
-                proposalGroups: state.model.betweenHand.proposalGroups.filter(
-                  (group) => group.disposition !== 'accepted',
-                ),
               }
             : state.model.betweenHand,
         },
@@ -280,50 +252,6 @@ export function reduceDurableGameEvent(
         outcome: event.terminal.outcome,
       };
       return reduceHandUpdateAcrossSnapshots(base, update, event.handState, activeHand);
-    }
-    case 'notification-insufficient-balance': {
-      const proposal = selectProposalGroupByMemberId(state.model, event.id);
-      if (!proposal) {
-        throw new Error(`InsufficientBalance ${event.id} missing normalized proposal group`);
-      }
-      const game = gameSliceReducer(gameSliceFromModel(state.model), {
-        type: 'remove-group',
-        groupIds: proposal.memberIds,
-      });
-      const modelWithGame = withGameSlice(state.model, game);
-      const cleared = clearProposalIds(
-        {
-          ...state,
-          model: {
-            ...modelWithGame,
-            betweenHand: {
-              ...state.model.betweenHand,
-              mode: 'compose-proposal',
-            },
-            game: {
-              ...modelWithGame.game,
-              queue: [...state.model.game.queue, event.notification],
-            },
-          },
-        },
-        proposal.memberIds,
-      );
-      const removesCurrentHand = proposal.memberIds.some((id) =>
-        state.model.game.currentHandIds.includes(id),
-      );
-      if (removesCurrentHand) activeHand?.clear();
-      return removesCurrentHand
-        ? {
-            state: {
-              ...cleared,
-              model: {
-                ...cleared.model,
-                game: { ...cleared.model.game, handState: null },
-              },
-            },
-            effects: [],
-          }
-        : { state: cleared, effects: [] };
     }
     case 'notification-abandoned': {
       activeHand?.clear();
@@ -354,7 +282,7 @@ export function reduceDurableGameEvent(
           ...state,
           model: { ...state.model, game: { ...state.model.game, handState } },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     }
     case 'local-game-action-committed': {
@@ -378,7 +306,7 @@ export function reduceDurableGameEvent(
             game: { ...state.model.game, handState },
           },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     }
     case 'local-action-applied': {
@@ -390,7 +318,7 @@ export function reduceDurableGameEvent(
       });
       return {
         state: { ...state, model: withGameSlice(state.model, game) },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     }
     default:

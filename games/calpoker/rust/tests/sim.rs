@@ -3,10 +3,9 @@ use std::rc::Rc;
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::channel_state::types::ReadableMove;
-use crate::common::types::GameID;
 use crate::common::types::{AllocEncoder, Program, Sha256Input};
 use crate::game_session::GameSession;
-use crate::test_support::sim_script::SimScriptAction;
+use crate::test_support::sim_script::{ScriptGameRef, SimScriptAction};
 use crate::transaction_manager::TransactionManager;
 
 fn selected_cards_to_bitfield(hand: &[usize], selected: &[usize]) -> u8 {
@@ -19,7 +18,10 @@ fn selected_cards_to_bitfield(hand: &[usize], selected: &[usize]) -> u8 {
     })
 }
 
-pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<SimScriptAction> {
+pub fn prefix_test_moves(
+    allocator: &mut AllocEncoder,
+    game_id: ScriptGameRef,
+) -> Vec<SimScriptAction> {
     let alice_word = b"0alice6789abcdef";
     let bob_seed = b"0bob456789abcdef";
     let alice_word_hash = Sha256Input::Bytes(alice_word)
@@ -120,7 +122,7 @@ mod sim_tests {
         run_calpoker_container_with_action_list_with_success_predicate, run_calpoker_proposal_only,
         ExpectedEvent, ExpectedNotification, GameRunOutcome, TestEvent,
     };
-    use crate::test_support::sim_script::{ProposeTrigger, SimScriptActionResult};
+    use crate::test_support::sim_script::{ProposeTrigger, ScriptProposalRef, SimScriptActionResult};
 
     fn extract_info_from_messages(
         game_results: &[SimScriptActionResult],
@@ -210,9 +212,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let result = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
@@ -263,9 +268,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let game_outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
@@ -313,9 +321,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             assert!(
                 moves.len() >= 4,
                 "expected at least two opening moves plus preamble"
@@ -419,9 +430,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             moves.push(SimScriptAction::CleanShutdown(0));
             let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("game should complete");
@@ -525,9 +539,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let num_moves = moves.len();
             let game_outcome = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -577,9 +594,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(3).collect();
             on_chain_moves.push(SimScriptAction::GoOnChain(true as usize));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -636,9 +656,12 @@ mod sim_tests {
                 let mut allocator = AllocEncoder::new();
                 let mut moves = vec![
                     SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                    SimScriptAction::AcceptProposal(1, GameID(1)),
+                    SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 ];
-                moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+                moves.extend(prefix_test_moves(
+                    &mut allocator,
+                    ScriptGameRef::accepted(1, 0),
+                ));
                 let mut on_chain_moves: Vec<SimScriptAction> =
                     moves.into_iter().take(3).map(|x| x.lose()).collect();
                 on_chain_moves.push(SimScriptAction::GoOnChain(true as usize));
@@ -696,9 +719,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(3).collect();
             on_chain_moves.push(SimScriptAction::GoOnChain(true as usize));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -753,9 +779,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(4).collect();
             on_chain_moves.push(SimScriptAction::GoOnChain(false as usize));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -816,9 +845,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let mut on_chain_moves: Vec<SimScriptAction> = moves.into_iter().take(4).collect();
             on_chain_moves.push(SimScriptAction::GoOnChain(true as usize));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -876,9 +908,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             moves.push(SimScriptAction::CleanShutdown(0));
 
             let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -949,17 +984,23 @@ mod sim_tests {
             let mut moves = Vec::new();
             // Game 0: player 0 proposes, plays through all calpoker moves.
             moves.push(SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel));
-            moves.push(SimScriptAction::AcceptProposal(1, GameID(1)));
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.push(SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             // Game 1: player 0 proposes again after game 0 finishes.
             // Cards differ so we can't reuse prefix_test_moves — just timeout.
             moves.push(SimScriptAction::ProposeNewGame(
                 0,
-                ProposeTrigger::AfterGame(GameID(1)),
+                ProposeTrigger::AfterGame(ScriptGameRef::accepted(1, 0)),
             ));
-            moves.push(SimScriptAction::AcceptProposal(1, GameID(3)));
+            moves.push(SimScriptAction::AcceptProposal(1, ScriptProposalRef(3)));
             moves.push(SimScriptAction::WaitBlocks(11, 0));
-            moves.push(SimScriptAction::AcceptSettlement(0, GameID(3)));
+            moves.push(SimScriptAction::AcceptSettlement(
+                0,
+                ScriptGameRef::accepted(3, 0),
+            ));
             moves.push(SimScriptAction::CleanShutdown(0));
 
             let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))
@@ -971,21 +1012,33 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
 
             let mut moves = Vec::new();
-            // Game 0: player 1 proposes, plays through all calpoker moves.
-            moves.push(SimScriptAction::ProposeNewGameTheirTurn(
+            // Game 0: player 1 proposes and therefore moves first.
+            moves.push(SimScriptAction::ProposeNewGame(
                 1,
                 ProposeTrigger::Channel,
             ));
-            moves.push(SimScriptAction::AcceptProposal(0, GameID(0)));
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.push(SimScriptAction::AcceptProposal(0, ScriptProposalRef(0)));
+            moves.extend(
+                prefix_test_moves(&mut allocator, ScriptGameRef::accepted(0, 0))
+                    .into_iter()
+                    .map(|action| match action {
+                        SimScriptAction::Move(player, id, readable, received) => {
+                            SimScriptAction::Move(player ^ 1, id, readable, received)
+                        }
+                        _ => unreachable!("calpoker prefix contains only moves"),
+                    }),
+            );
             // Game 1: player 1 proposes again after game 0 finishes.
-            moves.push(SimScriptAction::ProposeNewGameTheirTurn(
+            moves.push(SimScriptAction::ProposeNewGame(
                 1,
-                ProposeTrigger::AfterGame(GameID(0)),
+                ProposeTrigger::AfterGame(ScriptGameRef::accepted(0, 0)),
             ));
-            moves.push(SimScriptAction::AcceptProposal(0, GameID(2)));
+            moves.push(SimScriptAction::AcceptProposal(0, ScriptProposalRef(2)));
             moves.push(SimScriptAction::WaitBlocks(11, 0));
-            moves.push(SimScriptAction::AcceptSettlement(0, GameID(2)));
+            moves.push(SimScriptAction::AcceptSettlement(
+                1,
+                ScriptGameRef::accepted(2, 0),
+            ));
             moves.push(SimScriptAction::CleanShutdown(0));
 
             let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(300))
@@ -997,9 +1050,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             moves.push(SimScriptAction::CleanShutdown(0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)

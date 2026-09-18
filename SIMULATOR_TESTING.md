@@ -28,22 +28,24 @@ Alice moves and Bob must accept settlement. The `mover_share` value is what Bob,
 the new mover after Alice's move, receives on timeout; Alice receives
 `amount - mover_share`.
 
-## Explicit Game IDs
+## Explicit Script References
 
-`SimScriptAction` variants reference games by explicit `GameID` values, not ordinal
-positions in a test script. `GameID` values are deterministic nonces assigned
-when proposing a game; each player's nonce counter increments independently.
+`SimScriptAction` distinguishes scenario-local `ScriptProposalRef` values from
+`ScriptGameRef` accepted-member references. A proposal reference is bound to
+each endpoint's `LocalProposalId` returned locally or observed in
+`ProposalMade`. An accepted member is addressed by proposal reference and
+factory member index, then bound to the `GameID` reported in
+`ProposalAcceptedGroup.members`.
 
 Typical examples:
 
-- `Move(player, game_id, readable, was_received)` moves in the specified game.
-- `AcceptProposal(player, game_id)` accepts the proposal group containing that
-  member ID; the production boundary resolves it to the canonical first member
-  and queues one group action.
-- `AcceptSettlement(player, game_id)` accepts the current game result for that exact game
-  ID (off-chain voluntary accept or on-chain timeout-claim intent).
-- `ProposeNewGame(player, trigger)` creates a proposal; the resulting `GameID`
-  is determined by the proposer's nonce counter at proposal time.
+- `Move(player, game, readable, was_received)` moves in the bound accepted member.
+- `AcceptProposal(player, proposal_id)` queues acceptance of that endpoint-local
+  pending proposal.
+- `AcceptSettlement(player, game)` accepts the current game result for that
+  bound member (off-chain voluntary accept or on-chain timeout-claim intent).
+- `ProposeNewGame(player, trigger)` creates a scalar pending proposal. Factory
+  member `GameID`s do not exist yet.
 
 ## ProposeTrigger
 
@@ -62,12 +64,12 @@ The full `sim-tests` enum lives in `src/test_support/sim_script.rs`.
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ProposeNewGame(player, trigger)`                     | Player proposes a new game with `my_turn = true` when the trigger fires.                                                                                                                                                                                                                           |
 | `ProposeNewGameTheirTurn(player, trigger)`            | Player proposes a new game with `my_turn = false` when the trigger fires.                                                                                                                                                                                                                          |
-| `AcceptProposal(player, game_id)`                     | Player accepts the pending proposal group containing that member. The sim loop handles this as a two-phase action because acceptance may need a potato round trip.                                                                                                                                 |
-| `CancelProposal(player, game_id)`                     | Player cancels the pending proposal group containing that member.                                                                                                                                                                                                                                  |
-| `Move(player, game_id, readable, was_received)`       | Submit a normal move for the specified game. The final boolean records whether the move was received.                                                                                                                                                                                              |
-| `FakeMove(player, game_id, readable, sabotage_bytes)` | Submit a move with custom sabotage bytes for validation/error-path tests.                                                                                                                                                                                                                          |
-| `Cheat(player, game_id, mover_share)`                 | Queue a move with invalid game data, leaving `mover_share` to the victim on timeout.                                                                                                                                                                                                               |
-| `AcceptSettlement(player, game_id)`                   | Accept the current game result for the specified game (off-chain or on-chain).                                                                                                                                                                                                                     |
+| `AcceptProposal(player, proposal_id)`                 | Player queues acceptance of the endpoint-local pending proposal. The sim loop handles this as a two-phase action because acceptance may need a potato round trip.                                                                                                                                   |
+| `CancelProposal(player, proposal_id)`                 | Player cancels the endpoint-local pending proposal.                                                                                                                                                                                                                                                  |
+| `Move(player, game, readable, was_received)`          | Submit a normal move for the bound accepted member. The final boolean records whether the move was received.                                                                                                                                                                                       |
+| `FakeMove(player, game, readable, sabotage_bytes)`    | Submit a move with custom sabotage bytes for validation/error-path tests.                                                                                                                                                                                                                          |
+| `Cheat(player, game, mover_share)`                    | Queue a move with invalid game data, leaving `mover_share` to the victim on timeout.                                                                                                                                                                                                               |
+| `AcceptSettlement(player, game)`                      | Accept the current game result for the bound accepted member (off-chain or on-chain).                                                                                                                                                                                                              |
 | `GoOnChain(player)`                                   | Player initiates unilateral on-chain resolution.                                                                                                                                                                                                                                                   |
 | `WaitBlocks(n, players_bitmask)`                      | Farm `n` blocks. The bitmask controls whose coin reports are backlogged: 0 = nobody blocked, 1 = player 0, 2 = player 1, 3 = both.                                                                                                                                                                 |
 | `CleanShutdown(player)`                               | Initiate cooperative channel shutdown.                                                                                                                                                                                                                                                             |
@@ -84,7 +86,7 @@ The full `sim-tests` enum lives in `src/test_support/sim_script.rs`.
 | `UnNerfMessages`                                      | Stop dropping outbound peer messages.                                                                                                                                                                                                                                                              |
 | `CorruptStateNumber(player, new_state_number)`        | Corrupt a player's local state number for edge-case testing.                                                                                                                                                                                                                                       |
 | `InjectRawMessage(player, bytes)`                     | Inject raw inbound bytes to test message validation.                                                                                                                                                                                                                                               |
-| `SelfAcceptProposal(player, game_id)`                 | Force a self-accept by bypassing local parity checks and sending `AcceptProposal` for the player's own game ID.                                                                                                                                                                                    |
+| `SelfAcceptProposal(player, proposal_id)`             | Force a self-accept by bypassing local parity checks and sending `AcceptProposal` for the player's own proposal.                                                                                                                                                                                   |
 | `WrongParityProposal(player)`                         | Tamper an outbound proposal so it uses a game ID with the wrong parity, testing receiver-side rejection.                                                                                                                                                                                           |
 | `Assert(GameCoinPublished(player, game_id))`          | Two-phase assertion replacing the former publication/next-block pair. First it requires the mempool to spend that player's exact current game coin and checkpoints the coin and tip; after exactly one farm it requires the tracked coin to be that coin's child, created at `checkpoint tip + 1`. |
 | `Assert(GameCoinTimeoutRegistered(player, game_id))`  | Assert that the player's transaction manager registered a timeout spend for the current game coin. Used to verify effect ownership without waiting for a block.                                                                                                                                    |
@@ -106,8 +108,8 @@ whether a notification's coin is already spent in the simulator mempool.
 
 Every `SimScriptAction` has one `ActionSchedule` from `schedule()`. Its
 data-bearing `ActionReadiness` is one of `Immediate`,
-`GameCanMove { player, game_id }`, `AcceptProposal { player, game_id }`,
-`ChannelReady { player }`, or `AfterGame { game_id }`; this single classifier
+`GameCanMove { player, game }`, `AcceptProposal { player, proposal }`,
+`ChannelReady { player }`, or `AfterGame { game }`; this single classifier
 contains the exact identity the harness must observe. `PostActionDrain` (`None`
 or `OnChain`) controls whether an on-chain action is drained afterward. No
 secondary result/readiness channel and no runner-side `SimScriptAction` pattern
@@ -213,10 +215,10 @@ condition is satisfied.
 
 | `ActionSchedule.readiness`           | Fires when                                                                                             |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `GameCanMove { player, game_id }`    | That player's UI accepted the exact game or observed the opponent move in that exact game.             |
-| `AcceptProposal { player, game_id }` | Before submission, that exact proposal was received; after submission, that exact accept has resolved. |
+| `GameCanMove { player, game }`       | That player's UI accepted the bound member or observed the opponent move in it.                        |
+| `AcceptProposal { player, proposal }` | Before submission, that proposal was received; after submission, that exact accept has resolved.      |
 | `ChannelReady { player }`            | That player observed channel creation.                                                                 |
-| `AfterGame { game_id }`              | Either UI has a terminal event for that exact game.                                                    |
+| `AfterGame { game }`                 | Either UI has a terminal event for that bound member.                                                  |
 | `Immediate`                          | No UI-event prerequisite.                                                                              |
 
 `LocalTestUIReceiver` tracks the event state used by these triggers:
@@ -246,8 +248,8 @@ The sim loop handles this in two phases:
 
 ## Writing a Test
 
-1. Build a `Vec<SimScriptAction>` using explicit `GameID` values for variants that
-   require them.
+1. Build a `Vec<SimScriptAction>` using explicit proposal references and
+   `ScriptGameRef::accepted(proposal, member_index)` for accepted games.
 2. Explicitly `ProposeNewGame` and `AcceptProposal` to start a game; the sim
    loop does not auto-propose or auto-accept.
 3. Call `run_calpoker_container_with_action_list`,

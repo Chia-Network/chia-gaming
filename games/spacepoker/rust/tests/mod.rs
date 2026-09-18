@@ -1,4 +1,5 @@
 pub mod handlers;
+#[cfg(feature = "sim-tests")]
 pub mod sim;
 pub mod validation;
 

@@ -10,6 +10,7 @@ import {
   subscribeTransactionPublishNerfed,
 } from '../../hooks/blobSingleton';
 import {
+  attachTestCommitCoordinator,
   channelStatus,
   createReadyBlob,
   enc,
@@ -19,6 +20,7 @@ import {
   mockRpc,
   mockWasmConnection,
   setActiveBlob,
+  setTestPersistence,
   submitTransaction,
   testSpendBundle,
   transactionSubmitQueue,
@@ -60,9 +62,10 @@ describe('terminal protocol cleanup', () => {
       ),
     } as unknown as ChiaGame;
     blob.loadWasm(mockWasmConnection);
-    blob.onSaveNeeded = jest.fn();
+    setTestPersistence(blob, jest.fn());
     blob.setGameSession(cradle);
     blob.kickSystem(2);
+    attachTestCommitCoordinator(blob);
     await blob.flushPendingWork();
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
@@ -106,6 +109,7 @@ describe('terminal protocol cleanup', () => {
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.kickSystem(2);
+    attachTestCommitCoordinator(blob);
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     expect((blob as any).protocolStopped).toBe(false);
@@ -155,7 +159,8 @@ describe('terminal protocol cleanup', () => {
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.kickSystem(2);
-    blob.onSaveNeeded = jest.fn();
+    attachTestCommitCoordinator(blob);
+    setTestPersistence(blob, jest.fn());
     blob.processResult({
       ...wasmResult(),
       disposition: {
@@ -186,7 +191,7 @@ describe('terminal protocol cleanup', () => {
         throw new Error('temporary completion failure');
       })
       .mockReturnValueOnce(wasmResult({ disposition: { kind: 'terminal' } }));
-    blob.onSaveNeeded = jest.fn();
+    setTestPersistence(blob, jest.fn());
     blob.processResult({
       ...wasmResult(),
       disposition: {

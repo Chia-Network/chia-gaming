@@ -1,24 +1,52 @@
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
-import { runSessionMachineTransition } from '../session/sessionMachineEffects';
-import type { HandProposal, ProposalGroupOrigin } from '../session/types';
+import type {
+  SessionMachineEffect,
+  SessionMachineState,
+  SessionMachineTransition,
+} from '../session/sessionMachineTypes';
+import type { HandProposal, ProposalOrigin } from '../session/types';
+
+interface SessionMachineEffectRunner {
+  setAuthority(state: SessionMachineState): void;
+  getAuthority(): SessionMachineState;
+  controller: { clearDerivedGamePresentation(): void };
+  runCommand(
+    effect: Exclude<SessionMachineEffect, { type: 'clear-derived-game-presentation' }>,
+  ): void;
+  render(state: SessionMachineState): void;
+}
+
+export function runSessionMachineTransition(
+  transition: SessionMachineTransition,
+  runner: SessionMachineEffectRunner,
+): void {
+  runner.setAuthority(transition.state);
+  try {
+    for (const effect of transition.effects) {
+      if (effect.type === 'clear-derived-game-presentation') {
+        runner.controller.clearDerivedGamePresentation();
+      } else {
+        runner.runCommand(effect);
+      }
+    }
+  } finally {
+    runner.render(runner.getAuthority());
+  }
+}
 
 export const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
-  playerAContribution: 10n,
-  playerBContribution: 10n,
   senderIsPlayerA: false,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 10n,
 };
 
 export const KRUNK_TERMS = {
   gameType: 'krunk' as const,
-  playerAContribution: 100n,
-  playerBContribution: 100n,
   senderIsPlayerA: true,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 100n,
 };
 
 export function send(
@@ -30,18 +58,16 @@ export function send(
 
 export function trackProposal(
   state: ReturnType<typeof createSessionMachineState>,
-  memberIds: string[],
+  id: string,
   handProposal: HandProposal,
-  origin: ProposalGroupOrigin = 'local',
+  origin: ProposalOrigin = 'local',
 ) {
   return send(state, {
-    type: 'upsert-proposal-group',
-    group: {
-      primaryId: memberIds[0],
-      memberIds,
+    type: 'upsert-pending-proposal',
+    proposal: {
+      id,
       handProposal,
-      origin,
-      disposition: origin === 'local' ? 'outgoing' : 'incoming-cached',
+      lifecycle: origin === 'local' ? 'local-outgoing' : 'peer-cached',
     },
   });
 }

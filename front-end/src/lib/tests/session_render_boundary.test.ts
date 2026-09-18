@@ -4,6 +4,7 @@ import { expectConsoleError } from '../../../scripts/testSetup';
 import { destroySessionController } from '../../hooks/blobSingleton';
 import { useSessionControllerAfterCommit } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
+import { Program } from 'clvm-lib';
 import type { PeerConnectionResult } from '../../types/ChiaGaming';
 import type { LiveGamePort } from '@games/host';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
@@ -154,12 +155,24 @@ describe('GameSession render boundary', () => {
 
   it('projects the finalized model hand instead of a surviving live hand', () => {
     const finalizedHand = createRegisteredGameHand('calpoker', {
-      parameters: null,
-      members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: false }],
+      members: [
+        {
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n),
+        },
+      ],
     });
     const survivingLiveHand = createRegisteredGameHand('calpoker', {
-      parameters: null,
-      members: [{ playerAContribution: 100n, playerBContribution: 100n, ourTurn: true }],
+      members: [
+        {
+          playerAContribution: 100n,
+          playerBContribution: 100n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n),
+        },
+      ],
     });
     const model = createSessionModel({
       channel: {

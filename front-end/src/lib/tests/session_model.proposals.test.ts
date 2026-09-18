@@ -9,7 +9,7 @@ import {
   selectGameDashboardView,
   selectGameSessionView,
   selectGameSpecificView,
-  selectProposalGroupByMemberId,
+  selectPendingProposal,
   sessionModelFromSave,
   snapshotFromSessionModel,
   gameCoinIdentityForGameStatus,
@@ -38,63 +38,51 @@ describe('session model proposal and normalization contracts', () => {
       'Calpoker singleton',
       {
         gameType: 'calpoker' as const,
-        playerAContribution: 10n,
-        playerBContribution: 10n,
         senderIsPlayerA: false,
         gameTimeout: 15n,
-        parameters: null,
+        parameters: 10n,
       },
-      ['cal-1'],
+      'cal-1',
     ],
     [
       'Space Poker singleton',
       {
         gameType: 'spacepoker' as const,
-        playerAContribution: 20n,
-        playerBContribution: 20n,
         senderIsPlayerA: false,
         gameTimeout: 16n,
-        parameters: 2n,
+        parameters: [10n, 2n],
       },
-      ['space-1'],
+      'space-1',
     ],
     [
       'Krunk ordered pair',
       {
         gameType: 'krunk' as const,
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: true,
         gameTimeout: 17n,
-        parameters: null,
+        parameters: 100n,
       },
-      ['krunk-picker', 'krunk-guesser'],
+      'krunk-proposal',
     ],
-  ])('round-trips a normalized %s proposal group', (_label, terms, memberIds) => {
+  ])('round-trips a normalized %s pending proposal', (_label, terms, id) => {
     const model = createSessionModel({
       betweenHand: {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primaryId: memberIds[0],
-            memberIds: [...memberIds],
+            id,
             handProposal: terms,
-            origin: 'local',
-            disposition: 'outgoing',
+            lifecycle: 'local-outgoing',
           },
         ],
       },
     });
     const snapshot = snapshotFromSessionModel(model);
     const restored = sessionModelFromSave(
-      liveEnvelope({ activeGameIds: [], proposalGroups: snapshot.proposalGroups }),
+      liveEnvelope({ activeGameIds: [], pendingProposals: snapshot.pendingProposals }),
     );
 
-    expect(restored.betweenHand.proposalGroups).toEqual(model.betweenHand.proposalGroups);
-    for (const id of memberIds) {
-      expect(selectProposalGroupByMemberId(restored, id)).toBe(
-        restored.betweenHand.proposalGroups[0],
-      );
-    }
+    expect(restored.betweenHand.pendingProposals).toEqual(model.betweenHand.pendingProposals);
+    expect(selectPendingProposal(restored, id)).toBe(restored.betweenHand.pendingProposals[0]);
   });
 
   it('omits every deprecated parallel proposal ledger', () => {
@@ -122,39 +110,33 @@ describe('session model proposal and normalization contracts', () => {
     }
   });
 
-  it('retains generic group membership through acceptance until insufficient balance clears every member', () => {
+  it('stores advisory proposal status without generated member IDs', () => {
     const terms = {
       gameType: 'krunk',
-      playerAContribution: 100n,
-      playerBContribution: 100n,
       senderIsPlayerA: true,
       gameTimeout: 15n,
-      parameters: null,
+      parameters: 100n,
     } as const;
-    const groupIds = ['11', '13'];
     const model = createSessionModel({
       betweenHand: {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primaryId: '11',
-            memberIds: groupIds,
+            id: '11',
             handProposal: terms,
-            origin: 'local',
-            disposition: 'accepted',
+            lifecycle: 'local-cancel-queued',
           },
         ],
       },
     });
-    expect(selectProposalGroupByMemberId(model, '11')).toBe(
-      selectProposalGroupByMemberId(model, '13'),
-    );
-    expect(selectProposalGroupByMemberId(model, '13')).toMatchObject({
-      memberIds: groupIds,
+    expect(selectPendingProposal(model, '11')).toMatchObject({
+      id: '11',
+      lifecycle: 'local-cancel-queued',
       handProposal: terms,
     });
+    expect(selectPendingProposal(model, '13')).toBeNull();
   });
 
-  it('round-trips accepted in-flight groups for a later insufficient-balance cleanup', () => {
+  it('round-trips live games without retaining their accepted proposal', () => {
     const model = createSessionModel({
       game: {
         activeGameType: 'krunk',
@@ -181,28 +163,11 @@ describe('session model proposal and normalization contracts', () => {
       betweenHand: {
         lastHandProposal: {
           gameType: 'krunk',
-          playerAContribution: 100n,
-          playerBContribution: 100n,
           senderIsPlayerA: true,
           gameTimeout: 15n,
-          parameters: null,
+          parameters: 100n,
         },
-        proposalGroups: [
-          {
-            primaryId: '11',
-            memberIds: ['11', '13'],
-            handProposal: {
-              gameType: 'krunk',
-              playerAContribution: 100n,
-              playerBContribution: 100n,
-              senderIsPlayerA: true,
-              gameTimeout: 15n,
-              parameters: null,
-            },
-            origin: 'local',
-            disposition: 'accepted',
-          },
-        ],
+        pendingProposals: [],
       },
     });
     const snapshot = snapshotFromSessionModel(model);
@@ -213,7 +178,7 @@ describe('session model proposal and normalization contracts', () => {
         currentHandOrigin: snapshot.currentHandOrigin,
         gameInstances: snapshot.gameInstances,
         activeGameType: snapshot.activeGameType,
-        proposalGroups: snapshot.proposalGroups,
+        pendingProposals: snapshot.pendingProposals,
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: krunkStateCodec.encode({
           perPlayerStake: 100n,
@@ -221,69 +186,67 @@ describe('session model proposal and normalization contracts', () => {
         }),
       }),
     );
-    expect(selectProposalGroupByMemberId(restored, '13')).toMatchObject({
-      primaryId: '11',
-      memberIds: ['11', '13'],
-      disposition: 'accepted',
-    });
+    expect(selectPendingProposal(restored, '13')).toBeNull();
+    expect(restored.game.currentHandIds).toEqual(['11', '13']);
   });
 
-  it('round-trips one outgoing group alongside an incoming collision', () => {
-    const firstTerms = {
+  it('round-trips a cancellation tombstone beside its outgoing replacement', () => {
+    const cancelledTerms = {
       gameType: 'calpoker',
-      playerAContribution: 10n,
-      playerBContribution: 10n,
       senderIsPlayerA: false,
       gameTimeout: 15n,
-      parameters: null,
+      parameters: 10n,
     } as const;
-    const inboundTerms = {
+    const replacementTerms = {
       gameType: 'calpoker',
-      playerAContribution: 30n,
-      playerBContribution: 30n,
-      senderIsPlayerA: false,
+      senderIsPlayerA: true,
       gameTimeout: 25n,
-      parameters: null,
+      parameters: 30n,
     } as const;
+    const model = createSessionModel({
+      betweenHand: {
+        pendingProposals: [
+          {
+            id: '11',
+            lifecycle: 'local-cancel-queued',
+            handProposal: cancelledTerms,
+          },
+          {
+            id: '13',
+            lifecycle: 'local-outgoing',
+            handProposal: replacementTerms,
+          },
+        ],
+      },
+    });
+    const snapshot = snapshotFromSessionModel(model);
     const restored = sessionModelFromSave(
       liveEnvelope({
         activeGameIds: [],
-        proposalGroups: [
-          {
-            primary_id: '11',
-            member_ids: ['11'],
-            origin: 'local',
-            disposition: 'outgoing',
-            hand_proposal: {
-              player_a_contribution: '10',
-              player_b_contribution: '10',
-              sender_is_player_a: false,
-              game_timeout: '15',
-              game_type: 'calpoker',
-              parameters: null,
-            },
-          },
-          {
-            primary_id: '23',
-            member_ids: ['23'],
-            origin: 'peer',
-            disposition: 'incoming-review',
-            hand_proposal: {
-              player_a_contribution: '30',
-              player_b_contribution: '30',
-              sender_is_player_a: false,
-              game_timeout: '25',
-              game_type: 'calpoker',
-              parameters: null,
-            },
-          },
-        ],
+        pendingProposals: snapshot.pendingProposals,
       }),
     );
-    expect(restored.betweenHand.proposalGroups).toHaveLength(2);
-    expect(selectProposalGroupByMemberId(restored, '11')?.handProposal).toEqual(firstTerms);
-    expect(selectProposalGroupByMemberId(restored, '23')?.handProposal).toEqual(inboundTerms);
-    expect(snapshotFromSessionModel(restored).proposalGroups).toHaveLength(2);
+    expect(restored.betweenHand.pendingProposals).toEqual(model.betweenHand.pendingProposals);
+    expect(snapshotFromSessionModel(restored).pendingProposals).toEqual(snapshot.pendingProposals);
+  });
+
+  it('rejects persistence with more than one uncancelled proposal', () => {
+    const terms = {
+      gameType: 'calpoker',
+      senderIsPlayerA: false,
+      gameTimeout: 15n,
+      parameters: 10n,
+    } as const;
+    const model = createSessionModel({
+      betweenHand: {
+        pendingProposals: [
+          { id: '11', lifecycle: 'local-outgoing', handProposal: terms },
+          { id: '13', lifecycle: 'peer-review', handProposal: terms },
+        ],
+      },
+    });
+
+    expect(() => snapshotFromSessionModel(model)).toThrow('multiple uncancelled proposals');
   });
 
   it('restores every current-hand member for resolved-unroll lifecycle rows', () => {
@@ -313,11 +276,9 @@ describe('session model proposal and normalization contracts', () => {
       betweenHand: {
         lastHandProposal: {
           gameType: 'krunk',
-          playerAContribution: 100n,
-          playerBContribution: 100n,
           senderIsPlayerA: true,
           gameTimeout: 15n,
-          parameters: null,
+          parameters: 100n,
         },
       },
     });
@@ -465,11 +426,9 @@ describe('session model proposal and normalization contracts', () => {
         betweenHand: {
           lastHandProposal: {
             gameType: 'calpoker',
-            playerAContribution: 40n,
-            playerBContribution: 40n,
             senderIsPlayerA: false,
             gameTimeout: 15n,
-            parameters: null,
+            parameters: 40n,
           },
         },
       }),
@@ -481,11 +440,9 @@ describe('session model proposal and normalization contracts', () => {
         betweenHand: {
           lastHandProposal: {
             gameType: 'calpoker',
-            playerAContribution: 40n,
-            playerBContribution: 40n,
             senderIsPlayerA: false,
             gameTimeout: 15n,
-            parameters: null,
+            parameters: 40n,
           },
         },
       }),
@@ -850,7 +807,7 @@ describe('session model proposal and normalization contracts', () => {
 
     dispatchWasmNotification(
       {
-        ProposalMade: { id: '7', group_ids: ['7'] },
+        ProposalMade: { id: '7' },
       },
       handle,
       (error) => {

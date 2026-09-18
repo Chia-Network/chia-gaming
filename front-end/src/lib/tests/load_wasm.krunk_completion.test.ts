@@ -42,11 +42,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   ];
   const handProposal: HandProposal = {
     gameType: 'krunk',
-    playerAContribution: 100n,
-    playerBContribution: 100n,
     senderIsPlayerA: true,
     gameTimeout: 15n,
-    parameters: null,
+    parameters: 100n,
   };
   const traces: Array<
     Array<{ currentHandIds: string[]; payloadMemberCount: number; activeIds: string[] }>
@@ -54,6 +52,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   const errors: unknown[] = [];
   const runtimes: SessionMachineRuntime[] = [];
   const settlementTraces: KrunkSettlementTrace[][] = [[], []];
+  const pendingSettlementIds: string[][] = [[], []];
   const acceptedGroups: ProposalAcceptedGroupPayload[][] = [[], []];
 
   const settlementTrace = (
@@ -131,7 +130,6 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       },
     );
     runtimes.push(runtime);
-    controller.onSaveNeeded = persist;
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {
         if (event.type === 'notification') {
@@ -147,11 +145,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
               notification: event.data,
               iStarted: index === 0,
             });
-            const instance = runtime.getState().model.game.instances[id];
-            assert.ok(instance, `krunk completion player ${index}: missing settled instance`);
-            settlementTraces[index].push(
-              settlementTrace(index, id, 'after-terminal', instance.terminal),
-            );
+            pendingSettlementIds[index].push(id);
             return;
           }
           runtime.dispatch({
@@ -174,6 +168,15 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   const exchangeAndPersist = async () => {
     await exchangeUntilIdle(cradles);
     await flushPersistence();
+    for (const [index, ids] of pendingSettlementIds.entries()) {
+      for (const id of ids.splice(0)) {
+        const instance = runtimes[index].getState().model.game.instances[id];
+        assert.ok(instance, `krunk completion player ${index}: missing settled instance`);
+        settlementTraces[index].push(
+          settlementTrace(index, id, 'after-terminal', instance.terminal),
+        );
+      }
+    }
   };
   const word = Program.fromBytes(new TextEncoder().encode('CRANE'));
 
@@ -182,13 +185,13 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     await exchangeAndPersist();
     const review = runtimes[1]
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-review');
     assert.ok(review, 'krunk completion receiver must observe the real proposal');
-    const ids = review.memberIds;
-    assert.equal(ids.length, 2);
 
-    runtimes[1].dispatch({ type: 'accept-review', primaryId: review.primaryId });
+    runtimes[1].dispatch({ type: 'accept-review', id: review.id });
     await exchangeAndPersist();
+    const ids = runtimes[0].getState().model.game.currentHandIds;
+    assert.equal(ids.length, 2);
 
     for (const [index, groups] of acceptedGroups.entries()) {
       assert.equal(groups.length, 1, `krunk completion player ${index}: one real acceptance`);
@@ -352,11 +355,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     );
     const cachedSecondProposal = runtimes[0]
       .getState()
-      .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
+      .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-cached');
     assert.ok(cachedSecondProposal, 'krunk completion receiver must cache the same-terms proposal');
-    const secondIds = cachedSecondProposal.memberIds;
-    assert.equal(secondIds.length, 2);
-    assert.notDeepEqual(secondIds, ids);
+    assert.equal(cachedSecondProposal.id.length > 0, true);
 
     runtimes[0].dispatch({ type: 'choose-same-terms' });
     assert.equal(
@@ -365,6 +366,9 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       'Krunk repeat acceptance must bypass the compose form',
     );
     await exchangeAndPersist();
+    const secondIds = runtimes[0].getState().model.game.currentHandIds;
+    assert.equal(secondIds.length, 2);
+    assert.notDeepEqual(secondIds, ids);
 
     for (const [index, runtime] of runtimes.entries()) {
       assert.deepEqual(runtime.getState().model.game.currentHandIds, secondIds);
@@ -388,9 +392,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       }
     }
   } finally {
-    controllers.forEach((controller) => {
-      controller.onSaveNeeded = null;
-    });
+    controllers.forEach((controller) => controller.cleanup());
   }
 }
 

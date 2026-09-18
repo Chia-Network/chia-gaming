@@ -181,6 +181,72 @@ export interface TestHarness {
   sentAcks: number[];
 }
 
+const testPersistence = new WeakMap<SessionController, () => void | Promise<void>>();
+
+export function setTestPersistence(
+  blob: SessionController,
+  persist: () => void | Promise<void>,
+): void {
+  testPersistence.set(blob, persist);
+}
+
+/**
+ * Protocol unit tests intentionally isolate SessionController from React. Give
+ * them an explicit coordinator instead of reviving the removed production
+ * controller-owned persistence fallback.
+ */
+export function attachTestCommitCoordinator(blob: SessionController): void {
+  let dirty = false;
+  let flushing: Promise<void> = Promise.resolve();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const schedule = () => {
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      void coordinator.flush().catch(() => {});
+    }, 0);
+  };
+  const coordinator = {
+    requestCommit: () => {
+      dirty = true;
+      schedule();
+    },
+    enqueue: (work: () => void) => {
+      work();
+    },
+    flush: (): Promise<void> => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      flushing = flushing
+        .catch(() => {})
+        .then(async () => {
+          while (dirty) {
+            try {
+              dirty = false;
+              blob.flushDeferredWork();
+              const commit = blob.prepareReliableCommit();
+              const rejection = blob.prepareInboundSessionRejectPersistence();
+              if (rejection) {
+                await rejection.write();
+              } else {
+                await Promise.resolve(testPersistence.get(blob)?.());
+              }
+              blob.completeReliableCommit(commit);
+            } catch (error) {
+              dirty = true;
+              blob.reportDurabilityError(error);
+              throw error;
+            }
+          }
+        });
+      return flushing;
+    },
+  };
+  blob.attachTransactionCoordinator(coordinator);
+}
+
 /**
  * Returns a SessionController at qualifyingEvents=7 (system ready).
  * Setup: loadWasm → setGameSession → kickSystem(2) → qe=7.
@@ -205,8 +271,9 @@ export function createReadyBlob(
   blob.pairingToken = 'test-pairing';
   blob.rewardPuzzleHash = '11'.repeat(32);
   blob.kickSystem(2);
+  attachTestCommitCoordinator(blob);
   blob.reportCoinStates(1n, []);
-  blob.onSaveNeeded = () =>
+  setTestPersistence(blob, () =>
     saveLiveSession({
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
@@ -221,7 +288,8 @@ export function createReadyBlob(
       rewardPuzzleHash: blob.rewardPuzzleHash,
       activeGameIds: [],
       unackedMessages: blob.unackedMessages,
-    });
+    }),
+  );
 
   (cradle.deliver_message as jest.Mock).mockClear();
   (cradle.report_coin_states as jest.Mock).mockClear();
@@ -252,7 +320,8 @@ export function createUnreadyBlob(
   blob.setGameSession(cradle);
   blob.pairingToken = 'test-pairing';
   blob.rewardPuzzleHash = '11'.repeat(32);
-  blob.onSaveNeeded = () =>
+  attachTestCommitCoordinator(blob);
+  setTestPersistence(blob, () =>
     saveLiveSession({
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
@@ -267,7 +336,8 @@ export function createUnreadyBlob(
       rewardPuzzleHash: blob.rewardPuzzleHash,
       activeGameIds: [],
       unackedMessages: blob.unackedMessages,
-    });
+    }),
+  );
 
   trackedBlobs.push(blob);
 

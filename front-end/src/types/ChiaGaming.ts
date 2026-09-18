@@ -137,8 +137,6 @@ export interface ProposeGameParams {
   /** First generated member's initial validation puzzle hash (32-byte hex). */
   game_type: ProtocolGameId;
   timeout: bigint;
-  player_a_contribution: bigint;
-  player_b_contribution: bigint;
   sender_is_player_a: boolean;
   parameters: ProposalParameterValue;
 }
@@ -277,9 +275,8 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  propose_games: (cid: number, games: ProposeGameParams[]) => WasmResult;
+  propose: (cid: number, proposal: ProposeGameParams) => WasmResult;
   accept_proposal: (cid: number, game_id: string) => WasmResult;
-  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
   cancel_proposal: (cid: number, game_id: string) => WasmResult;
   make_move_with_entropy_for_testing: (
     cid: number,
@@ -323,16 +320,12 @@ export class ChiaGame {
     this.session = sessionId;
   }
 
-  propose_games(games: ProposeGameParams[]): WasmResult {
-    return this.wasm.propose_games(this.session, games);
+  propose(proposal: ProposeGameParams): WasmResult {
+    return this.wasm.propose(this.session, proposal);
   }
 
   accept_proposal(game_id: string): WasmResult {
     return this.wasm.accept_proposal(this.session, game_id);
-  }
-
-  accept_proposal_and_move(game_id: string, readable: Uint8Array): WasmResult {
-    return this.wasm.accept_proposal_and_move(this.session, game_id, readable);
   }
 
   cancel_proposal(game_id: string): WasmResult {

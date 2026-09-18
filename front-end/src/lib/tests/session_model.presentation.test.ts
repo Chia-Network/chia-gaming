@@ -362,6 +362,27 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     });
   });
 
+  it('owns WASM channel coin bytes across memory growth', () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const wasmCoin = new Uint8Array(memory.buffer, 0, 72);
+    wasmCoin.set(Array.from({ length: wasmCoin.length }, (_, index) => index));
+    const status = channelStatusModelFromPayload({
+      state: 'ShuttingDown',
+      advisory: null,
+      coin: wasmCoin,
+      our_balance: { Amount: '100' },
+      their_balance: { Amount: '101' },
+      game_allocated: { Amount: '0' },
+    });
+
+    memory.grow(1);
+
+    expect(wasmCoin.byteLength).toBe(0);
+    expect(status.coin).toBeInstanceOf(Uint8Array);
+    expect(status.coin).toHaveLength(72);
+    expect(status.coin?.[71]).toBe(71);
+  });
+
   it('promotes inbound integer state numbers to bigint before persistence', () => {
     expect(
       decodeChannelStatusPayload({

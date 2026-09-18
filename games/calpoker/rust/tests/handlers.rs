@@ -315,12 +315,16 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
-    let parameters = (BET_SIZE, (BET_SIZE, ((), ()))).to_clvm(allocator).unwrap();
+    let parameters = (BET_SIZE, (BET_SIZE, (BET_SIZE, ())))
+        .to_clvm(allocator)
+        .unwrap();
     let result = run_clvm(allocator, factory_clvm, parameters);
-    let records = proper_list(allocator.allocator(), result, true).unwrap();
+    let envelope = proper_list(allocator.allocator(), result, true).unwrap();
+    assert_eq!(int_from_node(allocator, envelope[0]), 1);
+    let records = proper_list(allocator.allocator(), envelope[1], true).unwrap();
     assert_eq!(records.len(), 1, "Calpoker factory must return one record");
     let record = proper_list(allocator.allocator(), records[0], true).unwrap();
-    assert_eq!(record.len(), 10, "factory record must have 10 fields");
+    assert_eq!(record.len(), 11, "factory record must have 11 fields");
     assert_eq!(int_from_node(allocator, record[0]), BET_SIZE);
     assert_eq!(int_from_node(allocator, record[1]), BET_SIZE);
     assert_eq!(
@@ -873,7 +877,7 @@ fn calpoker_factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> boo
 fn test_calpoker_factory_rejects_malformed_parameters() {
     let mut allocator = AllocEncoder::new();
 
-    let valid_args = (BET_SIZE, (BET_SIZE, ((), ())))
+    let valid_args = (BET_SIZE, (BET_SIZE, (BET_SIZE, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
@@ -881,29 +885,31 @@ fn test_calpoker_factory_rejects_malformed_parameters() {
         "valid uniform arguments should be accepted"
     );
 
-    let zero_args = (0i64, (0i64, ((), ()))).to_clvm(&mut allocator).unwrap();
+    let zero_args = (BET_SIZE, (BET_SIZE, (0i64, ())))
+        .to_clvm(&mut allocator)
+        .unwrap();
     assert!(
         !calpoker_factory_succeeds(&mut allocator, zero_args),
         "zero stake must be rejected"
     );
 
-    let unequal = (BET_SIZE, (BET_SIZE + 1, ((), ())))
+    let insufficient = (BET_SIZE - 1, (BET_SIZE, (BET_SIZE, ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
-        !calpoker_factory_succeeds(&mut allocator, unequal),
-        "player contributions must be equal"
+        calpoker_factory_succeeds(&mut allocator, insufficient),
+        "insufficient reserves must return shortage flags, not raise"
     );
 
-    let non_nil_parameters = (BET_SIZE, (BET_SIZE, (1i64, ())))
+    let malformed_parameters = (BET_SIZE, (BET_SIZE, ((BET_SIZE, ()), ())))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(!calpoker_factory_succeeds(
         &mut allocator,
-        non_nil_parameters
+        malformed_parameters
     ));
 
-    let extra_parameter = (BET_SIZE, (BET_SIZE, ((), (7i64, ()))))
+    let extra_parameter = (BET_SIZE, (BET_SIZE, (BET_SIZE, (7i64, ()))))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
