@@ -177,7 +177,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (!request || Array.isArray(request) || typeof request !== 'object') {
       throw new Error('Coinset request must be an object');
     }
-    const data = await this.gql<{ coinset: { response: T } | null }>(
+    const data = await this.gql<{ coinset: { response: T | null } | null }>(
       `mutation Coinset($input: CoinsetInput!) {
         coinset(input: $input) { response }
       }`,
@@ -189,8 +189,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         },
       },
     );
-    if (!data.coinset || data.coinset.response === undefined) {
-      throw new Error(`Malformed Coinset ${endpoint} response`);
+    if (data.coinset?.response == null) {
+      throw new CloudWalletTransportError(`Coinset ${endpoint} returned no response`);
     }
     return data.coinset.response;
   }

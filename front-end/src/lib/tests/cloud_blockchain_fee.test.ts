@@ -427,6 +427,18 @@ describe('CloudBlockchainInterface fee support', () => {
     });
   });
 
+  it('classifies a null Coinset response as unavailable', async () => {
+    mockGraphql(() => ({
+      coinset: { response: null },
+    }));
+    await expect(
+      new CloudBlockchainInterface().spend('', sampleBundle(), '', 'test'),
+    ).resolves.toMatchObject({
+      status: 'unavailable',
+      detail: expect.stringContaining('returned no response'),
+    });
+  });
+
   it('spend submits the finalized bundle through Coinset', async () => {
     mockGraphql(() => ({
       coinset: { response: { success: true, status: 'SUCCESS' } },

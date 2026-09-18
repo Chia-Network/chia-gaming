@@ -37,19 +37,19 @@ export const GENESIS_CHALLENGE_OVERRIDE: string | undefined =
 export const CLOUD_WALLET_API_URL: string =
   _win.__CLOUD_WALLET_API_URL__ ||
   _env.CHIA_GAMING_CLOUD_WALLET_API_URL ||
-  'https://cw-review-api-3395.tailaecde.ts.net';
+  'https://api-dev-testnet11.cw.chia.net';
 
 /** Cloud Wallet UI origin (consent, signature-request approve popup). */
 export const CLOUD_WALLET_UI_URL: string =
   _win.__CLOUD_WALLET_UI_URL__ ||
   _env.CHIA_GAMING_CLOUD_WALLET_UI_URL ||
-  'https://cw-review-3395.tailaecde.ts.net';
+  'https://dev-testnet11.cw.chia.net';
 
 /** OAuth client_id registered for Chia Gaming. */
 export const CLOUD_WALLET_CLIENT_ID: string =
   _win.__CLOUD_WALLET_CLIENT_ID__ ||
   _env.CHIA_GAMING_CLOUD_WALLET_CLIENT_ID ||
-  'k6r62t7a3lybvzl60din10ol';
+  'w70zx0oc40vkue0gdp0xcfv3';
 
 /** Fixed OAuth redirect path on the gaming origin. */
 export const CLOUD_WALLET_OAUTH_CALLBACK_PATH = '/oauth/callback';

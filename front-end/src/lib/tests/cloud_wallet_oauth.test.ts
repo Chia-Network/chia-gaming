@@ -304,9 +304,9 @@ describe('cloudWalletConfig', () => {
   });
 
   it('falls back to env defaults when nothing is stored', () => {
-    expect(getCloudWalletApiUrl()).toBe('https://cw-review-api-3395.tailaecde.ts.net');
-    expect(getCloudWalletUiUrl()).toBe('https://cw-review-3395.tailaecde.ts.net');
-    expect(getCloudWalletClientId()).toBe('k6r62t7a3lybvzl60din10ol');
+    expect(getCloudWalletApiUrl()).toBe('https://api-dev-testnet11.cw.chia.net');
+    expect(getCloudWalletUiUrl()).toBe('https://dev-testnet11.cw.chia.net');
+    expect(getCloudWalletClientId()).toBe('w70zx0oc40vkue0gdp0xcfv3');
   });
 
   it('persisted values take precedence and are normalized', () => {
@@ -343,17 +343,17 @@ describe('CloudBlockchainInterface beginConnect', () => {
       clientId: {
         type: 'string',
         label: 'OAuth client ID',
-        default: 'k6r62t7a3lybvzl60din10ol',
+        default: 'w70zx0oc40vkue0gdp0xcfv3',
       },
       apiUrl: {
         type: 'string',
         label: 'Cloud Wallet API URL',
-        default: 'https://cw-review-api-3395.tailaecde.ts.net',
+        default: 'https://api-dev-testnet11.cw.chia.net',
       },
       uiUrl: {
         type: 'string',
         label: 'Cloud Wallet UI URL',
-        default: 'https://cw-review-3395.tailaecde.ts.net',
+        default: 'https://dev-testnet11.cw.chia.net',
       },
     });
     expect(loadCloudWalletConfig()).toBeNull();
@@ -556,7 +556,7 @@ describe('waitForGamingConsentWalletId grace period', () => {
     setTestGlobal('window', globalThis);
   });
 
-  const consentEvent = (walletId: string, origin = 'https://cw-review-3395.tailaecde.ts.net') => ({
+  const consentEvent = (walletId: string, origin = 'https://dev-testnet11.cw.chia.net') => ({
     origin,
     data: { type: GAMING_CONSENT_MESSAGE_TYPE, walletId },
   });
