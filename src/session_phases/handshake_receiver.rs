@@ -295,12 +295,16 @@ impl HandshakeReceiverPhase {
                     }
                 };
 
+                let coin_spend_request = if self.last_height > 0 {
+                    Some(self.build_bob_coin_spend_request(env)?)
+                } else {
+                    None
+                };
                 self.state = ReceiverState::WaitingForOffer(Box::new(HandshakeStepInfo {
                     first_player_hs_info: (**msg).clone(),
                     second_player_hs_info: my_hs_info.clone(),
                 }));
-                if self.last_height > 0 {
-                    let request = self.build_bob_coin_spend_request(env)?;
+                if let Some(request) = coin_spend_request {
                     self.channel_deadline = self.compute_not_valid_after_height();
                     effects.push(Effect::NeedCoinSpend(request));
                 } else {
@@ -1153,6 +1157,35 @@ mod queued_message_tests {
             )
             .expect_err("HandshakeA collision");
         assert!(format!("{error:?}").contains("public key collision"));
+    }
+
+    #[test]
+    fn handshake_a_request_failure_does_not_publish_waiting_state() {
+        let mut phase = finished_phase();
+        phase.state = ReceiverState::WaitingForA;
+        phase.last_height = 1;
+        phase.my_contribution = Amount::new(u64::MAX);
+        phase.opening_fee = Amount::new(1);
+        let mut payload = payload_colliding_with_local_channel_key(&phase);
+        let referee_key =
+            crate::common::types::PrivateKey::from_bytes(&[47; 32]).expect("referee key");
+        payload.referee_pubkey = private_to_public_key(&referee_key);
+        payload.reward_payout_signature =
+            sign_reward_payout(&referee_key, &payload.reward_puzzle_hash);
+
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        let error = phase
+            .process_message(
+                &mut env,
+                Rc::new(PeerMessage::HandshakeA(Box::new(payload))),
+            )
+            .expect_err("overflow must reject HandshakeA");
+
+        assert!(format!("{error:?}").contains("overflowed u64"));
+        assert!(matches!(phase.state, ReceiverState::WaitingForA));
+        assert!(!phase.pending_coin_spend);
+        assert!(phase.channel_deadline.is_none());
     }
 
     #[test]

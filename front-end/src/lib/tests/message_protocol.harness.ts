@@ -182,6 +182,7 @@ export interface TestHarness {
 }
 
 const testPersistence = new WeakMap<SessionController, () => void | Promise<void>>();
+const coordinatedControllers = new WeakSet<SessionController>();
 
 export function setTestPersistence(
   blob: SessionController,
@@ -196,7 +197,10 @@ export function setTestPersistence(
  * controller-owned persistence fallback.
  */
 export function attachTestCommitCoordinator(blob: SessionController): void {
+  if (coordinatedControllers.has(blob)) return;
+  coordinatedControllers.add(blob);
   let dirty = false;
+  const pendingExternalEffects = new Map<string, () => void>();
   let flushing: Promise<void> = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | null = null;
   const schedule = () => {
@@ -214,6 +218,12 @@ export function attachTestCommitCoordinator(blob: SessionController): void {
     enqueue: (work: () => void) => {
       work();
     },
+    releaseAfterPersistence: (key: string, effect: () => void) => {
+      if (pendingExternalEffects.has(key)) return;
+      pendingExternalEffects.set(key, effect);
+      dirty = true;
+      schedule();
+    },
     flush: (): Promise<void> => {
       if (timer) {
         clearTimeout(timer);
@@ -227,13 +237,28 @@ export function attachTestCommitCoordinator(blob: SessionController): void {
               dirty = false;
               blob.flushDeferredWork();
               const commit = blob.prepareReliableCommit();
-              const rejection = blob.prepareInboundSessionRejectPersistence();
-              if (rejection) {
-                await rejection.write();
-              } else {
-                await Promise.resolve(testPersistence.get(blob)?.());
+              const externalEffects = [...pendingExternalEffects.entries()];
+              const releaseExternalEffects = () => {
+                for (const [key, effect] of externalEffects) {
+                  if (pendingExternalEffects.get(key) !== effect) continue;
+                  pendingExternalEffects.delete(key);
+                  effect();
+                }
+              };
+              try {
+                const rejection = blob.prepareInboundSessionRejectPersistence();
+                if (rejection) {
+                  await rejection.write();
+                } else {
+                  await Promise.resolve(testPersistence.get(blob)?.());
+                }
+              } catch (error) {
+                blob.completeReliableCommit(commit, false);
+                releaseExternalEffects();
+                throw error;
               }
-              blob.completeReliableCommit(commit);
+              blob.completeReliableCommit(commit, true);
+              releaseExternalEffects();
             } catch (error) {
               dirty = true;
               blob.reportDurabilityError(error);
@@ -347,6 +372,7 @@ export function createUnreadyBlob(
 let activeBlob: SessionController | null = null;
 
 export function setActiveBlob(blob: SessionController | null): void {
+  if (blob) attachTestCommitCoordinator(blob);
   activeBlob = blob;
 }
 const trackedBlobs: SessionController[] = [];
@@ -398,8 +424,10 @@ afterEach(async () => {
   }
 });
 
-export function transactionSubmitQueue(blob: SessionController): Promise<void> {
-  return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+export async function transactionSubmitQueue(blob: SessionController): Promise<void> {
+  await blob.flushPendingSave();
+  await (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+  await blob.flushPendingSave();
 }
 
 export function submitTransaction(

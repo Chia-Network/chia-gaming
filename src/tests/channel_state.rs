@@ -13,13 +13,16 @@ use crate::common::types::{AllocEncoder, Amount, Hash, Puzzle, Sha256tree};
 #[cfg(feature = "sim-tests")]
 pub(crate) mod sim_tests {
     use super::*;
+    use std::rc::Rc;
 
     use clvm_traits::ToClvm;
 
-    use crate::channel_state::types::HistoricalUnrollSpendInfo;
+    use crate::channel_state::game_handler::GameHandler;
+    use crate::channel_state::game_start_info::GameStartInfo;
+    use crate::channel_state::types::{HistoricalUnrollSpendInfo, ValidationProgramRegistry};
     use crate::common::types::{
         aggregate_wallet_fee_bundle, Aggsig, CoinCondition, CoinID, CoinSpend, CoinString, GameID,
-        Program, PuzzleHash, Spend, SpendBundle, ToQuotedProgram,
+        Program, PuzzleHash, Spend, SpendBundle, Timeout, ToQuotedProgram,
     };
     use crate::test_support::sim_script::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
@@ -152,6 +155,110 @@ pub(crate) mod sim_tests {
             .initialize_genesis_as_receiver(env, &genesis.state_one_signatures)
             .expect("receiver establishes genesis state 1");
         game
+    }
+
+    #[test]
+    fn later_member_failure_leaves_proposal_acceptance_unchanged() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([16; 32]);
+        let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+        let nil = allocator.allocator().nil();
+        let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("referee puzzle");
+        let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
+        let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("standard puzzle");
+        let mut env = ChannelEnv {
+            allocator: &mut allocator,
+            referee_coin_puzzle: ref_coin_puz,
+            referee_coin_puzzle_hash: ref_coin_ph,
+            unroll_puzzle,
+            standard_puzzle,
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        };
+        let mut party = ChannelHandlerGame::new(
+            &mut rng,
+            &mut env,
+            GameID(42),
+            &CoinID::default(),
+            &[Amount::new(100), Amount::new(100)],
+            (*DEFAULT_UNROLL_TIME_LOCK).clone(),
+        )
+        .expect("channel");
+        let proposal = crate::session_phases::proposal::GameProposal {
+            sender_is_player_a: true,
+            game_type: crate::common::types::GameType::from_hash(Hash::default()),
+            timeout: Timeout::new(15),
+            parameters: crate::session_phases::proposal::ProposalParameters::Null,
+        };
+        let local_id = party
+            .player(0)
+            .ch
+            .create_outgoing_proposal(&proposal)
+            .unwrap();
+        let validator = Rc::new(Program::from_bytes(&[0x01]).expect("quoted validator"));
+        let registry =
+            ValidationProgramRegistry::new(env.allocator, &[validator]).expect("registry");
+        let start = |id, initial_max_move_size| {
+            Rc::new(GameStartInfo {
+                amount: Amount::new(20),
+                game_handler: GameHandler::MyTurnHandler(Program::nil().into()),
+                player_a_contribution: Amount::new(10),
+                player_b_contribution: Amount::new(10),
+                my_contribution_this_game: Amount::new(10),
+                their_contribution_this_game: Amount::new(10),
+                validation_programs: registry.clone(),
+                initial_state: Program::nil().into(),
+                initial_move: vec![],
+                initial_max_move_size,
+                initial_mover_share: Amount::default(),
+                game_id: GameID(id),
+                timeout: Timeout::new(15),
+            })
+        };
+        let starts = [start(0, 32), start(1, usize::MAX)];
+        let before =
+            bencodex::to_vec(&party.player(0).ch).expect("serialize channel before acceptance");
+
+        let result = party
+            .player(0)
+            .ch
+            .accept_proposal_games(&mut env, local_id, &starts, true);
+
+        assert!(result.is_err(), "later invalid member must fail acceptance");
+        let channel = &party.player(0).ch;
+        assert_eq!(
+            bencodex::to_vec(channel).expect("serialize channel after failed acceptance"),
+            before,
+            "failed acceptance changed channel state",
+        );
+        assert!(
+            channel.is_proposal_pending(local_id),
+            "proposal ledger changed"
+        );
+        assert_eq!(
+            channel.next_game_id_for_testing(),
+            GameID(0),
+            "IDs advanced"
+        );
+        assert_eq!(
+            (
+                channel.my_out_of_game_balance(),
+                channel.their_out_of_game_balance(),
+                channel.my_allocated_balance(),
+                channel.their_allocated_balance(),
+            ),
+            (
+                Amount::new(100),
+                Amount::new(100),
+                Amount::default(),
+                Amount::default(),
+            ),
+            "balances changed",
+        );
+        assert!(channel.live_game_ids().is_empty(), "live games changed");
+        assert!(
+            channel.pending_proposal_accept_game_ids().is_empty(),
+            "redo entries changed"
+        );
     }
 
     /// Helper: perform one full round-trip of empty potato exchanges.

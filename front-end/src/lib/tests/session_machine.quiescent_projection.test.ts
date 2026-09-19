@@ -168,7 +168,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     expect(order).toEqual(['persist', 'render', 'peer-send']);
   });
 
-  it('projects and releases nothing on failure, then retries the exact state', async () => {
+  it('projects and releases once on failure, then retries durability without replay', async () => {
     const mockController = controller(jest.fn());
     const render = jest.fn();
     let attempt = 0;
@@ -189,13 +189,22 @@ describe('SessionMachineRuntime quiescent projection', () => {
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     await expect(runtime.persist()).rejects.toThrow('disk full');
-    expect(render).not.toHaveBeenCalled();
-    expect(mockController.completeReliableCommit).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledTimes(1);
+    expect(mockController.completeReliableCommit).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Object),
+      false,
+    );
 
     await runtime.persist();
     expect(persistedTimeouts).toEqual([20n, 20n]);
     expect(render).toHaveBeenCalledTimes(1);
-    expect(mockController.completeReliableCommit).toHaveBeenCalledTimes(1);
+    expect(mockController.completeReliableCommit).toHaveBeenCalledTimes(2);
+    expect(mockController.completeReliableCommit).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Object),
+      true,
+    );
   });
 
   it('places work arriving during persistence in the next transaction', async () => {
@@ -305,6 +314,13 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     const reportDurabilityError = jest.fn();
     const mockController = controller(jest.fn());
+    reportDurabilityError.mockImplementation(() => {
+      runtime.dispatch({
+        type: 'enqueue-error',
+        kind: 'durability-error',
+        message: 'Session storage failed',
+      });
+    });
     (mockController as SessionController).reportDurabilityError = reportDurabilityError;
     const runtime = new SessionMachineRuntime(initialState(), {
       controller: mockController,
@@ -315,6 +331,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
       onError: jest.fn(),
       persist,
     });
+    const rendered: ReturnType<typeof initialState>[] = [];
+    runtime.setRender((state) => rendered.push(state));
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     jest.runOnlyPendingTimers();
@@ -322,10 +340,101 @@ describe('SessionMachineRuntime quiescent projection', () => {
     await Promise.resolve();
     expect(persist).toHaveBeenCalledTimes(1);
     expect(reportDurabilityError).toHaveBeenCalledTimes(1);
+    expect(rendered).toHaveLength(2);
+    expect(rendered[0].model.channel.queue).toEqual([]);
+    expect(rendered[1].model.channel.queue).toContainEqual(
+      expect.objectContaining({
+        kind: 'durability-error',
+        message: 'Session storage failed',
+      }),
+    );
 
     await jest.advanceTimersByTimeAsync(60_000);
     expect(persist).toHaveBeenCalledTimes(1);
     expect(reportDurabilityError).toHaveBeenCalledTimes(1);
+  });
+
+  it('advances genuine work to a distinct failed boundary while suppressing warning-only retry', async () => {
+    let rejectFirst!: (error: Error) => void;
+    const firstWrite = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const writes: bigint[] = [];
+    const mockController = controller(jest.fn());
+    const firstReliableCommit = {
+      generation: 1,
+      outboundCount: 0,
+      ackCount: 0,
+      remoteNumber: 0n,
+    };
+    const nextReliableCommit = {
+      generation: 2,
+      outboundCount: 1,
+      ackCount: 1,
+      remoteNumber: 1n,
+    };
+    (mockController.prepareReliableCommit as jest.Mock)
+      .mockReturnValueOnce(firstReliableCommit)
+      .mockReturnValueOnce(nextReliableCommit);
+    const reportDurabilityError = jest.fn(() => {
+      if (reportDurabilityError.mock.calls.length !== 1) return;
+      runtime.dispatch({
+        type: 'enqueue-error',
+        kind: 'durability-error',
+        message: 'Session storage failed',
+      });
+    });
+    (mockController as SessionController).reportDurabilityError = reportDurabilityError;
+    const runtime = new SessionMachineRuntime(initialState(), {
+      controller: mockController,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: jest.fn(),
+      persist: async (state) => {
+        writes.push(state.model.betweenHand.compose.gameTimeout);
+        if (writes.length === 1) return firstWrite;
+        throw new Error('disk remains unavailable');
+      },
+    });
+    const rendered: Array<{ timeout: bigint; warningVisible: boolean }> = [];
+    runtime.setRender((state) =>
+      rendered.push({
+        timeout: state.model.betweenHand.compose.gameTimeout,
+        warningVisible: state.model.channel.queue.some(
+          (notification) => notification.kind === 'durability-error',
+        ),
+      }),
+    );
+
+    runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+    runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
+
+    rejectFirst(new Error('disk unavailable'));
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(writes).toEqual([20n, 30n]);
+    expect(rendered).toEqual([
+      { timeout: 20n, warningVisible: false },
+      { timeout: 30n, warningVisible: true },
+    ]);
+    expect(mockController.completeReliableCommit).toHaveBeenCalledTimes(2);
+    expect(mockController.completeReliableCommit).toHaveBeenNthCalledWith(
+      1,
+      firstReliableCommit,
+      false,
+    );
+    expect(mockController.completeReliableCommit).toHaveBeenNthCalledWith(
+      2,
+      nextReliableCommit,
+      false,
+    );
+
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(writes).toEqual([20n, 30n]);
   });
 
   it('finishes a reentrant terminal drain before preparing persistence', async () => {

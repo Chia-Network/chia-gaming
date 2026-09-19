@@ -235,7 +235,7 @@ pub trait MessagePeerQueue {
 ///
 /// A coin first discovered already spent is represented as `Created` followed by
 /// `Spent`, allowing creation to transition the phase before its spend arrives.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoinObservation {
     Created(CoinString),
     Spent(CoinString),
@@ -280,6 +280,7 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Serialize, Deserialize))]
 pub struct DrainResult {
     pub events: GameSessionEventQueue,
 }
@@ -407,6 +408,30 @@ pub struct GameSessionConfig {
 }
 
 impl GameSession {
+    pub(crate) fn detach_observation_output(&mut self) -> DrainResult {
+        DrainResult {
+            events: std::mem::take(&mut self.state.events),
+        }
+    }
+
+    pub(crate) fn prepend_observation_output(&mut self, mut output: DrainResult) {
+        output.events.append(&mut self.state.events);
+        self.state.events = output.events;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observation_test_unroll_snapshot(&self) -> Option<ChannelCoinSpendInfo> {
+        self.saved_unroll_snapshot.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn restore_observation_test_unroll_snapshot(
+        &mut self,
+        snapshot: Option<ChannelCoinSpendInfo>,
+    ) {
+        self.saved_unroll_snapshot = snapshot;
+    }
+
     pub fn new_with_keys(config: GameSessionConfig, private_keys: ChannelPrivateKeys) -> Self {
         GameSession {
             state: GameSessionState {

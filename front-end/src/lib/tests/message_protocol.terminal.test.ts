@@ -697,6 +697,7 @@ describe('transaction submission', () => {
       60000,
     );
     const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const submission = {
       id: 'same-id',
@@ -806,6 +807,7 @@ describe('transaction submission', () => {
       60000,
     );
     const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const first = { id: 'awaiting', bundle: testSpendBundle('01'), fee_request: null };
     const urgent = { id: 'urgent', bundle: testSpendBundle('02'), fee_request: null };
@@ -849,6 +851,7 @@ describe('transaction submission', () => {
       60000,
     );
     const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
     blob.getObservable().subscribe((event) => {
@@ -895,6 +898,7 @@ describe('transaction submission', () => {
       60000,
     );
     const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
     blob.getObservable().subscribe((event) => {

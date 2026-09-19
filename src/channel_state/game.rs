@@ -7,8 +7,8 @@ use crate::channel_state::game_handler::GameHandler;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{StateUpdateProgram, ValidationInfo, ValidationProgramRegistry};
 use crate::common::types::{
-    atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    GameID, Hash, IntoErr, Program, Puzzle, Timeout, MAX_BLOCK_COST_CLVM,
+    chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Program, Puzzle, Timeout,
+    MAX_BLOCK_COST_CLVM,
 };
 
 #[path = "../factory_abi.rs"]
@@ -41,56 +41,27 @@ pub enum FactoryResult {
     },
 }
 
-impl factory_abi::FactoryGameNodes {
-    fn hydrate(
-        self,
-        allocator: &mut AllocEncoder,
-        record_index: usize,
-    ) -> Result<FactoryGame, Error> {
-        let proposer_contribution = Amount::from_clvm(allocator, self.proposer_contribution)?;
-        let accepter_contribution = Amount::from_clvm(allocator, self.accepter_contribution)?;
-        let amount = proposer_contribution.clone() + accepter_contribution.clone();
+impl factory_abi::FactoryGameRecord {
+    fn hydrate(self, allocator: &mut AllocEncoder) -> Result<FactoryGame, Error> {
+        let proposer_contribution = Amount::new(self.proposer_contribution);
+        let accepter_contribution = Amount::new(self.accepter_contribution);
+        let amount = Amount::new(self.amount);
         let validation_programs = self
             .validation_programs
             .into_iter()
             .map(|node| Program::from_nodeptr(allocator, node).map(Rc::new))
             .collect::<Result<Vec<_>, _>>()?;
         let validation_programs = ValidationProgramRegistry::new(allocator, &validation_programs)?;
-        let initial_mover_share = atom_from_clvm(allocator, self.initial_mover_share)
-            .and_then(|atom| u64_from_atom(&atom))
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "proposal factory game {record_index} has invalid mover share"
-                ))
-            })?;
-        if Amount::new(initial_mover_share) > amount {
-            return Err(Error::StrErr(format!(
-                "proposal factory game {record_index} mover share {initial_mover_share} exceeds amount {}",
-                amount.to_u64()
-            )));
-        }
 
         Ok(FactoryGame {
             proposer_contribution,
             accepter_contribution,
             amount,
             proposer_goes_first: self.proposer_goes_first,
-            initial_move: atom_from_clvm(allocator, self.initial_move)
-                .ok_or_else(|| {
-                    Error::StrErr(format!(
-                        "proposal factory game {record_index} initial_move is not an atom"
-                    ))
-                })?
-                .to_vec(),
-            initial_max_move_size: atom_from_clvm(allocator, self.initial_max_move_size)
-                .and_then(|atom| usize_from_atom(&atom))
-                .ok_or_else(|| {
-                    Error::StrErr(format!(
-                        "proposal factory game {record_index} has invalid max move size"
-                    ))
-                })?,
+            initial_move: self.initial_move,
+            initial_max_move_size: self.initial_max_move_size as usize,
             initial_state: Rc::new(Program::from_nodeptr(allocator, self.initial_state)?),
-            initial_mover_share,
+            initial_mover_share: self.initial_mover_share,
             my_turn_handler: Program::from_nodeptr(allocator, self.my_turn_handler)?,
             their_turn_handler: Program::from_nodeptr(allocator, self.their_turn_handler)?,
             validation_programs,
@@ -223,8 +194,7 @@ impl Game {
 
         let games = records
             .into_iter()
-            .enumerate()
-            .map(|(index, record)| record.hydrate(allocator, index))
+            .map(|record| record.hydrate(allocator))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(FactoryResult::Success(games))
@@ -292,7 +262,7 @@ mod atomic_factory_tests {
         };
 
         assert!(
-            format!("{error:?}").contains("mover share 11 exceeds amount 10"),
+            format!("{error:?}").contains("initial_mover_share 11 exceeds amount 10"),
             "unexpected error: {error:?}"
         );
     }

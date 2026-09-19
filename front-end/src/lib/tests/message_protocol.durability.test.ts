@@ -96,7 +96,7 @@ describe('durability failures', () => {
       blob.makeMove('7', null);
       await jest.advanceTimersByTimeAsync(0);
       expect(warnings).toEqual([
-        'Session storage failed: background write failed. Protocol messages remain queued until storage succeeds.',
+        'Session storage failed: background write failed. The session is continuing without a durable checkpoint; progress may be lost if this page closes before storage succeeds.',
       ]);
       fail = false;
     } finally {
@@ -121,7 +121,7 @@ describe('durability failures', () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
-  it('warns the user and keeps messages and ACKs queued', async () => {
+  it('warns and releases messages and ACKs once before a later durability retry', async () => {
     const helloBytes = enc('hello');
     const { blob, sentMessages, sentAcks } = createReadyBlob(() => ({
       events: [{ OutboundMessage: helloBytes }],
@@ -141,9 +141,9 @@ describe('durability failures', () => {
       await expect(blob.flushPendingWork()).rejects.toThrow();
 
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain('remain queued');
-      expect(sentMessages).toEqual([]);
-      expect(sentAcks).toEqual([]);
+      expect(warnings[0]).toContain('continuing without a durable checkpoint');
+      expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
+      expect(sentAcks).toEqual([1]);
       expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
     } finally {
       fail = false;
@@ -196,7 +196,7 @@ describe('durability failures', () => {
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
   });
 
-  it('does not send when cradle serialization fails', async () => {
+  it('releases the prepared outbound when persistence-time cradle serialization fails', async () => {
     const outbound = enc('outbound');
     const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
       events: [{ OutboundMessage: outbound }],
@@ -223,8 +223,8 @@ describe('durability failures', () => {
     blob.deliverMessage(1n, enc('trigger'));
     await expect(blob.flushPendingWork()).rejects.toThrow('malformed cradle serialization');
 
-    expect(sentMessages).toEqual([]);
-    expect(sentAcks).toEqual([]);
+    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+    expect(sentAcks).toEqual([1]);
     blob.cleanup();
     setActiveBlob(null);
     const saved = await peekSession();

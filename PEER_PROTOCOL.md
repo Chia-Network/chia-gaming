@@ -334,9 +334,17 @@ Before sending a data frame, including a proposal or rejection, the host:
 
 1. allocates the next message number;
 2. stores the message in its unacknowledged-message list;
-3. persists the protocol session, next message number, last received number,
-   and unacknowledged-message list; and
-4. sends the frame only after that persistence operation succeeds.
+3. attempts to persist the protocol session, next message number, last received
+   number, and unacknowledged-message list; and
+4. sends the frame after that persistence attempt finishes.
+
+Successful persistence is the normal durability guarantee. If browser storage
+fails, the host warns the user but sends the prepared frame anyway rather than
+failing a live game for an internal storage problem. It retains dirty
+in-memory state for a later persistence attempt and does not send the same
+prepared frame again merely because that later attempt succeeds. A page crash
+during this degraded interval can restore a checkpoint older than a frame the
+peer observed.
 
 If sending fails because the hub connection is not open, the frame remains
 queued.
@@ -361,7 +369,10 @@ After delivering one message, the host delivers every newly contiguous frame
 from the reorder buffer in ascending order.
 
 Before sending an acknowledgement for a newly delivered message, the host
-persists the advanced `remoteNumber` and resulting protocol session state.
+attempts to persist the advanced `remoteNumber` and resulting protocol session
+state. The same degraded-storage rule applies: the acknowledgement is released
+after a failed attempt so storage failure cannot halt play, while the dirty
+state remains eligible for a later checkpoint.
 
 The reorder buffer is not persisted. After reload, the sender's persisted
 unacknowledged list is responsible for replaying frames that had not been
@@ -373,9 +384,10 @@ An acknowledgement for N is cumulative: it confirms every local outbound frame
 with `msgno <= N`. The sender removes all such frames from its unacknowledged
 list.
 
-An acknowledgement is a transport fact only. It means the receiver durably
-processed that numbered semantic message; it does not assert that a proposal
-was accepted or that an on-chain transaction succeeded.
+An acknowledgement is a transport fact only. It means the receiver processed
+that numbered semantic message and attempted its local checkpoint; during
+normal storage operation that processing is durable. It does not assert that a
+proposal was accepted or that an on-chain transaction succeeded.
 
 ### 5.4 Replay
 

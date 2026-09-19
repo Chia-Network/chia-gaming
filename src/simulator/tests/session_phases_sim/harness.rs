@@ -185,6 +185,26 @@ impl SimulationHarness {
             })
     }
 
+    fn expect_accepted_members(&mut self, proposal: ScriptProposalRef) {
+        let expected_member_count = self
+            .local_uis
+            .iter()
+            .find_map(|ui| {
+                ui.proposal_bindings
+                    .get(&proposal)
+                    .and_then(|local_id| ui.proposal_member_counts.get(local_id))
+            })
+            .copied()
+            .unwrap_or_else(|| {
+                panic!("no script-known member count for accepted proposal {proposal:?}")
+            });
+        let expected = (0..expected_member_count)
+            .map(|member| ScriptGameRef::AcceptedMember { proposal, member });
+        for ui in &mut self.local_uis {
+            ui.expected_accepted_game_refs.extend(expected.clone());
+        }
+    }
+
     pub(super) fn new(
         cradles: [TransactionManager<GameSession>; 2],
         simulator: Simulator,
@@ -404,8 +424,7 @@ impl SimulationHarness {
 
     pub(super) fn fully_resolved(&self) -> bool {
         self.cradles.iter().enumerate().all(|(player, cradle)| {
-            cradle.is_fully_resolved()
-                && self.local_uis[player].all_accepted_games_have_terminal_notification()
+            cradle.is_fully_resolved() && self.local_uis[player].lifecycle_oracle_satisfied()
         })
     }
 
@@ -581,6 +600,7 @@ impl SimulationHarness {
         player: usize,
         reference: Option<ScriptProposalRef>,
         proposals: &[GameProposal],
+        expected_member_count: usize,
     ) -> Result<(), Error> {
         let [proposal] = proposals else {
             return Err(Error::StrErr(format!(
@@ -590,6 +610,9 @@ impl SimulationHarness {
         };
         let local_id = self.cradles[player].propose(allocator, proposal)?;
         self.local_uis[player].proposed_game_ids.push(local_id);
+        self.local_uis[player]
+            .proposal_member_counts
+            .insert(local_id, expected_member_count);
         if let Some(reference) = reference {
             self.bind_proposal_reference(player, reference, local_id);
             self.pending_received_proposal_refs[player ^ 1].push_back(reference);
@@ -618,6 +641,7 @@ impl SimulationHarness {
         self.local_uis[player]
             .accepted_proposal_ids
             .insert(*proposal);
+        self.expect_accepted_members(*proposal);
         Ok(true)
     }
 
@@ -649,6 +673,8 @@ impl SimulationHarness {
         self.local_uis[player]
             .accepted_proposal_ids
             .extend([*first, *second]);
+        self.expect_accepted_members(*first);
+        self.expect_accepted_members(*second);
         Ok(true)
     }
 
@@ -1379,6 +1405,79 @@ mod tests {
         assert!(
             boundary.is_satisfied(&ui),
             "the next application after the wait boundary must satisfy it"
+        );
+    }
+
+    #[test]
+    fn lifecycle_oracle_rejects_missing_acceptance_and_terminal() {
+        let proposal = ScriptProposalRef(1);
+        let game = ScriptGameRef::AcceptedMember {
+            proposal,
+            member: 0,
+        };
+
+        let mut missing_acceptance = LocalTestUIReceiver::default();
+        missing_acceptance.expected_accepted_game_refs.insert(game);
+        assert!(
+            missing_acceptance
+                .lifecycle_oracle_error()
+                .is_some_and(|error| error.contains("no runtime binding")),
+            "an expected acceptance without a runtime binding must not pass"
+        );
+
+        let mut missing_terminal = LocalTestUIReceiver::default();
+        missing_terminal.expected_accepted_game_refs.insert(game);
+        missing_terminal.accepted_game_ids.insert(game, GameID(7));
+        assert!(
+            missing_terminal
+                .lifecycle_oracle_error()
+                .is_some_and(|error| error.contains("exactly one terminal notification, got 0")),
+            "an accepted member without a terminal notification must not pass"
+        );
+    }
+
+    #[test]
+    fn lifecycle_oracle_rejects_partial_multi_member_acceptance() {
+        let proposal = ScriptProposalRef(1);
+        let first = ScriptGameRef::AcceptedMember {
+            proposal,
+            member: 0,
+        };
+        let second = ScriptGameRef::AcceptedMember {
+            proposal,
+            member: 1,
+        };
+        let mut ui = LocalTestUIReceiver::default();
+        ui.expected_accepted_game_refs.extend([first, second]);
+        ui.accepted_game_ids.insert(first, GameID(7));
+        ui.notifications.push(GameNotification::game_settled(
+            GameID(7),
+            SettlementOutcome::AcceptSettlement,
+            Amount::default(),
+            None,
+        ));
+
+        assert!(
+            ui.lifecycle_oracle_error()
+                .is_some_and(|error| error.contains(&format!("{second:?}"))),
+            "binding only member 0 of an expected two-member acceptance must not pass"
+        );
+    }
+
+    #[test]
+    fn lifecycle_oracle_rejects_unaccepted_game_settled() {
+        let mut ui = LocalTestUIReceiver::default();
+        ui.notifications.push(GameNotification::game_settled(
+            GameID(7),
+            SettlementOutcome::AcceptSettlement,
+            Amount::default(),
+            None,
+        ));
+
+        assert!(
+            ui.lifecycle_oracle_error()
+                .is_some_and(|error| error.contains("terminal notification for unaccepted member")),
+            "GameSettled for an unaccepted member must not pass"
         );
     }
 

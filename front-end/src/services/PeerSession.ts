@@ -65,6 +65,7 @@ export interface ReliableCommitCoordinator {
   requestCommit(): void;
   flush(): Promise<void>;
   enqueue(work: () => void): void;
+  releaseAfterPersistence(key: string, effect: () => void): void;
 }
 
 export interface PreparedReliableCommit {
@@ -85,8 +86,9 @@ export class ReliablePeerTransport {
   private unsentDurableOutbound = new Set<bigint>();
   private durableAckRetries: bigint[] = [];
   private durabilityGeneration = 0;
+  private releasedGeneration = 0;
   private persistedGeneration = 0;
-  private durableRemoteNumber: bigint;
+  private releasedRemoteNumber: bigint;
   private flushScheduled = false;
   private flushing = false;
   private flushPromise: Promise<void> = Promise.resolve();
@@ -100,7 +102,7 @@ export class ReliablePeerTransport {
     private readonly sendAck: (msgno: bigint) => boolean,
   ) {
     this.state = state;
-    this.durableRemoteNumber = state.remoteNumber;
+    this.releasedRemoteNumber = state.remoteNumber;
   }
 
   attachConsumer(consumer: ReliableMessageConsumer): void {
@@ -166,7 +168,7 @@ export class ReliablePeerTransport {
       return false;
     }
     if (msgno <= this.state.remoteNumber) {
-      if (msgno <= this.durableRemoteNumber) {
+      if (msgno <= this.releasedRemoteNumber) {
         this.sendAck(msgno);
       } else if (!this.pendingAcks.includes(msgno)) {
         this.pendingAcks.push(msgno);
@@ -300,6 +302,7 @@ export class ReliablePeerTransport {
     this.pendingAcks = [];
     this.unsentDurableOutbound.clear();
     this.durableAckRetries = [];
+    this.releasedGeneration = this.durabilityGeneration;
     this.persistedGeneration = this.durabilityGeneration;
     this.flushScheduled = false;
     this.consumer = null;
@@ -391,8 +394,13 @@ export class ReliablePeerTransport {
     const consumer = this.consumer;
     if (!consumer) throw new Error('Reliable transport has no durability consumer');
     const commit = this.prepareCommit();
-    await consumer.persist();
-    this.completeCommit(commit);
+    try {
+      await consumer.persist();
+    } catch (error) {
+      this.completeCommit(commit, false);
+      throw error;
+    }
+    this.completeCommit(commit, true);
   }
 
   prepareCommit(): PreparedReliableCommit {
@@ -404,12 +412,19 @@ export class ReliablePeerTransport {
     };
   }
 
-  completeCommit(commit: PreparedReliableCommit): void {
+  completeCommit(commit: PreparedReliableCommit, persistenceSucceeded: boolean): void {
     const consumer = this.consumer;
+    if (persistenceSucceeded) {
+      this.persistedGeneration = Math.max(this.persistedGeneration, commit.generation);
+    }
+    if (commit.generation <= this.releasedGeneration) {
+      if (persistenceSucceeded) consumer?.committed?.();
+      return;
+    }
     const outbound = this.pendingOutbound.splice(0, commit.outboundCount);
     const acks = this.pendingAcks.splice(0, commit.ackCount);
-    this.persistedGeneration = commit.generation;
-    this.durableRemoteNumber = commit.remoteNumber;
+    this.releasedGeneration = commit.generation;
+    this.releasedRemoteNumber = commit.remoteNumber;
     for (const { msgno } of outbound) this.unsentDurableOutbound.add(msgno);
     const failedOutbound = outbound.filter(({ msgno, msg }) => {
       const sent = this.sendData(msgno, msg);
@@ -422,7 +437,7 @@ export class ReliablePeerTransport {
     const failedAcks = acks.filter((ack) => !this.sendAck(ack));
     for (const { msgno } of failedOutbound) this.unsentDurableOutbound.add(msgno);
     this.durableAckRetries = [...new Set([...this.durableAckRetries, ...failedAcks])];
-    consumer?.committed?.();
+    if (persistenceSucceeded) consumer?.committed?.();
   }
 
   private retryDurableAcks(): void {

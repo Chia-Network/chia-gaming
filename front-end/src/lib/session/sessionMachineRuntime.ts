@@ -63,6 +63,7 @@ export class SessionMachineRuntime {
   private dispatching = false;
   private readonly pendingEvents: SessionMachineEvent[] = [];
   private readonly pendingControllerWork: Array<() => void> = [];
+  private readonly pendingExternalEffects = new Map<string, () => void>();
   private transactionActive = false;
   private committing = false;
   private commitActivityPending = false;
@@ -71,6 +72,8 @@ export class SessionMachineRuntime {
   private commitScheduled = false;
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
   private commitPromise: Promise<void> = Promise.resolve();
+  private reportingDurabilityFailure = false;
+  private readonly failureWarningEvents = new Set<SessionMachineEvent>();
   private readonly preparePersistence: (
     state: SessionMachineState,
   ) => PreparedSessionPersistence | null;
@@ -106,6 +109,7 @@ export class SessionMachineRuntime {
       requestCommit: () => this.requestCommit(),
       flush: () => this.flush(),
       enqueue: (work) => this.enqueueControllerWork(work),
+      releaseAfterPersistence: (key, effect) => this.releaseAfterPersistence(key, effect),
     };
     this.controller.attachTransactionCoordinator(this.commitCoordinator);
   }
@@ -124,6 +128,14 @@ export class SessionMachineRuntime {
 
   dispatch(event: SessionMachineEvent): void {
     this.pendingEvents.push(event);
+    if (
+      this.reportingDurabilityFailure &&
+      event.type === 'enqueue-error' &&
+      event.kind === 'durability-error'
+    ) {
+      this.failureWarningEvents.add(event);
+      return;
+    }
     if (this.committing || this.transactionActive || this.dispatching) {
       this.scheduleCommit(false);
       return;
@@ -278,6 +290,12 @@ export class SessionMachineRuntime {
     this.runTransaction(work);
   }
 
+  private releaseAfterPersistence(key: string, effect: () => void): void {
+    if (this.pendingExternalEffects.has(key)) return;
+    this.pendingExternalEffects.set(key, effect);
+    this.scheduleCommit(true);
+  }
+
   private runTransaction(work?: () => void, requestCommit = true): void {
     if (this.transactionActive) {
       work?.();
@@ -338,6 +356,7 @@ export class SessionMachineRuntime {
       return;
     }
     const projectedState = this.state;
+    const shouldProject = this.projectionPending;
     if (!this.durabilityDirty) {
       this.projectionPending = false;
       try {
@@ -348,6 +367,7 @@ export class SessionMachineRuntime {
       return;
     }
     const reliableCommit = this.controller.prepareReliableCommit();
+    const externalEffects = [...this.pendingExternalEffects.entries()];
     const persistenceState = structuredClone(projectedState);
     const persistence =
       this.controller.prepareInboundSessionRejectPersistence?.() ??
@@ -362,24 +382,57 @@ export class SessionMachineRuntime {
     } catch (error) {
       write = Promise.reject(error);
     }
+    let persistenceFailed = false;
+    const releaseExternalEffects = () => {
+      for (const [key, effect] of externalEffects) {
+        if (this.pendingExternalEffects.get(key) !== effect) continue;
+        this.pendingExternalEffects.delete(key);
+        try {
+          effect();
+        } catch (error) {
+          this.onError(error);
+        }
+      }
+    };
     this.commitPromise = write
       .then(
         () => {
+          if (shouldProject) {
+            try {
+              this.render(projectedState);
+            } catch (error) {
+              this.onError(error);
+            }
+          }
           try {
-            this.render(projectedState);
+            this.controller.completeReliableCommit(reliableCommit, true);
           } catch (error) {
             this.onError(error);
           }
-          try {
-            this.controller.completeReliableCommit(reliableCommit);
-          } catch (error) {
-            this.onError(error);
-          }
+          releaseExternalEffects();
         },
         (error) => {
+          persistenceFailed = true;
           this.durabilityDirty = true;
-          this.projectionPending = true;
-          this.controller.reportDurabilityError?.(error);
+          this.reportingDurabilityFailure = true;
+          try {
+            this.controller.reportDurabilityError?.(error);
+          } finally {
+            this.reportingDurabilityFailure = false;
+          }
+          if (shouldProject) {
+            try {
+              this.render(projectedState);
+            } catch (renderError) {
+              this.onError(renderError);
+            }
+          }
+          try {
+            this.controller.completeReliableCommit(reliableCommit, false);
+          } catch (releaseError) {
+            this.onError(releaseError);
+          }
+          releaseExternalEffects();
           throw error;
         },
       )
@@ -387,6 +440,25 @@ export class SessionMachineRuntime {
         this.committing = false;
         const activityPending = this.commitActivityPending;
         this.commitActivityPending = false;
+        const warningOnly =
+          persistenceFailed &&
+          !activityPending &&
+          this.pendingControllerWork.length === 0 &&
+          this.pendingEvents.length > 0 &&
+          this.pendingEvents.every((event) => this.failureWarningEvents.has(event));
+        this.failureWarningEvents.clear();
+        if (warningOnly) {
+          this.runTransaction(undefined, false);
+          if (this.projectionPending) {
+            this.projectionPending = false;
+            try {
+              this.render(this.state);
+            } catch (error) {
+              this.onError(error);
+            }
+          }
+          return;
+        }
         if (this.pendingControllerWork.length > 0 || this.pendingEvents.length > 0) {
           const work = this.pendingControllerWork.splice(0);
           this.runTransaction(() => {
@@ -417,7 +489,8 @@ export class SessionMachineRuntime {
       this.durabilityDirty ||
       this.projectionPending ||
       this.pendingEvents.length > 0 ||
-      this.pendingControllerWork.length > 0
+      this.pendingControllerWork.length > 0 ||
+      this.pendingExternalEffects.size > 0
     ) {
       return this.flush();
     }

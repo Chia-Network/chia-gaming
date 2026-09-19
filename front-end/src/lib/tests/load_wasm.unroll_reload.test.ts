@@ -325,6 +325,10 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
           landedHeight,
           'replacement chain must reach the persisted tip',
         );
+        // Force the poll that used to race teardown. Before the reload harness
+        // retired the old controller first, it consumed this replacement and
+        // lost its queued broadcast during teardown.
+        await pollOnce(poller);
       })
     ).lane;
     assert.equal(lane.controller.getRestoreStatus(), 'restored');

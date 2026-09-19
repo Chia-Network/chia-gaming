@@ -24,6 +24,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::common::types::{
@@ -216,6 +217,35 @@ pub struct ManagerDrain {
 /// wraps.  Implemented by [`GameSession`] in production and by
 /// `MockGameSession` in unit tests.
 pub trait ManagedGameSession {
+    /// Detach transient session output before creating an observation working
+    /// copy. `None` distinguishes no output slot from an existing empty slot.
+    fn session_detach_observation_output(&mut self) -> Option<DrainResult> {
+        None
+    }
+
+    /// Restore detached output ahead of anything produced by the observation.
+    fn session_prepend_observation_output(&mut self, output: Option<DrainResult>) {
+        debug_assert!(
+            output.as_ref().is_none_or(|drain| drain.events.is_empty()),
+            "no-output ManagedGameSession produced transient observation output"
+        );
+    }
+
+    #[cfg(test)]
+    fn session_observation_test_unroll_snapshot(
+        &self,
+    ) -> Option<crate::channel_state::types::ChannelCoinSpendInfo> {
+        None
+    }
+
+    #[cfg(test)]
+    fn session_restore_observation_test_unroll_snapshot(
+        &mut self,
+        snapshot: Option<crate::channel_state::types::ChannelCoinSpendInfo>,
+    ) {
+        debug_assert!(snapshot.is_none());
+    }
+
     /// Receive a manager-ordered coin observation batch. `None` advances
     /// protocol clocks from a trusted height without treating an unavailable
     /// snapshot as an authoritative empty coin set.
@@ -255,6 +285,31 @@ pub trait ManagedGameSession {
 }
 
 impl ManagedGameSession for GameSession {
+    fn session_detach_observation_output(&mut self) -> Option<DrainResult> {
+        Some(self.detach_observation_output())
+    }
+
+    fn session_prepend_observation_output(&mut self, output: Option<DrainResult>) {
+        if let Some(output) = output {
+            self.prepend_observation_output(output);
+        }
+    }
+
+    #[cfg(test)]
+    fn session_observation_test_unroll_snapshot(
+        &self,
+    ) -> Option<crate::channel_state::types::ChannelCoinSpendInfo> {
+        self.observation_test_unroll_snapshot()
+    }
+
+    #[cfg(test)]
+    fn session_restore_observation_test_unroll_snapshot(
+        &mut self,
+        snapshot: Option<crate::channel_state::types::ChannelCoinSpendInfo>,
+    ) {
+        self.restore_observation_test_unroll_snapshot(snapshot);
+    }
+
     fn session_observe(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -875,22 +930,101 @@ impl<C> TransactionManager<C> {
 }
 
 impl<C: ManagedGameSession> TransactionManager<C> {
+    fn apply_observation_transaction<F>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        apply: F,
+    ) -> Result<(), Error>
+    where
+        C: Serialize + DeserializeOwned,
+        F: FnOnce(&mut Self, &mut AllocEncoder) -> Result<(), Error>,
+    {
+        let mut old_events = std::mem::take(&mut self.pending_events);
+        let mut old_watch_coins = std::mem::take(&mut self.pending_watch_coins);
+        let mut old_unwatch_coins = std::mem::take(&mut self.pending_unwatch_coins);
+        let old_session_output = self.cradle.session_detach_observation_output();
+        #[cfg(test)]
+        let observation_test_unroll_snapshot =
+            self.cradle.session_observation_test_unroll_snapshot();
+
+        let checkpoint = match bencodex::to_vec(&self) {
+            Ok(checkpoint) => checkpoint,
+            Err(e) => {
+                self.pending_events = old_events;
+                self.pending_watch_coins = old_watch_coins;
+                self.pending_unwatch_coins = old_unwatch_coins;
+                self.cradle
+                    .session_prepend_observation_output(old_session_output);
+                return Err(Error::StrErr(format!(
+                    "failed to encode blockchain observation working copy: {e}"
+                )));
+            }
+        };
+        let mut working: Self = match bencodex::from_slice(&checkpoint) {
+            Ok(working) => working,
+            Err(e) => {
+                self.pending_events = old_events;
+                self.pending_watch_coins = old_watch_coins;
+                self.pending_unwatch_coins = old_unwatch_coins;
+                self.cradle
+                    .session_prepend_observation_output(old_session_output);
+                return Err(Error::StrErr(format!(
+                    "failed to decode blockchain observation working copy: {e}"
+                )));
+            }
+        };
+        working.timeout_claim_status_reconciled = self.timeout_claim_status_reconciled;
+        #[cfg(test)]
+        working
+            .cradle
+            .session_restore_observation_test_unroll_snapshot(observation_test_unroll_snapshot);
+        if let Err(e) = apply(&mut working, allocator) {
+            self.pending_events = old_events;
+            self.pending_watch_coins = old_watch_coins;
+            self.pending_unwatch_coins = old_unwatch_coins;
+            self.cradle
+                .session_prepend_observation_output(old_session_output);
+            return Err(e);
+        }
+
+        old_events.append(&mut working.pending_events);
+        old_watch_coins.append(&mut working.pending_watch_coins);
+        old_unwatch_coins.append(&mut working.pending_unwatch_coins);
+        working.pending_events = old_events;
+        working.pending_watch_coins = old_watch_coins;
+        working.pending_unwatch_coins = old_unwatch_coins;
+        working
+            .cradle
+            .session_prepend_observation_output(old_session_output);
+        *self = working;
+        Ok(())
+    }
+
     /// Report a trusted chain height when the watched-coin snapshot is not
     /// available or is known partial. This advances handshake protocol clocks
     /// through the manager without inventing coin creations/deletions or
     /// evaluating channel-creation expiry from absent coin data. Timeout claims
     /// wait for `report_coin_states`: a height-only observation cannot tell
     /// whether the coin is still unspent.
-    pub fn report_height(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        height: u64,
-    ) -> Result<(), Error> {
+    pub fn report_height(&mut self, allocator: &mut AllocEncoder, height: u64) -> Result<(), Error>
+    where
+        C: Serialize + DeserializeOwned,
+    {
         if height > MAX_REPORTED_HEIGHT {
             return Err(Error::StrErr(format!(
                 "report_height: height {height} exceeds MAX_REPORTED_HEIGHT {MAX_REPORTED_HEIGHT}"
             )));
         }
+        self.apply_observation_transaction(allocator, |working, allocator| {
+            working.report_height_in_place(allocator, height)
+        })
+    }
+
+    fn report_height_in_place(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        height: u64,
+    ) -> Result<(), Error> {
         let reorg = height < self.last_height;
         self.last_height = height;
         let rollback_rearms = self.invalidate_timeout_claims_for_rollback_epoch(height, reorg);
@@ -1038,7 +1172,10 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         allocator: &mut AllocEncoder,
         height: u64,
         records: &[CoinStateRecord],
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        C: Serialize + DeserializeOwned,
+    {
         // Reject out-of-range heights before touching any state: a height above
         // `MAX_REPORTED_HEIGHT` can only come from a corrupt/malicious source,
         // and letting it through would both poison our bookkeeping and risk
@@ -1055,8 +1192,24 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                         "report_coin_states: coin height {h} exceeds MAX_REPORTED_HEIGHT {MAX_REPORTED_HEIGHT}"
                     )));
                 }
+                if h > height {
+                    return Err(Error::StrErr(format!(
+                        "report_coin_states: coin height {h} exceeds supplied peak {height}"
+                    )));
+                }
             }
         }
+        self.apply_observation_transaction(allocator, |working, allocator| {
+            working.report_coin_states_in_place(allocator, height, records)
+        })
+    }
+
+    fn report_coin_states_in_place(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        height: u64,
+        records: &[CoinStateRecord],
+    ) -> Result<(), Error> {
         let reconciliation_inputs_before = self.reconciliation_input_coins();
         let reconciliation_only_inputs = reconciliation_inputs_before
             .iter()
@@ -1491,7 +1644,7 @@ mod tests {
 
     /// A scriptable cradle for exercising the manager in isolation.  Each call
     /// to `session_flush_and_collect` returns the next queued `DrainResult`.
-    #[derive(Default)]
+    #[derive(Default, Serialize, Deserialize)]
     struct MockGameSession {
         /// Reports seen via `session_new_block`, for assertions.
         seen_observations: Vec<(u64, Vec<CoinObservation>)>,
@@ -1511,6 +1664,16 @@ mod tests {
     }
 
     impl ManagedGameSession for MockGameSession {
+        fn session_detach_observation_output(&mut self) -> Option<DrainResult> {
+            self.scripted_drains.pop_front()
+        }
+
+        fn session_prepend_observation_output(&mut self, output: Option<DrainResult>) {
+            if let Some(output) = output {
+                self.scripted_drains.push_front(output);
+            }
+        }
+
         fn session_observe(
             &mut self,
             _allocator: &mut AllocEncoder,
@@ -1599,6 +1762,68 @@ mod tests {
         ) -> Result<(), Error> {
             self.submitted_timeout_claims.push(semantic);
             Ok(())
+        }
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct LateFailingObservationSession {
+        callback_mutations: Vec<(u64, Option<Vec<CoinObservation>>)>,
+        fail: bool,
+        #[serde(skip)]
+        output: GameSessionEventQueue,
+    }
+
+    impl Default for LateFailingObservationSession {
+        fn default() -> Self {
+            Self {
+                callback_mutations: Vec::new(),
+                fail: true,
+                output: GameSessionEventQueue::default(),
+            }
+        }
+    }
+
+    impl ManagedGameSession for LateFailingObservationSession {
+        fn session_detach_observation_output(&mut self) -> Option<DrainResult> {
+            Some(DrainResult {
+                events: std::mem::take(&mut self.output),
+            })
+        }
+
+        fn session_prepend_observation_output(&mut self, output: Option<DrainResult>) {
+            if let Some(mut old_output) = output {
+                old_output.events.append(&mut self.output);
+                self.output = old_output.events;
+            }
+        }
+
+        fn session_observe(
+            &mut self,
+            _allocator: &mut AllocEncoder,
+            height: u64,
+            observations: Option<&[CoinObservation]>,
+        ) -> Result<(), Error> {
+            self.callback_mutations
+                .push((height, observations.map(<[CoinObservation]>::to_vec)));
+            self.output.push_back(GameSessionEvent::Log(
+                "observation callback output".to_string(),
+            ));
+            if self.fail {
+                Err(Error::StrErr(
+                    "forced late observation callback failure".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn session_flush_and_collect(
+            &mut self,
+            _allocator: &mut AllocEncoder,
+        ) -> Result<DrainResult, Error> {
+            Ok(DrainResult {
+                events: std::mem::take(&mut self.output),
+            })
         }
     }
 
@@ -2520,7 +2745,7 @@ mod tests {
 
         // Reorg re-mines the coin at birthday 13: the claim re-arms and is
         // resubmitted once it matures again at 18.
-        mgr.report_coin_states(&mut allocator, 12, &rec(13))
+        mgr.report_coin_states(&mut allocator, 13, &rec(13))
             .expect("report");
         let replay = mgr.drain_submissions().unwrap();
         assert_eq!(replay.len(), 1);
@@ -2555,7 +2780,7 @@ mod tests {
         let first = mgr.drain_submissions().unwrap().remove(0);
         mgr.acknowledge_submission(first.id).unwrap();
 
-        mgr.report_coin_states(&mut allocator, 12, &rec(13))
+        mgr.report_coin_states(&mut allocator, 13, &rec(13))
             .expect("rollback");
         let replay = mgr.drain_submissions().unwrap();
         assert_eq!(replay.len(), 1);
@@ -2794,6 +3019,176 @@ mod tests {
         mgr.report_coin_states(&mut allocator, MAX_REPORTED_HEIGHT, &[])
             .expect("boundary height accepted");
         assert_eq!(mgr.last_height(), MAX_REPORTED_HEIGHT);
+    }
+
+    #[test]
+    fn coin_height_above_peak_is_rejected_without_touching_state() {
+        let mut allocator = AllocEncoder::new();
+        for (created_height, spent_height) in [(Some(11), None), (Some(5), Some(11))] {
+            let mut mgr = TransactionManager::new(PersistableMockGameSession);
+            let before = bencodex::to_vec(&mgr).expect("serialize before rejection");
+            let error = mgr
+                .report_coin_states(
+                    &mut allocator,
+                    10,
+                    &[CoinStateRecord {
+                        coin: test_coin(17),
+                        created_height,
+                        spent_height,
+                    }],
+                )
+                .expect_err("height above peak must fail");
+            assert!(format!("{error:?}").contains("exceeds supplied peak"));
+            assert_eq!(
+                bencodex::to_vec(&mgr).expect("serialize after rejection"),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn failed_coin_observation_is_byte_identical_and_repeatable() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(18);
+        let mut mgr = TransactionManager::new(LateFailingObservationSession::default());
+        mgr.register_watch(coin.clone(), Timeout::new(50), None, None);
+        let records = [CoinStateRecord {
+            coin,
+            created_height: Some(10),
+            spent_height: None,
+        }];
+        let before = bencodex::to_vec(&mgr).expect("serialize before observation");
+
+        for _ in 0..2 {
+            let error = mgr
+                .report_coin_states(&mut allocator, 10, &records)
+                .expect_err("late callback failure");
+            assert!(format!("{error:?}").contains("forced late observation callback failure"));
+            assert_eq!(
+                bencodex::to_vec(&mgr).expect("serialize after observation"),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn failed_height_only_observation_is_byte_identical_and_repeatable() {
+        let mut allocator = AllocEncoder::new();
+        let mut mgr = TransactionManager::new(LateFailingObservationSession::default());
+        let before = bencodex::to_vec(&mgr).expect("serialize before observation");
+
+        for _ in 0..2 {
+            let error = mgr
+                .report_height(&mut allocator, 10)
+                .expect_err("late callback failure");
+            assert!(format!("{error:?}").contains("forced late observation callback failure"));
+            assert_eq!(
+                bencodex::to_vec(&mgr).expect("serialize after observation"),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn observation_success_prepends_existing_transient_output() {
+        let mut allocator = AllocEncoder::new();
+        let old_watch = test_coin(19);
+        let old_unwatch = test_coin(20);
+        let mut session = LateFailingObservationSession {
+            fail: false,
+            ..Default::default()
+        };
+        session
+            .output
+            .push_back(GameSessionEvent::Log("session output before".to_string()));
+        let mut mgr = TransactionManager::new(session);
+        mgr.pending_events
+            .push_back(GameSessionEvent::Log("manager output before".to_string()));
+        mgr.pending_watch_coins.push(old_watch.clone());
+        mgr.pending_unwatch_coins.push(old_unwatch.clone());
+
+        mgr.report_height(&mut allocator, 10)
+            .expect("successful observation");
+        let drain = mgr
+            .flush_and_collect(&mut allocator)
+            .expect("collect ordered output");
+        let logs = drain
+            .events
+            .into_iter()
+            .map(|event| match event {
+                GameSessionEvent::Log(message) => message,
+                other => panic!("unexpected event {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            logs,
+            [
+                "manager output before",
+                "session output before",
+                "observation callback output"
+            ]
+        );
+        assert_eq!(drain.watch_coins, [old_watch]);
+        assert_eq!(drain.unwatch_coins, [old_unwatch]);
+    }
+
+    #[test]
+    fn observation_failure_restores_existing_transient_output_unchanged() {
+        let mut allocator = AllocEncoder::new();
+        let old_watch = test_coin(21);
+        let old_unwatch = test_coin(22);
+        let mut session = LateFailingObservationSession::default();
+        session
+            .output
+            .push_back(GameSessionEvent::Log("session output before".to_string()));
+        let mut mgr = TransactionManager::new(session);
+        mgr.pending_events
+            .push_back(GameSessionEvent::Log("manager output before".to_string()));
+        mgr.pending_watch_coins.push(old_watch.clone());
+        mgr.pending_unwatch_coins.push(old_unwatch.clone());
+        let before = bencodex::to_vec(&mgr).expect("serialize before observation");
+
+        mgr.report_height(&mut allocator, 10)
+            .expect_err("late callback failure");
+        assert_eq!(
+            bencodex::to_vec(&mgr).expect("serialize after observation"),
+            before
+        );
+        let drain = mgr
+            .flush_and_collect(&mut allocator)
+            .expect("collect restored output");
+        let logs = drain
+            .events
+            .into_iter()
+            .map(|event| match event {
+                GameSessionEvent::Log(message) => message,
+                other => panic!("unexpected event {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(logs, ["manager output before", "session output before"]);
+        assert_eq!(drain.watch_coins, [old_watch]);
+        assert_eq!(drain.unwatch_coins, [old_unwatch]);
+    }
+
+    #[test]
+    fn mock_observation_transaction_preserves_scripted_drain_sequence() {
+        let mut allocator = AllocEncoder::new();
+        let mut session = MockGameSession::default();
+        session.queue_drain(vec![GameSessionEvent::Log("first".to_string())]);
+        session.queue_drain(vec![GameSessionEvent::Log("second".to_string())]);
+        let mut mgr = TransactionManager::new(session);
+
+        mgr.report_height(&mut allocator, 10)
+            .expect("successful observation");
+        for expected in ["first", "second"] {
+            let drain = mgr
+                .flush_and_collect(&mut allocator)
+                .expect("scripted drain");
+            assert!(matches!(
+                drain.events.front(),
+                Some(GameSessionEvent::Log(message)) if message == expected
+            ));
+        }
     }
 
     #[test]

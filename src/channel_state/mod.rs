@@ -166,6 +166,17 @@ pub struct InitiatorGenesisTransition {
     pub state_one_signatures: StateUpdateSignatures,
 }
 
+pub(crate) struct StagedProposalAcceptance {
+    proposal_ledger: ProposalLedger,
+    next_game_id: u64,
+    my_out_of_game_balance: Amount,
+    their_out_of_game_balance: Amount,
+    my_allocated_balance: Amount,
+    their_allocated_balance: Amount,
+    cached_redo_actions: Vec<CachedRedoActions>,
+    live_games: Vec<LiveGame>,
+}
+
 impl ChannelState {
     fn validate_peer_identity(
         private_keys: &ChannelPrivateKeys,
@@ -254,16 +265,14 @@ impl ChannelState {
         self.private_keys.my_unroll_coin_private_key.clone()
     }
 
-    pub fn allocate_game_ids(&mut self, count: usize) -> Result<Vec<GameID>, Error> {
+    pub fn game_ids_for_acceptance(&self, count: usize) -> Result<Vec<GameID>, Error> {
         let end = self
             .next_game_id
             .checked_add(u64::try_from(count).map_err(|_| {
                 Error::StrErr("accepted factory member count exceeds u64".to_string())
             })?)
             .ok_or_else(|| Error::StrErr("accepted game id overflow".to_string()))?;
-        let ids = (self.next_game_id..end).map(GameID).collect();
-        self.next_game_id = end;
-        Ok(ids)
+        Ok((self.next_game_id..end).map(GameID).collect())
     }
 
     pub fn is_our_proposal(&self, id: LocalProposalId) -> bool {
@@ -325,7 +334,73 @@ impl ChannelState {
         starts: &[Rc<GameStartInfo>],
         cache_for_redo: bool,
     ) -> Result<(), Error> {
-        let proposal = self.remove_proposal(local_id)?;
+        let staged = self.stage_proposal_acceptance(env, local_id, starts, cache_for_redo)?;
+        self.commit_proposal_acceptance(staged);
+        Ok(())
+    }
+
+    pub(crate) fn stage_proposal_acceptance(
+        &self,
+        env: &mut ChannelEnv<'_>,
+        local_id: LocalProposalId,
+        starts: &[Rc<GameStartInfo>],
+        cache_for_redo: bool,
+    ) -> Result<StagedProposalAcceptance, Error> {
+        let ids = self.game_ids_for_acceptance(starts.len())?;
+        for (start, expected_id) in starts.iter().zip(&ids) {
+            if start.game_id != *expected_id {
+                return Err(Error::StrErr(format!(
+                    "accepted game id {:?} does not match next id {:?}",
+                    start.game_id, expected_id
+                )));
+            }
+        }
+
+        let mut proposal_ledger = self.proposal_ledger.clone();
+        proposal_ledger.remove_local(local_id)?;
+
+        let (my_required, their_required) =
+            starts.iter().try_fold((0u64, 0u64), |(my, their), start| {
+                Ok::<_, Error>((
+                    my.checked_add(start.my_contribution_this_game.to_u64())
+                        .ok_or_else(|| {
+                            Error::StrErr("accepted local contributions overflow".into())
+                        })?,
+                    their
+                        .checked_add(start.their_contribution_this_game.to_u64())
+                        .ok_or_else(|| {
+                            Error::StrErr("accepted peer contributions overflow".into())
+                        })?,
+                ))
+            })?;
+        if my_required > self.my_out_of_game_balance.to_u64()
+            || their_required > self.their_out_of_game_balance.to_u64()
+        {
+            return Err(Error::StrErr(
+                "accepted game contributions exceed available balances".into(),
+            ));
+        }
+        let my_out_of_game_balance = self
+            .my_out_of_game_balance
+            .checked_sub(&Amount::new(my_required))?;
+        let their_out_of_game_balance = self
+            .their_out_of_game_balance
+            .checked_sub(&Amount::new(their_required))?;
+        let my_allocated_balance = Amount::new(
+            self.my_allocated_balance
+                .to_u64()
+                .checked_add(my_required)
+                .ok_or_else(|| Error::StrErr("allocated local balance overflow".into()))?,
+        );
+        let their_allocated_balance = Amount::new(
+            self.their_allocated_balance
+                .to_u64()
+                .checked_add(their_required)
+                .ok_or_else(|| Error::StrErr("allocated peer balance overflow".into()))?,
+        );
+
+        let mut live_games = self.live_games.clone();
+        let mut cached_redo_actions = self.cached_redo_actions.clone();
         for start_info in starts {
             let referee_identity = ChiaIdentity::new(
                 env.allocator,
@@ -345,15 +420,7 @@ impl ChannelState {
                 &env.agg_sig_me_additional_data,
                 self.state_number,
             )?;
-            self.my_allocated_balance += start_info.my_contribution_this_game.clone();
-            self.their_allocated_balance += start_info.their_contribution_this_game.clone();
-            self.my_out_of_game_balance = self
-                .my_out_of_game_balance
-                .checked_sub(&start_info.my_contribution_this_game)?;
-            self.their_out_of_game_balance = self
-                .their_out_of_game_balance
-                .checked_sub(&start_info.their_contribution_this_game)?;
-            self.live_games.push(LiveGame::new(
+            live_games.push(LiveGame::new(
                 start_info.game_id,
                 puzzle_hash,
                 Rc::new(referee),
@@ -361,11 +428,37 @@ impl ChannelState {
                 start_info.their_contribution_this_game.clone(),
             ));
             if cache_for_redo {
-                self.push_cached_action(CachedRedoActions::ProposalAccepted(start_info.game_id));
+                cached_redo_actions.push(CachedRedoActions::ProposalAccepted(start_info.game_id));
             }
         }
-        let _ = proposal;
-        Ok(())
+        let next_game_id = self
+            .next_game_id
+            .checked_add(u64::try_from(starts.len()).map_err(|_| {
+                Error::StrErr("accepted factory member count exceeds u64".to_string())
+            })?)
+            .ok_or_else(|| Error::StrErr("accepted game id overflow".to_string()))?;
+
+        Ok(StagedProposalAcceptance {
+            proposal_ledger,
+            next_game_id,
+            my_out_of_game_balance,
+            their_out_of_game_balance,
+            my_allocated_balance,
+            their_allocated_balance,
+            cached_redo_actions,
+            live_games,
+        })
+    }
+
+    pub(crate) fn commit_proposal_acceptance(&mut self, staged: StagedProposalAcceptance) {
+        self.proposal_ledger = staged.proposal_ledger;
+        self.next_game_id = staged.next_game_id;
+        self.my_out_of_game_balance = staged.my_out_of_game_balance;
+        self.their_out_of_game_balance = staged.their_out_of_game_balance;
+        self.my_allocated_balance = staged.my_allocated_balance;
+        self.their_allocated_balance = staged.their_allocated_balance;
+        self.cached_redo_actions = staged.cached_redo_actions;
+        self.live_games = staged.live_games;
     }
 
     pub fn state_number(&self) -> usize {

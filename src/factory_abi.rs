@@ -2,14 +2,15 @@ use std::collections::BTreeSet;
 
 use clvmr::{Allocator, NodePtr, SExp};
 
-pub struct FactoryGameNodes {
-    pub proposer_contribution: NodePtr,
-    pub accepter_contribution: NodePtr,
+pub struct FactoryGameRecord {
+    pub proposer_contribution: u64,
+    pub accepter_contribution: u64,
+    pub amount: u64,
     pub proposer_goes_first: bool,
-    pub initial_move: NodePtr,
-    pub initial_max_move_size: NodePtr,
+    pub initial_move: Vec<u8>,
+    pub initial_max_move_size: u32,
     pub initial_state: NodePtr,
-    pub initial_mover_share: NodePtr,
+    pub initial_mover_share: u64,
     pub my_turn_handler: NodePtr,
     pub their_turn_handler: NodePtr,
     pub validation_programs: Vec<NodePtr>,
@@ -17,7 +18,7 @@ pub struct FactoryGameNodes {
 }
 
 pub enum FactoryResultNodes {
-    Success(Vec<FactoryGameNodes>),
+    Success(Vec<FactoryGameRecord>),
     InsufficientBalance {
         proposer_balance_short: bool,
         accepter_balance_short: bool,
@@ -52,6 +53,36 @@ fn canonical_boolean(
         },
         SExp::Pair(_, _) => Err(format!("{context} {field} is not an atom")),
     }
+}
+
+fn atom(
+    allocator: &Allocator,
+    node: NodePtr,
+    context: &str,
+    field: &str,
+) -> Result<Vec<u8>, String> {
+    match allocator.sexp(node) {
+        SExp::Atom => Ok(allocator.atom(node).as_ref().to_vec()),
+        SExp::Pair(_, _) => Err(format!("{context} {field} is not an atom")),
+    }
+}
+
+fn unsigned_u64(
+    allocator: &Allocator,
+    node: NodePtr,
+    context: &str,
+    field: &str,
+) -> Result<u64, String> {
+    let bytes = atom(allocator, node, context, field)?;
+    if bytes.first().is_some_and(|byte| byte & 0x80 != 0) {
+        return Err(format!("{context} {field} is negative"));
+    }
+    bytes.iter().try_fold(0u64, |value, byte| {
+        value
+            .checked_mul(256)
+            .and_then(|value| value.checked_add(u64::from(*byte)))
+            .ok_or_else(|| format!("{context} {field} exceeds u64"))
+    })
 }
 
 pub fn parse_factory_result(
@@ -104,8 +135,41 @@ pub fn parse_factory_result(
         let fields: [NodePtr; 11] = fields.try_into().map_err(|fields: Vec<NodePtr>| {
             format!("{record_context} has {} fields, expected 11", fields.len())
         })?;
+        let proposer_contribution = unsigned_u64(
+            allocator,
+            fields[0],
+            &record_context,
+            "proposer_contribution",
+        )?;
+        let accepter_contribution = unsigned_u64(
+            allocator,
+            fields[1],
+            &record_context,
+            "accepter_contribution",
+        )?;
+        let amount = proposer_contribution
+            .checked_add(accepter_contribution)
+            .ok_or_else(|| format!("{record_context} contributions exceed u64"))?;
         let proposer_goes_first =
             canonical_boolean(allocator, fields[2], &record_context, "proposer_goes_first")?;
+        let initial_move = atom(allocator, fields[3], &record_context, "initial_move")?;
+        let initial_max_move_size = unsigned_u64(
+            allocator,
+            fields[4],
+            &record_context,
+            "initial_max_move_size",
+        )
+        .and_then(|value| {
+            u32::try_from(value)
+                .map_err(|_| format!("{record_context} initial_max_move_size exceeds u32"))
+        })?;
+        let initial_mover_share =
+            unsigned_u64(allocator, fields[6], &record_context, "initial_mover_share")?;
+        if initial_mover_share > amount {
+            return Err(format!(
+                "{record_context} initial_mover_share {initial_mover_share} exceeds amount {amount}"
+            ));
+        }
         let validation_programs = proper_list(allocator, fields[9])
             .ok_or_else(|| format!("{record_context} validation programs are not a proper list"))?;
         if validation_programs.is_empty() {
@@ -127,14 +191,15 @@ pub fn parse_factory_result(
                 ));
             }
         }
-        parsed.push(FactoryGameNodes {
-            proposer_contribution: fields[0],
-            accepter_contribution: fields[1],
+        parsed.push(FactoryGameRecord {
+            proposer_contribution,
+            accepter_contribution,
+            amount,
             proposer_goes_first,
-            initial_move: fields[3],
-            initial_max_move_size: fields[4],
+            initial_move,
+            initial_max_move_size,
             initial_state: fields[5],
-            initial_mover_share: fields[6],
+            initial_mover_share,
             my_turn_handler: fields[7],
             their_turn_handler: fields[8],
             validation_programs,
@@ -264,6 +329,54 @@ mod tests {
     }
 
     #[test]
+    fn rejects_non_atoms_and_out_of_range_numeric_fields() {
+        let cases: &[(&str, fn(&mut Allocator, &mut [NodePtr; 11]))] = &[
+            (
+                "proposer_contribution is not an atom",
+                |allocator, fields| {
+                    fields[0] = allocator.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
+                },
+            ),
+            ("accepter_contribution is negative", |allocator, fields| {
+                fields[1] = allocator.new_atom(&[0x80]).unwrap();
+            }),
+            ("contributions exceed u64", |allocator, fields| {
+                fields[0] = allocator
+                    .new_atom(&[0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+                    .unwrap();
+                fields[1] = atom(allocator, 1);
+            }),
+            ("initial_move is not an atom", |allocator, fields| {
+                fields[3] = allocator.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
+            }),
+            ("initial_max_move_size exceeds u32", |allocator, fields| {
+                fields[4] = allocator.new_atom(&[1, 0, 0, 0, 0]).unwrap();
+            }),
+            (
+                "initial_mover_share 1 exceeds amount 0",
+                |allocator, fields| {
+                    fields[6] = atom(allocator, 1);
+                },
+            ),
+        ];
+
+        for (expected, mutate) in cases {
+            let mut allocator = Allocator::new();
+            let record = valid_record(&mut allocator);
+            let mut fields: [NodePtr; 11] =
+                proper_list(&allocator, record).unwrap().try_into().unwrap();
+            mutate(&mut allocator, &mut fields);
+            let record = list(&mut allocator, &fields);
+            let records = list(&mut allocator, &[record]);
+            let result = success(&mut allocator, records);
+            let error = parse_factory_result(&allocator, result, "test factory")
+                .err()
+                .expect("semantically invalid factory result was accepted");
+            assert!(error.contains(expected), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
     fn parses_shortage_flags_and_named_game_fields() {
         let mut allocator = Allocator::new();
         let false_flag = NodePtr::NIL;
@@ -289,12 +402,13 @@ mod tests {
             FactoryResultNodes::Success(records) => {
                 assert_eq!(records[0].validation_programs[0], expected);
                 assert!(records[0].proposer_goes_first);
-                assert_eq!(records[0].proposer_contribution, NodePtr::NIL);
-                assert_eq!(records[0].accepter_contribution, NodePtr::NIL);
-                assert_eq!(records[0].initial_move, NodePtr::NIL);
-                assert_eq!(records[0].initial_max_move_size, NodePtr::NIL);
+                assert_eq!(records[0].proposer_contribution, 0);
+                assert_eq!(records[0].accepter_contribution, 0);
+                assert_eq!(records[0].amount, 0);
+                assert!(records[0].initial_move.is_empty());
+                assert_eq!(records[0].initial_max_move_size, 0);
                 assert_eq!(records[0].initial_state, NodePtr::NIL);
-                assert_eq!(records[0].initial_mover_share, NodePtr::NIL);
+                assert_eq!(records[0].initial_mover_share, 0);
                 assert_eq!(records[0].my_turn_handler, NodePtr::NIL);
                 assert_eq!(records[0].their_turn_handler, NodePtr::NIL);
                 assert_eq!(records[0].readable_parameters, NodePtr::NIL);

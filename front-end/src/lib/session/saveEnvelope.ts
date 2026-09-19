@@ -1,4 +1,4 @@
-import type { ChannelStatusPayload } from '../../types/ChiaGaming';
+import type { ChannelStatusPayload, NeedCoinSpendRequest } from '../../types/ChiaGaming';
 import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
@@ -68,6 +68,7 @@ export interface SessionLiveSave extends SessionTransportSave {
   gameSessionSchemaVersion: bigint;
   rewardPuzzleHash: string;
   durabilityWarning?: string;
+  fundingOutbox?: Array<{ key: string; request: NeedCoinSpendRequest }>;
 }
 
 export interface SavedGameInstance {

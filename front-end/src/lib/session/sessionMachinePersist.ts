@@ -98,6 +98,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
         unackedMessages: wasm.unackedMessages,
         disposition: wasm.transportDisposition,
         durabilityWarning: wasm.durabilityWarning,
+        fundingOutbox: wasm.fundingOutbox,
       },
       presentation,
       history: {

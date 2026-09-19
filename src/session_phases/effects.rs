@@ -414,6 +414,7 @@ impl TransactionSubmission {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub enum GameSessionEvent {
     OutboundMessage(Vec<u8>),
     /// The sole message required before a local terminal transition. The

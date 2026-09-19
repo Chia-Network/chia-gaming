@@ -327,7 +327,7 @@ impl OffChainPhase {
                         },
                     });
                 }
-                let ids = self.channel_state_mut()?.allocate_game_ids(games.len())?;
+                let ids = self.channel_state()?.game_ids_for_acceptance(games.len())?;
                 let local_is_player_a = if local_is_proposer {
                     proposal.sender_is_player_a
                 } else {
@@ -356,12 +356,13 @@ impl OffChainPhase {
                         readable_parameters: factory_game.readable_parameters.clone(),
                     })
                     .collect();
-                self.channel_state_mut()?.accept_proposal_games(
+                let staged = self.channel_state()?.stage_proposal_acceptance(
                     env,
                     local_id,
                     &starts,
                     cache_for_redo,
                 )?;
+                self.channel_state_mut()?.commit_proposal_acceptance(staged);
                 Ok(AcceptanceOutcome::Accepted(members))
             }
         }

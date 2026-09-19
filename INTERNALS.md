@@ -279,16 +279,13 @@ indicate programming bugs — the queue was populated by our own UI/logic.
 
 The cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
-Every `drain_queue_into_batch` call has its own complete-working-state
-savepoint: a failure restores all mutable off-chain protocol fields before
-returning diagnostic context. The caller removes only the failed action. A
-post-receive drain retries the
-remaining queue immediately; an ordinary pending-action flush reports
-`ActionFailed` and leaves earlier valid actions queued for a later retry. This
-preserves accepted peer state without retaining an unsent partial local
-mutation. The JS-side game action methods (`proposeGame`, `acceptProposal`,
-`cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM
-throws and surface them through the UI error dialog.
+`drain_queue_into_batch` does not wrap these trusted local actions in a
+savepoint. A valid received batch commits before a post-receive drain
+reconciles stale local actions and emits `ActionFailed`; any remaining
+unexpected drain failure is an internal error and stays fail-fast. The JS-side
+game action methods (`proposeGame`, `acceptProposal`, `cancel_proposal`,
+`makeMove`, `acceptSettlement`, `cheat`) also catch WASM throws and surface
+them through the UI error dialog.
 
 ---
 
@@ -325,10 +322,12 @@ The invariant is therefore:
 
 Do not generalize this rollback mechanism. Its purpose is to quarantine
 partially applied, untrusted peer input. Local UI calls, block-height and coin
-observations, `go_on_chain`, and ordinary local drains are trusted entry points
-and must not acquire nested snapshots or retry loops. If a new peer message
-mutates state before all of its peer-controlled data is validated, give that
-message the narrowest complete rollback boundary that covers those mutations.
+`go_on_chain`, and ordinary local drains must not acquire nested snapshots or
+retry loops. Blockchain observations are also externally controlled and get
+their own narrow ingestion boundary; that does not make rollback a general
+runtime error-handling mechanism. If a new peer or chain message mutates state
+before all of its externally controlled data is validated, give that entry
+point the narrowest complete boundary that covers those mutations.
 
 **Key code:** `src/session_phases/mod.rs` — `OffChainWorkingState`,
 `process_received_batch`, `commit_received_batch_state`,
@@ -348,26 +347,35 @@ WASM call returned. The runtime must continue through reducer effects,
 controller/WASM callbacks, generated events, UX-model changes, and reliable
 transport changes until the whole event graph is quiescent.
 
-The required order is:
+The required normal order is:
 
 1. Drain all internal and UX-model work to a fixed point.
 2. Synchronously freeze the final JS model, serialized WASM cradle, and reliable
    transport generation.
-3. Complete exactly one awaited persistence operation.
+3. Attempt exactly one awaited persistence operation.
 4. Publish the captured model to React.
-5. Release captured peer messages, acknowledgements, and completion callbacks.
+5. Release captured peer messages, acknowledgements, wallet/chain work, and
+   completion callbacks exactly once.
 
-React rendering is a projection after durability, not another participant in
-the event drain. Intermediate models remain unpublished; this is both the
-atomicity mechanism and the general flicker-avoidance mechanism. Work arriving
-during the write belongs to the next commit and cannot change the captured
-payload. On write failure, retain dirty and staged work without rendering,
-sending, acknowledging, or starting an automatic retry loop.
+React rendering is a projection after the persistence attempt, not another
+participant in the event drain. Intermediate models remain unpublished; this
+is both the commit-boundary mechanism and the general flicker-avoidance
+mechanism. Work arriving during the write belongs to the next commit and cannot
+change the captured payload.
+
+A persistence failure is serious but must not stop a game for money for an
+internal storage reason. Report a persistent warning, publish and release the
+captured boundary once, retain the latest in-memory state as dirty, and retry
+only after later activity. Persisted and released generations are distinct: a
+later successful checkpoint must not resend effects already released in
+degraded mode. This availability choice admits a crash window in which external
+effects are newer than the last durable local checkpoint.
 
 Do not add active-session save timers, direct reducer/effect persistence,
 mid-drain React updates, or eager peer sends. Every new event source must feed
 the same coordinator. Pre-runtime negotiation may use the standalone reliable
-transport flush, but it must preserve the same persist-before-send ordering.
+transport flush, but it follows the same attempt-persistence-before-release
+ordering and degraded failure policy.
 
 ---
 

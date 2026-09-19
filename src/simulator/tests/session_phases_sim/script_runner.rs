@@ -123,6 +123,7 @@ pub(in super::super) fn run_script(
     let mut assertion_scheduler = AssertionScheduler::default();
     let proposal_type =
         crate::session_phases::game_collection::game_type_for_package(allocator, package_key);
+    let proposal_member_count = usize::from(package_key == "krunk") + 1;
     let krunk_type =
         crate::session_phases::game_collection::game_type_for_package(allocator, "krunk");
 
@@ -252,6 +253,7 @@ pub(in super::super) fn run_script(
                                 timeout: Timeout::new(timeout),
                                 parameters,
                             }],
+                            proposal_member_count,
                         )?;
                         ()
                     }
@@ -266,6 +268,7 @@ pub(in super::super) fn run_script(
                                 timeout: Timeout::new(15),
                                 parameters: ProposalParameters::Integer(100),
                             }],
+                            2,
                         )?;
                         ()
                     }
@@ -438,6 +441,7 @@ pub(in super::super) fn run_script(
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
+                            proposal_member_count,
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
                             wire.origin_wire_id = WireProposalId(wire.origin_wire_id.0 ^ 1);
@@ -465,6 +469,7 @@ pub(in super::super) fn run_script(
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
+                            proposal_member_count,
                         )?;
                         let invalid_parameters = if package_key == "calpoker" {
                             ProposalParameters::Integer(1)
@@ -495,6 +500,7 @@ pub(in super::super) fn run_script(
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
+                            proposal_member_count,
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
                             wire.origin_wire_id = WireProposalId(wire.origin_wire_id.0 + 2);
@@ -518,6 +524,7 @@ pub(in super::super) fn run_script(
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
+                            proposal_member_count,
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
                             wire.origin_wire_id =
@@ -544,6 +551,7 @@ pub(in super::super) fn run_script(
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
+                            proposal_member_count,
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
                             wire.start.game_type =
@@ -572,6 +580,7 @@ pub(in super::super) fn run_script(
                                 timeout: Timeout::new(15),
                                 parameters,
                             }],
+                            proposal_member_count,
                         )?;
                         harness.mutate_last_proposal(*who, |wire| {
                             wire.start.timeout = Timeout::new(0);

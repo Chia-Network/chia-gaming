@@ -977,6 +977,44 @@ describe('WASM wallet funding requests', () => {
     );
   });
 
+  it('attempts persistence before funding and continues after storage failure', async () => {
+    const order: string[] = [];
+    const createOfferForIds = jest.fn().mockImplementation(async () => {
+      order.push('funding');
+      return testSpendBundle('coin-spend');
+    });
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds }, 60000);
+    let persistenceAttempts = 0;
+    setTestPersistence(blob, async () => {
+      persistenceAttempts += 1;
+      order.push('persist');
+      if (persistenceAttempts === 1) throw new Error('disk full');
+    });
+    const request: NeedCoinSpendRequest = {
+      amount: '100',
+      fee: '10',
+      conditions: [{ opcode: 60, args: ['launcher'] }],
+    };
+
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    blob.flushDeferredWork();
+    expect(createOfferForIds).not.toHaveBeenCalled();
+    expect(blob.getWasmFields()?.fundingOutbox).toEqual([
+      expect.objectContaining({
+        request: expect.objectContaining({ amount: '100', fee: '10' }),
+      }),
+    ]);
+    await expect(blob.flushPendingSave()).rejects.toThrow('disk full');
+    await Promise.resolve();
+
+    expect(order.slice(0, 2)).toEqual(['persist', 'funding']);
+    expect(createOfferForIds).toHaveBeenCalledTimes(1);
+    await blob.flushPendingSave();
+    expect(createOfferForIds).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels a rejected persisted offer before creating its retry', async () => {
     const request: NeedCoinSpendRequest = {
       amount: 100,
@@ -1105,6 +1143,55 @@ describe('wallet fee attachment on submission', () => {
       'submitTransaction',
       10n,
     );
+  });
+
+  it('gates fee creation and finalized broadcast on persistence attempts, continuing after failure', async () => {
+    const order: string[] = [];
+    const createFeeSpend = jest.fn().mockImplementation(async () => {
+      order.push('fee');
+      return { kind: 'offer', offer: 'offer1signed' };
+    });
+    const spend = jest.fn().mockImplementation(async () => {
+      order.push('spend');
+      return { status: 'acknowledged' };
+    });
+    const finalize = jest.fn().mockImplementation(() => {
+      order.push('finalize');
+      return {
+        protocol_bundle: testSpendBundle('coin'),
+        bundle: protocolBundle,
+        applied_fee: '10',
+        warning: null,
+      };
+    });
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
+    setFinalizer(blob, finalize);
+    let writes = 0;
+    setTestPersistence(blob, async () => {
+      writes += 1;
+      order.push(`persist-${writes}`);
+      if (writes <= 2) throw new Error(`disk full ${writes}`);
+    });
+
+    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    expect(createFeeSpend).not.toHaveBeenCalled();
+    await expect(blob.flushPendingSave()).rejects.toThrow('disk full 1');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(order.slice(0, 2)).toEqual(['persist-1', 'fee']);
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(spend).not.toHaveBeenCalled();
+
+    await expect(blob.flushPendingSave()).rejects.toThrow('disk full 2');
+    await (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+
+    expect(order).toEqual(['persist-1', 'fee', 'finalize', 'persist-2', 'spend']);
+    expect(spend).toHaveBeenCalledTimes(1);
+    await blob.flushPendingSave();
+    expect(spend).toHaveBeenCalledTimes(1);
   });
 
   it('passes through an already-complete provider fee bundle', async () => {

@@ -345,18 +345,6 @@ fn proposal_cancelled_contains(notification: &GameNotification, id: &LocalPropos
     }
 }
 
-fn accepted_game_ids(notifications: &[GameNotification]) -> HashSet<GameID> {
-    notifications
-        .iter()
-        .flat_map(|notification| match notification {
-            GameNotification::ProposalAcceptedGroup { members, .. } => {
-                members.iter().map(|member| member.id).collect::<Vec<_>>()
-            }
-            _ => Vec::new(),
-        })
-        .collect()
-}
-
 fn has_status(n: &GameNotification, want: GameStatusKind) -> bool {
     matches!(n, GameNotification::GameStatus { status, .. } if *status == want)
 }
@@ -703,8 +691,10 @@ pub struct LocalTestUIReceiver {
     pub proposed_game_ids: Vec<LocalProposalId>,
     proposal_bindings: HashMap<ScriptProposalRef, LocalProposalId>,
     proposal_refs_by_id: HashMap<LocalProposalId, ScriptProposalRef>,
+    proposal_member_counts: HashMap<LocalProposalId, usize>,
     unbound_proposal_ids: VecDeque<LocalProposalId>,
     pub accepted_proposal_ids: HashSet<ScriptProposalRef>,
+    expected_accepted_game_refs: HashSet<ScriptGameRef>,
     pub received_proposal_ids: Vec<LocalProposalId>,
     pub silently_rejected_proposal_ids: HashSet<LocalProposalId>,
     pub game_accepted_ids: HashSet<GameID>,
@@ -722,27 +712,83 @@ impl LocalTestUIReceiver {
         );
     }
 
-    /// True when every accepted game has exactly one terminal game notification (Rule B forward
-    /// direction). Vacuously true if there are no accepted-group members.
-    pub fn all_accepted_games_have_terminal_notification(&self) -> bool {
-        let accepted_ids = accepted_game_ids(&self.notifications);
-        for id in accepted_ids {
+    fn accepted_member_ids(&self) -> HashSet<GameID> {
+        self.accepted_game_ids.values().copied().collect()
+    }
+
+    fn proposal_resolved_without_acceptance(&self, proposal: ScriptProposalRef) -> bool {
+        let Some(local_id) = self.proposal_bindings.get(&proposal) else {
+            return false;
+        };
+        self.notifications
+            .iter()
+            .any(|notification| proposal_cancelled_contains(notification, local_id))
+    }
+
+    fn lifecycle_oracle_error(&self) -> Option<String> {
+        for expected in &self.expected_accepted_game_refs {
+            let ScriptGameRef::AcceptedMember { proposal, .. } = expected else {
+                unreachable!("only accepted-member references can be expected");
+            };
+            if !self.accepted_game_ids.contains_key(expected)
+                && !self.proposal_resolved_without_acceptance(*proposal)
+            {
+                return Some(format!(
+                    "expected accepted member {expected:?}, but no runtime binding was observed"
+                ));
+            }
+        }
+
+        for observed in self.accepted_game_ids.keys() {
+            if !self.expected_accepted_game_refs.contains(observed) {
+                return Some(format!(
+                    "observed unexpected accepted member binding {observed:?}"
+                ));
+            }
+        }
+
+        let accepted_ids = self.accepted_member_ids();
+        if accepted_ids.len() != self.accepted_game_ids.len() {
+            return Some(format!(
+                "multiple expected member references bound to the same game ID: {:?}",
+                self.accepted_game_ids
+            ));
+        }
+        for id in &accepted_ids {
             let terminal_count = self
                 .notifications
                 .iter()
-                .filter(|n| match n {
-                    GameNotification::GameSettled { id: nid, .. } => nid == &id,
-                    GameNotification::GameStatus {
-                        id: nid, status, ..
-                    } => nid == &id && is_terminal_game_status(status),
-                    _ => false,
-                })
+                .filter(|notification| is_terminal_for_id(notification, id))
                 .count();
             if terminal_count != 1 {
-                return false;
+                return Some(format!(
+                    "accepted member {id:?} should have exactly one terminal notification, got {terminal_count}"
+                ));
             }
         }
-        true
+
+        for notification in &self.notifications {
+            let terminal_id = match notification {
+                GameNotification::GameSettled { id, .. } => Some(id),
+                GameNotification::GameStatus { id, status, .. }
+                    if is_terminal_game_status(status) =>
+                {
+                    Some(id)
+                }
+                _ => None,
+            };
+            if terminal_id.is_some_and(|id| !accepted_ids.contains(id)) {
+                return Some(format!(
+                    "terminal notification for unaccepted member {terminal_id:?}"
+                ));
+            }
+        }
+
+        None
+    }
+
+    pub fn lifecycle_oracle_satisfied(&self) -> bool {
+        self.lifecycle_oracle_error().is_none()
     }
 }
 
@@ -1173,58 +1219,21 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
     }
 
-    // Rule B (game lifecycle bijection): one-to-one correspondence between
-    // accepted-group members and terminal game notifications per player per
-    // game ID. Every accepted member has exactly one terminal, and every
-    // terminal has a preceding ProposalAcceptedGroup member.
-
-    // Rule B forward: every ProposalAcceptedGroup member has one terminal.
+    // Rule B (game lifecycle bijection): runtime-bound accepted members and
+    // terminal game notifications correspond one-to-one per player and game ID.
     for (i, lui) in local_uis.iter().enumerate() {
-        for n in lui.notifications.iter() {
-            if let GameNotification::ProposalAcceptedGroup { members, .. } = n {
-                for member in members {
-                    let id = &member.id;
-                    let terminal_count = lui
-                        .notifications
-                        .iter()
-                        .filter(|n2| is_terminal_for_id(n2, id))
-                        .count();
-                    assert!(
-                    terminal_count == 1,
-                    "player {i}: ProposalAcceptedGroup member {id:?} should have exactly one terminal game notification, got {terminal_count}. All notifications: {:?}",
-                    lui.notifications,
-                );
-                }
-            }
-        }
-    }
-
-    // Rule B reverse: every terminal has a preceding accepted-group member.
-    for (i, lui) in local_uis.iter().enumerate() {
-        let accepted_ids = accepted_game_ids(&lui.notifications);
-        for n in &lui.notifications {
-            let terminal_id = match n {
-                GameNotification::GameStatus { id, status, .. }
-                    if is_terminal_game_status(status) =>
-                {
-                    Some(id)
-                }
-                _ => None,
-            };
-            if let Some(id) = terminal_id {
-                assert!(
-                    accepted_ids.contains(id),
-                    "player {i}: terminal notification for {id:?} but no ProposalAcceptedGroup member for that game. \
-                     Accepted IDs: {accepted_ids:?}\nAll notifications: {:?}",
-                    lui.notifications,
-                );
-            }
-        }
+        assert!(
+            lui.lifecycle_oracle_satisfied(),
+            "player {i}: lifecycle oracle failed: {}.\nAll notifications: {:?}",
+            lui.lifecycle_oracle_error()
+                .expect("failed lifecycle oracle should provide a reason"),
+            lui.notifications,
+        );
     }
 
     // Invariant: on-chain statuses only for accepted games.
     for (i, lui) in local_uis.iter().enumerate() {
-        let accepted_ids = accepted_game_ids(&lui.notifications);
+        let accepted_ids = lui.accepted_member_ids();
         for n in &lui.notifications {
             if let GameNotification::GameStatus { id, status, .. } = n {
                 if !matches!(
@@ -1276,7 +1285,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             continue;
         };
 
-        let accepted_before_unroll = accepted_game_ids(&lui.notifications[..unroll_idx]);
+        let accepted_before_unroll = lui.accepted_member_ids();
 
         let terminal_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
             .iter()

@@ -11,6 +11,7 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
 import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
+import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
@@ -97,6 +98,7 @@ let testPoller: BlockchainPoller | null = null;
 
 function attachStandaloneTestCommitCoordinator(controller: SessionController): void {
   let dirty = false;
+  const pendingExternalEffects = new Map<string, () => void>();
   let flushing: Promise<void> = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | null = null;
   const schedule = () => {
@@ -114,6 +116,12 @@ function attachStandaloneTestCommitCoordinator(controller: SessionController): v
     enqueue: (work: () => void) => {
       work();
     },
+    releaseAfterPersistence: (key: string, effect: () => void) => {
+      if (pendingExternalEffects.has(key)) return;
+      pendingExternalEffects.set(key, effect);
+      dirty = true;
+      schedule();
+    },
     flush: (): Promise<void> => {
       if (timer) {
         clearTimeout(timer);
@@ -127,9 +135,24 @@ function attachStandaloneTestCommitCoordinator(controller: SessionController): v
               dirty = false;
               controller.flushDeferredWork();
               const commit = controller.prepareReliableCommit();
-              const rejection = controller.prepareInboundSessionRejectPersistence();
-              if (rejection) await rejection.write();
-              controller.completeReliableCommit(commit);
+              const externalEffects = [...pendingExternalEffects.entries()];
+              const releaseExternalEffects = () => {
+                for (const [key, effect] of externalEffects) {
+                  if (pendingExternalEffects.get(key) !== effect) continue;
+                  pendingExternalEffects.delete(key);
+                  effect();
+                }
+              };
+              try {
+                const rejection = controller.prepareInboundSessionRejectPersistence();
+                if (rejection) await rejection.write();
+              } catch (error) {
+                controller.completeReliableCommit(commit, false);
+                releaseExternalEffects();
+                throw error;
+              }
+              controller.completeReliableCommit(commit, true);
+              releaseExternalEffects();
             } catch (error) {
               dirty = true;
               controller.reportDurabilityError(error);
@@ -191,6 +214,7 @@ export function makeTestReliableState(): NonNullable<PeerConnectionResult['relia
 
 export class SessionControllerAdapter {
   blob: SessionController | undefined;
+  runtime: SessionMachineRuntime | undefined;
   waiting_messages: Array<SimpleMessage>;
   readonly peerConnection: PeerConnectionResult;
 
@@ -218,11 +242,21 @@ export class SessionControllerAdapter {
 
   set_blob(blob: SessionController) {
     this.blob = blob;
+    this.runtime = undefined;
     // These integration tests deliberately drive controllers before a React
     // runtime exists. Give that phase an explicit in-memory commit consumer;
     // SessionMachineRuntime replaces it when a reloadable lane is bound.
     attachStandaloneTestCommitCoordinator(blob);
     this.blob.kickSystem(2);
+  }
+
+  setRuntimeBlob(blob: SessionController) {
+    this.blob = blob;
+    this.runtime = undefined;
+  }
+
+  bindRuntime(runtime: SessionMachineRuntime) {
+    this.runtime = runtime;
   }
 
   deliver_message(msgno: number, msg: Uint8Array) {
@@ -276,7 +310,13 @@ function debugCradleState(cradle: SessionControllerAdapter): string {
 }
 
 export async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Promise<void> {
-  await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
+  await Promise.all(
+    cradles.map(async (cradle) => {
+      await cradle.runtime?.persist();
+      await cradle.blob?.flushPendingWork();
+      await cradle.runtime?.persist();
+    }),
+  );
 }
 
 export function assertCradleRoundTrip(stage: string, controller: SessionController): Uint8Array {

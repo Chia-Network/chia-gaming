@@ -749,12 +749,21 @@ the wire or core ledger.
 drains every consequence of a stimulus to a fixed point: reducer work, commands,
 controller/WASM results, generated events, UX-model updates, and reliable
 transport changes. It then synchronously captures one combined
-machine/WASM/reliable boundary, performs one atomic write, projects React state,
-and only then releases sends/ACKs. This same rule applies while completing work
-after rehydration. React projection is not part of the drain and must never
-precede persistence; withholding it until commit prevents transient UX states
-and flicker. A failed write keeps staged work for an explicit later retry
-without rendering or sending and without spinning.
+machine/WASM/reliable boundary and attempts one atomic write before projecting
+React state and releasing sends/ACKs. This same rule applies while completing
+work after rehydration. React projection is not part of the drain; holding it
+until the persistence attempt finishes prevents transient UX states and
+flicker.
+
+Persistence is checkpointing, not permission to continue a game for money. If
+the browser write fails, the runtime reports a persistent durability warning
+but still projects and releases that captured boundary exactly once. The
+in-memory state remains dirty and a later activity retries the checkpoint
+without resending already released effects; there is no immediate retry spin.
+This deliberately accepts a degraded crash window: if the page dies before a
+later write succeeds, the peer or chain may have advanced beyond the last local
+checkpoint. Refusing to continue solely because local storage failed would be
+the worse failure mode.
 
 No active-session adapter, reducer effect, or protocol callback may establish a
 competing save, render, or send boundary. New event sources must enter the same

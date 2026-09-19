@@ -4,6 +4,7 @@ import { coinRecordToName } from '../util/coinWatch';
 import { log, diagStack } from '../services/log';
 import {
   AsyncJobQueue,
+  AsyncJobQueueOptions,
   AsyncQueueJob,
   AsyncPollingScheduler,
   AsyncPollingTarget,
@@ -11,6 +12,7 @@ import {
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
+const MAX_COIN_SNAPSHOT_ATTEMPTS = 3;
 
 class BlockchainRpcUnavailableError extends Error {
   constructor(label: string) {
@@ -57,7 +59,8 @@ export class BlockchainPoller {
   private registrationScopeKey: string | undefined;
   private balanceCallbacks: BalanceCallbacks | null = null;
   private balancePollIntervalMs = BALANCE_POLL_INTERVAL_MS;
-  private requestLane: AsyncJobQueue;
+  private readLane: AsyncJobQueue;
+  private mutationLane: AsyncJobQueue;
   private heightPollingScheduler: AsyncPollingScheduler;
   private coinPollingScheduler: AsyncPollingScheduler;
   private balancePollingScheduler: AsyncPollingScheduler;
@@ -74,12 +77,14 @@ export class BlockchainPoller {
     this.adapter = blockchain;
     this.pollIntervalMs = pollIntervalMs;
     this.maxBackoffMs = maxBackoffMs ?? 60000;
-    this.requestLane = new AsyncJobQueue({
+    const queueOptions: AsyncJobQueueOptions = {
       gapMs: blockchain.requestGapMs ?? 0,
       onError: (job, e) => {
         log(`[blockchain-poller] queued job failed label=${job.label}: ${String(e)}`);
       },
-    });
+    };
+    this.readLane = new AsyncJobQueue(queueOptions);
+    this.mutationLane = new AsyncJobQueue(queueOptions);
     this.rpc = this.makeQueuedRpc(blockchain);
     const heightPollingTarget: AsyncPollingTarget = {
       runOnce: () => this.runHeightPoll(),
@@ -96,7 +101,7 @@ export class BlockchainPoller {
     this.heightPollingScheduler = new AsyncPollingScheduler(
       {
         label: 'blockchain-height',
-        queue: this.requestLane,
+        queue: this.readLane,
         intervalMs: this.pollIntervalMs,
       },
       heightPollingTarget,
@@ -104,7 +109,7 @@ export class BlockchainPoller {
     this.coinPollingScheduler = new AsyncPollingScheduler(
       {
         label: 'blockchain-coins',
-        queue: this.requestLane,
+        queue: this.readLane,
         intervalMs: this.pollIntervalMs,
       },
       coinPollingTarget,
@@ -112,7 +117,7 @@ export class BlockchainPoller {
     this.balancePollingScheduler = new AsyncPollingScheduler(
       {
         label: 'blockchain-balance',
-        queue: this.requestLane,
+        queue: this.readLane,
         intervalMs: BALANCE_POLL_INTERVAL_MS,
       },
       balancePollingTarget,
@@ -126,10 +131,8 @@ export class BlockchainPoller {
       getRegistrationScopeKey: () => adapter.getRegistrationScopeKey?.(),
       spend: async (blob, spendBundle, changePuzzleHash, source, fee) => {
         try {
-          return await this.enqueueRpc(
-            'spend',
-            () => adapter.spend(blob, spendBundle, changePuzzleHash, source, fee),
-            true,
+          return await this.enqueueMutation('spend', () =>
+            adapter.spend(blob, spendBundle, changePuzzleHash, source, fee),
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
@@ -142,7 +145,7 @@ export class BlockchainPoller {
       createFeeSpend: adapter.createFeeSpend
         ? async (fee, concurrentSpendCoinId) => {
             try {
-              return await this.enqueueRpc(
+              return await this.enqueueMutation(
                 'createFeeSpend',
                 () => adapter.createFeeSpend!(fee, concurrentSpendCoinId),
                 true,
@@ -155,15 +158,15 @@ export class BlockchainPoller {
             }
           }
         : undefined,
-      getAddress: () => this.enqueueRpc('getAddress', () => adapter.getAddress(), true),
-      getBalance: () => this.enqueueRpc('getBalance', () => adapter.getBalance()),
+      getAddress: () => this.enqueueRead('getAddress', () => adapter.getAddress()),
+      getBalance: () => this.enqueueRead('getBalance', () => adapter.getBalance()),
       getPuzzleAndSolution: (coin) =>
-        this.enqueueRpc('getPuzzleAndSolution', () => adapter.getPuzzleAndSolution(coin), true),
+        this.enqueueRead('getPuzzleAndSolution', () => adapter.getPuzzleAndSolution(coin)),
       selectCoins: (uniqueId, amount) =>
-        this.enqueueRpc('selectCoins', () => adapter.selectCoins(uniqueId, amount), true),
-      getHeightInfo: () => this.enqueueRpc('getHeightInfo', () => adapter.getHeightInfo()),
+        this.enqueueMutation('selectCoins', () => adapter.selectCoins(uniqueId, amount)),
+      getHeightInfo: () => this.enqueueRead('getHeightInfo', () => adapter.getHeightInfo()),
       createOfferForIds: (uniqueId, offer, extraConditions, coinIds, maxHeight, openingFee) =>
-        this.enqueueRpc(
+        this.enqueueMutation(
           'createOfferForIds',
           () =>
             adapter.createOfferForIds(
@@ -177,14 +180,14 @@ export class BlockchainPoller {
           true,
         ),
       cancelOffer: adapter.cancelOffer
-        ? (tradeId) => this.enqueueRpc('cancelOffer', () => adapter.cancelOffer!(tradeId), true)
+        ? (tradeId) => this.enqueueMutation('cancelOffer', () => adapter.cancelOffer!(tradeId))
         : undefined,
       getCoinRecordsByNames: (names) =>
-        this.enqueueRpc('getCoinRecordsByNames', () => adapter.getCoinRecordsByNames(names)),
+        this.enqueueRead('getCoinRecordsByNames', () => adapter.getCoinRecordsByNames(names)),
       registerCoins: (names) =>
-        this.enqueueRpc('registerCoins', () => adapter.registerCoins(names)),
+        this.enqueueRead('registerCoins', () => adapter.registerCoins(names)),
       startMonitoring: () =>
-        this.enqueueRpc('startMonitoring', () => adapter.startMonitoring(), true),
+        this.enqueueMutation('startMonitoring', () => adapter.startMonitoring()),
       beginConnect: (uniqueId) => adapter.beginConnect(uniqueId),
       disconnect: () => adapter.disconnect(),
       isConnected: () => adapter.isConnected(),
@@ -194,7 +197,24 @@ export class BlockchainPoller {
     };
   }
 
-  private enqueueRpc<T>(label: string, run: () => Promise<T> | T, foreground = false): Promise<T> {
+  private enqueueRead<T>(label: string, run: () => Promise<T> | T): Promise<T> {
+    return this.enqueueRpc(this.readLane, label, run);
+  }
+
+  private enqueueMutation<T>(
+    label: string,
+    run: () => Promise<T> | T,
+    cancelStaleOffer = false,
+  ): Promise<T> {
+    return this.enqueueRpc(this.mutationLane, label, run, cancelStaleOffer);
+  }
+
+  private enqueueRpc<T>(
+    lane: AsyncJobQueue,
+    label: string,
+    run: () => Promise<T> | T,
+    cancelStaleOffer = false,
+  ): Promise<T> {
     if (!this.isConnected()) {
       return Promise.reject(new BlockchainRpcUnavailableError(label));
     }
@@ -219,6 +239,7 @@ export class BlockchainPoller {
           try {
             const result = await run();
             if (!this.isConnectionEpochActive(connectionEpoch)) {
+              if (cancelStaleOffer) await this.cancelStaleOfferResult(label, result);
               rejectForDisconnect();
               return;
             }
@@ -229,12 +250,37 @@ export class BlockchainPoller {
         },
         onDiscard: rejectForDisconnect,
       };
-      if (foreground) {
-        this.requestLane.enqueueFront(job);
-      } else {
-        this.requestLane.enqueue(job);
-      }
+      lane.enqueue(job);
     });
+  }
+
+  private async cancelStaleOfferResult(label: string, result: unknown): Promise<void> {
+    const tradeId =
+      typeof result === 'object' &&
+      result !== null &&
+      typeof (result as { tradeId?: unknown }).tradeId === 'string'
+        ? (result as { tradeId: string }).tradeId
+        : undefined;
+    if (!tradeId) {
+      log(
+        `[blockchain-poller] stale ${label} result has no tradeId; wallet reservation cannot be released`,
+      );
+      return;
+    }
+    if (!this.adapter.cancelOffer) {
+      log(
+        `[blockchain-poller] stale ${label} offer trade_id=${tradeId} cannot be released; adapter has no cancelOffer`,
+      );
+      return;
+    }
+    try {
+      await this.adapter.cancelOffer(tradeId);
+      log(`[blockchain-poller] cancelled stale ${label} offer trade_id=${tradeId}`);
+    } catch (error) {
+      log(
+        `[blockchain-poller] failed to cancel stale ${label} offer trade_id=${tradeId}: ${String(error)}`,
+      );
+    }
   }
 
   attachGameSession(cradle: PollingGameSession) {
@@ -332,7 +378,8 @@ export class BlockchainPoller {
     this.coinPollingScheduler.stop();
     this.balancePollingScheduler.stop();
     for (const reject of [...this.pendingRpcRejects]) reject();
-    this.requestLane.abandonActive();
+    this.readLane.abandonActive();
+    this.mutationLane.clearQueued();
     // Remote wallet coin registrations are lost with the connection. Clear the
     // local cache even when a reconnect reuses the same registration scope key.
     this.registrationScopeKey = undefined;
@@ -466,21 +513,53 @@ export class BlockchainPoller {
       // tick, so the coin gets picked up once it registers.
       const namesToQuery = names.filter((n) => this.registeredNames.has(n));
 
-      const records =
-        namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
-      if (!this.isConnectionEpochActive(connectionEpoch)) return;
-      const recordByName = await this.recordMap(records, connectionEpoch);
-      if (!this.isConnectionEpochActive(connectionEpoch)) return;
-      if (recordByName) {
-        this.reportToCradles(perSession, recordByName, this.peak, this.previousPeakForCoinReport);
+      let openingPeak = this.peak;
+      for (let attempt = 1; attempt <= MAX_COIN_SNAPSHOT_ATTEMPTS; attempt++) {
+        const records =
+          namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
+        if (!this.isConnectionEpochActive(connectionEpoch)) return;
+        // None of the current providers offers an atomic peak-and-records read.
+        // Close the window immediately after the records query and retry if the
+        // tip moved or the provider returned a record from above that boundary.
+        const closingPeak = await this.adapter.getHeightInfo();
+        if (!this.isConnectionEpochActive(connectionEpoch)) return;
+        const coherent = openingPeak === closingPeak && this.recordsFitPeak(records, closingPeak);
+        if (!coherent) {
+          openingPeak = closingPeak;
+          if (attempt < MAX_COIN_SNAPSHOT_ATTEMPTS) continue;
+          throw new Error(
+            `coin snapshot remained incoherent after ${MAX_COIN_SNAPSHOT_ATTEMPTS} attempts`,
+          );
+        }
+
+        const recordByName = await this.recordMap(records, connectionEpoch);
+        if (!this.isConnectionEpochActive(connectionEpoch)) return;
+        if (recordByName) {
+          this.peak = closingPeak;
+          this.reportToCradles(
+            perSession,
+            recordByName,
+            closingPeak,
+            this.previousPeakForCoinReport,
+          );
+        }
+        this.consecutiveFailures = 0;
+        return;
       }
-      this.consecutiveFailures = 0;
     } catch (e) {
       if (!this.running || !this.isConnectionEpochActive(connectionEpoch)) return;
       this.consecutiveFailures++;
       diagStack('blockchain-poller coin poll failed', e);
       log(`[blockchain-poller] coin poll failed: ${String(e)}`);
     }
+  }
+
+  private recordsFitPeak(records: CoinRecord[], peak: bigint): boolean {
+    return records.every(
+      (record) =>
+        record.confirmedBlockIndex <= peak &&
+        (record.spentBlockIndex === 0n || record.spentBlockIndex <= peak),
+    );
   }
 
   private async runBalancePoll(): Promise<void> {
@@ -528,6 +607,12 @@ export class BlockchainPoller {
     _previousPeak: bigint,
   ): void {
     for (const { c, coins } of perSession) {
+      // The snapshot was captured before asynchronous registration/record/peak
+      // RPCs. A session detached while those requests were in flight must not
+      // receive the completed snapshot.
+      if (!this.sessions.has(c)) {
+        continue;
+      }
       if (coins.length === 0) {
         continue;
       }

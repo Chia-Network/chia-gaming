@@ -62,6 +62,7 @@ function bindRuntime(
       saveTerminal: (update) => persistOutsideReload(controller, () => saveTerminalSession(update)),
     },
   );
+  adapter.bindRuntime(runtime);
   const dispatchHostProjection = () => {
     const status = controller.getRestoreStatus();
     runtime.dispatch({
@@ -132,7 +133,9 @@ export async function injectSessionReload(
   wasmStateInit = new WasmStateInit(fetchPreset),
   whileReloaded?: () => Promise<void>,
 ): Promise<{ lane: ReloadableSessionLane; save: LiveSessionSave }> {
+  await lane.runtime.persist();
   await lane.controller.flushPendingWork();
+  await lane.runtime.persist();
   if (reloadBarrier) await reloadBarrier;
   let releaseReload!: () => void;
   reloadBarrier = new Promise<void>((resolve) => {
@@ -162,10 +165,10 @@ export async function injectSessionReload(
   }
 
   const uniqueId = lane.controller.uniqueId;
-  await whileReloaded?.();
   lane.subscription.unsubscribe();
   lane.runtime.setRender(() => {});
   lane.controller.cleanup();
+  await whileReloaded?.();
 
   const controller = new SessionController(
     poller,
@@ -176,18 +179,20 @@ export async function injectSessionReload(
   );
   controller.perGameAmount = BigInt(save.pairing.perGameAmount);
   controller.setPeerKeepalive(() => lane.adapter.peerConnection.sendKeepalive());
-  lane.adapter.set_blob(controller);
+  lane.adapter.setRuntimeBlob(controller);
+  const restoredLane = bindRuntime(
+    lane.adapter,
+    controller,
+    sessionModelFromSave(save),
+    save.pairing.iStarted,
+    true,
+  );
   controller.attachBlockchain(poller);
+  controller.kickSystem(2);
   await controller.beginRestore(restoreSession(controller, save, wasmStateInit));
 
   return {
-    lane: bindRuntime(
-      lane.adapter,
-      controller,
-      sessionModelFromSave(save),
-      save.pairing.iStarted,
-      true,
-    ),
+    lane: restoredLane,
     save,
   };
 }

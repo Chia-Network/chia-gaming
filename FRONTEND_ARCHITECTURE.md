@@ -482,9 +482,10 @@ including work resumed after rehydration:
 1. Reduce the stimulus and continue through commands, controller/WASM results,
    generated events, and UX-model feedback until no synchronous work remains.
 2. Synchronously freeze the resulting JS, WASM, and reliable-transport state.
-3. Await one persistence operation for that captured boundary.
+3. Await one persistence attempt for that captured boundary.
 4. Project the captured state to React.
-5. Finalize peer sends, acknowledgements, and completion callbacks.
+5. Finalize peer sends, acknowledgements, wallet/chain work, and completion
+   callbacks exactly once.
 
 “UX-model feedback” is reducer state and belongs inside the drain; React
 rendering is an externally visible projection and belongs after persistence.
@@ -495,8 +496,8 @@ a collection of feature-specific rendering exceptions.
 The pure root reducer returns the next unpublished authority and ordered
 commands. `SessionMachineRuntime` drains reducer events, reentrant controller
 events, WASM results, and generated commands to a fixed point. It then persists
-one combined snapshot, publishes the final authority to React once, and releases
-the staged reliable messages and acknowledgements. Games dispatch a `GameIntent`.
+or attempts to persist one combined snapshot, publishes the final authority to
+React once, and releases the staged effects. Games dispatch a `GameIntent`.
 A command result distinguishes rejection, queueing, and actual application. A
 game mutates its concrete hand before requesting an action; the public intent
 carries no state. The runtime keeps the previous canonical
@@ -528,7 +529,12 @@ or React projection being committed.
 Code must not bypass this boundary with an active-session save timer, direct
 effect persistence, an intermediate render, or an eager reliable send. New
 controller, wallet, chain, game, and peer event sources enter the coordinator
-and are drained by the same rule.
+and are drained by the same rule. A failed browser write reports a persistent
+warning but is not permission to stop a game for money: the captured effects
+are released once, the current in-memory boundary remains dirty, and later
+activity retries persistence without replaying those effects. A crash before
+that retry succeeds can restore an older local checkpoint; this degraded window
+is an explicit availability-over-durability choice.
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
 Each drained submission has a stable Rust identifier, expiry, and captured fee
@@ -619,23 +625,26 @@ work to a fixed point, then:
 
 1. Captures the staged reliable generation together with the final WASM and JS
    working state.
-2. Performs exactly one `SessionSave` IndexedDB write.
+2. Attempts exactly one `SessionSave` IndexedDB write.
 3. Publishes the captured machine state to React once.
 4. Releases the captured outbound messages and acknowledgements in order.
 
 Pre-runtime negotiation uses the reliability owner's explicit flush path with
 the same persist-before-send rule.
 
-This preserves the transport invariant across reloads: the peer only observes a
-message or ack after the local save contains the corresponding
-`messageNumber`/`unackedMessages` or `remoteNumber`/cradle state. A burst of
-events in one drain still causes only one full cradle serialization and one
-IndexedDB transaction instead of one write per message. If the transaction
-fails, the app shows a persistent session-storage warning and leaves the
-messages/acks plus dirty machine/WASM boundary staged; none cross the protocol
-boundary until an explicit later durability retry succeeds. Failure reporting
-does not immediately reschedule the same failed write, so storage failure
-cannot create a retry spin.
+On the normal path this preserves the transport invariant across reloads: the
+peer observes a message or ack only after the local save contains the
+corresponding `messageNumber`/`unackedMessages` or `remoteNumber`/cradle state.
+A burst of events in one drain still causes only one full cradle serialization
+and one IndexedDB transaction instead of one write per message.
+
+If the transaction fails, the app shows a persistent session-storage warning
+and releases the prepared messages/acks anyway. Released and persisted
+generations are tracked separately so a later successful save cannot duplicate
+wire effects. The machine/WASM boundary remains dirty for a later
+activity-driven retry; failure reporting does not immediately reschedule the
+same failed write. This deliberately weakens crash recovery during degraded
+storage rather than failing live play for an internal browser-storage problem.
 
 Development builds log the raw cradle byte count, an estimated total IndexedDB
 record size, the compact historical-unroll count when available, and all three

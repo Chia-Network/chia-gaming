@@ -184,6 +184,29 @@ describe('validateSessionSaveEnvelope', () => {
     expect(decodeSessionSaveEnvelope(terminal).phase).toBe('terminal');
   });
 
+  it('normalizes null WASM funding request optionals to absence', () => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    save.live.fundingOutbox = [
+      {
+        key: 'funding-request',
+        request: {
+          amount: '100',
+          fee: '0',
+          conditions: [],
+          coin_id: null,
+          max_height: null,
+        },
+      },
+    ] as unknown as NonNullable<typeof save.live.fundingOutbox>;
+
+    const decoded = decodeSessionSaveEnvelope(save);
+    expect(decoded.phase).toBe('live');
+    if (decoded.save.phase !== 'live') throw new Error('expected decoded live fixture');
+    expect(decoded.save.live.fundingOutbox?.[0].request.coin_id).toBeUndefined();
+    expect(decoded.save.live.fundingOutbox?.[0].request.max_height).toBeUndefined();
+  });
+
   it('accepts cloud as preferences.blockchainType', () => {
     const decoded = decodeSessionSaveEnvelope(baseSave({ blockchainType: 'cloud' }));
     expect(decoded.phase).toBe('preferences');

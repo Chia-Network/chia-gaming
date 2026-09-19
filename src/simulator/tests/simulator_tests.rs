@@ -20,7 +20,7 @@ use crate::transaction_manager::{ManagedGameSession, TransactionManager};
 /// A scripted [`ManagedGameSession`] for driving a [`TransactionManager`] over real
 /// simulator coin state.  Pre-queued event batches are returned in order from
 /// `session_flush_and_collect`; blocks are accepted and ignored.
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 struct ScriptedGameSession {
     drains: std::collections::VecDeque<Vec<GameSessionEvent>>,
 }
@@ -32,6 +32,18 @@ impl ScriptedGameSession {
 }
 
 impl ManagedGameSession for ScriptedGameSession {
+    fn session_detach_observation_output(&mut self) -> Option<DrainResult> {
+        self.drains.pop_front().map(|events| DrainResult {
+            events: events.into_iter().collect(),
+        })
+    }
+
+    fn session_prepend_observation_output(&mut self, output: Option<DrainResult>) {
+        if let Some(output) = output {
+            self.drains.push_front(output.events.into_iter().collect());
+        }
+    }
+
     fn session_observe(
         &mut self,
         _allocator: &mut AllocEncoder,
