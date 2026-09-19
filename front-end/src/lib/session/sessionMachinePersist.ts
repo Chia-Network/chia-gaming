@@ -21,6 +21,10 @@ export interface SessionPersistDependencies {
   saveTerminal?: typeof saveTerminalSession;
 }
 
+export interface PreparedSessionPersistence {
+  write(): Promise<void>;
+}
+
 /** Assemble at effect execution time from WASM facts and machine authority. */
 export function assembleSessionSave(dependencies: SessionPersistDependencies): {
   live: Extract<SessionCacheUpdate, { scope: 'live' }>;
@@ -94,6 +98,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
         unackedMessages: wasm.unackedMessages,
         disposition: wasm.transportDisposition,
         durabilityWarning: wasm.durabilityWarning,
+        fundingOutbox: wasm.fundingOutbox,
       },
       presentation,
       history: {
@@ -104,22 +109,40 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
   };
 }
 
-export async function persistSessionSnapshot(
+/**
+ * Capture every active-session persistence input before returning. The write
+ * may yield, but it never reads mutable machine, WASM, transport, or save
+ * assembly state again.
+ */
+export function prepareSessionPersistence(
   dependencies: SessionPersistDependencies,
-): Promise<void> {
+): PreparedSessionPersistence | null {
   const assembled = assembleSessionSave(dependencies);
-  if (!assembled) return;
+  if (!assembled) return null;
   if (assembled.terminal) {
-    await (dependencies.saveTerminal ?? saveTerminalSession)({
+    const terminal = structuredClone({
       terminal: {
         iStarted: assembled.terminalIStarted,
         coinsOfInterest: dependencies.controller.getCoinsOfInterest(),
         myAlias: assembled.myAlias ?? null,
         opponentAlias: assembled.opponentAlias ?? null,
       },
-      presentation: assembled.live.presentation,
+      presentation: assembled.presentation,
     });
-  } else {
-    await (dependencies.save ?? saveSession)(assembled.live);
+    const saveTerminal = dependencies.saveTerminal ?? saveTerminalSession;
+    return {
+      write: () => saveTerminal(terminal),
+    };
   }
+  const live = structuredClone(assembled.live);
+  const save = dependencies.save ?? saveSession;
+  return {
+    write: () => save(live),
+  };
+}
+
+export async function persistSessionSnapshot(
+  dependencies: SessionPersistDependencies,
+): Promise<void> {
+  await prepareSessionPersistence(dependencies)?.write();
 }

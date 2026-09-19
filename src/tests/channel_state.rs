@@ -13,11 +13,17 @@ use crate::common::types::{AllocEncoder, Amount, Hash, Puzzle, Sha256tree};
 #[cfg(feature = "sim-tests")]
 pub(crate) mod sim_tests {
     use super::*;
+    use std::rc::Rc;
 
     use clvm_traits::ToClvm;
 
-    use crate::channel_state::types::HistoricalUnrollSpendInfo;
-    use crate::common::types::{Aggsig, CoinCondition, CoinID, GameID};
+    use crate::channel_state::game_handler::GameHandler;
+    use crate::channel_state::game_start_info::GameStartInfo;
+    use crate::channel_state::types::{HistoricalUnrollSpendInfo, ValidationProgramRegistry};
+    use crate::common::types::{
+        aggregate_wallet_fee_bundle, Aggsig, CoinCondition, CoinID, CoinSpend, CoinString, GameID,
+        LocalProposalId, Program, PuzzleHash, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    };
     use crate::test_support::sim_script::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
@@ -38,6 +44,81 @@ pub(crate) mod sim_tests {
         game.finish_handshake(env, 1).expect("finish_handshake(1)");
         game.finish_handshake(env, 0).expect("finish_handshake(0)");
         game
+    }
+
+    fn assert_real_preemption_accepts_fee(env: &mut ChannelEnv<'_>, transaction: Spend) {
+        let protocol_coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([0xa1; 32])),
+            &transaction.puzzle.sha256tree(env.allocator),
+            &Amount::new(200),
+        );
+        let target = protocol_coin.to_coin_id();
+        let protocol = SpendBundle {
+            name: Some("real unroll preemption".to_string()),
+            spends: vec![CoinSpend {
+                coin: protocol_coin,
+                bundle: transaction,
+            }],
+        };
+        let fee_conditions = vec![
+            (
+                51_u8,
+                (PuzzleHash::from_bytes([0xa2; 32]), (Amount::new(90), ())),
+            )
+                .to_clvm(env.allocator)
+                .expect("fee CREATE_COIN"),
+            (52_u8, (Amount::new(10), ()))
+                .to_clvm(env.allocator)
+                .expect("fee RESERVE_FEE"),
+            (64_u8, (target.clone(), ()))
+                .to_clvm(env.allocator)
+                .expect("fee ASSERT_CONCURRENT_SPEND"),
+        ];
+        let conditions = fee_conditions
+            .to_clvm(env.allocator)
+            .expect("fee conditions");
+        let puzzle: Puzzle = conditions
+            .to_quoted_program(env.allocator)
+            .expect("quoted fee puzzle")
+            .into();
+        let fee_bundle = SpendBundle {
+            name: None,
+            spends: vec![CoinSpend {
+                coin: CoinString::from_parts(
+                    &CoinID::new(Hash::from_bytes([0xa3; 32])),
+                    &puzzle.sha256tree(env.allocator),
+                    &Amount::new(100),
+                ),
+                bundle: Spend {
+                    puzzle,
+                    solution: Program::nil().into(),
+                    signature: Aggsig::default(),
+                },
+            }],
+        };
+
+        aggregate_wallet_fee_bundle(
+            protocol.clone(),
+            fee_bundle.clone(),
+            10,
+            &target,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .expect("real unroll preemption accepts canonical fee aggregation");
+
+        let mut invalid = protocol;
+        invalid.spends[0].bundle.signature = Aggsig::default();
+        let error = aggregate_wallet_fee_bundle(
+            invalid,
+            fee_bundle,
+            10,
+            &target,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            1,
+        )
+        .expect_err("invalid preemption signature must fail");
+        assert!(format!("{error:?}").contains("invalid aggregate signature"));
     }
 
     fn setup_split_genesis_handshake(
@@ -74,6 +155,206 @@ pub(crate) mod sim_tests {
             .initialize_genesis_as_receiver(env, &genesis.state_one_signatures)
             .expect("receiver establishes genesis state 1");
         game
+    }
+
+    #[test]
+    fn acceptance_and_settlement_staging_failures_leave_channel_byte_identical() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([16; 32]);
+        let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+        let nil = allocator.allocator().nil();
+        let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("referee puzzle");
+        let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
+        let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("standard puzzle");
+        let mut env = ChannelEnv {
+            allocator: &mut allocator,
+            referee_coin_puzzle: ref_coin_puz,
+            referee_coin_puzzle_hash: ref_coin_ph,
+            unroll_puzzle,
+            standard_puzzle,
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        };
+        let mut party = ChannelHandlerGame::new(
+            &mut rng,
+            &mut env,
+            GameID(42),
+            &CoinID::default(),
+            &[Amount::new(100), Amount::new(100)],
+            (*DEFAULT_UNROLL_TIME_LOCK).clone(),
+        )
+        .expect("channel");
+        let proposal = crate::session_phases::proposal::GameProposal {
+            sender_is_player_a: true,
+            game_type: crate::common::types::GameType::from_hash(Hash::default()),
+            timeout: Timeout::new(15),
+            parameters: crate::session_phases::proposal::ProposalParameters::Null,
+        };
+        let local_id = party
+            .player(0)
+            .ch
+            .create_outgoing_proposal(&proposal)
+            .unwrap();
+        let validator = Rc::new(Program::from_bytes(&[0x01]).expect("quoted validator"));
+        let registry =
+            ValidationProgramRegistry::new(env.allocator, &[validator]).expect("registry");
+        let start = |id, initial_max_move_size| {
+            Rc::new(GameStartInfo {
+                amount: Amount::new(20),
+                game_handler: GameHandler::MyTurnHandler(Program::nil().into()),
+                player_a_contribution: Amount::new(10),
+                player_b_contribution: Amount::new(10),
+                my_contribution_this_game: Amount::new(10),
+                their_contribution_this_game: Amount::new(10),
+                validation_programs: registry.clone(),
+                initial_state: Program::nil().into(),
+                initial_move: vec![],
+                initial_max_move_size,
+                initial_mover_share: Amount::default(),
+                game_id: GameID(id),
+                timeout: Timeout::new(15),
+            })
+        };
+        let starts = [start(0, 32), start(1, usize::MAX)];
+        let before =
+            bencodex::to_vec(&party.player(0).ch).expect("serialize channel before acceptance");
+
+        let result = party
+            .player(0)
+            .ch
+            .accept_proposal_games(&mut env, local_id, &starts, true);
+
+        assert!(result.is_err(), "later invalid member must fail acceptance");
+        let channel = &party.player(0).ch;
+        assert_eq!(
+            bencodex::to_vec(channel).expect("serialize channel after failed acceptance"),
+            before,
+            "failed acceptance changed channel state",
+        );
+        assert!(
+            channel.is_proposal_pending(local_id),
+            "proposal ledger changed"
+        );
+        assert_eq!(
+            channel.next_game_id_for_testing(),
+            GameID(0),
+            "IDs advanced"
+        );
+        assert_eq!(
+            (
+                channel.my_out_of_game_balance(),
+                channel.their_out_of_game_balance(),
+                channel.my_allocated_balance(),
+                channel.their_allocated_balance(),
+            ),
+            (
+                Amount::new(100),
+                Amount::new(100),
+                Amount::default(),
+                Amount::default(),
+            ),
+            "balances changed",
+        );
+        assert!(channel.live_game_ids().is_empty(), "live games changed");
+        assert!(
+            channel.pending_proposal_accept_game_ids().is_empty(),
+            "redo entries changed"
+        );
+
+        let second_id = party
+            .player(0)
+            .ch
+            .create_outgoing_proposal(&proposal)
+            .expect("second proposal");
+        let before_batch = bencodex::to_vec(&party.player(0).ch)
+            .expect("serialize channel before staged accept batch");
+        let mut working = party.player(0).ch.clone();
+        assert!(matches!(
+            working.stage_proposal_acceptance(&mut env, local_id, &[start(0, 32)], true,),
+            Ok(crate::channel_state::ProposalAcceptanceStatus::Accepted)
+        ));
+        assert!(
+            working
+                .stage_proposal_acceptance(&mut env, second_id, &[start(1, usize::MAX)], true,)
+                .is_err(),
+            "second queued acceptance should fail"
+        );
+        assert_eq!(
+            bencodex::to_vec(&party.player(0).ch)
+                .expect("serialize channel after staged accept failure"),
+            before_batch,
+            "an earlier staged acceptance leaked into the live ledger",
+        );
+
+        let mut finalization_working = party.player(0).ch.clone();
+        finalization_working
+            .stage_proposal_acceptance(&mut env, local_id, &[start(0, 32)], true)
+            .expect("stage acceptance before finalization failure");
+        finalization_working.fail_next_cached_unroll_update_for_testing();
+        assert!(
+            finalization_working
+                .update_cached_unroll_state(&mut env)
+                .is_err(),
+            "injected cached-unroll finalization should fail"
+        );
+        assert_eq!(
+            bencodex::to_vec(&party.player(0).ch)
+                .expect("serialize channel after finalization failure"),
+            before_batch,
+            "cached-unroll failure committed staged acceptances",
+        );
+
+        party
+            .player(0)
+            .ch
+            .accept_proposal_games(&mut env, local_id, &[start(0, 32)], true)
+            .expect("establish live game for settlement rollback");
+        party.player(0).ch.set_have_potato_for_testing(true);
+        let before_settlement_batch = bencodex::to_vec(&party.player(0).ch)
+            .expect("serialize channel before settlement batch");
+
+        let mut later_failure_working = party.player(0).ch.clone();
+        later_failure_working
+            .send_accept_settlement_no_finalize(&GameID(0))
+            .expect("stage settlement");
+        assert!(
+            later_failure_working.live_game_ids().is_empty(),
+            "working live game was not removed"
+        );
+        assert_eq!(
+            later_failure_working.pending_settlement_game_ids_for_testing(),
+            vec![GameID(0)],
+            "working settlement was not retained"
+        );
+        assert!(
+            later_failure_working
+                .remove_proposal(LocalProposalId(u64::MAX))
+                .is_err(),
+            "later queued action should fail"
+        );
+        assert_eq!(
+            bencodex::to_vec(&party.player(0).ch)
+                .expect("serialize channel after later action failure"),
+            before_settlement_batch,
+            "later failure leaked pending settlements, live games, proposals, or balances",
+        );
+
+        let mut settlement_finalization_working = party.player(0).ch.clone();
+        settlement_finalization_working
+            .send_accept_settlement_no_finalize(&GameID(0))
+            .expect("stage settlement before finalization");
+        settlement_finalization_working.fail_next_cached_unroll_update_for_testing();
+        assert!(
+            settlement_finalization_working
+                .update_cached_unroll_state(&mut env)
+                .is_err(),
+            "injected settlement finalization should fail"
+        );
+        assert_eq!(
+            bencodex::to_vec(&party.player(0).ch)
+                .expect("serialize channel after settlement finalization failure"),
+            before_settlement_batch,
+            "finalization failure leaked pending settlements, live games, proposals, or balances",
+        );
     }
 
     /// Helper: perform one full round-trip of empty potato exchanges.
@@ -420,6 +701,7 @@ pub(crate) mod sim_tests {
             );
             let info = result.unwrap();
             assert!(!info.timeout, "should be a preemption, not a timeout");
+            assert_real_preemption_accepts_fee(&mut env, info.transaction);
         }
 
         // Case 3: current state → timeout.

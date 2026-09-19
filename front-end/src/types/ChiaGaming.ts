@@ -137,8 +137,6 @@ export interface ProposeGameParams {
   /** First generated member's initial validation puzzle hash (32-byte hex). */
   game_type: ProtocolGameId;
   timeout: bigint;
-  player_a_contribution: bigint;
-  player_b_contribution: bigint;
   sender_is_player_a: boolean;
   parameters: ProposalParameterValue;
 }
@@ -212,6 +210,32 @@ export interface CoinOfInterestEntry {
   game_coin_kind?: 'current' | 'reward';
 }
 
+export interface TransactionSubmission {
+  /** Stable Rust-owned identifier for delivery acknowledgement. */
+  id: string;
+  bundle: SpendBundle;
+  /** Rust-owned request for opaque provider fee material. */
+  fee_request?: { target: string; amount: string } | null;
+}
+
+export interface FinalizedSubmission {
+  protocol_bundle: SpendBundle;
+  bundle: unknown;
+  applied_fee: string;
+  warning?: string | null;
+}
+
+export type WalletSubmitOutcome =
+  | { status: 'acknowledged'; detail?: string }
+  | { status: 'unavailable'; detail: string }
+  | { status: 'rejected'; detail: string };
+
+export type WalletFeeSourceOutcome =
+  | { kind: 'offer'; offer: string; tradeId?: string }
+  | { kind: 'bundle'; bundle: unknown }
+  | { kind: 'failure'; reason: string }
+  | { kind: 'unavailable'; reason: string };
+
 export interface WasmConnection {
   // System
   init: () => void;
@@ -231,19 +255,18 @@ export interface WasmConnection {
   report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult;
   report_height: (cid: number, height: bigint) => WasmResult;
   snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
-  drain_submissions: (cid: number) => SpendBundle[];
-  acknowledge_submission: (cid: number, spend: string, finalizedBundleJson: string) => void;
-  submission_is_finalized: (cid: number, spend: string) => boolean;
+  drain_submissions: (cid: number) => TransactionSubmission[];
+  configure_submission_fee: (cid: number, amount: string) => void;
+  finalize_submission: (
+    cid: number,
+    submission_id: string,
+    fee_source_json?: string,
+  ) => FinalizedSubmission;
+  acknowledge_submission: (cid: number, submission_id: string) => void;
+  reject_submission: (cid: number, submission_id: string) => void;
   resubmit_submitted: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
-  aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
-  fee_payment_puzzle_hash_for_coin: (protocol_coin_id: string) => string;
-  complete_fee_offer_to_coinset_org: (
-    offer: string,
-    fee: string,
-    protocol_coin_id: string,
-  ) => unknown;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
     puzzle_hash: string,
@@ -252,9 +275,8 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  propose_games: (cid: number, games: ProposeGameParams[]) => WasmResult;
+  propose: (cid: number, proposal: ProposeGameParams) => WasmResult;
   accept_proposal: (cid: number, game_id: string) => WasmResult;
-  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
   cancel_proposal: (cid: number, game_id: string) => WasmResult;
   make_move_with_entropy_for_testing: (
     cid: number,
@@ -298,16 +320,12 @@ export class ChiaGame {
     this.session = sessionId;
   }
 
-  propose_games(games: ProposeGameParams[]): WasmResult {
-    return this.wasm.propose_games(this.session, games);
+  propose(proposal: ProposeGameParams): WasmResult {
+    return this.wasm.propose(this.session, proposal);
   }
 
   accept_proposal(game_id: string): WasmResult {
     return this.wasm.accept_proposal(this.session, game_id);
-  }
-
-  accept_proposal_and_move(game_id: string, readable: Uint8Array): WasmResult {
-    return this.wasm.accept_proposal_and_move(this.session, game_id, readable);
   }
 
   cancel_proposal(game_id: string): WasmResult {
@@ -418,19 +436,25 @@ export class ChiaGame {
     return this.wasm.snapshot_watched_coins(this.session);
   }
 
-  /** Spend bundles the manager captured and the host should submit. */
-  drain_submissions(): SpendBundle[] {
+  /** Typed submissions the manager captured and the host should submit. */
+  drain_submissions(): TransactionSubmission[] {
     return this.wasm.drain_submissions(this.session);
   }
 
-  /** Record that the wallet accepted a drained submission. */
-  acknowledge_submission(spend: string, finalizedBundleJson: string): void {
-    this.wasm.acknowledge_submission(this.session, spend, finalizedBundleJson);
+  configure_submission_fee(amount: string): void {
+    this.wasm.configure_submission_fee(this.session, amount);
   }
 
-  /** Whether this bundle must be replayed without another wallet fee spend. */
-  submission_is_finalized(spend: string): boolean {
-    return this.wasm.submission_is_finalized(this.session, spend);
+  finalize_submission(submissionId: string, feeSourceJson?: string): FinalizedSubmission {
+    return this.wasm.finalize_submission(this.session, submissionId, feeSourceJson);
+  }
+
+  acknowledge_submission(submissionId: string): void {
+    this.wasm.acknowledge_submission(this.session, submissionId);
+  }
+
+  reject_submission(submissionId: string): void {
+    this.wasm.reject_submission(this.session, submissionId);
   }
 
   /** Re-queue all retained submissions for resubmission (call after reload). */
@@ -513,7 +537,7 @@ export interface ConnectionSetup {
 
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
-  fundingMode?: 'offer-settlement' | 'direct';
+  fundingMode?: 'offer-settlement';
   getRegistrationScopeKey?(): string | undefined;
   spend(
     blob: string,
@@ -521,17 +545,14 @@ export interface InternalBlockchainInterface {
     changePuzzleHash: string,
     source?: string,
     fee?: bigint,
-  ): Promise<string>;
-  // Build a signed, validate-only XCH offer whose settlement output is exactly
-  // the fee and whose maker spend reserves that fee and asserts concurrent
-  // spends of the protocol coin and predicted nil burn coin. The host completes
-  // the offer output into that burn chain before aggregation. Undefined on
-  // backends that do not support fees.
-  createFeeOffer?(
+  ): Promise<WalletSubmitOutcome>;
+  // Build the wallet half of a fee-bearing aggregate spend, bound to the known
+  // protocol coin. Offer-producing backends may include the persisted trade ID
+  // so the host can release the reservation when Rust rejects it.
+  createFeeSpend?(
     fee: bigint,
     concurrentSpendCoinId: string,
-    paymentPuzzleHash: string,
-  ): Promise<string | null>;
+  ): Promise<WalletFeeSourceOutcome | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

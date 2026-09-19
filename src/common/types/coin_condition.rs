@@ -4,9 +4,10 @@ use clvmr::{run_program, ChiaDialect};
 use crate::utils::proper_list;
 
 use crate::common::constants::{
-    AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, ASSERT_COIN_ANNOUNCEMENT_ATOM,
-    ASSERT_CONCURRENT_SPEND_ATOM, ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ANNOUNCEMENT_ATOM,
-    CREATE_COIN_ATOM, RECEIVE_MESSAGE_ATOM, RESERVE_FEE_ATOM, SEND_MESSAGE_ATOM,
+    AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, ASSERT_BEFORE_HEIGHT_ABSOLUTE_ATOM,
+    ASSERT_COIN_ANNOUNCEMENT_ATOM, ASSERT_CONCURRENT_SPEND_ATOM, ASSERT_HEIGHT_RELATIVE_ATOM,
+    CREATE_COIN_ANNOUNCEMENT_ATOM, CREATE_COIN_ATOM, RECEIVE_MESSAGE_ATOM, RESERVE_FEE_ATOM,
+    SEND_MESSAGE_ATOM,
 };
 
 use crate::common::types::{
@@ -30,6 +31,7 @@ pub enum CoinCondition {
     ReserveFee(Amount),
     AssertConcurrentSpend(CoinID),
     AssertHeightRelative(u64),
+    AssertBeforeHeightAbsolute(u64),
     SendMessage(u8, Vec<u8>, Vec<Vec<u8>>),
     ReceiveMessage(u8, Vec<u8>, Vec<Vec<u8>>),
 }
@@ -128,6 +130,12 @@ fn parse_condition(
                 Error::StrErr("ASSERT_HEIGHT_RELATIVE value was not a u64 atom".to_string())
             })?;
             return Ok(Some(CoinCondition::AssertHeightRelative(val)));
+        }
+        if *op == ASSERT_BEFORE_HEIGHT_ABSOLUTE_ATOM {
+            let val = u64_from_atom(&arg).ok_or_else(|| {
+                Error::StrErr("ASSERT_BEFORE_HEIGHT_ABSOLUTE value was not a u64 atom".to_string())
+            })?;
+            return Ok(Some(CoinCondition::AssertBeforeHeightAbsolute(val)));
         }
         if *op == CREATE_COIN_ANNOUNCEMENT_ATOM {
             return Ok(Some(CoinCondition::CreateCoinAnnouncement(arg)));

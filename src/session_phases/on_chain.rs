@@ -12,8 +12,8 @@ use crate::channel_state::types::{
 };
 use crate::channel_state::ChannelState;
 use crate::common::types::{
-    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program, PuzzleHash, Spend,
-    SpendBundle, Timeout,
+    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, LocalProposalId, Program,
+    PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::referee::types::{
@@ -70,8 +70,6 @@ pub struct OnChainPhase {
     resolved_clean: bool,
     terminal_reward_coin: Option<CoinString>,
     #[serde(default)]
-    current_game_coins: Vec<(GameID, CoinString)>,
-    #[serde(default)]
     game_payout_coins: Vec<(GameID, CoinString)>,
     advisory: Option<String>,
 }
@@ -114,14 +112,17 @@ fn on_chain_move_submission_effects(
 ) -> Vec<Effect> {
     vec![
         Effect::SpendTransaction(
-            SpendBundle {
-                name: Some("on chain move".to_string()),
-                spends: vec![CoinSpend {
-                    coin: current_coin.clone(),
-                    bundle: transaction,
-                }],
-            },
-            None,
+            crate::session_phases::effects::TransactionSubmission::attach_to(
+                SpendBundle {
+                    name: Some("on chain move".to_string()),
+                    spends: vec![CoinSpend {
+                        coin: current_coin.clone(),
+                        bundle: transaction,
+                    }],
+                },
+                None,
+                current_coin,
+            ),
         ),
         Effect::Notify(GameNotification::LocalActionApplied {
             id: game_id,
@@ -140,7 +141,7 @@ fn on_chain_move_submission_effects(
 
 fn ordered_coins_of_interest(
     terminal_reward_coin: Option<&CoinString>,
-    current_game_coins: &[(GameID, CoinString)],
+    game_map: &HashMap<CoinString, OnChainGameState>,
     game_payout_coins: &[(GameID, CoinString)],
 ) -> Vec<(CoinOfInterest, CoinString)> {
     let mut coins = Vec::new();
@@ -150,10 +151,15 @@ fn ordered_coins_of_interest(
     }) {
         coins.push((CoinOfInterest::UnrollChange, reward.clone()));
     }
+    let mut current_game_coins: Vec<_> = game_map
+        .iter()
+        .map(|(coin, state)| (state.game_id, coin.clone()))
+        .collect();
+    current_game_coins.sort_by_key(|(game_id, _)| game_id.0);
     coins.extend(
         current_game_coins
-            .iter()
-            .map(|(id, coin)| (CoinOfInterest::CurrentGame(*id), coin.clone())),
+            .into_iter()
+            .map(|(id, coin)| (CoinOfInterest::CurrentGame(id), coin)),
     );
     coins.extend(
         game_payout_coins
@@ -167,14 +173,31 @@ fn ordered_coins_of_interest(
     coins
 }
 
+fn cleanup_terminal_game(
+    game_map: &mut HashMap<CoinString, OnChainGameState>,
+    game_payout_coins: &mut Vec<(GameID, CoinString)>,
+    game_id: &GameID,
+    notification: &GameNotification,
+) {
+    game_map.retain(|_, state| state.game_id != *game_id);
+    if let GameNotification::GameSettled {
+        id,
+        coin_id: Some(coin),
+        ..
+    } = notification
+    {
+        if coin
+            .amount()
+            .is_some_and(|amount| amount > Amount::default())
+        {
+            game_payout_coins.retain(|(known_id, _)| known_id != id);
+            game_payout_coins.push((*id, coin.clone()));
+        }
+    }
+}
+
 impl OnChainPhase {
     pub fn new(args: OnChainPhaseArgs) -> Self {
-        let mut current_game_coins: Vec<_> = args
-            .game_map
-            .iter()
-            .map(|(coin, state)| (state.game_id, coin.clone()))
-            .collect();
-        current_game_coins.sort_by_key(|(game_id, _)| game_id.0);
         OnChainPhase {
             have_potato: args.have_potato,
             channel_timeout: args.channel_timeout,
@@ -196,7 +219,6 @@ impl OnChainPhase {
             was_stale: args.was_stale,
             resolved_clean: args.resolved_clean,
             terminal_reward_coin: args.terminal_reward_coin,
-            current_game_coins,
             game_payout_coins: args.game_payout_coins,
             advisory: None,
         }
@@ -234,7 +256,6 @@ impl OnChainPhase {
             was_stale,
             resolved_clean,
             terminal_reward_coin,
-            current_game_coins: Vec::new(),
             game_payout_coins: Vec::new(),
             advisory,
         }
@@ -244,35 +265,14 @@ impl OnChainPhase {
         false
     }
 
-    fn remember_current_game_coin(&mut self, game_id: GameID, coin: CoinString) {
-        self.current_game_coins
-            .retain(|(known_id, _)| *known_id != game_id);
-        self.current_game_coins.push((game_id, coin));
-    }
-
-    fn try_emit_terminal(
-        &mut self,
-        game_id: &GameID,
-        notification: GameNotification,
-    ) -> Option<Effect> {
-        self.current_game_coins
-            .retain(|(known_id, _)| known_id != game_id);
-        if let GameNotification::GameSettled {
-            id,
-            coin_id: Some(coin),
-            ..
-        } = &notification
-        {
-            if coin
-                .amount()
-                .is_some_and(|amount| amount > Amount::default())
-            {
-                self.game_payout_coins
-                    .retain(|(known_id, _)| known_id != id);
-                self.game_payout_coins.push((*id, coin.clone()));
-            }
-        }
-        Some(Effect::Notify(notification))
+    fn emit_terminal(&mut self, game_id: &GameID, notification: GameNotification) -> Effect {
+        cleanup_terminal_game(
+            &mut self.game_map,
+            &mut self.game_payout_coins,
+            game_id,
+            &notification,
+        );
+        Effect::Notify(notification)
     }
 
     pub fn get_reward_puzzle_hash(&self) -> PuzzleHash {
@@ -551,16 +551,15 @@ impl OnChainPhase {
                 }),
             }));
         }
-        // No timeout to claim and no further action on this game: drop it from
-        // tracking so a later spend of the terminal coin is ignored gracefully
-        // rather than presenting a phantom turn.
-        self.game_map.retain(|_, def| def.game_id != *game_id);
-        effects.push(Effect::Notify(GameNotification::game_settled(
-            *game_id,
-            SettlementOutcome::Lost,
-            Amount::default(),
-            None,
-        )));
+        effects.push(self.emit_terminal(
+            game_id,
+            GameNotification::game_settled(
+                *game_id,
+                SettlementOutcome::Lost,
+                Amount::default(),
+                None,
+            ),
+        ));
     }
 
     /// Build the eager timeout claim for `coin` in game `game_id`, without
@@ -721,10 +720,14 @@ impl OnChainPhase {
             let semantic =
                 Self::timeout_claim_semantic(game_id, our_turn, game_finished, claim.is_some());
             effects.push(Effect::RegisterCoin {
-                coin,
+                coin: coin.clone(),
                 timeout: gt,
                 name: Some("game coin"),
-                spend: claim,
+                spend: claim.map(|bundle| {
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        bundle, None, &coin,
+                    )
+                }),
                 semantic,
             });
         }
@@ -800,8 +803,6 @@ impl OnChainPhase {
                             ..old_def
                         },
                     );
-                    self.remember_current_game_coin(pending.game_id, new_coin.clone());
-
                     effects.push(Effect::Notify(GameNotification::GameStatus {
                         id: pending.game_id,
                         status: Self::on_chain_turn_status(false, game_over),
@@ -826,10 +827,14 @@ impl OnChainPhase {
                         claim.is_some(),
                     );
                     effects.push(Effect::RegisterCoin {
-                        coin: new_coin,
+                        coin: new_coin.clone(),
                         timeout: gt,
                         name: Some("our on-chain move confirmed"),
-                        spend: claim,
+                        spend: claim.map(|bundle| {
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                bundle, None, &new_coin,
+                            )
+                        }),
                         semantic,
                     });
                     effects.extend(self.process_queued_action(env)?);
@@ -847,12 +852,10 @@ impl OnChainPhase {
                     } else {
                         SettlementOutcome::AttemptToMoveFailed
                     };
-                    if let Some(eff) = self.try_emit_terminal(
+                    effects.push(self.emit_terminal(
                         &game_id,
                         GameNotification::game_settled(game_id, outcome, Amount::default(), None),
-                    ) {
-                        effects.push(eff);
-                    }
+                    ));
                     effects.extend(self.process_queued_action(env)?);
                     return Ok(effects);
                 }
@@ -955,9 +958,7 @@ impl OnChainPhase {
                     other_params: None,
                 }
             };
-            if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notification) {
-                effects.push(eff);
-            }
+            effects.push(self.emit_terminal(&old_definition.game_id, notification));
             effects.extend(self.process_queued_action(env)?);
             return Ok(effects);
         }
@@ -987,7 +988,7 @@ impl OnChainPhase {
                     } else {
                         SettlementOutcome::WeAccepted
                     };
-                    if let Some(eff) = self.try_emit_terminal(
+                    effects.push(self.emit_terminal(
                         &old_definition.game_id,
                         GameNotification::game_settled(
                             old_definition.game_id,
@@ -995,9 +996,7 @@ impl OnChainPhase {
                             amt,
                             reward_coin,
                         ),
-                    ) {
-                        effects.push(eff);
-                    }
+                    ));
                 }
             } else {
                 let is_timeout = conditions.iter().any(
@@ -1011,7 +1010,7 @@ impl OnChainPhase {
                         } else {
                             SettlementOutcome::WeAccepted
                         };
-                        if let Some(eff) = self.try_emit_terminal(
+                        effects.push(self.emit_terminal(
                             &old_definition.game_id,
                             GameNotification::game_settled(
                                 old_definition.game_id,
@@ -1019,9 +1018,7 @@ impl OnChainPhase {
                                 Amount::default(),
                                 None,
                             ),
-                        ) {
-                            effects.push(eff);
-                        }
+                        ));
                     }
                 } else {
                     let created = conditions.iter().find_map(|c| match c {
@@ -1031,7 +1028,6 @@ impl OnChainPhase {
                     if let Some((ph, amt)) = created {
                         let new_coin = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
                         let gt = old_definition.game_timeout.clone();
-                        let game_id = old_definition.game_id;
                         self.game_map.insert(
                             new_coin.clone(),
                             OnChainGameState {
@@ -1041,7 +1037,6 @@ impl OnChainPhase {
                                 ..old_definition
                             },
                         );
-                        self.remember_current_game_coin(game_id, new_coin.clone());
                         effects.push(Effect::Notify(GameNotification::GameStatus {
                             id: old_definition.game_id,
                             status: Self::on_chain_turn_status(
@@ -1062,10 +1057,14 @@ impl OnChainPhase {
                             claim.is_some(),
                         );
                         effects.push(Effect::RegisterCoin {
-                            coin: new_coin,
+                            coin: new_coin.clone(),
                             timeout: gt,
                             name: Some("timeout-claim-armed game coin advanced by redo"),
-                            spend: claim,
+                            spend: claim.map(|bundle| {
+                                crate::session_phases::effects::TransactionSubmission::attach_to(
+                                    bundle, None, &new_coin,
+                                )
+                            }),
                             semantic,
                         });
                     }
@@ -1098,7 +1097,7 @@ impl OnChainPhase {
                 "[game-error] {} {reason}",
                 format_coin(coin_id),
             )));
-            if let Some(eff) = self.try_emit_terminal(
+            effects.push(self.emit_terminal(
                 &old_definition.game_id,
                 GameNotification::GameStatus {
                     id: old_definition.game_id,
@@ -1108,9 +1107,7 @@ impl OnChainPhase {
                     reason: Some(reason),
                     other_params: None,
                 },
-            ) {
-                effects.push(eff);
-            }
+            ));
             effects.extend(self.process_queued_action(env)?);
             return Ok(effects);
         };
@@ -1128,7 +1125,7 @@ impl OnChainPhase {
                     "[game-error] {} {reason}",
                     format_coin(coin_id),
                 )));
-                if let Some(eff) = self.try_emit_terminal(
+                effects.push(self.emit_terminal(
                     &old_definition.game_id,
                     GameNotification::GameStatus {
                         id: old_definition.game_id,
@@ -1138,9 +1135,7 @@ impl OnChainPhase {
                         reason: Some(reason),
                         other_params: None,
                     },
-                ) {
-                    effects.push(eff);
-                }
+                ));
                 effects.extend(self.process_queued_action(env)?);
                 return Ok(effects);
             }
@@ -1178,8 +1173,6 @@ impl OnChainPhase {
                         ..old_definition
                     },
                 );
-                self.remember_current_game_coin(game_id, new_coin_id.clone());
-
                 let auto_settle = self.should_auto_settle(&game_id, is_my_turn)?;
                 if auto_settle {
                     if let Some(state) = self.game_map.get_mut(&new_coin_id) {
@@ -1230,7 +1223,13 @@ impl OnChainPhase {
                         } else {
                             "expected spend - their turn"
                         }),
-                        spend: claim,
+                        spend: claim.map(|bundle| {
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                bundle,
+                                None,
+                                &new_coin_id,
+                            )
+                        }),
                         semantic,
                     });
                     if auto_settle {
@@ -1292,9 +1291,7 @@ impl OnChainPhase {
                             my_reward_coin_string.clone(),
                         )
                     };
-                    if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
-                        effects.push(eff);
-                    }
+                    effects.push(self.emit_terminal(&old_definition.game_id, notif));
                 }
                 unblock_queue = true;
             }
@@ -1335,7 +1332,6 @@ impl OnChainPhase {
                         ..old_definition
                     },
                 );
-                self.remember_current_game_coin(game_id, new_coin_string.clone());
                 let auto_settle = self.should_auto_settle(&game_id, true)?;
                 if auto_settle {
                     if let Some(state) = self.game_map.get_mut(&new_coin_string) {
@@ -1397,7 +1393,13 @@ impl OnChainPhase {
                         coin: new_coin_string.clone(),
                         timeout: gt,
                         name: Some("coin gives my turn"),
-                        spend: claim,
+                        spend: claim.map(|bundle| {
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                bundle,
+                                None,
+                                &new_coin_string,
+                            )
+                        }),
                         semantic,
                     });
                     if auto_settle {
@@ -1426,15 +1428,17 @@ impl OnChainPhase {
                             .map(|(_, _, amt)| amt.clone())
                             .unwrap_or_default();
                         effects.push(Effect::SpendTransaction(
-                            SpendBundle {
-                                name: Some("slash move".to_string()),
-                                spends: vec![*transaction.clone()],
-                            },
-                            None,
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                SpendBundle {
+                                    name: Some("slash move".to_string()),
+                                    spends: vec![*transaction.clone()],
+                                },
+                                None,
+                                &transaction.coin,
+                            ),
                         ));
                         let slash_coin = transaction.coin.clone();
                         let gt = old_definition.game_timeout.clone();
-                        let game_id = old_definition.game_id;
                         effects.push(Effect::Notify(GameNotification::GameStatus {
                             id: old_definition.game_id,
                             status: GameStatusKind::IllegalMoveDetected,
@@ -1460,7 +1464,6 @@ impl OnChainPhase {
                                 ..old_definition
                             },
                         );
-                        self.remember_current_game_coin(game_id, slash_coin.clone());
                         effects.push(Effect::RegisterCoin {
                             coin: slash_coin,
                             timeout: gt,
@@ -1486,7 +1489,7 @@ impl OnChainPhase {
                                 submitting_timeout_claim: None,
                             }),
                         }));
-                        if let Some(eff) = self.try_emit_terminal(
+                        effects.push(self.emit_terminal(
                             &old_definition.game_id,
                             GameNotification::game_settled(
                                 old_definition.game_id,
@@ -1494,9 +1497,7 @@ impl OnChainPhase {
                                 Amount::default(),
                                 None,
                             ),
-                        ) {
-                            effects.push(eff);
-                        }
+                        ));
                     }
                 }
             }
@@ -1526,9 +1527,7 @@ impl OnChainPhase {
                         amt,
                         reward_coin,
                     );
-                    if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
-                        effects.push(eff);
-                    }
+                    effects.push(self.emit_terminal(&old_definition.game_id, notif));
                 }
                 unblock_queue = true;
             }
@@ -1598,18 +1597,20 @@ impl OnChainPhase {
 
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
-            self.game_map.retain(|_, def| def.game_id != game_id);
             return Ok(vec![
                 Effect::Notify(GameNotification::LocalActionApplied {
                     id: game_id,
                     action,
                 }),
-                Effect::Notify(GameNotification::game_settled(
-                    game_id,
-                    SettlementOutcome::ForfeitedSkippedReveal,
-                    Amount::default(),
-                    None,
-                )),
+                self.emit_terminal(
+                    &game_id,
+                    GameNotification::game_settled(
+                        game_id,
+                        SettlementOutcome::ForfeitedSkippedReveal,
+                        Amount::default(),
+                        None,
+                    ),
+                ),
             ]);
         }
 
@@ -1744,18 +1745,20 @@ impl OnChainPhase {
                 if my_turn == Some(true) {
                     let our_share = self.get_game_our_current_share(&game_id);
                     if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
-                        self.game_map.remove(&current_coin);
                         return Ok(vec![
                             Effect::Notify(GameNotification::LocalActionApplied {
                                 id: game_id,
                                 action: LocalActionKind::AcceptSettlement,
                             }),
-                            Effect::Notify(GameNotification::game_settled(
-                                game_id,
-                                SettlementOutcome::ForfeitedWeAccepted,
-                                Amount::default(),
-                                None,
-                            )),
+                            self.emit_terminal(
+                                &game_id,
+                                GameNotification::game_settled(
+                                    game_id,
+                                    SettlementOutcome::ForfeitedWeAccepted,
+                                    Amount::default(),
+                                    None,
+                                ),
+                            ),
                         ]);
                     }
                 }
@@ -1776,7 +1779,13 @@ impl OnChainPhase {
                         coin: current_coin.clone(),
                         timeout: gt,
                         name: Some("timeout claim"),
-                        spend: Some(claim),
+                        spend: Some(
+                            crate::session_phases::effects::TransactionSubmission::attach_to(
+                                claim,
+                                None,
+                                &current_coin,
+                            ),
+                        ),
                         semantic: Some(TimeoutClaimSemantic::GameFinishTimeout { id: game_id }),
                     });
                 }
@@ -1801,10 +1810,10 @@ impl OnChainPhase {
                 Ok(effects)
             }
             GameAction::CleanShutdown => Ok(Vec::new()),
-            GameAction::QueuedProposalGroup(_, _)
-            | GameAction::QueuedAcceptProposalGroup(_)
-            | GameAction::QueuedCancelProposalGroup(_)
-            | GameAction::QueuedCancelProposalGroupSilently(_) => Ok(vec![]),
+            GameAction::QueuedProposal(_)
+            | GameAction::QueuedAcceptProposal(_)
+            | GameAction::QueuedCancelProposal(_)
+            | GameAction::QueuedCancelProposalSilently(_) => Ok(vec![]),
             #[cfg(test)]
             GameAction::ForcedSelfAccept(_) => Ok(vec![]),
         }
@@ -2022,7 +2031,7 @@ impl PeerLifecyclePhase for OnChainPhase {
     fn self_accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(
             self.phase_name(),
@@ -2073,24 +2082,24 @@ impl PeerLifecyclePhase for OnChainPhase {
             "provide_coin_spend_bundle",
         ))
     }
-    fn propose_games(
+    fn propose(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        Err(phase_operation_error(self.phase_name(), "propose_games"))
+        _proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
+        Err(phase_operation_error(self.phase_name(), "propose"))
     }
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "accept_proposal"))
     }
     fn cancel_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "cancel_proposal"))
     }
@@ -2134,13 +2143,9 @@ impl PeerLifecyclePhase for OnChainPhase {
     }
 
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        // Only surface the coin for a game that's still live: once the game is
-        // finished (settled, slashed, or forfeited) its coin is no longer of
-        // interest. The forfeit path also prunes game_map, but the explicit
-        // game_finished check makes the disappearance reliable regardless.
         ordered_coins_of_interest(
             self.terminal_reward_coin.as_ref(),
-            &self.current_game_coins,
+            &self.game_map,
             &self.game_payout_coins,
         )
     }
@@ -2217,9 +2222,26 @@ impl PeerLifecyclePhase for OnChainPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel_state::types::TimeoutClaimState;
+
+    fn game_state(game_id: GameID) -> OnChainGameState {
+        OnChainGameState {
+            game_id,
+            puzzle_hash: PuzzleHash::default(),
+            our_turn: false,
+            state_number: 0,
+            timeout_claim: TimeoutClaimState::Waiting,
+            pending_slash_amount: None,
+            cheating_move_mover_share: None,
+            timeout_claim_armed: false,
+            notification_sent: false,
+            game_timeout: Timeout::new(1),
+            game_finished: false,
+        }
+    }
 
     #[test]
-    fn unroll_outputs_are_listed_change_then_hands_in_creation_order() {
+    fn interests_are_ordered_from_authoritative_game_map_then_payouts() {
         let coin = |amount| {
             CoinString::from_parts(
                 &CoinString::default().to_coin_id(),
@@ -2227,11 +2249,10 @@ mod tests {
                 &Amount::new(amount),
             )
         };
-        let coins = ordered_coins_of_interest(
-            Some(&coin(3)),
-            &[(GameID(1), coin(1)), (GameID(2), coin(2))],
-            &[],
-        );
+        let mut game_map = HashMap::new();
+        game_map.insert(coin(2), game_state(GameID(2)));
+        game_map.insert(coin(1), game_state(GameID(1)));
+        let coins = ordered_coins_of_interest(Some(&coin(3)), &game_map, &[(GameID(4), coin(4))]);
 
         assert_eq!(
             coins.into_iter().map(|(kind, _)| kind).collect::<Vec<_>>(),
@@ -2239,8 +2260,30 @@ mod tests {
                 CoinOfInterest::UnrollChange,
                 CoinOfInterest::CurrentGame(GameID(1)),
                 CoinOfInterest::CurrentGame(GameID(2)),
+                CoinOfInterest::GameReward(GameID(4)),
             ]
         );
+    }
+
+    #[test]
+    fn zero_share_terminal_outcomes_remove_current_coin_without_payout_interest() {
+        for outcome in [
+            SettlementOutcome::Lost,
+            SettlementOutcome::ForfeitedSkippedReveal,
+            SettlementOutcome::ForfeitedWeAccepted,
+        ] {
+            let current_coin = CoinString::default();
+            let mut game_map = HashMap::from([(current_coin, game_state(GameID(7)))]);
+            let mut payouts = Vec::new();
+            let notification =
+                GameNotification::game_settled(GameID(7), outcome, Amount::default(), None);
+
+            cleanup_terminal_game(&mut game_map, &mut payouts, &GameID(7), &notification);
+
+            assert!(game_map.is_empty());
+            assert!(payouts.is_empty());
+            assert!(ordered_coins_of_interest(None, &game_map, &payouts).is_empty());
+        }
     }
 
     #[test]
@@ -2254,7 +2297,7 @@ mod tests {
         assert!(matches!(
             effects.as_slice(),
             [
-                Effect::SpendTransaction(_, _),
+                Effect::SpendTransaction(_),
                 Effect::Notify(GameNotification::LocalActionApplied {
                     id: GameID(7),
                     action: LocalActionKind::MakeMove,

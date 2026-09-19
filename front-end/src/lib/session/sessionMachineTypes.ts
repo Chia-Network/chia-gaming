@@ -5,8 +5,8 @@ import type {
   GameTerminalModel,
   HandProposal,
   LocalActionKind,
-  ProposalGroupDisposition,
-  ProposalGroupModel,
+  PendingProposalModel,
+  PendingProposalLifecycle,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
@@ -48,19 +48,12 @@ export type SessionControllerCommand =
   | 'clean-shutdown'
   | 'go-on-chain';
 
-export type ProposalCommandContext =
-  | 'accept-review'
-  | 'choose-same-terms'
-  | 'reject-current-proposal'
-  | 'reject-review';
-
 export type SessionMachineEffect =
-  | { type: 'controller-accept-proposal'; id: string; context?: ProposalCommandContext }
-  | { type: 'controller-cancel-proposal'; id: string; context?: ProposalCommandContext }
+  | { type: 'controller-accept-proposal'; id: string }
+  | { type: 'controller-cancel-proposal'; id: string }
   | { type: 'controller-propose-game'; handProposal: HandProposal }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
-  | { type: 'persist-session' }
   | {
       type: 'request-coin-enrichment';
       target: 'channel' | 'game' | 'settlement';
@@ -96,12 +89,8 @@ export type SessionMachineEvent =
   | { type: 'dismiss-channel' }
   | { type: 'dismiss-game-notification' }
   | { type: 'set-between-hand-mode'; mode: BetweenHandModeModel }
-  | { type: 'upsert-proposal-group'; group: ProposalGroupModel }
-  | {
-      type: 'set-proposal-disposition';
-      primaryId: string;
-      disposition: ProposalGroupDisposition;
-    }
+  | { type: 'upsert-pending-proposal'; proposal: PendingProposalModel }
+  | { type: 'set-proposal-lifecycle'; id: string; lifecycle: PendingProposalLifecycle }
   | { type: 'set-rejected-terms'; handProposal: HandProposal | null }
   | { type: 'set-last-terms'; handProposal: HandProposal }
   | { type: 'set-pending-retry-terms'; handProposal: HandProposal | null }
@@ -114,11 +103,13 @@ export type SessionMachineEvent =
   | { type: 'set-first-game-accepted'; accepted: boolean }
   | {
       type: 'notification-accepted-group';
+      proposalId: string;
       members: readonly {
         id: string;
         playerAContribution: bigint;
         playerBContribution: bigint;
         ourTurn: boolean;
+        readableParameters: Uint8Array;
       }[];
       handState?: PersistedGameState;
     }
@@ -138,11 +129,6 @@ export type SessionMachineEvent =
       terminal: GameTerminalModel;
       handState?: PersistedGameState;
     }
-  | {
-      type: 'notification-insufficient-balance';
-      id: string;
-      notification: QueuedNotificationModel;
-    }
   | { type: 'notification-abandoned' }
   | {
       type: 'hand-state-changed';
@@ -161,12 +147,11 @@ export type SessionMachineEvent =
   | { type: 'request-accept-proposal'; id: string }
   | { type: 'request-cancel-proposal'; id: string }
   | { type: 'request-propose-game'; handProposal: HandProposal }
-  | { type: 'proposal-sent'; ids: string[]; handProposal: HandProposal }
+  | { type: 'proposal-sent'; id: string; handProposal: HandProposal }
   | {
       type: 'proposal-command-succeeded';
       command: 'accept-proposal' | 'cancel-proposal';
       id: string;
-      context?: ProposalCommandContext;
     }
   | { type: 'clean-shutdown-command-succeeded' }
   | { type: 'controller-command-failed'; command: SessionControllerCommand; message: string }
@@ -174,7 +159,7 @@ export type SessionMachineEvent =
   | { type: 'reject-current-proposal' }
   | { type: 'open-compose' }
   | { type: 'submit-compose'; handProposal: HandProposal }
-  | { type: 'accept-review'; primaryId: string }
+  | { type: 'accept-review'; id: string }
   | { type: 'reject-review' }
   | { type: 'start-clean-shutdown' }
   | { type: 'go-on-chain' }
@@ -197,4 +182,8 @@ export type SessionMachineEvent =
 export interface SessionMachineTransition {
   state: SessionMachineState;
   effects: SessionMachineEffect[];
+}
+
+export interface ClassifiedSessionMachineTransition extends SessionMachineTransition {
+  durability: 'durable' | 'projection-only';
 }

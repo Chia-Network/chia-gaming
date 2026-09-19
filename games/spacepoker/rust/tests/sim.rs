@@ -1,13 +1,15 @@
 use std::rc::Rc;
 
 use crate::channel_state::types::ReadableMove;
-use crate::common::types::GameID;
-use crate::common::types::{AllocEncoder, Program};
+use crate::common::types::{AllocEncoder, GameID, Program};
 use crate::game_session::GameSession;
-use crate::test_support::sim_script::SimScriptAction;
+use crate::test_support::sim_script::{ScriptGameRef, ScriptProposalRef, SimScriptAction};
 use crate::transaction_manager::TransactionManager;
 
-pub fn prefix_test_moves(_allocator: &mut AllocEncoder, game_id: GameID) -> Vec<SimScriptAction> {
+pub fn prefix_test_moves(
+    _allocator: &mut AllocEncoder,
+    game_id: ScriptGameRef,
+) -> Vec<SimScriptAction> {
     let nil_move = Program::from_hex("80").expect("should build nil move");
     let zero_raise = Program::from_hex("80").expect("should build zero raise");
 
@@ -104,9 +106,12 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.extend(prefix_test_moves(
+                &mut allocator,
+                ScriptGameRef::accepted(1, 0),
+            ));
             let num_moves = moves.len();
             let result = run_spacepoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
@@ -130,16 +135,19 @@ mod sim_tests {
                 let mut allocator = AllocEncoder::new();
                 let mut moves = vec![
                     SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                    SimScriptAction::AcceptProposal(1, GameID(1)),
+                    SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 ];
                 moves.extend(
-                    prefix_test_moves(&mut allocator, GameID(1))
+                    prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0))
                         .into_iter()
                         .take(3),
                 );
                 moves.push(SimScriptAction::GoOnChain(1));
                 moves.push(SimScriptAction::WaitBlocks(6, 0));
-                moves.push(SimScriptAction::AcceptSettlement(1, GameID(1)));
+                moves.push(SimScriptAction::AcceptSettlement(
+                    1,
+                    ScriptGameRef::accepted(1, 0),
+                ));
                 moves.push(SimScriptAction::WaitBlocks(20, 0));
                 moves.push(SimScriptAction::WaitBlocks(5, 1));
 
@@ -158,7 +166,7 @@ mod sim_tests {
                         matches!(
                             notification,
                             GameNotification::GameStatus {
-                                id: GameID(1),
+                                id: GameID(0),
                                 status: GameStatusKind::FinishingWaitingTimeout,
                                 other_params: Some(params),
                                 ..
@@ -175,7 +183,7 @@ mod sim_tests {
                         .any(|notification| matches!(
                             notification,
                             GameNotification::GameStatus {
-                                id: GameID(1),
+                                id: GameID(0),
                                 status: GameStatusKind::PlayingMove,
                                 ..
                             }
@@ -186,7 +194,7 @@ mod sim_tests {
                     accepter.iter().any(|notification| matches!(
                         notification,
                         GameNotification::GameSettled {
-                            id: GameID(1),
+                            id: GameID(0),
                             outcome: SettlementOutcome::WeAccepted,
                             ..
                         }
@@ -197,7 +205,7 @@ mod sim_tests {
                     winner.iter().any(|notification| matches!(
                         notification,
                         GameNotification::GameSettled {
-                            id: GameID(1),
+                            id: GameID(0),
                             outcome: SettlementOutcome::OpponentTimedOut,
                             ..
                         }
@@ -213,14 +221,14 @@ mod sim_tests {
             let move_for = |player| {
                 SimScriptAction::Move(
                     player,
-                    GameID(1),
+                    ScriptGameRef::accepted(1, 0),
                     ReadableMove::from_program(Rc::new(nil_move.clone())),
                     true,
                 )
             };
             let mut moves = vec![
                 SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                SimScriptAction::AcceptProposal(1, GameID(1)),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
                 move_for(0), // Alice commit
                 move_for(1), // Bob commit
                 move_for(0), // Alice pong; Bob opens
@@ -249,7 +257,7 @@ mod sim_tests {
                 bob.iter().any(|notification| matches!(
                     notification,
                     GameNotification::GameSettled {
-                        id: GameID(1),
+                        id: GameID(0),
                         outcome: SettlementOutcome::SettledCleanly,
                         ..
                     }
@@ -260,7 +268,7 @@ mod sim_tests {
                 !bob.iter().any(|notification| matches!(
                     notification,
                     GameNotification::GameSettled {
-                        id: GameID(1),
+                        id: GameID(0),
                         outcome: SettlementOutcome::ForfeitedSkippedReveal,
                         ..
                     }

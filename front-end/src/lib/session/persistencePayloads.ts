@@ -340,6 +340,17 @@ export function validateLive(live: LiveSessionSave['live']): void {
     throw new Error('Garbled save: invalid live.rewardPuzzleHash');
   }
   optionalString(live.durabilityWarning, 'live.durabilityWarning', true);
+  if (live.fundingOutbox === undefined) return;
+  if (!Array.isArray(live.fundingOutbox)) {
+    throw new Error('Garbled save: invalid live.fundingOutbox');
+  }
+  const fundingKeys = new Set<string>();
+  for (const entry of live.fundingOutbox) {
+    if (fundingKeys.has(entry.key)) {
+      throw new Error(`Garbled save: duplicate live.fundingOutbox key ${entry.key}`);
+    }
+    fundingKeys.add(entry.key);
+  }
 }
 
 export function validatePresentationScalarFields(save: SessionPresentationSave): void {

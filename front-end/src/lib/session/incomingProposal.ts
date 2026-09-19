@@ -1,16 +1,13 @@
 import type { ProposalMadePayload } from '../../types/ChiaGaming';
 import { catalogGameTypeFromWire } from '../gameIdentities';
 import { isProposalParameterValue, packageFor } from '../gameRegistry';
-import { parseAmount } from '../wasm/parseAmount';
 import { isValidGameTimeoutBlocks } from './gameTimeout';
-import type { ProposalGroupModel } from './types';
+import type { PendingProposalModel } from './types';
 
-export function proposalGroupFromProposalMade(
+export function pendingProposalFromProposalMade(
   payload: ProposalMadePayload | undefined,
-): ProposalGroupModel | null {
+): PendingProposalModel | null {
   if (!payload) return null;
-  const playerA = parseAmount(payload.player_a_contribution);
-  const playerB = parseAmount(payload.player_b_contribution);
   const gameType =
     typeof payload.game_type === 'string' ? catalogGameTypeFromWire(payload.game_type) : null;
   let timeout: bigint;
@@ -19,34 +16,26 @@ export function proposalGroupFromProposalMade(
   } catch {
     return null;
   }
-  const memberIds = Array.isArray(payload.group_ids) ? payload.group_ids.map(String) : [];
   if (
-    !playerA ||
-    !playerB ||
     !gameType ||
     !isValidGameTimeoutBlocks(timeout) ||
     typeof payload.sender_is_player_a !== 'boolean' ||
     !isProposalParameterValue(payload.parameters) ||
-    payload.id == null ||
-    memberIds.length === 0
+    payload.id == null
   ) {
     return null;
   }
-  if (packageFor(gameType).decodeProposalParameters(payload.parameters) === null) {
-    return null;
-  }
   return {
-    primaryId: String(payload.id),
-    memberIds,
+    id: String(payload.id),
     handProposal: {
       gameType,
-      playerAContribution: playerA,
-      playerBContribution: playerB,
       senderIsPlayerA: payload.sender_is_player_a,
       gameTimeout: timeout,
       parameters: payload.parameters,
     },
-    origin: 'peer',
-    disposition: 'incoming-cached',
+    lifecycle:
+      packageFor(gameType).decodeProposalParameters(payload.parameters) === null
+        ? 'peer-cancel-queued'
+        : 'peer-cached',
   };
 }

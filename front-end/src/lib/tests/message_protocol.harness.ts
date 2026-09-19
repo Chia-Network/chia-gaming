@@ -7,6 +7,7 @@ import type {
   InternalBlockchainInterface,
   PeerConnectionResult,
   SpendBundle,
+  TransactionSubmission,
   ChannelStatusPayload,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
@@ -15,6 +16,7 @@ import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
+import { attachControllerOnlyTestCommitCoordinator } from './reliable_commit_coordinator.harness';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
   get: (target, property) =>
@@ -125,8 +127,15 @@ export function makeMockCradle(
     report_height: jest.fn(() => wasmResult()),
     snapshot_watched_coins: jest.fn(() => []),
     drain_submissions: jest.fn(() => []),
+    configure_submission_fee: jest.fn(),
+    finalize_submission: jest.fn(() => ({
+      protocol_bundle: testSpendBundle('00'),
+      bundle: {},
+      applied_fee: '0',
+      warning: null,
+    })),
     acknowledge_submission: jest.fn(),
-    submission_is_finalized: jest.fn(() => false),
+    reject_submission: jest.fn(),
     resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => wasmResult()),
@@ -173,6 +182,29 @@ export interface TestHarness {
   sentAcks: number[];
 }
 
+const testPersistence = new WeakMap<SessionController, () => void | Promise<void>>();
+const coordinatedControllers = new WeakSet<SessionController>();
+
+export function setTestPersistence(
+  blob: SessionController,
+  persist: () => void | Promise<void>,
+): void {
+  testPersistence.set(blob, persist);
+}
+
+/**
+ * Protocol unit tests intentionally isolate SessionController from React. Give
+ * them an explicit coordinator instead of reviving the removed production
+ * controller-owned persistence fallback.
+ */
+export function attachTestCommitCoordinator(blob: SessionController): void {
+  if (coordinatedControllers.has(blob)) return;
+  coordinatedControllers.add(blob);
+  attachControllerOnlyTestCommitCoordinator(blob, {
+    persist: () => testPersistence.get(blob)?.(),
+  });
+}
+
 /**
  * Returns a SessionController at qualifyingEvents=7 (system ready).
  * Setup: loadWasm → setGameSession → kickSystem(2) → qe=7.
@@ -197,8 +229,9 @@ export function createReadyBlob(
   blob.pairingToken = 'test-pairing';
   blob.rewardPuzzleHash = '11'.repeat(32);
   blob.kickSystem(2);
+  attachTestCommitCoordinator(blob);
   blob.reportCoinStates(1n, []);
-  blob.onSaveNeeded = () =>
+  setTestPersistence(blob, () =>
     saveLiveSession({
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
@@ -213,7 +246,8 @@ export function createReadyBlob(
       rewardPuzzleHash: blob.rewardPuzzleHash,
       activeGameIds: [],
       unackedMessages: blob.unackedMessages,
-    });
+    }),
+  );
 
   (cradle.deliver_message as jest.Mock).mockClear();
   (cradle.report_coin_states as jest.Mock).mockClear();
@@ -244,7 +278,8 @@ export function createUnreadyBlob(
   blob.setGameSession(cradle);
   blob.pairingToken = 'test-pairing';
   blob.rewardPuzzleHash = '11'.repeat(32);
-  blob.onSaveNeeded = () =>
+  attachTestCommitCoordinator(blob);
+  setTestPersistence(blob, () =>
     saveLiveSession({
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
@@ -259,7 +294,8 @@ export function createUnreadyBlob(
       rewardPuzzleHash: blob.rewardPuzzleHash,
       activeGameIds: [],
       unackedMessages: blob.unackedMessages,
-    });
+    }),
+  );
 
   trackedBlobs.push(blob);
 
@@ -269,6 +305,7 @@ export function createUnreadyBlob(
 let activeBlob: SessionController | null = null;
 
 export function setActiveBlob(blob: SessionController | null): void {
+  if (blob) attachTestCommitCoordinator(blob);
   activeBlob = blob;
 }
 const trackedBlobs: SessionController[] = [];
@@ -320,15 +357,28 @@ afterEach(async () => {
   }
 });
 
-export function transactionSubmitQueue(blob: SessionController): Promise<void> {
-  return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+export async function transactionSubmitQueue(blob: SessionController): Promise<void> {
+  await blob.flushPendingSave();
+  await (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+  await blob.flushPendingSave();
 }
 
-export function submitTransaction(blob: SessionController, tx: SpendBundle): void {
+export function submitTransaction(
+  blob: SessionController,
+  bundle: SpendBundle,
+  fee_request: { target: string; amount: string } | null = null,
+): void {
   if (!blob.rewardPuzzleHash) {
     blob.rewardPuzzleHash = '11'.repeat(32);
   }
-  (blob as unknown as { submitTransaction: (tx: SpendBundle) => void }).submitTransaction(tx);
+  const submission: TransactionSubmission = {
+    id: `test-${Math.random()}`,
+    bundle,
+    fee_request,
+  };
+  (
+    blob as unknown as { submitTransaction: (submission: TransactionSubmission) => void }
+  ).submitTransaction(submission);
 }
 
 export async function flushPromiseJobs(): Promise<void> {

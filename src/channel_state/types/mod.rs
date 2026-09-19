@@ -28,7 +28,7 @@ pub use potato::{
     CachedAcceptSettlement, CachedRedoActions, CachedSendMove, ChannelMoveResult,
     StateUpdateSignatures,
 };
-pub use proposed_game::ProposedGame;
+pub use proposed_game::{ProposalLifecycle, ProposedGame};
 #[cfg(test)]
 pub use read::read_unroll_puzzle;
 pub use readable_move::ReadableMove;

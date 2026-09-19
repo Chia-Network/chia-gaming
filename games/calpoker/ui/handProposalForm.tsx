@@ -2,7 +2,7 @@ import { forwardRef, useImperativeHandle, useState } from 'react';
 import type { GameProposalFormHandle, HandProposalFormProps } from '../../host';
 import { AmountInput } from './AmountInput';
 
-type CalpokerParameters = Record<string, never>;
+type CalpokerParameters = bigint;
 
 export const HandProposalForm = forwardRef<
   GameProposalFormHandle<CalpokerParameters>,
@@ -11,16 +11,14 @@ export const HandProposalForm = forwardRef<
   { disabled, maxPerHandMojos, defaultContribution, initialValues, onSubmit },
   ref,
 ) {
-  const initialAmount = initialValues?.senderContribution ?? defaultContribution;
+  const initialAmount = initialValues?.parameters ?? defaultContribution;
   const [amount, setAmount] = useState(initialAmount);
   useImperativeHandle(ref, () => ({
     getProposal: () =>
       amount > 0n && (maxPerHandMojos === null || amount <= maxPerHandMojos)
         ? {
             ok: true,
-            senderContribution: amount,
-            receiverContribution: amount,
-            parameters: {},
+            parameters: amount,
           }
         : { ok: false, error: 'Enter a positive stake within the available reserve.' },
   }));

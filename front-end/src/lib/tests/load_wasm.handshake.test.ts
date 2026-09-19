@@ -19,6 +19,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  LONG_WASM_TEST_TIMEOUT,
   makeTestReliableState,
   pollOnce,
   startSimulator,
@@ -67,18 +68,6 @@ it(
         wasm_init1,
       );
       wasm_blob1.getFee = () => 10n;
-      wasm_blob1.onSaveNeeded = () => {
-        const fields = wasm_blob1.getWasmFields();
-        if (!fields) {
-          return Promise.reject(
-            new Error('Cannot persist session: WASM cradle serialization failed'),
-          );
-        }
-        return saveLiveFields({
-          ...fields,
-          pairingToken: 'reload-regression-p1',
-        });
-      };
       cradle1.set_blob(wasm_blob1);
 
       const peer_conn2: PeerConnectionResult = {
@@ -100,18 +89,6 @@ it(
         peer_conn2,
         wasm_init2,
       );
-      wasm_blob2.onSaveNeeded = () => {
-        const fields = wasm_blob2.getWasmFields();
-        if (!fields) {
-          return Promise.reject(
-            new Error('Cannot persist session: WASM cradle serialization failed'),
-          );
-        }
-        return saveLiveFields({
-          ...fields,
-          pairingToken: 'reload-regression-p2',
-        });
-      };
       cradle2.set_blob(wasm_blob2);
 
       await flushWrapperDrain([cradle1, cradle2]);
@@ -132,8 +109,11 @@ it(
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
       assert.deepEqual(
         wasm_blob2.getCoinsOfInterest().map((coin) => coin.label),
-        ['Channel coin', 'Funding coin'],
+        ['Channel coin'],
       );
+      const receiverChannelWatch = wasm_blob2.snapshotWatchedCoins();
+      assert.equal(receiverChannelWatch.length, 1);
+      assert.equal(receiverChannelWatch[0].coin_name, wasm_blob2.getCoinsOfInterest()[0].id);
       const sentB = cradle2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
@@ -146,8 +126,11 @@ it(
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
       assert.deepEqual(
         wasm_blob1.getCoinsOfInterest().map((coin) => coin.label),
-        ['Channel coin', 'Funding coin'],
+        ['Channel coin'],
       );
+      const initiatorChannelWatch = wasm_blob1.snapshotWatchedCoins();
+      assert.equal(initiatorChannelWatch.length, 1);
+      assert.equal(initiatorChannelWatch[0].coin_name, wasm_blob1.getCoinsOfInterest()[0].id);
       const sentC = cradle1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
@@ -173,10 +156,6 @@ it(
       await pollOnce(poller);
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('initiator-observed-channel', wasm_blob1);
-      // Stop live durability saves before the explicit snapshot so a late
-      // onSaveNeeded cannot overwrite the cradle under test.
-      wasm_blob1.onSaveNeeded = () => Promise.resolve();
-      wasm_blob2.onSaveNeeded = () => Promise.resolve();
       const receiverFields = wasm_blob2.getWasmFields();
       assert.ok(receiverFields);
       void saveLiveFields({
@@ -215,6 +194,22 @@ it(
         'reload-regression-seed',
       );
       assert.equal(typeof restoredId, 'number');
+      const restoredWatches = WholeWasmObject.snapshot_watched_coins(restoredId) as Array<{
+        coin_name: string;
+        coin_string: string;
+      }>;
+      // This fixture's funding bundle has seven creating inputs. They remain
+      // bounded reconciliation interests until its watched channel output lands.
+      assert.ok(
+        restoredWatches.length <= 8,
+        `restored handshake poll interests must stay bounded, got ${restoredWatches.length}`,
+      );
+      assert.equal(
+        restoredWatches.filter((watch) => watch.coin_name === receiverChannelWatch[0].coin_name)
+          .length,
+        1,
+        'reload before channel creation must preserve the channel watch',
+      );
 
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('receiver-finished-four-message-handshake', wasm_blob2);
@@ -231,5 +226,5 @@ it(
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

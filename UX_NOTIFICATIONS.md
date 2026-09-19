@@ -19,8 +19,8 @@ action was actually applied. It updates protocol presentation only: it does not
 promote game-owned state and does not grant the game permission to act. An
 accepted queued or immediately applied command has already committed the
 game-owned mutation canonically. The sole JS exception is explicit client capability policy, such
-as declining a second concurrent proposal group while still supporting each
-independently progressing game within an accepted group.
+as declining a second concurrent proposal while still supporting each
+independently progressing game created by one acceptance.
 
 The UI layer receives events via the `ToLocalUI` trait callbacks and
 `GameNotification` variants (delivered through `game_notification`).
@@ -396,9 +396,9 @@ These fire during active gameplay (after a game proposal has been accepted).
 
 | Notification                                                                                   | When                                         | Meaning                                                                                                                                                                                                                           |
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ProposalMade { id, group_ids, player_a_contribution, player_b_contribution, sender_is_player_a, timeout, game_type, parameters }` | Atomic proposal group received from opponent | Fires exactly once for the receiver. `id` is the first factory-produced game ID; `group_ids` is always the full ordered member list (singleton ⇒ `[id]`). Parameters and A/B terms are preserved exactly. |
-| `ProposalAcceptedGroup { members: [{ id, player_a_contribution, player_b_contribution, our_turn }, ...] }` | Proposal accepted by either side | Fires once for the whole group. Members are in exact factory order and retain the factory-approved A/B contribution split; total amount is their sum. The two peers have opposite `our_turn` for every member. |
-| `ProposalCancelled { id, group_ids, reason }`                                                  | Atomic proposal group cancelled or invalidated | Fires once for the whole group. `id` is the canonical first member and `group_ids` is the full ordered member list. The group was cancelled explicitly or automatically due to going on-chain. |
+| `ProposalMade { id, sender_is_player_a, timeout, game_type, parameters }` | Scalar proposal received from opponent | Fires exactly once for the receiver. `id` is an endpoint-local `LocalProposalId`; parameters and requested terms are preserved exactly. |
+| `ProposalAcceptedGroup { id, members: [{ id, player_a_contribution, player_b_contribution, our_turn }, ...] }` | Proposal accepted by either side | `id` is the consumed endpoint-local proposal ID. Generated game members are in exact factory order and retain the factory-approved A/B contribution split. |
+| `ProposalCancelled { id, reason }` | Proposal cancelled or invalidated | `id` is endpoint-local. Receiver-side rejection is locally definitive and intentionally emits no Rust cancellation echo when its queued wire cancel drains. |
 
 ### Cancellation Reasons (`CancelReason`)
 
@@ -409,10 +409,10 @@ whether the user is notified.
 | `CancelReason`         | Emitted when                                                                                                                                                                                                                                                                                                                                 | Frontend behavior                                                                                                                                                         |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SupersededByIncoming` | A peer proposal arrived in a batch while our own proposal was queued locally. WASM removes our queued proposal because the state it was built against is now stale.                                                                                                                                                                          | **Local/silent.** Terms stashed in `pendingRetryHandProposal` for automatic re-submission (see [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)). |
-| `PeerProposalPending`  | JS called `propose_games` while an unresolved peer proposal already exists in `proposed_games`. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect.                                                                                                                                                  | **Local/silent.** Same retry stash as `SupersededByIncoming`.                                                                                                             |
+| `PeerProposalPending`  | JS called `propose` while an unresolved peer proposal already exists. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect. | **Local/silent.** Same retry stash as `SupersededByIncoming`. |
 | `GameActive`           | Reserved for future use. The JS-side guard prevents this from occurring in practice.                                                                                                                                                                                                                                                         | **Local/silent.** Clears retry state.                                                                                                                                     |
-| `CancelledByPeer`      | The peer sent `BatchAction::CancelProposalGroup` for our proposal group. This usually means the peer rejected it, but the same protocol message is also used as the peer-side follow-up for failed accept attempts such as insufficient balance (see [Race Conditions in Proposal Lifecycle](GAME_LIFECYCLE.md#race-conditions-in-proposal-lifecycle)). | **User-facing notice:** the proposal did not proceed on the peer side.                                                                                                    |
-| `CancelledByUs`        | We explicitly cancelled the peer's proposal (via `cancel_proposal`).                                                                                                                                                                                                                                                                         | **Silent.** We initiated the cancellation; nothing to tell the user.                                                                                                      |
+| `CancelledByPeer`      | The peer sent `BatchAction::CancelProposal` for our proposal. This also reports the peer-side follow-up for failed accept attempts such as insufficient balance. | **User-facing notice:** the proposal did not proceed on the peer side. |
+| `CancelledByUs`        | Our own emitted proposal cancellation drained. Receiver-side rejection does not use this echo. | **Silent.** We initiated the cancellation. |
 | `CleanShutdown`        | The channel is shutting down cooperatively. All outstanding proposals are cancelled.                                                                                                                                                                                                                                                         | **Silent.** The shutdown UI handles this.                                                                                                                                 |
 | `WentOnChain`          | The channel transitioned to on-chain resolution. Proposals not reflected in the unroll are cancelled.                                                                                                                                                                                                                                        | **Silent.** The on-chain UI handles this.                                                                                                                                 |
 | `ChannelError`         | An unrecoverable channel error occurred. All proposals are cancelled as cleanup.                                                                                                                                                                                                                                                             | **Silent.** The error UI handles this.                                                                                                                                    |
@@ -499,9 +499,14 @@ when the timeout claim confirms. See `ON_CHAIN.md` for mechanism details.
 
 | Notification        | Wire shape                                                           | When                                                     |
 | ------------------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
-| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Group accept attempted with insufficient aggregate funds |
+| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Proposal acceptance attempted with insufficient aggregate funds |
 | EndedCancelled      | `GameStatus { status: EndedCancelled, ... }`                         | In-flight accept lost during stale unroll                |
 | GameError           | `GameStatus { status: EndedError, reason }`                          | Unrecoverable game-level issue                           |
+
+`InsufficientBalance` and `ProposalCancelled` are proposal outcomes keyed by
+endpoint-local proposal ID. `EndedCancelled` is different: acceptance already
+consumed the proposal and generated games, and stale unroll later terminated
+one of those games by shared `GameID`.
 
 `EndedError` covers situations that "should never happen" under normal
 operation but _can_ happen if, for example, a trusted full node sends
@@ -526,7 +531,7 @@ open item is explicitly resolved.
 
 ### Local actions are advisory
 
-Calling `propose_games`, `accept_proposal`, or `cancel_proposal` queues an
+Calling `propose`, `accept_proposal`, or `cancel_proposal` queues an
 intent. The potato protocol resolves it when the potato is held and the queue
 is drained. The notification stream — not the API call — is the source of
 truth. One proposal call represents one factory-derived group and the receiver
@@ -538,29 +543,23 @@ is drained).
 
 ### Rule A — Proposal lifecycle
 
-Every group-start event — a `propose_games` call (proposer side) or the single
-`ProposalMade` notification (receiver side) — covers the ordered IDs returned
-by the deterministic factory. The group yields exactly one
-`ProposalAcceptedGroup` containing every member in order, or cancellation for
-all members; acceptance and cancellation are all-or-none. The
-`cancel_all_proposals()` call
-on every exit path (go-on-chain, clean shutdown, channel error) is the catch-all
-that ensures no member is left unresolved. Enforced by the simulation loop's
-post-test assertion.
+Every proposal-start event — a `propose` call (proposer side) or
+`ProposalMade` notification (receiver side) — creates one scalar pending
+proposal keyed by an endpoint-local ID. It has no member IDs or approved
+economics. The proposal resolves exactly once as `ProposalAcceptedGroup`,
+`ProposalCancelled`, or `InsufficientBalance`. `cancel_all_proposals()` on
+every exit path (go-on-chain, clean shutdown, channel error) ensures no pending
+proposal is left unresolved.
 
-### Atomic proposal-group invariant
+### Atomic acceptance invariant
 
-Proposal creation derives all member economics atomically but does not require
-the hand to be currently fundable. Acceptance checks the aggregate sender and
-receiver contributions before accepting any member. A peer must place every
-member acceptance in the same batch; partial acceptance rejects the batch.
-Cancellation likewise expands to the complete group. Consequently the UI must
-never model a factory group as partly pending, partly live, or partly cancelled.
-The normalized proposal-group record retains each ordered group as a distinct
-atomic unit through the single `ProposalAcceptedGroup`. If aggregate preflight
-emits `InsufficientBalance`, no acceptance notification is emitted and the host
-removes every member from active/current-hand presentation atomically. It must
-not create a fake accepted hand from the failed request.
+At acceptance, Rust runs the factory against the current ordered reserves,
+validates the aggregate proposer and accepter contributions, and generates all
+member games at once. Success emits one `ProposalAcceptedGroup` with every
+generated `GameID` in factory order and consumes all proposal state. Failure
+emits `InsufficientBalance` for the proposal ID and creates no games.
+Consequently the UI never models a proposal as partly accepted and never
+removes or mutates a live game in response to a proposal outcome.
 
 ### Rule B — Game lifecycle (bijection)
 
@@ -569,7 +568,7 @@ There is a one-to-one correspondence between those accepted members and
 terminal game notifications per player. Every accepted member has exactly one
 terminal (`GameSettled`, `EndedCancelled`, or `EndedError`), and every such
 terminal has a preceding accepted-group member. `InsufficientBalance` is a
-failed group acceptance, not a terminal for a live member. Enforced by the
+failed proposal acceptance, not a terminal for a live member. Enforced by the
 simulation loop's post-test assertion.
 
 ### Additional invariants
@@ -681,11 +680,10 @@ These are not lifecycle invariants but important rules enforced in the code:
 - **Accept only on our turn.** Calling `accept_settlement()` when it is not our
   turn is an assert failure. `AcceptSettlement` is an alternative to moving when
   we choose to settle at the current `mover_share`.
-- **Accepted + opponent move is an untested path.** Since accept_settlement only
-  happens on our turn, and only the mover can advance a game coin, the opponent
-  cannot move on a coin where we already accepted. The `accept_proposal_and_move` API exists but has
-  not been tested end-to-end; Calpoker's move direction may prevent it from
-  triggering in practice.
+- **Acceptance and a first move remain separate actions.** The wire batch may
+  order `AcceptProposal` immediately before `Move`; the receiver creates
+  the generated game before validating the following move. There is no
+  specialized host API that guesses which generated member should move.
 - **No phantom game-map entries.** During the on-chain transition,
   `finish_on_chain_transition` filters out both our and the opponent's reward
   puzzle hashes from the created-coins list before calling

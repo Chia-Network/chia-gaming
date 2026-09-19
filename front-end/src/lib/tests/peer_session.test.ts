@@ -551,6 +551,37 @@ describe('PeerSession', () => {
       expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x01]);
     });
 
+    it('releases a failed standalone slice once and later marks it durable without replay', async () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'session1', conn);
+      const persist = jest
+        .fn<Promise<void>, []>()
+        .mockRejectedValueOnce(new Error('storage unavailable'))
+        .mockResolvedValue(undefined);
+      const committed = jest.fn();
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        deliver: jest.fn(),
+        persist,
+        failure: (reason) => fail(reason),
+        committed,
+      });
+
+      ps.reliableTransport.allocateOutbound(new Uint8Array([0xaa]));
+      ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0xbb])));
+
+      await expect(ps.reliableTransport.flushPending()).rejects.toThrow('storage unavailable');
+      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x01, 0x02]);
+      expect(committed).not.toHaveBeenCalled();
+      expect(ps.reliableTransport.hasPendingDurability()).toBe(true);
+
+      await ps.reliableTransport.flushPending();
+      expect(persist).toHaveBeenCalledTimes(2);
+      expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x01, 0x02]);
+      expect(committed).toHaveBeenCalledTimes(1);
+      expect(ps.reliableTransport.hasPendingDurability()).toBe(false);
+    });
+
     it('coalesces a duplicate ack behind the in-flight receive persistence', async () => {
       const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);

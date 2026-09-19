@@ -10,8 +10,8 @@ use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove
 use crate::channel_state::ChannelState;
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, Node, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout,
-    MAX_BLOCK_COST_CLVM,
+    IntoErr, LocalProposalId, Node, Program, ProgramRef, PuzzleHash, Sha256tree, Spend,
+    SpendBundle, Timeout, MAX_BLOCK_COST_CLVM,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
@@ -349,7 +349,13 @@ impl SpendChannelCoinPhase {
         let ch = self.base.channel_state()?;
         let bundle =
             build_channel_to_unroll_bundle(env, ch, &channel_coin, &saved, "impatience unroll")?;
-        Ok(vec![Effect::SpendTransaction(bundle, None)])
+        Ok(vec![Effect::SpendTransaction(
+            crate::session_phases::effects::TransactionSubmission::attach_to(
+                bundle,
+                None,
+                &channel_coin,
+            ),
+        )])
     }
 
     #[cfg(test)]
@@ -692,11 +698,10 @@ impl SpendChannelCoinPhase {
 
         {
             let ch = self.base.channel_state_mut()?;
-            let cancelled_groups = ch.cancel_all_proposals();
-            for group_ids in cancelled_groups {
+            let cancelled = ch.cancel_all_proposals();
+            for id in cancelled {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id: group_ids[0],
-                    group_ids,
+                    id,
                     reason: CancelReason::WentOnChain,
                 }));
             }
@@ -754,7 +759,13 @@ impl SpendChannelCoinPhase {
                     .channel_state()
                     .ok()
                     .and_then(|ch| ch.preempting_state_number_for(on_chain_state));
-                effects.push(Effect::SpendTransaction(bundle, None));
+                effects.push(Effect::SpendTransaction(
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        bundle,
+                        None,
+                        unroll_coin,
+                    ),
+                ));
                 effects.push(Effect::Log(format!(
                     "[unroll-preempt] state={on_chain_state} preempting={preempting_state_number:?}"
                 )));
@@ -788,7 +799,13 @@ impl SpendChannelCoinPhase {
                             coin: unroll_coin.clone(),
                             timeout: self.base.unroll_timeout.clone(),
                             name: Some("unroll"),
-                            spend: Some(spend),
+                            spend: Some(
+                                crate::session_phases::effects::TransactionSubmission::attach_to(
+                                    spend,
+                                    None,
+                                    unroll_coin,
+                                ),
+                            ),
                             semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
                         });
                     }
@@ -1078,14 +1095,17 @@ impl SpendChannelCoinPhase {
                 );
 
                 effects.push(Effect::SpendTransaction(
-                    SpendBundle {
-                        name: Some("on chain redo move".to_string()),
-                        spends: vec![CoinSpend {
-                            coin: coin.clone(),
-                            bundle: transaction,
-                        }],
-                    },
-                    None,
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        SpendBundle {
+                            name: Some("on chain redo move".to_string()),
+                            spends: vec![CoinSpend {
+                                coin: coin.clone(),
+                                bundle: transaction,
+                            }],
+                        },
+                        None,
+                        &coin,
+                    ),
                 ));
             }
         }
@@ -1237,7 +1257,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
     fn self_accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(
             self.phase_name(),
@@ -1287,24 +1307,24 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             "provide_coin_spend_bundle",
         ))
     }
-    fn propose_games(
+    fn propose(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        Err(phase_operation_error(self.phase_name(), "propose_games"))
+        _proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
+        Err(phase_operation_error(self.phase_name(), "propose"))
     }
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "accept_proposal"))
     }
     fn cancel_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "cancel_proposal"))
     }

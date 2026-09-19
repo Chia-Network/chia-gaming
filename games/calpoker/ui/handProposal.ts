@@ -12,11 +12,11 @@ import { formatCalpokerMojos } from './formatting';
 
 export { reduceCalpokerFeatureState } from './serialize';
 
-export type CalpokerFactoryParameters = Record<string, never>;
+export type CalpokerFactoryParameters = bigint;
 
 export const calpokerProposalParameters: ProposalParameterCodec<CalpokerFactoryParameters> = {
-  decode: (value) => (value === null ? {} : null),
-  encode: () => null,
+  decode: (value) => (typeof value === 'bigint' && value > 0n ? value : null),
+  encode: (value) => value,
 };
 
 const registration: GamePackageRegistration<
@@ -29,10 +29,11 @@ const registration: GamePackageRegistration<
   restoreHand: restoreCalpokerHand,
   proposalParameters: calpokerProposalParameters,
   describeHandProposal(handProposal) {
-    if (calpokerProposalParameters.decode(handProposal.parameters) === null) {
+    const stake = calpokerProposalParameters.decode(handProposal.parameters);
+    if (stake === null) {
       throw new Error('California Poker proposal parameters are invalid');
     }
-    return `Stake ${formatCalpokerMojos(handProposal.playerAContribution)} each`;
+    return `Stake ${formatCalpokerMojos(stake)} each`;
   },
 };
 

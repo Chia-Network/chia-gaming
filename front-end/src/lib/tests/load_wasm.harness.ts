@@ -11,10 +11,12 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
 import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
+import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
 import type { HandProposal, PersistedGameState } from '../session/types';
+import { attachControllerOnlyTestCommitCoordinator } from './reliable_commit_coordinator.harness';
 import 'fake-indexeddb/auto';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
@@ -22,6 +24,8 @@ import * as fs from 'fs';
 import { resolve } from 'path';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
+
+export const LONG_WASM_TEST_TIMEOUT = 10 * 60 * 1000;
 
 function rooted(name: string) {
   // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
@@ -141,6 +145,7 @@ export function makeTestReliableState(): NonNullable<PeerConnectionResult['relia
 
 export class SessionControllerAdapter {
   blob: SessionController | undefined;
+  runtime: SessionMachineRuntime | undefined;
   waiting_messages: Array<SimpleMessage>;
   readonly peerConnection: PeerConnectionResult;
 
@@ -168,7 +173,21 @@ export class SessionControllerAdapter {
 
   set_blob(blob: SessionController) {
     this.blob = blob;
+    this.runtime = undefined;
+    // These integration tests deliberately drive controllers before a React
+    // runtime exists. Give that phase an explicit in-memory commit consumer;
+    // SessionMachineRuntime replaces it when a reloadable lane is bound.
+    attachControllerOnlyTestCommitCoordinator(blob);
     this.blob.kickSystem(2);
+  }
+
+  setRuntimeBlob(blob: SessionController) {
+    this.blob = blob;
+    this.runtime = undefined;
+  }
+
+  bindRuntime(runtime: SessionMachineRuntime) {
+    this.runtime = runtime;
   }
 
   deliver_message(msgno: number, msg: Uint8Array) {
@@ -222,7 +241,13 @@ function debugCradleState(cradle: SessionControllerAdapter): string {
 }
 
 export async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Promise<void> {
-  await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
+  await Promise.all(
+    cradles.map(async (cradle) => {
+      await cradle.runtime?.persist();
+      await cradle.blob?.flushPendingWork();
+      await cradle.runtime?.persist();
+    }),
+  );
 }
 
 export function assertCradleRoundTrip(stage: string, controller: SessionController): Uint8Array {
@@ -263,7 +288,7 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
 }
 
 export async function pollOnce(poller: BlockchainPoller): Promise<void> {
-  await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+  await poller.pollOnce();
 }
 
 export async function action_with_messages(
@@ -403,8 +428,6 @@ export async function createActivePair(
   second.pairingToken = `restore-games-${index}-second`;
   first.perGameAmount = 100n;
   second.perGameAmount = 100n;
-  first.onSaveNeeded = () => Promise.resolve();
-  second.onSaveNeeded = () => Promise.resolve();
   cradles[0].set_blob(first);
   cradles[1].set_blob(second);
   await action_with_messages(poller, cradles[0], cradles[1]);
@@ -415,14 +438,21 @@ export function postMoveHandState(
   handProposal: HandProposal,
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
+  const stake =
+    handProposal.gameType === 'spacepoker'
+      ? (handProposal.parameters as readonly bigint[])[0]! *
+        (handProposal.parameters as readonly bigint[])[1]!
+      : (handProposal.parameters as bigint);
+  const readableParameters =
+    handProposal.gameType === 'spacepoker'
+      ? Program.fromList((handProposal.parameters as readonly bigint[]).map(Program.fromBigInt))
+      : Program.fromBigInt(stake);
   const hand = createRegisteredGameHand(handProposal.gameType, {
-    parameters: handProposal.parameters,
     members: ids.map((_, index) => ({
-      playerAContribution:
-        handProposal.gameType === 'krunk' && index !== 0 ? 0n : handProposal.playerAContribution,
-      playerBContribution:
-        handProposal.gameType === 'krunk' && index === 0 ? 0n : handProposal.playerBContribution,
+      playerAContribution: handProposal.gameType === 'krunk' && index !== 0 ? 0n : stake,
+      playerBContribution: handProposal.gameType === 'krunk' && index === 0 ? 0n : stake,
       ourTurn: handProposal.gameType === 'krunk' ? index === 1 : true,
+      readableParameters,
     })),
   });
   const accepted = snapshotRegisteredGameHand(handProposal.gameType, hand);

@@ -15,8 +15,9 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    LocalProposalId, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout,
+    ToQuotedProgram,
 };
 use crate::session_phases::effects::{
     apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
@@ -104,7 +105,7 @@ pub trait PeerLifecyclePhase {
     fn self_accept_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>>;
     fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error>;
@@ -130,20 +131,20 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error>;
-    fn propose_games(
+    fn propose(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
+        proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error>;
     fn accept_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
     fn cancel_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
     fn shut_down(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
     fn go_on_chain(
@@ -234,7 +235,7 @@ pub trait MessagePeerQueue {
 ///
 /// A coin first discovered already spent is represented as `Created` followed by
 /// `Spent`, allowing creation to transition the phase before its spend arrives.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoinObservation {
     Created(CoinString),
     Spent(CoinString),
@@ -279,6 +280,7 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Serialize, Deserialize))]
 pub struct DrainResult {
     pub events: GameSessionEventQueue,
 }
@@ -343,18 +345,15 @@ impl PacketSender for GameSessionState {
 }
 
 impl WalletSpendInterface for GameSessionState {
-    fn spend_transaction_and_add_fee(
+    fn spend_transaction(
         &mut self,
-        bundle: &SpendBundle,
-        expiry: Option<u64>,
+        submission: &crate::session_phases::effects::TransactionSubmission,
     ) -> Result<(), Error> {
-        if expiry.is_some() {
-            self.channel_creation_expiry = expiry;
+        if submission.expiry.is_some() {
+            self.channel_creation_expiry = submission.expiry;
         }
-        self.events.push_back(GameSessionEvent::OutboundTransaction(
-            bundle.clone(),
-            expiry,
-        ));
+        self.events
+            .push_back(GameSessionEvent::OutboundTransaction(submission.clone()));
         Ok(())
     }
     fn register_coin(
@@ -362,7 +361,7 @@ impl WalletSpendInterface for GameSessionState {
         coin_id: &CoinString,
         timeout: &Timeout,
         _name: Option<&'static str>,
-        spend: Option<SpendBundle>,
+        spend: Option<crate::session_phases::effects::TransactionSubmission>,
         semantic: Option<TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         self.events.push_back(GameSessionEvent::WatchCoin {
@@ -409,6 +408,30 @@ pub struct GameSessionConfig {
 }
 
 impl GameSession {
+    pub(crate) fn detach_observation_output(&mut self) -> DrainResult {
+        DrainResult {
+            events: std::mem::take(&mut self.state.events),
+        }
+    }
+
+    pub(crate) fn prepend_observation_output(&mut self, mut output: DrainResult) {
+        output.events.append(&mut self.state.events);
+        self.state.events = output.events;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observation_test_unroll_snapshot(&self) -> Option<ChannelCoinSpendInfo> {
+        self.saved_unroll_snapshot.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn restore_observation_test_unroll_snapshot(
+        &mut self,
+        snapshot: Option<ChannelCoinSpendInfo>,
+    ) {
+        self.saved_unroll_snapshot = snapshot;
+    }
+
     pub fn new_with_keys(config: GameSessionConfig, private_keys: ChannelPrivateKeys) -> Self {
         GameSession {
             state: GameSessionState {
@@ -488,20 +511,17 @@ impl ToLocalUI for GameSessionState {
 
 impl GameSession {
     #[cfg(test)]
-    pub fn proposal_contributions_for_testing(
-        &self,
-    ) -> Result<Vec<(GameID, Amount, Amount)>, Error> {
-        let channel = self.peer.channel_state()?;
-        Ok(channel.proposal_contributions_for_testing())
-    }
-
-    #[cfg(test)]
     pub fn allocated_balances_for_testing(&self) -> Result<(Amount, Amount), Error> {
         let channel = self.peer.channel_state()?;
         Ok((
             channel.my_allocated_balance(),
             channel.their_allocated_balance(),
         ))
+    }
+
+    #[cfg(test)]
+    pub fn next_game_id_for_testing(&self) -> Result<GameID, Error> {
+        Ok(self.peer.channel_state()?.next_game_id_for_testing())
     }
 
     #[cfg(test)]
@@ -1131,7 +1151,13 @@ impl GameSession {
 
             self.state
                 .events
-                .push_back(GameSessionEvent::OutboundTransaction(spends, None));
+                .push_back(GameSessionEvent::OutboundTransaction(
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        spends,
+                        None,
+                        &parent_coin,
+                    ),
+                ));
 
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
@@ -1145,6 +1171,10 @@ impl GameSession {
 }
 
 impl GameSession {
+    pub fn agg_sig_me_additional_data(&self) -> &Hash {
+        &self.state.agg_sig_me_additional_data
+    }
+
     #[cfg(test)]
     pub fn flush_pending(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
         let effects = {
@@ -1187,12 +1217,12 @@ impl GameSession {
     pub fn self_accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.self_accept_proposal(&mut env, game_id)?
+            self.peer.self_accept_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1253,15 +1283,15 @@ impl GameSession {
         self.peer.handshake_finished()
     }
 
-    pub fn propose_games(
+    pub fn propose(
         &mut self,
         allocator: &mut AllocEncoder,
-        games: &[GameProposal],
-    ) -> Result<Vec<GameID>, Error> {
+        proposal: &GameProposal,
+    ) -> Result<LocalProposalId, Error> {
         let (result, reported_effects) = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.propose_games(&mut env, games)?
+            self.peer.propose(&mut env, proposal)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(result)
@@ -1270,12 +1300,12 @@ impl GameSession {
     pub fn accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.accept_proposal(&mut env, game_id)?
+            self.peer.accept_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1284,12 +1314,12 @@ impl GameSession {
     pub fn cancel_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.cancel_proposal(&mut env, game_id)?
+            self.peer.cancel_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1321,34 +1351,6 @@ impl GameSession {
                 }
                 Err(error) => return Err(error),
             }
-        };
-        self.process_effects(reported_effects, allocator)?;
-        Ok(())
-    }
-
-    pub fn accept_proposal_and_move(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-        new_entropy: Hash,
-    ) -> Result<(), Error> {
-        let reported_effects = {
-            let mut env =
-                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            let mut effects = self.peer.accept_proposal(&mut env, id)?;
-            match self.peer.make_move(&mut env, id, &readable, new_entropy) {
-                Ok(move_effects) => effects.extend(move_effects),
-                Err(Error::GameMoveRejected { tag, message }) => {
-                    effects.push(Effect::Notify(GameNotification::MoveRejected {
-                        id: *id,
-                        tag: String::from_utf8_lossy(&tag).into_owned(),
-                        message: String::from_utf8_lossy(&message).into_owned(),
-                    }));
-                }
-                Err(error) => return Err(error),
-            }
-            effects
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1822,13 +1824,19 @@ mod genesis_challenge_tests {
         session
             .start_handshake(&mut allocator, Amount::default())
             .expect("receiver start is an intentional no-op");
+        let proposal = GameProposal {
+            sender_is_player_a: true,
+            game_type: GameType::from_hash(Hash::default()),
+            timeout: Timeout::new(10),
+            parameters: crate::session_phases::proposal::ProposalParameters::Null,
+        };
         let error = session
-            .propose_games(&mut allocator, &[])
+            .propose(&mut allocator, &proposal)
             .expect_err("receiver cannot propose games during handshake");
         assert!(matches!(
             error,
             Error::StrErr(message)
-                if message == "propose_games is not available in handshake receiver phase"
+                if message == "propose is not available in handshake receiver phase"
         ));
     }
 }

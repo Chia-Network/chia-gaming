@@ -267,18 +267,23 @@ fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
-    let parameters = (BET_SIZE, (BET_SIZE, (BET_UNIT, ())))
+    let parameters = (
+        BET_SIZE,
+        (BET_SIZE, (((BET_SIZE / BET_UNIT), (BET_UNIT, ())), ())),
+    )
         .to_clvm(allocator)
         .unwrap();
     let result = run_clvm(allocator, factory_clvm, parameters);
-    let records = proper_list(allocator.allocator(), result, true).unwrap();
+    let envelope = proper_list(allocator.allocator(), result, true).unwrap();
+    assert_eq!(int_from_node(allocator, envelope[0]), 1);
+    let records = proper_list(allocator.allocator(), envelope[1], true).unwrap();
     assert_eq!(
         records.len(),
         1,
         "Space Poker factory must return one record"
     );
     let record = proper_list(allocator.allocator(), records[0], true).unwrap();
-    assert_eq!(record.len(), 10, "factory record must have 10 fields");
+    assert_eq!(record.len(), 11, "factory record must have 11 fields");
     assert_eq!(int_from_node(allocator, record[0]), BET_SIZE);
     assert_eq!(int_from_node(allocator, record[1]), BET_SIZE);
     assert_eq!(
@@ -768,7 +773,10 @@ fn factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
 fn test_spacepoker_factory_requires_canonical_parameters() {
     let mut allocator = AllocEncoder::new();
 
-    let valid_args = (BET_SIZE, (BET_SIZE, (BET_UNIT, ())))
+    let valid_args = (
+        BET_SIZE,
+        (BET_SIZE, (((BET_SIZE / BET_UNIT), (BET_UNIT, ())), ())),
+    )
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
@@ -782,7 +790,7 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
         "bet_unit is required; no per_player_stake / 10 fallback should exist"
     );
 
-    let zero_bet_unit = (BET_SIZE, (BET_SIZE, (0i64, ())))
+    let zero_bet_unit = (BET_SIZE, (BET_SIZE, (((10i64, (0i64, ())), ()))))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
@@ -790,29 +798,88 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
         "bet_unit must be positive"
     );
 
-    let non_dividing_bet_unit = (BET_SIZE, (BET_SIZE, (6i64, ())))
+    let negative_stack = (BET_SIZE, (BET_SIZE, (((-1i64, (BET_UNIT, ())), ()))))
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
-        !factory_succeeds(&mut allocator, non_dividing_bet_unit),
-        "per_player_stake must divide evenly into bet_unit-sized stack units"
+        !factory_succeeds(&mut allocator, negative_stack),
+        "stack size must be nonnegative"
     );
 
-    let unequal_contributions = (BET_SIZE, (BET_SIZE + 1, (BET_UNIT, ())))
+    let asymmetric_reserves = (
+        BET_SIZE,
+        (BET_SIZE + 1, (((BET_SIZE / BET_UNIT), (BET_UNIT, ())), ())),
+    )
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
-        !factory_succeeds(&mut allocator, unequal_contributions),
-        "player contributions must be equal"
+        factory_succeeds(&mut allocator, asymmetric_reserves),
+        "reserves may be asymmetric"
     );
 
-    let extra_parameter = (BET_SIZE, (BET_SIZE, (BET_UNIT, (7i64, ()))))
+    let extra_parameter = (
+        BET_SIZE,
+        (BET_SIZE, (((10i64, (BET_UNIT, (7i64, ()))), ()))),
+    )
         .to_clvm(&mut allocator)
         .unwrap();
     assert!(
         !factory_succeeds(&mut allocator, extra_parameter),
         "parameters must be a three-element proper list"
     );
+}
+
+#[test]
+fn test_spacepoker_factory_fixed_and_no_limit_reserve_results() {
+    let mut allocator = AllocEncoder::new();
+    let factory = read_hex_puzzle(
+        &mut allocator,
+        "games/spacepoker/clsp/factory_spacepoker_factory.hex",
+    )
+    .expect("load factory");
+    let factory_clvm = factory.to_clvm(&mut allocator).unwrap();
+
+    let no_limit = (105i64, (95i64, (((0i64, (10i64, ())), ()))))
+        .to_clvm(&mut allocator)
+        .unwrap();
+    let result = run_clvm(&mut allocator, factory_clvm, no_limit);
+    let envelope = proper_list(allocator.allocator(), result, true).unwrap();
+    assert_eq!(int_from_node(&mut allocator, envelope[0]), 1);
+    let records = proper_list(allocator.allocator(), envelope[1], true).unwrap();
+    let member = proper_list(allocator.allocator(), records[0], true).unwrap();
+    assert_eq!(int_from_node(&mut allocator, member[0]), 90);
+    assert_eq!(int_from_node(&mut allocator, member[1]), 90);
+    let readable = proper_list(allocator.allocator(), member[10], true).unwrap();
+    assert_eq!(int_from_node(&mut allocator, readable[0]), 9);
+    assert_eq!(int_from_node(&mut allocator, readable[1]), 10);
+
+    for (proposer, accepter, expected_proposer_short, expected_accepter_short) in
+        [(5i64, 20i64, 1i64, 0i64), (5, 7, 1, 1)]
+    {
+        let args = (proposer, (accepter, (((0i64, (10i64, ())), ()))))
+            .to_clvm(&mut allocator)
+            .unwrap();
+        let result = run_clvm(&mut allocator, factory_clvm, args);
+        let shortage = proper_list(allocator.allocator(), result, true).unwrap();
+        assert_eq!(int_from_node(&mut allocator, shortage[0]), 0);
+        assert_eq!(
+            int_from_node(&mut allocator, shortage[1]),
+            expected_proposer_short
+        );
+        assert_eq!(
+            int_from_node(&mut allocator, shortage[2]),
+            expected_accepter_short
+        );
+    }
+
+    let fixed = (99i64, (200i64, (((10i64, (10i64, ())), ()))))
+        .to_clvm(&mut allocator)
+        .unwrap();
+    let result = run_clvm(&mut allocator, factory_clvm, fixed);
+    let shortage = proper_list(allocator.allocator(), result, true).unwrap();
+    assert_eq!(int_from_node(&mut allocator, shortage[0]), 0);
+    assert_eq!(int_from_node(&mut allocator, shortage[1]), 1);
+    assert_eq!(int_from_node(&mut allocator, shortage[2]), 0);
 }
 
 #[test]
@@ -1990,6 +2057,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_spacepoker_factory_requires_canonical_parameters",
             &test_spacepoker_factory_requires_canonical_parameters,
+        ),
+        (
+            "test_spacepoker_factory_fixed_and_no_limit_reserve_results",
+            &test_spacepoker_factory_fixed_and_no_limit_reserve_results,
         ),
         (
             "test_spacepoker_happy_path_alice_opens",

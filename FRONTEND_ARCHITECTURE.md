@@ -4,6 +4,12 @@ This document describes the architecture of the frontend JavaScript/TypeScript
 code. It reflects the current implementation unless explicitly marked as a future
 direction.
 
+This player is a security-sensitive application that constructs and submits
+transactions controlling real value. JavaScript/TypeScript is therefore treated
+as an integration and presentation environment, not as the authority for
+protocol or transaction correctness. Value-bearing rules, transaction intent,
+wallet-output validation, and durable protocol/retry state belong in Rust.
+
 For the backend/WASM architecture, see `OVERVIEW.md`. For the connectivity
 model (wallet, hub, peer, session interactions and rollover), see
 `CONNECTIVITY.md`.
@@ -314,6 +320,15 @@ The WASM module and its host JavaScript execute in the **same trust domain** —
 they are served from the same origin, run in the same process, and share the
 same memory. The WASM-to-JS boundary is not a security boundary.
 
+Sharing a security domain does not make the layers interchangeable. Browser
+JavaScript has a large, dynamic API surface and provider-specific failure modes.
+It should transport opaque values, adapt wallet/browser APIs, and render
+Rust-owned facts. Logic equivalent to backend business logic—especially
+authorization, protocol transitions, spend construction or validation, fee
+policy, and durable retry decisions—must remain in Rust unless an external API
+can only be invoked from JavaScript. In that case JavaScript reports a typed raw
+outcome and Rust retains the authoritative state.
+
 Private keys (channel, unroll, referee) are intentionally included in the
 serialized cradle state. Without them, a deserialized session cannot resume
 signing and the game would be unrecoverable after a page reload. Any
@@ -403,7 +418,7 @@ are grouped under those phase-owned payloads:
 | `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
 | `blockchainType`                | `'simulator' \| 'walletconnect' \| 'cloud'?`                                                               | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
-| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `8`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
+| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `12`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                 |
 | `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
@@ -444,14 +459,14 @@ are grouped under those phase-owned payloads:
 | `betweenHandLastHandProposal`          | `SavedHandProposal \| null`                                                                                   | Last agreed generic A/B-oriented hand proposal, including the exact opaque `parameters`. Null when there is no agreed hand yet. |
 | `betweenHandRejectedOnceHandProposal`  | `SavedHandProposal \| null`                                                                                   | Hand proposal already rejected once, used to avoid repeated automatic retries.                                                                                                                                                                                                                                          |
 | `betweenHandPendingRetryHandProposal`  | `SavedHandProposal \| null`                                                                                   | Local hand proposal waiting for retry after a proposal collision.                                                                                                                                                                                                                                              |
-| `proposalGroups`                | `Array<{ primary_id, member_ids, hand_proposal, origin, disposition }>`                                            | Normalized proposal projection. Each group owns its canonical first ID, ordered factory members, one HandProposal object, local/peer origin, and outgoing/incoming-cached/incoming-review/accepted disposition. Member lookup is derived rather than persisted.                                                            |
+| `pendingProposals`              | `Array<{ id, hand_proposal, lifecycle }>`                                                                    | Scalar pending proposals keyed by endpoint-local ID. The lifecycle discriminant is local-outgoing, local-cancel-queued, peer-cached, peer-review, peer-accept-queued, or peer-cancel-queued; generated game members never enter this collection. |
 | `waitingStateEnteredAt`         | `bigint \| null`                                                                                           | Epoch ms when the channel entered an abandon-eligible waiting state.                                                                                                                                                                                                                                            |
 | `cleanShutdownGraceStartedAt`   | `bigint \| null`                                                                                           | Epoch ms when the clean-shutdown grace timer started.                                                                                                                                                                                                                                                           |
 
 #### Save architecture
 
-Session persistence is executed by the session-machine runtime. A save combines
-two authoritative sources:
+Session persistence is executed by `SessionMachineRuntime`, the sole active
+durability coordinator. A save combines two authoritative sources:
 
 1. **WASM-native state** — `SessionController.getWasmFields()` returns the
    cradle serialization, message counters, protocol state, history, aliases,
@@ -461,12 +476,31 @@ two authoritative sources:
    queues, host-owned compose state, between-hand mode, running balance, and
    dismissed notifications.
 
-The pure root reducer returns the next authority and ordered effects.
-`SessionMachineRuntime` publishes that authority, runs commands (including
-`persist-session`), and only then schedules React. Games dispatch a
-`GameIntent`. A command result distinguishes rejection, queueing, and actual
-application. A game mutates its concrete hand before requesting an action; the
-public intent carries no state. The runtime keeps the previous canonical
+The following ordering is a design invariant for every active-session stimulus,
+including work resumed after rehydration:
+
+1. Reduce the stimulus and continue through commands, controller/WASM results,
+   generated events, and UX-model feedback until no synchronous work remains.
+2. Synchronously freeze the resulting JS, WASM, and reliable-transport state.
+3. Await one persistence attempt for that captured boundary.
+4. Project the captured state to React.
+5. Finalize peer sends, acknowledgements, wallet/chain work, and completion
+   callbacks exactly once.
+
+“UX-model feedback” is reducer state and belongs inside the drain; React
+rendering is an externally visible projection and belongs after persistence.
+This distinction lets the UX participate fully in event processing without
+displaying intermediate states. It is the general flicker-prevention rule, not
+a collection of feature-specific rendering exceptions.
+
+The pure root reducer returns the next unpublished authority and ordered
+commands. `SessionMachineRuntime` drains reducer events, reentrant controller
+events, WASM results, and generated commands to a fixed point. It then persists
+or attempts to persist one combined snapshot, publishes the final authority to
+React once, and releases the staged effects. Games dispatch a `GameIntent`.
+A command result distinguishes rejection, queueing, and actual application. A
+game mutates its concrete hand before requesting an action; the public intent
+carries no state. The runtime keeps the previous canonical
 `handState` only as a temporary synchronous checkpoint while it calls Rust. A
 synchronous command exception or `MoveRejected` restores that checkpoint. If
 Rust accepts the action as queued or already applied, the runtime rereads
@@ -476,9 +510,9 @@ checkpoint and no `pendingCandidates` state. `LocalActionApplied` is a host-only
 protocol-presentation fact; it can update the keyed turn presentation, but it
 does not promote game-owned state and does not grant game permission. Rejection
 is not delivered to the game.
-`assembleSessionSave` reads game-owned canonical `handState` from current
-machine authority and combines it with
-the controller's WASM-origin snapshot at effect execution time. Every package
+Before starting the asynchronous write, `assembleSessionSave` synchronously
+captures game-owned canonical `handState`, the serialized WASM cradle, and the
+reliable boundary into one immutable save input. Every package
 has one `render(view)` mount. Its `frozen` boolean is a type discriminant: only
 the live branch has an intent port. It is not per-move permission; game controls
 derive availability from their own handler, turn, and terminal state. The view
@@ -487,14 +521,43 @@ service. Accepted stakes, factory-ordered member state, and terminal outcomes
 are part of the complete hand state rather than parallel mount projections.
 Protocol IDs remain in the host session model and never enter package state. A new
 `handKey` creates a fresh component and `GameHand` lifetime.
-`SessionController.onSaveNeeded` invokes the same runtime persistence path for
-ordinary debounced WASM changes. Every successful mutating WASM command
-schedules that coalesced save even when it emits no events; read-only polling
-does not. Delivery-critical outbound messages and acknowledgements still bypass
-the delay and flush immediately before sending. Game-owned local-only
-`state-changed` updates retain the existing outer persistence debounce.
+Every successful mutating WASM command marks the same runtime transaction dirty
+even when it emits no events; read-only polling does not. The runtime keeps
+intermediate machine states unpublished. Stimuli arriving while persistence is
+in flight are retained for the next transaction and cannot alter the snapshot
+or React projection being committed.
+Code must not bypass this boundary with an active-session save timer, direct
+effect persistence, an intermediate render, or an eager reliable send. New
+controller, wallet, chain, game, and peer event sources enter the coordinator
+and are drained by the same rule. A failed browser write reports a persistent
+warning but is not permission to stop a game for money: the captured effects
+are released once, the current in-memory boundary remains dirty, and later
+activity retries persistence without replaying those effects. A crash before
+that retry succeeds can restore an older local checkpoint; this degraded window
+is an explicit availability-over-durability choice.
+`releaseAfterPersistence(key, launcher)` deduplicates an effect only while that
+key is pending and returns the same completion promise to every duplicate
+caller. The persistence attempt gates invoking `launcher`, not completion of
+the promise it returns: the coordinator proceeds without awaiting that external
+work, while callers can still observe its eventual success or failure. The key
+is removed before invocation, so reentrant work may schedule the same key for a
+later captured boundary.
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
+Each drained submission has a stable Rust identifier, expiry, and captured fee
+intent. Rust deduplicates only an exact canonical intent fingerprint; two
+different transactions that spend the same inputs retain different IDs.
+Rejection retires only its exact ID. The manager separately retains wallet
+delivery acknowledgement and chain finality. JavaScript makes one wallet call
+and reports a typed `acknowledged`, `unavailable`, or `rejected` result:
+acknowledgement ends ordinary app rebroadcast, while unavailability remains
+eligible for replay after fresh chain synchronization. A lower-tip rollback
+queues every surviving retained transaction once for that epoch. An
+equal-or-higher replacement tip queues only the retained transaction whose
+watched output is explicitly absent and whose own input is explicitly live.
+Rollback replay uses the exact wallet-finalized bundle without rebuilding its
+fee. Successful poll batches represent every queried interest explicitly;
+failed or malformed batches are not reported as authoritative snapshots.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
 frontend does not persist a move journal or receive replay instructions.
 Following browser restore, an ordinary game effect may submit an automatic move
@@ -524,17 +587,15 @@ inbound update clones the full hand, replaces only the addressed member, and
 leaves its sibling's move/handler state untouched; the persisted opaque hand
 state still contains both members.
 
-Proposal state is one normalized `proposalGroups` collection. Each entry owns
-its canonical first ID, ordered members, one HandProposal object, origin, and explicit
-UI/lifecycle disposition. Member-ID lookup scans this collection as a pure
-derivation; there are no per-ID terms/group maps or parallel outgoing/accepted
-ledgers to rebuild on restore. Product policy permits at most one outgoing local
-group while one incoming collision may coexist. During an acceptance wave the
-same entry changes to `accepted`, preserving terms and ordered Krunk membership
-across the single ordered `ProposalAcceptedGroup`. An `InsufficientBalance` removes
-the affected group atomically; successful Krunk members still settle
-independently, and the accepted entry is removed only after the hand is fully
-settled. The current v21 envelope makes
+Proposal state is one normalized `pendingProposals` collection. Each entry owns
+one endpoint-local proposal ID, one `HandProposal`, and one lifecycle
+discriminant that also determines local/peer origin. Rust alone maps that local
+ID to the origin's parity-sequenced wire ID while the proposal remains pending.
+Acceptance removes
+the proposal and creates factory-ordered game members in `GameSlice`;
+`InsufficientBalance` and proposal cancellation remove only the proposal.
+Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
+independently by `GameID`. The current v26 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
@@ -542,39 +603,55 @@ sidecar.
 This schema does not migrate incompatible records from aggregate current-game
 fields; they are deleted instead.
 
-Rejecting an incoming proposal returns the model to compose as soon as the
-cancel command succeeds. There is no `expectingCounterProposal` flag or timer.
-A legitimate crossed proposal may therefore produce a brief compose-state
-flicker before its `ProposalMade` arrives and is reduced normally.
+The current frontend admits at most one uncancelled proposal across local and
+peer origins. An additional incoming proposal is automatically and definitively
+cancelled without being inserted into `pendingProposals`; a
+`local-cancel-queued` or `peer-cancel-queued` entry does not block its
+replacement. This is intentionally a single-hand presentation capability, not
+a Rust or wire invariant. Rust retains multiple proposals so planned multi-hand
+UX can lift this frontend policy without a protocol migration.
+
+Rejecting an incoming proposal returns the unpublished model to compose as soon
+as the cancel command succeeds. There is no `expectingCounterProposal` flag or
+timer. Any crossed `ProposalMade` in the same runnable event wave is reduced
+before the single post-persistence React projection, so intermediate compose
+state is not displayed.
 
 #### Delivery-critical saves
 
-Peer message counters and queues are part of the reliable transport protocol,
-so they are not allowed to wait for the normal debounce. The shared reliability
-owner exists before the WASM controller: it increments `messageNumber`, appends
-every outbound semantic body to `unackedMessages`, and queues the actual
-WebSocket send. When an inbound body is delivered to negotiation or WASM, it
-advances `remoteNumber` and queues the ack. The queued sends/acks are held until
-the corresponding semantic state is durable.
+Peer message counters and queues are part of the reliable transport protocol.
+The shared reliability owner exists before the WASM controller: it increments
+`messageNumber`, appends every outbound semantic body to `unackedMessages`, and
+stages the actual WebSocket send. When an inbound body is delivered to
+negotiation or WASM, it advances `remoteNumber` and stages the ack. With a live
+runtime these allocations participate in the same fixed-point drain and active
+commit as all other session work.
 
-At that point the reliability owner performs one immediate durability flush:
+At quiescence `SessionMachineRuntime` drains machine, controller, and generated
+work to a fixed point, then:
 
-1. Cancel any pending debounced save.
-2. Call its save boundary, which records pending negotiation directly or
-   serializes the cradle and merges the current WASM/JS fields into
-   `SessionSave`.
-3. Await `flushSessionSave()` to commit the record through an IndexedDB
-   read/write transaction.
-4. Send all queued outbound messages and acks.
+1. Captures the staged reliable generation together with the final WASM and JS
+   working state.
+2. Attempts exactly one `SessionSave` IndexedDB write.
+3. Publishes the captured machine state to React once.
+4. Releases the captured outbound messages and acknowledgements in order.
 
-This preserves the transport invariant across reloads: the peer only observes a
-message or ack after the local save contains the corresponding
-`messageNumber`/`unackedMessages` or `remoteNumber`/cradle state. A burst of
-events in one drain still causes only one full cradle serialization and one
-IndexedDB transaction instead of one write per message. If the transaction
-fails, the app shows a persistent session-storage warning and leaves the
-messages/acks queued; none cross the protocol boundary until a later durability
-retry succeeds.
+Pre-runtime negotiation uses the reliability owner's explicit flush path with
+the same persist-before-send rule.
+
+On the normal path this preserves the transport invariant across reloads: the
+peer observes a message or ack only after the local save contains the
+corresponding `messageNumber`/`unackedMessages` or `remoteNumber`/cradle state.
+A burst of events in one drain still causes only one full cradle serialization
+and one IndexedDB transaction instead of one write per message.
+
+If the transaction fails, the app shows a persistent session-storage warning
+and releases the prepared messages/acks anyway. Released and persisted
+generations are tracked separately so a later successful save cannot duplicate
+wire effects. The machine/WASM boundary remains dirty for a later
+activity-driven retry; failure reporting does not immediately reschedule the
+same failed write. This deliberately weakens crash recovery during degraded
+storage rather than failing live play for an internal browser-storage problem.
 
 Development builds log the raw cradle byte count, an estimated total IndexedDB
 record size, the compact historical-unroll count when available, and all three
@@ -666,8 +743,8 @@ Game-associated entries use the accepted group's stable hand ordinal rather
 than the private protocol game ID. A current game coin disappears when that
 hand settles because the coin has been spent, while a newly created reward coin
 can remain visible. During handshake this list includes the predicted channel
-coin and, once available, the local funding coin whose spend emitted the extra
-conditions. Coin parent IDs are protocol ancestry and are not displayed.
+coin as soon as Rust can derive it. Coin parent IDs are protocol ancestry and
+are not displayed.
 
 During the short interval after the user accepts a session — before
 `GameSession` has reported its first live model, and also while a prior finished
@@ -1028,7 +1105,7 @@ The player app is a single-page React application with one real iframe (the
 hub). Game session and game UI are React components within the same
 window, separated by hook boundaries rather than iframe boundaries. The design
 supports future extension to multiple game types and multiple simultaneous games,
-but the MVP is limited to one game at a time.
+but the MVP presents one logical hand at a time.
 
 ### Component Hierarchy
 
@@ -1147,12 +1224,31 @@ Shell manages wallet connections through two abstractions defined in
   endpoints at call time through `getCloudWallet*` getters, so UI-entered config
   takes effect without a rebuild.
 
-  Cloud Wallet's `createSpendWithExtraConditions` path directly creates the
-  message-bound pre-launcher or contribution coin; it does not insert an
-  OFFER_MOD settlement coin. The protocol child has amount
-  `contribution + opening fee` and emits `RESERVE_FEE`, so the mutation does
-  not also declare a native wallet fee. Cloud Wallet implements no separate
-  `createFeeSpend`.
+  Cloud Wallet funding uses persisted `createOffer` requests, matching the
+  WalletConnect funding contract: `offered` contains the requested funding
+  amount, `requested` is empty, and the protocol's conditions are serialized as
+  complete CLVM condition programs. Once the signature request is `SUBMITTED`,
+  the adapter returns both the bech32 offer and its offer ID. Rust decodes and
+  validates the offer; if validation requests another funding attempt, the
+  controller cancels the rejected persisted offer off chain to release its
+  wallet reservation. The wallet chooses the offer inputs, so Cloud no longer
+  selects or pins a funding coin in JavaScript.
+
+  Cloud fee attachment is also offer-based. `createFeeSpend` creates a fee-only
+  offer with empty `offered`/`requested` arrays, the native `fee` field, and one
+  serialized `ASSERT_CONCURRENT_SPEND` targeting Rust's protocol coin. Unlike a
+  WalletConnect settlement offer, this shape already contains the reserve-fee
+  condition and fee deficit, so Rust normalizes it without adding a settlement
+  or nil-puzzle spend. Both shapes then pass through the same Rust checks for
+  target, amount, deficit, input overlap, aggregate signatures, expiry, and
+  combined consensus validity. Rejected or unusable Cloud fee offers are
+  cancelled off chain using their offer IDs.
+
+  Cloud's wallet address, balance, consent, and offer operations remain on the
+  wallet GraphQL API. Full-node reads and final `push_tx` calls use its typed
+  Coinset GraphQL proxy and preserve the Coinset request and response shapes:
+  `get_blockchain_state`, `get_coin_record_by_name` /
+  `get_coin_records_by_names`, and `get_puzzle_and_solution`.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
@@ -1164,13 +1260,33 @@ Shell manages wallet connections through two abstractions defined in
   (the Wallet-tab editor in `Shell.tsx` and the Cloud Wallet connect modal's fee
   field) reject a nonzero fee below it. Zero (a free transaction) and
   floor-or-above are allowed. This is a floor below which a fee definitely cannot
-  work, not a guarantee of inclusion. Cloud-vs-Cloud is the pairing that most
-  needs it: neither peer has a wallet-built fee spend, so the entered fee is the
-  whole story, whereas a WalletConnect peer aggregates a real `createFeeSpend`
-  bundle. Both peers push the byte-identical funding bundle, so the node de-dups
-  the second arrival; `isBenignTransactionSubmitError` recognizes that
-  duplicate/`ALREADY_INCLUDING_TRANSACTION` as harmless, and a fee-rate rejection
-  is rewritten by `rewriteFeeRateRejection` into an actionable message.
+  work, not a guarantee of inclusion. For ordinary WalletConnect submissions,
+  `createFeeSpend` makes a validate-only offer whose wallet spend asserts the
+  Rust-specified target coin is spent concurrently and reserves the fee. Cloud
+  Wallet returns its native-fee offer instead. JavaScript passes
+  either tagged provider result opaquely to one Rust/WASM attachment operation.
+  Rust captures the configured amount, target, and explicit
+  `SubmitWithoutFee` attachment-failure policy when the intent is first emitted,
+  so retries cannot silently change fee policy. Rust completes WalletConnect's
+  OFFER_MOD output into a spent nil-puzzle coin; validates the exact reserve,
+  deficit, target assertion, signatures (including legitimate
+  `AGG_SIG_UNSAFE` pairs), and lack of protocol input overlap for either
+  provider; aggregates the bundles; and consensus-checks the result. If the
+  wallet source cannot be obtained or validated, the same Rust finalization
+  boundary deliberately returns the original fee-free bundle with a warning.
+  The host never chooses that fallback or derives fee policy or target coins
+  from bundle names, puzzle hashes, or spend ordering.
+
+  Wallet adapters make one submission attempt and return a typed outcome.
+  Structured success and a response identifying the exact same transaction as
+  already included are idempotent acknowledgement. An RPC that cannot complete
+  because the wallet connection, relayer, or request transport is unavailable
+  returns `unavailable`; an error response from the wallet returns `rejected`.
+  The WalletConnect RPC layer preserves this provenance, and adapters do not
+  infer retry policy from consensus, mempool, or coin-status text. Local
+  conversion or finalization errors also retain the Rust intent rather than
+  retiring it. No adapter owns a timer retry loop, so an unavailable submission
+  cannot block a later urgent transaction.
 
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single
@@ -1247,11 +1363,19 @@ host-side coordinator for chain observations. It separates three concerns:
    additions arrive as `watchCoins` deltas from WASM drain results.
    `snapshot_watched_coins()` is only the restore/attach snapshot of the durable
    WASM interest set, not the per-sweep source of truth.
-2. **Scheduling** — `BlockchainPoller` owns one `AsyncJobQueue` per active
-   backend. That queue serializes both background polling and foreground wallet
-   actions exposed through `blockchain.rpc`, applying the backend's requested
-   inter-request gap. `AsyncPollingScheduler` runs the repeating height,
-   balance, and coin-sweep jobs by enqueueing them onto that same lane.
+2. **Scheduling** — `BlockchainPoller` owns two independent serialized
+   `AsyncJobQueue` lanes per active backend: one for reads and background polls,
+   and one for wallet mutations. A hung provider read therefore cannot block a
+   spend, offer, selection, or other mutation. Both lanes pass every adapter
+   request through one global request-start gate, which applies the backend's
+   requested gap between starts without waiting for prior requests to finish.
+   `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
+   work on the read lane. On disconnect, both queues abandon their current
+   generation: queued jobs are discarded and a new generation may run
+   immediately even if an unabortable provider promise from the old connection
+   never resolves. Each request revalidates its connection epoch after waiting
+   at the start gate and again after adapter completion, so stale work cannot
+   start late or publish a late old-generation result.
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
@@ -1262,6 +1386,18 @@ Coin polling reports raw height and coin-state observations upward every
 successful sweep. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those
 observations. The browser never decides that a watch has become terminal.
+Inside Rust, each height or coin-state observation is transactional over a deep
+serialized clone of the durable `TransactionManager` and nested `GameSession`.
+Only a successful callback replaces that durable state; pending events,
+watch/unwatch deltas, cradle output, and other skipped bookkeeping are journaled
+separately and restored on failure or prepended on commit. This boundary covers
+protocol mutations as well as effects, and callback CLVM values that survive it
+own serialized `Program` bytes rather than scratch-allocator pointers.
+
+During channel opening, each handshake role registers the predicted channel
+coin as soon as its identity is known. The wallet funding input is validated as
+part of the assembled transaction but is not used as an intermediate watch.
+Only observing the channel coin itself activates the channel.
 
 When WASM processing registers new watched coins, `SessionController` applies
 the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
@@ -1280,10 +1416,10 @@ Only `terminal` discards queued protocol work and watch-coin updates and stops
 the `BlockchainPoller` and keepalive timer. Its retained `ChannelStatus`
 presentation event updates the `SessionModel`. Shell then stages one terminal
 snapshot, awaits the controller's pending durability work and the IndexedDB
-write, updates the resume marker, and only then destroys the controller and
-releases the peer relay/hub busy state. If either durability step fails, the
-staged terminal candidate is discarded while the live cache and controller
-remain owned and retryable; teardown is not attempted.
+write attempt, then destroys the controller and releases the peer relay/hub
+busy state exactly once. A persistence failure reports the durability warning
+and may leave the last checkpoint stale, but it does not suppress already
+prepared terminal effects or teardown.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes
@@ -1463,7 +1599,7 @@ The cohesive session modules own those responsibilities:
 - `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
 - `session/incomingProposal.ts` validates the generic `ProposalMade` bridge,
   retains its exact opaque Bencodex parameters, and assembles
-  `ProposalGroupModel`. Rust alone applies factory semantics.
+  `PendingProposalModel`. Rust alone applies factory semantics.
 
 The controller still waits for its normal macrotask boundary, then drains one
 active FIFO to quiescence so synchronously re-entrant WASM effects enter the
@@ -1584,12 +1720,12 @@ in host dashboard/status surfaces rather than creating a second queue entry.
 These drive game proposal and acceptance flow. They are consumed by
 the notification reducer and never forwarded raw to the game UI:
 
-- `ProposalMade` — one notification per factory group; carries the first ID and
-  always-non-empty ordered `group_ids` (singleton ⇒ `[id]`), and triggers
-  group auto-accept
+- `ProposalMade` — one notification per pending terms record; carries an
+  endpoint-local proposal ID and triggers proposal auto-accept
 - `ProposalAcceptedGroup` — creates one game-owned hand from all ordered
-  `{ id, player_a_contribution, player_b_contribution, our_turn }` members and
-  advances `handKey`
+  `{ id, player_a_contribution, player_b_contribution, our_turn,
+  readable_parameters }` members, identifies and consumes the endpoint-local
+  proposal ID, and advances `handKey`
 
 ### Normalized game inputs
 
@@ -1603,6 +1739,9 @@ Raw move and message readables remain serialized bytes through the WASM
 notification and session-event layers. When constructing a package update, the
 host maps the private protocol game ID to its stable factory-ordered
 `memberIndex` and deserializes the readable once into a CLVM `Program`.
+Factory-approved `readable_parameters` follows the same byte-to-`Program`
+boundary and initializes each accepted member; requested proposal parameters
+are not reused as approved economics.
 `hand-ended` contains only that member index and normalized settlement outcome.
 Reward amounts, coin IDs, labels, and abnormal-termination explanations remain
 in the host's keyed instances and status surfaces. The package stores the
@@ -1616,15 +1755,20 @@ shared error UX but cannot roll back already committed canonical game state.
 
 ## Single-Hand Enforcement
 
-The WASM layer supports multiple simultaneous games (games are tracked by
-`GameID`), but the frontend currently enforces **one game at a time**. This is
-a deliberate architectural choice: single-hand enforcement lives almost entirely
-in JavaScript, keeping the WASM/Rust layer multi-hand-ready for future use. The
-game UI component contract does not change — each game instance behaves as if
-it is the only game. When multi-handing is added, the session component gains
-a multiplexer (game ID → component mapping) and the JS-side guards are relaxed.
+The WASM layer supports multiple simultaneous proposals and games, but the
+frontend currently presents **one logical hand at a time**. A hand may already
+contain multiple factory-ordered games—Krunk has two—so this policy must not be
+implemented as a one-`GameID` protocol restriction. Single-hand enforcement
+lives in JavaScript, keeping the WASM/Rust layer multi-hand-ready. When
+multi-handing is added, the session component gains hand selection/multiplexing
+and the JS-side admission and presentation guards are relaxed.
 
 ### JS-side guards
+
+**Proposal admission guard** — the frontend admits at most one uncancelled
+proposal across local and peer origins. Entries already queued for cancellation
+do not occupy the slot. This is intentional product policy; Rust continues to
+support multiple pending proposals (`MAX_PROPOSALS` is 100).
 
 **Send guard** — the command interpreter checks the current machine authority
 and does not call `SessionController.proposeGame` while
@@ -1633,17 +1777,19 @@ new hand while one is in progress without a mirror ref.
 
 **Atomic factory proposals** — the proposal command constructs one request with
 `game_type`, game-specific Bencodex `parameters`, and a shared game timeout.
-`SessionController.proposeGame` sends that single request to WASM and stores all
-returned IDs. The registered deterministic factory decides cardinality:
-Calpoker and Space Poker return one ID; Krunk returns two ordered IDs. On the
-receive side there is exactly one `ProposalMade` for the group, so the frontend
-presents one logical proposal without deduplicating per-member notifications.
-Accepting or cancelling via any member ID expands to the full group in WASM,
-which emits one ordered per-member wire action for acceptance or cancellation.
+`SessionController.proposeGame` sends that request to WASM and stores its
+endpoint-local proposal ID. No game IDs or factory members exist yet. At
+acceptance, both peers run the registered deterministic factory in wire order;
+Calpoker and Space Poker create one game and Krunk creates two ordered games.
+`ProposalAcceptedGroup` correlates the endpoint-local proposal ID with the
+complete generated member list. Accept and cancel commands address the proposal
+ID, while subsequent game commands address generated `GameID`s.
 
-**Receive guard** — When a `ProposalMade` notification arrives while a game is
-active, the notification reducer emits `controller-cancel-proposal` rather than
-caching it.
+**Receive guard** — When `ProposalMade` arrives while any uncancelled local or
+peer proposal exists, the notification reducer emits
+`controller-cancel-proposal` for the new proposal without admitting it. A
+proposal arriving during an active hand is likewise hidden and queued for
+definitive cancellation.
 
 **First-game proposal** — The initiator proposes the first game exactly once,
 triggered by `ChannelStatus { state: Active }` while the machine's
@@ -1657,14 +1803,14 @@ Two proposal constraints live in WASM because they arise from the potato
 protocol's asynchronous nature and cannot be deferred to JS:
 
 1. **`SupersededByIncoming`** — When a batch arrives containing a
-   `ProposeGroup` from the peer, any locally queued `QueuedProposalGroup`
-   actions are removed from the `game_action_queue`. The queued groups were
+   `Propose` from the peer, any locally queued `QueuedProposal`
+   actions are removed from the `game_action_queue`. The queued proposals were
    built against a now-stale state (the incoming batch carries the potato and
    the definitive state). WASM emits one `ProposalCancelled { reason:
-SupersededByIncoming }` for each removed group, keyed by its first ID.
+SupersededByIncoming }` for each removed proposal, keyed by endpoint-local ID.
 
-2. **`PeerProposalPending`** — When JS calls `propose_games` while an
-   unresolved peer proposal exists in `proposed_games`, WASM rejects
+2. **`PeerProposalPending`** — When JS calls `propose` while an
+   unresolved peer proposal exists in the proposal ledger, WASM rejects
    immediately with `ProposalCancelled { reason: PeerProposalPending }`.
    This prevents silently cancelling the peer's proposal as a side effect
    of proposing our own.
@@ -1674,14 +1820,14 @@ proposal intent and the peer's — hitting at different points in the potato
 cycle. In case 1, our proposal was queued but unsent when the peer's batch
 arrived. In case 2, the peer's proposal was already recorded when JS tried to
 propose. The frontend handles both identically: stash the cancelled terms in
-the machine-owned durable `betweenHand.pendingRetryTerms` field and wait for the
+the machine-owned durable `betweenHand.pendingRetryHandProposal` field and wait for the
 incoming peer proposal to surface
 before deciding what to do (see
 [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)).
 
 Everything else in WASM — `MAX_PROPOSALS` (100), nonce parity/monotonicity,
 factory/member consistency, positive shared timeout validation, aggregate
-balance preflight, and all-or-none group acceptance — are validation/safety
+balance preflight, and all-or-none generation of accepted members — are validation/safety
 checks, not single-hand enforcement. They exist to prevent protocol violations,
 not to limit concurrency.
 
@@ -1693,10 +1839,10 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v21 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v21 presentation snapshot encoder                                                            |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v26 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v26 presentation snapshot encoder                                                            |
 | `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                    |
-| `front-end/src/lib/session/incomingProposal.ts`  | Generic opaque `ProposalMade` bridge validation and proposal-group assembly                                 |
+| `front-end/src/lib/session/incomingProposal.ts`  | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                        |
 | `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                               |
 | `games/calpoker/ui/useCalpokerHand.ts`          | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
 | `front-end/src/hooks/SessionController.ts`       | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence   |

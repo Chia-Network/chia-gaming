@@ -1,7 +1,7 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
 import { handProposalsEqual } from '../gameRegistry';
-import { proposalContributionForOrigin } from './proposalOrigin';
-import { selectProposalGroupByDisposition } from './selectors';
+import { selectProposalByLifecycle } from './selectors';
+import { isUncancelledProposal, proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEvent,
   SessionMachineState,
@@ -18,15 +18,6 @@ type CommandEvent = Extract<
   | { type: 'reject-review' }
 >;
 
-function canCover(balance: string | null, amount: bigint): boolean {
-  if (balance == null) return true;
-  try {
-    return BigInt(balance) >= amount;
-  } catch {
-    return true;
-  }
-}
-
 export function reduceSessionCommand(
   state: SessionMachineState,
   event: CommandEvent,
@@ -34,25 +25,22 @@ export function reduceSessionCommand(
   const betweenHand = state.model.betweenHand;
   switch (event.type) {
     case 'choose-same-terms': {
-      const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
+      if (selectProposalByLifecycle(state.model, 'peer-accept-queued')) {
+        return { state, effects: [] };
+      }
+      const cached = selectProposalByLifecycle(state.model, 'peer-cached');
       if (cached) {
         if (
           handProposalsEqual(
             cached.handProposal,
-            cached.origin,
+            proposalOrigin(cached),
             betweenHand.lastHandProposal,
             state.model.game.currentHandOrigin,
           )
         ) {
           return {
             state,
-            effects: [
-              {
-                type: 'controller-accept-proposal',
-                id: cached.primaryId,
-                context: 'choose-same-terms',
-              },
-            ],
+            effects: [{ type: 'controller-accept-proposal', id: cached.id }],
           };
         }
         return {
@@ -62,16 +50,16 @@ export function reduceSessionCommand(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                proposalGroups: betweenHand.proposalGroups.map((group) =>
-                  group.primaryId === cached.primaryId
-                    ? { ...group, disposition: 'incoming-review' as const }
-                    : group,
+                pendingProposals: betweenHand.pendingProposals.map((proposal) =>
+                  proposal.id === cached.id
+                    ? { ...proposal, lifecycle: 'peer-review' as const }
+                    : proposal,
                 ),
                 mode: 'review-incoming-proposal',
               },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
       const terms = betweenHand.lastHandProposal;
@@ -84,38 +72,11 @@ export function reduceSessionCommand(
               betweenHand: { ...betweenHand, mode: 'compose-proposal' },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
-      const enough =
-        canCover(
-          state.model.channel.status.ourBalance,
-          proposalContributionForOrigin(terms, state.model.game.currentHandOrigin ?? 'local'),
-        ) &&
-        canCover(
-          state.model.channel.status.theirBalance,
-          proposalContributionForOrigin(
-            terms,
-            state.model.game.currentHandOrigin === 'local' ? 'peer' : 'local',
-          ),
-        );
-      if (!enough) {
-        return {
-          state: {
-            ...state,
-            model: {
-              ...state.model,
-              betweenHand: {
-                ...betweenHand,
-                compose: applyHandProposalToComposeDraft(betweenHand.compose, terms),
-                mode: 'compose-proposal',
-                newHandRequested: false,
-              },
-            },
-            coordination: { ...state.coordination, sameTermsRequested: false },
-          },
-          effects: [{ type: 'persist-session' }],
-        };
+      if (betweenHand.pendingProposals.some(isUncancelledProposal)) {
+        return { state, effects: [] };
       }
       const localTerms =
         state.model.game.currentHandOrigin === 'peer'
@@ -134,12 +95,12 @@ export function reduceSessionCommand(
       };
     }
     case 'reject-current-proposal': {
-      const cached = selectProposalGroupByDisposition(state.model, 'incoming-cached');
+      const cached = selectProposalByLifecycle(state.model, 'peer-cached');
       if (
         cached &&
         !handProposalsEqual(
           cached.handProposal,
-          cached.origin,
+          proposalOrigin(cached),
           betweenHand.lastHandProposal,
           state.model.game.currentHandOrigin,
         )
@@ -151,16 +112,16 @@ export function reduceSessionCommand(
               ...state.model,
               betweenHand: {
                 ...betweenHand,
-                proposalGroups: betweenHand.proposalGroups.map((group) =>
-                  group.primaryId === cached.primaryId
-                    ? { ...group, disposition: 'incoming-review' as const }
-                    : group,
+                pendingProposals: betweenHand.pendingProposals.map((proposal) =>
+                  proposal.id === cached.id
+                    ? { ...proposal, lifecycle: 'peer-review' as const }
+                    : proposal,
                 ),
                 mode: 'review-incoming-proposal',
               },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
       return {
@@ -181,15 +142,7 @@ export function reduceSessionCommand(
                 },
               },
             },
-        effects: cached
-          ? [
-              {
-                type: 'controller-cancel-proposal',
-                id: cached.primaryId,
-                context: 'reject-current-proposal',
-              },
-            ]
-          : [{ type: 'persist-session' }],
+        effects: cached ? [{ type: 'controller-cancel-proposal', id: cached.id }] : [],
       };
     }
     case 'open-compose':
@@ -208,29 +161,26 @@ export function reduceSessionCommand(
             },
           },
         },
-        effects: [{ type: 'persist-session' }],
+        effects: [],
       };
     case 'submit-compose':
+      if (betweenHand.pendingProposals.some(isUncancelledProposal)) {
+        return { state, effects: [] };
+      }
       return {
         state,
         effects: [{ type: 'controller-propose-game', handProposal: event.handProposal }],
       };
     case 'accept-review': {
-      const review = selectProposalGroupByDisposition(state.model, 'incoming-review');
-      if (!review || review.primaryId !== event.primaryId) return { state, effects: [] };
+      const review = selectProposalByLifecycle(state.model, 'peer-review');
+      if (!review || review.id !== event.id) return { state, effects: [] };
       return {
         state,
-        effects: [
-          {
-            type: 'controller-accept-proposal',
-            id: review.primaryId,
-            context: 'accept-review',
-          },
-        ],
+        effects: [{ type: 'controller-accept-proposal', id: review.id }],
       };
     }
     case 'reject-review': {
-      const review = selectProposalGroupByDisposition(state.model, 'incoming-review');
+      const review = selectProposalByLifecycle(state.model, 'peer-review');
       if (!review) {
         return {
           state: {
@@ -244,18 +194,12 @@ export function reduceSessionCommand(
               },
             },
           },
-          effects: [{ type: 'persist-session' }],
+          effects: [],
         };
       }
       return {
         state,
-        effects: [
-          {
-            type: 'controller-cancel-proposal',
-            id: review.primaryId,
-            context: 'reject-review',
-          },
-        ],
+        effects: [{ type: 'controller-cancel-proposal', id: review.id }],
       };
     }
   }

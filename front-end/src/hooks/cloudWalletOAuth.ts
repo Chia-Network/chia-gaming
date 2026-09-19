@@ -24,6 +24,22 @@ export class CloudWalletAuthError extends Error {
   }
 }
 
+export class CloudWalletTransportError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'CloudWalletTransportError';
+    if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
+export class CloudWalletResponseError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'CloudWalletResponseError';
+    if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
 /** OAuth error codes that mean re-presenting the same grant will never work. */
 const FATAL_OAUTH_ERROR_CODES = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client']);
 
@@ -101,17 +117,30 @@ interface TokenResponse {
 
 async function postToken(body: Record<string, string>): Promise<TokenResponse> {
   const apiBase = getCloudWalletApiUrl().replace(/\/$/, '');
-  const res = await fetch(`${apiBase}/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(body).toString(),
-  });
-  const text = await res.text();
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body).toString(),
+    });
+  } catch (error) {
+    throw new CloudWalletTransportError('Cloud Wallet token transport failed', error);
+  }
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (error) {
+    throw new CloudWalletTransportError('Cloud Wallet token response transport failed', error);
+  }
   let json: any;
   try {
     json = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`Cloud Wallet token endpoint returned non-JSON (${res.status})`);
+  } catch (error) {
+    throw new CloudWalletResponseError(
+      `Cloud Wallet token endpoint returned non-JSON (${res.status})`,
+      error,
+    );
   }
   if (!res.ok || !json.access_token) {
     const msg =
@@ -123,7 +152,7 @@ async function postToken(body: Record<string, string>): Promise<TokenResponse> {
     if (res.status === 401 || FATAL_OAUTH_ERROR_CODES.has(code)) {
       throw new CloudWalletAuthError(String(msg));
     }
-    throw new Error(String(msg));
+    throw new CloudWalletResponseError(String(msg));
   }
   return json as TokenResponse;
 }
@@ -468,7 +497,10 @@ export function handleOAuthCallbackPage(): {
 
 export interface GraphQLResponse<T> {
   data?: T;
-  errors?: Array<{ message?: string }>;
+  errors?: Array<{
+    message?: string;
+    extensions?: { code?: string };
+  }>;
 }
 
 export type TokenProvider = {
@@ -520,35 +552,68 @@ export async function graphqlRequest<T>(
   apiBase = getCloudWalletApiUrl(),
 ): Promise<T> {
   const run = async (accessToken: string) => {
-    const res = await fetch(`${apiBase.replace(/\/$/, '')}/graphql`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({ query, variables }),
-    });
-    return res;
+    try {
+      return await fetch(`${apiBase.replace(/\/$/, '')}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ query, variables }),
+      });
+    } catch (error) {
+      throw new CloudWalletTransportError('Cloud Wallet GraphQL transport failed', error);
+    }
   };
+
+  const readPayload = async (res: Response): Promise<GraphQLResponse<T>> => {
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (error) {
+      throw new CloudWalletTransportError('Cloud Wallet GraphQL response transport failed', error);
+    }
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (error) {
+      throw new CloudWalletResponseError(
+        `Cloud Wallet GraphQL returned non-JSON (${res.status})`,
+        error,
+      );
+    }
+  };
+
+  const isUnauthenticated = (payload: GraphQLResponse<T>): boolean =>
+    payload.errors?.some((error) => error.extensions?.code === 'UNAUTHENTICATED') === true;
 
   let accessToken = await tokenProvider.getAccessToken();
   let res = await run(accessToken);
+  let refreshed = false;
 
   if (res.status === 401) {
     accessToken = await tokenProvider.getAccessToken({ forceRefresh: true });
     res = await run(accessToken);
+    refreshed = true;
     if (res.status === 401) {
       // A freshly refreshed token was still rejected: the grant itself is dead.
       throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (401)');
     }
   }
 
-  const text = await res.text();
-  let payload: GraphQLResponse<T>;
-  try {
-    payload = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`Cloud Wallet GraphQL returned non-JSON (${res.status})`);
+  let payload = await readPayload(res);
+  if (isUnauthenticated(payload)) {
+    if (refreshed) {
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (UNAUTHENTICATED)');
+    }
+    accessToken = await tokenProvider.getAccessToken({ forceRefresh: true });
+    res = await run(accessToken);
+    if (res.status === 401) {
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (401)');
+    }
+    payload = await readPayload(res);
+    if (isUnauthenticated(payload)) {
+      throw new CloudWalletAuthError('Cloud Wallet rejected the OAuth grant (UNAUTHENTICATED)');
+    }
   }
 
   if (!res.ok || payload.errors?.length) {
@@ -557,10 +622,10 @@ export async function graphqlRequest<T>(
         ?.map((e) => e.message)
         .filter(Boolean)
         .join('; ') || `GraphQL request failed (${res.status})`;
-    throw new Error(msg);
+    throw new CloudWalletResponseError(msg);
   }
   if (payload.data === undefined) {
-    throw new Error('Cloud Wallet GraphQL response missing data');
+    throw new CloudWalletResponseError('Cloud Wallet GraphQL response missing data');
   }
   return payload.data;
 }

@@ -138,9 +138,10 @@ function initialState(init: GameHandInitialization): CalpokerHandState {
   const member = init.members[0]!;
   if (
     member.playerAContribution <= 0n ||
-    member.playerAContribution !== member.playerBContribution
+    member.playerAContribution !== member.playerBContribution ||
+    member.readableParameters.toBigInt() !== member.playerAContribution
   ) {
-    throw new Error('California Poker requires equal positive approved contributions');
+    throw new Error('California Poker requires matching approved and readable contributions');
   }
   return {
     perPlayerStake: member.playerAContribution,

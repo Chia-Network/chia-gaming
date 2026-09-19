@@ -1,14 +1,97 @@
 import type { SessionController } from '../../hooks/SessionController';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { runSessionMachineTransition } from '../session/sessionMachineEffects';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { send } from './session_machine.harness';
+import type { ReliableCommitCoordinator } from '../../services/PeerSession';
+import { runSessionMachineTransition, send } from './session_machine.harness';
 
 describe('session machine behavior sequences', () => {
-  it('queues dispatches requested during a React projection instead of re-entering it', () => {
+  function runtimeWithCoordinator(persist: () => Promise<void>) {
+    let coordinator: ReliableCommitCoordinator | undefined;
     const controller = {
       clearDerivedGamePresentation: () => {},
+      attachTransactionCoordinator: (attached: ReliableCommitCoordinator) => {
+        coordinator = attached;
+      },
+      flushDeferredWork: () => {},
+      prepareReliableCommit: () => ({
+        generation: 0,
+        outboundCount: 0,
+        ackCount: 0,
+        remoteNumber: 0n,
+      }),
+      completeReliableCommit: () => {},
+    } as unknown as SessionController;
+    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      controller,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: () => {},
+      persist,
+    });
+    if (!coordinator) throw new Error('runtime did not attach its commit coordinator');
+    return { runtime, coordinator };
+  }
+
+  it('deduplicates pending external effects by key without awaiting their completion', async () => {
+    let resolveEffect!: () => void;
+    const effectGate = new Promise<void>((resolve) => {
+      resolveEffect = resolve;
+    });
+    const launcher = jest.fn(() => effectGate);
+    const { runtime, coordinator } = runtimeWithCoordinator(async () => {});
+
+    const first = coordinator.releaseAfterPersistence('same-key', launcher);
+    const second = coordinator.releaseAfterPersistence('same-key', async () => {});
+    expect(second).toBe(first);
+
+    await runtime.persist();
+    expect(launcher).toHaveBeenCalledTimes(1);
+    let settled = false;
+    void first.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveEffect();
+    await expect(first).resolves.toBeUndefined();
+  });
+
+  it('releases a captured effect once after failed persistence and rejects sync launcher throws', async () => {
+    const persist = jest
+      .fn<Promise<void>, []>()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValue(undefined);
+    const { runtime, coordinator } = runtimeWithCoordinator(persist);
+    const launcher = jest.fn((): Promise<void> => {
+      throw new Error('sync launch failure');
+    });
+    const completion = coordinator.releaseAfterPersistence('failing-launch', launcher);
+
+    await expect(runtime.persist()).rejects.toThrow('disk full');
+    await expect(completion).rejects.toThrow('sync launch failure');
+    expect(launcher).toHaveBeenCalledTimes(1);
+
+    await runtime.persist();
+    expect(launcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues dispatches requested during a React projection instead of re-entering it', async () => {
+    jest.useFakeTimers();
+    const controller = {
+      clearDerivedGamePresentation: () => {},
+      attachTransactionCoordinator: jest.fn(),
+      flushDeferredWork: jest.fn(),
+      prepareReliableCommit: jest.fn(() => ({
+        generation: 0,
+        outboundCount: 0,
+        ackCount: 0,
+        remoteNumber: 0n,
+      })),
+      completeReliableCommit: jest.fn(),
     } as unknown as SessionController;
 
     const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
@@ -48,6 +131,7 @@ describe('session machine behavior sequences', () => {
     });
 
     runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
+    await runtime.persist();
 
     expect(maxRenderDepth).toBe(1);
 
@@ -58,6 +142,7 @@ describe('session machine behavior sequences', () => {
 
       sameTermsRequested: true,
     });
+    jest.useRealTimers();
   });
 
   it('publishes machine authority before commands and React', () => {

@@ -18,7 +18,10 @@ use crate::channel_state::types::{
 use crate::common::load_clvm::read_binary_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]
-use crate::common::types::PrivateKey;
+use crate::common::types::{
+    aggregate_wallet_fee_bundle, Aggsig, CoinCondition, CoinID, CoinSpend, CoinString, PrivateKey,
+    Puzzle, Spend, SpendBundle, ToQuotedProgram,
+};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
@@ -29,6 +32,17 @@ use crate::referee::types::{
 };
 #[cfg(test)]
 use crate::utils::pair_of_array_mut;
+#[cfg(test)]
+use crate::{
+    common::{
+        constants::AGG_SIG_ME_ADDITIONAL_DATA,
+        standard_coin::sign_reward_payout,
+    },
+    referee::{
+        types::{ParsedRefereeSolution, SlashOutcome, TheirTurnCoinSpentResult},
+        Referee,
+    },
+};
 
 #[derive(Debug)]
 pub struct DebugGameCurry {
@@ -185,15 +199,22 @@ impl BareDebugGameHandler {
             .to_clvm(allocator)
             .into_gen()?;
         let parameters = Program::from_nodeptr(allocator, args_node)?;
-        let games = Game::run_factory(allocator, curried_prog.into(), &parameters)?;
+        let games = match Game::run_factory(allocator, curried_prog.into(), &parameters)? {
+            crate::channel_state::game::FactoryResult::Success(games) => games,
+            crate::channel_state::game::FactoryResult::InsufficientBalance { .. } => {
+                return Err(Error::StrErr(
+                    "debug factory unexpectedly reported insufficient balance".to_string(),
+                ));
+            }
+        };
         if games.len() != 1 {
             return Err(Error::StrErr(format!(
                 "debug factory returned {} games, expected one",
                 games.len()
             )));
         }
-        let start_a = games[0].game_start(&game_id, &timeout, true);
-        let start_b = games[0].game_start(&game_id, &timeout, false);
+        let start_a = games[0].game_start(&game_id, &timeout, true, true);
+        let start_b = games[0].game_start(&game_id, &timeout, true, false);
         assert_ne!(start_a.amount, Amount::default());
         assert_ne!(start_b.amount, Amount::default());
         let make_bare_handler = |game_start: &GameStartInfo| -> BareDebugGameHandler {
@@ -836,12 +857,241 @@ pub fn test_debug_game_validation_move() {
 }
 
 #[cfg(test)]
+fn aggregate_real_referee_spend_with_fee(
+    allocator: &mut AllocEncoder,
+    name: &str,
+    protocol_spend: CoinSpend,
+) {
+    let protocol_conditions = CoinCondition::from_puzzle_and_solution(
+        allocator,
+        protocol_spend.bundle.puzzle.to_program().as_ref(),
+        protocol_spend.bundle.solution.pref(),
+    )
+    .unwrap_or_else(|error| panic!("{name} must execute: {error:?}"));
+    assert!(
+        protocol_conditions
+            .iter()
+            .any(|condition| matches!(condition, CoinCondition::AggSigUnsafe(_, _))),
+        "{name} must exercise AGG_SIG_UNSAFE"
+    );
+
+    let target = protocol_spend.coin.to_coin_id();
+    let fee_conditions = vec![
+        (
+            51_u8,
+            (PuzzleHash::from_bytes([0xa2; 32]), (Amount::new(90), ())),
+        )
+            .to_clvm(allocator)
+            .expect("fee CREATE_COIN"),
+        (52_u8, (Amount::new(10), ()))
+            .to_clvm(allocator)
+            .expect("fee RESERVE_FEE"),
+        (64_u8, (target.clone(), ()))
+            .to_clvm(allocator)
+            .expect("fee ASSERT_CONCURRENT_SPEND"),
+    ];
+    let conditions = fee_conditions
+        .to_clvm(allocator)
+        .expect("fee conditions");
+    let puzzle: Puzzle = conditions
+        .to_quoted_program(allocator)
+        .expect("quoted fee puzzle")
+        .into();
+    let fee_bundle = SpendBundle {
+        name: None,
+        spends: vec![CoinSpend {
+            coin: CoinString::from_parts(
+                &CoinID::new(Hash::from_bytes([0xa3; 32])),
+                &puzzle.sha256tree(allocator),
+                &Amount::new(100),
+            ),
+            bundle: Spend {
+                puzzle,
+                solution: Program::nil().into(),
+                signature: Aggsig::default(),
+            },
+        }],
+    };
+    let protocol = SpendBundle {
+        name: Some(name.to_string()),
+        spends: vec![protocol_spend],
+    };
+
+    aggregate_wallet_fee_bundle(
+        protocol.clone(),
+        fee_bundle.clone(),
+        10,
+        &target,
+        &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        1,
+    )
+    .unwrap_or_else(|error| panic!("{name} must accept canonical fee aggregation: {error:?}"));
+
+    let mut invalid = protocol;
+    invalid.spends[0].bundle.signature = Aggsig::default();
+    let error = aggregate_wallet_fee_bundle(
+        invalid,
+        fee_bundle,
+        10,
+        &target,
+        &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        1,
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("invalid aggregate signature"),
+        "{name} with its protocol signature removed must fail: {error:?}"
+    );
+}
+
+#[cfg(test)]
+fn make_real_debug_referees(
+    allocator: &mut AllocEncoder,
+) -> ([BareDebugGameHandler; 2], [Referee; 2], PuzzleHash) {
+    let mut rng = ChaCha8Rng::from_seed([11; 32]);
+    let alice = ChiaIdentity::new(allocator, rng.random()).expect("alice identity");
+    let bob = ChiaIdentity::new(allocator, rng.random()).expect("bob identity");
+    let identities = [alice.clone(), bob.clone()];
+    let debug_games =
+        make_debug_games(allocator, &mut rng, &identities, 1).expect("canonical debug games");
+    let referee_puzzle =
+        read_binary_puzzle(allocator, "clsp/referee/onchain/referee.clvm.bin")
+            .expect("production referee puzzle");
+    let referee_puzzle_hash = referee_puzzle.sha256tree(allocator);
+    let alice_reward_signature = sign_reward_payout(&alice.private_key, &alice.puzzle_hash);
+    let bob_reward_signature = sign_reward_payout(&bob.private_key, &bob.puzzle_hash);
+    let (alice_referee, alice_hash) = Referee::new(
+        allocator,
+        referee_puzzle.clone(),
+        referee_puzzle_hash.clone(),
+        &Rc::new(debug_games[0].game.clone()),
+        alice.clone(),
+        &bob.public_key,
+        &bob.puzzle_hash,
+        &bob_reward_signature,
+        &alice.puzzle_hash,
+        1,
+        &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        1,
+    )
+    .expect("alice referee");
+    let (bob_referee, bob_hash) = Referee::new(
+        allocator,
+        referee_puzzle,
+        referee_puzzle_hash,
+        &Rc::new(debug_games[1].game.clone()),
+        bob,
+        &alice.public_key,
+        &alice.puzzle_hash,
+        &alice_reward_signature,
+        &identities[1].puzzle_hash,
+        1,
+        &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        1,
+    )
+    .expect("bob referee");
+    assert_eq!(alice_hash, bob_hash);
+
+    (debug_games, [alice_referee, bob_referee], alice_hash)
+}
+
+#[cfg(test)]
+pub fn test_real_referee_timeout_fee_aggregation_unsafe_signature() {
+    let mut allocator = AllocEncoder::new();
+    let (_debug_games, referees, initial_puzzle_hash) =
+        make_real_debug_referees(&mut allocator);
+    let coin = CoinString::from_parts(
+        &CoinID::new(Hash::from_bytes([0xb1; 32])),
+        &initial_puzzle_hash,
+        &Amount::new(200),
+    );
+    let timeout = referees[0]
+        .get_transaction_for_timeout(&mut allocator, &coin)
+        .expect("build referee timeout")
+        .expect("timeout has a payout");
+
+    aggregate_real_referee_spend_with_fee(
+        &mut allocator,
+        "real referee timeout",
+        CoinSpend {
+            coin,
+            bundle: timeout,
+        },
+    );
+}
+
+#[cfg(test)]
+pub fn test_real_referee_slash_fee_aggregation_unsafe_signature() {
+    let mut allocator = AllocEncoder::new();
+    let (mut debug_games, referees, initial_puzzle_hash) =
+        make_real_debug_referees(&mut allocator);
+    let move_inputs = debug_games[0]
+        .get_move_inputs(&mut allocator, Amount::new(100), 7)
+        .expect("canonical slashable debug move");
+    let readable_move = move_inputs
+        .get_ui_move(&mut allocator)
+        .expect("readable debug move");
+    let initial_coin = CoinString::from_parts(
+        &CoinID::new(Hash::from_bytes([0xb2; 32])),
+        &initial_puzzle_hash,
+        &Amount::new(200),
+    );
+    let prepared = referees[0]
+        .prepare_my_turn_move(&mut allocator, &readable_move, Hash::from_bytes([0xc1; 32]))
+        .expect("prepare canonical referee move");
+    let (alice_after_move, _) = referees[0]
+        .apply_prepared_move(&mut allocator, prepared, 2)
+        .expect("apply canonical referee move");
+    let move_spend = alice_after_move
+        .get_transaction_for_move(&mut allocator, &initial_coin)
+        .expect("build canonical referee move spend");
+    let move_conditions = CoinCondition::from_puzzle_and_solution(
+        &mut allocator,
+        move_spend.puzzle.to_program().as_ref(),
+        move_spend.solution.pref(),
+    )
+    .expect("run canonical referee move");
+    let parsed_move =
+        ParsedRefereeSolution::parse(&mut allocator, move_spend.solution.pref())
+            .expect("parse canonical referee move");
+    let (_, slash_result) = referees[1]
+        .their_turn_coin_spent(
+            &mut allocator,
+            &initial_coin,
+            &move_conditions,
+            2,
+            &parsed_move,
+        )
+        .expect("detect and build canonical referee slash");
+    let TheirTurnCoinSpentResult::Slash(slash) = slash_result else {
+        panic!("slashable move did not produce a slash");
+    };
+    let SlashOutcome::Reward { transaction, .. } = *slash else {
+        panic!("slashable move did not produce a reward spend");
+    };
+
+    aggregate_real_referee_spend_with_fee(
+        &mut allocator,
+        "real referee slash",
+        *transaction,
+    );
+}
+
+#[cfg(test)]
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_debug_game_factory", &test_debug_game_factory),
         (
             "test_debug_game_validation_move",
             &test_debug_game_validation_move,
+        ),
+        (
+            "test_real_referee_timeout_fee_aggregation_unsafe_signature",
+            &test_real_referee_timeout_fee_aggregation_unsafe_signature,
+        ),
+        (
+            "test_real_referee_slash_fee_aggregation_unsafe_signature",
+            &test_real_referee_slash_fee_aggregation_unsafe_signature,
         ),
     ]
 }

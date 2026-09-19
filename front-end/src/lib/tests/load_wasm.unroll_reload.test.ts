@@ -15,6 +15,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  LONG_WASM_TEST_TIMEOUT,
   pollOnce,
   SessionControllerAdapter,
   startSimulator,
@@ -56,7 +57,6 @@ async function createAsymmetricActivePair(
   controllers.forEach((activeController, index) => {
     activeController.pairingToken = `reload-asymmetric-${suffix}-${index}`;
     activeController.perGameAmount = 100n;
-    activeController.onSaveNeeded = () => Promise.resolve();
     adapters[index].set_blob(activeController);
   });
   await action_with_messages(poller, adapters[0], adapters[1]);
@@ -70,11 +70,9 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
   assert.ok(status, 'unroll reload lane must begin Active');
   const handProposal: HandProposal = {
     gameType: 'calpoker',
-    playerAContribution: 20n,
-    playerBContribution: 20n,
     senderIsPlayerA: false,
     gameTimeout: 15n,
-    parameters: null,
+    parameters: 20n,
   };
   let lane = createReloadableSessionLane(
     adapters[0],
@@ -89,14 +87,17 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
   lane.runtime.dispatch({ type: 'submit-compose', handProposal });
   const outgoing = lane.runtime
     .getState()
-    .model.betweenHand.proposalGroups.find((group) => group.disposition === 'outgoing');
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'local-outgoing');
   assert.ok(outgoing);
-  const ids = outgoing.memberIds;
   await exchangeUntilIdle(adapters);
-  adapters[1].blob!.acceptProposal(ids[0]);
+  adapters[1].blob!.acceptProposal(outgoing.id);
   await exchangeUntilIdle(adapters);
-  assert.deepEqual(lane.controller.activeGameIds, ids);
+  const ids = [...lane.controller.activeGameIds];
+  assert.equal(ids.length, 1);
+  assert.deepEqual(adapters[1].blob!.activeGameIds, ids);
 
+  lane.controller.makeMove(ids[0], null);
+  await exchangeUntilIdle(adapters);
   assert.equal(lane.controller.goOnChain(), true);
   await flushWrapperDrain(adapters);
   assert.equal(lane.controller.lastChannelStatus?.state, 'GoingOnChain');
@@ -135,6 +136,16 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
     'Unrolling',
     'restored unroll lane must observe a later chain lifecycle state',
   );
+  for (
+    let block = 0;
+    block < 40 &&
+    lane.runtime.getState().model.game.instances[ids[0]]?.presentation === 'replaying-move';
+    block++
+  ) {
+    await fakeBlockchainInfo.farmBlock();
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+  }
   const onChainPresentation = lane.runtime.getState().model.game.instances[ids[0]]?.presentation;
   assert.ok(
     onChainPresentation === 'on-chain-my-turn' || onChainPresentation === 'on-chain-their-turn',
@@ -166,6 +177,237 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
   );
 }
 
+async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<void> {
+  const adapters = await createAsymmetricActivePair(poller, 11);
+  const initiatorIndex = adapters[0].blob!.lastChannelStatus?.have_potato ? 0 : 1;
+  const reloadingIndex = initiatorIndex ^ 1;
+  const controller = adapters[reloadingIndex].blob!;
+  const status = controller.lastChannelStatus;
+  assert.ok(status, 'clean shutdown reload lane must begin Active');
+  let lane = createReloadableSessionLane(
+    adapters[reloadingIndex],
+    controller,
+    createSessionModel({
+      channel: { status: channelStatusModelFromPayload(status) },
+    }),
+  );
+
+  adapters[initiatorIndex].blob!.cleanShutdown();
+  await flushWrapperDrain(adapters);
+  const shutdownRequests = adapters[initiatorIndex].outbound_messages();
+  assert.equal(shutdownRequests.length, 1);
+  for (const request of shutdownRequests) {
+    adapters[reloadingIndex].deliver_message(request.msgno, request.msg);
+  }
+  await flushWrapperDrain(adapters);
+  assert.equal(lane.controller.lastChannelStatus?.state, 'ShutdownTransactionPending');
+
+  lane = (
+    await injectSessionReload(lane, poller, undefined, async () => {
+      const shutdownResponses = adapters[reloadingIndex].outbound_messages();
+      assert.equal(shutdownResponses.length, 1);
+      for (const response of shutdownResponses) {
+        adapters[initiatorIndex].deliver_message(response.msgno, response.msg);
+      }
+      await flushWrapperDrain(adapters);
+      await fakeBlockchainInfo.farmBlock();
+    })
+  ).lane;
+  assert.equal(lane.controller.getRestoreStatus(), 'restored');
+  await flushWrapperDrain(adapters);
+  for (
+    let block = 0;
+    block < 10 && lane.controller.lastChannelStatus?.state !== 'ResolvedClean';
+    block++
+  ) {
+    await fakeBlockchainInfo.farmBlock();
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+  }
+  assert.equal(
+    lane.controller.lastChannelStatus?.state,
+    'ResolvedClean',
+    `clean landing failed: advisory=${lane.controller.lastChannelStatus?.advisory ?? 'none'}\n${lane.controller.diagnosticLog.join('\n')}`,
+  );
+  await lane.runtime.persist();
+  await flushSessionSave();
+  assert.equal((await peekSession())?.phase, 'terminal');
+}
+
+async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<void> {
+  const adapters = await createAsymmetricActivePair(poller, 12);
+  poller.stop();
+  await pollOnce(poller);
+  const controller = adapters[0].blob!;
+  const status = controller.lastChannelStatus;
+  assert.ok(status, 'offline-reorg lane must begin Active');
+  const handProposal: HandProposal = {
+    gameType: 'calpoker',
+    senderIsPlayerA: false,
+    gameTimeout: 15n,
+    parameters: 20n,
+  };
+  let lane = createReloadableSessionLane(
+    adapters[0],
+    controller,
+    createSessionModel({
+      channel: { status: channelStatusModelFromPayload(status) },
+      game: { handKey: 1 },
+      betweenHand: { mode: 'compose-proposal', lastHandProposal: handProposal },
+    }),
+  );
+
+  lane.runtime.dispatch({ type: 'submit-compose', handProposal });
+  const outgoing = lane.runtime
+    .getState()
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'local-outgoing');
+  assert.ok(outgoing);
+  await exchangeUntilIdle(adapters);
+  adapters[1].blob!.acceptProposal(outgoing.id);
+  await exchangeUntilIdle(adapters);
+  const [gameId] = [...lane.controller.activeGameIds];
+  assert.ok(gameId);
+  lane.controller.makeMove(gameId, null);
+  await exchangeUntilIdle(adapters);
+
+  const submittedBlobs: string[] = [];
+  const puzzleSolutionCoins: string[] = [];
+  let resolveReplayBroadcast: ((blob: string) => void) | undefined;
+  const originalSpend = fakeBlockchainInfo.spend;
+  const originalGetPuzzleAndSolution = fakeBlockchainInfo.getPuzzleAndSolution;
+  fakeBlockchainInfo.spend = async (...args: Parameters<typeof originalSpend>) => {
+    submittedBlobs.push(args[0]);
+    resolveReplayBroadcast?.(args[0]);
+    return originalSpend.apply(fakeBlockchainInfo, args);
+  };
+  fakeBlockchainInfo.getPuzzleAndSolution = async (
+    ...args: Parameters<typeof originalGetPuzzleAndSolution>
+  ) => {
+    puzzleSolutionCoins.push(args[0]);
+    return originalGetPuzzleAndSolution.apply(fakeBlockchainInfo, args);
+  };
+
+  try {
+    assert.equal(lane.controller.goOnChain(), true);
+    await flushWrapperDrain(adapters);
+    assert.equal(submittedBlobs.length, 1, 'unilateral spend must be submitted once');
+    const finalizedBlob = submittedBlobs[0];
+
+    lane = (await injectSessionReload(lane, poller)).lane;
+    assert.equal(lane.controller.getRestoreStatus(), 'restored');
+    assert.equal(lane.controller.lastChannelStatus?.state, 'GoingOnChain');
+
+    const preLandingHeight = await fakeBlockchainInfo.getHeightInfo();
+    for (
+      let block = 0;
+      block < 10 && lane.controller.lastChannelStatus?.state === 'GoingOnChain';
+      block++
+    ) {
+      await fakeBlockchainInfo.farmBlock();
+      await pollOnce(poller);
+      await flushWrapperDrain(adapters);
+    }
+    assert.equal(
+      lane.controller.lastChannelStatus?.state,
+      'Unrolling',
+      'the retained unilateral spend must land before the offline reorg',
+    );
+    // The snapshot that first observes the channel spend registers the new
+    // unroll output but cannot include it retroactively. Refresh the expanded
+    // watch set so the retained submission records its output as landed.
+    const landedWatches = lane.controller.snapshotWatchedCoins();
+    poller.snapshotGameSessionCoinInterest(lane.controller, landedWatches);
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+    const landedRecords = await fakeBlockchainInfo.getCoinRecordsByNames(
+      landedWatches.map(({ coin_name }) => coin_name),
+    );
+    assert.equal(
+      landedRecords.length,
+      landedWatches.length,
+      'every retained watch, including the expected output, must exist before replacement',
+    );
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+    const landedHeight = await fakeBlockchainInfo.getHeightInfo();
+    assert.ok(landedHeight > preLandingHeight, 'landing must advance the simulator tip');
+    const spendsBeforeReload = submittedBlobs.length;
+    const puzzleRequestsBeforeReload = puzzleSolutionCoins.length;
+    const replayBroadcast = new Promise<string>((resolve) => {
+      resolveReplayBroadcast = resolve;
+    });
+
+    lane = (
+      await injectSessionReload(lane, poller, undefined, async () => {
+        const replacementHeight = await fakeBlockchainInfo.replaceChain(
+          preLandingHeight,
+          landedHeight,
+        );
+        assert.equal(
+          replacementHeight,
+          landedHeight,
+          'replacement chain must reach the persisted tip',
+        );
+        // Force the poll that used to race teardown. Before the reload harness
+        // retired the old controller first, it consumed this replacement and
+        // lost its queued broadcast during teardown.
+        await pollOnce(poller);
+      })
+    ).lane;
+    assert.equal(lane.controller.getRestoreStatus(), 'restored');
+
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+    // The first pass releases the replay into the controller transaction queue;
+    // the second persists finalization and releases the resulting broadcast.
+    await flushWrapperDrain(adapters);
+    let replayTimeout: ReturnType<typeof setTimeout> | undefined;
+    const observedReplay = await Promise.race([
+      replayBroadcast,
+      new Promise<never>((_resolve, reject) => {
+        replayTimeout = setTimeout(
+          () => reject(new Error('restored replay broadcast was not released within 15 seconds')),
+          15_000,
+        );
+      }),
+    ]).finally(() => {
+      if (replayTimeout !== undefined) clearTimeout(replayTimeout);
+    });
+    resolveReplayBroadcast = undefined;
+    const replayed = submittedBlobs.slice(spendsBeforeReload);
+    assert.equal(
+      observedReplay,
+      finalizedBlob,
+      'restore must rebroadcast the exact finalized bytes',
+    );
+    assert.deepEqual(
+      replayed,
+      [finalizedBlob],
+      `restore must rebroadcast exact bytes once: count=${replayed.length} expectedLength=${finalizedBlob.length} actualLengths=${replayed.map((blob) => blob.length).join(',')}`,
+    );
+    assert.equal(
+      puzzleSolutionCoins.length,
+      puzzleRequestsBeforeReload,
+      'vanished output must not request a nonexistent puzzle and solution',
+    );
+    assert.equal((await peekSession())?.phase, 'live');
+    assert.notEqual(lane.controller.lastChannelStatus?.state, 'ResolvedClean');
+    assert.notEqual(lane.controller.lastChannelStatus?.state, 'ResolvedAborted');
+
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+    await lane.controller.flushPendingWork();
+    assert.deepEqual(
+      submittedBlobs.slice(spendsBeforeReload),
+      [finalizedBlob],
+      'a repeated replacement snapshot must not rebroadcast again',
+    );
+  } finally {
+    fakeBlockchainInfo.spend = originalSpend;
+    fakeBlockchainInfo.getPuzzleAndSolution = originalGetPuzzleAndSolution;
+  }
+}
+
 it(
   'restores a real unilateral unroll and advances on later chain observations',
   async () => {
@@ -179,5 +421,37 @@ it(
       });
     }
   },
+  LONG_WASM_TEST_TIMEOUT,
+);
+
+it(
+  'restores during cooperative shutdown and persists the clean landing',
+  async () => {
+    try {
+      const poller = await startSimulator(['cafe00011', 'dead00011']);
+      if (!poller) return;
+      await runCleanShutdownReloadAndLand(poller);
+    } catch (error) {
+      throw new Error(`[load_wasm clean shutdown reload injection failed]\n${String(error)}`, {
+        cause: error,
+      });
+    }
+  },
   120 * 1000,
+);
+
+it(
+  'restores after an offline equal-tip replacement and rebroadcasts exactly once',
+  async () => {
+    try {
+      const poller = await startSimulator(['cafe00012', 'dead00012']);
+      if (!poller) return;
+      await runOfflineReplacementRestore(poller);
+    } catch (error) {
+      throw new Error(`[load_wasm offline replacement restore failed]\n${String(error)}`, {
+        cause: error,
+      });
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
 );

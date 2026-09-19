@@ -6,6 +6,7 @@ import {
   sessionModelFromSave,
   validateSessionSaveEnvelope,
 } from '../session/model';
+import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
 import {
   ACTIVE_INSTANCE,
   TERMINAL_INSTANCE,
@@ -184,6 +185,58 @@ describe('validateSessionSaveEnvelope', () => {
     expect(decodeSessionSaveEnvelope(terminal).phase).toBe('terminal');
   });
 
+  it('normalizes null WASM funding request optionals to absence', () => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    const wasmRequest = {
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['launcher'] }],
+      coin_id: null,
+      max_height: null,
+    };
+    save.live.fundingOutbox = [
+      {
+        key: fundingRequestKey(canonicalizeFundingRequest(wasmRequest)),
+        request: wasmRequest,
+      },
+    ] as unknown as NonNullable<typeof save.live.fundingOutbox>;
+
+    const decoded = decodeSessionSaveEnvelope(save);
+    expect(decoded.phase).toBe('live');
+    if (decoded.save.phase !== 'live') throw new Error('expected decoded live fixture');
+    expect(decoded.save.live.fundingOutbox).toEqual([
+      {
+        key: fundingRequestKey(canonicalizeFundingRequest(wasmRequest)),
+        request: {
+          amount: '100',
+          fee: '0',
+          conditions: [{ opcode: 60, args: ['launcher'] }],
+        },
+      },
+    ]);
+  });
+
+  it('rejects mismatched and duplicate funding outbox keys', () => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    const request = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [],
+    });
+    const key = fundingRequestKey(request);
+
+    save.live.fundingOutbox = [{ key: 'wrong', request }];
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow('key does not match');
+
+    save.live.fundingOutbox = [
+      { key, request },
+      { key, request },
+    ];
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow('duplicate');
+  });
+
   it('accepts cloud as preferences.blockchainType', () => {
     const decoded = decodeSessionSaveEnvelope(baseSave({ blockchainType: 'cloud' }));
     expect(decoded.phase).toBe('preferences');
@@ -237,7 +290,7 @@ describe('validateSessionSaveEnvelope', () => {
     'betweenHandLastHandProposal',
     'betweenHandRejectedOnceHandProposal',
     'betweenHandPendingRetryHandProposal',
-    'proposalGroups',
+    'pendingProposals',
     'waitingStateEnteredAt',
     'cleanShutdownGraceStartedAt',
   ] satisfies Array<keyof SessionPresentationSave>)(
@@ -526,54 +579,54 @@ describe('validateSessionSaveEnvelope', () => {
       'between-hand terms',
       {
         betweenHandLastHandProposal: {
-          player_a_contribution: 'not-an-amount',
-          player_b_contribution: '10',
           sender_is_player_a: false,
           game_timeout: '15',
           game_type: 'calpoker',
-          parameters: null,
+          parameters: 10,
         },
       },
-      'betweenHandLastHandProposal.player_a_contribution',
+      'betweenHandLastHandProposal.parameters',
     ],
     [
-      'peer proposal',
+      'proposal lifecycle',
       {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: 'proposal-1',
-            member_ids: [],
-            origin: 'peer',
-            disposition: 'incoming-cached',
+            id: 'proposal-1',
+            lifecycle: 'local-cached',
             hand_proposal: {
-              player_a_contribution: '10',
-              player_b_contribution: '10',
               sender_is_player_a: false,
               game_timeout: '15',
               game_type: 'calpoker',
-              parameters: null,
+              parameters: 10n,
             },
           },
         ],
       },
-      'member_ids',
+      'lifecycle',
     ],
     [
-      'proposal groups',
+      'pending proposals',
       {
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: 'proposal-1',
-            member_ids: ['proposal-1', 'proposal-1'],
-            origin: 'local',
-            disposition: 'outgoing',
+            id: 'proposal-1',
+            lifecycle: 'local-outgoing',
             hand_proposal: {
-              player_a_contribution: '100',
-              player_b_contribution: '100',
               sender_is_player_a: true,
               game_timeout: '15',
               game_type: 'krunk',
-              parameters: null,
+              parameters: 100n,
+            },
+          },
+          {
+            id: 'proposal-1',
+            lifecycle: 'peer-cached',
+            hand_proposal: {
+              sender_is_player_a: false,
+              game_timeout: '15',
+              game_type: 'calpoker',
+              parameters: 10n,
             },
           },
         ],

@@ -8,6 +8,7 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
+  WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 
 import { log, diagStack, diagNote } from '../services/log';
@@ -19,6 +20,65 @@ function sleepMs(ms: number): Promise<void> {
 function getWebSocketClass(): any {
   if (typeof globalThis.WebSocket !== 'undefined') return globalThis.WebSocket;
   throw new Error('No WebSocket implementation available');
+}
+
+export class SimulatorTransportError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'SimulatorTransportError';
+    if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
+export function classifyFakeBlockchainSubmitResult(result: unknown): WalletSubmitOutcome {
+  if (!Array.isArray(result)) {
+    return { status: 'rejected', detail: 'Malformed simulator spend response' };
+  }
+  const status =
+    typeof result[0] === 'bigint'
+      ? Number(result[0])
+      : typeof result[0] === 'number'
+        ? result[0]
+        : null;
+  if (status === 1) {
+    return { status: 'acknowledged' };
+  }
+  if (status !== 3) {
+    return {
+      status: 'rejected',
+      detail:
+        status === null
+          ? 'Malformed simulator spend response'
+          : `Unknown simulator spend status=${status}`,
+    };
+  }
+  const detail =
+    typeof result[1] === 'bigint'
+      ? Number(result[1])
+      : typeof result[1] === 'number'
+        ? result[1]
+        : null;
+  if (detail === null) {
+    return { status: 'rejected', detail: 'Malformed simulator spend rejection' };
+  }
+  const diagnostic = typeof result[2] === 'string' ? result[2] : '';
+  const message = `spend rejected: status=[${result[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
+  return { status: 'rejected', detail: message };
+}
+
+export function classifyFakeBlockchainSubmitError(error: unknown): WalletSubmitOutcome {
+  const detail = error instanceof Error ? error.message : String(error);
+  if (error instanceof SimulatorTransportError) {
+    return { status: 'unavailable', detail };
+  }
+  if (
+    /\bALREADY_INCLUDING_TRANSACTION\b|\bduplicate transaction\b|\btransaction (?:is |was |has been )?already (?:included|in (?:the )?mempool)\b/i.test(
+      detail,
+    )
+  ) {
+    return { status: 'acknowledged', detail };
+  }
+  return { status: 'rejected', detail: detail || 'Simulator rejected spend' };
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
@@ -114,7 +174,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           );
         }
         for (const [, p] of this.pending) {
-          p.reject(new Error('WebSocket closed'));
+          p.reject(new SimulatorTransportError('WebSocket closed'));
         }
         this.pending.clear();
         // Fire-and-forget reconnect.  A deliberate shutdown makes runConnectLoop
@@ -218,13 +278,18 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   private sendRequest(method: string, params?: any): Promise<any> {
     if (!this.ws || this.ws.readyState !== 1) {
-      return Promise.reject(new Error('not connected'));
+      return Promise.reject(new SimulatorTransportError('not connected'));
     }
     const id = this.nextId++;
     const msg = jsonStringify({ id, method, params: params ?? {} });
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.ws!.send(msg);
+      try {
+        this.ws!.send(msg);
+      } catch (error) {
+        this.pending.delete(id);
+        reject(new SimulatorTransportError('WebSocket send failed', error));
+      }
     });
   }
 
@@ -245,19 +310,14 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     _changePuzzleHash: string,
     _source?: string,
     _fee?: bigint,
-  ): Promise<string> {
-    const status_array = await this.sendRequest('spend', { blob });
-    if (!Array.isArray(status_array) || status_array.length < 1) {
-      throw new Error('status result array was empty');
+  ): Promise<WalletSubmitOutcome> {
+    try {
+      const result = classifyFakeBlockchainSubmitResult(await this.sendRequest('spend', { blob }));
+      if (result.status === 'rejected') console.warn('[blockchain]', result.detail);
+      return result;
+    } catch (error) {
+      return classifyFakeBlockchainSubmitError(error);
     }
-    if (status_array[0] != 1) {
-      const detail = status_array[1] ?? '?';
-      const diagnostic = status_array[2] ?? '';
-      const msg = `spend rejected: status=[${status_array[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
-      console.warn('[blockchain]', msg);
-      throw new Error(msg);
-    }
-    return '';
   }
 
   async getBalance(): Promise<bigint> {
@@ -281,6 +341,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   async farmBlock(): Promise<bigint> {
     return this.sendRequest('farm_block');
+  }
+
+  async replaceChain(rollbackHeight: bigint, targetHeight: bigint): Promise<bigint> {
+    return this.sendRequest('replace_chain', {
+      rollbackHeight: Number(rollbackHeight),
+      targetHeight: Number(targetHeight),
+    });
   }
 
   waitForNextBlock(timeoutMs = 15_000): Promise<void> {

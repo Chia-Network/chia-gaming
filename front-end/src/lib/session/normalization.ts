@@ -126,7 +126,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
     },
     betweenHand: {
       mode: 'decision',
-      proposalGroups: [],
+      pendingProposals: [],
       rejectedOnceHandProposal: null,
       lastHandProposal: null,
       compose: emptyComposeDraftState(),

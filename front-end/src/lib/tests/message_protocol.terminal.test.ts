@@ -1,11 +1,7 @@
-import {
-  isAlreadySubmittedTransactionError,
-  isBenignTransactionSubmitError,
-  rewriteFeeRateRejection,
-  SessionController,
-} from '../../hooks/SessionController';
+import { rewriteFeeRateRejection, SessionController } from '../../hooks/SessionController';
 import type { ChiaGame, InternalBlockchainInterface, WasmResult } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import {
   destroySessionController,
   getOrCreateSessionController,
@@ -14,16 +10,17 @@ import {
   subscribeTransactionPublishNerfed,
 } from '../../hooks/blobSingleton';
 import {
+  attachTestCommitCoordinator,
   channelStatus,
   createReadyBlob,
   enc,
-  flushPromiseJobs,
   makeMockCradle,
   makePeerConn,
   mockBlockchain,
   mockRpc,
   mockWasmConnection,
   setActiveBlob,
+  setTestPersistence,
   submitTransaction,
   testSpendBundle,
   transactionSubmitQueue,
@@ -65,9 +62,10 @@ describe('terminal protocol cleanup', () => {
       ),
     } as unknown as ChiaGame;
     blob.loadWasm(mockWasmConnection);
-    blob.onSaveNeeded = jest.fn();
+    setTestPersistence(blob, jest.fn());
     blob.setGameSession(cradle);
     blob.kickSystem(2);
+    attachTestCommitCoordinator(blob);
     await blob.flushPendingWork();
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
@@ -111,6 +109,7 @@ describe('terminal protocol cleanup', () => {
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.kickSystem(2);
+    attachTestCommitCoordinator(blob);
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     expect((blob as any).protocolStopped).toBe(false);
@@ -160,7 +159,8 @@ describe('terminal protocol cleanup', () => {
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.kickSystem(2);
-    blob.onSaveNeeded = jest.fn();
+    attachTestCommitCoordinator(blob);
+    setTestPersistence(blob, jest.fn());
     blob.processResult({
       ...wasmResult(),
       disposition: {
@@ -191,7 +191,7 @@ describe('terminal protocol cleanup', () => {
         throw new Error('temporary completion failure');
       })
       .mockReturnValueOnce(wasmResult({ disposition: { kind: 'terminal' } }));
-    blob.onSaveNeeded = jest.fn();
+    setTestPersistence(blob, jest.fn());
     blob.processResult({
       ...wasmResult(),
       disposition: {
@@ -381,7 +381,7 @@ describe('transaction submission', () => {
   });
 
   it('drops queued publishes after nerfing and resumes newly queued publishes when re-enabled', async () => {
-    const spend = jest.fn().mockResolvedValue('');
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
@@ -400,6 +400,7 @@ describe('transaction submission', () => {
     );
     setActiveBlob(blob);
     blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(makeMockCradle());
 
     submitTransaction(blob, testSpendBundle('07'));
     blob.setTransactionPublishNerfed(true);
@@ -414,15 +415,20 @@ describe('transaction submission', () => {
 
   it('drops queued publishes after controller cleanup without cancelling an in-flight publish', async () => {
     let resolveFirst: (() => void) | null = null;
+    let markFirstStarted: (() => void) | null = null;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
     const spend = jest
       .fn()
       .mockImplementationOnce(
         () =>
-          new Promise<string>((resolve) => {
-            resolveFirst = () => resolve('');
+          new Promise((resolve) => {
+            resolveFirst = () => resolve({ status: 'acknowledged' });
+            markFirstStarted?.();
           }),
       )
-      .mockResolvedValue('');
+      .mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
@@ -441,10 +447,11 @@ describe('transaction submission', () => {
     );
     setActiveBlob(blob);
     blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(makeMockCradle());
 
     submitTransaction(blob, testSpendBundle('09'));
     submitTransaction(blob, testSpendBundle('0a'));
-    await flushPromiseJobs();
+    await firstStarted;
     expect(spend).toHaveBeenCalledTimes(1);
 
     blob.cleanup();
@@ -565,12 +572,13 @@ describe('transaction submission', () => {
 
   it('hydrates without blockchain and replays retained submissions on later attach', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const spend = jest.fn().mockResolvedValue('');
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
         spend,
         isConnected: () => true,
+        isReadyForPlay: () => true,
         getHeightInfo: () => Promise.resolve(1n),
         registerCoins: () => Promise.resolve(),
         getCoinRecordsByNames: () => Promise.resolve([]),
@@ -594,7 +602,7 @@ describe('transaction submission', () => {
       drain_submissions: jest
         .fn()
         .mockReturnValueOnce([])
-        .mockReturnValueOnce([testSpendBundle('05')]),
+        .mockReturnValueOnce([{ id: '5', bundle: testSpendBundle('05'), fee_request: null }]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -673,136 +681,79 @@ describe('transaction submission', () => {
     blob.detachBlockchain(blockchain);
   });
 
-  it('submits one fee-bearing transaction and replays it unchanged after restored fresh sync', async () => {
-    let resolveFeeOffer: ((offer: string) => void) | null = null;
-    const feeOffer = new Promise<string>((resolve) => {
-      resolveFeeOffer = resolve;
+  it('suppresses a same-stack fresh-sync duplicate while its submission is queued', async () => {
+    const createFeeSpend = jest.fn().mockResolvedValue({
+      kind: 'bundle',
+      bundle: { coin_spends: [], aggregated_signature: '0x' },
     });
-    const createFeeOffer = jest.fn(() => feeOffer);
-    const spend = jest.fn().mockResolvedValue('');
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
-        createFeeOffer,
+        createFeeSpend,
         spend,
-        isConnected: () => true,
+        isReadyForPlay: () => true,
       } as InternalBlockchainInterface,
       60000,
     );
-    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const sentAcks: number[] = [];
-    const blob = new SessionController(
-      blockchain,
-      'test',
-      100n,
-      100n,
-      makePeerConn(sentMessages, sentAcks),
-    );
-    setActiveBlob(blob);
+    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
-
-    const submission = testSpendBundle('01');
-    let initialQueued = true;
-    let replayQueued = false;
-    let walletFinalized = false;
+    const submission = {
+      id: 'same-id',
+      bundle: testSpendBundle('01'),
+      fee_request: { target: '22'.repeat(32), amount: '10' },
+    };
+    const finalizeSubmission = jest.fn(() => ({
+      protocol_bundle: testSpendBundle('01'),
+      bundle: {},
+      applied_fee: '10',
+      warning: null,
+    }));
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() => {
-        if (initialQueued) {
-          initialQueued = false;
-          return [submission];
-        }
-        if (replayQueued) {
-          replayQueued = false;
-          return [{ ...submission, name: 'fresh sync replay' }];
-        }
-        return [];
-      }),
-      acknowledge_submission: jest.fn(() => {
-        walletFinalized = true;
-      }),
-      submission_is_finalized: jest.fn(() => walletFinalized),
-      resubmit_submitted: jest.fn(() => {
-        replayQueued = true;
-      }),
+      drain_submissions: jest
+        .fn()
+        .mockReturnValueOnce([submission])
+        .mockReturnValueOnce([submission])
+        .mockReturnValue([]),
+      finalize_submission: finalizeSubmission,
     } as unknown as ChiaGame;
-    const protocolBundle = {
-      coin_spends: [
-        {
-          coin: {
-            parent_coin_info: `0x${'aa'.repeat(32)}`,
-            puzzle_hash: `0x${'bb'.repeat(32)}`,
-            amount: 100n,
-          },
-        },
-      ],
-    };
-    const feeSpend = {
-      coin_spends: [
-        {
-          coin: {
-            parent_coin_info: `0x${'cc'.repeat(32)}`,
-            puzzle_hash: `0x${'dd'.repeat(32)}`,
-            amount: 10n,
-          },
-        },
-      ],
-    };
 
     blob.loadWasm(mockWasmConnection);
-    (blob as unknown as { wc: unknown }).wc = {
-      convert_spend_to_coinset_org: () => protocolBundle,
-      fee_payment_puzzle_hash_for_coin: () => 'ef'.repeat(32),
-      complete_fee_offer_to_coinset_org: () => feeSpend,
-      aggregate_coinset_spend_bundles: () => protocolBundle,
-    };
     blob.setGameSession(cradle);
-    blob.getFee = () => 10n;
-
-    blob.processResult(wasmResult());
-    for (let attempt = 0; attempt < 20 && createFeeOffer.mock.calls.length === 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    if (createFeeOffer.mock.calls.length === 0) {
-      resolveFeeOffer?.('offer1cleanup');
-      await transactionSubmitQueue(blob);
-    }
-    expect(createFeeOffer).toHaveBeenCalledTimes(1);
-
     blob.attachBlockchain(blockchain);
+
+    // report_coin_states queues the first copy in processResult, then the
+    // fresh-sync resubmit drains the same retained ID before promise jobs run.
     blob.reportCoinStates(1n, []);
+    await transactionSubmitQueue(blob);
+
     expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
-
-    resolveFeeOffer?.('offer1signed');
-    await transactionSubmitQueue(blob);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-
-    expect(createFeeOffer).toHaveBeenCalledTimes(1);
+    expect(createFeeSpend).toHaveBeenCalledTimes(1);
+    expect(finalizeSubmission).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
-
-    blob.attachBlockchain(blockchain);
-    blob.reportCoinStates(2n, []);
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(2);
-    await transactionSubmitQueue(blob);
-
-    expect(createFeeOffer).toHaveBeenCalledTimes(1);
-    expect(spend).toHaveBeenCalledTimes(2);
-    expect(spend.mock.calls[1][1]).toEqual(spend.mock.calls[0][1]);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(2);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith(submission.id);
     blob.detachBlockchain(blockchain);
   });
 
   it('submits drained transactions sequentially', async () => {
     let resolveFirst: (() => void) | null = null;
+    let markFirstStarted: (() => void) | null = null;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
     const spend = jest
       .fn()
       .mockImplementationOnce(
         () =>
-          new Promise<string>((resolve) => {
-            resolveFirst = () => resolve('');
+          new Promise((resolve) => {
+            resolveFirst = () => resolve({ status: 'acknowledged' });
+            markFirstStarted?.();
           }),
       )
-      .mockResolvedValue('');
+      .mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
@@ -824,22 +775,158 @@ describe('transaction submission', () => {
     blob.rewardPuzzleHash = '11'.repeat(32);
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() => [testSpendBundle('01'), testSpendBundle('02')]),
+      drain_submissions: jest.fn(() => [
+        { id: '1', bundle: testSpendBundle('01'), fee_request: null },
+        { id: '2', bundle: testSpendBundle('02'), fee_request: null },
+      ]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.processResult(wasmResult());
 
-    await flushPromiseJobs();
+    await firstStarted;
     expect(spend).toHaveBeenCalledTimes(1);
     resolveFirst?.();
     await transactionSubmitQueue(blob);
     expect(spend).toHaveBeenCalledTimes(2);
   });
 
+  it('lets an urgent submission pass an unavailable one and replays awaiting delivery once', async () => {
+    const spend = jest
+      .fn()
+      .mockResolvedValueOnce({ status: 'unavailable', detail: 'wallet syncing' })
+      .mockResolvedValue({ status: 'acknowledged' });
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend,
+        isConnected: () => true,
+        isReadyForPlay: () => true,
+      } as InternalBlockchainInterface,
+      60000,
+    );
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
+    blob.rewardPuzzleHash = '11'.repeat(32);
+    const first = { id: 'awaiting', bundle: testSpendBundle('01'), fee_request: null };
+    const urgent = { id: 'urgent', bundle: testSpendBundle('02'), fee_request: null };
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest
+        .fn()
+        .mockReturnValueOnce([first, urgent])
+        .mockReturnValueOnce([])
+        .mockReturnValueOnce([first])
+        .mockReturnValue([]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+    blob.processResult(wasmResult());
+    await transactionSubmitQueue(blob);
+
+    expect(spend).toHaveBeenCalledTimes(2);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent');
+    expect(cradle.acknowledge_submission).not.toHaveBeenCalledWith('awaiting');
+
+    blob.reportNewBlock(2n);
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(3);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('awaiting');
+  });
+
+  it('retains a locally failed submission and advances to the urgent next submission', async () => {
+    expectConsoleError('finalization exploded');
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend,
+        isConnected: () => true,
+        isReadyForPlay: () => true,
+      } as InternalBlockchainInterface,
+      60000,
+    );
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
+    blob.rewardPuzzleHash = '11'.repeat(32);
+    const errors: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest.fn(() => [
+        { id: 'local-failure', bundle: testSpendBundle('01'), fee_request: null },
+        { id: 'urgent', bundle: testSpendBundle('02'), fee_request: null },
+      ]),
+      finalize_submission: jest.fn((id: string) => {
+        if (id === 'local-failure') throw new Error('finalization exploded');
+        return {
+          protocol_bundle: testSpendBundle('02'),
+          bundle: {},
+          applied_fee: '0',
+          warning: null,
+        };
+      }),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+    blob.processResult(wasmResult());
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.reject_submission).not.toHaveBeenCalled();
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent');
+    expect(spend).toHaveBeenCalledTimes(1);
+    expect((blob as any).resubmitAfterChainSync).toBe(true);
+    expect(errors).toEqual([
+      expect.stringMatching(/local-failure.*retained for retry.*finalization exploded/i),
+    ]);
+  });
+
+  it('retires rejected submissions and emits an actionable wallet error', async () => {
+    const spend = jest.fn().mockResolvedValue({
+      status: 'rejected',
+      detail: 'INVALID_FEE_TOO_CLOSE_TO_ZERO',
+    });
+    const blockchain = new BlockchainPoller(
+      { ...mockRpc, spend, isConnected: () => true } as InternalBlockchainInterface,
+      60000,
+    );
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
+    blob.rewardPuzzleHash = '11'.repeat(32);
+    const errors: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest
+        .fn()
+        .mockReturnValueOnce([
+          { id: 'rejected', bundle: testSpendBundle('03'), fee_request: null },
+        ]),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+    blob.processResult(wasmResult());
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.reject_submission).toHaveBeenCalledTimes(1);
+    expect(cradle.reject_submission).toHaveBeenCalledWith('rejected');
+    expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
+    expect(errors).toEqual([expect.stringMatching(/Wallet rejected transaction rejected/)]);
+    expect(errors[0]).toMatch(/effectively zero/i);
+  });
+
   it('submits transactions already queued when a manager result is terminal', async () => {
-    const spend = jest.fn().mockResolvedValue('');
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
@@ -860,7 +947,9 @@ describe('transaction submission', () => {
     blob.rewardPuzzleHash = '11'.repeat(32);
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() => [testSpendBundle('06')]),
+      drain_submissions: jest.fn(() => [
+        { id: '6', bundle: testSpendBundle('06'), fee_request: null },
+      ]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -877,59 +966,14 @@ describe('transaction submission', () => {
     blob.detachBlockchain(blockchain);
   });
 
-  it('does not emit user-facing errors for benign stale spend rejections', async () => {
-    expect(
-      isBenignTransactionSubmitError(
-        'spend rejected: status=[3,9] Conflicting transaction: overlapping spends [CoinID(Hash(a))]',
-      ),
-    ).toBe(true);
-    expect(
-      isBenignTransactionSubmitError(
-        'spend rejected: status=[3,5] Coin not found: CoinID(Hash(b))',
-      ),
-    ).toBe(true);
-    expect(
-      isBenignTransactionSubmitError(
-        'This transaction conflicts with an existing transaction in the mempool.',
-      ),
-    ).toBe(true);
-    // Both peers push the byte-identical funding bundle, so the node de-dups the
-    // second arrival. That is harmless and must not surface as an error.
-    expect(isBenignTransactionSubmitError('Err.ALREADY_INCLUDING_TRANSACTION')).toBe(true);
-    expect(isBenignTransactionSubmitError('duplicate transaction de-duplicated')).toBe(true);
-    expect(isBenignTransactionSubmitError('This transaction is already in the mempool.')).toBe(
-      true,
-    );
-    expect(isAlreadySubmittedTransactionError('Err.ALREADY_INCLUDING_TRANSACTION')).toBe(true);
-    expect(isAlreadySubmittedTransactionError('duplicate transaction de-duplicated')).toBe(true);
-    expect(isAlreadySubmittedTransactionError('This transaction is already in the mempool.')).toBe(
-      true,
-    );
-    expect(
-      isAlreadySubmittedTransactionError(
-        'This transaction conflicts with an existing transaction in the mempool.',
-      ),
-    ).toBe(false);
-    expect(isBenignTransactionSubmitError('spend rejected: status=[3,99] something else')).toBe(
-      false,
-    );
-    // The fee-rate rejection is fatal, not benign: it must stay loud.
-    expect(isBenignTransactionSubmitError('Err.INVALID_FEE_TOO_CLOSE_TO_ZERO')).toBe(false);
-
+  it('retains unavailable submissions and silently acknowledges an exact duplicate', async () => {
     const spend = jest
       .fn()
-      .mockRejectedValueOnce(
-        new Error('spend rejected: status=[3,9] Conflicting transaction: overlapping spends []'),
-      )
-      .mockRejectedValueOnce(
-        new Error('spend rejected: status=[3,5] Coin not found: CoinID(Hash(c))'),
-      )
-      .mockRejectedValueOnce(
-        new Error('This transaction conflicts with an existing transaction in the mempool.'),
-      )
-      .mockRejectedValueOnce(new Error('Err.ALREADY_INCLUDING_TRANSACTION'))
-      .mockRejectedValueOnce(new Error('duplicate transaction de-duplicated'))
-      .mockRejectedValueOnce(new Error('This transaction is already in the mempool.'));
+      .mockResolvedValueOnce({ status: 'unavailable', detail: 'input coin already spent' })
+      .mockResolvedValueOnce({
+        status: 'acknowledged',
+        detail: 'duplicate transaction already in mempool',
+      });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
@@ -955,27 +999,21 @@ describe('transaction submission', () => {
     });
     const cradle = {
       ...makeMockCradle(),
-      acknowledge_submission: jest.fn(),
       drain_submissions: jest.fn(() => [
-        testSpendBundle('03'),
-        testSpendBundle('04'),
-        testSpendBundle('05'),
-        testSpendBundle('06'),
-        testSpendBundle('07'),
-        testSpendBundle('08'),
+        { id: '3', bundle: testSpendBundle('03'), fee_request: null },
+        { id: '4', bundle: testSpendBundle('04'), fee_request: null },
       ]),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
-    (blob as unknown as { wc: unknown }).wc = {
-      convert_spend_to_coinset_org: () => ({ coin_spends: [] }),
-    };
     blob.setGameSession(cradle);
     blob.processResult(wasmResult());
 
     await transactionSubmitQueue(blob);
-    expect(spend).toHaveBeenCalledTimes(6);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(3);
+    expect(spend).toHaveBeenCalledTimes(2);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('4');
+    expect(cradle.reject_submission).not.toHaveBeenCalled();
     expect(errors).toEqual([]);
   });
 

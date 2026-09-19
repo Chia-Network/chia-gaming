@@ -100,32 +100,55 @@
 
 ; ─── deterministic factory ───────────────────────────────────────────
 
-; Uniform factory arguments:
-; (player_a_contribution player_b_contribution bet_unit).
-; Returns one canonical 10-field game record.
+; Acceptance arguments:
+; (proposer_reserve accepter_reserve (stack_size minimum_raise)).
+; stack_size=0 selects the largest common stack rounded down to minimum_raise.
 (defun spacepoker_factory
-    (@ _args (player_a_contribution player_b_contribution bet_unit))
+    (@ _args (proposer_reserve accepter_reserve (stack_size minimum_raise)))
     (assert
-        (> player_a_contribution 0)
-        (= player_a_contribution player_b_contribution)
-        (> bet_unit 0)
-        (= (% player_a_contribution bet_unit) 0)
+        (>= stack_size 0)
+        (> minimum_raise 0)
         (deep=
             _args
-            (li player_a_contribution player_b_contribution bet_unit)
+            (li proposer_reserve accepter_reserve (li stack_size minimum_raise))
         )
-        (li
-            (li
-                player_a_contribution
-                player_b_contribution
-                1
-                0
-                32
-                bet_unit
-                0
-                spacepoker_alice_commitA
-                spacepoker_bob_handler_commitA
-                (list val_commitA val_commitB val_begin val_mid val_end)
+        (assign
+            requested_stake (if stack_size
+                (* stack_size minimum_raise)
+                (* (/ (if (< proposer_reserve accepter_reserve)
+                          proposer_reserve
+                          accepter_reserve)
+                      minimum_raise)
+                   minimum_raise)
+            )
+            (if (or
+                    (not requested_stake)
+                    (> requested_stake proposer_reserve)
+                    (> requested_stake accepter_reserve))
+                (li 0
+                    (if stack_size
+                        (> requested_stake proposer_reserve)
+                        (< proposer_reserve minimum_raise))
+                    (if stack_size
+                        (> requested_stake accepter_reserve)
+                        (< accepter_reserve minimum_raise)))
+                (li 1
+                    (li
+                        (li
+                            requested_stake
+                            requested_stake
+                            1
+                            0
+                            32
+                            minimum_raise
+                            0
+                            spacepoker_alice_commitA
+                            spacepoker_bob_handler_commitA
+                            (list val_commitA val_commitB val_begin val_mid val_end)
+                            (li (/ requested_stake minimum_raise) minimum_raise)
+                        )
+                    )
+                )
             )
         )
     )

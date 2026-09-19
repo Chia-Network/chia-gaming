@@ -186,6 +186,7 @@ export async function restoreSession(
   );
   sc.diagnosticLog = recentEntries(save.history.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
   sc.durabilityWarning = save.live.durabilityWarning;
+  sc.restoreFundingOutbox(save.live.fundingOutbox ?? []);
   if (!Array.isArray(save.presentation.activeGameIds)) {
     throw new Error('restoreSession: missing or invalid activeGameIds');
   }

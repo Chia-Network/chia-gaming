@@ -8,17 +8,30 @@ import { CALPOKER_TERMS, KRUNK_TERMS, run, send, trackProposal } from './session
 describe('session machine behavior sequences', () => {
   it('atomically replaces Krunk authority when the next group arrives after one member settles', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['1', '2'], KRUNK_TERMS, 'peer');
+    state = trackProposal(state, '1', KRUNK_TERMS, 'peer');
 
     state = send(state, {
       type: 'notification-accepted-group',
+      proposalId: '1',
       members: [
-        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: false },
-        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: true },
+        {
+          id: '1',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '2',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
       ],
     });
 
-    state = trackProposal(state, ['7'], CALPOKER_TERMS);
+    state = trackProposal(state, '7', CALPOKER_TERMS);
     state = send(state, {
       type: 'notification-game-terminal',
 
@@ -48,7 +61,16 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'notification-accepted-group',
-      members: [{ id: '7', playerAContribution: 10n, playerBContribution: 10n, ourTurn: true }],
+      proposalId: '7',
+      members: [
+        {
+          id: '7',
+          playerAContribution: 10n,
+          playerBContribution: 10n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(10n).serialize(),
+        },
+      ],
     });
 
     expect(state.model.game.activeIds).toEqual(['7']);
@@ -66,13 +88,26 @@ describe('session machine behavior sequences', () => {
 
   it('ignores replayed readables after one Krunk game settles without suppressing its sibling', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
+    state = trackProposal(state, '1', KRUNK_TERMS);
 
     state = send(state, {
       type: 'notification-accepted-group',
+      proposalId: '1',
       members: [
-        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          id: '1',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '2',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
       ],
     });
 
@@ -188,13 +223,26 @@ describe('session machine behavior sequences', () => {
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       }),
     );
-    state = trackProposal(state, ['7', '9'], KRUNK_TERMS);
+    state = trackProposal(state, '7', KRUNK_TERMS);
 
     state = run(state, {
       type: 'notification-accepted-group',
+      proposalId: '7',
       members: [
-        { id: '7', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { id: '9', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          id: '7',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '9',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
       ],
     });
 
@@ -295,12 +343,25 @@ describe('session machine behavior sequences', () => {
 
   it('commits complete Krunk hands while preserving sibling members', () => {
     let state = createSessionMachineState(createSessionModel());
-    state = trackProposal(state, ['1', '2'], KRUNK_TERMS);
+    state = trackProposal(state, '1', KRUNK_TERMS);
     state = send(state, {
       type: 'notification-accepted-group',
+      proposalId: '1',
       members: [
-        { id: '1', playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { id: '2', playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          id: '1',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '2',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
       ],
     });
     const hand = krunkStateCodec.decode(state.model.game.handState)!;
@@ -351,7 +412,7 @@ describe('session machine behavior sequences', () => {
         message: 'XXXXX is not in the dictionary.',
       },
     ]);
-    expect(transition.effects).toEqual([{ type: 'persist-session' }]);
+    expect(transition.effects).toEqual([]);
   });
 
   it('surfaces a tagged rejection message when the tag has no dedicated copy', () => {

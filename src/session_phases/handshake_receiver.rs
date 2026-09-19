@@ -14,8 +14,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, GetCoinStringParts,
-    Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
-    SpendBundle, Timeout,
+    Hash, IntoErr, LocalProposalId, Program, ProgramRef, Puzzle, PuzzleHash, Sha256Input,
+    Sha256tree, Spend, SpendBundle, Timeout,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
@@ -48,7 +48,6 @@ pub struct HandshakeReceiverPhase {
 
     channel_state: Option<ChannelState>,
     channel_finished_transaction: Option<SpendBundle>,
-    funding_coin: Option<CoinString>,
     #[serde(default)]
     opening_fee: Amount,
 
@@ -85,7 +84,6 @@ impl HandshakeReceiverPhase {
             state: ReceiverState::WaitingForA,
             channel_state: None,
             channel_finished_transaction: None,
-            funding_coin: None,
             opening_fee: Amount::default(),
             private_keys: phi.private_keys,
             game_types: phi.game_types,
@@ -113,12 +111,6 @@ impl HandshakeReceiverPhase {
             .ok_or_else(|| Error::StrErr("receiver handshake: no channel handler yet".to_string()))
     }
 
-    fn channel_state_mut(&mut self) -> Result<&mut ChannelState, Error> {
-        self.channel_state
-            .as_mut()
-            .ok_or_else(|| Error::StrErr("receiver handshake: no channel handler yet".to_string()))
-    }
-
     fn make_channel_state(
         &self,
         parent: CoinID,
@@ -141,18 +133,6 @@ impl HandshakeReceiverPhase {
             self.unroll_timeout.clone(),
             self.reward_puzzle_hash.clone(),
         )
-    }
-
-    fn try_send_step_d(&mut self, info: HandshakeStepInfo) -> Result<Option<Effect>, Error> {
-        if let Some(spend) = self.channel_finished_transaction.clone() {
-            let send_effect = Effect::PeerHandshakeD(HandshakePayloadD {
-                bundle: spend.clone(),
-            });
-            self.state = ReceiverState::Finished(Box::new(HandshakeStepWithSpend { info, spend }));
-            return Ok(Some(send_effect));
-        }
-
-        Ok(None)
     }
 
     fn compute_not_valid_after_height(&self) -> Option<u64> {
@@ -315,12 +295,16 @@ impl HandshakeReceiverPhase {
                     }
                 };
 
+                let coin_spend_request = if self.last_height > 0 {
+                    Some(self.build_bob_coin_spend_request(env)?)
+                } else {
+                    None
+                };
                 self.state = ReceiverState::WaitingForOffer(Box::new(HandshakeStepInfo {
                     first_player_hs_info: (**msg).clone(),
                     second_player_hs_info: my_hs_info.clone(),
                 }));
-                if self.last_height > 0 {
-                    let request = self.build_bob_coin_spend_request(env)?;
+                if let Some(request) = coin_spend_request {
                     self.channel_deadline = self.compute_not_valid_after_height();
                     effects.push(Effect::NeedCoinSpend(request));
                 } else {
@@ -343,17 +327,6 @@ impl HandshakeReceiverPhase {
                     )));
                 };
 
-                let info_clone = info.as_ref().clone();
-                let spend_info = {
-                    let ch = self.channel_state_mut()?;
-                    ch.initialize_genesis_as_receiver(env, &msg.signatures)
-                        .map_err(|e| {
-                            Error::StrErr(format!(
-                                "receiver step C: genesis initialization failed: {e}"
-                            ))
-                        })?
-                };
-                self.last_channel_coin_spend_info = Some(spend_info);
                 if msg.bundle.spends.is_empty() {
                     return Err(Error::StrErr(
                         "No spends to draw the channel coin from".to_string(),
@@ -376,8 +349,33 @@ impl HandshakeReceiverPhase {
                     &env.agg_sig_me_additional_data,
                     self.last_height,
                 )?;
-                effects.extend(self.try_send_step_d(info_clone)?);
-                effects.push(Effect::SpendTransaction(combined, self.channel_deadline));
+                let mut staged_channel_state = self.channel_state()?.clone();
+                let spend_info = staged_channel_state
+                    .initialize_genesis_as_receiver(env, &msg.signatures)
+                    .map_err(|e| {
+                        Error::StrErr(format!(
+                            "receiver step C: genesis initialization failed: {e}"
+                        ))
+                    })?;
+
+                let info_clone = info.as_ref().clone();
+                self.channel_state = Some(staged_channel_state);
+                self.last_channel_coin_spend_info = Some(spend_info);
+                self.state = ReceiverState::Finished(Box::new(HandshakeStepWithSpend {
+                    info: info_clone,
+                    spend: receiver_bundle.clone(),
+                }));
+                effects.push(Effect::SendPeer(PeerMessage::HandshakeD(
+                    HandshakePayloadD {
+                        bundle: receiver_bundle,
+                    },
+                )));
+                effects.push(Effect::SpendTransaction(
+                    crate::session_phases::effects::TransactionSubmission::already_paid(
+                        combined,
+                        self.channel_deadline,
+                    ),
+                ));
             }
 
             ReceiverState::Finished(_) => {
@@ -462,29 +460,20 @@ impl SpendWalletReceiver for HandshakeReceiverPhase {
     fn coin_created(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _coin: &CoinString,
+        coin: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
+        let channel_coin = self.channel_state()?.channel_coin().clone();
+        if *coin != channel_coin {
+            return Err(Error::StrErr(format!(
+                "receiver handshake observed unexpected coin creation: {}",
+                format_coin(coin),
+            )));
+        }
         if !self.waiting_to_start {
             return Ok(None);
         }
 
-        let has_channel_coin = self
-            .channel_state()
-            .ok()
-            .map(|ch| ch.channel_coin())
-            .is_some();
-
-        if !has_channel_coin {
-            return Ok(None);
-        }
-
         self.waiting_to_start = false;
-
-        let channel_coin = self
-            .channel_state()
-            .ok()
-            .map(|ch| ch.channel_coin().clone())
-            .expect("has_channel_coin was true");
 
         let mut effects = Vec::new();
 
@@ -504,12 +493,19 @@ impl SpendWalletReceiver for HandshakeReceiverPhase {
     fn coin_spent(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        coin_id: &CoinString,
+        coin: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![Effect::Log(format!(
-            "[receiver-handshake:coin-spent] {}",
-            format_coin(coin_id),
-        ))])
+        if self.channel_state()?.channel_coin() == coin {
+            return Ok(vec![Effect::Log(format!(
+                "[receiver-handshake:channel-spent] {}",
+                format_coin(coin),
+            ))]);
+        }
+
+        Err(Error::StrErr(format!(
+            "receiver handshake observed unexpected coin spend: {}",
+            format_coin(coin),
+        )))
     }
 
     fn coin_puzzle_and_solution(
@@ -611,7 +607,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
     fn self_accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(
             self.phase_name(),
@@ -690,11 +686,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         };
         let mut request = self.build_bob_coin_spend_request(env)?;
         request.max_height = self.channel_deadline;
-        self.funding_coin = Some(validate_wallet_bundle_applies_conditions(
-            env.allocator,
-            &wallet_bundle,
-            &request,
-        )?);
+        validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)?;
 
         let amount = self.pre_launcher_amount()?;
         let pre_identity = self.pre_launcher_identity(env)?;
@@ -901,31 +893,33 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                 spend: None,
                 semantic: None,
             },
-            Effect::PeerHandshakeB(Box::new(HandshakePayloadBWithGenesis {
-                identity: info.second_player_hs_info,
-                channel_coin_grandparent: pre_launcher_coin.to_coin_id(),
-                signatures: state_zero_signatures,
-            })),
+            Effect::SendPeer(PeerMessage::HandshakeB(Box::new(
+                HandshakePayloadBWithGenesis {
+                    identity: info.second_player_hs_info,
+                    channel_coin_grandparent: pre_launcher_coin.to_coin_id(),
+                    signatures: state_zero_signatures,
+                },
+            ))),
         ])
     }
-    fn propose_games(
+    fn propose(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        Err(phase_operation_error(self.phase_name(), "propose_games"))
+        _proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
+        Err(phase_operation_error(self.phase_name(), "propose"))
     }
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "accept_proposal"))
     }
     fn cancel_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "cancel_proposal"))
     }
@@ -1016,17 +1010,10 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        // While funding is pending, surface both the predicted channel coin and
-        // the local wallet coin that emitted the required extra conditions.
-        let mut coins = self
-            .channel_state
+        self.channel_state
             .as_ref()
             .map(|ch| vec![(CoinOfInterest::Channel, ch.channel_coin().clone())])
-            .unwrap_or_default();
-        if let Some(funding_coin) = &self.funding_coin {
-            coins.push((CoinOfInterest::Funding, funding_coin.clone()));
-        }
-        coins
+            .unwrap_or_default()
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         HandshakeReceiverPhase::channel_state(self)
@@ -1170,6 +1157,35 @@ mod queued_message_tests {
             )
             .expect_err("HandshakeA collision");
         assert!(format!("{error:?}").contains("public key collision"));
+    }
+
+    #[test]
+    fn handshake_a_request_failure_does_not_publish_waiting_state() {
+        let mut phase = finished_phase();
+        phase.state = ReceiverState::WaitingForA;
+        phase.last_height = 1;
+        phase.my_contribution = Amount::new(u64::MAX);
+        phase.opening_fee = Amount::new(1);
+        let mut payload = payload_colliding_with_local_channel_key(&phase);
+        let referee_key =
+            crate::common::types::PrivateKey::from_bytes(&[47; 32]).expect("referee key");
+        payload.referee_pubkey = private_to_public_key(&referee_key);
+        payload.reward_payout_signature =
+            sign_reward_payout(&referee_key, &payload.reward_puzzle_hash);
+
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        let error = phase
+            .process_message(
+                &mut env,
+                Rc::new(PeerMessage::HandshakeA(Box::new(payload))),
+            )
+            .expect_err("overflow must reject HandshakeA");
+
+        assert!(format!("{error:?}").contains("overflowed u64"));
+        assert!(matches!(phase.state, ReceiverState::WaitingForA));
+        assert!(!phase.pending_coin_spend);
+        assert!(phase.channel_deadline.is_none());
     }
 
     #[test]
