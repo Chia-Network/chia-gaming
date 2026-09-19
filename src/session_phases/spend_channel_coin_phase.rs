@@ -1253,17 +1253,6 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
     ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinPhase::cheat_game(self, env, game_id, mover_share, entropy)
     }
-    #[cfg(test)]
-    fn self_accept_proposal(
-        &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _proposal_id: &LocalProposalId,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "self_accept_proposal",
-        ))
-    }
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
         SpendChannelCoinPhase::take_next_phase(self).map(|oc| oc as Box<dyn PeerLifecyclePhase>)
     }
@@ -1494,60 +1483,6 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             SpendChannelCoinPhase::timeout_claim_rearmed(self, semantic);
         }
         Ok(None)
-    }
-    #[cfg(test)]
-    fn corrupt_state_for_testing(&mut self, _new_sn: usize) -> Result<(), Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "corrupt_state_for_testing",
-        ))
-    }
-    #[cfg(test)]
-    fn force_unroll_spend_for_testing(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<SpendBundle, Error> {
-        SpendChannelCoinPhase::force_unroll_spend(self, env)
-    }
-    #[cfg(test)]
-    fn last_channel_coin_spend_info_for_testing(&self) -> Option<ChannelCoinSpendInfo> {
-        self.last_channel_coin_spend_info.clone()
-    }
-    #[cfg(test)]
-    fn force_stale_unroll_spend_for_testing(
-        &self,
-        _env: &mut ChannelEnv<'_>,
-        _saved: &ChannelCoinSpendInfo,
-    ) -> Result<SpendBundle, Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "force_stale_unroll_spend_for_testing",
-        ))
-    }
-    #[cfg(test)]
-    fn take_off_chain_phase_for_testing(&mut self) -> Option<crate::session_phases::OffChainPhase> {
-        None
-    }
-    #[cfg(test)]
-    fn queue_game_action_for_testing(
-        &mut self,
-        _action: crate::session_phases::types::GameAction,
-    ) -> Result<(), Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "queue_game_action_for_testing",
-        ))
-    }
-    #[cfg(test)]
-    fn fail_next_cached_unroll_update_for_testing(&mut self) -> Result<(), Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "fail_next_cached_unroll_update_for_testing",
-        ))
-    }
-    #[cfg(test)]
-    fn queued_game_action_count_for_testing(&self) -> usize {
-        0
     }
     fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
         None

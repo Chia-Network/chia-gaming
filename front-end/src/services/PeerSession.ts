@@ -62,6 +62,7 @@ export interface ReliableMessageConsumer {
 }
 
 export interface ReliableCommitCoordinator {
+  retire(): void;
   requestCommit(): void;
   flush(): Promise<void>;
   enqueue(work: () => void): void;

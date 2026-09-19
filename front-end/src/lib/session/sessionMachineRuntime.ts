@@ -47,9 +47,26 @@ interface ResultDeferred<T> {
   reject(error: unknown): void;
 }
 
+type PendingControllerWork =
+  | { readonly kind: 'fire-and-forget'; readonly run: () => void }
+  | {
+      readonly kind: 'result';
+      readonly run: () => void;
+      readonly reject: (error: unknown) => void;
+    };
+
 interface PendingExternalEffect {
   readonly launcher: () => Promise<void>;
   readonly deferred: Deferred;
+}
+
+export class SessionRuntimeRetiredError extends Error {
+  readonly code = 'SESSION_RUNTIME_RETIRED';
+
+  constructor() {
+    super('Session runtime was retired before queued work could start');
+    this.name = 'SessionRuntimeRetiredError';
+  }
 }
 
 function createDeferred(): Deferred {
@@ -60,6 +77,7 @@ function createDeferred(): Deferred {
     resolvePromise = resolve;
     rejectPromise = reject;
   });
+  void promise.catch(() => {});
   return {
     promise,
     resolve: () => {
@@ -82,6 +100,7 @@ function createResultDeferred<T>(): ResultDeferred<T> {
     resolvePromise = resolve;
     rejectPromise = reject;
   });
+  void promise.catch(() => {});
   return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
 
@@ -112,7 +131,7 @@ export class SessionMachineRuntime {
   };
   private dispatching = false;
   private readonly pendingEvents: SessionMachineEvent[] = [];
-  private readonly pendingControllerWork: Array<() => void> = [];
+  private readonly pendingControllerWork: PendingControllerWork[] = [];
   private readonly pendingExternalEffects = new Map<string, PendingExternalEffect>();
   private transactionActive = false;
   private committing = false;
@@ -157,6 +176,7 @@ export class SessionMachineRuntime {
       enrichCoin: dependencies.enrichCoin,
     });
     this.commitCoordinator = {
+      retire: () => this.retire(),
       requestCommit: () => this.requestCommit(),
       flush: () => this.flush(),
       enqueue: (work) => this.enqueueControllerWork(work),
@@ -186,10 +206,20 @@ export class SessionMachineRuntime {
       this.commitTimer = null;
       this.commitScheduled = false;
     }
+    const error = new SessionRuntimeRetiredError();
+    for (const work of this.pendingControllerWork.splice(0)) {
+      if (work.kind === 'result') work.reject(error);
+    }
+    for (const effect of this.pendingExternalEffects.values()) {
+      effect.deferred.reject(error);
+    }
+    this.pendingExternalEffects.clear();
+    this.pendingEvents.length = 0;
     this.controller.detachTransactionCoordinator(this.commitCoordinator);
   }
 
   dispatch(event: SessionMachineEvent): void {
+    if (this.retired) return;
     this.pendingEvents.push(event);
     if (
       this.reportingDurabilityFailure &&
@@ -346,8 +376,9 @@ export class SessionMachineRuntime {
   }
 
   private enqueueControllerWork(work: () => void): void {
+    if (this.retired) return;
     if (this.committing) {
-      this.pendingControllerWork.push(work);
+      this.pendingControllerWork.push({ kind: 'fire-and-forget', run: work });
       return;
     }
     this.runTransaction(work);
@@ -355,6 +386,10 @@ export class SessionMachineRuntime {
 
   private enqueueControllerWorkResult<T>(work: () => T): Promise<T> {
     const deferred = createResultDeferred<T>();
+    if (this.retired) {
+      deferred.reject(new SessionRuntimeRetiredError());
+      return deferred.promise;
+    }
     const run = () => {
       try {
         deferred.resolve(work());
@@ -363,7 +398,7 @@ export class SessionMachineRuntime {
       }
     };
     if (this.committing) {
-      this.pendingControllerWork.push(run);
+      this.pendingControllerWork.push({ kind: 'result', run, reject: deferred.reject });
     } else {
       this.runTransaction(run);
     }
@@ -371,6 +406,11 @@ export class SessionMachineRuntime {
   }
 
   private releaseAfterPersistence(key: string, launcher: () => Promise<void>): Promise<void> {
+    if (this.retired) {
+      const deferred = createDeferred();
+      deferred.reject(new SessionRuntimeRetiredError());
+      return deferred.promise;
+    }
     const pending = this.pendingExternalEffects.get(key);
     if (pending) return pending.deferred.promise;
     const effect = { launcher, deferred: createDeferred() };
@@ -380,6 +420,7 @@ export class SessionMachineRuntime {
   }
 
   private runTransaction(work?: () => void, requestCommit = true): void {
+    if (this.retired) return;
     if (this.transactionActive) {
       work?.();
       return;
@@ -485,6 +526,7 @@ export class SessionMachineRuntime {
     this.commitPromise = write
       .then(
         () => {
+          if (this.retired) return;
           if (shouldProject) {
             try {
               this.render(projectedState);
@@ -500,6 +542,7 @@ export class SessionMachineRuntime {
           releaseExternalEffects();
         },
         (error) => {
+          if (this.retired) throw error;
           persistenceFailed = true;
           this.durabilityDirty = true;
           this.reportingDurabilityFailure = true;
@@ -526,6 +569,11 @@ export class SessionMachineRuntime {
       )
       .finally(() => {
         this.committing = false;
+        if (this.retired) {
+          this.commitActivityPending = false;
+          this.failureWarningEvents.clear();
+          return;
+        }
         const activityPending = this.commitActivityPending;
         this.commitActivityPending = false;
         const warningOnly =
@@ -550,7 +598,7 @@ export class SessionMachineRuntime {
         if (this.pendingControllerWork.length > 0 || this.pendingEvents.length > 0) {
           const work = this.pendingControllerWork.splice(0);
           this.runTransaction(() => {
-            for (const task of work) task();
+            for (const task of work) task.run();
           });
         } else if (activityPending) {
           this.scheduleCommit(false);

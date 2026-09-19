@@ -546,15 +546,25 @@ result-bearing companion to `enqueue`: it runs typed controller work inside the
 same serialized runtime transaction and resolves or rejects its promise when
 that work executes, including when an active commit temporarily queues it.
 
+The coordinator attachment is an exclusive, retire-aware runtime lease.
+Attaching a replacement retires the previous runtime; unmount, reload, and
+controller cleanup retire the current owner. Retirement discards queued events
+and fire-and-forget controller work, rejects queued result promises and
+not-yet-launched persistence-gated effects, and makes completion from an
+in-flight write inert. An obsolete runtime therefore cannot publish, persist,
+or release effects after replacement.
+
 The funding outbox persists an explicit `CanonicalFundingRequest`, not the loose
 WASM boundary shape. `amount`, `fee`, and optional `max_height` are canonical
 decimal `u64` strings; every condition opcode is a bounded `bigint` `u32`;
 absent `coin_id` and `max_height` options are omitted, never stored as null.
-`SessionController` owns outbox retirement and the per-replacement cancellation
-prerequisite: the replacement request keyed from Rust's new event waits for
-cancellation of the rejected persisted offer. Rust remains the durable owner of
-submission/retry intent; the controller's submission queue only serializes
-one-shot wallet delivery and reports the typed outcome back to Rust.
+`SessionController` owns a single-flight outbox whose durable shape is exactly
+zero or one request. A replacement request keyed from Rust's new event waits
+for cancellation of the rejected predecessor wallet offer before it may launch.
+Distinct concurrent requests are an internal protocol-state violation. Rust
+remains the durable owner of submission/retry intent; the controller's
+submission queue only serializes one-shot wallet delivery and reports the typed
+outcome back to Rust.
 
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
@@ -572,12 +582,23 @@ watched output is explicitly absent and whose own input is explicitly live.
 Rollback replay uses the exact wallet-finalized bundle without rebuilding its
 fee. Successful poll batches represent every queried interest explicitly;
 failed or malformed batches are not reported as authoritative snapshots.
+This chain operation is **transaction rebroadcast**. It is distinct from
+**reliable peer-frame replay**, which resends unacknowledged numbered transport
+frames only at reconnect or peer-availability boundaries.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
 frontend does not persist a move journal or receive replay instructions.
 Following browser restore, an ordinary game effect may submit an automatic move
 again only when the restored canonical state still precedes it. An action
 accepted into Rust's durable queue commits the advanced hand state in the same
 snapshot, so that queued or applied action does not autoplay again.
+
+Rust local batch packaging is modular and host-invisible. `OffChainPhase`
+exclusively owns a `BatchPlan` containing cloned channel state, queue
+disposition, actions, and staged effects; planning changes only that value, and
+commit installs the live state only after cached-unroll finalization succeeds.
+Rust tests access this through `GameSession`'s concrete test-only
+`OffChainPhase` seam rather than production debug operations on the lifecycle
+trait.
 
 `GameSlice` atomically owns `activeIds`, `currentHandIds`, `currentHandOrigin`,
 keyed instances, `lastDisplayedId`, hand key, and active game type. Its reducer updates a game
@@ -1433,11 +1454,14 @@ its Rust-issued command until the peer ACKs it, then asks Rust to finalize.
 Only `terminal` discards queued protocol work and watch-coin updates and stops
 the `BlockchainPoller` and keepalive timer. Its retained `ChannelStatus`
 presentation event updates the `SessionModel`. Shell then stages one terminal
-snapshot, awaits the controller's pending durability work and the IndexedDB
-write attempt, then destroys the controller and releases the peer relay/hub
-busy state exactly once. A persistence failure reports the durability warning
-and may leave the last checkpoint stale, but it does not suppress already
-prepared terminal effects or teardown.
+snapshot only after terminal quiescence repeatedly drains controller events,
+persistence, reliable transport, and end-to-end transaction submission
+promises. Those promises cover persistence-gated launch, ordered wallet
+delivery, Rust acknowledgement or rejection, and fee-offer cleanup. Shell then
+awaits the IndexedDB write attempt, destroys the controller, and releases the
+peer relay/hub busy state exactly once. A persistence failure reports the
+durability warning and may leave the last checkpoint stale, but it does not
+suppress already prepared terminal effects or teardown.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes

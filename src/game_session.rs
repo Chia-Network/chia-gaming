@@ -6,8 +6,6 @@ use rand::Rng;
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(test)]
-use crate::channel_state::types::ChannelCoinSpendInfo;
 use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, ReadableMove};
 use crate::channel_state::ChannelState;
 use crate::common::constants::CREATE_COIN;
@@ -103,12 +101,6 @@ pub trait PeerLifecyclePhase {
         mover_share: Amount,
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
-    #[cfg(test)]
-    fn self_accept_proposal(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        proposal_id: &LocalProposalId,
-    ) -> Result<Vec<Effect>, Error>;
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>>;
     fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error>;
     fn handshake_finished(&self) -> bool;
@@ -174,28 +166,13 @@ pub trait PeerLifecyclePhase {
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)>;
 
     #[cfg(test)]
-    fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error>;
+    fn off_chain_phase_for_testing(&mut self) -> Option<&mut OffChainPhase> {
+        None
+    }
     #[cfg(test)]
-    fn force_unroll_spend_for_testing(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<SpendBundle, Error>;
-    #[cfg(test)]
-    fn last_channel_coin_spend_info_for_testing(&self) -> Option<ChannelCoinSpendInfo>;
-    #[cfg(test)]
-    fn force_stale_unroll_spend_for_testing(
-        &self,
-        env: &mut ChannelEnv<'_>,
-        saved: &ChannelCoinSpendInfo,
-    ) -> Result<SpendBundle, Error>;
-    #[cfg(test)]
-    fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase>;
-    #[cfg(test)]
-    fn queue_game_action_for_testing(&mut self, action: GameAction) -> Result<(), Error>;
-    #[cfg(test)]
-    fn fail_next_cached_unroll_update_for_testing(&mut self) -> Result<(), Error>;
-    #[cfg(test)]
-    fn queued_game_action_count_for_testing(&self) -> usize;
+    fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase> {
+        None
+    }
     fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString>;
 }
 
@@ -413,6 +390,14 @@ pub struct GameSessionConfig {
 }
 
 impl GameSession {
+    #[cfg(test)]
+    fn off_chain_phase_for_testing(&mut self) -> Result<&mut OffChainPhase, Error> {
+        let phase_name = self.peer.phase_name();
+        self.peer
+            .off_chain_phase_for_testing()
+            .ok_or_else(|| phase_operation_error(phase_name, "off_chain_phase_for_testing"))
+    }
+
     pub(crate) fn detach_observation_output(&mut self) -> DrainResult {
         DrainResult {
             events: std::mem::take(&mut self.state.events),
@@ -524,31 +509,40 @@ impl GameSession {
 
     #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
-        self.peer.corrupt_state_for_testing(new_sn)
+        self.off_chain_phase_for_testing()?
+            .corrupt_state_for_testing(new_sn)
     }
 
     #[cfg(test)]
-    pub fn force_unroll_spend(&self, allocator: &mut AllocEncoder) -> Result<SpendBundle, Error> {
-        let mut env =
-            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-        self.peer.force_unroll_spend_for_testing(&mut env)
+    pub fn force_unroll_spend(
+        &mut self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<SpendBundle, Error> {
+        let genesis = self.state.agg_sig_me_additional_data.clone();
+        let mut env = ChannelEnv::new_with_genesis(allocator, &genesis)?;
+        self.off_chain_phase_for_testing()?
+            .force_unroll_spend(&mut env)
     }
 
     #[cfg(test)]
-    pub fn unroll_snapshot_for_testing(&self) -> Option<ChannelCoinSpendInfo> {
-        self.peer.last_channel_coin_spend_info_for_testing()
+    pub fn unroll_snapshot_for_testing(
+        &mut self,
+    ) -> Option<crate::channel_state::types::ChannelCoinSpendInfo> {
+        self.peer
+            .off_chain_phase_for_testing()
+            .and_then(|phase| phase.get_last_channel_coin_spend_info().cloned())
     }
 
     #[cfg(test)]
     pub fn force_stale_unroll_spend(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
-        snapshot: &ChannelCoinSpendInfo,
+        snapshot: &crate::channel_state::types::ChannelCoinSpendInfo,
     ) -> Result<SpendBundle, Error> {
-        let mut env =
-            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-        self.peer
-            .force_stale_unroll_spend_for_testing(&mut env, snapshot)
+        let genesis = self.state.agg_sig_me_additional_data.clone();
+        let mut env = ChannelEnv::new_with_genesis(allocator, &genesis)?;
+        self.off_chain_phase_for_testing()?
+            .force_stale_unroll_spend(&mut env, snapshot)
     }
 
     pub fn historical_unroll_count(&self) -> Option<usize> {
@@ -1215,10 +1209,11 @@ impl GameSession {
         allocator: &mut AllocEncoder,
         proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
+        let genesis = self.state.agg_sig_me_additional_data.clone();
         let reported_effects = {
-            let mut env =
-                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.self_accept_proposal(&mut env, proposal_id)?
+            let mut env = ChannelEnv::new_with_genesis(allocator, &genesis)?;
+            self.off_chain_phase_for_testing()?
+                .self_accept_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1229,17 +1224,23 @@ impl GameSession {
         &mut self,
         action: GameAction,
     ) -> Result<(), Error> {
-        self.peer.queue_game_action_for_testing(action)
+        self.off_chain_phase_for_testing()?
+            .queue_game_action_for_testing(action);
+        Ok(())
     }
 
     #[cfg(test)]
     pub(crate) fn fail_next_cached_unroll_update_for_testing(&mut self) -> Result<(), Error> {
-        self.peer.fail_next_cached_unroll_update_for_testing()
+        self.off_chain_phase_for_testing()?
+            .fail_next_cached_unroll_update_for_testing();
+        Ok(())
     }
 
     #[cfg(test)]
-    pub(crate) fn queued_game_action_count_for_testing(&self) -> usize {
-        self.peer.queued_game_action_count_for_testing()
+    pub(crate) fn queued_game_action_count_for_testing(&mut self) -> usize {
+        self.peer
+            .off_chain_phase_for_testing()
+            .map_or(0, |phase| phase.queued_game_action_count_for_testing())
     }
 
     pub fn cheat(

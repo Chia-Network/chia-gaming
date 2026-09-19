@@ -306,7 +306,11 @@ disposition, and staged effects. It commits only after cached-unroll
 finalization succeeds. A trusted action error removes and attributes only the
 failing action while preserving every other queued action in order; a
 finalization error preserves the full queue. This packaging boundary is not a
-general rollback or retry mechanism.
+general rollback or retry mechanism. `OffChainPhase` exclusively owns planning
+and commit: planning mutates only the `BatchPlan`; commit replaces the live
+channel and queue and publishes effects together. Tests reach this behavior
+through the concrete test-only `OffChainPhase` seam on `GameSession`, not test
+operations implemented by every lifecycle phase.
 
 This rollback scope is an architectural invariant. Core atomicity exists to
 isolate mutations made while validating untrusted peer input; it is not a
@@ -701,6 +705,9 @@ wallet-acknowledged ones. A lower tip replays the surviving retained set; an
 equal-or-higher replacement tip replays only a transaction whose watched output
 is explicitly absent while an input from that same bundle is explicitly live.
 All replay paths reuse the exact wallet-finalized bundle and original fee.
+This is **transaction rebroadcast**: resubmission of exact chain bytes.
+**Reliable peer-frame replay** is separate transport behavior that resends
+unacknowledged numbered peer frames after reconnect or peer availability.
 
 Rust captures the configured fee amount, target, and explicit
 `SubmitWithoutFee` attachment-failure policy when an intent is emitted.
@@ -777,11 +784,19 @@ controller work on this same serialized boundary and returns a typed promise
 that resolves or rejects when that work executes, including work queued behind
 an in-progress commit.
 
+The controller grants an exclusive, retire-aware lease to one runtime
+coordinator. Attaching a replacement retires the previous runtime; unmount,
+reload, and controller cleanup retire the current one. Retirement discards
+queued reducer/controller work and rejects pending result promises and
+not-yet-launched external effects, so an obsolete runtime cannot publish,
+persist, or release work after replacement.
+
 Durable funding requests use one explicit canonical model: `amount`, `fee`, and
 optional `max_height` are canonical decimal `u64` strings; condition opcodes are
 bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
 omitted rather than stored as null. The controller owns the durable funding
-outbox and cancellation prerequisite for a replacement request, while Rust owns
+outbox as a single-flight zero-or-one request. A replacement cannot launch
+until cancellation of its predecessor wallet offer settles. Rust owns
 transaction submission intent and the frontend submission queue owns only
 ordered one-shot wallet delivery.
 
@@ -817,6 +832,12 @@ from that finalized terminal model; `frozen` means terminal, read-only, and no
 port, not stale pre-finalization game state. Cold restoration is separate again:
 `FinishedSessionGameView` always attempts a package's frozen mount from valid
 persisted hand state when no live tree survived (for example, after reload).
+
+Submission promises cover the complete ordered operation: persistence-gated
+launch, wallet delivery, Rust acknowledgement or rejection, and fee-offer
+cleanup. Terminal finalization repeatedly drains controller events,
+persistence, those submission promises, and reliable transport to quiescence
+before taking the terminal snapshot and retiring protocol ownership.
 
 ### Handlers
 

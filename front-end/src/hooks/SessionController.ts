@@ -57,13 +57,10 @@ export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 class TransactionSubmitQueue {
   private tail: Promise<void> = Promise.resolve();
 
-  enqueue(
-    run: () => Promise<void>,
-    onError: (error: unknown) => void,
-    onFinally: () => void,
-  ): void {
+  enqueue(run: () => Promise<void>): Promise<void> {
     const submission = this.tail.then(run);
-    this.tail = submission.catch(onError).finally(onFinally);
+    this.tail = submission.catch(() => {});
+    return submission;
   }
 
   flush(): Promise<void> {
@@ -170,6 +167,18 @@ export function rewriteFeeRateRejection(message: string): string {
 
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
 
+type FundingAttemptLaunchState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'scheduled'; readonly coordinator: ReliableCommitCoordinator }
+  | { readonly kind: 'launched' };
+
+interface ActiveFundingAttempt {
+  readonly key: string;
+  readonly request: CanonicalFundingRequest;
+  readonly predecessorCancellation?: Promise<void>;
+  launchState: FundingAttemptLaunchState;
+}
+
 export class SessionController implements PollingGameSession {
   myContribution: bigint;
   theirContribution: bigint;
@@ -233,9 +242,7 @@ export class SessionController implements PollingGameSession {
   private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
-  private readonly fundingCancellationForRequest = new Map<string, Promise<void>>();
-  private readonly fundingOutbox = new Map<string, CanonicalFundingRequest>();
-  private readonly scheduledFundingEffects = new Set<string>();
+  private activeFundingAttempt: ActiveFundingAttempt | null = null;
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: {
@@ -349,14 +356,16 @@ export class SessionController implements PollingGameSession {
   }
 
   attachTransactionCoordinator(coordinator: ReliableCommitCoordinator): void {
+    if (this.retired) {
+      coordinator.retire();
+      return;
+    }
     if (this.transactionCoordinator && this.transactionCoordinator !== coordinator) {
-      this.reliableTransport.detachCommitCoordinator(this.transactionCoordinator);
+      this.transactionCoordinator.retire();
     }
     this.transactionCoordinator = coordinator;
     this.reliableTransport.attachCommitCoordinator(coordinator);
-    for (const [key, request] of this.fundingOutbox) {
-      this.scheduleFundingRequest(key, request);
-    }
+    if (this.activeFundingAttempt) this.scheduleFundingRequest(this.activeFundingAttempt);
     if (this.eventQueue.length > 0) coordinator.requestCommit();
   }
 
@@ -473,6 +482,7 @@ export class SessionController implements PollingGameSession {
   private cleanupInternal() {
     const retainRejectedTransport = this.reliableState.disposition === 'outbound-reject';
     this.retired = true;
+    this.transactionCoordinator?.retire();
     this.cleanShutdownCalled = true;
     // Retirement is not a manager terminal disposition: detach this session
     // without stopping a shared poller, but make any in-flight active drain
@@ -489,10 +499,6 @@ export class SessionController implements PollingGameSession {
     this.blockchain?.detachGameSession(this);
     this.blockchainAttached = false;
     this.blockchain = null;
-    if (this.transactionCoordinator) {
-      this.reliableTransport.detachCommitCoordinator(this.transactionCoordinator);
-      this.transactionCoordinator = null;
-    }
     this.persistInboundSessionReject = null;
     this.inboundSessionRejectHandler = null;
     if (this.drainTimer) {
@@ -723,15 +729,13 @@ export class SessionController implements PollingGameSession {
     return this.cradle?.get_channel_puzzle_hash() ?? null;
   }
 
-  private async handleNeedCoinSpend(
-    request: CanonicalFundingRequest,
-    prerequisite?: Promise<void>,
-  ) {
+  private async handleNeedCoinSpend(attempt: ActiveFundingAttempt) {
+    const { request } = attempt;
     const blockchain = this.blockchain;
     if (!blockchain) {
       const message = 'Blockchain is not connected';
       this.enqueueStimulus(() => {
-        this.retireFundingRequest(request);
+        this.retireFundingAttempt(attempt);
         this.rxjsEmitter?.next({ type: 'error', error: message });
         if (this.cradle) this.processResult(this.cradle.wallet_callback_failed(message));
         this.requestCommit();
@@ -739,7 +743,7 @@ export class SessionController implements PollingGameSession {
       return;
     }
     try {
-      await prerequisite;
+      await attempt.predecessorCancellation;
       const offerAmount = -BigInt(request.amount);
       const extraConditions = request.conditions.map(({ opcode, args }) => ({
         opcode,
@@ -757,10 +761,29 @@ export class SessionController implements PollingGameSession {
         maxHeight,
         openingFee,
       );
+      if (this.activeFundingAttempt !== attempt) {
+        const staleTradeId =
+          typeof bundle === 'object' &&
+          bundle !== null &&
+          typeof bundle.tradeId === 'string' &&
+          typeof bundle.offer === 'string'
+            ? bundle.tradeId
+            : undefined;
+        if (staleTradeId) {
+          try {
+            await this.cancelRejectedFundingOffer(staleTradeId);
+          } catch (error) {
+            log(
+              `[wasm] failed to cancel retired funding offer trade_id=${staleTradeId}: ${extractErrorMessage(error)}`,
+            );
+          }
+        }
+        return;
+      }
       if (!bundle) {
         const msg = 'Wallet createOfferForIds failed (returned null)';
         this.enqueueStimulus(() => {
-          this.retireFundingRequest(request);
+          this.retireFundingAttempt(attempt);
           log(`[wasm] ${msg}`);
           this.rxjsEmitter?.next({ type: 'error', error: msg });
           if (this.cradle) this.processResult(this.cradle.wallet_callback_failed(msg));
@@ -791,15 +814,15 @@ export class SessionController implements PollingGameSession {
             await this.cancelRejectedFundingOffer(persistedTradeId);
           }
           this.enqueueStimulus(() => {
-            this.retireFundingRequest(request);
+            this.retireFundingAttempt(attempt);
             this.requestCommit();
           });
           return;
         }
-        let scheduledCancellation: { key: string; completion: Promise<void> } | undefined;
+        let successorCancellation: Promise<void> | undefined;
         try {
           await this.enqueueResult(() => {
-            this.retireFundingRequest(request);
+            this.retireFundingAttempt(attempt);
             if (!this.cradle) {
               this.requestCommit();
               return;
@@ -816,21 +839,14 @@ export class SessionController implements PollingGameSession {
                 `funding-cancel:${persistedTradeId}`,
                 () => this.cancelRejectedFundingOffer(persistedTradeId),
               );
-              this.fundingCancellationForRequest.set(replacementKey, cancellation);
-              scheduledCancellation = { key: replacementKey, completion: cancellation };
+              successorCancellation = cancellation;
+              this.queueCanonicalFundingRequest(replacementKey, canonicalReplacement, cancellation);
             }
             this.processResult(result);
             this.requestCommit();
           });
         } catch (error) {
-          if (
-            scheduledCancellation &&
-            this.fundingCancellationForRequest.get(scheduledCancellation.key) ===
-              scheduledCancellation.completion
-          ) {
-            this.fundingCancellationForRequest.delete(scheduledCancellation.key);
-            await scheduledCancellation.completion;
-          } else if (persistedTradeId && !scheduledCancellation) {
+          if (persistedTradeId && !successorCancellation) {
             await this.cancelRejectedFundingOffer(persistedTradeId);
           }
           throw error;
@@ -839,14 +855,14 @@ export class SessionController implements PollingGameSession {
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
           this.enqueueStimulus(() => {
-            this.retireFundingRequest(request);
+            this.retireFundingAttempt(attempt);
             this.requestCommit();
           });
           return;
         }
         const bundleJson = typeof bundle === 'string' ? bundle : jsonStringify(bundle);
         this.enqueueStimulus(() => {
-          this.retireFundingRequest(request);
+          this.retireFundingAttempt(attempt);
           if (this.cradle) this.processResult(this.cradle.provide_coin_spend_bundle(bundleJson));
           this.requestCommit();
         });
@@ -860,7 +876,7 @@ export class SessionController implements PollingGameSession {
           'Wallet reports insufficient funds. It may be that your wallet has enough balance but some coins are locked. Free up locked coins in your wallet and try again.';
       }
       this.enqueueStimulus(() => {
-        this.retireFundingRequest(request);
+        this.retireFundingAttempt(attempt);
         this.rxjsEmitter?.next({ type: 'error', error: msg });
         if (this.cradle) this.processResult(this.cradle.wallet_callback_failed(msg));
         this.requestCommit();
@@ -868,59 +884,83 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  private retireFundingRequest(request: CanonicalFundingRequest): void {
-    const key = fundingRequestKey(request);
-    this.fundingOutbox.delete(key);
-    this.scheduledFundingEffects.delete(key);
+  private retireFundingAttempt(attempt: ActiveFundingAttempt): void {
+    if (this.activeFundingAttempt === attempt) this.activeFundingAttempt = null;
   }
 
   private queueFundingRequest(request: NeedCoinSpendRequest): void {
     const canonical = canonicalizeFundingRequest(request, 'WASM NeedCoinSpend request');
     const key = fundingRequestKey(canonical);
-    if (this.fundingOutbox.has(key)) return;
-    const prerequisite = this.fundingCancellationForRequest.get(key);
-    this.fundingCancellationForRequest.delete(key);
-    this.fundingOutbox.set(key, canonical);
-    this.scheduleFundingRequest(key, canonical, prerequisite);
+    this.queueCanonicalFundingRequest(key, canonical);
   }
 
-  private scheduleFundingRequest(
+  private queueCanonicalFundingRequest(
     key: string,
     request: CanonicalFundingRequest,
-    prerequisite?: Promise<void>,
+    predecessorCancellation?: Promise<void>,
   ): void {
-    if (!this.transactionCoordinator || this.scheduledFundingEffects.has(key)) return;
-    this.scheduledFundingEffects.add(key);
-    const effect = this.transactionCoordinator.releaseAfterPersistence(key, () =>
-      this.handleNeedCoinSpend(request, prerequisite),
-    );
+    const active = this.activeFundingAttempt;
+    if (active) {
+      if (active.key === key) return;
+      const message = `Internal protocol-state violation: received concurrent funding request ${key} while ${active.key} is active`;
+      this.retireFundingAttempt(active);
+      if (this.cradle) this.processResult(this.cradle.wallet_callback_failed(message));
+      throw new Error(message);
+    }
+    const attempt: ActiveFundingAttempt = {
+      key,
+      request,
+      launchState: { kind: 'idle' },
+      ...(predecessorCancellation ? { predecessorCancellation } : {}),
+    };
+    this.activeFundingAttempt = attempt;
+    this.scheduleFundingRequest(attempt);
+  }
+
+  private scheduleFundingRequest(attempt: ActiveFundingAttempt): void {
+    const coordinator = this.transactionCoordinator;
+    if (!coordinator || this.activeFundingAttempt !== attempt) return;
+    if (attempt.launchState.kind === 'launched') return;
+    if (
+      attempt.launchState.kind === 'scheduled' &&
+      attempt.launchState.coordinator === coordinator
+    ) {
+      return;
+    }
+    attempt.launchState = { kind: 'scheduled', coordinator };
+    const effect = coordinator.releaseAfterPersistence(attempt.key, () => {
+      if (this.activeFundingAttempt !== attempt) return Promise.resolve();
+      attempt.launchState = { kind: 'launched' };
+      return this.handleNeedCoinSpend(attempt);
+    });
     this.trackEffect(effect);
   }
 
   restoreFundingOutbox(entries: Array<{ key: string; request: CanonicalFundingRequest }>): void {
-    const restored = new Map<string, CanonicalFundingRequest>();
+    let restoredKey: string | undefined;
+    let restoredRequest: CanonicalFundingRequest | undefined;
     for (const entry of entries) {
       const request = decodeCanonicalFundingRequest(entry.request, 'persisted funding request');
       const key = fundingRequestKey(request);
       if (entry.key !== key) {
         throw new Error('Persisted funding outbox key does not match its request');
       }
-      if (restored.has(key)) {
+      if (restoredKey === key) {
         throw new Error(`Persisted funding outbox contains duplicate key ${key}`);
       }
-      restored.set(key, request);
+      if (restoredKey !== undefined) {
+        throw new Error('Persisted funding outbox contains more than one distinct request');
+      }
+      restoredKey = key;
+      restoredRequest = request;
     }
 
-    this.fundingOutbox.clear();
-    this.scheduledFundingEffects.clear();
-    for (const [key, request] of restored) {
-      this.fundingOutbox.set(key, request);
-    }
-    if (this.transactionCoordinator) {
-      for (const [key, request] of this.fundingOutbox) {
-        this.scheduleFundingRequest(key, request);
-      }
-    }
+    const restored =
+      restoredKey === undefined || restoredRequest === undefined
+        ? null
+        : { key: restoredKey, request: restoredRequest, launchState: { kind: 'idle' } as const };
+    this.activeFundingAttempt = restored;
+    if (restored) this.scheduleFundingRequest(restored);
   }
 
   private async cancelRejectedFundingOffer(tradeId: string): Promise<void> {
@@ -1029,14 +1069,15 @@ export class SessionController implements PollingGameSession {
           const broadcast = this.releaseAfterPersistence(`broadcast:${submission.id}`, () =>
             this.broadcastFinalizedSubmission(submission, finalized, feeOfferTradeId),
           );
-          this.trackEffect(broadcast);
           return broadcast;
         } catch (error) {
           if (feeOfferTradeId) {
             const cleanup = this.releaseAfterPersistence(`fee-release:${submission.id}`, () =>
               this.releaseFeeOfferReservation(feeOfferTradeId!, 'Rust rejected fee offer'),
             );
-            this.trackEffect(cleanup);
+            return cleanup.then(() => {
+              throw error;
+            });
           }
           throw error;
         }
@@ -1101,18 +1142,18 @@ export class SessionController implements PollingGameSession {
       }
       this.cradle.reject_submission(submission.id);
       this.requestCommit();
-      if (feeOfferTradeId) {
-        const cleanup = this.releaseAfterPersistence(`fee-release:${submission.id}`, () =>
-          this.releaseFeeOfferReservation(feeOfferTradeId!, 'network rejected transaction'),
-        );
-        this.trackEffect(cleanup);
-      }
+      const cleanup = feeOfferTradeId
+        ? this.releaseAfterPersistence(`fee-release:${submission.id}`, () =>
+            this.releaseFeeOfferReservation(feeOfferTradeId!, 'network rejected transaction'),
+          )
+        : undefined;
       const message = rewriteFeeRateRejection(outcome.detail);
       log(`[wasm] submitTransaction rejected id=${submission.id}: ${message}`);
       this.rxjsEmitter?.next({
         type: 'error',
         error: `Wallet rejected transaction ${submission.id}: ${message}`,
       });
+      return cleanup;
     });
   }
 
@@ -1147,27 +1188,25 @@ export class SessionController implements PollingGameSession {
     }
     this.queuedSubmissionIds.add(submission.id);
     try {
-      const release = this.releaseAfterPersistence(`submission:${submission.id}`, async () => {
-        this.transactionSubmitQueue.enqueue(
-          async () => {
-            if (this.retired) {
-              log('[wasm] submitTransaction dropped because controller is retired');
-              return;
-            }
-            if (this.transactionPublishNerfed) {
-              log('[wasm] submitTransaction dropped because publishing is nerfed');
-              return;
-            }
-            await this.submitTransactionNow(submission);
-          },
-          (e) => {
-            diagStack('transactionSubmitQueue rejected', e);
-          },
-          () => {
-            this.queuedSubmissionIds.delete(submission.id);
-          },
-        );
-      });
+      const release = this.releaseAfterPersistence(`submission:${submission.id}`, () =>
+        this.transactionSubmitQueue.enqueue(async () => {
+          if (this.retired) {
+            log('[wasm] submitTransaction dropped because controller is retired');
+            return;
+          }
+          if (this.transactionPublishNerfed) {
+            log('[wasm] submitTransaction dropped because publishing is nerfed');
+            return;
+          }
+          await this.submitTransactionNow(submission);
+        }),
+      )
+        .catch((error) => {
+          diagStack('transactionSubmitQueue rejected', error);
+        })
+        .finally(() => {
+          this.queuedSubmissionIds.delete(submission.id);
+        });
       this.trackEffect(release);
     } catch (error) {
       this.queuedSubmissionIds.delete(submission.id);
@@ -1434,6 +1473,33 @@ export class SessionController implements PollingGameSession {
 
   flushTransactionSubmissions(): Promise<void> {
     return this.transactionSubmitQueue.flush();
+  }
+
+  async quiesceForTerminalFinalization(): Promise<void> {
+    const maxPasses = 20;
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      this.flushDeferredWork();
+      await this.flushPendingSave();
+
+      await Promise.allSettled([...this.pendingEffects]);
+      await this.flushTransactionSubmissions();
+      await this.reliableTransport.flushPending();
+
+      this.flushDeferredWork();
+      await this.flushPendingSave();
+
+      if (
+        this.pendingEffects.size === 0 &&
+        this.eventQueue.length === 0 &&
+        !this.drainScheduled &&
+        !this.reliableTransport.hasPendingDurability()
+      ) {
+        return;
+      }
+    }
+    throw new Error(
+      `SessionController terminal quiescence did not settle after ${maxPasses} persistence passes`,
+    );
   }
 
   async flushPendingWork(): Promise<void> {
@@ -1801,10 +1867,14 @@ export class SessionController implements PollingGameSession {
       ),
       diagnosticLog: recentEntries(this.diagnosticLog, DIAGNOSTIC_LOG_LIMIT),
       durabilityWarning: this.durabilityWarning,
-      fundingOutbox: [...this.fundingOutbox].map(([key, request]) => ({
-        key,
-        request: canonicalizeFundingRequest(request),
-      })),
+      fundingOutbox: this.activeFundingAttempt
+        ? [
+            {
+              key: this.activeFundingAttempt.key,
+              request: canonicalizeFundingRequest(this.activeFundingAttempt.request),
+            },
+          ]
+        : [],
       transportDisposition: this.reliableState.disposition ?? 'active',
       activeGameIds: [...this.activeGameIds],
       channelStatus: this.lastChannelStatus,

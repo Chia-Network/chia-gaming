@@ -102,6 +102,7 @@ pub(super) struct SimulationHarness {
     move_readiness_boundary: Option<MoveReadinessBoundary>,
     pending_received_proposal_refs: [VecDeque<ScriptProposalRef>; 2],
     saved_unroll_snapshots: [Option<ChannelCoinSpendInfo>; 2],
+    saved_force_unroll_spends: [Option<SpendBundle>; 2],
 }
 
 impl SimulationHarness {
@@ -235,6 +236,7 @@ impl SimulationHarness {
             move_readiness_boundary: None,
             pending_received_proposal_refs: [VecDeque::new(), VecDeque::new()],
             saved_unroll_snapshots: [None, None],
+            saved_force_unroll_spends: [None, None],
         }
     }
 
@@ -987,6 +989,10 @@ impl SimulationHarness {
         if !self.cradles[player].handshake_finished() {
             return Ok(false);
         }
+        for who in 0..=1 {
+            self.saved_force_unroll_spends[who] =
+                Some(self.cradles[who].force_unroll_spend(allocator)?);
+        }
         self.cradles[player].shut_down(allocator)?;
         Ok(true)
     }
@@ -1004,7 +1010,10 @@ impl SimulationHarness {
         allocator: &mut AllocEncoder,
         player: usize,
     ) -> Result<(), Error> {
-        let spend = self.cradles[player].force_unroll_spend(allocator)?;
+        let spend = match self.saved_force_unroll_spends[player].take() {
+            Some(spend) => spend,
+            None => self.cradles[player].force_unroll_spend(allocator)?,
+        };
         self.simulator.push_transactions(allocator, &spend.spends)?;
         Ok(())
     }

@@ -62,7 +62,7 @@ export function finalizeTerminalSession(
   const coins = args.coins.map((coin) => ({ ...coin }));
 
   const finalization = (async () => {
-    await args.controller.flushPendingSave();
+    await args.controller.quiesceForTerminalFinalization();
     const handState = structuredClone(args.model.game.handState);
     const model: SessionModel = {
       ...args.model,

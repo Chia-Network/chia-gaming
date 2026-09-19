@@ -208,7 +208,10 @@ export function useGameSession(
   };
   useEffect(() => {
     runtime.setRender(setMachineState);
-    return () => runtime.clearRender();
+    return () => {
+      runtime.clearRender();
+      runtime.retire();
+    };
   }, [runtime]);
   const dispatchHostProjection = useCallback(() => {
     const status = controller.getRestoreStatus();

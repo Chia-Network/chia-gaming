@@ -100,7 +100,7 @@ export function activeMachineState() {
   return createSessionMachineState(createSessionModel());
 }
 
-export function createHeadlessSessionMachineRuntime(
+export function createCoordinatorOnlySessionMachineRuntime(
   controller: SessionController,
   persist: () => void | Promise<void> = () => {},
 ): SessionMachineRuntime {

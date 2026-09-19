@@ -349,6 +349,9 @@ export function validateLive(live: LiveSessionSave['live']): void {
     if (fundingKeys.has(entry.key)) {
       throw new Error(`Garbled save: duplicate live.fundingOutbox key ${entry.key}`);
     }
+    if (fundingKeys.size > 0) {
+      throw new Error('Garbled save: live.fundingOutbox contains more than one distinct request');
+    }
     fundingKeys.add(entry.key);
   }
 }

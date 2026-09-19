@@ -27,6 +27,7 @@ import {
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
+import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
 import { jsonStringify } from '../../util/jsonSafe';
 import {
   protocolIdentitiesReady,
@@ -38,6 +39,7 @@ import { sessionReceivePolicy } from '../session/receivePolicy';
 import { readSessionRecord, writeSessionRecord } from '../session/indexedDb';
 import { decodeSessionSaveEnvelope } from '../session/persistence';
 import { liveSave } from './session_save_envelope.fixtures';
+import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
 
 describe('WASM result boundary', () => {
   it.each(['events', 'watchCoins', 'unwatchCoins', 'actionSucceeded', 'disposition'] as const)(
@@ -1028,6 +1030,27 @@ describe('WASM wallet funding requests', () => {
     }
   });
 
+  it('rejects restoring more than one distinct canonical funding request', () => {
+    const { blob } = createReadyBlob();
+    const first = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['first'] }],
+    });
+    const second = canonicalizeFundingRequest({
+      amount: '101',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['second'] }],
+    });
+
+    expect(() =>
+      blob.restoreFundingOutbox([
+        { key: fundingRequestKey(first), request: first },
+        { key: fundingRequestKey(second), request: second },
+      ]),
+    ).toThrow('more than one distinct request');
+  });
+
   it('attempts persistence before funding and continues after storage failure', async () => {
     const order: string[] = [];
     const createOfferForIds = jest.fn().mockImplementation(async () => {
@@ -1142,7 +1165,7 @@ describe('WASM wallet funding requests', () => {
     expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
   });
 
-  it('owns an unconsumed cancellation when replacement processing throws', async () => {
+  it('reports replacement processing errors without stealing successor cancellation failure', async () => {
     const request: NeedCoinSpendRequest = {
       amount: '100',
       fee: '0',
@@ -1178,13 +1201,23 @@ describe('WASM wallet funding requests', () => {
       })
       .mockImplementation(processResult);
 
-    expectConsoleError('handleNeedCoinSpend error');
+    expectConsoleError('replacement processing failed');
+    expectConsoleError('cancellation failed');
     resolveOffer({ offer: 'offer1first', tradeId: 'trade-1' });
     await blob.flushPendingWork();
 
     expect(cancelOffer).toHaveBeenCalledTimes(1);
-    expect(walletCallbackFailed).toHaveBeenCalledTimes(1);
+    expect(walletCallbackFailed).toHaveBeenCalledTimes(2);
+    expect(walletCallbackFailed).toHaveBeenCalledWith('replacement processing failed');
     expect(walletCallbackFailed).toHaveBeenCalledWith('cancellation failed');
+    expect(
+      walletCallbackFailed.mock.calls.filter(
+        ([message]) => message === 'replacement processing failed',
+      ),
+    ).toHaveLength(1);
+    expect(
+      walletCallbackFailed.mock.calls.filter(([message]) => message === 'cancellation failed'),
+    ).toHaveLength(1);
     expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 
@@ -1218,6 +1251,68 @@ describe('WASM wallet funding requests', () => {
     expect(createOfferForIds).toHaveBeenCalledTimes(2);
     expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
     expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
+  });
+
+  it('fails one distinct concurrent funding request without launching it', async () => {
+    const first: NeedCoinSpendRequest = {
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['first'] }],
+    };
+    const second: NeedCoinSpendRequest = {
+      amount: '101',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['second'] }],
+    };
+    let resolveFirst!: (bundle: ReturnType<typeof testSpendBundle>) => void;
+    const firstWalletRequest = new Promise<ReturnType<typeof testSpendBundle>>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const createOfferForIds = jest.fn(() => firstWalletRequest);
+    const { blob, cradle } = createReadyBlob();
+    const walletCallbackFailed = jest.fn().mockReturnValue(wasmResult());
+    (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
+      walletCallbackFailed;
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds }, 60000);
+    const errors: string[] = [];
+    const subscription = blob.getObservable().subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+
+    expectConsoleError('concurrent funding request');
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: first }] }));
+    await blob.flushPendingSave();
+    for (let i = 0; i < 10 && createOfferForIds.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: second }] }));
+    resolveFirst(testSpendBundle('first'));
+    await blob.flushPendingWork();
+    subscription.unsubscribe();
+
+    expect(createOfferForIds).toHaveBeenCalledTimes(1);
+    expect(walletCallbackFailed).toHaveBeenCalledTimes(1);
+    expect(cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
+    expect(errors.filter((error) => error.includes('concurrent funding request'))).toHaveLength(1);
+  });
+
+  it('reschedules an unlaunched funding attempt onto a replacement runtime once', async () => {
+    const request: NeedCoinSpendRequest = {
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['launcher'] }],
+    };
+    const createOfferForIds = jest.fn().mockResolvedValue(testSpendBundle('replacement-runtime'));
+    const { blob } = createReadyBlob();
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds }, 60000);
+
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    const replacement = createCoordinatorOnlySessionMachineRuntime(blob);
+    await replacement.persist();
+    await blob.flushPendingWork();
+
+    expect(createOfferForIds).toHaveBeenCalledTimes(1);
+    replacement.retire();
   });
 });
 
@@ -1412,17 +1507,28 @@ describe('wallet fee attachment on submission', () => {
     setActiveBlob(blob);
     blob.blockchain = new BlockchainPoller({ ...mockRpc, spend }, 60000);
     setFinalizer(blob, finalize);
+    const errors: string[] = [];
+    const subscription = blob.getObservable().subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
 
     expectConsoleError('submitTransaction failed');
     submitTransaction(blob, testSpendBundle('first'));
     submitTransaction(blob, testSpendBundle('second'));
     await transactionSubmitQueue(blob);
+    subscription.unsubscribe();
 
     expect(spend).toHaveBeenCalledTimes(2);
     expect(finalize).toHaveBeenCalledTimes(2);
+    expect(errors).toEqual([
+      expect.stringContaining('retained for retry after a local submission failure'),
+    ]);
+    expect((blob as unknown as { resubmitAfterChainSync: boolean }).resubmitAfterChainSync).toBe(
+      true,
+    );
   });
 
-  it('tracks only persistence releases while the submission lane advances later work', async () => {
+  it('tracks one outer release through fee, broadcast, and outcome recording', async () => {
     let resolveFirstFee!: (value: undefined) => void;
     const firstFee = new Promise<undefined>((resolve) => {
       resolveFirstFee = resolve;
@@ -1453,20 +1559,22 @@ describe('wallet fee attachment on submission', () => {
     }
 
     expect(createFeeSpend).toHaveBeenCalledTimes(1);
+    expect(pendingEffects.size).toBe(1);
+
+    resolveFirstFee(undefined);
+    await blob.flushPendingWork();
     expect(pendingEffects.size).toBe(0);
 
     submitTransaction(blob, testSpendBundle('second'), { target: feeTarget, amount: '10' });
     expect(pendingEffects.size).toBe(1);
-    await blob.flushPendingSave();
-    resolveFirstFee(undefined);
-    await blob.flushPendingWork();
-
+    await blob.quiesceForTerminalFinalization();
     expect(createFeeSpend).toHaveBeenCalledTimes(2);
     expect(finalize).toHaveBeenCalledTimes(2);
     expect(spend).toHaveBeenCalledTimes(2);
+    expect(pendingEffects.size).toBe(0);
   });
 
-  it('lets persistence flush release broadcast while controller pending-work waits for it', async () => {
+  it('keeps terminal quiescence blocked through broadcast and persists the wallet outcome', async () => {
     let resolveSpend!: (value: { status: 'acknowledged' }) => void;
     const spendGate = new Promise<{ status: 'acknowledged' }>((resolve) => {
       resolveSpend = resolve;
@@ -1478,29 +1586,33 @@ describe('wallet fee attachment on submission', () => {
       applied_fee: '0',
       warning: null,
     });
-    const { blob } = createReadyBlob();
+    const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = new BlockchainPoller({ ...mockRpc, spend }, 60000);
     setFinalizer(blob, finalize);
+    const persistedAcknowledgementCounts: number[] = [];
+    setTestPersistence(blob, () => {
+      persistedAcknowledgementCounts.push(cradle.acknowledge_submission.mock.calls.length);
+    });
 
     submitTransaction(blob, testSpendBundle('coin'));
-    await blob.flushPendingSave();
+    let quiesced = false;
+    const quiescence = blob.quiesceForTerminalFinalization().then(() => {
+      quiesced = true;
+    });
     for (let i = 0; i < 10 && spend.mock.calls.length === 0; i += 1) {
       await Promise.resolve();
-      await blob.flushPendingSave();
     }
     expect(spend).toHaveBeenCalledTimes(1);
-
-    let controllerFlushed = false;
-    const pendingWork = blob.flushPendingWork().then(() => {
-      controllerFlushed = true;
-    });
     await Promise.resolve();
-    expect(controllerFlushed).toBe(false);
+    expect(quiesced).toBe(false);
+    expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
 
     resolveSpend({ status: 'acknowledged' });
-    await pendingWork;
-    expect(controllerFlushed).toBe(true);
+    await quiescence;
+    expect(quiesced).toBe(true);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
+    expect(persistedAcknowledgementCounts.at(-1)).toBe(1);
   });
 
   it('passes through an already-complete provider fee bundle', async () => {

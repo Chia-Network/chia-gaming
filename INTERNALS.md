@@ -100,7 +100,7 @@ manager converts authoritative raw snapshots into ordered `Created`, `Spent`,
 then height observations for `GameSession`. The session never maintains or
 filters a second watch set.
 
-**Retained transaction replay.** When the manager drains a transaction for
+**Retained transaction rebroadcast.** When the manager drains a transaction for
 submission, it keeps a retained copy for reload/reorg recovery and derives the
 output coins that transaction should create from its `CREATE_COIN` conditions.
 Those expected outputs are replay/conflict metadata only. They do not become host
@@ -133,6 +133,10 @@ spend. `rollback_replayed_ids` survives drain and acknowledgement for the curren
 epoch, preventing the height report and its following same-tip snapshot from
 duplicating a replay. Re-observing the expected output closes that transaction's
 epoch so a later independent rollback can replay it once again.
+
+Here “replay” means **transaction rebroadcast** of exact retained chain bytes.
+It is unrelated to **reliable peer-frame replay**, where the transport resends
+unacknowledged numbered protocol frames after reconnect or peer availability.
 
 The host poller makes this evidence explicit. Once all interests are registered
 and a coin-record request succeeds, every queried coin produces a
@@ -286,7 +290,9 @@ commits those together only after cached-unroll finalization succeeds. If one
 trusted action fails while packaging, only that action is removed and
 attributed through `ActionFailed`; every other queued action remains in its
 original order. If finalization fails, the full original queue remains. This is
-atomic batch packaging, not general rollback or retry.
+atomic batch packaging, not general rollback or retry. `OffChainPhase` owns both
+halves of the boundary: planning mutates only `BatchPlan`; commit installs its
+channel, queue disposition, and effects together.
 
 A valid received batch commits before a post-receive drain reconciles known
 stale local actions and emits `ActionFailed`; any remaining unexpected drain
@@ -346,6 +352,10 @@ point the narrowest complete boundary that covers those mutations.
 `drain_queue_into_batch`; regressions:
 `test_peer_smoke` and
 `failed_final_move_bad_signature_does_not_queue_accept_settlement`.
+Test-only off-chain operations are exposed through the concrete
+`OffChainPhase` accessor seam on `GameSession`; they are not part of the
+production lifecycle trait contract and are not stubbed across unrelated
+phases.
 
 ---
 
@@ -415,6 +425,20 @@ mid-drain React updates, or eager peer sends. Every new event source must feed
 the same coordinator. Pre-runtime negotiation may use the standalone reliable
 transport flush, but it follows the same attempt-persistence-before-release
 ordering and degraded failure policy.
+
+The controller grants this coordinator an exclusive, retire-aware runtime
+lease. Replacing or unmounting it retires the old runtime, discards queued
+events and fire-and-forget controller work, and rejects queued result promises
+and persistence-gated effects. Completion callbacks from an in-flight write
+also become inert after retirement.
+
+The funding outbox is single-flight and persists exactly zero or one canonical
+request. A replacement request carries the predecessor wallet-offer
+cancellation promise and cannot launch until that cancellation settles.
+Transaction submission promises span persistence-gated launch, ordered wallet
+delivery, Rust acknowledgement/rejection, and fee-offer cleanup. Terminal
+finalization drains those promises, controller events, persistence, and reliable
+transport repeatedly to quiescence before writing the terminal snapshot.
 
 ---
 

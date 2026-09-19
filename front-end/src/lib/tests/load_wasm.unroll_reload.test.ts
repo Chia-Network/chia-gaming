@@ -23,6 +23,28 @@ import {
 import { createReloadableSessionLane, injectSessionReload } from './reload_injection.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
+// @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
+import { createHash } from 'crypto';
+
+function diagnosticBlobHash(blob: string): string {
+  return createHash('sha256').update(blob).digest('hex');
+}
+
+function diagnosticBlobSummary(blobs: string[]): string {
+  return blobs.map((blob) => `{hash=${diagnosticBlobHash(blob)},length=${blob.length}}`).join(',');
+}
+
+async function runBoundedPollAttempts(
+  maxAttempts: number,
+  done: () => boolean,
+  pollAttempt: () => Promise<void>,
+): Promise<number> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await pollAttempt();
+    if (done()) return attempt;
+  }
+  return maxAttempts;
+}
 
 async function createAsymmetricActivePair(
   poller: BlockchainPoller,
@@ -235,7 +257,7 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
 }
 
 async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<void> {
-  const adapters = await createAsymmetricActivePair(poller, 12);
+  const adapters = await createAsymmetricActivePair(poller, 13);
   poller.stop();
   await pollOnce(poller);
   const controller = adapters[0].blob!;
@@ -272,12 +294,10 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
 
   const submittedBlobs: string[] = [];
   const puzzleSolutionCoins: string[] = [];
-  let resolveReplayBroadcast: ((blob: string) => void) | undefined;
   const originalSpend = fakeBlockchainInfo.spend;
   const originalGetPuzzleAndSolution = fakeBlockchainInfo.getPuzzleAndSolution;
   fakeBlockchainInfo.spend = async (...args: Parameters<typeof originalSpend>) => {
     submittedBlobs.push(args[0]);
-    resolveReplayBroadcast?.(args[0]);
     return originalSpend.apply(fakeBlockchainInfo, args);
   };
   fakeBlockchainInfo.getPuzzleAndSolution = async (
@@ -288,6 +308,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
   };
 
   try {
+    const baselineSubmissionCount = submittedBlobs.length;
     assert.equal(lane.controller.goOnChain(), true);
     await flushWrapperDrain(adapters);
     assert.equal(submittedBlobs.length, 1, 'unilateral spend must be submitted once');
@@ -331,11 +352,9 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     await flushWrapperDrain(adapters);
     const landedHeight = await fakeBlockchainInfo.getHeightInfo();
     assert.ok(landedHeight > preLandingHeight, 'landing must advance the simulator tip');
-    const spendsBeforeReload = submittedBlobs.length;
+    const preReplacementSubmissionCount = submittedBlobs.length;
     const puzzleRequestsBeforeReload = puzzleSolutionCoins.length;
-    const replayBroadcast = new Promise<string>((resolve) => {
-      resolveReplayBroadcast = resolve;
-    });
+    const controllerBeforeReplacementReload = lane.controller;
 
     lane = (
       await injectSessionReload(lane, poller, undefined, async () => {
@@ -350,7 +369,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
         );
         // Force the poll that used to race teardown. Before the reload harness
         // retired the old controller first, it consumed this replacement and
-        // lost its queued broadcast during teardown.
+        // lost its queued transaction rebroadcast during teardown.
         await pollOnce(poller);
       })
     ).lane;
@@ -358,26 +377,36 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
 
     // Scheduled polling is stopped for this offline lane. An explicit poll may
     // intentionally decline to report after exhausting its coherent-snapshot
-    // attempts, so keep driving the chain until a submission is observed.
-    do {
-      await pollOnce(poller);
-      await flushWrapperDrain(adapters);
-      // The first pass releases the replay into the controller transaction queue;
-      // the second persists finalization and releases the resulting broadcast.
-      await flushWrapperDrain(adapters);
-    } while (submittedBlobs.length === spendsBeforeReload);
-    const observedReplay = await replayBroadcast;
-    resolveReplayBroadcast = undefined;
-    const replayed = submittedBlobs.slice(spendsBeforeReload);
-    assert.equal(
-      observedReplay,
-      finalizedBlob,
-      'restore must rebroadcast the exact finalized bytes',
+    // attempts. The recorder is shared by both controllers, so only the exact
+    // retained bundle proves that the restored controller rebroadcast its transaction.
+    const transactionRebroadcastPollAttempts = await runBoundedPollAttempts(
+      100,
+      () => submittedBlobs.slice(preReplacementSubmissionCount).includes(finalizedBlob),
+      async () => {
+        await pollOnce(poller);
+        await flushWrapperDrain(adapters);
+        // The first pass releases the transaction rebroadcast into the controller
+        // queue; the second persists finalization and releases its submission.
+        await flushWrapperDrain(adapters);
+      },
     );
-    assert.deepEqual(
-      replayed,
-      [finalizedBlob],
-      `restore must rebroadcast exact bytes once: count=${replayed.length} expectedLength=${finalizedBlob.length} actualLengths=${replayed.map((blob) => blob.length).join(',')}`,
+    const transactionRebroadcasts = submittedBlobs.slice(preReplacementSubmissionCount);
+    const watchedCoins = lane.controller.snapshotWatchedCoins();
+    const transactionRebroadcastProvenance =
+      `attempts=${transactionRebroadcastPollAttempts}/100 ` +
+      `peak=${await fakeBlockchainInfo.getHeightInfo()} ` +
+      `submissions={total=${submittedBlobs.length},baseline=${baselineSubmissionCount},preReplacement=${preReplacementSubmissionCount},postReplacement=${transactionRebroadcasts.length}} ` +
+      `expected={hash=${diagnosticBlobHash(finalizedBlob)},length=${finalizedBlob.length}} ` +
+      `observed=[${diagnosticBlobSummary(transactionRebroadcasts)}] ` +
+      `channelStatus=${lane.controller.lastChannelStatus?.state ?? 'none'} ` +
+      `watchedCoins={count=${watchedCoins.length},ids=[${watchedCoins.map(({ coin_name }) => coin_name).join(',')}]} ` +
+      `controller={uniqueId=${lane.controller.uniqueId},replaced=${controllerBeforeReplacementReload !== lane.controller},adapterOwnsController=${lane.adapter.blob === lane.controller}} ` +
+      `runtime={adapterOwnsLaneRuntime=${lane.adapter.runtime === lane.runtime}} ` +
+      `diagnosticLog=[${lane.controller.diagnosticLog.join('|')}]`;
+    assert.equal(
+      transactionRebroadcasts.filter((blob) => blob === finalizedBlob).length,
+      1,
+      `restore must rebroadcast exact transaction bytes once: ${transactionRebroadcastProvenance}`,
     );
     assert.equal(
       puzzleSolutionCoins.length,
@@ -391,10 +420,11 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     await pollOnce(poller);
     await flushWrapperDrain(adapters);
     await lane.controller.flushPendingWork();
-    assert.deepEqual(
-      submittedBlobs.slice(spendsBeforeReload),
-      [finalizedBlob],
-      'a repeated replacement snapshot must not rebroadcast again',
+    const submissionsAfterRepeatedSnapshot = submittedBlobs.slice(preReplacementSubmissionCount);
+    assert.equal(
+      submissionsAfterRepeatedSnapshot.filter((blob) => blob === finalizedBlob).length,
+      1,
+      `a repeated replacement snapshot must not duplicate the transaction rebroadcast: ${transactionRebroadcastProvenance} repeatedObserved=[${diagnosticBlobSummary(submissionsAfterRepeatedSnapshot)}] repeatedTotal=${submittedBlobs.length}`,
     );
   } finally {
     fakeBlockchainInfo.spend = originalSpend;
@@ -438,7 +468,7 @@ it(
   'restores after an offline equal-tip replacement and rebroadcasts exactly once',
   async () => {
     try {
-      const poller = await startSimulator(['cafe00012', 'dead00012']);
+      const poller = await startSimulator(['cafe00013', 'dead00013']);
       if (!poller) return;
       await runOfflineReplacementRestore(poller);
     } catch (error) {

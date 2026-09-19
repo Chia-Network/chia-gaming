@@ -269,6 +269,27 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() => decodeSessionSaveEnvelope(save)).toThrow('duplicate');
   });
 
+  it('rejects more than one distinct funding outbox entry', () => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    const first = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['first'] }],
+    });
+    const second = canonicalizeFundingRequest({
+      amount: '101',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['second'] }],
+    });
+    save.live.fundingOutbox = [
+      { key: fundingRequestKey(first), request: first },
+      { key: fundingRequestKey(second), request: second },
+    ];
+
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow('more than one distinct request');
+  });
+
   it('accepts cloud as preferences.blockchainType', () => {
     const decoded = decodeSessionSaveEnvelope(baseSave({ blockchainType: 'cloud' }));
     expect(decoded.phase).toBe('preferences');

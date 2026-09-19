@@ -1,7 +1,8 @@
-import type { SessionController } from '../../hooks/SessionController';
+import { SessionController } from '../../hooks/SessionController';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
 import type { ReliableCommitCoordinator } from '../../services/PeerSession';
 import { runSessionMachineTransition, send } from './session_machine.harness';
 
@@ -21,10 +22,18 @@ describe('session machine behavior sequences', () => {
     flushDeferredWork: () => void = () => {},
   ) {
     let coordinator: ReliableCommitCoordinator | undefined;
+    let attachedCoordinator: ReliableCommitCoordinator | undefined;
     const controller = {
       clearDerivedGamePresentation: () => {},
-      attachTransactionCoordinator: (attached: ReliableCommitCoordinator) => {
-        coordinator = attached;
+      attachTransactionCoordinator: (next: ReliableCommitCoordinator) => {
+        coordinator = next;
+        if (attachedCoordinator && attachedCoordinator !== next) {
+          attachedCoordinator.retire();
+        }
+        attachedCoordinator = next;
+      },
+      detachTransactionCoordinator: (detached: ReliableCommitCoordinator) => {
+        if (attachedCoordinator === detached) attachedCoordinator = undefined;
       },
       flushDeferredWork,
       prepareReliableCommit: () => ({
@@ -45,8 +54,42 @@ describe('session machine behavior sequences', () => {
       persist,
     });
     if (!coordinator) throw new Error('runtime did not attach its commit coordinator');
-    return { runtime, coordinator };
+    return { runtime, coordinator, controller };
   }
+
+  it('synchronously revokes a replaced controller owner and ignores stale release', async () => {
+    const controller = new SessionController(null, 'session-id', 0n, 0n, {
+      sendMessage: () => true,
+      sendAck: () => true,
+    });
+    const first = {
+      retire: jest.fn(() => controller.detachTransactionCoordinator(first)),
+      requestCommit: jest.fn(),
+      flush: jest.fn(async () => {}),
+      enqueue: jest.fn(),
+      enqueueResult: jest.fn(),
+      releaseAfterPersistence: jest.fn(),
+    } as unknown as ReliableCommitCoordinator;
+    const second = {
+      retire: jest.fn(() => controller.detachTransactionCoordinator(second)),
+      requestCommit: jest.fn(),
+      flush: jest.fn(async () => {}),
+      enqueue: jest.fn(),
+      enqueueResult: jest.fn(),
+      releaseAfterPersistence: jest.fn(),
+    } as unknown as ReliableCommitCoordinator;
+
+    controller.attachTransactionCoordinator(first);
+    controller.attachTransactionCoordinator(second);
+    expect(first.retire).toHaveBeenCalledTimes(1);
+
+    controller.detachTransactionCoordinator(first);
+    await controller.flushPendingSave();
+    expect(second.flush).toHaveBeenCalledTimes(1);
+
+    controller.cleanup();
+    expect(second.retire).toHaveBeenCalledTimes(1);
+  });
 
   it('deduplicates pending external effects by key without awaiting their completion', async () => {
     let resolveEffect!: () => void;
@@ -175,6 +218,79 @@ describe('session machine behavior sequences', () => {
     await expect(later).resolves.toBeUndefined();
     expect(firstLauncher).toHaveBeenCalledTimes(1);
     expect(laterLauncher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['success', undefined],
+    ['failure', new Error('disk full')],
+  ] as const)(
+    'retires a stale runtime during a slow persistence %s without releasing its boundary',
+    async (_label, writeError) => {
+      const write = deferred();
+      const { runtime, coordinator, controller } = runtimeWithCoordinator(() => write.promise);
+      const render = jest.fn();
+      const complete = jest.fn();
+      const reportDurabilityError = jest.fn();
+      (controller as SessionController).completeReliableCommit = complete;
+      (controller as SessionController).reportDurabilityError = reportDurabilityError;
+      runtime.setRender(render);
+      runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
+      const flush = runtime.persist();
+      await Promise.resolve();
+
+      const result = coordinator.enqueueResult(() => 'stale');
+      const launcher = jest.fn(async () => {});
+      const effect = coordinator.releaseAfterPersistence('stale-effect', launcher);
+      const replacement = new SessionMachineRuntime(
+        createSessionMachineState(createSessionModel()),
+        {
+          controller,
+          iStarted: false,
+          restoring: false,
+          getRestoreStatus: () => 'idle',
+          getRestoreError: () => null,
+          onError: jest.fn(),
+          persist: async () => {},
+        },
+      );
+      if (writeError) write.reject(writeError);
+      else write.resolve();
+
+      if (writeError) await expect(flush).rejects.toThrow('disk full');
+      else await expect(flush).resolves.toBeUndefined();
+      await expect(result).rejects.toBeInstanceOf(SessionRuntimeRetiredError);
+      await expect(effect).rejects.toBeInstanceOf(SessionRuntimeRetiredError);
+      expect(render).not.toHaveBeenCalled();
+      expect(complete).not.toHaveBeenCalled();
+      expect(reportDurabilityError).not.toHaveBeenCalled();
+      expect(launcher).not.toHaveBeenCalled();
+      replacement.retire();
+    },
+  );
+
+  it('rejects queued typed work, discards fire-and-forget work, and cancels keyed effects', async () => {
+    const write = deferred();
+    const { runtime, coordinator } = runtimeWithCoordinator(() => write.promise);
+    runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
+    const flush = runtime.persist();
+    await Promise.resolve();
+
+    const discarded = jest.fn();
+    coordinator.enqueue(discarded);
+    const result = coordinator.enqueueResult(() => 42);
+    const launcher = jest.fn(async () => {});
+    const effect = coordinator.releaseAfterPersistence('cancel-me', launcher);
+    runtime.retire();
+
+    await expect(result).rejects.toMatchObject({
+      name: 'SessionRuntimeRetiredError',
+      code: 'SESSION_RUNTIME_RETIRED',
+    });
+    await expect(effect).rejects.toBeInstanceOf(SessionRuntimeRetiredError);
+    write.resolve();
+    await flush;
+    expect(discarded).not.toHaveBeenCalled();
+    expect(launcher).not.toHaveBeenCalled();
   });
 
   it('queues dispatches requested during a React projection instead of re-entering it', async () => {

@@ -22,7 +22,7 @@ pub(crate) mod sim_tests {
     use crate::channel_state::types::{HistoricalUnrollSpendInfo, ValidationProgramRegistry};
     use crate::common::types::{
         aggregate_wallet_fee_bundle, Aggsig, CoinCondition, CoinID, CoinSpend, CoinString, GameID,
-        LocalProposalId, Program, PuzzleHash, Spend, SpendBundle, Timeout, ToQuotedProgram,
+        Program, PuzzleHash, Spend, SpendBundle, Timeout, ToQuotedProgram,
     };
     use crate::test_support::sim_script::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 

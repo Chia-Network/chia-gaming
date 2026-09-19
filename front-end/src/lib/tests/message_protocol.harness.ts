@@ -16,8 +16,7 @@ import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
-import { createHeadlessSessionMachineRuntime } from './session_machine.harness';
-import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
   get: (target, property) =>
@@ -185,7 +184,6 @@ export interface TestHarness {
 
 const testPersistence = new WeakMap<SessionController, () => void | Promise<void>>();
 const coordinatedControllers = new WeakSet<SessionController>();
-const controllerRuntimes = new WeakMap<SessionController, SessionMachineRuntime>();
 
 export function setTestPersistence(
   blob: SessionController,
@@ -202,8 +200,7 @@ export function setTestPersistence(
 export function attachTestCommitCoordinator(blob: SessionController): void {
   if (coordinatedControllers.has(blob)) return;
   coordinatedControllers.add(blob);
-  const runtime = createHeadlessSessionMachineRuntime(blob, () => testPersistence.get(blob)?.());
-  controllerRuntimes.set(blob, runtime);
+  createCoordinatorOnlySessionMachineRuntime(blob, () => testPersistence.get(blob)?.());
 }
 
 /**
@@ -347,12 +344,10 @@ afterEach(async () => {
       try {
         await blob.flushPendingWork();
       } finally {
-        controllerRuntimes.get(blob)?.retire();
         blob.cleanup();
       }
     }
   } finally {
-    if (toFlush) controllerRuntimes.get(toFlush)?.retire();
     resetSaveState();
     _resetGameIdentityWarmupForTests();
     clearTestGlobal('localStorage');

@@ -126,10 +126,6 @@ pub struct ChannelState {
     // Specifies the time lock that should be used in the unroll coin's conditions.
     unroll_advance_timeout: Timeout,
 
-    #[cfg(test)]
-    #[serde(skip, default)]
-    fail_next_cached_unroll_update: bool,
-
     // Latest potato number. Incremented on every send and receive.
     state_number: usize,
 
@@ -905,9 +901,6 @@ impl ChannelState {
 
             have_potato: false,
 
-            #[cfg(test)]
-            fail_next_cached_unroll_update: false,
-
             acceptance_ledger: AcceptanceLedger {
                 proposal_ledger: ProposalLedger::new(is_receiver),
                 next_game_id: 0,
@@ -1085,13 +1078,6 @@ impl ChannelState {
         &mut self,
         env: &mut ChannelEnv<'_>,
     ) -> Result<StateUpdateSignatures, Error> {
-        #[cfg(test)]
-        if std::mem::take(&mut self.fail_next_cached_unroll_update) {
-            return Err(Error::StrErr(
-                "injected cached-unroll finalization failure".to_string(),
-            ));
-        }
-
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
             self.compute_unroll_data_for_games(&[], None, &self.acceptance_ledger.live_games)?;
 
@@ -1124,16 +1110,6 @@ impl ChannelState {
             channel_half_sig: channel_coin_spend.signature,
             unroll_preempt_half_sig: our_half,
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fail_next_cached_unroll_update_for_testing(&mut self) {
-        self.fail_next_cached_unroll_update = true;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_cached_unroll_failure_for_testing(&mut self) -> bool {
-        std::mem::take(&mut self.fail_next_cached_unroll_update)
     }
 
     pub fn send_empty_potato(

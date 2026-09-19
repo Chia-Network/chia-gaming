@@ -16,7 +16,7 @@ import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
 import type { HandProposal, PersistedGameState } from '../session/types';
-import { createHeadlessSessionMachineRuntime } from './session_machine.harness';
+import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
 import { pollOnce } from './blockchain_poller.driver';
 import 'fake-indexeddb/auto';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
@@ -175,7 +175,7 @@ export class SessionControllerAdapter {
   set_blob(blob: SessionController) {
     this.blob = blob;
     this.runtime?.retire();
-    this.runtime = createHeadlessSessionMachineRuntime(blob);
+    this.runtime = createCoordinatorOnlySessionMachineRuntime(blob);
     this.blob.kickSystem(2);
   }
 

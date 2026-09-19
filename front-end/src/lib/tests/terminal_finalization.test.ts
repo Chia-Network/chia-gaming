@@ -139,8 +139,8 @@ const model = createSessionModel({
 function makeController(events: string[]): SessionController {
   return {
     handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
-    flushPendingSave: async () => {
-      events.push('controller-flush');
+    quiesceForTerminalFinalization: async () => {
+      events.push('controller-quiesce');
     },
   } as unknown as SessionController;
 }
@@ -262,7 +262,7 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   await first;
 
   expect(events).toEqual([
-    'controller-flush',
+    'controller-quiesce',
     'stage-terminal',
     'write-start',
     'write-complete',
@@ -295,6 +295,37 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   ).toBe('Finished');
   expect(restored).not.toHaveProperty('live');
   expect(restored).not.toHaveProperty('pairing');
+});
+
+it('does not stage or tear down before controller terminal quiescence', async () => {
+  let releaseQuiescence!: () => void;
+  const quiescenceGate = new Promise<void>((resolve) => {
+    releaseQuiescence = resolve;
+  });
+  const controller = {
+    quiesceForTerminalFinalization: jest.fn(() => quiescenceGate),
+  } as unknown as SessionController;
+  const stageTerminal = jest.fn(async () => {});
+  const teardown = jest.fn();
+
+  const finalization = finalizeTerminalSession(finalizationArgs(controller), {
+    stageTerminal,
+    flushSave: async () => {},
+    discardTerminal: () => {},
+    updateMarker: () => {},
+    teardown,
+  });
+  await Promise.resolve();
+
+  expect(controller.quiesceForTerminalFinalization).toHaveBeenCalledTimes(1);
+  expect(stageTerminal).not.toHaveBeenCalled();
+  expect(teardown).not.toHaveBeenCalled();
+
+  releaseQuiescence();
+  await finalization;
+
+  expect(stageTerminal).toHaveBeenCalledTimes(1);
+  expect(teardown).toHaveBeenCalledTimes(1);
 });
 
 it('round-trips an explicitly empty local alias without converting it to null', async () => {
@@ -773,7 +804,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   });
   const controller = {
     handState: acceptedHandState,
-    flushPendingSave: async () => {},
+    quiesceForTerminalFinalization: async () => {},
   } as unknown as SessionController;
   const stageTerminal = jest.fn(async () => {});
 
@@ -879,7 +910,7 @@ it('keeps live state and ownership after failure, then retries without teardown 
   failWrite = false;
   await finalizeTerminalSession(finalizationArgs(controller), dependencies);
 
-  expect(events).toEqual(['controller-flush', 'controller-flush']);
+  expect(events).toEqual(['controller-quiesce', 'controller-quiesce']);
   expect(teardown).toHaveBeenCalledTimes(1);
   _resetForTests();
   const restored = await peekSession();
