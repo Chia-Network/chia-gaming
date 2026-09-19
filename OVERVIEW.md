@@ -710,6 +710,17 @@ signature verification for `AGG_SIG_UNSAFE`. JavaScript does not inspect
 protocol bundle names, puzzles, inputs, or ordering, choose fee fallback, or
 own durable retry state.
 
+Blockchain observations have an explicit transaction boundary inside
+`TransactionManager`. Each observation pays an intentional Bencodex
+serialize/deserialize cost to create a deep working copy of the full durable
+manager and nested `GameSession`; effects-only rollback cannot cover the
+protocol mutations made by callbacks. Pending events, watch/unwatch deltas,
+cradle output, and other skipped observation bookkeeping live in a separate
+transient journal that is restored unchanged on failure or prepended to new
+output on commit. Observation callbacks use a fresh scratch allocator, and all
+surviving CLVM values own serialized `Program` bytes rather than allocator-local
+`NodePtr`s.
+
 Each game package owns its concrete mutable hand. Fresh hands are created from
 accepted initialization terms; restored hands are constructed directly from
 only their saved state. The shared hand boundary exposes `getState()` plus
@@ -765,19 +776,26 @@ later write succeeds, the peer or chain may have advanced beyond the last local
 checkpoint. Refusing to continue solely because local storage failed would be
 the worse failure mode.
 
+A released effect is deduplicated by key only while pending. Duplicate callers
+receive the same promise, which settles with the launched external work. The
+persistence attempt gates launching that work but does not await its completion;
+the key is removed before launch so reentrant work may schedule the same key for
+a later boundary.
+
 No active-session adapter, reducer effect, or protocol callback may establish a
 competing save, render, or send boundary. New event sources must enter the same
 fixed-point drain.
 
 The browser also separates three lifetimes that end at different moments.
 Protocol lifetime ends only after queued terminal reductions and the durable
-terminal snapshot are flushed, at which point the real controller and transport
-attachments are destroyed. Visual lifetime can continue: the same React hand
-component and `handKey` remain mounted, but receive the finalized model through
-the `frozen: true` branch of the same mount contract, which structurally has no
-intent port. The retained hand is restored from that finalized terminal model;
-`frozen` means terminal, read-only, and no port, not stale pre-finalization game
-state. Cold restoration is separate again:
+terminal snapshot has been prepared and its persistence attempt finishes. A
+failure warns and degrades crash durability, but prepared external effects and
+controller/transport teardown still proceed exactly once. Visual lifetime can
+continue: the same React hand component and `handKey` remain mounted, but
+receive the finalized model through the `frozen: true` branch of the same mount
+contract, which structurally has no intent port. The retained hand is restored
+from that finalized terminal model; `frozen` means terminal, read-only, and no
+port, not stale pre-finalization game state. Cold restoration is separate again:
 `FinishedSessionGameView` always attempts a package's frozen mount from valid
 persisted hand state when no live tree survived (for example, after reload).
 

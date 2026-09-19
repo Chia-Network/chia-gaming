@@ -16,6 +16,7 @@ import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
 import type { HandProposal, PersistedGameState } from '../session/types';
+import { attachControllerOnlyTestCommitCoordinator } from './reliable_commit_coordinator.harness';
 import 'fake-indexeddb/auto';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
@@ -95,76 +96,6 @@ afterAll(async () => {
 const activeSubscriptions: Subscription[] = [];
 const activeCradles: SessionControllerAdapter[] = [];
 let testPoller: BlockchainPoller | null = null;
-
-function attachStandaloneTestCommitCoordinator(controller: SessionController): void {
-  let dirty = false;
-  const pendingExternalEffects = new Map<string, () => void>();
-  let flushing: Promise<void> = Promise.resolve();
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const schedule = () => {
-    if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      void coordinator.flush().catch(() => {});
-    }, 0);
-  };
-  const coordinator = {
-    requestCommit: () => {
-      dirty = true;
-      schedule();
-    },
-    enqueue: (work: () => void) => {
-      work();
-    },
-    releaseAfterPersistence: (key: string, effect: () => void) => {
-      if (pendingExternalEffects.has(key)) return;
-      pendingExternalEffects.set(key, effect);
-      dirty = true;
-      schedule();
-    },
-    flush: (): Promise<void> => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      flushing = flushing
-        .catch(() => {})
-        .then(async () => {
-          while (dirty) {
-            try {
-              dirty = false;
-              controller.flushDeferredWork();
-              const commit = controller.prepareReliableCommit();
-              const externalEffects = [...pendingExternalEffects.entries()];
-              const releaseExternalEffects = () => {
-                for (const [key, effect] of externalEffects) {
-                  if (pendingExternalEffects.get(key) !== effect) continue;
-                  pendingExternalEffects.delete(key);
-                  effect();
-                }
-              };
-              try {
-                const rejection = controller.prepareInboundSessionRejectPersistence();
-                if (rejection) await rejection.write();
-              } catch (error) {
-                controller.completeReliableCommit(commit, false);
-                releaseExternalEffects();
-                throw error;
-              }
-              controller.completeReliableCommit(commit, true);
-              releaseExternalEffects();
-            } catch (error) {
-              dirty = true;
-              controller.reportDurabilityError(error);
-              throw error;
-            }
-          }
-        });
-      return flushing;
-    },
-  };
-  controller.attachTransactionCoordinator(coordinator);
-}
 
 export function addActiveSubscription(sub: Subscription): Subscription {
   activeSubscriptions.push(sub);
@@ -246,7 +177,7 @@ export class SessionControllerAdapter {
     // These integration tests deliberately drive controllers before a React
     // runtime exists. Give that phase an explicit in-memory commit consumer;
     // SessionMachineRuntime replaces it when a reloadable lane is bound.
-    attachStandaloneTestCommitCoordinator(blob);
+    attachControllerOnlyTestCommitCoordinator(blob);
     this.blob.kickSystem(2);
   }
 
@@ -357,7 +288,7 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
 }
 
 export async function pollOnce(poller: BlockchainPoller): Promise<void> {
-  await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+  await poller.pollOnce();
 }
 
 export async function action_with_messages(

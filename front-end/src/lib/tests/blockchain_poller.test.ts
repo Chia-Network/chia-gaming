@@ -457,6 +457,83 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
+  it('serializes explicit polls behind active read work', async () => {
+    jest.useFakeTimers();
+    const activeRead = deferred<bigint>();
+    const calls: string[] = [];
+    let heightCalls = 0;
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => {
+          calls.push('height');
+          heightCalls += 1;
+          return heightCalls === 1 ? activeRead.promise : Promise.resolve(7n);
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+
+    const read = poller.rpc.getHeightInfo();
+    await advanceLane();
+    const explicitPoll = poller.pollOnce();
+    await advanceLane();
+    expect(calls).toEqual(['height']);
+
+    activeRead.resolve(6n);
+    await expect(read).resolves.toBe(6n);
+    await expect(explicitPoll).resolves.toBeUndefined();
+    expect(calls).toEqual(['height', 'height', 'height']);
+    jest.useRealTimers();
+  });
+
+  it('spaces starts across lanes without waiting for read completion', async () => {
+    jest.useFakeTimers();
+    const read = deferred<bigint>();
+    const mutation = deferred<string | null>();
+    const starts: Array<{ label: string; at: number }> = [];
+    const rpc = new Proxy(
+      {
+        requestGapMs: 50,
+        getHeightInfo: () => {
+          starts.push({ label: 'read', at: performance.now() });
+          return read.promise;
+        },
+        selectCoins: () => {
+          starts.push({ label: 'mutation', at: performance.now() });
+          return mutation.promise;
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+
+    const readResult = poller.rpc.getHeightInfo();
+    await advanceLane(0);
+    expect(starts).toEqual([{ label: 'read', at: 0 }]);
+
+    const mutationResult = poller.rpc.selectCoins('wallet', 1n);
+    await advanceLane(49);
+    expect(starts).toHaveLength(1);
+    await advanceLane(1);
+    expect(starts).toEqual([
+      { label: 'read', at: 0 },
+      { label: 'mutation', at: 50 },
+    ]);
+
+    read.resolve(7n);
+    mutation.resolve(null);
+    await expect(readResult).resolves.toBe(7n);
+    await expect(mutationResult).resolves.toBeNull();
+    jest.useRealTimers();
+  });
+
   it('runs serialized wallet mutations independently of queued reads', async () => {
     jest.useFakeTimers();
     const first = deferred<bigint>();
@@ -524,6 +601,61 @@ describe('BlockchainPoller', () => {
     await expect(p3).resolves.toEqual({});
     await expect(p4).resolves.toBeNull();
     await expect(p5).resolves.toEqual({ status: 'acknowledged' });
+    jest.useRealTimers();
+  });
+
+  it('revalidates the connection epoch after waiting at the shared gate', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const selected = deferred<string | null>();
+    const selectCoins = jest.fn(() => selected.promise);
+    const getHeightInfo = jest.fn().mockResolvedValue(100n);
+    const rpc = {
+      requestGapMs: 50,
+      selectCoins,
+      getHeightInfo,
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => {
+          onConnectionChange = undefined;
+        };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000);
+    (
+      poller as unknown as {
+        ensureConnectionListener: () => void;
+      }
+    ).ensureConnectionListener();
+
+    const mutation = poller.rpc.selectCoins('wallet', 1n);
+    const mutationRejection = expect(mutation).rejects.toThrow(
+      'RPC request discarded during disconnect: selectCoins',
+    );
+    await advanceLane(0);
+    expect(selectCoins).toHaveBeenCalledTimes(1);
+
+    const staleRead = poller.rpc.getHeightInfo();
+    const staleReadRejection = expect(staleRead).rejects.toThrow(
+      'RPC request discarded during disconnect: getHeightInfo',
+    );
+    await advanceLane(25);
+    connected = false;
+    onConnectionChange?.(false);
+    await staleReadRejection;
+
+    connected = true;
+    onConnectionChange?.(true);
+    const freshRead = poller.rpc.getHeightInfo();
+    await advanceLane(75);
+    await expect(freshRead).resolves.toBe(100n);
+    expect(getHeightInfo).toHaveBeenCalledTimes(1);
+
+    selected.resolve(null);
+    await mutationRejection;
+    expect(selectCoins).toHaveBeenCalledTimes(1);
     jest.useRealTimers();
   });
 

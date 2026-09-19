@@ -10,6 +10,7 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 - [Peer Error Escalation](#peer-error-escalation)
 - [Local Action Errors](#local-action-errors)
 - [Batch Rollback Scope](#batch-rollback-scope)
+- [Blockchain Observation Boundary](#blockchain-observation-boundary)
 - [Atomic Proposal Factory Invariants](#atomic-proposal-factory-invariants)
 - [cached_redo_actions and the Redo Mechanism](#cached_redo_actions-and-the-redo-mechanism)
 - [Cheat Support](#cheat-support)
@@ -336,6 +337,33 @@ point the narrowest complete boundary that covers those mutations.
 `drain_queue_into_batch`; regressions:
 `test_peer_smoke` and
 `failed_final_move_bad_signature_does_not_queue_accept_settlement`.
+
+---
+
+## Blockchain Observation Boundary
+
+Each height or coin-snapshot observation runs against a fresh
+`TransactionManager<GameSession>` working copy created by a Bencodex
+serialize/deserialize round trip. This cost is intentional: the durable
+transaction scope includes both the manager and the complete nested
+`GameSession`, so a late handler, encoding, decoding, or application failure
+cannot commit a partial chain interpretation. Rolling back effects alone would
+be insufficient because observation callbacks also mutate protocol state.
+
+Transient output is excluded from that durable copy and held in one observation
+journal: pending manager events, watch and unwatch deltas, detached cradle
+output, timeout-claim reconciliation state, and the test-only saved snapshot.
+Failure restores that journal unchanged. Success prepends the old journal to
+new output, preserving FIFO order, and commits the working copy.
+
+Callbacks execute with a fresh scratch `AllocEncoder`, not the caller's
+allocator. A failed callback therefore leaves no CLVM allocations behind in
+the caller. Any state or effect that survives the observation owns its CLVM
+data as serialized `Program` bytes; allocator-local `NodePtr` values must not
+cross the boundary.
+
+**Key code:** `src/transaction_manager.rs` — `ObservationTransients`,
+`apply_observation_transaction`, `report_height`, and `report_coin_states`.
 
 ---
 

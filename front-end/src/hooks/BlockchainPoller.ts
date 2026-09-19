@@ -8,6 +8,7 @@ import {
   AsyncQueueJob,
   AsyncPollingScheduler,
   AsyncPollingTarget,
+  AsyncRequestStartGate,
 } from '../lib/AsyncScheduler';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
@@ -68,6 +69,7 @@ export class BlockchainPoller {
   private connectionActive = true;
   private connectionEpoch = 0;
   private pendingRpcRejects = new Set<() => void>();
+  private requestStartGate: AsyncRequestStartGate;
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -77,8 +79,8 @@ export class BlockchainPoller {
     this.adapter = blockchain;
     this.pollIntervalMs = pollIntervalMs;
     this.maxBackoffMs = maxBackoffMs ?? 60000;
+    this.requestStartGate = new AsyncRequestStartGate(blockchain.requestGapMs ?? 0);
     const queueOptions: AsyncJobQueueOptions = {
-      gapMs: blockchain.requestGapMs ?? 0,
       onError: (job, e) => {
         log(`[blockchain-poller] queued job failed label=${job.label}: ${String(e)}`);
       },
@@ -237,7 +239,7 @@ export class BlockchainPoller {
             return;
           }
           try {
-            const result = await run();
+            const result = await this.runAdapterRpc(connectionEpoch, label, run);
             if (!this.isConnectionEpochActive(connectionEpoch)) {
               if (cancelStaleOffer) await this.cancelStaleOfferResult(label, result);
               rejectForDisconnect();
@@ -252,6 +254,18 @@ export class BlockchainPoller {
       };
       lane.enqueue(job);
     });
+  }
+
+  private async runAdapterRpc<T>(
+    connectionEpoch: number,
+    label: string,
+    run: () => Promise<T> | T,
+  ): Promise<T> {
+    await this.requestStartGate.wait();
+    if (!this.isConnectionEpochActive(connectionEpoch)) {
+      throw new BlockchainRpcUnavailableError(label);
+    }
+    return run();
   }
 
   private async cancelStaleOfferResult(label: string, result: unknown): Promise<void> {
@@ -274,6 +288,7 @@ export class BlockchainPoller {
       return;
     }
     try {
+      await this.requestStartGate.wait();
       await this.adapter.cancelOffer(tradeId);
       log(`[blockchain-poller] cancelled stale ${label} offer trade_id=${tradeId}`);
     } catch (error) {
@@ -439,7 +454,9 @@ export class BlockchainPoller {
     const newNames = names.filter((n) => !this.registeredNames.has(n));
     if (newNames.length === 0) return;
     try {
-      await this.adapter.registerCoins(newNames);
+      await this.runAdapterRpc(connectionEpoch, 'registerCoins', () =>
+        this.adapter.registerCoins(newNames),
+      );
       if (!this.isConnectionEpochActive(connectionEpoch)) return;
       for (const n of newNames) this.registeredNames.add(n);
     } catch (e) {
@@ -456,9 +473,11 @@ export class BlockchainPoller {
     this.registeredNames.clear();
   }
 
-  private async pollOnce(): Promise<void> {
-    await this.runHeightPoll();
-    await this.runCoinPoll();
+  pollOnce(): Promise<void> {
+    return this.enqueueRead('blockchain-explicit-poll', async () => {
+      await this.runHeightPoll();
+      await this.runCoinPoll();
+    });
   }
 
   private async runHeightPoll(): Promise<void> {
@@ -469,7 +488,9 @@ export class BlockchainPoller {
       // which the transaction manager detects via height < last_height. Clamping
       // this monotonically would hide reorgs from the manager.
       const previousPeak = this.peak;
-      const height = await this.adapter.getHeightInfo();
+      const height = await this.runAdapterRpc(connectionEpoch, 'getHeightInfo', () =>
+        this.adapter.getHeightInfo(),
+      );
       if (!this.isConnectionEpochActive(connectionEpoch)) return;
       this.previousPeakForCoinReport = previousPeak;
       this.peak = height;
@@ -516,12 +537,18 @@ export class BlockchainPoller {
       let openingPeak = this.peak;
       for (let attempt = 1; attempt <= MAX_COIN_SNAPSHOT_ATTEMPTS; attempt++) {
         const records =
-          namesToQuery.length > 0 ? await this.adapter.getCoinRecordsByNames(namesToQuery) : [];
+          namesToQuery.length > 0
+            ? await this.runAdapterRpc(connectionEpoch, 'getCoinRecordsByNames', () =>
+                this.adapter.getCoinRecordsByNames(namesToQuery),
+              )
+            : [];
         if (!this.isConnectionEpochActive(connectionEpoch)) return;
         // None of the current providers offers an atomic peak-and-records read.
         // Close the window immediately after the records query and retry if the
         // tip moved or the provider returned a record from above that boundary.
-        const closingPeak = await this.adapter.getHeightInfo();
+        const closingPeak = await this.runAdapterRpc(connectionEpoch, 'getHeightInfo', () =>
+          this.adapter.getHeightInfo(),
+        );
         if (!this.isConnectionEpochActive(connectionEpoch)) return;
         const coherent = openingPeak === closingPeak && this.recordsFitPeak(records, closingPeak);
         if (!coherent) {
@@ -566,7 +593,9 @@ export class BlockchainPoller {
     const connectionEpoch = this.connectionEpoch;
     if (!this.balanceCallbacks || !this.isConnectionEpochActive(connectionEpoch)) return;
     try {
-      const balance = await this.adapter.getBalance();
+      const balance = await this.runAdapterRpc(connectionEpoch, 'getBalance', () =>
+        this.adapter.getBalance(),
+      );
       if (
         this.isConnectionEpochActive(connectionEpoch) &&
         this.balancePollingScheduler.isInterested()

@@ -217,7 +217,18 @@ impl GameRunner {
         self.chase_block()
     }
 
-    fn replace_chain(&mut self, depth: u32, target_height: u64) -> Result<u64, Error> {
+    fn replace_chain(&mut self, rollback_height: u64, target_height: u64) -> Result<u64, Error> {
+        let current_height = self.simulator.get_current_height() as u64;
+        if rollback_height > current_height {
+            return Err(Error::StrErr(format!(
+                "replacement rollback height {rollback_height} exceeds current height {current_height}"
+            )));
+        }
+        let depth = u32::try_from(current_height - rollback_height).map_err(|_| {
+            Error::StrErr(format!(
+                "replacement depth exceeds u32: current={current_height} rollback={rollback_height}"
+            ))
+        })?;
         self.simulator.reorg(depth);
         let rolled_back_height = self.simulator.get_current_height() as u64;
         if target_height < rolled_back_height {
@@ -892,12 +903,11 @@ fn dispatch_ws_request(
             .farm_and_chase()
             .map(|height| format!("{height}\n")),
         "replace_chain" => {
-            let depth = get_u64_param(&req.params, "depth");
+            let rollback_height = get_u64_param(&req.params, "rollbackHeight");
             let target_height = get_u64_param(&req.params, "targetHeight");
-            match (depth, target_height) {
-                (Ok(depth), Ok(target_height)) => u32::try_from(depth)
-                    .map_err(|_| Error::StrErr(format!("reorg depth too large: {depth}")))
-                    .and_then(|depth| game_runner.replace_chain(depth, target_height))
+            match (rollback_height, target_height) {
+                (Ok(rollback_height), Ok(target_height)) => game_runner
+                    .replace_chain(rollback_height, target_height)
                     .map(|height| format!("{height}\n")),
                 (Err(e), _) | (_, Err(e)) => Err(e),
             }

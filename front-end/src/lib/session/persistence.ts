@@ -63,6 +63,7 @@ import {
   requireUniqueIds,
   parseStringArray,
 } from './persistencePrimitives';
+import { canonicalizeFundingRequest, fundingRequestKey } from './fundingRequest';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
@@ -235,56 +236,17 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
       : {
           fundingOutbox: fundingOutbox.map((entry, index) => {
             const record = requireRecord(entry, `live.fundingOutbox[${index}]`);
-            const request = requireRecord(record.request, `live.fundingOutbox[${index}].request`);
-            if (!Array.isArray(request.conditions)) {
+            const key = requireString(record.key, `live.fundingOutbox[${index}].key`);
+            const request = canonicalizeFundingRequest(
+              record.request,
+              `live.fundingOutbox[${index}].request`,
+            );
+            if (key !== fundingRequestKey(request)) {
               throw new Error(
-                `Garbled save: invalid live.fundingOutbox[${index}].request.conditions`,
+                `Garbled save: live.fundingOutbox[${index}] key does not match its request`,
               );
             }
-            return {
-              key: requireString(record.key, `live.fundingOutbox[${index}].key`),
-              request: {
-                amount: requireString(
-                  request.amount,
-                  `live.fundingOutbox[${index}].request.amount`,
-                ),
-                fee: requireString(request.fee, `live.fundingOutbox[${index}].request.fee`),
-                conditions: request.conditions.map((condition, conditionIndex) => {
-                  const parsed = requireRecord(
-                    condition,
-                    `live.fundingOutbox[${index}].request.conditions[${conditionIndex}]`,
-                  );
-                  if (
-                    (typeof parsed.opcode !== 'bigint' && typeof parsed.opcode !== 'number') ||
-                    !Array.isArray(parsed.args) ||
-                    !parsed.args.every((arg) => typeof arg === 'string')
-                  ) {
-                    throw new Error(
-                      `Garbled save: invalid live.fundingOutbox[${index}].request.conditions[${conditionIndex}]`,
-                    );
-                  }
-                  return { opcode: parsed.opcode, args: parsed.args };
-                }),
-                coin_id:
-                  request.coin_id == null
-                    ? undefined
-                    : requireString(
-                        request.coin_id,
-                        `live.fundingOutbox[${index}].request.coin_id`,
-                      ),
-                max_height:
-                  request.max_height == null
-                    ? undefined
-                    : typeof request.max_height === 'bigint' ||
-                        typeof request.max_height === 'number'
-                      ? request.max_height
-                      : (() => {
-                          throw new Error(
-                            `Garbled save: invalid live.fundingOutbox[${index}].request.max_height`,
-                          );
-                        })(),
-              },
-            };
+            return { key, request };
           }),
         }),
   };

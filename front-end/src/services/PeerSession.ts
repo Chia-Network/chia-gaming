@@ -65,7 +65,7 @@ export interface ReliableCommitCoordinator {
   requestCommit(): void;
   flush(): Promise<void>;
   enqueue(work: () => void): void;
-  releaseAfterPersistence(key: string, effect: () => void): void;
+  releaseAfterPersistence(key: string, launcher: () => Promise<void>): Promise<void>;
 }
 
 export interface PreparedReliableCommit {

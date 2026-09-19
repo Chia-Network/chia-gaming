@@ -35,6 +35,40 @@ export interface SessionMachineRuntimeDependencies {
   enrichCoin?: typeof coinIdHex;
 }
 
+interface Deferred {
+  readonly promise: Promise<void>;
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
+interface PendingExternalEffect {
+  readonly launcher: () => Promise<void>;
+  readonly deferred: Deferred;
+}
+
+function createDeferred(): Deferred {
+  let resolvePromise!: () => void;
+  let rejectPromise!: (error: unknown) => void;
+  let settled = false;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  return {
+    promise,
+    resolve: () => {
+      if (settled) return;
+      settled = true;
+      resolvePromise();
+    },
+    reject: (error) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    },
+  };
+}
+
 export class SessionMachineRuntime {
   private state: SessionMachineState;
   private render: (state: SessionMachineState) => void = () => {};
@@ -63,7 +97,7 @@ export class SessionMachineRuntime {
   private dispatching = false;
   private readonly pendingEvents: SessionMachineEvent[] = [];
   private readonly pendingControllerWork: Array<() => void> = [];
-  private readonly pendingExternalEffects = new Map<string, () => void>();
+  private readonly pendingExternalEffects = new Map<string, PendingExternalEffect>();
   private transactionActive = false;
   private committing = false;
   private commitActivityPending = false;
@@ -290,10 +324,13 @@ export class SessionMachineRuntime {
     this.runTransaction(work);
   }
 
-  private releaseAfterPersistence(key: string, effect: () => void): void {
-    if (this.pendingExternalEffects.has(key)) return;
+  private releaseAfterPersistence(key: string, launcher: () => Promise<void>): Promise<void> {
+    const pending = this.pendingExternalEffects.get(key);
+    if (pending) return pending.deferred.promise;
+    const effect = { launcher, deferred: createDeferred() };
     this.pendingExternalEffects.set(key, effect);
     this.scheduleCommit(true);
+    return effect.deferred.promise;
   }
 
   private runTransaction(work?: () => void, requestCommit = true): void {
@@ -387,11 +424,14 @@ export class SessionMachineRuntime {
       for (const [key, effect] of externalEffects) {
         if (this.pendingExternalEffects.get(key) !== effect) continue;
         this.pendingExternalEffects.delete(key);
+        let completion: Promise<void>;
         try {
-          effect();
+          completion = effect.launcher();
         } catch (error) {
-          this.onError(error);
+          effect.deferred.reject(error);
+          continue;
         }
+        void Promise.resolve(completion).then(effect.deferred.resolve, effect.deferred.reject);
       }
     };
     this.commitPromise = write

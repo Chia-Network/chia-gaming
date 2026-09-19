@@ -420,6 +420,70 @@ pub struct TransactionManager<C> {
     present_coins: std::collections::HashSet<CoinString>,
 }
 
+/// State intentionally excluded from the serialized observation working copy.
+///
+/// An observation either restores this journal unchanged on failure or prepends
+/// it to the output produced by the successfully committed working copy.
+struct ObservationTransients {
+    pending_events: GameSessionEventQueue,
+    pending_watch_coins: Vec<CoinString>,
+    pending_unwatch_coins: Vec<CoinString>,
+    session_output: Option<DrainResult>,
+    timeout_claim_status_reconciled: bool,
+    #[cfg(test)]
+    saved_unroll_snapshot: Option<crate::channel_state::types::ChannelCoinSpendInfo>,
+}
+
+impl ObservationTransients {
+    fn detach<C: ManagedGameSession>(manager: &mut TransactionManager<C>) -> Self {
+        Self {
+            pending_events: std::mem::take(&mut manager.pending_events),
+            pending_watch_coins: std::mem::take(&mut manager.pending_watch_coins),
+            pending_unwatch_coins: std::mem::take(&mut manager.pending_unwatch_coins),
+            session_output: manager.cradle.session_detach_observation_output(),
+            timeout_claim_status_reconciled: manager.timeout_claim_status_reconciled,
+            #[cfg(test)]
+            saved_unroll_snapshot: manager.cradle.session_observation_test_unroll_snapshot(),
+        }
+    }
+
+    fn seed_working_copy<C: ManagedGameSession>(&self, working: &mut TransactionManager<C>) {
+        working.timeout_claim_status_reconciled = self.timeout_claim_status_reconciled;
+        #[cfg(test)]
+        working
+            .cradle
+            .session_restore_observation_test_unroll_snapshot(self.saved_unroll_snapshot.clone());
+    }
+
+    fn restore<C: ManagedGameSession>(&mut self, manager: &mut TransactionManager<C>) {
+        manager.pending_events = std::mem::take(&mut self.pending_events);
+        manager.pending_watch_coins = std::mem::take(&mut self.pending_watch_coins);
+        manager.pending_unwatch_coins = std::mem::take(&mut self.pending_unwatch_coins);
+        manager.timeout_claim_status_reconciled = self.timeout_claim_status_reconciled;
+        manager
+            .cradle
+            .session_prepend_observation_output(self.session_output.take());
+        #[cfg(test)]
+        manager
+            .cradle
+            .session_restore_observation_test_unroll_snapshot(self.saved_unroll_snapshot.take());
+    }
+
+    fn merge<C: ManagedGameSession>(&mut self, working: &mut TransactionManager<C>) {
+        self.pending_events.append(&mut working.pending_events);
+        self.pending_watch_coins
+            .append(&mut working.pending_watch_coins);
+        self.pending_unwatch_coins
+            .append(&mut working.pending_unwatch_coins);
+        working.pending_events = std::mem::take(&mut self.pending_events);
+        working.pending_watch_coins = std::mem::take(&mut self.pending_watch_coins);
+        working.pending_unwatch_coins = std::mem::take(&mut self.pending_unwatch_coins);
+        working
+            .cradle
+            .session_prepend_observation_output(self.session_output.take());
+    }
+}
+
 /// Default confirmation depth.  Chosen to be far deeper than any plausible
 /// Chia reorg.
 pub const DEFAULT_CONFIRMATION_DEPTH: u64 = 32;
@@ -932,72 +996,47 @@ impl<C> TransactionManager<C> {
 impl<C: ManagedGameSession> TransactionManager<C> {
     fn apply_observation_transaction<F>(
         &mut self,
-        allocator: &mut AllocEncoder,
+        _allocator: &mut AllocEncoder,
         apply: F,
     ) -> Result<(), Error>
     where
         C: Serialize + DeserializeOwned,
         F: FnOnce(&mut Self, &mut AllocEncoder) -> Result<(), Error>,
     {
-        let mut old_events = std::mem::take(&mut self.pending_events);
-        let mut old_watch_coins = std::mem::take(&mut self.pending_watch_coins);
-        let mut old_unwatch_coins = std::mem::take(&mut self.pending_unwatch_coins);
-        let old_session_output = self.cradle.session_detach_observation_output();
-        #[cfg(test)]
-        let observation_test_unroll_snapshot =
-            self.cradle.session_observation_test_unroll_snapshot();
-
-        let checkpoint = match bencodex::to_vec(&self) {
-            Ok(checkpoint) => checkpoint,
-            Err(e) => {
-                self.pending_events = old_events;
-                self.pending_watch_coins = old_watch_coins;
-                self.pending_unwatch_coins = old_unwatch_coins;
-                self.cradle
-                    .session_prepend_observation_output(old_session_output);
-                return Err(Error::StrErr(format!(
+        let mut transients = ObservationTransients::detach(self);
+        let result = (|| {
+            let checkpoint = bencodex::to_vec(&self).map_err(|e| {
+                Error::StrErr(format!(
                     "failed to encode blockchain observation working copy: {e}"
-                )));
-            }
-        };
-        let mut working: Self = match bencodex::from_slice(&checkpoint) {
-            Ok(working) => working,
-            Err(e) => {
-                self.pending_events = old_events;
-                self.pending_watch_coins = old_watch_coins;
-                self.pending_unwatch_coins = old_unwatch_coins;
-                self.cradle
-                    .session_prepend_observation_output(old_session_output);
-                return Err(Error::StrErr(format!(
+                ))
+            })?;
+            let mut working: Self = bencodex::from_slice(&checkpoint).map_err(|e| {
+                Error::StrErr(format!(
                     "failed to decode blockchain observation working copy: {e}"
-                )));
-            }
-        };
-        working.timeout_claim_status_reconciled = self.timeout_claim_status_reconciled;
-        #[cfg(test)]
-        working
-            .cradle
-            .session_restore_observation_test_unroll_snapshot(observation_test_unroll_snapshot);
-        if let Err(e) = apply(&mut working, allocator) {
-            self.pending_events = old_events;
-            self.pending_watch_coins = old_watch_coins;
-            self.pending_unwatch_coins = old_unwatch_coins;
-            self.cradle
-                .session_prepend_observation_output(old_session_output);
-            return Err(e);
-        }
+                ))
+            })?;
+            transients.seed_working_copy(&mut working);
 
-        old_events.append(&mut working.pending_events);
-        old_watch_coins.append(&mut working.pending_watch_coins);
-        old_unwatch_coins.append(&mut working.pending_unwatch_coins);
-        working.pending_events = old_events;
-        working.pending_watch_coins = old_watch_coins;
-        working.pending_unwatch_coins = old_unwatch_coins;
-        working
-            .cradle
-            .session_prepend_observation_output(old_session_output);
-        *self = working;
-        Ok(())
+            // Observation callbacks may allocate aggressively and can still fail
+            // after doing so. Programs retained by durable state serialize their
+            // trees, so no NodePtr needs to escape this scratch allocator.
+            let mut scratch_allocator = AllocEncoder::new();
+            apply(&mut working, &mut scratch_allocator)?;
+
+            transients.merge(&mut working);
+            Ok(working)
+        })();
+
+        match result {
+            Ok(working) => {
+                *self = working;
+                Ok(())
+            }
+            Err(error) => {
+                transients.restore(self);
+                Err(error)
+            }
+        }
     }
 
     /// Report a trusted chain height when the watched-coin snapshot is not
@@ -1768,6 +1807,7 @@ mod tests {
     #[derive(Serialize, Deserialize)]
     struct LateFailingObservationSession {
         callback_mutations: Vec<(u64, Option<Vec<CoinObservation>>)>,
+        callback_programs: Vec<Program>,
         fail: bool,
         #[serde(skip)]
         output: GameSessionEventQueue,
@@ -1777,6 +1817,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 callback_mutations: Vec::new(),
+                callback_programs: Vec::new(),
                 fail: true,
                 output: GameSessionEventQueue::default(),
             }
@@ -1799,10 +1840,18 @@ mod tests {
 
         fn session_observe(
             &mut self,
-            _allocator: &mut AllocEncoder,
+            allocator: &mut AllocEncoder,
             height: u64,
             observations: Option<&[CoinObservation]>,
         ) -> Result<(), Error> {
+            let allocated = allocator
+                .allocator()
+                .new_atom(&[0x5a; 8 * 1024])
+                .expect("late callback allocation");
+            self.callback_programs.push(
+                Program::from_nodeptr(allocator, allocated)
+                    .expect("callback allocation serializes into owned Program"),
+            );
             self.callback_mutations
                 .push((height, observations.map(<[CoinObservation]>::to_vec)));
             self.output.push_back(GameSessionEvent::Log(
@@ -3049,6 +3098,11 @@ mod tests {
     #[test]
     fn failed_coin_observation_is_byte_identical_and_repeatable() {
         let mut allocator = AllocEncoder::new();
+        allocator
+            .allocator()
+            .new_atom(b"caller-owned allocation")
+            .expect("caller allocation");
+        let caller_live_bytes = allocator.allocator_ref().heap_size();
         let coin = test_coin(18);
         let mut mgr = TransactionManager::new(LateFailingObservationSession::default());
         mgr.register_watch(coin.clone(), Timeout::new(50), None, None);
@@ -3067,6 +3121,11 @@ mod tests {
             assert_eq!(
                 bencodex::to_vec(&mgr).expect("serialize after observation"),
                 before
+            );
+            assert_eq!(
+                allocator.allocator_ref().heap_size(),
+                caller_live_bytes,
+                "failed callback allocations must stay in the scratch allocator"
             );
         }
     }
@@ -3109,6 +3168,9 @@ mod tests {
 
         mgr.report_height(&mut allocator, 10)
             .expect("successful observation");
+        assert_eq!(mgr.cradle().callback_mutations.len(), 1);
+        assert_eq!(mgr.cradle().callback_programs.len(), 1);
+        assert!(mgr.cradle().callback_programs[0].bytes().len() > 8 * 1024);
         let drain = mgr
             .flush_and_collect(&mut allocator)
             .expect("collect ordered output");

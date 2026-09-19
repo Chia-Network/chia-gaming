@@ -535,6 +535,13 @@ are released once, the current in-memory boundary remains dirty, and later
 activity retries persistence without replaying those effects. A crash before
 that retry succeeds can restore an older local checkpoint; this degraded window
 is an explicit availability-over-durability choice.
+`releaseAfterPersistence(key, launcher)` deduplicates an effect only while that
+key is pending and returns the same completion promise to every duplicate
+caller. The persistence attempt gates invoking `launcher`, not completion of
+the promise it returns: the coordinator proceeds without awaiting that external
+work, while callers can still observe its eventual success or failure. The key
+is removed before invocation, so reentrant work may schedule the same key for a
+later captured boundary.
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
 Each drained submission has a stable Rust identifier, expiry, and captured fee
@@ -1356,15 +1363,19 @@ host-side coordinator for chain observations. It separates three concerns:
    additions arrive as `watchCoins` deltas from WASM drain results.
    `snapshot_watched_coins()` is only the restore/attach snapshot of the durable
    WASM interest set, not the per-sweep source of truth.
-2. **Scheduling** — `BlockchainPoller` owns one `AsyncJobQueue` per active
-   backend. That queue serializes both background polling and foreground wallet
-   actions exposed through `blockchain.rpc`, applying the backend's requested
-   inter-request gap. `AsyncPollingScheduler` runs the repeating height,
-   balance, and coin-sweep jobs by enqueueing them onto that same lane. On
-   disconnect, the queue abandons its current generation: queued jobs are
-   discarded and a new generation may run immediately even if an unabortable
-   provider promise from the old connection never resolves. Connection-epoch
-   checks discard any late old-generation result.
+2. **Scheduling** — `BlockchainPoller` owns two independent serialized
+   `AsyncJobQueue` lanes per active backend: one for reads and background polls,
+   and one for wallet mutations. A hung provider read therefore cannot block a
+   spend, offer, selection, or other mutation. Both lanes pass every adapter
+   request through one global request-start gate, which applies the backend's
+   requested gap between starts without waiting for prior requests to finish.
+   `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
+   work on the read lane. On disconnect, both queues abandon their current
+   generation: queued jobs are discarded and a new generation may run
+   immediately even if an unabortable provider promise from the old connection
+   never resolves. Each request revalidates its connection epoch after waiting
+   at the start gate and again after adapter completion, so stale work cannot
+   start late or publish a late old-generation result.
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
@@ -1375,6 +1386,13 @@ Coin polling reports raw height and coin-state observations upward every
 successful sweep. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those
 observations. The browser never decides that a watch has become terminal.
+Inside Rust, each height or coin-state observation is transactional over a deep
+serialized clone of the durable `TransactionManager` and nested `GameSession`.
+Only a successful callback replaces that durable state; pending events,
+watch/unwatch deltas, cradle output, and other skipped bookkeeping are journaled
+separately and restored on failure or prepended on commit. This boundary covers
+protocol mutations as well as effects, and callback CLVM values that survive it
+own serialized `Program` bytes rather than scratch-allocator pointers.
 
 During channel opening, each handshake role registers the predicted channel
 coin as soon as its identity is known. The wallet funding input is validated as
@@ -1398,10 +1416,10 @@ Only `terminal` discards queued protocol work and watch-coin updates and stops
 the `BlockchainPoller` and keepalive timer. Its retained `ChannelStatus`
 presentation event updates the `SessionModel`. Shell then stages one terminal
 snapshot, awaits the controller's pending durability work and the IndexedDB
-write, updates the resume marker, and only then destroys the controller and
-releases the peer relay/hub busy state. If either durability step fails, the
-staged terminal candidate is discarded while the live cache and controller
-remain owned and retryable; teardown is not attempted.
+write attempt, then destroys the controller and releases the peer relay/hub
+busy state exactly once. A persistence failure reports the durability warning
+and may leave the last checkpoint stale, but it does not suppress already
+prepared terminal effects or teardown.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes

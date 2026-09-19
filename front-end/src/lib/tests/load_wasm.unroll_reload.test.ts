@@ -236,6 +236,8 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
 
 async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<void> {
   const adapters = await createAsymmetricActivePair(poller, 12);
+  poller.stop();
+  await pollOnce(poller);
   const controller = adapters[0].blob!;
   const status = controller.lastChannelStatus;
   assert.ok(status, 'offline-reorg lane must begin Active');
@@ -270,10 +272,12 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
 
   const submittedBlobs: string[] = [];
   const puzzleSolutionCoins: string[] = [];
+  let resolveReplayBroadcast: ((blob: string) => void) | undefined;
   const originalSpend = fakeBlockchainInfo.spend;
   const originalGetPuzzleAndSolution = fakeBlockchainInfo.getPuzzleAndSolution;
   fakeBlockchainInfo.spend = async (...args: Parameters<typeof originalSpend>) => {
     submittedBlobs.push(args[0]);
+    resolveReplayBroadcast?.(args[0]);
     return originalSpend.apply(fakeBlockchainInfo, args);
   };
   fakeBlockchainInfo.getPuzzleAndSolution = async (
@@ -308,16 +312,35 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
       'Unrolling',
       'the retained unilateral spend must land before the offline reorg',
     );
+    // The snapshot that first observes the channel spend registers the new
+    // unroll output but cannot include it retroactively. Refresh the expanded
+    // watch set so the retained submission records its output as landed.
+    const landedWatches = lane.controller.snapshotWatchedCoins();
+    poller.snapshotGameSessionCoinInterest(lane.controller, landedWatches);
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+    const landedRecords = await fakeBlockchainInfo.getCoinRecordsByNames(
+      landedWatches.map(({ coin_name }) => coin_name),
+    );
+    assert.equal(
+      landedRecords.length,
+      landedWatches.length,
+      'every retained watch, including the expected output, must exist before replacement',
+    );
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
     const landedHeight = await fakeBlockchainInfo.getHeightInfo();
-    const rollbackDepth = Number(landedHeight - preLandingHeight);
-    assert.ok(rollbackDepth > 0, 'landing must advance the simulator tip');
+    assert.ok(landedHeight > preLandingHeight, 'landing must advance the simulator tip');
     const spendsBeforeReload = submittedBlobs.length;
     const puzzleRequestsBeforeReload = puzzleSolutionCoins.length;
+    const replayBroadcast = new Promise<string>((resolve) => {
+      resolveReplayBroadcast = resolve;
+    });
 
     lane = (
       await injectSessionReload(lane, poller, undefined, async () => {
         const replacementHeight = await fakeBlockchainInfo.replaceChain(
-          rollbackDepth,
+          preLandingHeight,
           landedHeight,
         );
         assert.equal(
@@ -335,7 +358,28 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
 
     await pollOnce(poller);
     await flushWrapperDrain(adapters);
+    // The first pass releases the replay into the controller transaction queue;
+    // the second persists finalization and releases the resulting broadcast.
+    await flushWrapperDrain(adapters);
+    let replayTimeout: ReturnType<typeof setTimeout> | undefined;
+    const observedReplay = await Promise.race([
+      replayBroadcast,
+      new Promise<never>((_resolve, reject) => {
+        replayTimeout = setTimeout(
+          () => reject(new Error('restored replay broadcast was not released within 15 seconds')),
+          15_000,
+        );
+      }),
+    ]).finally(() => {
+      if (replayTimeout !== undefined) clearTimeout(replayTimeout);
+    });
+    resolveReplayBroadcast = undefined;
     const replayed = submittedBlobs.slice(spendsBeforeReload);
+    assert.equal(
+      observedReplay,
+      finalizedBlob,
+      'restore must rebroadcast the exact finalized bytes',
+    );
     assert.deepEqual(
       replayed,
       [finalizedBlob],
@@ -352,6 +396,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
 
     await pollOnce(poller);
     await flushWrapperDrain(adapters);
+    await lane.controller.flushPendingWork();
     assert.deepEqual(
       submittedBlobs.slice(spendsBeforeReload),
       [finalizedBlob],

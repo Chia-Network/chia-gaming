@@ -13,6 +13,32 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export class AsyncRequestStartGate {
+  private turn: Promise<void> = Promise.resolve();
+  private lastStartAt: number | null = null;
+
+  constructor(private readonly gapMs: number) {}
+
+  async wait(): Promise<void> {
+    let release!: () => void;
+    const previousTurn = this.turn;
+    this.turn = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previousTurn;
+    try {
+      if (this.lastStartAt !== null) {
+        const remainingMs = this.lastStartAt + this.gapMs - performance.now();
+        if (remainingMs > 0) await delay(remainingMs);
+      }
+      this.lastStartAt = performance.now();
+    } finally {
+      release();
+    }
+  }
+}
+
 export class AsyncJobQueue {
   private frontQueue: AsyncQueueJob[] = [];
   private queue: AsyncQueueJob[] = [];

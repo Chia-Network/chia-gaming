@@ -16,6 +16,7 @@ import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
+import { attachControllerOnlyTestCommitCoordinator } from './reliable_commit_coordinator.harness';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
   get: (target, property) =>
@@ -199,77 +200,9 @@ export function setTestPersistence(
 export function attachTestCommitCoordinator(blob: SessionController): void {
   if (coordinatedControllers.has(blob)) return;
   coordinatedControllers.add(blob);
-  let dirty = false;
-  const pendingExternalEffects = new Map<string, () => void>();
-  let flushing: Promise<void> = Promise.resolve();
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const schedule = () => {
-    if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      void coordinator.flush().catch(() => {});
-    }, 0);
-  };
-  const coordinator = {
-    requestCommit: () => {
-      dirty = true;
-      schedule();
-    },
-    enqueue: (work: () => void) => {
-      work();
-    },
-    releaseAfterPersistence: (key: string, effect: () => void) => {
-      if (pendingExternalEffects.has(key)) return;
-      pendingExternalEffects.set(key, effect);
-      dirty = true;
-      schedule();
-    },
-    flush: (): Promise<void> => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      flushing = flushing
-        .catch(() => {})
-        .then(async () => {
-          while (dirty) {
-            try {
-              dirty = false;
-              blob.flushDeferredWork();
-              const commit = blob.prepareReliableCommit();
-              const externalEffects = [...pendingExternalEffects.entries()];
-              const releaseExternalEffects = () => {
-                for (const [key, effect] of externalEffects) {
-                  if (pendingExternalEffects.get(key) !== effect) continue;
-                  pendingExternalEffects.delete(key);
-                  effect();
-                }
-              };
-              try {
-                const rejection = blob.prepareInboundSessionRejectPersistence();
-                if (rejection) {
-                  await rejection.write();
-                } else {
-                  await Promise.resolve(testPersistence.get(blob)?.());
-                }
-              } catch (error) {
-                blob.completeReliableCommit(commit, false);
-                releaseExternalEffects();
-                throw error;
-              }
-              blob.completeReliableCommit(commit, true);
-              releaseExternalEffects();
-            } catch (error) {
-              dirty = true;
-              blob.reportDurabilityError(error);
-              throw error;
-            }
-          }
-        });
-      return flushing;
-    },
-  };
-  blob.attachTransactionCoordinator(coordinator);
+  attachControllerOnlyTestCommitCoordinator(blob, {
+    persist: () => testPersistence.get(blob)?.(),
+  });
 }
 
 /**

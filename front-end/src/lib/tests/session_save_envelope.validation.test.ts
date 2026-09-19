@@ -6,6 +6,7 @@ import {
   sessionModelFromSave,
   validateSessionSaveEnvelope,
 } from '../session/model';
+import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
 import {
   ACTIVE_INSTANCE,
   TERMINAL_INSTANCE,
@@ -187,24 +188,53 @@ describe('validateSessionSaveEnvelope', () => {
   it('normalizes null WASM funding request optionals to absence', () => {
     const save = liveSave();
     if (save.phase !== 'live') throw new Error('expected live fixture');
+    const wasmRequest = {
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['launcher'] }],
+      coin_id: null,
+      max_height: null,
+    };
     save.live.fundingOutbox = [
       {
-        key: 'funding-request',
-        request: {
-          amount: '100',
-          fee: '0',
-          conditions: [],
-          coin_id: null,
-          max_height: null,
-        },
+        key: fundingRequestKey(canonicalizeFundingRequest(wasmRequest)),
+        request: wasmRequest,
       },
     ] as unknown as NonNullable<typeof save.live.fundingOutbox>;
 
     const decoded = decodeSessionSaveEnvelope(save);
     expect(decoded.phase).toBe('live');
     if (decoded.save.phase !== 'live') throw new Error('expected decoded live fixture');
-    expect(decoded.save.live.fundingOutbox?.[0].request.coin_id).toBeUndefined();
-    expect(decoded.save.live.fundingOutbox?.[0].request.max_height).toBeUndefined();
+    expect(decoded.save.live.fundingOutbox).toEqual([
+      {
+        key: fundingRequestKey(canonicalizeFundingRequest(wasmRequest)),
+        request: {
+          amount: '100',
+          fee: '0',
+          conditions: [{ opcode: 60, args: ['launcher'] }],
+        },
+      },
+    ]);
+  });
+
+  it('rejects mismatched and duplicate funding outbox keys', () => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    const request = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [],
+    });
+    const key = fundingRequestKey(request);
+
+    save.live.fundingOutbox = [{ key: 'wrong', request }];
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow('key does not match');
+
+    save.live.fundingOutbox = [
+      { key, request },
+      { key, request },
+    ];
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow('duplicate');
   });
 
   it('accepts cloud as preferences.blockchainType', () => {

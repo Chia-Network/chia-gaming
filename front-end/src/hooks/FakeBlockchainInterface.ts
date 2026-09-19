@@ -343,9 +343,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.sendRequest('farm_block');
   }
 
-  async replaceChain(depth: number, targetHeight: bigint): Promise<bigint> {
+  async replaceChain(rollbackHeight: bigint, targetHeight: bigint): Promise<bigint> {
     return this.sendRequest('replace_chain', {
-      depth,
+      rollbackHeight: Number(rollbackHeight),
       targetHeight: Number(targetHeight),
     });
   }
