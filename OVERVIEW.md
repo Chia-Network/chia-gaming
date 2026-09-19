@@ -301,6 +301,12 @@ After a valid received batch commits, queued local game actions are reconciled
 once against the new peer state. Known stale moves, settlements, and cheats are
 removed with `ActionFailed`; the remaining queue is drained once. An unexpected
 local drain failure is an internal error, not a retryable peer-batch condition.
+That drain builds a narrow local `BatchPlan` over a cloned channel, queue
+disposition, and staged effects. It commits only after cached-unroll
+finalization succeeds. A trusted action error removes and attributes only the
+failing action while preserving every other queued action in order; a
+finalization error preserves the full queue. This packaging boundary is not a
+general rollback or retry mechanism.
 
 This rollback scope is an architectural invariant. Core atomicity exists to
 isolate mutations made while validating untrusted peer input; it is not a
@@ -717,7 +723,9 @@ manager and nested `GameSession`; effects-only rollback cannot cover the
 protocol mutations made by callbacks. Pending events, watch/unwatch deltas,
 cradle output, and other skipped observation bookkeeping live in a separate
 transient journal that is restored unchanged on failure or prepended to new
-output on commit. Observation callbacks use a fresh scratch allocator, and all
+output on commit. Test-only stale-unroll snapshots instead belong to the
+simulator harness and are passed explicitly; they are not journaled production
+session state. Observation callbacks use a fresh scratch allocator, and all
 surviving CLVM values own serialized `Program` bytes rather than allocator-local
 `NodePtr`s.
 
@@ -764,7 +772,18 @@ machine/WASM/reliable boundary and attempts one atomic write before projecting
 React state and releasing sends/ACKs. This same rule applies while completing
 work after rehydration. React projection is not part of the drain; holding it
 until the persistence attempt finishes prevents transient UX states and
-flicker.
+flicker. `ReliableCommitCoordinator.enqueueResult<T>` places result-bearing
+controller work on this same serialized boundary and returns a typed promise
+that resolves or rejects when that work executes, including work queued behind
+an in-progress commit.
+
+Durable funding requests use one explicit canonical model: `amount`, `fee`, and
+optional `max_height` are canonical decimal `u64` strings; condition opcodes are
+bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
+omitted rather than stored as null. The controller owns the durable funding
+outbox and cancellation prerequisite for a replacement request, while Rust owns
+transaction submission intent and the frontend submission queue owns only
+ordered one-shot wallet delivery.
 
 Persistence is checkpointing, not permission to continue a game for money. If
 the browser write fails, the runtime reports a persistent durability warning

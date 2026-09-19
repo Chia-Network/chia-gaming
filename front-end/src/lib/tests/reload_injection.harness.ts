@@ -47,6 +47,7 @@ function bindRuntime(
   iStarted: boolean,
   restoring: boolean,
 ): ReloadableSessionLane {
+  adapter.retireRuntime();
   const runtime = new SessionMachineRuntime(
     createSessionMachineState(model, {
       firstGameAccepted: model.channel.status.state === 'Active',

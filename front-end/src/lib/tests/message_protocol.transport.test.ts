@@ -80,7 +80,7 @@ describe('WASM result boundary', () => {
 });
 
 describe('in-order delivery', () => {
-  it('drains an active result to quiescence in one macrotask', async () => {
+  it('drains an active result to the runtime fixed point', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     const reasons: string[] = [];
@@ -99,8 +99,6 @@ describe('in-order delivery', () => {
       ],
     });
 
-    expect(reasons).toEqual([]);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(reasons).toEqual(['first', 'second']);
   });
 
@@ -157,7 +155,7 @@ describe('in-order delivery', () => {
     expect(delivered).toBe(101);
   });
 
-  it('keeps the active event budget when work is flushed explicitly', async () => {
+  it('reaches the runtime fixed point when work is flushed explicitly', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     let delivered = 0;
@@ -179,9 +177,6 @@ describe('in-order delivery', () => {
       events: [{ Notification: { ActionFailed: { reason: 'first' } } }],
     });
     blob.flushDeferredWork();
-    expect(delivered).toBe(100);
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(delivered).toBe(101);
   });
 
@@ -961,7 +956,7 @@ describe('WASM wallet funding requests', () => {
       amount: '100',
       fee: '10',
       conditions: [{ opcode: 60, args: ['launcher'] }],
-      coin_id: 'funding-coin',
+      coin_id: 'ab'.repeat(32),
       max_height: 123,
     };
 
@@ -972,7 +967,7 @@ describe('WASM wallet funding requests', () => {
       'test',
       { '1': -100n },
       [{ opcode: 60n, args: ['launcher'] }],
-      ['funding-coin'],
+      ['ab'.repeat(32)],
       123n,
       10n,
     );
@@ -1076,7 +1071,7 @@ describe('WASM wallet funding requests', () => {
       amount: '100',
       fee: '0',
       conditions: [{ opcode: 60, args: ['launcher'] }],
-      coin_id: 'funding-coin',
+      coin_id: 'ab'.repeat(32),
       max_height: 123,
     };
     const createOfferForIds = jest
@@ -1102,6 +1097,127 @@ describe('WASM wallet funding requests', () => {
     expect(cancelOffer.mock.invocationCallOrder[0]).toBeLessThan(
       createOfferForIds.mock.invocationCallOrder[1],
     );
+  });
+
+  it('reports one failed cancellation through its successor and permits later funding', async () => {
+    const request: NeedCoinSpendRequest = {
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['launcher'] }],
+    };
+    const laterRequest: NeedCoinSpendRequest = {
+      amount: '101',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['later'] }],
+    };
+    const createOfferForIds = jest
+      .fn()
+      .mockResolvedValueOnce({ offer: 'offer1first', tradeId: 'trade-1' })
+      .mockResolvedValueOnce(testSpendBundle('later'));
+    const cancelOffer = jest.fn().mockRejectedValue(new Error('cancellation failed'));
+    const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds, cancelOffer }, 60000);
+    const { blob, cradle } = createReadyBlob();
+    const walletCallbackFailed = jest.fn().mockReturnValue(wasmResult());
+    (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
+      walletCallbackFailed;
+    (cradle as unknown as { provide_offer_bech32: jest.Mock }).provide_offer_bech32 = jest
+      .fn()
+      .mockReturnValue(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+
+    expectConsoleError('handleNeedCoinSpend error');
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    await blob.flushPendingWork();
+
+    expect(cancelOffer).toHaveBeenCalledTimes(1);
+    expect(walletCallbackFailed).toHaveBeenCalledTimes(1);
+    expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
+    expect(createOfferForIds).toHaveBeenCalledTimes(1);
+
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: laterRequest }] }));
+    await blob.flushPendingWork();
+
+    expect(createOfferForIds).toHaveBeenCalledTimes(2);
+    expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
+  });
+
+  it('owns an unconsumed cancellation when replacement processing throws', async () => {
+    const request: NeedCoinSpendRequest = {
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['launcher'] }],
+    };
+    let resolveOffer!: (value: { offer: string; tradeId: string }) => void;
+    const offer = new Promise<{ offer: string; tradeId: string }>((resolve) => {
+      resolveOffer = resolve;
+    });
+    const createOfferForIds = jest.fn(() => offer);
+    const cancelOffer = jest.fn().mockRejectedValue(new Error('cancellation failed'));
+    const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds, cancelOffer }, 60000);
+    const { blob, cradle } = createReadyBlob();
+    const walletCallbackFailed = jest.fn().mockReturnValue(wasmResult());
+    (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
+      walletCallbackFailed;
+    (cradle as unknown as { provide_offer_bech32: jest.Mock }).provide_offer_bech32 = jest
+      .fn()
+      .mockReturnValue(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    await blob.flushPendingSave();
+    for (let i = 0; i < 10 && createOfferForIds.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    const processResult = blob.processResult.bind(blob);
+    jest
+      .spyOn(blob, 'processResult')
+      .mockImplementationOnce(() => {
+        throw new Error('replacement processing failed');
+      })
+      .mockImplementation(processResult);
+
+    expectConsoleError('handleNeedCoinSpend error');
+    resolveOffer({ offer: 'offer1first', tradeId: 'trade-1' });
+    await blob.flushPendingWork();
+
+    expect(cancelOffer).toHaveBeenCalledTimes(1);
+    expect(walletCallbackFailed).toHaveBeenCalledTimes(1);
+    expect(walletCallbackFailed).toHaveBeenCalledWith('cancellation failed');
+    expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
+  });
+
+  it('deduplicates duplicate replacement funding keys behind one cancellation', async () => {
+    const request: NeedCoinSpendRequest = {
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60, args: ['launcher'] }],
+    };
+    const createOfferForIds = jest
+      .fn()
+      .mockResolvedValueOnce({ offer: 'offer1first', tradeId: 'trade-1' })
+      .mockResolvedValueOnce(testSpendBundle('replacement'));
+    const cancelOffer = jest.fn().mockResolvedValue(undefined);
+    const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds, cancelOffer }, 60000);
+    const { blob, cradle } = createReadyBlob();
+    (cradle as unknown as { provide_offer_bech32: jest.Mock }).provide_offer_bech32 = jest
+      .fn()
+      .mockReturnValueOnce(
+        wasmResult({
+          events: [{ NeedCoinSpend: request }, { NeedCoinSpend: request }],
+        }),
+      );
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+
+    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    await blob.flushPendingWork();
+
+    expect(cancelOffer).toHaveBeenCalledTimes(1);
+    expect(createOfferForIds).toHaveBeenCalledTimes(2);
+    expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
+    expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 });
 
@@ -1243,7 +1359,7 @@ describe('wallet fee attachment on submission', () => {
     expect(spend).not.toHaveBeenCalled();
 
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full 2');
-    await (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+    await blob.flushTransactionSubmissions();
 
     expect(order).toEqual(['persist-1', 'fee', 'finalize', 'persist-2', 'spend']);
     expect(spend).toHaveBeenCalledTimes(1);
@@ -1304,6 +1420,50 @@ describe('wallet fee attachment on submission', () => {
 
     expect(spend).toHaveBeenCalledTimes(2);
     expect(finalize).toHaveBeenCalledTimes(2);
+  });
+
+  it('tracks only persistence releases while the submission lane advances later work', async () => {
+    let resolveFirstFee!: (value: undefined) => void;
+    const firstFee = new Promise<undefined>((resolve) => {
+      resolveFirstFee = resolve;
+    });
+    const createFeeSpend = jest
+      .fn()
+      .mockImplementationOnce(() => firstFee)
+      .mockResolvedValue(undefined);
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const finalize = jest.fn().mockReturnValue({
+      protocol_bundle: testSpendBundle('coin'),
+      bundle: protocolBundle,
+      applied_fee: '0',
+      warning: null,
+    });
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
+    setFinalizer(blob, finalize);
+    const pendingEffects = (blob as unknown as { pendingEffects: Set<Promise<void>> })
+      .pendingEffects;
+
+    submitTransaction(blob, testSpendBundle('first'), { target: feeTarget, amount: '10' });
+    expect(pendingEffects.size).toBe(1);
+    await blob.flushPendingSave();
+    for (let i = 0; i < 10 && pendingEffects.size > 0; i += 1) {
+      await Promise.resolve();
+    }
+
+    expect(createFeeSpend).toHaveBeenCalledTimes(1);
+    expect(pendingEffects.size).toBe(0);
+
+    submitTransaction(blob, testSpendBundle('second'), { target: feeTarget, amount: '10' });
+    expect(pendingEffects.size).toBe(1);
+    await blob.flushPendingSave();
+    resolveFirstFee(undefined);
+    await blob.flushPendingWork();
+
+    expect(createFeeSpend).toHaveBeenCalledTimes(2);
+    expect(finalize).toHaveBeenCalledTimes(2);
+    expect(spend).toHaveBeenCalledTimes(2);
   });
 
   it('lets persistence flush release broadcast while controller pending-work waits for it', async () => {

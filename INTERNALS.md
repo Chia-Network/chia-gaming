@@ -280,13 +280,20 @@ indicate programming bugs — the queue was populated by our own UI/logic.
 
 The cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
-`drain_queue_into_batch` does not wrap these trusted local actions in a
-savepoint. A valid received batch commits before a post-receive drain
-reconciles stale local actions and emits `ActionFailed`; any remaining
-unexpected drain failure is an internal error and stays fail-fast. The JS-side
-game action methods (`proposeGame`, `acceptProposal`, `cancel_proposal`,
-`makeMove`, `acceptSettlement`, `cheat`) also catch WASM throws and surface
-them through the UI error dialog.
+`drain_queue_into_batch` uses a narrow local `BatchPlan`: it packages actions
+against a cloned channel while staging queue disposition and effects, then
+commits those together only after cached-unroll finalization succeeds. If one
+trusted action fails while packaging, only that action is removed and
+attributed through `ActionFailed`; every other queued action remains in its
+original order. If finalization fails, the full original queue remains. This is
+atomic batch packaging, not general rollback or retry.
+
+A valid received batch commits before a post-receive drain reconciles known
+stale local actions and emits `ActionFailed`; any remaining unexpected drain
+failure is an internal error and stays fail-fast. The JS-side game action
+methods (`proposeGame`, `acceptProposal`, `cancel_proposal`, `makeMove`,
+`acceptSettlement`, `cheat`) also catch WASM throws and surface them through
+the UI error dialog.
 
 ---
 
@@ -319,7 +326,9 @@ The invariant is therefore:
   Those errors are not a normal peer-message recovery path. A valid peer batch
   commits before explicit reconciliation removes known stale game actions and
   emits `ActionFailed`; the remaining queue drains once. Unexpected local
-  failures stay fail-fast rather than restoring a nested snapshot and retrying.
+  failures stay fail-fast. Its local `BatchPlan` protects only package
+  construction: cloned channel state, queue disposition, and staged effects
+  commit after cached-unroll finalization, with no nested retry loop.
 
 Do not generalize this rollback mechanism. Its purpose is to quarantine
 partially applied, untrusted peer input. Local UI calls, block-height and coin
@@ -352,9 +361,11 @@ be insufficient because observation callbacks also mutate protocol state.
 
 Transient output is excluded from that durable copy and held in one observation
 journal: pending manager events, watch and unwatch deltas, detached cradle
-output, timeout-claim reconciliation state, and the test-only saved snapshot.
-Failure restores that journal unchanged. Success prepends the old journal to
-new output, preserving FIFO order, and commits the working copy.
+output, and timeout-claim reconciliation state. Failure restores that journal
+unchanged. Success prepends the old journal to new output, preserving FIFO
+order, and commits the working copy. Test-only stale-unroll snapshots belong to
+the simulator harness and are passed explicitly; they are not production
+`GameSession` or observation-journal state.
 
 Callbacks execute with a fresh scratch `AllocEncoder`, not the caller's
 allocator. A failed callback therefore leaves no CLVM allocations behind in
@@ -442,9 +453,10 @@ Atomicity is enforced at three boundaries:
    member cardinality, and game IDs remain deferred.
 2. **Accept:** When a queued acceptance executes, run the factory with the
    proposer and accepter reserves remaining after all earlier batch actions.
-   Validate the result, deduct its contributions immediately, allocate ordered
-   `GameID`s, and continue to the next action. A cancellation addresses the
-   proposal ID and creates no games.
+   Validate and build all temporary games and economics first, then commit them
+   once inside the batch's already cloned channel. Allocate ordered `GameID`s
+   and continue to the next action. A cancellation addresses the proposal ID
+   and creates no games.
 3. **Receive:** Replay acceptances in wire order with the same reserve
    orientation and calculations. The enclosing untrusted peer-batch rollback
    withholds every mutation and effect until all actions and signatures
@@ -642,6 +654,10 @@ non-strict mode the simulator behaves like a normal blockchain, returning reject
 instead of panicking. The point of strict-mode panics is that in a correct
 implementation none of these conditions should ever occur — hitting one means
 there is a bug.
+
+The simulator service's `replace_chain` operation validates rollback and target
+height bounds before calling `reorg` or mutating its coin adapter and simulation
+record. An invalid replacement request therefore leaves runner state unchanged.
 
 **Strict-mode panics** (non-strict mode returns rejection codes instead):
 

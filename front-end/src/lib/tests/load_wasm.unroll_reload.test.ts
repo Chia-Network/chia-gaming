@@ -356,23 +356,17 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     ).lane;
     assert.equal(lane.controller.getRestoreStatus(), 'restored');
 
-    await pollOnce(poller);
-    await flushWrapperDrain(adapters);
-    // The first pass releases the replay into the controller transaction queue;
-    // the second persists finalization and releases the resulting broadcast.
-    await flushWrapperDrain(adapters);
-    let replayTimeout: ReturnType<typeof setTimeout> | undefined;
-    const observedReplay = await Promise.race([
-      replayBroadcast,
-      new Promise<never>((_resolve, reject) => {
-        replayTimeout = setTimeout(
-          () => reject(new Error('restored replay broadcast was not released within 15 seconds')),
-          15_000,
-        );
-      }),
-    ]).finally(() => {
-      if (replayTimeout !== undefined) clearTimeout(replayTimeout);
-    });
+    // Scheduled polling is stopped for this offline lane. An explicit poll may
+    // intentionally decline to report after exhausting its coherent-snapshot
+    // attempts, so keep driving the chain until a submission is observed.
+    do {
+      await pollOnce(poller);
+      await flushWrapperDrain(adapters);
+      // The first pass releases the replay into the controller transaction queue;
+      // the second persists finalization and releases the resulting broadcast.
+      await flushWrapperDrain(adapters);
+    } while (submittedBlobs.length === spendsBeforeReload);
+    const observedReplay = await replayBroadcast;
     resolveReplayBroadcast = undefined;
     const replayed = submittedBlobs.slice(spendsBeforeReload);
     assert.equal(

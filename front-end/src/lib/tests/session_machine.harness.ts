@@ -1,5 +1,7 @@
+import type { SessionController } from '../../hooks/SessionController';
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type {
   SessionMachineEffect,
   SessionMachineState,
@@ -96,4 +98,21 @@ export function run(
 
 export function activeMachineState() {
   return createSessionMachineState(createSessionModel());
+}
+
+export function createHeadlessSessionMachineRuntime(
+  controller: SessionController,
+  persist: () => void | Promise<void> = () => {},
+): SessionMachineRuntime {
+  return new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+    controller,
+    iStarted: controller.iStarted,
+    restoring: false,
+    getRestoreStatus: () => controller.getRestoreStatus(),
+    getRestoreError: () => controller.getRestoreError(),
+    onError: (error) => controller.reportRuntimeError(error),
+    persist: async () => {
+      await persist();
+    },
+  });
 }

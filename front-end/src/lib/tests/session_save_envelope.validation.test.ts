@@ -185,36 +185,68 @@ describe('validateSessionSaveEnvelope', () => {
     expect(decodeSessionSaveEnvelope(terminal).phase).toBe('terminal');
   });
 
-  it('normalizes null WASM funding request optionals to absence', () => {
+  it('round-trips an explicitly canonical funding request', () => {
     const save = liveSave();
     if (save.phase !== 'live') throw new Error('expected live fixture');
-    const wasmRequest = {
+    const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
       conditions: [{ opcode: 60, args: ['launcher'] }],
-      coin_id: null,
-      max_height: null,
-    };
+      coin_id: 'ab'.repeat(32),
+      max_height: 123,
+    });
     save.live.fundingOutbox = [
       {
-        key: fundingRequestKey(canonicalizeFundingRequest(wasmRequest)),
-        request: wasmRequest,
+        key: fundingRequestKey(request),
+        request,
       },
-    ] as unknown as NonNullable<typeof save.live.fundingOutbox>;
+    ];
 
     const decoded = decodeSessionSaveEnvelope(save);
     expect(decoded.phase).toBe('live');
     if (decoded.save.phase !== 'live') throw new Error('expected decoded live fixture');
     expect(decoded.save.live.fundingOutbox).toEqual([
       {
-        key: fundingRequestKey(canonicalizeFundingRequest(wasmRequest)),
+        key: fundingRequestKey(request),
         request: {
           amount: '100',
           fee: '0',
-          conditions: [{ opcode: 60, args: ['launcher'] }],
+          conditions: [{ opcode: 60n, args: ['launcher'] }],
+          coin_id: 'ab'.repeat(32),
+          max_height: '123',
         },
       },
     ]);
+  });
+
+  it.each([
+    ['missing fee', { amount: '100', conditions: [] }],
+    ['null fee', { amount: '100', fee: null, conditions: [] }],
+    ['noncanonical amount', { amount: '01', fee: '0', conditions: [] }],
+    ['out-of-range fee', { amount: '100', fee: '18446744073709551616', conditions: [] }],
+    [
+      'out-of-range opcode',
+      { amount: '100', fee: '0', conditions: [{ opcode: 2 ** 32, args: [] }] },
+    ],
+    ['numeric opcode', { amount: '100', fee: '0', conditions: [{ opcode: 60, args: [] }] }],
+    ['uppercase coin id', { amount: '100', fee: '0', conditions: [], coin_id: 'AB'.repeat(32) }],
+    ['numeric max height', { amount: '100', fee: '0', conditions: [], max_height: 123 }],
+    ['noncanonical max height', { amount: '100', fee: '0', conditions: [], max_height: '0123' }],
+  ])('rejects a saved funding request with %s', (_label, request) => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    const canonicalKey = fundingRequestKey(
+      canonicalizeFundingRequest({
+        amount: '100',
+        fee: '0',
+        conditions: [],
+      }),
+    );
+    save.live.fundingOutbox = [{ key: canonicalKey, request }] as unknown as NonNullable<
+      typeof save.live.fundingOutbox
+    >;
+
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow();
   });
 
   it('rejects mismatched and duplicate funding outbox keys', () => {

@@ -541,7 +541,21 @@ caller. The persistence attempt gates invoking `launcher`, not completion of
 the promise it returns: the coordinator proceeds without awaiting that external
 work, while callers can still observe its eventual success or failure. The key
 is removed before invocation, so reentrant work may schedule the same key for a
-later captured boundary.
+later captured boundary. `ReliableCommitCoordinator.enqueueResult<T>` is the
+result-bearing companion to `enqueue`: it runs typed controller work inside the
+same serialized runtime transaction and resolves or rejects its promise when
+that work executes, including when an active commit temporarily queues it.
+
+The funding outbox persists an explicit `CanonicalFundingRequest`, not the loose
+WASM boundary shape. `amount`, `fee`, and optional `max_height` are canonical
+decimal `u64` strings; every condition opcode is a bounded `bigint` `u32`;
+absent `coin_id` and `max_height` options are omitted, never stored as null.
+`SessionController` owns outbox retirement and the per-replacement cancellation
+prerequisite: the replacement request keyed from Rust's new event waits for
+cancellation of the rejected persisted offer. Rust remains the durable owner of
+submission/retry intent; the controller's submission queue only serializes
+one-shot wallet delivery and reports the typed outcome back to Rust.
+
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
 Each drained submission has a stable Rust identifier, expiry, and captured fee
@@ -1370,12 +1384,14 @@ host-side coordinator for chain observations. It separates three concerns:
    request through one global request-start gate, which applies the backend's
    requested gap between starts without waiting for prior requests to finish.
    `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
-   work on the read lane. On disconnect, both queues abandon their current
-   generation: queued jobs are discarded and a new generation may run
-   immediately even if an unabortable provider promise from the old connection
-   never resolves. Each request revalidates its connection epoch after waiting
-   at the start gate and again after adapter completion, so stale work cannot
-   start late or publish a late old-generation result.
+   work on the read lane. On disconnect, active reads are abandoned and queued
+   mutations are cleared. An active mutation is allowed to finish; if it was an
+   offer-creating call whose result became stale, the poller uses its trade ID
+   to cancel the wallet reservation before rejecting the old-generation result.
+   A new generation may run immediately even if an unabortable old read never
+   resolves. Each request revalidates its connection epoch after the shared
+   start gate and after adapter completion, so stale work cannot start late or
+   publish a late old-generation result.
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
@@ -1392,7 +1408,9 @@ Only a successful callback replaces that durable state; pending events,
 watch/unwatch deltas, cradle output, and other skipped bookkeeping are journaled
 separately and restored on failure or prepended on commit. This boundary covers
 protocol mutations as well as effects, and callback CLVM values that survive it
-own serialized `Program` bytes rather than scratch-allocator pointers.
+own serialized `Program` bytes rather than scratch-allocator pointers. The
+transient journal contains no test state; stale-unroll snapshots are owned by
+the simulator test harness and passed explicitly.
 
 During channel opening, each handshake role registers the predicted channel
 coin as soon as its identity is known. The wallet funding input is validated as

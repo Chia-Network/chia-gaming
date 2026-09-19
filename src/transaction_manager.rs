@@ -231,21 +231,6 @@ pub trait ManagedGameSession {
         );
     }
 
-    #[cfg(test)]
-    fn session_observation_test_unroll_snapshot(
-        &self,
-    ) -> Option<crate::channel_state::types::ChannelCoinSpendInfo> {
-        None
-    }
-
-    #[cfg(test)]
-    fn session_restore_observation_test_unroll_snapshot(
-        &mut self,
-        snapshot: Option<crate::channel_state::types::ChannelCoinSpendInfo>,
-    ) {
-        debug_assert!(snapshot.is_none());
-    }
-
     /// Receive a manager-ordered coin observation batch. `None` advances
     /// protocol clocks from a trusted height without treating an unavailable
     /// snapshot as an authoritative empty coin set.
@@ -293,21 +278,6 @@ impl ManagedGameSession for GameSession {
         if let Some(output) = output {
             self.prepend_observation_output(output);
         }
-    }
-
-    #[cfg(test)]
-    fn session_observation_test_unroll_snapshot(
-        &self,
-    ) -> Option<crate::channel_state::types::ChannelCoinSpendInfo> {
-        self.observation_test_unroll_snapshot()
-    }
-
-    #[cfg(test)]
-    fn session_restore_observation_test_unroll_snapshot(
-        &mut self,
-        snapshot: Option<crate::channel_state::types::ChannelCoinSpendInfo>,
-    ) {
-        self.restore_observation_test_unroll_snapshot(snapshot);
     }
 
     fn session_observe(
@@ -430,8 +400,6 @@ struct ObservationTransients {
     pending_unwatch_coins: Vec<CoinString>,
     session_output: Option<DrainResult>,
     timeout_claim_status_reconciled: bool,
-    #[cfg(test)]
-    saved_unroll_snapshot: Option<crate::channel_state::types::ChannelCoinSpendInfo>,
 }
 
 impl ObservationTransients {
@@ -442,17 +410,11 @@ impl ObservationTransients {
             pending_unwatch_coins: std::mem::take(&mut manager.pending_unwatch_coins),
             session_output: manager.cradle.session_detach_observation_output(),
             timeout_claim_status_reconciled: manager.timeout_claim_status_reconciled,
-            #[cfg(test)]
-            saved_unroll_snapshot: manager.cradle.session_observation_test_unroll_snapshot(),
         }
     }
 
     fn seed_working_copy<C: ManagedGameSession>(&self, working: &mut TransactionManager<C>) {
         working.timeout_claim_status_reconciled = self.timeout_claim_status_reconciled;
-        #[cfg(test)]
-        working
-            .cradle
-            .session_restore_observation_test_unroll_snapshot(self.saved_unroll_snapshot.clone());
     }
 
     fn restore<C: ManagedGameSession>(&mut self, manager: &mut TransactionManager<C>) {
@@ -463,10 +425,6 @@ impl ObservationTransients {
         manager
             .cradle
             .session_prepend_observation_output(self.session_output.take());
-        #[cfg(test)]
-        manager
-            .cradle
-            .session_restore_observation_test_unroll_snapshot(self.saved_unroll_snapshot.take());
     }
 
     fn merge<C: ManagedGameSession>(&mut self, working: &mut TransactionManager<C>) {

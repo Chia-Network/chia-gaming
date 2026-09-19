@@ -26,6 +26,7 @@ import {
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
+import { pollOnce } from './blockchain_poller.driver';
 
 describe('terminal protocol cleanup', () => {
   it('completes a restored cooperative terminal handoff', async () => {
@@ -503,7 +504,7 @@ describe('transaction submission', () => {
       events: [],
       watchCoins: [{ coin_name: 'aa', coin_string: 'coin-a' }],
     });
-    await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(blockchain);
 
     expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
     expect(queriedNames).toEqual([['aa']]);
@@ -513,7 +514,7 @@ describe('transaction submission', () => {
       events: [],
       unwatchCoins: [{ coin_name: 'aa', coin_string: 'coin-a' }],
     });
-    await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(blockchain);
 
     expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
     expect(queriedNames).toEqual([['aa']]);
@@ -560,7 +561,7 @@ describe('transaction submission', () => {
     expect(queriedNames).toEqual([]);
 
     blob.attachBlockchain(blockchain);
-    await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(blockchain);
 
     expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
     expect(queriedNames).toEqual([['bb']]);
@@ -613,7 +614,7 @@ describe('transaction submission', () => {
     expect(spend).not.toHaveBeenCalled();
 
     blob.attachBlockchain(blockchain);
-    await (blockchain as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(blockchain);
     await transactionSubmitQueue(blob);
 
     expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);

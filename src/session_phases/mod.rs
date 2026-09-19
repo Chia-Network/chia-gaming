@@ -15,7 +15,7 @@ use crate::channel_state::types::{
 use crate::channel_state::{ChannelState, ProposalAcceptanceStatus};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, IntoErr,
-    LocalProposalId, Program, ProgramRef, PuzzleHash, SpendBundle, Timeout, WireProposalId,
+    LocalProposalId, Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout, WireProposalId,
 };
 use crate::session_phases::effects::{
     format_coin, AcceptedGameMember, CancelReason, ChannelStatus, ChannelStatusSnapshot,
@@ -141,6 +141,21 @@ type AppliedPeerBatch = (
     bool,
     Vec<(LocalProposalId, Vec<AcceptedGameMember>)>,
 );
+
+struct PlannedCleanShutdown {
+    channel_coin: CoinString,
+    spend: Spend,
+}
+
+struct BatchPlan {
+    channel_state: ChannelState,
+    remaining_queue: VecDeque<GameAction>,
+    batch_actions: Vec<BatchAction>,
+    effects: Vec<Effect>,
+    applied_actions: Vec<(GameID, LocalActionKind)>,
+    request_potato_back: bool,
+    clean_shutdown: Option<PlannedCleanShutdown>,
+}
 
 fn format_batch_action(action: &BatchAction) -> String {
     match action {
@@ -1140,213 +1155,289 @@ impl OffChainPhase {
             matches!(self.state.have_potato, PotatoState::Present),
             "drain_queue_into_batch: must have potato"
         );
-        let mut effects = Vec::new();
-        let mut batch_actions: Vec<BatchAction> = Vec::new();
-        let mut deferred = VecDeque::new();
-        let mut applied_actions = Vec::new();
-        let mut request_potato_back = false;
-        let mut working_channel = self.channel_state()?.clone();
+        let original_queue = self.state.game_action_queue.clone();
+        #[cfg(test)]
+        let inject_cached_unroll_failure = self
+            .channel_state_mut()?
+            .take_cached_unroll_failure_for_testing();
+        #[cfg(test)]
+        let mut planned_channel_state = self.channel_state()?.clone();
+        #[cfg(not(test))]
+        let planned_channel_state = self.channel_state()?.clone();
+        #[cfg(test)]
+        if inject_cached_unroll_failure {
+            planned_channel_state.fail_next_cached_unroll_update_for_testing();
+        }
+        let mut plan = BatchPlan {
+            channel_state: planned_channel_state,
+            remaining_queue: VecDeque::new(),
+            batch_actions: Vec::new(),
+            effects: Vec::new(),
+            applied_actions: Vec::new(),
+            request_potato_back: false,
+            clean_shutdown: None,
+        };
 
-        while let Some(action) = self.state.game_action_queue.pop_front() {
-            self.last_failed_queued_action = failed_game_action_context(&action);
-            match action {
-                GameAction::Move(game_id, prepared) => {
-                    let game_is_my_turn = working_channel.game_is_my_turn(&game_id);
-                    if let Some(true) = game_is_my_turn {
-                        let move_result =
-                            working_channel.send_move_no_finalize(env, &game_id, prepared)?;
-                        batch_actions.push(BatchAction::Move(
-                            game_id,
-                            peer_move_from_result(move_result)?,
-                        ));
-                        applied_actions.push((game_id, LocalActionKind::MakeMove));
-                    } else {
+        for (index, action) in original_queue.iter().cloned().enumerate() {
+            let action_result = (|| -> Result<bool, Error> {
+                match action {
+                    GameAction::Move(game_id, prepared) => {
                         game_assert!(
-                            false,
+                            plan.channel_state.game_is_my_turn(&game_id) == Some(true),
                             "prepared move became stale before off-chain application"
                         );
-                    }
-                }
-                GameAction::Cheat(game_id, mover_share, entropy) => {
-                    let game_is_my_turn = working_channel.game_is_my_turn(&game_id);
-                    if let Some(true) = game_is_my_turn {
-                        let readable_move = ReadableMove::from_program(Rc::new(Program::nil()));
-                        working_channel.enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
-                        let prepared =
-                            working_channel.prepare_move(env, &game_id, &readable_move, entropy)?;
-                        let move_result =
-                            working_channel.send_move_no_finalize(env, &game_id, prepared)?;
-                        batch_actions.push(BatchAction::Move(
+                        let move_result = plan
+                            .channel_state
+                            .send_move_no_finalize(env, &game_id, prepared)?;
+                        plan.batch_actions.push(BatchAction::Move(
                             game_id,
                             peer_move_from_result(move_result)?,
                         ));
-                        applied_actions.push((game_id, LocalActionKind::Cheat));
-                    } else {
-                        deferred.push_back(GameAction::Cheat(game_id, mover_share, entropy));
+                        plan.applied_actions
+                            .push((game_id, LocalActionKind::MakeMove));
                     }
-                }
-                GameAction::AcceptSettlement(game_id) => {
-                    let amount = working_channel.send_accept_settlement_no_finalize(&game_id)?;
-                    batch_actions.push(BatchAction::AcceptSettlement(game_id, amount));
-                    applied_actions.push((game_id, LocalActionKind::AcceptSettlement));
-                }
-                GameAction::QueuedProposal(local_id) => {
-                    let start = {
-                        let proposal = working_channel.find_proposal(local_id)?;
-                        GameProposal {
-                            sender_is_player_a: proposal.sender_is_player_a,
-                            game_type: proposal.game_type.clone(),
-                            timeout: proposal.timeout.clone(),
-                            parameters: proposal.parameters.clone(),
+                    GameAction::Cheat(game_id, mover_share, entropy) => {
+                        if plan.channel_state.game_is_my_turn(&game_id) == Some(true) {
+                            let readable_move = ReadableMove::from_program(Rc::new(Program::nil()));
+                            plan.channel_state.enable_cheating_for_game(
+                                &game_id,
+                                &[0x80],
+                                mover_share,
+                            )?;
+                            let prepared = plan.channel_state.prepare_move(
+                                env,
+                                &game_id,
+                                &readable_move,
+                                entropy,
+                            )?;
+                            let move_result = plan
+                                .channel_state
+                                .send_move_no_finalize(env, &game_id, prepared)?;
+                            plan.batch_actions.push(BatchAction::Move(
+                                game_id,
+                                peer_move_from_result(move_result)?,
+                            ));
+                            plan.applied_actions.push((game_id, LocalActionKind::Cheat));
+                        } else {
+                            plan.remaining_queue.push_back(GameAction::Cheat(
+                                game_id,
+                                mover_share,
+                                entropy,
+                            ));
                         }
-                    };
-                    let origin_wire_id = working_channel.emit_outgoing_proposal(local_id)?;
-                    batch_actions.push(BatchAction::Propose(WireProposal {
-                        origin_wire_id,
-                        start,
-                    }));
-                }
-                GameAction::QueuedAcceptProposal(local_id) => {
-                    let origin_wire_id = working_channel.proposal_wire_id(local_id)?;
-                    self.ensure_game_types(env.allocator);
-                    match Self::execute_acceptance(
-                        &self.game_types,
-                        env,
-                        &mut working_channel,
-                        local_id,
-                        false,
-                        true,
-                    )? {
-                        AcceptanceOutcome::Accepted(members) => {
-                            batch_actions.push(BatchAction::AcceptProposal(origin_wire_id));
-                            effects.push(Effect::Notify(GameNotification::ProposalAcceptedGroup {
-                                id: local_id,
-                                members,
-                            }));
-                        }
-                        AcceptanceOutcome::Insufficient {
-                            local_id,
+                    }
+                    GameAction::AcceptSettlement(game_id) => {
+                        let amount = plan
+                            .channel_state
+                            .send_accept_settlement_no_finalize(&game_id)?;
+                        plan.batch_actions
+                            .push(BatchAction::AcceptSettlement(game_id, amount));
+                        plan.applied_actions
+                            .push((game_id, LocalActionKind::AcceptSettlement));
+                    }
+                    GameAction::QueuedProposal(local_id) => {
+                        let start = {
+                            let proposal = plan.channel_state.find_proposal(local_id)?;
+                            GameProposal {
+                                sender_is_player_a: proposal.sender_is_player_a,
+                                game_type: proposal.game_type.clone(),
+                                timeout: proposal.timeout.clone(),
+                                parameters: proposal.parameters.clone(),
+                            }
+                        };
+                        let origin_wire_id = plan.channel_state.emit_outgoing_proposal(local_id)?;
+                        plan.batch_actions.push(BatchAction::Propose(WireProposal {
                             origin_wire_id,
-                            our_balance_short,
-                            their_balance_short,
-                        } => {
-                            effects.push(Effect::Notify(GameNotification::InsufficientBalance {
-                                id: local_id,
-                                our_balance_short,
-                                their_balance_short,
-                            }));
-                            working_channel.remove_proposal(local_id)?;
-                            batch_actions.push(BatchAction::CancelProposal(origin_wire_id));
-                            self.last_failed_queued_action = None;
-                            continue;
-                        }
-                    }
-                }
-                GameAction::QueuedCancelProposal(local_id) => {
-                    let proposal = working_channel.remove_proposal(local_id)?;
-                    effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                        id: local_id,
-                        reason: CancelReason::CancelledByUs,
-                    }));
-                    batch_actions.push(BatchAction::CancelProposal(
-                        proposal.lifecycle.wire_id().ok_or_else(|| {
-                            Error::StrErr(format!("proposal {local_id} has no wire id"))
-                        })?,
-                    ));
-                }
-                GameAction::QueuedCancelProposalSilently(local_id) => {
-                    let proposal = working_channel.remove_proposal(local_id)?;
-                    batch_actions.push(BatchAction::CancelProposal(
-                        proposal.lifecycle.wire_id().ok_or_else(|| {
-                            Error::StrErr(format!("proposal {local_id} has no wire id"))
-                        })?,
-                    ));
-                }
-                GameAction::CleanShutdown => {
-                    if !batch_actions.is_empty() {
-                        deferred.push_back(GameAction::CleanShutdown);
-                        deferred.append(&mut self.state.game_action_queue);
-                        request_potato_back = true;
-                        self.last_failed_queued_action = None;
-                        break;
-                    }
-                    if working_channel.has_active_games() {
-                        return Err(Error::StrErr(
-                            "cannot clean shutdown while games are active".to_string(),
-                        ));
-                    }
-                    let cancelled = working_channel.cancel_all_proposals();
-                    for id in cancelled {
-                        effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                            id,
-                            reason: CancelReason::CleanShutdown,
+                            start,
                         }));
                     }
-
-                    let real_conditions = get_conditions_with_channel_state(env, &working_channel)?;
-                    let channel_coin = working_channel.channel_coin().clone();
-                    let spend = working_channel.send_potato_clean_shutdown(env, real_conditions)?;
-
-                    *self.channel_state_mut()? = working_channel;
-                    self.state.pending_clean_shutdown =
-                        Some((channel_coin.clone(), spend.solution.clone()));
-                    self.state.game_action_queue = deferred;
-                    self.state.have_potato = PotatoState::Absent;
-                    {
-                        let ch = self.channel_state()?;
-                        effects.push(Effect::Log(make_send_log(ch, &[], true)));
+                    GameAction::QueuedAcceptProposal(local_id) => {
+                        let origin_wire_id = plan.channel_state.proposal_wire_id(local_id)?;
+                        self.ensure_game_types(env.allocator);
+                        match Self::execute_acceptance(
+                            &self.game_types,
+                            env,
+                            &mut plan.channel_state,
+                            local_id,
+                            false,
+                            true,
+                        )? {
+                            AcceptanceOutcome::Accepted(members) => {
+                                plan.batch_actions
+                                    .push(BatchAction::AcceptProposal(origin_wire_id));
+                                plan.effects.push(Effect::Notify(
+                                    GameNotification::ProposalAcceptedGroup {
+                                        id: local_id,
+                                        members,
+                                    },
+                                ));
+                            }
+                            AcceptanceOutcome::Insufficient {
+                                local_id,
+                                origin_wire_id,
+                                our_balance_short,
+                                their_balance_short,
+                            } => {
+                                plan.effects.push(Effect::Notify(
+                                    GameNotification::InsufficientBalance {
+                                        id: local_id,
+                                        our_balance_short,
+                                        their_balance_short,
+                                    },
+                                ));
+                                plan.channel_state.remove_proposal(local_id)?;
+                                plan.batch_actions
+                                    .push(BatchAction::CancelProposal(origin_wire_id));
+                            }
+                        }
                     }
-                    effects.push(Effect::SendPeer(PeerMessage::CleanShutdown {
-                        channel_half_sig: spend.signature,
-                    }));
-                    return Ok((true, effects));
+                    GameAction::QueuedCancelProposal(local_id) => {
+                        let proposal = plan.channel_state.remove_proposal(local_id)?;
+                        plan.effects
+                            .push(Effect::Notify(GameNotification::ProposalCancelled {
+                                id: local_id,
+                                reason: CancelReason::CancelledByUs,
+                            }));
+                        plan.batch_actions.push(BatchAction::CancelProposal(
+                            proposal.lifecycle.wire_id().ok_or_else(|| {
+                                Error::StrErr(format!("proposal {local_id} has no wire id"))
+                            })?,
+                        ));
+                    }
+                    GameAction::QueuedCancelProposalSilently(local_id) => {
+                        let proposal = plan.channel_state.remove_proposal(local_id)?;
+                        plan.batch_actions.push(BatchAction::CancelProposal(
+                            proposal.lifecycle.wire_id().ok_or_else(|| {
+                                Error::StrErr(format!("proposal {local_id} has no wire id"))
+                            })?,
+                        ));
+                    }
+                    GameAction::CleanShutdown => {
+                        if !plan.batch_actions.is_empty() {
+                            plan.remaining_queue
+                                .extend(original_queue.iter().skip(index).cloned());
+                            plan.request_potato_back = true;
+                            return Ok(true);
+                        }
+                        if plan.channel_state.has_active_games() {
+                            return Err(Error::StrErr(
+                                "cannot clean shutdown while games are active".to_string(),
+                            ));
+                        }
+                        for id in plan.channel_state.cancel_all_proposals() {
+                            plan.effects.push(Effect::Notify(
+                                GameNotification::ProposalCancelled {
+                                    id,
+                                    reason: CancelReason::CleanShutdown,
+                                },
+                            ));
+                        }
+                        let real_conditions =
+                            get_conditions_with_channel_state(env, &plan.channel_state)?;
+                        let channel_coin = plan.channel_state.channel_coin().clone();
+                        let spend = plan
+                            .channel_state
+                            .send_potato_clean_shutdown(env, real_conditions)?;
+                        plan.clean_shutdown = Some(PlannedCleanShutdown {
+                            channel_coin,
+                            spend,
+                        });
+                        plan.remaining_queue
+                            .extend(original_queue.iter().skip(index + 1).cloned());
+                        return Ok(true);
+                    }
+                    #[cfg(test)]
+                    GameAction::ForcedSelfAccept(local_id) => {
+                        let wire_id = plan.channel_state.proposal_wire_id(local_id)?;
+                        plan.batch_actions
+                            .push(BatchAction::AcceptProposal(wire_id));
+                    }
                 }
-                #[cfg(test)]
-                GameAction::ForcedSelfAccept(local_id) => {
-                    let wire_id = working_channel.proposal_wire_id(local_id)?;
-                    batch_actions.push(BatchAction::AcceptProposal(wire_id));
+                Ok(false)
+            })();
+
+            match action_result {
+                Ok(stop) if stop => break,
+                Ok(_) => {}
+                Err(error) => {
+                    self.state.game_action_queue = original_queue
+                        .iter()
+                        .enumerate()
+                        .filter(|(queued_index, _)| *queued_index != index)
+                        .map(|(_, queued)| queued.clone())
+                        .collect();
+                    self.last_failed_queued_action = failed_game_action_context(
+                        original_queue
+                            .get(index)
+                            .expect("planned action index comes from original queue"),
+                    );
+                    return Err(error);
                 }
             }
+        }
+
+        if let Some(shutdown) = plan.clean_shutdown {
+            *self.channel_state_mut()? = plan.channel_state;
+            self.state.pending_clean_shutdown = Some((
+                shutdown.channel_coin.clone(),
+                shutdown.spend.solution.clone(),
+            ));
+            self.state.game_action_queue = plan.remaining_queue;
+            self.state.have_potato = PotatoState::Absent;
+            {
+                let ch = self.channel_state()?;
+                plan.effects.push(Effect::Log(make_send_log(ch, &[], true)));
+            }
+            plan.effects
+                .push(Effect::SendPeer(PeerMessage::CleanShutdown {
+                    channel_half_sig: shutdown.spend.signature,
+                }));
             self.last_failed_queued_action = None;
+            return Ok((true, plan.effects));
         }
 
-        self.state.game_action_queue = deferred;
-
-        if batch_actions.is_empty() {
-            // No batch was packaged; deferred actions remain pending for a
-            // future potato receipt, so this flush has no attributable failure.
-            return Ok((false, effects));
+        if plan.batch_actions.is_empty() {
+            self.state.game_action_queue = plan.remaining_queue;
+            self.last_failed_queued_action = None;
+            return Ok((false, plan.effects));
         }
 
-        let sigs = working_channel.update_cached_unroll_state(env)?;
-        *self.channel_state_mut()? = working_channel;
+        let sigs = match plan.channel_state.update_cached_unroll_state(env) {
+            Ok(sigs) => sigs,
+            Err(error) => {
+                self.last_failed_queued_action = None;
+                return Err(error);
+            }
+        };
+        *self.channel_state_mut()? = plan.channel_state;
+        self.state.game_action_queue = plan.remaining_queue;
 
-        effects.extend(applied_actions.into_iter().map(|(id, action)| {
-            Effect::Notify(GameNotification::LocalActionApplied { id, action })
-        }));
-
+        plan.effects
+            .extend(plan.applied_actions.into_iter().map(|(id, action)| {
+                Effect::Notify(GameNotification::LocalActionApplied { id, action })
+            }));
         {
             let ch = self.channel_state()?;
-            effects.push(Effect::Log(make_send_log(ch, &batch_actions, false)));
+            plan.effects
+                .push(Effect::Log(make_send_log(ch, &plan.batch_actions, false)));
         }
 
-        self.state.have_potato = if request_potato_back {
+        self.state.have_potato = if plan.request_potato_back {
             PotatoState::Requested
         } else {
             PotatoState::Absent
         };
-        effects.push(Effect::SendPeer(PeerMessage::Batch {
-            actions: batch_actions,
+        plan.effects.push(Effect::SendPeer(PeerMessage::Batch {
+            actions: plan.batch_actions,
             signatures: sigs,
         }));
-        if request_potato_back {
-            effects.push(Effect::SendPeer(PeerMessage::RequestPotato(())));
+        if plan.request_potato_back {
+            plan.effects
+                .push(Effect::SendPeer(PeerMessage::RequestPotato(())));
         }
 
-        // Packaging and delivery intent succeeded. Later failures cannot be
-        // attributed to a still-pending local action from this flush.
         self.last_failed_queued_action = None;
-        Ok((true, effects))
+        Ok((true, plan.effects))
     }
 
     const MAX_MESSAGE_SIZE: usize = handshake::MAX_PEER_MESSAGE_SIZE;
@@ -1997,6 +2088,21 @@ impl PeerLifecyclePhase for OffChainPhase {
     #[cfg(test)]
     fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase> {
         None
+    }
+    #[cfg(test)]
+    fn queue_game_action_for_testing(&mut self, action: GameAction) -> Result<(), Error> {
+        self.push_action(action);
+        Ok(())
+    }
+    #[cfg(test)]
+    fn fail_next_cached_unroll_update_for_testing(&mut self) -> Result<(), Error> {
+        self.channel_state_mut()?
+            .fail_next_cached_unroll_update_for_testing();
+        Ok(())
+    }
+    #[cfg(test)]
+    fn queued_game_action_count_for_testing(&self) -> usize {
+        self.state.game_action_queue.len()
     }
     fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
         None

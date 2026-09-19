@@ -1119,6 +1119,27 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
     fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase> {
         self.take_off_chain_phase()
     }
+    #[cfg(test)]
+    fn queue_game_action_for_testing(
+        &mut self,
+        _action: crate::session_phases::types::GameAction,
+    ) -> Result<(), Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "queue_game_action_for_testing",
+        ))
+    }
+    #[cfg(test)]
+    fn fail_next_cached_unroll_update_for_testing(&mut self) -> Result<(), Error> {
+        Err(phase_operation_error(
+            self.phase_name(),
+            "fail_next_cached_unroll_update_for_testing",
+        ))
+    }
+    #[cfg(test)]
+    fn queued_game_action_count_for_testing(&self) -> usize {
+        0
+    }
     fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
         None
     }

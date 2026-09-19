@@ -1,3 +1,4 @@
+use crate::channel_state::types::ChannelCoinSpendInfo;
 use crate::common::types::Hash;
 use crate::transaction_manager::CoinStateRecord;
 
@@ -100,6 +101,7 @@ pub(super) struct SimulationHarness {
     host_events: [Vec<HostBoundaryEvent>; 2],
     move_readiness_boundary: Option<MoveReadinessBoundary>,
     pending_received_proposal_refs: [VecDeque<ScriptProposalRef>; 2],
+    saved_unroll_snapshots: [Option<ChannelCoinSpendInfo>; 2],
 }
 
 impl SimulationHarness {
@@ -232,6 +234,7 @@ impl SimulationHarness {
             host_events: [Vec::new(), Vec::new()],
             move_readiness_boundary: None,
             pending_received_proposal_refs: [VecDeque::new(), VecDeque::new()],
+            saved_unroll_snapshots: [None, None],
         }
     }
 
@@ -1007,7 +1010,11 @@ impl SimulationHarness {
     }
 
     pub(super) fn save_unroll_snapshot(&mut self, player: usize) {
-        self.cradles[player].save_unroll_snapshot();
+        self.saved_unroll_snapshots[player] = Some(
+            self.cradles[player]
+                .unroll_snapshot_for_testing()
+                .expect("SaveUnrollSnapshot requires a current channel spend"),
+        );
     }
 
     pub(super) fn force_stale_unroll(
@@ -1015,7 +1022,14 @@ impl SimulationHarness {
         allocator: &mut AllocEncoder,
         player: usize,
     ) -> Result<(), Error> {
-        let spend = self.cradles[player].force_stale_unroll_spend(allocator)?;
+        let snapshot = self.saved_unroll_snapshots[player]
+            .as_ref()
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "ForceStaleUnroll({player}) requires SaveUnrollSnapshot({player})"
+                ))
+            })?;
+        let spend = self.cradles[player].force_stale_unroll_spend(allocator, snapshot)?;
         self.simulator.push_transactions(allocator, &spend.spends)?;
         Ok(())
     }

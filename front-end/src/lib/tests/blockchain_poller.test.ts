@@ -2,6 +2,7 @@ import { BlockchainPoller, PollingGameSession } from '../../hooks/BlockchainPoll
 import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
+import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 
 function makeRpc(heights: bigint[]): InternalBlockchainInterface {
   let lastHeight = heights[0] ?? 0n;
@@ -72,8 +73,8 @@ describe('BlockchainPoller', () => {
     poller.attachGameSession(cradle);
 
     // Drive the poll loop directly, twice, without the setTimeout backoff.
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
+    await pollOnce(poller);
 
     expect(reportedPeaks).toEqual([100n, 90n]);
     expect(poller.getPeak()).toEqual(90n);
@@ -112,13 +113,13 @@ describe('BlockchainPoller', () => {
     poller.attachGameSession(cradle);
 
     // Registration fails: no report (a partial snapshot would be misread).
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     expect(reportedPeaks).toEqual([]);
     expect(heightOnlyPeaks).toEqual([100n]);
 
     // Registration succeeds on the retry: the cradle is reported.
     registerOk = true;
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     expect(reportedPeaks).toEqual([100n]);
     expect(heightOnlyPeaks).toEqual([100n, 100n]);
   });
@@ -145,7 +146,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(reportCoinStates).not.toHaveBeenCalled();
     expect(reportNewBlock).toHaveBeenCalledWith(100n);
@@ -179,7 +180,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(getCoinRecordsByNames).toHaveBeenCalledTimes(2);
     expect(reportCoinStates).toHaveBeenCalledWith(101n, [
@@ -218,7 +219,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(getCoinRecordsByNames).toHaveBeenCalledTimes(3);
     expect(reportCoinStates).not.toHaveBeenCalled();
@@ -254,7 +255,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(getHeightInfo).toHaveBeenCalledTimes(2);
     expect(reportCoinStates).not.toHaveBeenCalled();
@@ -294,9 +295,9 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
+    await pollOnce(poller);
+    await pollOnce(poller);
 
     expect(reports).toEqual([
       {
@@ -345,7 +346,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    const poll = (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    const poll = pollOnce(poller);
     await recordsRequested.promise;
     poller.detachGameSession(cradle);
     records.resolve([record]);
@@ -367,7 +368,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(heightOnlyPeaks).toEqual([100n]);
   });
@@ -403,15 +404,15 @@ describe('BlockchainPoller', () => {
     poller.attachGameSession(cradle);
     expect(snapshotCalls).toBe(1);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     interests = [{ coin_name: 'bb', coin_string: 'coin-b' }];
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     expect(snapshotCalls).toBe(1);
     expect(queriedNames).toEqual([['aa'], ['aa']]);
 
     poller.watchCoin(cradle, { coin_name: 'bb', coin_string: 'coin-b' });
     expect(snapshotCalls).toBe(1);
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     expect(queriedNames).toEqual([['aa'], ['aa'], ['aa', 'bb']]);
   });
 
@@ -479,7 +480,7 @@ describe('BlockchainPoller', () => {
 
     const read = poller.rpc.getHeightInfo();
     await advanceLane();
-    const explicitPoll = poller.pollOnce();
+    const explicitPoll = pollOnce(poller);
     await advanceLane();
     expect(calls).toEqual(['height']);
 
@@ -624,11 +625,7 @@ describe('BlockchainPoller', () => {
       },
     } as unknown as InternalBlockchainInterface;
     const poller = new BlockchainPoller(rpc, 1000);
-    (
-      poller as unknown as {
-        ensureConnectionListener: () => void;
-      }
-    ).ensureConnectionListener();
+    ensureConnectionListener(poller);
 
     const mutation = poller.rpc.selectCoins('wallet', 1n);
     const mutationRejection = expect(mutation).rejects.toThrow(
@@ -1080,9 +1077,9 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     scope = '100';
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(registered).toEqual([['aa'], ['aa']]);
   });
@@ -1127,8 +1124,8 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
+    await pollOnce(poller);
 
     expect(reports).toEqual([
       {
@@ -1188,8 +1185,8 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
+    await pollOnce(poller);
 
     const expectedReports = [
       {
@@ -1251,7 +1248,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(reports).toEqual([]);
   });
@@ -1295,7 +1292,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(reports).toEqual([
       {

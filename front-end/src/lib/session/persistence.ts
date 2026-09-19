@@ -63,7 +63,7 @@ import {
   requireUniqueIds,
   parseStringArray,
 } from './persistencePrimitives';
-import { canonicalizeFundingRequest, fundingRequestKey } from './fundingRequest';
+import { decodeCanonicalFundingRequest, fundingRequestKey } from './fundingRequest';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
@@ -237,7 +237,7 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
           fundingOutbox: fundingOutbox.map((entry, index) => {
             const record = requireRecord(entry, `live.fundingOutbox[${index}]`);
             const key = requireString(record.key, `live.fundingOutbox[${index}].key`);
-            const request = canonicalizeFundingRequest(
+            const request = decodeCanonicalFundingRequest(
               record.request,
               `live.fundingOutbox[${index}].request`,
             );

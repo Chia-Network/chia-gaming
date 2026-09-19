@@ -224,6 +224,11 @@ impl GameRunner {
                 "replacement rollback height {rollback_height} exceeds current height {current_height}"
             )));
         }
+        if target_height < rollback_height {
+            return Err(Error::StrErr(format!(
+                "replacement target {target_height} is below rollback height {rollback_height}"
+            )));
+        }
         let depth = u32::try_from(current_height - rollback_height).map_err(|_| {
             Error::StrErr(format!(
                 "replacement depth exceeds u32: current={current_height} rollback={rollback_height}"
@@ -231,11 +236,6 @@ impl GameRunner {
         })?;
         self.simulator.reorg(depth);
         let rolled_back_height = self.simulator.get_current_height() as u64;
-        if target_height < rolled_back_height {
-            return Err(Error::StrErr(format!(
-                "replacement target {target_height} is below rolled-back height {rolled_back_height}"
-            )));
-        }
 
         // Rebase the adapter before farming the replacement chain so an
         // un-created output is not misclassified as a spend observation.
@@ -1098,9 +1098,21 @@ enum GameCommand {
     Farm {
         reply: oneshot::Sender<Result<(), String>>,
     },
+    #[cfg(test)]
+    Snapshot {
+        reply: oneshot::Sender<GameRunnerSnapshot>,
+    },
     Shutdown {
         reply: oneshot::Sender<()>,
     },
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GameRunnerSnapshot {
+    peak: u64,
+    current_coins: HashSet<CoinString>,
+    sim_record: BTreeMap<u64, Vec<CoinObservation>>,
 }
 
 #[derive(Clone)]
@@ -1175,6 +1187,17 @@ impl GameActor {
         received
             .await
             .map_err(|_| "game actor stopped before farming".to_string())?
+    }
+
+    #[cfg(test)]
+    async fn snapshot(&self) -> Result<GameRunnerSnapshot, String> {
+        let (reply, received) = oneshot::channel();
+        self.commands
+            .send(GameCommand::Snapshot { reply })
+            .map_err(|_| "game actor stopped before snapshot".to_string())?;
+        received
+            .await
+            .map_err(|_| "game actor stopped during snapshot".to_string())
     }
 
     async fn shutdown(&self) -> Result<(), String> {
@@ -1322,6 +1345,14 @@ fn run_game_actor(
                         Ok(())
                     });
                 let _ = reply.send(result);
+            }
+            #[cfg(test)]
+            GameCommand::Snapshot { reply } => {
+                let _ = reply.send(GameRunnerSnapshot {
+                    peak: game_runner.simulator.get_current_height() as u64,
+                    current_coins: game_runner.coinset_adapter.current_coins.clone(),
+                    sim_record: game_runner.sim_record.clone(),
+                });
             }
             GameCommand::Shutdown { reply } => {
                 clients.clear();
@@ -2066,6 +2097,74 @@ mod regression_tests {
                 .await
                 .expect("concurrent client timed out")
                 .expect("concurrent client task panicked");
+        }
+
+        harness.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn regression_invalid_replace_chain_bounds_are_atomic_via_websocket() {
+        let harness = ServiceHarness::start().await;
+        let url = format!("ws://{}/ws", harness.listen_addr);
+        let (mut websocket, _) = connect_async(url).await.unwrap();
+
+        send_request(
+            &mut websocket,
+            serde_json::json!({
+                "id": 1,
+                "method": "register",
+                "params": {
+                    "name": "replace-chain-atomicity",
+                    "balance": 1_000_000u64
+                }
+            }),
+        )
+        .await;
+        let register = receive_response(&mut websocket, 1).await;
+        assert!(register["error"].is_null(), "{register}");
+
+        let before = harness.actor.snapshot().await.unwrap();
+        assert!(before.peak >= 2, "test setup peak was too low: {before:?}");
+        assert!(
+            !before.current_coins.is_empty(),
+            "test setup did not populate the coinset adapter"
+        );
+        assert!(
+            !before.sim_record.is_empty(),
+            "test setup did not populate the simulation record"
+        );
+
+        let invalid_requests = [
+            (before.peak + 1, before.peak + 1, "exceeds current height"),
+            (before.peak - 1, before.peak - 2, "is below rollback height"),
+        ];
+        for (index, (rollback_height, target_height, expected_error)) in
+            invalid_requests.into_iter().enumerate()
+        {
+            let request_id = index as u64 + 2;
+            send_request(
+                &mut websocket,
+                serde_json::json!({
+                    "id": request_id,
+                    "method": "replace_chain",
+                    "params": {
+                        "rollbackHeight": rollback_height,
+                        "targetHeight": target_height
+                    }
+                }),
+            )
+            .await;
+            let response = receive_response(&mut websocket, request_id).await;
+            let error = response["error"]
+                .as_str()
+                .expect("invalid replacement unexpectedly succeeded");
+            assert!(error.contains(expected_error), "{response}");
+
+            let after = harness.actor.snapshot().await.unwrap();
+            assert_eq!(
+                after, before,
+                "invalid replacement mutated runner state: rollback={rollback_height} target={target_height}"
+            );
         }
 
         harness.shutdown().await;

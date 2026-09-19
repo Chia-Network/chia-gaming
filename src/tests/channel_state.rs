@@ -158,7 +158,7 @@ pub(crate) mod sim_tests {
     }
 
     #[test]
-    fn acceptance_and_settlement_staging_failures_leave_channel_byte_identical() {
+    fn acceptance_failure_leaves_channel_byte_identical() {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([16; 32]);
         let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
@@ -258,102 +258,6 @@ pub(crate) mod sim_tests {
         assert!(
             channel.pending_proposal_accept_game_ids().is_empty(),
             "redo entries changed"
-        );
-
-        let second_id = party
-            .player(0)
-            .ch
-            .create_outgoing_proposal(&proposal)
-            .expect("second proposal");
-        let before_batch = bencodex::to_vec(&party.player(0).ch)
-            .expect("serialize channel before staged accept batch");
-        let mut working = party.player(0).ch.clone();
-        assert!(matches!(
-            working.stage_proposal_acceptance(&mut env, local_id, &[start(0, 32)], true,),
-            Ok(crate::channel_state::ProposalAcceptanceStatus::Accepted)
-        ));
-        assert!(
-            working
-                .stage_proposal_acceptance(&mut env, second_id, &[start(1, usize::MAX)], true,)
-                .is_err(),
-            "second queued acceptance should fail"
-        );
-        assert_eq!(
-            bencodex::to_vec(&party.player(0).ch)
-                .expect("serialize channel after staged accept failure"),
-            before_batch,
-            "an earlier staged acceptance leaked into the live ledger",
-        );
-
-        let mut finalization_working = party.player(0).ch.clone();
-        finalization_working
-            .stage_proposal_acceptance(&mut env, local_id, &[start(0, 32)], true)
-            .expect("stage acceptance before finalization failure");
-        finalization_working.fail_next_cached_unroll_update_for_testing();
-        assert!(
-            finalization_working
-                .update_cached_unroll_state(&mut env)
-                .is_err(),
-            "injected cached-unroll finalization should fail"
-        );
-        assert_eq!(
-            bencodex::to_vec(&party.player(0).ch)
-                .expect("serialize channel after finalization failure"),
-            before_batch,
-            "cached-unroll failure committed staged acceptances",
-        );
-
-        party
-            .player(0)
-            .ch
-            .accept_proposal_games(&mut env, local_id, &[start(0, 32)], true)
-            .expect("establish live game for settlement rollback");
-        party.player(0).ch.set_have_potato_for_testing(true);
-        let before_settlement_batch = bencodex::to_vec(&party.player(0).ch)
-            .expect("serialize channel before settlement batch");
-
-        let mut later_failure_working = party.player(0).ch.clone();
-        later_failure_working
-            .send_accept_settlement_no_finalize(&GameID(0))
-            .expect("stage settlement");
-        assert!(
-            later_failure_working.live_game_ids().is_empty(),
-            "working live game was not removed"
-        );
-        assert_eq!(
-            later_failure_working.pending_settlement_game_ids_for_testing(),
-            vec![GameID(0)],
-            "working settlement was not retained"
-        );
-        assert!(
-            later_failure_working
-                .remove_proposal(LocalProposalId(u64::MAX))
-                .is_err(),
-            "later queued action should fail"
-        );
-        assert_eq!(
-            bencodex::to_vec(&party.player(0).ch)
-                .expect("serialize channel after later action failure"),
-            before_settlement_batch,
-            "later failure leaked pending settlements, live games, proposals, or balances",
-        );
-
-        let mut settlement_finalization_working = party.player(0).ch.clone();
-        settlement_finalization_working
-            .send_accept_settlement_no_finalize(&GameID(0))
-            .expect("stage settlement before finalization");
-        settlement_finalization_working.fail_next_cached_unroll_update_for_testing();
-        assert!(
-            settlement_finalization_working
-                .update_cached_unroll_state(&mut env)
-                .is_err(),
-            "injected settlement finalization should fail"
-        );
-        assert_eq!(
-            bencodex::to_vec(&party.player(0).ch)
-                .expect("serialize channel after settlement finalization failure"),
-            before_settlement_batch,
-            "finalization failure leaked pending settlements, live games, proposals, or balances",
         );
     }
 

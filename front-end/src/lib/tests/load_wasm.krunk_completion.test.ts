@@ -84,6 +84,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   for (const [index, controller] of controllers.entries()) {
     const status = controller.lastChannelStatus;
     assert.ok(status, `krunk completion player ${index}: missing active channel status`);
+    cradles[index].retireRuntime();
     const persist = async () => {
       const runtime = runtimes[index];
       assert.ok(
@@ -129,6 +130,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         persist,
       },
     );
+    cradles[index].bindRuntime(runtime);
     runtimes.push(runtime);
     addActiveSubscription(
       controller.getObservable().subscribe((event) => {

@@ -30,6 +30,8 @@ use crate::session_phases::handshake::{
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 use crate::session_phases::proposal::GameProposal;
+#[cfg(test)]
+use crate::session_phases::types::GameAction;
 use crate::session_phases::types::{
     ChannelFundingWallet, OffChainPhaseInit, PacketSender, PeerMessage, SpendWalletReceiver,
     ToLocalUI, WalletSpendInterface,
@@ -188,6 +190,12 @@ pub trait PeerLifecyclePhase {
     ) -> Result<SpendBundle, Error>;
     #[cfg(test)]
     fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase>;
+    #[cfg(test)]
+    fn queue_game_action_for_testing(&mut self, action: GameAction) -> Result<(), Error>;
+    #[cfg(test)]
+    fn fail_next_cached_unroll_update_for_testing(&mut self) -> Result<(), Error>;
+    #[cfg(test)]
+    fn queued_game_action_count_for_testing(&self) -> usize;
     fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString>;
 }
 
@@ -388,9 +396,6 @@ pub struct GameSession {
     state: GameSessionState,
     peer: Box<dyn PeerLifecyclePhase>,
     last_channel_status: Option<ChannelStatusSnapshot>,
-    #[cfg(test)]
-    #[serde(skip)]
-    saved_unroll_snapshot: Option<ChannelCoinSpendInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -417,19 +422,6 @@ impl GameSession {
     pub(crate) fn prepend_observation_output(&mut self, mut output: DrainResult) {
         output.events.append(&mut self.state.events);
         self.state.events = output.events;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn observation_test_unroll_snapshot(&self) -> Option<ChannelCoinSpendInfo> {
-        self.saved_unroll_snapshot.clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn restore_observation_test_unroll_snapshot(
-        &mut self,
-        snapshot: Option<ChannelCoinSpendInfo>,
-    ) {
-        self.saved_unroll_snapshot = snapshot;
     }
 
     pub fn new_with_keys(config: GameSessionConfig, private_keys: ChannelPrivateKeys) -> Self {
@@ -473,8 +465,6 @@ impl GameSession {
                 }
             },
             last_channel_status: None,
-            #[cfg(test)]
-            saved_unroll_snapshot: None,
         }
     }
     pub fn new<R: Rng>(rng: &mut R, config: GameSessionConfig) -> Self {
@@ -525,6 +515,14 @@ impl GameSession {
     }
 
     #[cfg(test)]
+    pub(crate) fn has_potato_for_testing(&self) -> bool {
+        self.peer
+            .channel_status_snapshot()
+            .and_then(|snapshot| snapshot.have_potato)
+            .unwrap_or(false)
+    }
+
+    #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
         self.peer.corrupt_state_for_testing(new_sn)
     }
@@ -537,22 +535,20 @@ impl GameSession {
     }
 
     #[cfg(test)]
-    pub fn save_unroll_snapshot(&mut self) {
-        self.saved_unroll_snapshot = self.peer.last_channel_coin_spend_info_for_testing();
+    pub fn unroll_snapshot_for_testing(&self) -> Option<ChannelCoinSpendInfo> {
+        self.peer.last_channel_coin_spend_info_for_testing()
     }
 
     #[cfg(test)]
     pub fn force_stale_unroll_spend(
         &self,
         allocator: &mut AllocEncoder,
+        snapshot: &ChannelCoinSpendInfo,
     ) -> Result<SpendBundle, Error> {
-        let saved = self.saved_unroll_snapshot.as_ref().ok_or_else(|| {
-            Error::StrErr("force_stale_unroll_spend: no snapshot saved".to_string())
-        })?;
         let mut env =
             ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
         self.peer
-            .force_stale_unroll_spend_for_testing(&mut env, saved)
+            .force_stale_unroll_spend_for_testing(&mut env, snapshot)
     }
 
     pub fn historical_unroll_count(&self) -> Option<usize> {
@@ -1226,6 +1222,24 @@ impl GameSession {
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_game_action_for_testing(
+        &mut self,
+        action: GameAction,
+    ) -> Result<(), Error> {
+        self.peer.queue_game_action_for_testing(action)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_cached_unroll_update_for_testing(&mut self) -> Result<(), Error> {
+        self.peer.fail_next_cached_unroll_update_for_testing()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queued_game_action_count_for_testing(&self) -> usize {
+        self.peer.queued_game_action_count_for_testing()
     }
 
     pub fn cheat(

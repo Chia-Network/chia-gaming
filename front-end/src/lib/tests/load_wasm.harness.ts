@@ -16,7 +16,8 @@ import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
 import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
 import type { HandProposal, PersistedGameState } from '../session/types';
-import { attachControllerOnlyTestCommitCoordinator } from './reliable_commit_coordinator.harness';
+import { createHeadlessSessionMachineRuntime } from './session_machine.harness';
+import { pollOnce } from './blockchain_poller.driver';
 import 'fake-indexeddb/auto';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
@@ -173,20 +174,23 @@ export class SessionControllerAdapter {
 
   set_blob(blob: SessionController) {
     this.blob = blob;
-    this.runtime = undefined;
-    // These integration tests deliberately drive controllers before a React
-    // runtime exists. Give that phase an explicit in-memory commit consumer;
-    // SessionMachineRuntime replaces it when a reloadable lane is bound.
-    attachControllerOnlyTestCommitCoordinator(blob);
+    this.runtime?.retire();
+    this.runtime = createHeadlessSessionMachineRuntime(blob);
     this.blob.kickSystem(2);
   }
 
   setRuntimeBlob(blob: SessionController) {
+    this.retireRuntime();
     this.blob = blob;
+  }
+
+  retireRuntime() {
+    this.runtime?.retire();
     this.runtime = undefined;
   }
 
   bindRuntime(runtime: SessionMachineRuntime) {
+    if (this.runtime !== runtime) this.retireRuntime();
     this.runtime = runtime;
   }
 
@@ -213,6 +217,7 @@ export class SessionControllerAdapter {
   }
 
   shutdown() {
+    this.retireRuntime();
     this.blob?.cleanup();
   }
 }
@@ -287,9 +292,7 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
   return serialized;
 }
 
-export async function pollOnce(poller: BlockchainPoller): Promise<void> {
-  await poller.pollOnce();
-}
+export { pollOnce };
 
 export async function action_with_messages(
   poller: BlockchainPoller,

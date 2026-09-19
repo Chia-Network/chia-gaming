@@ -47,6 +47,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
   for (const [index, controller] of controllers.entries()) {
     const status = controller.lastChannelStatus;
     assert.ok(status, `calpoker initial deal player ${index}: missing active channel status`);
+    cradles[index].retireRuntime();
     const runtime = new SessionMachineRuntime(
       createSessionMachineState(
         createSessionModel({
@@ -69,6 +70,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
       const runtimeHand = calpokerStateCodec.decode(state.model.game.handState);
       if (runtimeHand) stageTrace[index].push(runtimeHand.moveNumber);
     });
+    cradles[index].bindRuntime(runtime);
     runtimes.push(runtime);
     ports.push({
       isChannelReady: () => controller.isChannelReady(),

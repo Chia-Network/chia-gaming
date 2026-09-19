@@ -197,6 +197,9 @@ impl AcceptanceLedger {
         cache_for_redo: bool,
         mut create_live_game: impl FnMut(&Rc<GameStartInfo>) -> Result<LiveGame, Error>,
     ) -> Result<ProposalAcceptanceStatus, Error> {
+        if self.proposal_ledger.find_local(local_id).is_none() {
+            return Err(Error::StrErr(format!("no proposal with id {local_id}")));
+        }
         let ids = self.game_ids_for_acceptance(starts.len())?;
         for (start, expected_id) in starts.iter().zip(&ids) {
             if start.game_id != *expected_id {
@@ -206,9 +209,6 @@ impl AcceptanceLedger {
                 )));
             }
         }
-
-        let mut staged = self.clone();
-        staged.proposal_ledger.remove_local(local_id)?;
 
         let (my_required, their_required) =
             starts.iter().try_fold((0u64, 0u64), |(my, their), start| {
@@ -224,8 +224,8 @@ impl AcceptanceLedger {
                         })?,
                 ))
             })?;
-        let our_balance_short = my_required > staged.my_out_of_game_balance.to_u64();
-        let their_balance_short = their_required > staged.their_out_of_game_balance.to_u64();
+        let our_balance_short = my_required > self.my_out_of_game_balance.to_u64();
+        let their_balance_short = their_required > self.their_out_of_game_balance.to_u64();
         if our_balance_short || their_balance_short {
             return Ok(ProposalAcceptanceStatus::Insufficient {
                 our_balance_short,
@@ -233,43 +233,53 @@ impl AcceptanceLedger {
             });
         }
 
-        staged.my_out_of_game_balance = staged
+        let my_out_of_game_balance = self
             .my_out_of_game_balance
             .checked_sub(&Amount::new(my_required))?;
-        staged.their_out_of_game_balance = staged
+        let their_out_of_game_balance = self
             .their_out_of_game_balance
             .checked_sub(&Amount::new(their_required))?;
-        staged.my_allocated_balance = Amount::new(
-            staged
-                .my_allocated_balance
+        let my_allocated_balance = Amount::new(
+            self.my_allocated_balance
                 .to_u64()
                 .checked_add(my_required)
                 .ok_or_else(|| Error::StrErr("allocated local balance overflow".into()))?,
         );
-        staged.their_allocated_balance = Amount::new(
-            staged
-                .their_allocated_balance
+        let their_allocated_balance = Amount::new(
+            self.their_allocated_balance
                 .to_u64()
                 .checked_add(their_required)
                 .ok_or_else(|| Error::StrErr("allocated peer balance overflow".into()))?,
         );
-
-        for start_info in starts {
-            staged.live_games.push(create_live_game(start_info)?);
-            if cache_for_redo {
-                staged
-                    .cached_redo_actions
-                    .push(CachedRedoActions::ProposalAccepted(start_info.game_id));
-            }
-        }
-        staged.next_game_id = staged
+        let new_live_games = starts
+            .iter()
+            .map(&mut create_live_game)
+            .collect::<Result<Vec<_>, _>>()?;
+        let redo_actions = cache_for_redo.then(|| {
+            starts
+                .iter()
+                .map(|start| CachedRedoActions::ProposalAccepted(start.game_id))
+                .collect::<Vec<_>>()
+        });
+        let next_game_id = self
             .next_game_id
             .checked_add(u64::try_from(starts.len()).map_err(|_| {
                 Error::StrErr("accepted factory member count exceeds u64".to_string())
             })?)
             .ok_or_else(|| Error::StrErr("accepted game id overflow".to_string()))?;
 
-        *self = staged;
+        self.proposal_ledger
+            .remove_local(local_id)
+            .expect("proposal existence was validated before acceptance commit");
+        self.my_out_of_game_balance = my_out_of_game_balance;
+        self.their_out_of_game_balance = their_out_of_game_balance;
+        self.my_allocated_balance = my_allocated_balance;
+        self.their_allocated_balance = their_allocated_balance;
+        self.live_games.extend(new_live_games);
+        if let Some(redo_actions) = redo_actions {
+            self.cached_redo_actions.extend(redo_actions);
+        }
+        self.next_game_id = next_game_id;
         Ok(ProposalAcceptanceStatus::Accepted)
     }
 }
@@ -446,9 +456,11 @@ impl ChannelState {
         starts: &[Rc<GameStartInfo>],
         cache_for_redo: bool,
     ) -> Result<ProposalAcceptanceStatus, Error> {
-        let mut staged = self.acceptance_ledger.clone();
-        let result =
-            staged.stage_proposal_acceptance(local_id, starts, cache_for_redo, |start_info| {
+        self.acceptance_ledger.stage_proposal_acceptance(
+            local_id,
+            starts,
+            cache_for_redo,
+            |start_info| {
                 let referee_identity = ChiaIdentity::new(
                     env.allocator,
                     self.private_keys.my_referee_private_key.clone(),
@@ -474,11 +486,8 @@ impl ChannelState {
                     start_info.my_contribution_this_game.clone(),
                     start_info.their_contribution_this_game.clone(),
                 ))
-            })?;
-        if matches!(result, ProposalAcceptanceStatus::Accepted) {
-            self.acceptance_ledger = staged;
-        }
-        Ok(result)
+            },
+        )
     }
 
     pub fn state_number(&self) -> usize {
@@ -517,19 +526,6 @@ impl ChannelState {
         self.latest_sent_unroll.signatures = Default::default();
         self.latest_received_unroll = None;
         self.unroll_puzzle_hash_map.clear();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_have_potato_for_testing(&mut self, have_potato: bool) {
-        self.have_potato = have_potato;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_settlement_game_ids_for_testing(&self) -> Vec<GameID> {
-        self.pending_settlements
-            .iter()
-            .map(|game| game.game_id)
-            .collect()
     }
 
     pub fn live_game_ids(&self) -> Vec<GameID> {
@@ -1133,6 +1129,11 @@ impl ChannelState {
     #[cfg(test)]
     pub(crate) fn fail_next_cached_unroll_update_for_testing(&mut self) {
         self.fail_next_cached_unroll_update = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_cached_unroll_failure_for_testing(&mut self) -> bool {
+        std::mem::take(&mut self.fail_next_cached_unroll_update)
     }
 
     pub fn send_empty_potato(

@@ -473,7 +473,7 @@ export class BlockchainPoller {
     this.registeredNames.clear();
   }
 
-  pollOnce(): Promise<void> {
+  private pollOnce(): Promise<void> {
     return this.enqueueRead('blockchain-explicit-poll', async () => {
       await this.runHeightPoll();
       await this.runCoinPoll();

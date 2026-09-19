@@ -67,9 +67,11 @@ Rust maps them to stable player A/B fields using `sender_is_player_a`.
 
 Each successful factory member receives the next value from the shared
 sequential game-ID counter. IDs are not sent on the wire. Contributions are
-deducted immediately so later acceptances see the new reserves. Notifications
-are deferred until every action and signature validates. Any error rolls back
-the complete batch, including balances and game-ID allocation.
+staged with all temporary games and committed once inside the batch's already
+cloned channel; later acceptances in that plan then see the reduced reserves.
+Notifications remain staged until every action and cached-unroll finalization
+succeeds. Any error before commit leaves balances and game-ID allocation
+unchanged.
 
 ### Race Conditions in Proposal Lifecycle
 
@@ -200,6 +202,12 @@ actions for other games. A move directive is validated and prepared before that
 queue boundary: Rust verifies local turn/duplicate authority and immediately
 runs the my-turn handler. A tagged `(tag message)` rejection emits synchronous
 `MoveRejected`, and neither the readable input nor any move is queued.
+
+The sender packages the queue through a narrow local `BatchPlan` that owns a
+cloned channel, queue disposition, and staged effects until cached-unroll
+finalization succeeds. A trusted action error removes and attributes only that
+action while preserving all others in order; a finalization error preserves the
+full queue. This is not a general rollback or retry facility.
 
 On success the queue stores only the durable uncurried `PreparedMove` outputs
 from that handler: move bytes, mover share, waiting handler, and optional
