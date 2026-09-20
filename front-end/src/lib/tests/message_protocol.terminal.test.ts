@@ -713,11 +713,11 @@ describe('transaction submission', () => {
     blob.attachBlockchain(blockchain);
     await pollOnce(blockchain);
 
-    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
     expect(queriedNames).toEqual([['bb']]);
 
     blob.attachBlockchain(blockchain);
-    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(4);
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
     blob.detachBlockchain(blockchain);
   });
 
@@ -769,7 +769,7 @@ describe('transaction submission', () => {
     await pollOnce(blockchain);
     await transactionSubmitQueue(blob);
 
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(5);
     expect(spend).toHaveBeenCalledTimes(1);
     blob.detachBlockchain(blockchain);
@@ -829,11 +829,12 @@ describe('transaction submission', () => {
     blob.setGameSession(cradle);
 
     expect(cradle.report_height).toHaveBeenCalledWith(1n);
-    expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
+    expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();
 
     blob.reportCoinStates(1n, []);
+    blob.reportChainSnapshotReady(1n);
 
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     blob.detachBlockchain(blockchain);
   });
 
@@ -855,8 +856,9 @@ describe('transaction submission', () => {
     blob.attachBlockchain(blockchain);
     blob.reportNewBlock(1n);
     blob.setGameSession(cradle);
+    blob.reportChainSnapshotReady(1n);
 
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     blob.detachBlockchain(blockchain);
   });
 
@@ -902,7 +904,7 @@ describe('transaction submission', () => {
         .mockReturnValueOnce(submissionDrain([submission]))
         .mockReturnValueOnce(submissionDrain([submission]))
         .mockReturnValue(submissionDrain()),
-      finalize_submission: finalizeSubmission,
+      finalize_submission_attempt: finalizeSubmission,
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -912,14 +914,15 @@ describe('transaction submission', () => {
     // report_coin_states queues the first copy in processResult, then the
     // fresh-sync resubmit drains the same retained ID before promise jobs run.
     blob.reportCoinStates(1n, []);
+    blob.reportChainSnapshotReady(1n);
     await transactionSubmitQueue(blob);
 
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(finalizeSubmission).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith(submission.id, expect.any(String));
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith(submission.id);
     blob.detachBlockchain(blockchain);
   });
 
@@ -1014,15 +1017,16 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(spend).toHaveBeenCalledTimes(2);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent', expect.any(String));
-    expect(cradle.acknowledge_submission).not.toHaveBeenCalledWith('awaiting', expect.any(String));
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent');
+    expect(cradle.acknowledge_submission).not.toHaveBeenCalledWith('awaiting');
 
     blob.reportNewBlock(2n);
+    blob.reportChainSnapshotReady(2n);
     await transactionSubmitQueue(blob);
 
-    expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
+    expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(3);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('awaiting', expect.any(String));
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('awaiting');
   });
 
   it('retains a locally failed submission and advances to the urgent next submission', async () => {
@@ -1052,7 +1056,7 @@ describe('transaction submission', () => {
           { id: 'urgent', bundle: testSpendBundle('02'), fee_request: null },
         ]),
       ),
-      finalize_submission: jest.fn((id: string) => {
+      finalize_submission_attempt: jest.fn((id: string) => {
         if (id === 'local-failure') throw new Error('finalization exploded');
         return {
           protocol_bundle: testSpendBundle('02'),
@@ -1072,9 +1076,8 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(cradle.reject_submission).not.toHaveBeenCalled();
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent', expect.any(String));
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent');
     expect(spend).toHaveBeenCalledTimes(1);
-    expect((blob as any).resubmitAfterChainSync).toBe(true);
     expect(errors).toEqual([
       expect.stringMatching(/local-failure.*retained for retry.*finalization exploded/i),
     ]);
@@ -1113,7 +1116,7 @@ describe('transaction submission', () => {
 
     expect(cradle.reject_submission).toHaveBeenCalledTimes(1);
     expect(cradle.reject_submission).toHaveBeenCalledWith('rejected');
-    expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
+    expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();
     expect(errors).toEqual([expect.stringMatching(/Wallet rejected transaction rejected/)]);
     expect(errors[0]).toMatch(/effectively zero/i);
   });
@@ -1207,7 +1210,7 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
     expect(spend).toHaveBeenCalledTimes(2);
     expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('4', expect.any(String));
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('4');
     expect(cradle.reject_submission).not.toHaveBeenCalled();
     expect(errors).toEqual([]);
   });

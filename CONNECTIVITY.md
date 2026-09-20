@@ -434,19 +434,27 @@ The hub does not create a session. It can only advise and relay:
   with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
-- **Session persistence**: one salt-prefixed, masked Bencodex `SessionSave`
-  byte value in IndexedDB (including raw cradle/unacked byte strings), plus
-  small preferences and the resumable-session boot marker in localStorage
-  (`front-end/src/hooks/save.ts`). The app database is schema 4: durable owner,
-  write, and reset epochs are checked atomically with every mutation;
+- **Session persistence**: `StorageCoordinator` atomically claims and reads the
+  salt-prefixed, masked Bencodex records and owns ordered durable mutations.
+  `front-end/src/lib/session/sessionCache.ts` strictly decodes/hydrates the
+  `SessionSave` (including raw cradle/unacked byte strings), while
+  `WalletOperationService` decodes/hydrates its independent record. Small
+  preferences and the resumable-session boot marker remain in localStorage.
+  The app-owned formats are session envelope v32, Rust/WASM cradle schema 19,
+  IndexedDB schema 4, and wallet-operation record v7. The app database's durable
+  owner, write, and reset epochs are checked atomically with every mutation;
   localStorage lease/reset state is only an early UI hint. Ordinary I/O failure
   leaves the owner degraded; typed authority loss retires it and suppresses
-  pending effects. Diagnostic history
+  pending effects. Its mutation result is `committed`, ordinary `failed`, or
+  `authority-lost`; ordinary failure preserves dirty in-memory authority and
+  does not gate effects. Diagnostic history
   retains newest complete entries within 256 KiB total UTF-8 text, with the
   2,000-entry cap secondary.
 - **Resume on reload**: `BootRecoveryBoundary` owns pending wipe, visible local
-  loading, read-only inspection, atomic claim-and-hydrate, takeover, malformed
-  evidence, reset retry, and authority loss. A malformed strict-v5 ledger is
+  loading, read-only inspection, atomic claim-and-read, subsequent strict
+  hydration, takeover, malformed evidence, reset retry, and authority loss. A
+  malformed strict-v7 wallet
+  operation record is
   preserved and displayed there. Local dashboard/game presentation does not
   wait for hub or wallet reconnection; only dependent controls remain gated.
   Hard reset deletes the owned manifest/prefixes, preserves foreign databases,
@@ -474,7 +482,7 @@ The hub does not create a session. It can only advise and relay:
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
   chain id than the existing WASM cradle. (`Shell.tsx`)
 
-- **Wallet reservation recovery**: strict-v5 entries bind installation,
+- **Wallet operation recovery**: `WalletOperationService` strict-v7 entries bind installation,
   peer-session, and provider/account scope. Pending creation embeds the
   canonical request, exact recovery ID, and active/cancel-on-create disposition;
   pending cancellation preserves its exact IDs. Retired creation is cancelled
@@ -483,15 +491,28 @@ The hub does not create a session. It can only advise and relay:
   cannot mutate another wallet. Funding unavailability remains pending.
   Disconnect detaches the provider RPC without discarding cleanup; controller
   retirement records cleanup, and matching restore/reconnect attachment drains
-  it. Recoverable providers require paired begin/reconcile operations. Deployed
-  WalletConnect cannot reconcile a lost successful create response end to end,
-  so it uses the explicit best-effort variant.
+  it. Cloud is recoverable after begin: response loss before a
+  `signatureRequest` ID is known persists `best-effort-uncertain`; after that ID
+  is known, paired begin/reconcile operations recover the exact creation or
+  cancellation. A replacement begin that first yields the ID transitions into
+  exact reconciliation. Wallet record v7 carries typed
+  `orphanRisk: 'pre-id-response-lost'` provenance through that transition and
+  any eventual created trade, preserving the unidentified-request warning.
+  Deployed WalletConnect cannot reconcile a lost successful create response end
+  to end, so it is best-effort throughout and uses the same provenance for a
+  lost response.
+  `WalletProviderRegistry` readiness epochs launch exactly one automatic
+  attempt for persisted WalletConnect or pre-ID Cloud uncertainty on each later
+  reconnect, including after reload; there is no timer or immediate retry loop,
+  and the external orphan warning remains visible.
 
 - **Submission evolution**: Rust broadcasts the no-fee base immediately while
   continuing to seek a fee under the same ID. Base acknowledgement does not stop
-  seeking; readiness or an explicit fresh-chain epoch triggers retry, and chain
-  terminality stops it. Fingerprints and transactional WASM drain conversion
-  keep browser delivery single-owner before and after launch.
+  seeking; readiness or `chain_snapshot_ready` triggers retry, and chain
+  terminality stops it. `SubmissionExecutor` receives only opaque attempt
+  tokens. An unavailable exact-variant successor waits for a coherent snapshot,
+  a newer fee-bearing successor may replace the base immediately, and unrelated
+  IDs remain independent.
 
 - **Session state surfaced to Shell**: `GameSession` reports coarse session
   phase (`off-chain | on-chain | resolved`) and an error flag to Shell via

@@ -11,20 +11,17 @@ import {
   WasmResult,
   TransactionSubmission,
   SubmissionDrainFailure,
-  FinalizedSubmission,
   ProposeGameParams,
   WasmEvent,
   WasmNotification,
-  NeedCoinSpendRequest,
   requireWasmResult,
-  type WalletProviderScope,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
-import { spend_bundle_to_clvm, coerceToBytes } from '../util';
+import { coerceToBytes } from '../util';
 import { log, diagStack } from '../services/log';
 import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
 import { jsonStringify } from '../util/jsonSafe';
-import { clearSession } from './save';
+import { clearSession } from '../lib/session/sessionCache';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendDiagnosticEntry,
@@ -42,16 +39,9 @@ import {
   type ReadonlySessionReceivePolicy,
 } from '../lib/session/receivePolicy';
 import {
-  canonicalizeFundingRequest,
-  decodeCanonicalFundingRequest,
-  fundingRequestKey,
-  type CanonicalFundingRequest,
-} from '../lib/session/fundingRequest';
-import {
   decodePeerAppMessage,
   ReliablePeerTransport,
   type PreparedReliableCommit,
-  type ReliableCommitCoordinator,
   type ReliableMessageConsumer,
 } from '../services/PeerSession';
 import type { SessionRuntimeLease } from '../lib/session/sessionRuntimeLease';
@@ -61,28 +51,22 @@ import {
   type SessionMachineRuntime,
 } from '../lib/session/sessionMachineRuntime';
 import {
-  walletReservationOwnerKey,
-  type WalletReservationLedgerEntry,
-  type WalletReservationOwner,
-  type WalletReservationPurpose,
-} from '../lib/session/walletReservationLedgerSchema';
-import {
-  walletReservationOperation,
-  type WalletReservationCoordinator,
-  type WalletReservationOperationHandle,
-} from '../lib/session/walletReservationLedger';
+  type WalletOperationEntry,
+  type WalletOperationOwner,
+  walletOperationOwnerKey,
+} from '../lib/session/walletOperationStore';
+import { type WalletOperationService } from '../lib/session/walletOperationService';
 import type { SessionTerminalHandoffSave, SessionTransportSave } from '../lib/session/saveEnvelope';
-import {
-  SubmissionDeliveryCoordinator,
-  type SubmissionDeliveryToken,
-} from '../lib/session/submissionDeliveryCoordinator';
+import { SubmissionDeliveryCoordinator } from '../lib/session/submissionDeliveryCoordinator';
+import { SubmissionExecutor } from '../lib/session/submissionExecutor';
+import { FundingOperationAdapter } from '../lib/session/fundingOperationAdapter';
 
 export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 
 export class WalletOfferCleanupPendingError extends Error {
   readonly code = 'WALLET_OFFER_CLEANUP_PENDING';
 
-  constructor(readonly entries: readonly WalletReservationLedgerEntry[]) {
+  constructor(readonly entries: readonly WalletOperationEntry[]) {
     super(
       `Cannot finish session while ${entries.length} wallet offer reservation${
         entries.length === 1 ? '' : 's'
@@ -114,7 +98,6 @@ export interface WasmFields {
   wasmNotificationHistory: string[];
   diagnosticLog: string[];
   durabilityWarning: string | undefined;
-  fundingOutbox: Array<{ key: string; request: CanonicalFundingRequest }>;
   transportDisposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
   activeGameIds: string[];
   channelStatus: ChannelStatusPayload | null;
@@ -200,18 +183,6 @@ export function rewriteFeeRateRejection(message: string): string {
 
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
 
-type FundingAttemptLaunchState =
-  | { readonly kind: 'idle' }
-  | { readonly kind: 'scheduled'; readonly coordinator: ReliableCommitCoordinator }
-  | { readonly kind: 'launched' };
-
-interface ActiveFundingAttempt {
-  readonly key: string;
-  readonly request: CanonicalFundingRequest;
-  launchState: FundingAttemptLaunchState;
-  reservation?: WalletReservationOperationHandle;
-}
-
 type CoinSolutionDeliveryState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'scheduled-with-lease'; readonly lease: SessionRuntimeLease }
@@ -276,11 +247,8 @@ export class SessionController implements PollingGameSession {
   private pendingChainObservations: Array<
     | { kind: 'coin-states'; peak: bigint; records: CoinStateRecord[] }
     | { kind: 'height'; peak: bigint }
+    | { kind: 'snapshot-ready'; peak: bigint }
   > = [];
-  private resubmitAfterChainSync = false;
-  // Null means blockchain attachment preceded asynchronous cradle restore, so
-  // the restored manager has not yet told us whether a coin snapshot is needed.
-  private resubmitNeedsCoinSnapshot: boolean | null = null;
 
   wasmNotificationHistory: string[] = [];
   diagnosticLog: string[] = [];
@@ -293,11 +261,18 @@ export class SessionController implements PollingGameSession {
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private terminalFinalizationRetryListeners = new Set<() => void>();
+  private readonly submissionExecutor: SubmissionExecutor;
   private readonly submissionDeliveries = new SubmissionDeliveryCoordinator({
     getLease: () => this.transactionCoordinator,
-    canLaunch: ({ awaitingFreshSync }) =>
-      Boolean(this.blockchain) && !(awaitingFreshSync && this.resubmitAfterChainSync),
-    run: (operation) => this.submitTransactionNow(operation),
+    canLaunch: ({ awaitingFreshSync }) => Boolean(this.blockchain) && !awaitingFreshSync,
+    run: (operation) => this.submissionExecutor.execute(operation),
+    classifySuccessor: (successor, completed) =>
+      this.cradle?.submission_successor_relationship(
+        successor.attempt_token,
+        completed.attempt_token,
+      ) ?? 'other',
+    relinquishAttempt: (completed) => this.relinquishSubmissionAttempt(completed),
+    requireFreshSync: () => this.requestFreshChainSnapshot(),
     recordFailure: (submission, error) =>
       this.runRuntimeMutation(() => this.recordLocalSubmissionFailure(submission, error)),
     reportError: (error) => this.reportRuntimeError(error),
@@ -308,11 +283,9 @@ export class SessionController implements PollingGameSession {
   private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
-  private activeFundingAttempt: ActiveFundingAttempt | null = null;
-  private walletProviderScope: WalletProviderScope | null = null;
-  private walletLedgerUnsubscribe: (() => void) | null = null;
-  private walletReservations: WalletReservationCoordinator | null;
-  private readonly feeReservationOperations = new Map<string, WalletReservationOperationHandle>();
+  private readonly fundingOperations: FundingOperationAdapter;
+  private walletOperationsUnsubscribe: (() => void) | null = null;
+  private walletOperations: WalletOperationService | null;
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: SessionTerminalHandoffSave | null = null;
@@ -341,8 +314,7 @@ export class SessionController implements PollingGameSession {
     myContribution: bigint,
     theirContribution: bigint,
     peer_conn: PeerConnectionResult,
-    walletReservations: WalletReservationCoordinator | null = blockchain?.walletReservations ??
-      null,
+    walletOperations: WalletOperationService | null = blockchain?.walletOperations ?? null,
   ) {
     const { sendMessage, sendAck } = peer_conn;
     this.receivePolicy = peer_conn.receivePolicy ?? DEFAULT_SESSION_RECEIVE_POLICY;
@@ -400,22 +372,61 @@ export class SessionController implements PollingGameSession {
     this.reloading = false;
     this.qualifyingEvents = 0;
     this.blockchain = blockchain;
-    this.walletReservations = walletReservations;
-    this.walletProviderScope =
-      blockchain?.rpc.getWalletOfferProvider(this.walletProviderScopeOwner())?.scope ?? null;
-    const initialWalletProvider = blockchain?.rpc.getWalletOfferProvider(
-      this.walletProviderScopeOwner(),
-    );
-    if (initialWalletProvider && this.walletReservations) {
-      this.walletReservations.attachProvider(initialWalletProvider);
-    }
+    this.walletOperations = walletOperations;
+    this.submissionExecutor = new SubmissionExecutor(() => this.requireWalletOperations(), {
+      getCradle: () => this.cradle,
+      getBlockchain: () => this.blockchain,
+      getRewardPuzzleHash: () => this.rewardPuzzleHash,
+      getWalletOwner: () => this.currentWalletOperationOwner(),
+      getInstallationPlayerId: () => this.uniqueId,
+      isRetired: () => this.retired,
+      isPublishingDisabled: () => this.transactionPublishNerfed,
+      mutate: (work) => this.runRuntimeMutation(work),
+      release: (key, launcher) => this.releaseSubmissionEffect(key, launcher),
+      requestCommit: () => this.requestCommit(),
+      scheduleWalletCleanup: () => this.scheduleCancelRequiredEntries(),
+      reportWarning: (message) => {
+        log(`[wasm] submitTransaction: ${message}`);
+        this.rxjsEmitter?.next({ type: 'error', error: rewriteFeeRateRejection(message) });
+      },
+      reportLocalFailure: (submission, error) =>
+        this.recordLocalSubmissionFailure(submission, error),
+    });
+    this.fundingOperations = new FundingOperationAdapter({
+      getLease: () => this.transactionCoordinator,
+      getWalletOperations: () => this.requireWalletOperations(),
+      getOwnerForRead: () => this.currentWalletOperationOwnerForRead(),
+      requireOwner: () => this.walletOperationOwner(),
+      isBlockchainAvailable: () => Boolean(this.blockchain),
+      isRetired: () => this.retired,
+      mutate: (work) => this.runRuntimeMutation(work),
+      track: (effect) => this.trackEffect(effect),
+      requestCommit: () => this.requestCommit(),
+      scheduleCleanup: () => this.scheduleCancelRequiredEntries(),
+      provideOffer: (offer) => {
+        if (!this.cradle) throw new Error('WASM cradle is unavailable for funding completion');
+        this.processResultNow(requireWasmResult(this.cradle.provide_offer_bech32(offer)));
+        this.flushDeferredWork();
+      },
+      provideBundle: (bundleJson) => {
+        if (!this.cradle) throw new Error('WASM cradle is unavailable for funding completion');
+        this.processResultNow(this.cradle.provide_coin_spend_bundle(bundleJson));
+      },
+      failRust: (message) => {
+        if (this.cradle) this.processResultNow(this.cradle.wallet_callback_failed(message));
+      },
+      reportError: (message) => {
+        log(`[wasm] ${message}`);
+        this.rxjsEmitter?.next({ type: 'error', error: message });
+      },
+    });
     this.rxjsMessageSingleton = new Subject<WasmEvent>();
     this.rxjsEmitter = {
       next: (evt: WasmEvent) => {
         this.rxjsMessageSingleton.next(evt);
       },
     };
-    this.subscribeWalletReservations();
+    this.subscribeWalletOperations();
     this.beforeUnloadHandler = () => {
       void this.flushPendingSave().catch((error) => this.reportBackgroundSaveError(error));
     };
@@ -445,7 +456,7 @@ export class SessionController implements PollingGameSession {
     }
     this.transactionCoordinator = lease;
     this.reliableTransport.attachCommitCoordinator(lease);
-    if (this.activeFundingAttempt) this.scheduleFundingRequest(this.activeFundingAttempt);
+    this.fundingOperations.schedule();
     this.submissionDeliveries.scheduleAll();
     for (const delivery of this.pendingCoinSolutionDeliveries.values()) {
       this.scheduleCoinSolutionDelivery(delivery);
@@ -475,17 +486,17 @@ export class SessionController implements PollingGameSession {
     this.transactionCoordinator = null;
   }
 
-  private requireWalletReservations(): WalletReservationCoordinator {
-    if (!this.walletReservations) {
-      throw new Error('Wallet reservation coordinator is unavailable');
+  private requireWalletOperations(): WalletOperationService {
+    if (!this.walletOperations) {
+      throw new Error('Wallet operation coordinator is unavailable');
     }
-    return this.walletReservations;
+    return this.walletOperations;
   }
 
-  private subscribeWalletReservations(): void {
-    if (!this.walletReservations || this.walletLedgerUnsubscribe) return;
-    this.walletLedgerUnsubscribe = this.walletReservations.subscribe(() => {
-      if (this.activeFundingAttempt) this.scheduleFundingRequest(this.activeFundingAttempt);
+  private subscribeWalletOperations(): void {
+    if (!this.walletOperations || this.walletOperationsUnsubscribe) return;
+    this.walletOperationsUnsubscribe = this.walletOperations.subscribe(() => {
+      this.fundingOperations.schedule();
       this.requestCommit();
       this.notifyTerminalFinalizationRetry();
     });
@@ -551,51 +562,43 @@ export class SessionController implements PollingGameSession {
     this.puzzleSolutionReadinessUnsubscribe?.();
     const readinessUnsubscribe = blockchain.rpc.onPlayReadinessChange((ready) => {
       if (ready) {
+        blockchain.notifyWalletOperationReadiness(this.walletProviderOwnerSelector());
         this.syncPendingCoinSolutionRequests();
         this.retryPendingCoinSolutionDeliveries();
         this.requestFeeUpgrades();
-        if (this.activeFundingAttempt) {
-          this.activeFundingAttempt.launchState = { kind: 'idle' };
-          this.scheduleFundingRequest(this.activeFundingAttempt);
-        }
+        this.fundingOperations.providerReady();
       }
     });
     this.puzzleSolutionReadinessUnsubscribe =
       typeof readinessUnsubscribe === 'function' ? readinessUnsubscribe : null;
     const alreadyAttached = this.blockchain === blockchain && this.blockchainAttached;
     this.blockchain = blockchain;
-    if (!this.walletReservations) {
-      this.walletReservations = blockchain.walletReservations;
-      this.subscribeWalletReservations();
-    } else if (this.walletReservations !== blockchain.walletReservations) {
-      throw new Error('Blockchain attachment uses another wallet reservation coordinator');
+    if (!this.walletOperations) {
+      this.walletOperations = blockchain.walletOperations;
+      this.subscribeWalletOperations();
+    } else if (this.walletOperations !== blockchain.walletOperations) {
+      throw new Error('Blockchain attachment uses another wallet operation coordinator');
     }
-    const walletProvider = blockchain.rpc.getWalletOfferProvider(this.walletProviderScopeOwner());
-    if (walletProvider) this.requireWalletReservations().attachProvider(walletProvider);
-    this.walletProviderScope ??=
-      blockchain.rpc.getWalletOfferProvider(this.walletProviderScopeOwner())?.scope ?? null;
     if (alreadyAttached) {
       blockchain.snapshotGameSessionCoinInterest(this);
     } else {
       blockchain.attachGameSession(this);
       this.blockchainAttached = true;
     }
-    this.resubmitAfterChainSync = true;
-    this.resubmitNeedsCoinSnapshot = this.cradle ? this.snapshotWatchedCoins().length > 0 : null;
     this.syncPendingCoinSolutionRequests();
     this.retryPendingCoinSolutionDeliveries();
     this.flushPendingCoinStates();
-    if (this.activeFundingAttempt) {
-      this.activeFundingAttempt.launchState = { kind: 'idle' };
-      this.scheduleFundingRequest(this.activeFundingAttempt);
-    }
+    this.fundingOperations.providerReady();
     if (this.transactionCoordinator) {
       this.scheduleCancelRequiredEntries();
     } else {
-      const owner = this.currentWalletReservationOwnerForRead();
-      if (owner) this.requireWalletReservations().retryCancelRequired(owner);
+      const owner = this.currentWalletOperationOwnerForRead();
+      if (owner) this.requireWalletOperations().retryCancelRequired(owner);
     }
-    if (walletProvider) this.requestFeeUpgrades();
+    if (blockchain.resolveWalletOperationOwner(this.walletProviderOwnerSelector())) {
+      blockchain.notifyWalletOperationReadiness(this.walletProviderOwnerSelector());
+      this.requestFeeUpgrades();
+    }
     this.notifyTerminalFinalizationRetry();
   }
 
@@ -624,22 +627,15 @@ export class SessionController implements PollingGameSession {
   private cleanupInternal() {
     if (this.retired) return;
     const retainRejectedTransport = this.reliableState.disposition === 'outbound-reject';
-    const reservationOwner = this.currentWalletReservationOwnerForRead();
-    if (reservationOwner) {
-      this.requireWalletReservations().promoteReservedForOwner(
-        reservationOwner,
-        'session-controller-retired',
-      );
-    }
-    this.activeFundingAttempt?.reservation?.retire('session-controller-retired');
-    for (const reservation of this.feeReservationOperations.values()) {
-      reservation.retire('session-controller-retired');
-    }
-    this.feeReservationOperations.clear();
+    this.walletOperations?.retireSession(
+      this.uniqueId,
+      this.reliableState.sessionId,
+      'session-controller-retired',
+    );
+    this.fundingOperations.retire('session-controller-retired');
     this.retired = true;
-    this.activeFundingAttempt = null;
-    this.walletLedgerUnsubscribe?.();
-    this.walletLedgerUnsubscribe = null;
+    this.walletOperationsUnsubscribe?.();
+    this.walletOperationsUnsubscribe = null;
     this.terminalFinalizationRetryListeners.clear();
     this.submissionDeliveries.retireAll();
     for (const delivery of [...this.pendingCoinSolutionDeliveries.values()]) {
@@ -853,16 +849,7 @@ export class SessionController implements PollingGameSession {
     }
     const command = cradle.pendingTerminalHandoff();
     this.reconcileTerminalHandoff(command);
-    // A blockchain attach may have happened while asynchronous restore had no
-    // cradle. The restored transaction manager's watch snapshot—not that empty
-    // pre-restore state—decides whether height-only sync can resubmit.
-    if (this.resubmitAfterChainSync) {
-      const watchedCoins = this.snapshotWatchedCoins();
-      this.resubmitNeedsCoinSnapshot = watchedCoins.length > 0;
-      this.blockchain?.snapshotGameSessionCoinInterest(this, watchedCoins);
-    } else {
-      this.blockchain?.snapshotGameSessionCoinInterest(this);
-    }
+    this.blockchain?.snapshotGameSessionCoinInterest(this);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
   }
@@ -890,8 +877,10 @@ export class SessionController implements PollingGameSession {
     for (const observation of observations) {
       if (observation.kind === 'coin-states') {
         deliveries.push(this.reportCoinStates(observation.peak, observation.records));
-      } else {
+      } else if (observation.kind === 'height') {
         deliveries.push(this.reportNewBlock(observation.peak));
+      } else {
+        deliveries.push(this.reportChainSnapshotReady(observation.peak));
       }
     }
     if (deliveries.length > 0) {
@@ -903,236 +892,20 @@ export class SessionController implements PollingGameSession {
     return this.cradle?.get_channel_puzzle_hash() ?? null;
   }
 
-  private async handleNeedCoinSpend(attempt: ActiveFundingAttempt) {
-    const { request } = attempt;
-    const blockchain = this.blockchain;
-    if (!blockchain) {
-      attempt.launchState = { kind: 'idle' };
-      this.requestCommit();
-      return;
+  private currentWalletOperationOwner(): WalletOperationOwner | null {
+    const durable =
+      this.walletOperations?.ownerForSession(this.uniqueId, this.reliableState.sessionId) ?? null;
+    const connected =
+      this.blockchain?.resolveWalletOperationOwner(this.walletProviderOwnerSelector()) ?? null;
+    if (!durable) return connected;
+    if (connected && walletOperationOwnerKey(connected) !== walletOperationOwnerKey(durable)) {
+      return durable;
     }
-    const owner = this.walletReservationOwner();
-    const purpose = this.fundingReservationPurpose(attempt);
-    const reservation =
-      attempt.reservation ??
-      (attempt.reservation = walletReservationOperation(
-        this.requireWalletReservations(),
-        owner,
-        purpose,
-      ));
-    try {
-      const outcome = await reservation.createFunding(request);
-      if (outcome.kind !== 'created') {
-        const msg = outcome.reason;
-        if (outcome.kind === 'unavailable') {
-          await this.runRuntimeMutation(() => {
-            if (this.activeFundingAttempt === attempt) {
-              attempt.launchState = { kind: 'idle' };
-              log(`[wasm] funding wallet unavailable: ${msg}`);
-              this.requestCommit();
-            }
-          });
-          return;
-        }
-        await this.runRuntimeMutation(() => {
-          this.retireFundingAttempt(attempt);
-          log(`[wasm] ${msg}`);
-          this.rxjsEmitter?.next({ type: 'error', error: msg });
-          if (this.cradle) this.processResultNow(this.cradle.wallet_callback_failed(msg));
-          this.requestCommit();
-        });
-        return;
-      }
-
-      if (this.activeFundingAttempt !== attempt || this.retired) {
-        reservation.settle('cancel-required', 'funding-offer-stale');
-        return;
-      }
-
-      if (outcome.material.kind === 'offer') {
-        const offerString = outcome.material.offer;
-        log('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
-        await this.runRuntimeMutation(() => {
-          if (!this.cradle || this.retired) {
-            reservation.settle('cancel-required', 'funding-cradle-unavailable', true);
-            this.scheduleCancelRequiredEntries();
-            this.retireFundingAttempt(attempt);
-            this.requestCommit();
-            return;
-          }
-          try {
-            const result = requireWasmResult(this.cradle.provide_offer_bech32(offerString));
-            this.processResultNow(result);
-            reservation.settle('consumed', 'funding-offer-consumed', true);
-            this.flushDeferredWork();
-            this.retireFundingAttempt(attempt);
-            this.requestCommit();
-          } catch (error) {
-            reservation.settle('cancel-required', 'funding-offer-rejected', true);
-            this.scheduleCancelRequiredEntries();
-            this.requestCommit();
-            throw error;
-          }
-        });
-      } else {
-        const bundleJson = jsonStringify(outcome.material.bundle);
-        await this.runRuntimeMutation(() => {
-          this.retireFundingAttempt(attempt);
-          if (this.cradle) {
-            this.processResultNow(this.cradle.provide_coin_spend_bundle(bundleJson));
-          }
-          this.requestCommit();
-        });
-      }
-    } catch (e) {
-      diagStack('handleNeedCoinSpend error', e);
-      log(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
-      let msg = extractErrorMessage(e);
-      if (/insufficient funds/i.test(msg)) {
-        msg =
-          'Wallet reports insufficient funds. It may be that your wallet has enough balance but some coins are locked. Free up locked coins in your wallet and try again.';
-      }
-      if (e instanceof SessionRuntimeRetiredError && this.retired) return;
-      try {
-        await this.runRuntimeMutation(() => {
-          this.retireFundingAttempt(attempt);
-          this.rxjsEmitter?.next({ type: 'error', error: msg });
-          if (this.cradle) this.processResultNow(this.cradle.wallet_callback_failed(msg));
-          this.requestCommit();
-        });
-      } catch (completionError) {
-        if (!this.retired) {
-          this.reportAuthoritativeCompletionError('funding failure callback', completionError);
-        }
-      }
-    }
+    return durable;
   }
 
-  private retireFundingAttempt(attempt: ActiveFundingAttempt): void {
-    if (this.activeFundingAttempt === attempt) this.activeFundingAttempt = null;
-  }
-
-  private queueFundingRequest(request: NeedCoinSpendRequest): void {
-    const canonical = canonicalizeFundingRequest(request, 'WASM NeedCoinSpend request');
-    const key = fundingRequestKey(canonical);
-    this.queueCanonicalFundingRequest(key, canonical);
-  }
-
-  private queueCanonicalFundingRequest(key: string, request: CanonicalFundingRequest): void {
-    const active = this.activeFundingAttempt;
-    if (active) {
-      if (active.key === key) return;
-      const message = `Internal protocol-state violation: received concurrent funding request ${key} while ${active.key} is active`;
-      this.retireFundingAttempt(active);
-      if (this.cradle) this.processResult(this.cradle.wallet_callback_failed(message));
-      throw new Error(message);
-    }
-    const attempt: ActiveFundingAttempt = {
-      key,
-      request,
-      launchState: { kind: 'idle' },
-    };
-    this.activeFundingAttempt = attempt;
-    this.scheduleFundingRequest(attempt);
-  }
-
-  private scheduleFundingRequest(attempt: ActiveFundingAttempt): void {
-    const coordinator = this.transactionCoordinator;
-    if (!coordinator || this.activeFundingAttempt !== attempt) return;
-    const owner = this.currentWalletReservationOwnerForRead();
-    if (!owner) return;
-    if (
-      this.requireWalletReservations().hasBlockingTradeOperation(
-        owner,
-        this.fundingReservationPurpose(attempt),
-      )
-    ) {
-      return;
-    }
-    if (attempt.launchState.kind === 'launched') return;
-    if (
-      attempt.launchState.kind === 'scheduled' &&
-      attempt.launchState.coordinator === coordinator
-    ) {
-      return;
-    }
-    attempt.launchState = { kind: 'scheduled', coordinator };
-    const effect = coordinator.releaseAfterPersistence(attempt.key, () => {
-      if (this.activeFundingAttempt !== attempt) return Promise.resolve();
-      attempt.launchState = { kind: 'launched' };
-      return this.handleNeedCoinSpend(attempt);
-    });
-    this.trackEffect(effect);
-  }
-
-  restoreFundingOutbox(entries: Array<{ key: string; request: CanonicalFundingRequest }>): void {
-    let restoredKey: string | undefined;
-    let restoredRequest: CanonicalFundingRequest | undefined;
-    for (const entry of entries) {
-      const request = decodeCanonicalFundingRequest(entry.request, 'persisted funding request');
-      const key = fundingRequestKey(request);
-      if (entry.key !== key) {
-        throw new Error('Persisted funding outbox key does not match its request');
-      }
-      if (restoredKey === key) {
-        throw new Error(`Persisted funding outbox contains duplicate key ${key}`);
-      }
-      if (restoredKey !== undefined) {
-        throw new Error('Persisted funding outbox contains more than one distinct request');
-      }
-      restoredKey = key;
-      restoredRequest = request;
-    }
-
-    const ledgerRecovery = this.requireWalletReservations().creatingFundingEntryForSession(
-      this.uniqueId,
-      this.reliableState.sessionId,
-    );
-    if (ledgerRecovery) {
-      const recoveryRequest = ledgerRecovery.request;
-      if (recoveryRequest.kind !== 'funding') {
-        throw new Error('Wallet reservation ledger funding recovery has a non-funding request');
-      }
-      const canonical = recoveryRequest.canonical;
-      const key = fundingRequestKey(canonical);
-      if (
-        restoredKey !== undefined &&
-        (restoredKey !== key || jsonStringify(restoredRequest) !== jsonStringify(canonical))
-      ) {
-        throw new Error('Session funding outbox conflicts with wallet ledger recovery request');
-      }
-      restoredKey = key;
-      restoredRequest = canonical;
-      this.walletProviderScope = ledgerRecovery.owner.providerScope;
-    }
-
-    const restored =
-      restoredKey === undefined || restoredRequest === undefined
-        ? null
-        : { key: restoredKey, request: restoredRequest, launchState: { kind: 'idle' } as const };
-    this.activeFundingAttempt = restored;
-    if (restored) this.scheduleFundingRequest(restored);
-  }
-
-  private currentWalletReservationOwner(): WalletReservationOwner | null {
-    const attachedProvider = this.blockchain?.rpc.getWalletOfferProvider(
-      this.walletProviderScopeOwner(),
-    );
-    if (attachedProvider && this.walletReservations) {
-      this.walletReservations.attachProvider(attachedProvider);
-    }
-    const providerScope = this.walletProviderScope ?? attachedProvider?.scope ?? null;
-    if (!providerScope) return null;
-    this.walletProviderScope = providerScope;
-    return {
-      installationPlayerId: this.uniqueId,
-      peerSessionId: this.reliableState.sessionId,
-      providerScope,
-    };
-  }
-
-  private walletProviderScopeOwner(): Pick<
-    WalletReservationOwner,
+  private walletProviderOwnerSelector(): Pick<
+    WalletOperationOwner,
     'installationPlayerId' | 'peerSessionId'
   > {
     return {
@@ -1141,67 +914,27 @@ export class SessionController implements PollingGameSession {
     };
   }
 
-  private currentWalletReservationOwnerForRead(): WalletReservationOwner | null {
-    const owner = this.currentWalletReservationOwner();
+  private currentWalletOperationOwnerForRead(): WalletOperationOwner | null {
+    const owner = this.currentWalletOperationOwner();
     if (
       !owner &&
-      this.walletReservations?.hasEntriesForSession(this.uniqueId, this.reliableState.sessionId)
+      this.walletOperations?.hasEntriesForSession(this.uniqueId, this.reliableState.sessionId)
     ) {
       throw new Error('Wallet provider account scope is unavailable for durable wallet recovery');
     }
     return owner;
   }
 
-  private walletReservationOwner(): WalletReservationOwner {
-    const owner = this.currentWalletReservationOwner();
+  private walletOperationOwner(): WalletOperationOwner {
+    const owner = this.currentWalletOperationOwner();
     if (!owner) throw new Error('Wallet provider account scope is unavailable');
     return owner;
   }
 
-  private fundingReservationPurpose(attempt: ActiveFundingAttempt): WalletReservationPurpose {
-    return { kind: 'funding', operationId: attempt.key };
-  }
-
-  private feeReservationPurpose(submission: TransactionSubmission): WalletReservationPurpose {
-    return { kind: 'fee', operationId: submission.id };
-  }
-
-  private feeReservationOperation(
-    submission: TransactionSubmission,
-    owner: WalletReservationOwner,
-  ): WalletReservationOperationHandle {
-    const existing = this.feeReservationOperations.get(submission.id);
-    if (existing) {
-      if (walletReservationOwnerKey(existing.owner) !== walletReservationOwnerKey(owner)) {
-        throw new Error(`Fee submission ${submission.id} changed wallet provider scope`);
-      }
-      return existing;
-    }
-    const operation = walletReservationOperation(
-      this.requireWalletReservations(),
-      owner,
-      this.feeReservationPurpose(submission),
-    );
-    this.feeReservationOperations.set(submission.id, operation);
-    return operation;
-  }
-
-  private retireTrackedFeeReservation(submissionId: string, reason: string): boolean {
-    const reservation = this.feeReservationOperations.get(submissionId);
-    if (!reservation) return false;
-    this.feeReservationOperations.delete(submissionId);
-    reservation.retire(reason);
-    return true;
-  }
-
   private requestRetainedFeeCancellation(submissionId: string, reason: string): void {
-    if (this.retireTrackedFeeReservation(submissionId, reason)) {
-      if (this.transactionCoordinator) this.scheduleCancelRequiredEntries();
-      return;
-    }
-    const owner = this.currentWalletReservationOwnerForRead();
+    const owner = this.currentWalletOperationOwnerForRead();
     if (!owner) return;
-    this.requireWalletReservations().retireOperation(
+    this.requireWalletOperations().retireOperation(
       owner,
       { kind: 'fee', operationId: submissionId },
       reason,
@@ -1210,24 +943,19 @@ export class SessionController implements PollingGameSession {
     if (this.transactionCoordinator) this.scheduleCancelRequiredEntries();
   }
 
-  private requireCancellationCoordinated(tradeId: string, reason: string): void {
-    this.requireWalletReservations().requireCancellationCoordinated(tradeId, reason);
-    this.scheduleCancellation(tradeId);
-  }
-
   private scheduleCancellation(tradeId: string): void {
     const lease = this.transactionCoordinator;
     if (!lease) return;
     const effect = lease.releaseAfterPersistence(`wallet-offer-cancellation:${tradeId}`, () =>
-      this.requireWalletReservations().launchCancellation(tradeId),
+      this.requireWalletOperations().launchCancellation(tradeId),
     );
     this.trackEffect(effect);
   }
 
   private scheduleCancelRequiredEntries(): void {
-    const owner = this.currentWalletReservationOwnerForRead();
+    const owner = this.currentWalletOperationOwnerForRead();
     if (!owner) return;
-    for (const entry of this.requireWalletReservations().entriesFor(owner)) {
+    for (const entry of this.requireWalletOperations().entriesFor(owner)) {
       if (entry.stage === 'cancel-required' || entry.stage === 'cancelling') {
         this.scheduleCancellation(entry.tradeId);
       }
@@ -1267,153 +995,6 @@ export class SessionController implements PollingGameSession {
     this.kickSystem(1);
   }
 
-  private async submitTransactionNow(delivery: SubmissionDeliveryToken) {
-    const { submission } = delivery;
-    if (delivery.isRetired() || this.retired) return;
-    if (this.transactionPublishNerfed) {
-      log('[wasm] submitTransaction dropped because publishing is nerfed');
-      return;
-    }
-    const blockchain = this.blockchain;
-    if (!blockchain) {
-      this.deferSubmissionUntilFreshSync();
-      this.requestCommit();
-      return;
-    }
-    try {
-      if (!this.rewardPuzzleHash) {
-        throw new Error('submitTransactionNow: rewardPuzzleHash is not set');
-      }
-      let feeSourceJson: string | undefined;
-      let feeOfferCreated = false;
-      let reservation: WalletReservationOperationHandle | undefined;
-      if (submission.fee_request) {
-        const { amount, target } = submission.fee_request;
-        try {
-          const owner = this.currentWalletReservationOwner();
-          if (!owner) {
-            feeSourceJson = jsonStringify({
-              kind: 'failure',
-              reason: 'wallet fee provider is unavailable',
-            });
-          } else {
-            reservation = this.feeReservationOperation(submission, owner);
-            const feeSource = await reservation.createFee({
-              kind: 'fee',
-              uniqueId: this.uniqueId,
-              fee: BigInt(amount),
-              concurrentSpendCoinId: target,
-            });
-            if (feeSource.kind === 'unavailable') {
-              if (delivery.isRetired()) return;
-              log(`[wasm] fee source unavailable id=${submission.id}: ${feeSource.reason}`);
-              feeSourceJson = jsonStringify({
-                kind: 'failure',
-                reason: feeSource.reason,
-              });
-            } else if (feeSource.kind === 'created') {
-              feeOfferCreated = true;
-              if (this.retired || delivery.isRetired()) {
-                reservation.settle(
-                  'cancel-required',
-                  this.retired ? 'fee-offer-stale' : 'fee-submission-retired',
-                );
-                this.feeReservationOperations.delete(submission.id);
-                if (!this.retired) {
-                  await this.runRuntimeMutation(() => {
-                    this.scheduleCancelRequiredEntries();
-                    this.requestCommit();
-                  });
-                }
-                return;
-              }
-              if (feeSource.material.kind === 'offer') {
-                feeSourceJson = jsonStringify({
-                  kind: 'offer',
-                  offer: feeSource.material.offer,
-                });
-              } else {
-                feeSourceJson = jsonStringify({
-                  kind: 'bundle',
-                  bundle: feeSource.material.bundle,
-                });
-              }
-            } else {
-              feeSourceJson = jsonStringify({
-                kind: 'failure',
-                reason: feeSource.reason,
-              });
-            }
-          }
-        } catch (e) {
-          feeSourceJson = jsonStringify({ kind: 'failure', reason: extractErrorMessage(e) });
-        }
-      }
-      let completion: Promise<void>;
-      let finalizedFeeSourceDisposition: FinalizedSubmission['fee_source_disposition'] | undefined;
-      try {
-        const finalized = await this.runRuntimeMutation(() => {
-          if (delivery.isRetired()) {
-            if (feeOfferCreated && reservation) {
-              reservation.settle('cancel-required', 'fee-submission-retired', true);
-              this.feeReservationOperations.delete(submission.id);
-              this.scheduleCancelRequiredEntries();
-            }
-            this.requestCommit();
-            return { broadcast: Promise.resolve() };
-          }
-          if (!this.cradle) {
-            throw new Error('WASM cradle became unavailable before submission finalization');
-          }
-          const result = this.cradle.finalize_submission(
-            submission.id,
-            submission.delivery_goal,
-            submission.variant_fingerprint,
-            feeSourceJson,
-          );
-          finalizedFeeSourceDisposition = result.fee_source_disposition;
-          if (result.fee_source_disposition === 'attached') {
-            if (feeOfferCreated && reservation) {
-              reservation.settle('retained-for-replay', 'fee-source-attached', true);
-              this.feeReservationOperations.delete(submission.id);
-            }
-          } else if (feeOfferCreated && reservation) {
-            reservation.settle('cancel-required', 'fee-source-unused-at-finalization', true);
-            this.feeReservationOperations.delete(submission.id);
-            this.scheduleCancelRequiredEntries();
-          }
-          this.requestCommit();
-          const broadcast = !result.should_broadcast
-            ? Promise.resolve()
-            : this.releaseSubmissionEffect(
-                `broadcast:${submission.id}:${result.variant_fingerprint}`,
-                () => {
-                  if (delivery.isRetired()) return Promise.resolve();
-                  return this.broadcastFinalizedSubmission(delivery, result);
-                },
-              );
-          return { broadcast };
-        });
-        completion = finalized.broadcast;
-      } catch (error) {
-        if (error instanceof SessionRuntimeRetiredError && this.retired) throw error;
-        if (feeOfferCreated && reservation && finalizedFeeSourceDisposition !== 'attached') {
-          await this.runRuntimeMutation(() => {
-            reservation.settle('cancel-required', 'fee-finalization-rejected', true);
-            this.feeReservationOperations.delete(submission.id);
-            this.scheduleCancelRequiredEntries();
-            this.requestCommit();
-          });
-        }
-        throw error;
-      }
-      await completion;
-    } catch (e) {
-      if (delivery.isRetired()) return;
-      await this.runRuntimeMutation(() => this.recordLocalSubmissionFailure(submission, e));
-    }
-  }
-
   private async runRuntimeMutation<T>(work: () => T): Promise<T> {
     let lease = this.transactionCoordinator;
     if (!lease) {
@@ -1430,6 +1011,21 @@ export class SessionController implements PollingGameSession {
         lease = replacement;
       }
     }
+  }
+
+  private async relinquishSubmissionAttempt(completed: TransactionSubmission): Promise<void> {
+    await this.runRuntimeMutation(() => {
+      if (!this.cradle) {
+        if (this.retired) return;
+        throw new Error('WASM cradle became unavailable before attempt relinquishment');
+      }
+      this.cradle.relinquish_submission_attempt(completed.attempt_token);
+      this.requestCommit();
+    });
+    await this.releaseSubmissionEffect(
+      `submission-relinquishment:${completed.id}:${completed.attempt_token}`,
+      async () => {},
+    );
   }
 
   private async releaseSubmissionEffect(key: string, launcher: () => Promise<void>): Promise<void> {
@@ -1462,62 +1058,8 @@ export class SessionController implements PollingGameSession {
     return this.transactionCoordinator.releaseAfterPersistence(key, launcher);
   }
 
-  private async broadcastFinalizedSubmission(
-    delivery: SubmissionDeliveryToken,
-    finalized: FinalizedSubmission,
-  ): Promise<void> {
-    const { submission } = delivery;
-    if (delivery.isRetired()) return;
-    const blockchain = this.blockchain;
-    if (!blockchain || !this.rewardPuzzleHash) {
-      throw new Error('Blockchain became unavailable before finalized submission broadcast');
-    }
-    const blob = spend_bundle_to_clvm(finalized.protocol_bundle);
-    const appliedFee = BigInt(finalized.applied_fee);
-    log(`[wasm] submitTransaction blobLen=${blob.length}`);
-    if (finalized.warning) {
-      log(`[wasm] submitTransaction: ${finalized.warning}`);
-      this.rxjsEmitter?.next({ type: 'error', error: finalized.warning });
-    }
-    const outcome = await blockchain.rpc.spend(
-      blob,
-      finalized.bundle,
-      this.rewardPuzzleHash,
-      'submitTransaction',
-      appliedFee || undefined,
-    );
-    await this.runRuntimeMutation(() => {
-      if (delivery.isRetired()) {
-        this.requestCommit();
-        return;
-      }
-      if (!this.cradle) {
-        throw new Error('WASM cradle became unavailable before recording the wallet outcome');
-      }
-      if (outcome.status === 'acknowledged') {
-        this.cradle.acknowledge_submission(submission.id, finalized.variant_fingerprint);
-        this.requestCommit();
-        return;
-      }
-      if (outcome.status === 'unavailable') {
-        log(`[wasm] submitTransaction unavailable id=${submission.id}: ${outcome.detail}`);
-        this.deferSubmissionUntilFreshSync();
-        this.requestCommit();
-        return;
-      }
-      this.cradle.reject_submission(submission.id);
-      this.requestCommit();
-      const message = rewriteFeeRateRejection(outcome.detail);
-      log(`[wasm] submitTransaction rejected id=${submission.id}: ${message}`);
-      this.rxjsEmitter?.next({
-        type: 'error',
-        error: `Wallet rejected transaction ${submission.id}: ${message}`,
-      });
-      return;
-    });
-  }
-
   private recordLocalSubmissionFailure(submission: TransactionSubmission, error: unknown): void {
+    this.cradle?.submission_attempt_unavailable(submission.attempt_token);
     const message = extractErrorMessage(error);
     const coinDescs = (submission.bundle.spends ?? [])
       .map((cs: any) => {
@@ -1527,17 +1069,11 @@ export class SessionController implements PollingGameSession {
       .join(', ');
     diagStack('submitTransaction failed', error);
     log(`[wasm] submitTransaction failed: ${message} coins=[${coinDescs}]`);
-    this.deferSubmissionUntilFreshSync();
     this.rxjsEmitter?.next({
       type: 'error',
       error: `Transaction ${submission.id} was retained for retry after a local submission failure: ${rewriteFeeRateRejection(message)}`,
     });
     this.requestCommit();
-  }
-
-  private deferSubmissionUntilFreshSync(): void {
-    this.resubmitAfterChainSync = true;
-    this.resubmitNeedsCoinSnapshot = this.snapshotWatchedCoins().length > 0;
   }
 
   private handleSubmissionDrainFailures(failures: readonly SubmissionDrainFailure[]): void {
@@ -1573,6 +1109,11 @@ export class SessionController implements PollingGameSession {
   private submitTransaction(submission: TransactionSubmission) {
     if (this.transactionPublishNerfed) return;
     this.submissionDeliveries.submit(submission, !this.blockchain);
+  }
+
+  private requestFreshChainSnapshot(): void {
+    if (!this.blockchain || !this.cradle || this.protocolStopped) return;
+    this.blockchain.snapshotGameSessionCoinInterest(this, this.snapshotWatchedCoins());
   }
 
   /**
@@ -1819,7 +1360,13 @@ export class SessionController implements PollingGameSession {
 
   async quiesceForTerminalFinalization(): Promise<TerminalQuiescentSnapshot> {
     const maxPasses = 20;
-    const reservationOwner = this.currentWalletReservationOwnerForRead();
+    this.requireWalletOperations().retireSession(
+      this.uniqueId,
+      this.reliableState.sessionId,
+      'session-terminal',
+      Boolean(this.transactionCoordinator),
+    );
+    const reservationOwner = this.currentWalletOperationOwnerForRead();
     this.scheduleCancelRequiredEntries();
     for (let pass = 0; pass < maxPasses; pass += 1) {
       this.flushDeferredWork();
@@ -1828,7 +1375,7 @@ export class SessionController implements PollingGameSession {
       await Promise.allSettled([...this.pendingEffects]);
       await this.flushTransactionSubmissions();
       await this.reliableTransport.flushPending();
-      if (reservationOwner) await this.requireWalletReservations().awaitOwner(reservationOwner);
+      if (reservationOwner) await this.requireWalletOperations().awaitOwner(reservationOwner);
 
       this.flushDeferredWork();
       await this.flushPendingSave();
@@ -1841,7 +1388,7 @@ export class SessionController implements PollingGameSession {
         !this.reliableTransport.hasPendingDurability()
       ) {
         const obligations = reservationOwner
-          ? this.requireWalletReservations().entriesFor(reservationOwner)
+          ? this.requireWalletOperations().entriesFor(reservationOwner)
           : [];
         if (obligations.length > 0) {
           throw new WalletOfferCleanupPendingError(obligations);
@@ -1859,7 +1406,7 @@ export class SessionController implements PollingGameSession {
       }
     }
     const obligations = reservationOwner
-      ? this.requireWalletReservations().entriesFor(reservationOwner)
+      ? this.requireWalletOperations().entriesFor(reservationOwner)
       : [];
     if (obligations.length > 0) {
       throw new WalletOfferCleanupPendingError(obligations);
@@ -2047,7 +1594,7 @@ export class SessionController implements PollingGameSession {
       this.diagnosticLog = appendDiagnosticEntry(this.diagnosticLog, event.Log);
       this.rxjsEmitter?.next({ type: 'log', message: event.Log });
     } else if ('NeedCoinSpend' in event) {
-      this.queueFundingRequest(event.NeedCoinSpend);
+      this.fundingOperations.queue(event.NeedCoinSpend);
     } else {
       const keys = Object.keys(event as object);
       throw new Error(`unknown GameSessionEvent: ${keys.join(',') || '(empty)'}`);
@@ -2329,6 +1876,20 @@ export class SessionController implements PollingGameSession {
     }
   }
 
+  async reportChainSnapshotReady(peak: bigint): Promise<void> {
+    if (this.retired) return;
+    if (!this.cradle || !this.transactionCoordinator) {
+      this.pendingChainObservations.push({ kind: 'snapshot-ready', peak });
+      return;
+    }
+    try {
+      await this.runRuntimeMutation(() => this.deliverChainSnapshotReady(peak));
+    } catch (error) {
+      if (!this.retired) this.reportAuthoritativeCompletionError('chain snapshot ready', error);
+      throw error;
+    }
+  }
+
   private deliverHeight(peak: bigint) {
     log(`[wasm] height-only observation height=${peak}`);
     if (!this.cradle) {
@@ -2336,7 +1897,6 @@ export class SessionController implements PollingGameSession {
     }
     this.processResultNow(this.cradle.report_height(peak));
     this.retryPendingCoinSolutionDeliveries();
-    if (this.resubmitNeedsCoinSnapshot === false) this.resubmitAfterFreshChainSync();
   }
 
   private deliverCoinStates(peak: bigint, records: CoinStateRecord[]) {
@@ -2347,16 +1907,16 @@ export class SessionController implements PollingGameSession {
     const result = this.cradle.report_coin_states(peak, records);
     this.processResultNow(result);
     this.retryPendingCoinSolutionDeliveries();
-    this.resubmitNeedsCoinSnapshot = false;
-    this.resubmitAfterFreshChainSync();
   }
 
-  private resubmitAfterFreshChainSync() {
-    if (!this.resubmitAfterChainSync || this.protocolStopped || !this.cradle) return;
-    if (this.blockchain?.rpc.isReadyForPlay?.() === false) return;
-    this.resubmitAfterChainSync = false;
+  private deliverChainSnapshotReady(peak: bigint): void {
+    log(`[wasm] chain snapshot ready height=${peak}`);
+    if (!this.cradle) {
+      throw new Error('deliverChainSnapshotReady called without cradle');
+    }
+    if (this.protocolStopped) return;
+    this.cradle.chain_snapshot_ready();
     this.submissionDeliveries.releaseFreshSync();
-    this.cradle.resubmit_submitted();
     this.drainAndSubmitTransactions();
   }
 
@@ -2367,7 +1927,7 @@ export class SessionController implements PollingGameSession {
         this.protocolStopped ||
         !this.blockchain ||
         this.blockchain?.rpc.isReadyForPlay?.() === false ||
-        !this.blockchain.rpc.getWalletOfferProvider(this.walletProviderScopeOwner())
+        !this.blockchain.resolveWalletOperationOwner(this.walletProviderOwnerSelector())
       ) {
         return;
       }
@@ -2488,14 +2048,6 @@ export class SessionController implements PollingGameSession {
       ),
       diagnosticLog: recentDiagnosticEntries(this.diagnosticLog),
       durabilityWarning: this.durabilityWarning,
-      fundingOutbox: this.activeFundingAttempt
-        ? [
-            {
-              key: this.activeFundingAttempt.key,
-              request: canonicalizeFundingRequest(this.activeFundingAttempt.request),
-            },
-          ]
-        : [],
       transportDisposition: this.reliableState.disposition ?? 'active',
       activeGameIds: [...this.activeGameIds],
       channelStatus: this.lastChannelStatus,

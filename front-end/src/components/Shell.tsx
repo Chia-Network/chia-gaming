@@ -14,7 +14,7 @@ import {
   startFailureDisposition,
 } from '../lib/session/acceptLifecycle';
 import { selectGamePaneKind } from '../lib/session/gamePane';
-import { walletReservationLedger } from '../lib/session/walletReservationLedger';
+import { walletOperationService } from '../lib/session/walletOperationService';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
@@ -43,12 +43,8 @@ import {
   encodePeerAppMessage,
   generateSessionId,
 } from '../services/PeerSession';
-import {
-  deleteRejectionTombstone,
-  readRejectionTombstones,
-  rejectionTombstoneKey,
-  writeRejectionTombstone,
-} from '../lib/session/indexedDb';
+import { rejectionTombstoneKey } from '../lib/session/indexedDb';
+import { storageCoordinator } from '../lib/session/storageCoordinator';
 import {
   bindOutboundRejectionPeer,
   retainRejectionPeer,
@@ -97,7 +93,7 @@ import {
   peekAlias,
   releaseLeaseIfOwner,
   setAlias,
-} from '../hooks/save';
+} from '../lib/session/sessionCache';
 import type { ChiaNetwork } from '../lib/session/saveEnvelope';
 import { getCurrencyLabels } from '../constants/currency';
 import { MIN_NONZERO_FEE_MOJOS, isEffectivelyZeroFee } from '../constants/fees';
@@ -1045,12 +1041,12 @@ const Shell = () => {
   }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => getSavedWalletAlert());
   const [walletRecoveryReadiness, setWalletRecoveryReadiness] = useState(() =>
-    walletReservationLedger.getRecoveryReadiness(),
+    walletOperationService.getRecoveryReadiness(),
   );
   useEffect(
     () =>
-      walletReservationLedger.subscribe(() =>
-        setWalletRecoveryReadiness(walletReservationLedger.getRecoveryReadiness()),
+      walletOperationService.subscribe(() =>
+        setWalletRecoveryReadiness(walletOperationService.getRecoveryReadiness()),
       ),
     [],
   );
@@ -1471,9 +1467,10 @@ const Shell = () => {
                 replacedResumableSave = true;
                 return;
               }
-              await writeRejectionTombstone(tombstone);
+              await storageCoordinator.persist(storageCoordinator.writeRejection(tombstone));
             },
-            delete: deleteRejectionTombstone,
+            delete: (peerId, sessionId) =>
+              storageCoordinator.persist(storageCoordinator.deleteRejection(peerId, sessionId)),
           }
         : undefined,
     ).catch((error) => {
@@ -2481,12 +2478,15 @@ const Shell = () => {
         return;
       }
       hubConnRef.current = conn;
-      void readRejectionTombstones()
+      void storageCoordinator
+        .readRejections()
         .then((tombstones) => {
           if (hubConnRef.current !== conn) return;
           for (const tombstone of tombstones) {
             if (tombstone.kind === 'outbound-reject' && tombstone.unackedMessages.length === 0) {
-              void deleteRejectionTombstone(tombstone.peerId, tombstone.sessionId);
+              void storageCoordinator.persist(
+                storageCoordinator.deleteRejection(tombstone.peerId, tombstone.sessionId),
+              );
               continue;
             }
             const peer = new PeerSession(

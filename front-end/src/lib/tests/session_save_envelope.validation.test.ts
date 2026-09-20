@@ -1,12 +1,11 @@
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { type SessionPresentationSave, type SessionSave } from '../../hooks/save';
+import { type SessionPresentationSave, type SessionSave } from '../session/sessionCache';
 import {
   decodeSessionSaveEnvelope,
   sessionModelFromSave,
   validateSessionSaveEnvelope,
 } from '../session/model';
-import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
 import {
   ACTIVE_INSTANCE,
   TERMINAL_INSTANCE,
@@ -192,109 +191,13 @@ describe('validateSessionSaveEnvelope', () => {
     expect(decodeSessionSaveEnvelope(terminal).phase).toBe('terminal');
   });
 
-  it('round-trips an explicitly canonical funding request', () => {
+  it('rejects the removed live funding outbox projection', () => {
     const save = liveSave();
     if (save.phase !== 'live') throw new Error('expected live fixture');
-    const request = canonicalizeFundingRequest({
-      amount: '100',
-      fee: '0',
-      conditions: [{ opcode: 60, args: ['launcher'] }],
-      coin_id: 'ab'.repeat(32),
-      max_height: 123,
-    });
-    save.live.fundingOutbox = [
-      {
-        key: fundingRequestKey(request),
-        request,
-      },
-    ];
-
-    const decoded = decodeSessionSaveEnvelope(save);
-    expect(decoded.phase).toBe('live');
-    if (decoded.save.phase !== 'live') throw new Error('expected decoded live fixture');
-    expect(decoded.save.live.fundingOutbox).toEqual([
-      {
-        key: fundingRequestKey(request),
-        request: {
-          amount: '100',
-          fee: '0',
-          conditions: [{ opcode: 60n, args: ['launcher'] }],
-          coin_id: 'ab'.repeat(32),
-          max_height: '123',
-        },
-      },
-    ]);
-  });
-
-  it.each([
-    ['missing fee', { amount: '100', conditions: [] }],
-    ['null fee', { amount: '100', fee: null, conditions: [] }],
-    ['noncanonical amount', { amount: '01', fee: '0', conditions: [] }],
-    ['out-of-range fee', { amount: '100', fee: '18446744073709551616', conditions: [] }],
-    [
-      'out-of-range opcode',
-      { amount: '100', fee: '0', conditions: [{ opcode: 2 ** 32, args: [] }] },
-    ],
-    ['numeric opcode', { amount: '100', fee: '0', conditions: [{ opcode: 60, args: [] }] }],
-    ['uppercase coin id', { amount: '100', fee: '0', conditions: [], coin_id: 'AB'.repeat(32) }],
-    ['numeric max height', { amount: '100', fee: '0', conditions: [], max_height: 123 }],
-    ['noncanonical max height', { amount: '100', fee: '0', conditions: [], max_height: '0123' }],
-  ])('rejects a saved funding request with %s', (_label, request) => {
-    const save = liveSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    const canonicalKey = fundingRequestKey(
-      canonicalizeFundingRequest({
-        amount: '100',
-        fee: '0',
-        conditions: [],
-      }),
+    (save.live as unknown as Record<string, unknown>).obsoleteFundingQueue = [];
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow(
+      'unexpected live field obsoleteFundingQueue',
     );
-    save.live.fundingOutbox = [{ key: canonicalKey, request }] as unknown as NonNullable<
-      typeof save.live.fundingOutbox
-    >;
-
-    expect(() => decodeSessionSaveEnvelope(save)).toThrow();
-  });
-
-  it('rejects mismatched and duplicate funding outbox keys', () => {
-    const save = liveSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    const request = canonicalizeFundingRequest({
-      amount: '100',
-      fee: '0',
-      conditions: [],
-    });
-    const key = fundingRequestKey(request);
-
-    save.live.fundingOutbox = [{ key: 'wrong', request }];
-    expect(() => decodeSessionSaveEnvelope(save)).toThrow('key does not match');
-
-    save.live.fundingOutbox = [
-      { key, request },
-      { key, request },
-    ];
-    expect(() => decodeSessionSaveEnvelope(save)).toThrow('duplicate');
-  });
-
-  it('rejects more than one distinct funding outbox entry', () => {
-    const save = liveSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    const first = canonicalizeFundingRequest({
-      amount: '100',
-      fee: '0',
-      conditions: [{ opcode: 60, args: ['first'] }],
-    });
-    const second = canonicalizeFundingRequest({
-      amount: '101',
-      fee: '0',
-      conditions: [{ opcode: 60, args: ['second'] }],
-    });
-    save.live.fundingOutbox = [
-      { key: fundingRequestKey(first), request: first },
-      { key: fundingRequestKey(second), request: second },
-    ];
-
-    expect(() => decodeSessionSaveEnvelope(save)).toThrow('more than one distinct request');
   });
 
   it('accepts cloud as preferences.blockchainType', () => {
@@ -313,9 +216,9 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() =>
       decodeSessionSaveEnvelope({
         ...liveSave(),
-        walletReservationLedger: [],
+        walletOperationService: [],
       }),
-    ).toThrow('walletReservationLedger is not session-owned');
+    ).toThrow('walletOperationService is not session-owned');
   });
 
   it.each([
@@ -539,55 +442,6 @@ describe('validateSessionSaveEnvelope', () => {
       () => {
         const save = liveSave() as any;
         save.live.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'funding outbox entry',
-      () => {
-        const save = liveSave() as any;
-        const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
-        save.live.fundingOutbox = [{ key: fundingRequestKey(request), request, unknown: true }];
-        return save;
-      },
-    ],
-    [
-      'funding request',
-      () => {
-        const save = liveSave() as any;
-        const request = { amount: '100', fee: '0', conditions: [], unknown: true };
-        save.live.fundingOutbox = [
-          {
-            key: fundingRequestKey(
-              canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] }),
-            ),
-            request,
-          },
-        ];
-        return save;
-      },
-    ],
-    [
-      'funding condition',
-      () => {
-        const save = liveSave() as any;
-        const request = {
-          amount: '100',
-          fee: '0',
-          conditions: [{ opcode: 60n, args: [], unknown: true }],
-        };
-        save.live.fundingOutbox = [
-          {
-            key: fundingRequestKey(
-              canonicalizeFundingRequest({
-                amount: '100',
-                fee: '0',
-                conditions: [{ opcode: 60n, args: [] }],
-              }),
-            ),
-            request,
-          },
-        ];
         return save;
       },
     ],

@@ -1,5 +1,5 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
-import { loadState, saveSession, type SessionCacheUpdate } from '../../hooks/save';
+import { loadState, saveSession, type SessionCacheUpdate } from './sessionCache';
 import { channelStatusModelFromPayload, normalizeSessionPresentation } from './normalization';
 import { recentDiagnosticEntries } from './historyLimits';
 import { snapshotFromSessionModel } from './sessionSnapshot';
@@ -81,7 +81,6 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
         terminalHandoff: wasm.terminalHandoff,
         disposition: wasm.transportDisposition,
         durabilityWarning: dependencies.clearDurabilityWarning ? undefined : wasm.durabilityWarning,
-        fundingOutbox: wasm.fundingOutbox,
       },
       presentation,
       history: {

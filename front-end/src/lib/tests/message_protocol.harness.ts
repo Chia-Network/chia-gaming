@@ -12,13 +12,14 @@ import type {
   ChannelStatusPayload,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { _resetForTests as resetSaveState, claimLease, saveSession } from '../../hooks/save';
+import { _resetForTests as resetSaveState, claimLease, saveSession } from '../session/sessionCache';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
 import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
-import { deleteWalletReservationRecord } from '../session/indexedDb';
+import { storageCoordinator } from '../session/storageCoordinator';
+
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy(
   {
@@ -135,19 +136,16 @@ export function testSpendBundle(coinHex: string): SpendBundle {
 
 export function submissionDrain(
   submissions: Array<
-    Omit<TransactionSubmission, 'delivery_goal' | 'intent_fingerprint' | 'variant_fingerprint'> &
-      Partial<
-        Pick<TransactionSubmission, 'delivery_goal' | 'intent_fingerprint' | 'variant_fingerprint'>
-      >
+    Omit<TransactionSubmission, 'attempt_token' | 'intent_fingerprint'> &
+      Partial<Pick<TransactionSubmission, 'attempt_token' | 'intent_fingerprint'>>
   > = [],
   retired_submission_ids: string[] = [],
   failures: SubmissionDrainFailure[] = [],
 ) {
   return {
     submissions: submissions.map((submission) => ({
-      delivery_goal: 'ensure-broadcast' as const,
+      attempt_token: submission.id,
       intent_fingerprint: 'aa'.repeat(32),
-      variant_fingerprint: 'bb'.repeat(32),
       ...submission,
     })),
     retired_submission_ids,
@@ -158,7 +156,18 @@ export function submissionDrain(
 export function makeMockCradle(
   onDeliver: (msg: Uint8Array) => Partial<WasmResult> | undefined = () => wasmResult(),
 ): ChiaGame {
-  return {
+  const finalizeSubmissionAttempt = jest.fn((_attemptToken: string, feeSourceJson?: string) => ({
+    protocol_bundle: testSpendBundle('00'),
+    bundle: {},
+    applied_fee: '0',
+    warning: null,
+    fee_source_disposition: feeSourceJson === undefined ? 'not-requested' : 'attached',
+    variant_fingerprint: 'bb'.repeat(32),
+    should_broadcast: true,
+  }));
+  const acknowledgeSubmissionAttempt = jest.fn();
+  const rejectSubmissionAttempt = jest.fn();
+  const cradle = {
     deliver_message: jest.fn((msg: Uint8Array) => {
       const result = onDeliver(msg);
       return result === undefined ? undefined : wasmResult(result);
@@ -171,25 +180,13 @@ export function makeMockCradle(
     coins_of_interest: jest.fn(() => []),
     drain_submissions: jest.fn(() => submissionDrain()),
     configure_submission_fee: jest.fn(),
-    finalize_submission: jest.fn(
-      (
-        _submissionId: string,
-        _deliveryGoal: TransactionSubmission['delivery_goal'],
-        variantFingerprint: string,
-        feeSourceJson?: string,
-      ) => ({
-        protocol_bundle: testSpendBundle('00'),
-        bundle: {},
-        applied_fee: '0',
-        warning: null,
-        fee_source_disposition: feeSourceJson === undefined ? 'not-requested' : 'attached',
-        variant_fingerprint: variantFingerprint,
-        should_broadcast: true,
-      }),
-    ),
-    acknowledge_submission: jest.fn(),
-    reject_submission: jest.fn(),
-    resubmit_submitted: jest.fn(),
+    finalize_submission_attempt: finalizeSubmissionAttempt,
+    acknowledge_submission_attempt: acknowledgeSubmissionAttempt,
+    reject_submission_attempt: rejectSubmissionAttempt,
+    submission_attempt_unavailable: jest.fn(),
+    relinquish_submission_attempt: jest.fn(),
+    submission_successor_relationship: jest.fn(() => 'exact'),
+    chain_snapshot_ready: jest.fn(),
     request_fee_upgrades: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => wasmResult()),
@@ -199,6 +196,33 @@ export function makeMockCradle(
     provide_coin_spend_bundle: jest.fn(() => wasmResult()),
     cradle: 0,
   } as unknown as ChiaGame;
+  // Test-only aliases keep older assertion helpers readable while the
+  // production ChiaGame/WASM surface remains token-only.
+  const legacy = cradle as unknown as Record<string, unknown>;
+  Object.defineProperties(legacy, {
+    finalize_submission: {
+      enumerable: true,
+      get: () => cradle.finalize_submission_attempt,
+      set: (value) => {
+        legacy.finalize_submission_attempt = value;
+      },
+    },
+    acknowledge_submission: {
+      enumerable: true,
+      get: () => cradle.acknowledge_submission_attempt,
+      set: (value) => {
+        legacy.acknowledge_submission_attempt = value;
+      },
+    },
+    reject_submission: {
+      enumerable: true,
+      get: () => cradle.reject_submission_attempt,
+      set: (value) => {
+        legacy.reject_submission_attempt = value;
+      },
+    },
+  });
+  return cradle;
 }
 
 export function makePeerConn(
@@ -380,7 +404,7 @@ beforeEach(async () => {
   setTestGlobal('indexedDB', testIndexedDb);
   resetSaveState();
   await claimLease();
-  await deleteWalletReservationRecord();
+  await storageCoordinator.persist(storageCoordinator.deleteWalletOperations());
 });
 
 afterEach(async () => {
@@ -428,11 +452,10 @@ export function submitTransaction(
   }
   const submission: TransactionSubmission = {
     id: `test-${Math.random()}`,
+    attempt_token: `attempt-${Math.random()}`,
     bundle,
     fee_request,
-    delivery_goal: 'ensure-broadcast',
     intent_fingerprint: 'aa'.repeat(32),
-    variant_fingerprint: 'bb'.repeat(32),
   };
   (
     blob as unknown as { submitTransaction: (submission: TransactionSubmission) => void }

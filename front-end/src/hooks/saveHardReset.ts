@@ -1,8 +1,5 @@
-import {
-  enqueueHardResetStorageMutation,
-  SESSION_DB_NAME,
-  type DurableStorageAuthority,
-} from '../lib/session/indexedDb';
+import { SESSION_DB_NAME, type DurableStorageAuthority } from '../lib/session/indexedDb';
+import { storageCoordinator } from '../lib/session/storageCoordinator';
 import { isWalletConnectStorageKey, signalHardResetToOtherTabs } from './saveCoordination';
 
 export const OWNED_INDEXED_DB_EXACT_NAMES = [
@@ -290,27 +287,29 @@ async function clearAllIndexedDbForHardReset(): Promise<HardResetResult> {
 export function hardResetStorage(authority: DurableStorageAuthority): Promise<HardResetResult> {
   signalHardResetToOtherTabs();
   let result: HardResetResult = { success: false, failures: [] };
-  return enqueueHardResetStorageMutation(authority, async () => {
-    try {
-      clearOwnedStorageKeys(
-        localStorage,
-        OWNED_LOCAL_STORAGE_EXACT_KEYS,
-        OWNED_LOCAL_STORAGE_PREFIXES,
-      );
-    } catch (error) {
-      console.error('[save] failed to clear owned localStorage during hard reset:', error);
-    }
-    try {
-      clearOwnedStorageKeys(
-        sessionStorage,
-        OWNED_SESSION_STORAGE_EXACT_KEYS,
-        OWNED_SESSION_STORAGE_PREFIXES,
-      );
-    } catch (error) {
-      console.error('[save] failed to clear owned sessionStorage during hard reset:', error);
-    }
-    result = await clearAllIndexedDbForHardReset();
-    if (result.success) clearPendingWipe();
-    else markPendingWipe();
-  }).then(() => result);
+  return storageCoordinator
+    .hardResetMutation(authority, async () => {
+      try {
+        clearOwnedStorageKeys(
+          localStorage,
+          OWNED_LOCAL_STORAGE_EXACT_KEYS,
+          OWNED_LOCAL_STORAGE_PREFIXES,
+        );
+      } catch (error) {
+        console.error('[save] failed to clear owned localStorage during hard reset:', error);
+      }
+      try {
+        clearOwnedStorageKeys(
+          sessionStorage,
+          OWNED_SESSION_STORAGE_EXACT_KEYS,
+          OWNED_SESSION_STORAGE_PREFIXES,
+        );
+      } catch (error) {
+        console.error('[save] failed to clear owned sessionStorage during hard reset:', error);
+      }
+      result = await clearAllIndexedDbForHardReset();
+      if (result.success) clearPendingWipe();
+      else markPendingWipe();
+    })
+    .then(() => result);
 }

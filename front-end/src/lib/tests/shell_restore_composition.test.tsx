@@ -10,10 +10,11 @@ import {
   claimLease,
   markSavedSession,
   releaseLeaseIfOwner,
-} from '../../hooks/save';
+} from '../session/sessionCache';
 import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
-import { SESSION_DB_NAME, writeSessionAndWalletReservationRecords } from '../session/indexedDb';
+import { SESSION_DB_NAME } from '../session/indexedDb';
 import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
+import { storageCoordinator } from '../session/storageCoordinator';
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -153,7 +154,7 @@ describe('Shell production restore composition', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
     });
-    await writeSessionAndWalletReservationRecords(save, []);
+    await storageCoordinator.persist(storageCoordinator.checkpoint(save, []));
     markSavedSession();
     releaseLeaseIfOwner();
     _resetForTests();
@@ -204,7 +205,7 @@ describe('Shell production restore composition', () => {
     act(() => {
       renderer = create(React.createElement(Shell));
     });
-    await waitForText(renderer!, 'Stored wallet reservation ledger is malformed');
+    await waitForText(renderer!, 'Stored wallet operation record is malformed');
 
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();

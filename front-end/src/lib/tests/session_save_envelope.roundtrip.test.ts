@@ -1,11 +1,16 @@
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { _resetForTests, flushSessionSave, peekSession, saveSession } from '../../hooks/save';
+import {
+  _resetForTests,
+  flushSessionSave,
+  peekSession,
+  saveSession,
+} from '../session/sessionCache';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog, resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
-import { deleteSessionRecord, readSessionRecord, writeSessionRecord } from '../session/indexedDb';
+import { readSessionRecord } from '../session/indexedDb';
 import {
   createSessionModel,
   decodeSessionSaveEnvelope,
@@ -19,6 +24,7 @@ import {
   installSessionEnvelopeTestSetup,
   liveSave,
 } from './session_save_envelope.fixtures';
+import { storageCoordinator } from '../session/storageCoordinator';
 
 installSessionEnvelopeTestSetup();
 
@@ -84,13 +90,13 @@ describe('durable game envelope round trips', () => {
   ] as const)(
     'round-trips a legitimate %s phase through IndexedDB and canonical decode',
     async (_label, save, kind) => {
-      await writeSessionRecord(save);
+      await storageCoordinator.persist(storageCoordinator.writeSession(save));
       const restored = await readSessionRecord();
       expect(restored).not.toBeNull();
       const decoded = decodeSessionSaveEnvelope(restored!);
       expect(decoded.phase).toBe(kind);
       expect(decoded.save).toEqual(save);
-      await deleteSessionRecord();
+      await storageCoordinator.persist(storageCoordinator.deleteSession());
     },
   );
 

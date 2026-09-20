@@ -213,13 +213,8 @@ describe('session machine behavior sequences', () => {
   });
 
   it('retires on storage authority loss without releasing effects', async () => {
-    const authority = { ownerTabId: 'old', writeEpoch: 1n, resetEpoch: 0n };
     const persist = jest.fn(async () => {
-      throw new StorageAuthorityLostError(authority, {
-        ownerTabId: 'winner',
-        writeEpoch: 2n,
-        resetEpoch: 0n,
-      });
+      throw new StorageAuthorityLostError();
     });
     const { runtime, coordinator, controller } = runtimeWithCoordinator(persist);
     const launcher = jest.fn(async () => {});

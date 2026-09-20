@@ -7,7 +7,7 @@ import {
   markSavedSession,
   peekSession,
   stageTerminalSession,
-} from '../../hooks/save';
+} from '../session/sessionCache';
 import {
   channelStatusModelFromPayload,
   createSessionModel,

@@ -62,7 +62,7 @@ import {
   WalletConnectTransportError,
 } from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
-import { WalletReservationCoordinator } from '../session/walletReservationLedger';
+import { WalletOperationService } from '../session/walletOperationService';
 import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
@@ -718,7 +718,7 @@ describe('RealBlockchainInterface', () => {
   });
 
   it('preserves already-spent cancellation detail and converges the ledger', async () => {
-    const ledger = new WalletReservationCoordinator();
+    const ledger = new WalletOperationService();
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({
       success: false,

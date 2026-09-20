@@ -5,12 +5,29 @@ import { SessionRuntimeRetiredError } from './sessionMachineRuntime';
 export interface SubmissionDeliveryToken {
   readonly submission: TransactionSubmission;
   isRetired(): boolean;
+  isSuperseded(): boolean;
 }
 
-interface BridgeDelivery {
-  readonly submission: TransactionSubmission;
+export type SubmissionDeliveryOutcome =
+  | 'acknowledged'
+  | 'unavailable'
+  | 'rejected'
+  | 'local-failure'
+  | 'skipped';
+
+export interface SubmissionDeliveryCompletion {
+  readonly broadcastAttempted: boolean;
+  readonly outcome: SubmissionDeliveryOutcome;
+  readonly requiresFreshSync: boolean;
+}
+
+export type SubmissionSuccessorRelationship = 'exact' | 'newer-fee-bearing' | 'other';
+
+interface DeliveryEntry {
+  submission: TransactionSubmission;
   awaitingFreshSync: boolean;
   successor?: TransactionSubmission;
+  retired: boolean;
   state:
     | { readonly kind: 'idle' }
     | {
@@ -19,162 +36,139 @@ interface BridgeDelivery {
         readonly release: Promise<void>;
       }
     | {
+        readonly kind: 'launched';
+      }
+    | {
         readonly kind: 'settling-failure';
+        readonly completion: Promise<void>;
+      }
+    | {
+        readonly kind: 'settling-relinquishment';
         readonly completion: Promise<void>;
       };
 }
 
-class LaunchedDelivery implements SubmissionDeliveryToken {
-  retired = false;
-  successor?: TransactionSubmission;
-
-  constructor(readonly submission: TransactionSubmission) {}
+class LaunchedDeliveryToken implements SubmissionDeliveryToken {
+  constructor(
+    readonly submission: TransactionSubmission,
+    private readonly entry: DeliveryEntry,
+  ) {}
 
   isRetired(): boolean {
-    return this.retired;
-  }
-}
-
-class TransactionSubmitQueue {
-  private tail: Promise<void> = Promise.resolve();
-  private readonly active = new Map<string, LaunchedDelivery>();
-  private retired = false;
-
-  get(id: string): LaunchedDelivery | undefined {
-    return this.active.get(id);
+    return this.entry.retired;
   }
 
-  enqueue(
-    operation: LaunchedDelivery,
-    run: (operation: SubmissionDeliveryToken) => Promise<void>,
-    completed: (operation: LaunchedDelivery, error?: unknown) => Promise<void>,
-  ): void {
-    if (this.retired) {
-      operation.retired = true;
-      return;
-    }
-    this.active.set(operation.submission.id, operation);
-    const submission = this.tail.then(() => run(operation));
-    const completedSubmission = submission.then(
-      async () => {
-        if (this.active.get(operation.submission.id) === operation) {
-          this.active.delete(operation.submission.id);
-        }
-        await completed(operation);
-      },
-      async (error) => {
-        if (this.active.get(operation.submission.id) === operation) {
-          this.active.delete(operation.submission.id);
-        }
-        await completed(operation, error);
-      },
-    );
-    this.tail = completedSubmission.catch(() => {});
-  }
-
-  retire(id: string): void {
-    const operation = this.active.get(id);
-    if (!operation) return;
-    operation.retired = true;
-    operation.successor = undefined;
-  }
-
-  hasPending(): boolean {
-    return this.active.size > 0;
-  }
-
-  flush(): Promise<void> {
-    return this.tail;
-  }
-
-  retireAll(): void {
-    if (this.retired) return;
-    this.retired = true;
-    for (const operation of this.active.values()) operation.retired = true;
-    this.active.clear();
-    this.tail = Promise.resolve();
+  isSuperseded(): boolean {
+    return this.entry.successor !== undefined;
   }
 }
 
 interface SubmissionDeliveryCoordinatorDependencies {
   getLease(): SessionRuntimeLease | null;
   canLaunch(delivery: { awaitingFreshSync: boolean }): boolean;
-  run(operation: SubmissionDeliveryToken): Promise<void>;
+  run(operation: SubmissionDeliveryToken): Promise<SubmissionDeliveryCompletion>;
+  classifySuccessor(
+    successor: TransactionSubmission,
+    completed: TransactionSubmission,
+  ): SubmissionSuccessorRelationship;
+  relinquishAttempt(completed: TransactionSubmission): Promise<void>;
+  requireFreshSync(): void;
   recordFailure(submission: TransactionSubmission, error: unknown): Promise<void>;
   reportError(error: unknown): void;
   isRetired(): boolean;
 }
 
 export class SubmissionDeliveryCoordinator {
-  private readonly bridge = new Map<string, BridgeDelivery>();
-  private readonly queue = new TransactionSubmitQueue();
+  private readonly deliveries = new Map<string, DeliveryEntry>();
+  private tail: Promise<void> = Promise.resolve();
   private retired = false;
 
   constructor(private readonly dependencies: SubmissionDeliveryCoordinatorDependencies) {}
 
   submit(submission: TransactionSubmission, awaitingFreshSync: boolean): void {
     if (this.retired) return;
-    const bridged = this.bridge.get(submission.id);
-    if (bridged) {
-      this.requireMatchingIntent(bridged.submission, submission);
-      if (bridged.submission.variant_fingerprint === submission.variant_fingerprint) return;
-      bridged.successor = submission;
+    const existing = this.deliveries.get(submission.id);
+    if (existing) {
+      this.requireMatchingIntent(existing.submission, submission);
+      if (
+        existing.submission.attempt_token === submission.attempt_token ||
+        existing.successor?.attempt_token === submission.attempt_token
+      ) {
+        return;
+      }
+      if (existing.state.kind === 'launched') {
+        if (existing.successor) this.queueRelinquishment(existing.successor);
+        existing.successor = submission;
+      } else if (
+        existing.state.kind === 'settling-failure' ||
+        existing.state.kind === 'settling-relinquishment'
+      ) {
+        if (existing.successor) this.queueRelinquishment(existing.successor);
+        existing.successor = submission;
+      } else {
+        existing.successor = submission;
+        const completion = this.tail.then(() =>
+          this.settlePrelaunchRelinquishment(existing, awaitingFreshSync),
+        );
+        existing.state = { kind: 'settling-relinquishment', completion };
+        this.tail = completion.catch((error) => this.reportSettlementError(error));
+      }
       return;
     }
-    const launched = this.queue.get(submission.id);
-    if (launched) {
-      this.requireMatchingIntent(launched.submission, submission);
-      if (launched.submission.variant_fingerprint === submission.variant_fingerprint) return;
-      launched.successor = submission;
-      return;
-    }
-    this.bridge.set(submission.id, {
+    this.deliveries.set(submission.id, {
       submission,
       awaitingFreshSync,
+      retired: false,
       state: { kind: 'idle' },
     });
     this.schedule(submission.id);
   }
 
   scheduleAll(): void {
-    for (const id of this.bridge.keys()) this.schedule(id);
+    for (const id of this.deliveries.keys()) this.schedule(id);
   }
 
   releaseFreshSync(): void {
-    for (const delivery of this.bridge.values()) delivery.awaitingFreshSync = false;
+    for (const delivery of this.deliveries.values()) delivery.awaitingFreshSync = false;
     this.scheduleAll();
   }
 
   retire(id: string): void {
-    this.bridge.delete(id);
-    this.queue.retire(id);
+    const delivery = this.deliveries.get(id);
+    if (!delivery) return;
+    delivery.retired = true;
+    delivery.successor = undefined;
+    if (delivery.state.kind !== 'launched') this.deliveries.delete(id);
   }
 
   hasPrelaunch(id: string): boolean {
-    return this.bridge.has(id);
+    const delivery = this.deliveries.get(id);
+    return delivery !== undefined && delivery.state.kind !== 'launched';
   }
 
   hasPending(): boolean {
-    return this.bridge.size > 0 || this.queue.hasPending();
+    return this.deliveries.size > 0;
   }
 
   async flush(): Promise<void> {
-    const releases = [...this.bridge.values()]
+    const releases = [...this.deliveries.values()]
       .map((delivery) => {
         if (delivery.state.kind === 'scheduled') return delivery.state.release;
         if (delivery.state.kind === 'settling-failure') return delivery.state.completion;
+        if (delivery.state.kind === 'settling-relinquishment') return delivery.state.completion;
         return null;
       })
       .filter((release): release is Promise<void> => release !== null);
     await Promise.allSettled(releases);
-    await this.queue.flush();
+    await this.tail;
   }
 
   retireAll(): void {
     if (this.retired) return;
     this.retired = true;
-    this.bridge.clear();
-    this.queue.retireAll();
+    for (const delivery of this.deliveries.values()) delivery.retired = true;
+    this.deliveries.clear();
+    this.tail = Promise.resolve();
   }
 
   private requireMatchingIntent(
@@ -189,13 +183,16 @@ export class SubmissionDeliveryCoordinator {
   }
 
   private schedule(id: string): void {
-    const delivery = this.bridge.get(id);
+    const delivery = this.deliveries.get(id);
     const lease = this.dependencies.getLease();
     if (
       !delivery ||
       !lease ||
       !this.dependencies.canLaunch(delivery) ||
+      delivery.retired ||
+      delivery.state.kind === 'launched' ||
       delivery.state.kind === 'settling-failure' ||
+      delivery.state.kind === 'settling-relinquishment' ||
       (delivery.state.kind === 'scheduled' && delivery.state.lease === lease)
     ) {
       return;
@@ -203,7 +200,7 @@ export class SubmissionDeliveryCoordinator {
     let release!: Promise<void>;
     try {
       release = lease.releaseAfterPersistence(`submission:${id}`, () => {
-        const current = this.bridge.get(id);
+        const current = this.deliveries.get(id);
         if (
           current !== delivery ||
           current.state.kind !== 'scheduled' ||
@@ -211,14 +208,14 @@ export class SubmissionDeliveryCoordinator {
         ) {
           return Promise.resolve();
         }
-        this.bridge.delete(id);
-        const operation = new LaunchedDelivery(delivery.submission);
-        operation.successor = delivery.successor;
-        this.queue.enqueue(
-          operation,
-          (token) => this.dependencies.run(token),
-          (finished, error) => this.completeLaunched(finished, error),
+        delivery.state = { kind: 'launched' };
+        const token = new LaunchedDeliveryToken(delivery.submission, delivery);
+        const run = this.tail.then(() => this.dependencies.run(token));
+        const completed = run.then(
+          (completion) => this.completeLaunched(delivery, token, completion),
+          (error) => this.completeLaunched(delivery, token, undefined, error),
         );
+        this.tail = completed.catch(() => {});
         return Promise.resolve();
       });
     } catch (error) {
@@ -230,11 +227,11 @@ export class SubmissionDeliveryCoordinator {
   }
 
   private handleReleaseFailure(
-    delivery: BridgeDelivery,
+    delivery: DeliveryEntry,
     lease: SessionRuntimeLease,
     error: unknown,
   ): void {
-    const current = this.bridge.get(delivery.submission.id);
+    const current = this.deliveries.get(delivery.submission.id);
     if (
       current !== delivery ||
       current.state.kind !== 'scheduled' ||
@@ -247,28 +244,101 @@ export class SubmissionDeliveryCoordinator {
       if (this.dependencies.getLease() !== lease) this.schedule(delivery.submission.id);
       return;
     }
-    const completion = this.dependencies.recordFailure(delivery.submission, error).finally(() => {
-      if (this.bridge.get(delivery.submission.id) === delivery) {
-        this.bridge.delete(delivery.submission.id);
-      }
-    });
+    const completion = this.settlePrelaunchFailure(delivery, error);
     delivery.state = { kind: 'settling-failure', completion };
-    void completion.catch((recordingError) => {
-      if (!this.dependencies.isRetired()) this.dependencies.reportError(recordingError);
-    });
+    void completion.catch((recordingError) => this.reportSettlementError(recordingError));
   }
 
-  private async completeLaunched(operation: LaunchedDelivery, error?: unknown): Promise<void> {
-    const successor = operation.successor;
+  private async settlePrelaunchFailure(delivery: DeliveryEntry, error: unknown): Promise<void> {
+    try {
+      await this.dependencies.recordFailure(delivery.submission, error);
+    } finally {
+      if (this.deliveries.get(delivery.submission.id) === delivery) {
+        if (!delivery.retired) await this.dependencies.relinquishAttempt(delivery.submission);
+        const successor = delivery.successor;
+        if (successor && !delivery.retired && !this.retired) {
+          delivery.submission = successor;
+          delivery.successor = undefined;
+          delivery.state = { kind: 'idle' };
+          this.schedule(successor.id);
+        } else {
+          this.deliveries.delete(delivery.submission.id);
+        }
+      }
+    }
+  }
+
+  private async settlePrelaunchRelinquishment(
+    delivery: DeliveryEntry,
+    awaitingFreshSync: boolean,
+  ): Promise<void> {
+    await this.dependencies.relinquishAttempt(delivery.submission);
+    if (
+      this.deliveries.get(delivery.submission.id) !== delivery ||
+      delivery.retired ||
+      this.retired
+    ) {
+      return;
+    }
+    const successor = delivery.successor;
+    if (!successor) {
+      throw new Error(`Submission ${delivery.submission.id} lost its prelaunch successor`);
+    }
+    delivery.submission = successor;
+    delivery.successor = undefined;
+    delivery.awaitingFreshSync = awaitingFreshSync;
+    delivery.state = { kind: 'idle' };
+    this.schedule(successor.id);
+  }
+
+  private async completeLaunched(
+    delivery: DeliveryEntry,
+    operation: LaunchedDeliveryToken,
+    completion?: SubmissionDeliveryCompletion,
+    error?: unknown,
+  ): Promise<void> {
+    if (this.deliveries.get(operation.submission.id) !== delivery) return;
     if (
       error !== undefined &&
-      !operation.retired &&
+      !operation.isRetired() &&
+      !operation.isSuperseded() &&
       !(this.dependencies.isRetired() && error instanceof SessionRuntimeRetiredError)
     ) {
-      await this.dependencies.recordFailure(operation.submission, error);
+      try {
+        await this.dependencies.recordFailure(operation.submission, error);
+      } catch (recordingError) {
+        if (!this.dependencies.isRetired()) this.dependencies.reportError(recordingError);
+      }
     }
-    if (successor && !operation.retired && !this.retired) {
-      this.submit(successor, false);
+    if (completion?.requiresFreshSync && !operation.isRetired()) {
+      this.dependencies.requireFreshSync();
+    }
+    const successor = delivery.successor;
+    if (successor && !operation.isRetired() && !this.retired) {
+      const relationship = this.dependencies.classifySuccessor(successor, operation.submission);
+      const awaitingFreshSync =
+        completion?.requiresFreshSync === true && relationship !== 'newer-fee-bearing';
+      delivery.submission = successor;
+      delivery.successor = undefined;
+      delivery.awaitingFreshSync = awaitingFreshSync;
+      delivery.state = { kind: 'idle' };
+      this.schedule(successor.id);
+    } else {
+      if (!operation.isRetired()) {
+        await this.dependencies.relinquishAttempt(operation.submission);
+      }
+      this.deliveries.delete(operation.submission.id);
+    }
+  }
+
+  private queueRelinquishment(submission: TransactionSubmission): void {
+    const relinquishment = this.tail.then(() => this.dependencies.relinquishAttempt(submission));
+    this.tail = relinquishment.catch((error) => this.reportSettlementError(error));
+  }
+
+  private reportSettlementError(error: unknown): void {
+    if (!this.dependencies.isRetired() && !(error instanceof SessionRuntimeRetiredError)) {
+      this.dependencies.reportError(error);
     }
   }
 }

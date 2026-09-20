@@ -5,7 +5,11 @@ import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult, WasmEvent } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import { claimLease, flushSessionSave, _resetForTests as resetSaveState } from '../../hooks/save';
+import {
+  claimLease,
+  flushSessionSave,
+  _resetForTests as resetSaveState,
+} from '../session/sessionCache';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';

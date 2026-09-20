@@ -15,11 +15,11 @@ import {
   releaseLeaseIfOwner,
   saveSession,
   setAlias,
-} from '../../hooks/save';
-import { loseAuthority } from '../../hooks/saveCoordination';
+} from '../session/sessionCache';
 import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
-import { _holdNextClaimAfterCommitForTests, SESSION_DB_NAME } from '../session/indexedDb';
-import { liveSave } from './session_save_envelope.fixtures';
+import { SESSION_DB_NAME } from '../session/indexedDb';
+import { baseSave, liveSave } from './session_save_envelope.fixtures';
+import { StorageCoordinator, storageCoordinator } from '../session/storageCoordinator';
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -71,7 +71,7 @@ function holdNextClaim(): { entered: Promise<void>; release: () => void } {
   const entered = new Promise<void>((resolve) => {
     claimed = resolve;
   });
-  _holdNextClaimAfterCommitForTests(barrier, claimed);
+  storageCoordinator.holdNextClaimAfterCommitForTests(barrier, claimed);
   return { entered, release };
 }
 
@@ -165,6 +165,100 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     await deleteSessionDatabase();
   });
 
+  it('finishes a pending wipe before automatic inspection, claim, identity, or restore', async () => {
+    const originalIndexedDb = indexedDB;
+    localStorage.setItem('appState_pendingWipe', '1');
+    localStorage.setItem('appState_savedSession', '1');
+    sessionStorage.setItem('appState_autoResumeOnce', '1');
+    const deletes: Array<{ onsuccess?: () => void }> = [];
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: {
+        databases: jest.fn().mockResolvedValue([]),
+        deleteDatabase: jest.fn(() => {
+          const request: { onsuccess?: () => void } = {};
+          deletes.push(request);
+          return request;
+        }),
+      },
+    });
+    const inspect = jest.spyOn(storageCoordinator, 'inspect');
+    const claim = jest.spyOn(storageCoordinator, 'claimAndRead');
+    const onSessionId = jest.fn();
+    const onRestore = jest.fn();
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+          onSessionId,
+          onRestore,
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(renderer!.root.findByProps({ children: 'Loading Chia Gaming…' })).toBeDefined();
+    expect(inspect).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+    expect(onSessionId).not.toHaveBeenCalled();
+    expect(onRestore).not.toHaveBeenCalled();
+
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: originalIndexedDb,
+    });
+    for (const request of deletes) request.onsuccess?.();
+    await waitForRender(renderer!, 'saved session is unsupported');
+
+    expect(inspect).toHaveBeenCalled();
+    inspect.mockRestore();
+    claim.mockRestore();
+  });
+
+  it('keeps a blocked pending wipe on recovery UI without inspecting or claiming', async () => {
+    const originalIndexedDb = indexedDB;
+    localStorage.setItem('appState_pendingWipe', '1');
+    const deletes: Array<{ onblocked?: () => void }> = [];
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: {
+        databases: jest.fn().mockResolvedValue([]),
+        deleteDatabase: jest.fn(() => {
+          const request: { onblocked?: () => void } = {};
+          deletes.push(request);
+          return request;
+        }),
+      },
+    });
+    const inspect = jest.spyOn(storageCoordinator, 'inspect');
+    const claim = jest.spyOn(storageCoordinator, 'claimAndRead');
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+        }),
+      );
+    });
+    await flushEffects();
+    for (const request of deletes) request.onblocked?.();
+    await waitForRender(renderer!, 'pending hard reset is still blocked');
+
+    expect(inspect).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: originalIndexedDb,
+    });
+    inspect.mockRestore();
+    claim.mockRestore();
+  });
+
   it('shows local loading then restores while hub and wallet remain unresolved', async () => {
     await claimLease();
     const save = liveSave({
@@ -217,6 +311,122 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     expect(renderer!.root.findByProps({ children: 'Hub action' }).props.disabled).toBe(true);
   });
 
+  it('offers and restores a durable live session without localStorage hints', async () => {
+    await claimLease();
+    const save = liveSave({
+      pairingToken: 'markerless-restore-pair',
+      serializedGameSession: new Uint8Array([9, 8, 7]),
+    });
+    if (save.phase !== 'live') throw new Error('expected live save');
+    await saveSession({
+      scope: 'live',
+      pairing: save.pairing,
+      live: save.live,
+      presentation: save.presentation,
+      history: save.history,
+    });
+    await flushSessionSave();
+    releaseLeaseIfOwner();
+    _resetForTests();
+    localStorage.clear();
+
+    const onRestore = jest.fn();
+    const claim = jest.spyOn(storageCoordinator, 'claimAndRead');
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+          onRestore,
+        }),
+      );
+    });
+
+    await waitForRender(renderer!, 'You have previously saved state.');
+    expect(claim).not.toHaveBeenCalled();
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(onRestore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: 'live',
+        pairing: expect.objectContaining({ token: 'markerless-restore-pair' }),
+      }),
+      'manual',
+    );
+    claim.mockRestore();
+  });
+
+  it.each([
+    [
+      'live',
+      () =>
+        liveSave({
+          sessionId: 'race-live-hub-session',
+          pairingToken: 'race-live-pair',
+          serializedGameSession: new Uint8Array([6, 5, 4]),
+        }),
+    ],
+    [
+      'terminal',
+      () =>
+        baseSave({
+          sessionId: 'race-terminal-hub-session',
+          channelStatus: { state: 'ResolvedClean' },
+          coinsOfInterest: [],
+        }),
+    ],
+  ])(
+    'recovers a %s session committed between inspection and atomic claim without a second claim',
+    async (_label, makeSave) => {
+      const racingSave = makeSave();
+      const racingCoordinator = new StorageCoordinator();
+      const originalInspect = storageCoordinator.inspect.bind(storageCoordinator);
+      const inspect = jest.spyOn(storageCoordinator, 'inspect').mockImplementationOnce(async () => {
+        const inspected = await originalInspect();
+        await racingCoordinator.claimAndRead('racing-tab');
+        await racingCoordinator.persist(racingCoordinator.writeSession(racingSave));
+        return inspected;
+      });
+      const claim = jest.spyOn(storageCoordinator, 'claimAndRead');
+      const onFreshClaim = jest.fn();
+      const onRestore = jest.fn();
+
+      act(() => {
+        renderer = create(
+          createElement(ShellBootHarness, {
+            externalHub: new Promise<void>(() => {}),
+            externalWallet: new Promise<void>(() => {}),
+            reload: jest.fn(),
+            onFreshClaim,
+            onRestore,
+          }),
+        );
+      });
+
+      await waitForRender(renderer!, 'You have previously saved state.');
+      expect(inspect).toHaveBeenCalledTimes(1);
+      expect(claim).toHaveBeenCalledTimes(1);
+      expect(onFreshClaim).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+      });
+
+      expect(claim).toHaveBeenCalledTimes(1);
+      expect(onFreshClaim).not.toHaveBeenCalled();
+      expect(onRestore).toHaveBeenCalledWith(
+        expect.objectContaining({ phase: racingSave.phase }),
+        'manual',
+      );
+      inspect.mockRestore();
+      claim.mockRestore();
+    },
+  );
+
   it('preserves malformed wallet evidence and offers a successful hard reset retry', async () => {
     await claimLease();
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -244,7 +454,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
         }),
       );
     });
-    await waitForRender(renderer!, 'Stored wallet reservation ledger is malformed');
+    await waitForRender(renderer!, 'Stored wallet operation record is malformed');
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
     });
@@ -290,7 +500,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       await claim.entered;
     });
 
-    act(() => loseAuthority('takeover'));
+    act(() => storageCoordinator.loseAuthority('takeover'));
     claim.release();
     await waitForRender(renderer!, 'Tab conflict');
 
@@ -325,7 +535,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       takeover = renderer!.root.findByProps({ children: 'Take over' }).props.onClick();
       await claim.entered;
     });
-    act(() => loseAuthority('takeover'));
+    act(() => storageCoordinator.loseAuthority('takeover'));
     claim.release();
     await act(async () => {
       await takeover;
@@ -378,7 +588,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       resume = renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       await claim.entered;
     });
-    act(() => loseAuthority('takeover'));
+    act(() => storageCoordinator.loseAuthority('takeover'));
     claim.release();
     await act(async () => {
       await resume;
@@ -442,7 +652,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       resume = renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       await restoreEntered;
     });
-    act(() => loseAuthority('takeover'));
+    act(() => storageCoordinator.loseAuthority('takeover'));
     expect(renderer!.root.findByProps({ children: 'Tab conflict' })).toBeDefined();
 
     releaseRestore();

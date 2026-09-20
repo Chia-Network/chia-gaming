@@ -1,8 +1,8 @@
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import { hydrateWalletReservationLedger } from '../../hooks/save';
-import { readSessionRecord, readWalletReservationRecord } from '../session/indexedDb';
+import { hydrateWalletOperations } from '../session/sessionCache';
+import { readSessionRecord, readWalletOperationRecord } from '../session/indexedDb';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { walletReservationLedger } from '../session/walletReservationLedger';
+import { walletOperationService } from '../session/walletOperationService';
 import {
   createActivePair,
   flushWrapperDrain,
@@ -22,7 +22,7 @@ it(
     poller.stop();
     await pollOnce(poller);
     const provider = fakeBlockchainInfo.getWalletOfferProvider();
-    if (provider) walletReservationLedger.attachProvider(provider);
+    if (provider) walletOperationService.attachProvider(provider);
 
     const adapters = await createActivePair(poller, 14);
     const controller = adapters[0].blob!;
@@ -90,7 +90,7 @@ it(
       assert.equal(submittedBlobs.length, 1, 'fee unavailability must broadcast base immediately');
       assert.equal(submittedFees[0], undefined);
       assert.equal(feeOfferCreations, 1);
-      assert.deepEqual(walletReservationLedger.snapshot(), []);
+      assert.deepEqual(walletOperationService.snapshot(), []);
 
       lane.controller.attachBlockchain(poller);
       await flushWrapperDrain(adapters);
@@ -105,7 +105,7 @@ it(
       );
 
       const finalizedBlob = submittedBlobs[1]!;
-      const retained = walletReservationLedger.snapshot();
+      const retained = walletOperationService.snapshot();
       assert.equal(
         retained.length,
         1,
@@ -123,7 +123,7 @@ it(
       await lane.runtime.persist();
       const [diskSession, diskLedger] = await Promise.all([
         readSessionRecord(),
-        readWalletReservationRecord(),
+        readWalletOperationRecord(),
       ]);
       assert.equal(diskSession?.phase, 'live');
       assert.deepEqual(
@@ -133,9 +133,9 @@ it(
       );
 
       const restored = await injectSessionReload(lane, poller, undefined, async () => {
-        await hydrateWalletReservationLedger();
+        await hydrateWalletOperations();
         const provider = fakeBlockchainInfo.getWalletOfferProvider();
-        if (provider) walletReservationLedger.attachProvider(provider);
+        if (provider) walletOperationService.attachProvider(provider);
       });
       lane = restored.lane;
       assert.equal(lane.controller.getRestoreStatus(), 'restored');
@@ -156,7 +156,7 @@ it(
       assert.equal(feeOfferCreations, 2, 'replay must not request a third fee offer');
       assert.deepEqual(submissionOutcomes[2], { status: 'acknowledged' });
       assert.equal(
-        walletReservationLedger.snapshot()[0]?.stage,
+        walletOperationService.snapshot()[0]?.stage,
         'retained-for-replay',
         'wallet acknowledgement must not retire fee material before chain terminality',
       );
@@ -177,7 +177,7 @@ it(
       );
       for (
         let attempt = 0;
-        attempt < 20 && walletReservationLedger.snapshot().length > 0;
+        attempt < 20 && walletOperationService.snapshot().length > 0;
         attempt += 1
       ) {
         await pollOnce(poller);
@@ -188,10 +188,10 @@ it(
       assert.deepEqual(
         cancellationOutcomes,
         [{ status: 'already-terminal', detail: 'simulator fee offer was spent' }],
-        `landed fee cleanup stalled: ledger=${JSON.stringify(walletReservationLedger.snapshot())} diagnostics=${lane.controller.diagnosticLog.join('|')}`,
+        `landed fee cleanup stalled: ledger=${JSON.stringify(walletOperationService.snapshot())} diagnostics=${lane.controller.diagnosticLog.join('|')}`,
       );
-      assert.deepEqual(walletReservationLedger.snapshot(), []);
-      assert.deepEqual((await readWalletReservationRecord())?.entries, []);
+      assert.deepEqual(walletOperationService.snapshot(), []);
+      assert.deepEqual((await readWalletOperationRecord())?.entries, []);
     } finally {
       for (const adapter of adapters) {
         if (adapter.blob) poller.detachGameSession(adapter.blob);

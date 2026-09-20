@@ -227,7 +227,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       this.walletOfferProvider.scope.walletId !== walletId
     ) {
       this.walletOfferProvider = {
-        capability: 'recoverable',
+        capability: 'recoverable-after-begin',
         scope: { provider: 'cloud', walletId },
         beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
         reconcileCreation: (operation, request, recoveryId) =>

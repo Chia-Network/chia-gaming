@@ -7,7 +7,7 @@ import {
   ChiaMethod,
 } from '../../constants/wallet-connect';
 import { MAINNET_GENESIS_CHALLENGE, TESTNET_GENESIS_CHALLENGE } from '../../constants/env';
-import { claimLease, setNetwork, saveSession, _resetForTests } from '../../hooks/save';
+import { claimLease, setNetwork, saveSession, _resetForTests } from '../session/sessionCache';
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();

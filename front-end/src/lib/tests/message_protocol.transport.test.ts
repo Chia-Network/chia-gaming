@@ -1,5 +1,5 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { walletReservationLedger } from '../session/walletReservationLedger';
+import { walletOperationService } from '../session/walletOperationService';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import type {
@@ -9,7 +9,7 @@ import type {
 } from '../../types/ChiaGaming';
 import { requireWasmResult } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { peekSession } from '../../hooks/save';
+import { peekSession } from '../session/sessionCache';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { createSessionModel } from '../session/model';
@@ -42,10 +42,6 @@ import {
 } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
 import { sessionReceivePolicy } from '../session/receivePolicy';
-import { readSessionRecord, writeSessionRecord } from '../session/indexedDb';
-import { decodeSessionSaveEnvelope } from '../session/persistence';
-import { liveSave } from './session_save_envelope.fixtures';
-import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
 
 describe('WASM result boundary', () => {
   it.each(['events', 'watchCoins', 'unwatchCoins', 'actionSucceeded', 'disposition'] as const)(
@@ -656,6 +652,7 @@ describe('game action failure events', () => {
   it('does not drain or save a synchronous actionSucceeded=false result', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { blob, cradle } = createReadyBlob();
+    await blob.flushPendingSave();
     const save = jest.fn();
     setTestPersistence(blob, save);
     (
@@ -758,10 +755,12 @@ describe('duplicate detection', () => {
 });
 
 describe('keepalive activity', () => {
-  it('does not retransmit unacked outbound when a peer keepalive arrives', () => {
+  it('does not retransmit unacked outbound when a peer keepalive arrives', async () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
+    await blob.flushPendingSave();
     const pending = enc('pending-offer');
+    blob.messageNumber = 4n;
     blob.unackedMessages = [{ msgno: 3n, msg: pending }];
 
     blob.receiveKeepalive();
@@ -1090,79 +1089,6 @@ describe('WASM wallet funding requests', () => {
     );
   });
 
-  it('round-trips null-valued WASM funding output through persistence and restore', async () => {
-    const blob = new SessionController(mockBlockchain, 'source', 100n, 100n, makePeerConn([], []));
-    blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(makeMockCradle());
-    const wasmRequest = {
-      amount: '100',
-      fee: '10',
-      conditions: [{ opcode: 60, args: ['launcher'] }],
-      coin_id: null,
-      max_height: null,
-    } as unknown as NeedCoinSpendRequest;
-
-    blob.processResult(wasmResult({ events: [{ NeedCoinSpend: wasmRequest }] }));
-    blob.flushDeferredWork();
-    const fundingOutbox = blob.getWasmFields()?.fundingOutbox;
-    expect(fundingOutbox).toEqual([
-      {
-        key: expect.stringMatching(/^funding:/),
-        request: {
-          amount: '100',
-          fee: '10',
-          conditions: [{ opcode: 60n, args: ['launcher'] }],
-        },
-      },
-    ]);
-    blob.cleanup();
-
-    const save = liveSave();
-    if (save.phase !== 'live') throw new Error('expected live funding save');
-    save.live.fundingOutbox = fundingOutbox;
-    await writeSessionRecord(save);
-    const encodedThenDecoded = await readSessionRecord();
-    const decoded = decodeSessionSaveEnvelope(encodedThenDecoded).save;
-    if (decoded.phase !== 'live') throw new Error('expected live funding round-trip');
-
-    const restored = new SessionController(
-      mockBlockchain,
-      'restored',
-      100n,
-      100n,
-      makePeerConn([], []),
-    );
-    restored.loadWasm(mockWasmConnection);
-    restored.setGameSession(makeMockCradle());
-    try {
-      restored.restoreFundingOutbox(decoded.live.fundingOutbox ?? []);
-      expect(restored.getWasmFields()?.fundingOutbox).toEqual(fundingOutbox);
-    } finally {
-      restored.cleanup();
-    }
-  });
-
-  it('rejects restoring more than one distinct canonical funding request', () => {
-    const { blob } = createReadyBlob();
-    const first = canonicalizeFundingRequest({
-      amount: '100',
-      fee: '0',
-      conditions: [{ opcode: 60, args: ['first'] }],
-    });
-    const second = canonicalizeFundingRequest({
-      amount: '101',
-      fee: '0',
-      conditions: [{ opcode: 60, args: ['second'] }],
-    });
-
-    expect(() =>
-      blob.restoreFundingOutbox([
-        { key: fundingRequestKey(first), request: first },
-        { key: fundingRequestKey(second), request: second },
-      ]),
-    ).toThrow('more than one distinct request');
-  });
-
   it('attempts persistence before funding and continues after storage failure', async () => {
     const order: string[] = [];
     const beginWalletOffer = jest.fn().mockImplementation(async () => {
@@ -1190,11 +1116,6 @@ describe('WASM wallet funding requests', () => {
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     blob.flushDeferredWork();
     expect(beginWalletOffer).not.toHaveBeenCalled();
-    expect(blob.getWasmFields()?.fundingOutbox).toEqual([
-      expect.objectContaining({
-        request: expect.objectContaining({ amount: '100', fee: '10' }),
-      }),
-    ]);
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full');
     await Promise.resolve();
 
@@ -1276,8 +1197,7 @@ describe('WASM wallet funding requests', () => {
     expect(walletCallbackFailed).toHaveBeenCalledWith(
       expect.stringContaining('concurrent funding request'),
     );
-    expect(walletReservationLedger.snapshot()).toEqual([]);
-    expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
+    expect(walletOperationService.snapshot()).toEqual([]);
   });
 
   it('cancels the original trade and reports one callback failure when offer validation throws', async () => {
@@ -1317,7 +1237,6 @@ describe('WASM wallet funding requests', () => {
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-1');
     expect(walletCallbackFailed).toHaveBeenCalledTimes(1);
     expect(walletCallbackFailed).toHaveBeenCalledWith('wallet funding offer failed validation');
-    expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 
   it('routes a late funding result through the ledger after controller teardown', async () => {
@@ -1378,7 +1297,7 @@ describe('WASM wallet funding requests', () => {
     ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    await walletReservationLedger.awaitOwner({
+    await walletOperationService.awaitOwner({
       installationPlayerId: 'test',
       peerSessionId: '00'.repeat(16),
       providerScope: { provider: 'simulator', identity: 'submission-handoff' },
@@ -1433,7 +1352,6 @@ describe('WASM wallet funding requests', () => {
     );
     expect(advances).toEqual(['advanced']);
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 
   it('keeps funding pending on wallet unavailability and retries on readiness', async () => {
@@ -1479,13 +1397,14 @@ describe('WASM wallet funding requests', () => {
     await blob.flushPendingWork();
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(walletCallbackFailed).not.toHaveBeenCalled();
-    expect(blob.getWasmFields()?.fundingOutbox).toHaveLength(1);
+    expect(walletOperationService.snapshot()).toEqual([
+      expect.objectContaining({ stage: 'best-effort-uncertain' }),
+    ]);
 
     readiness?.(true);
     await blob.flushPendingWork();
     expect(beginWalletOffer).toHaveBeenCalledTimes(2);
     expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
-    expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 
   it('asks Rust for fee upgrades only on provider attach or readiness', async () => {
@@ -1619,22 +1538,21 @@ describe('wallet fee attachment on submission', () => {
   const feeTarget = 'dd'.repeat(32);
 
   function setFinalizer(blob: SessionController, finalize: jest.Mock) {
-    (
-      blob as unknown as {
-        cradle: {
-          finalize_submission: (
-            id: string,
-            goal: TransactionSubmission['delivery_goal'],
-            variantFingerprint: string,
-            feeSourceJson?: string,
-          ) => unknown;
-        };
-      }
-    ).cradle.finalize_submission = (id, _goal, variantFingerprint, feeSourceJson) => ({
-      ...(finalize(id, feeSourceJson) as object),
-      variant_fingerprint: variantFingerprint,
+    const wrapped = (attemptToken: string, feeSourceJson?: string) => ({
+      ...(finalize(attemptToken, feeSourceJson) as object),
+      variant_fingerprint: 'bb'.repeat(32),
       should_broadcast: true,
     });
+    const cradle = (
+      blob as unknown as {
+        cradle: {
+          finalize_submission_attempt: (attemptToken: string, feeSourceJson?: string) => unknown;
+          finalize_submission: (attemptToken: string, feeSourceJson?: string) => unknown;
+        };
+      }
+    ).cradle;
+    cradle.finalize_submission_attempt = wrapped;
+    cradle.finalize_submission = wrapped;
   }
 
   it('does not attach a second fee spend to a channel-opening bundle', async () => {
@@ -1720,7 +1638,7 @@ describe('wallet fee attachment on submission', () => {
       10n,
     );
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(walletReservationLedger.snapshot()[0]).toEqual(
+    expect(walletOperationService.snapshot()[0]).toEqual(
       expect.objectContaining({
         tradeId: 'fee-aggregate-trade',
         stage: 'retained-for-replay',
@@ -1758,7 +1676,7 @@ describe('wallet fee attachment on submission', () => {
 
     expect(spend).not.toHaveBeenCalled();
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('fee-conversion-failure-trade');
-    expect(walletReservationLedger.snapshot()).toEqual([]);
+    expect(walletOperationService.snapshot()).toEqual([]);
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('failed to convert finalized transaction result'),
     );
@@ -1814,7 +1732,7 @@ describe('wallet fee attachment on submission', () => {
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full 2');
     await blob.flushTransactionSubmissions();
 
-    expect(order).toEqual(['persist-1', 'fee', 'finalize', 'persist-2', 'spend']);
+    expect(order).toEqual(['persist-1', 'fee', 'finalize', 'persist-2', 'spend', 'persist-3']);
     expect(spend).toHaveBeenCalledTimes(1);
     await blob.flushPendingSave();
     expect(spend).toHaveBeenCalledTimes(1);
@@ -1884,9 +1802,6 @@ describe('wallet fee attachment on submission', () => {
     expect(errors).toEqual([
       expect.stringContaining('retained for retry after a local submission failure'),
     ]);
-    expect((blob as unknown as { resubmitAfterChainSync: boolean }).resubmitAfterChainSync).toBe(
-      true,
-    );
   });
 
   it('tracks launched submission only in the ordered queue', async () => {
@@ -2063,36 +1978,34 @@ describe('wallet fee attachment on submission', () => {
     blob.blockchain = blockchain;
     (cradle.drain_submissions as jest.Mock)
       .mockReturnValueOnce(submissionDrain([submission]))
-      .mockReturnValueOnce(submissionDrain([{ ...submission, delivery_goal: 'fee-upgrade' }]));
+      .mockReturnValueOnce(
+        submissionDrain([{ ...submission, attempt_token: 'fee-upgrade-attempt' }]),
+      );
     (cradle.finalize_submission as jest.Mock)
-      .mockImplementationOnce(
-        (_id: string, _goal: string, variantFingerprint: string, feeSourceJson: string) => {
-          expect(JSON.parse(feeSourceJson)).toEqual({
-            kind: 'failure',
-            reason: 'wallet transport disconnected',
-          });
-          return {
-            protocol_bundle: testSpendBundle('coin'),
-            bundle: protocolBundle,
-            applied_fee: '0',
-            warning: null,
-            fee_source_disposition: 'unused',
-            variant_fingerprint: variantFingerprint,
-            should_broadcast: true,
-          };
-        },
-      )
-      .mockImplementationOnce(
-        (_id: string, _goal: string, _variantFingerprint: string, _feeSourceJson: string) => ({
+      .mockImplementationOnce((_attemptToken: string, feeSourceJson: string) => {
+        expect(JSON.parse(feeSourceJson)).toEqual({
+          kind: 'failure',
+          reason: 'wallet transport disconnected',
+        });
+        return {
           protocol_bundle: testSpendBundle('coin'),
           bundle: protocolBundle,
-          applied_fee: '10',
+          applied_fee: '0',
           warning: null,
-          fee_source_disposition: 'attached',
-          variant_fingerprint: 'cc'.repeat(32),
+          fee_source_disposition: 'unused',
+          variant_fingerprint: 'bb'.repeat(32),
           should_broadcast: true,
-        }),
-      );
+        };
+      })
+      .mockImplementationOnce((_attemptToken: string, _feeSourceJson: string) => ({
+        protocol_bundle: testSpendBundle('coin'),
+        bundle: protocolBundle,
+        applied_fee: '10',
+        warning: null,
+        fee_source_disposition: 'attached',
+        variant_fingerprint: 'cc'.repeat(32),
+        should_broadcast: true,
+      }));
 
     blob.processResult(wasmResult());
     await transactionSubmitQueue(blob);
@@ -2123,9 +2036,7 @@ describe('wallet fee attachment on submission', () => {
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
     expect(beginWalletOffer).toHaveBeenCalledTimes(2);
     expect(cradle.finalize_submission).toHaveBeenLastCalledWith(
-      submission.id,
-      'fee-upgrade',
-      'bb'.repeat(32),
+      'fee-upgrade-attempt',
       jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
     );
     expect(spend).toHaveBeenLastCalledWith(
@@ -2143,7 +2054,11 @@ describe('wallet fee attachment on submission', () => {
       bundle: testSpendBundle('coin'),
       fee_request: { target: feeTarget, amount: '10' },
     };
-    const exactReplay = { ...initial, fee_request: null };
+    const exactReplay = {
+      ...initial,
+      attempt_token: 'attached-replay-attempt-2',
+      fee_request: null,
+    };
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created',
       material: { kind: 'offer', offer: 'offer1signed' },
@@ -2186,7 +2101,7 @@ describe('wallet fee attachment on submission', () => {
     blob.processResult(wasmResult());
     await transactionSubmitQueue(blob);
 
-    expect(walletReservationLedger.snapshot()).toEqual([
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({
         tradeId: 'attached-replay-trade',
         stage: 'retained-for-replay',
@@ -2194,17 +2109,16 @@ describe('wallet fee attachment on submission', () => {
     ]);
 
     blob.reportNewBlock(2n);
+    blob.reportChainSnapshotReady(2n);
     await transactionSubmitQueue(blob);
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(cradle.finalize_submission).toHaveBeenLastCalledWith(
-      initial.id,
-      'ensure-broadcast',
-      'bb'.repeat(32),
+      'attached-replay-attempt-2',
       undefined,
     );
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(walletReservationLedger.snapshot()[0]).toEqual(
+    expect(walletOperationService.snapshot()[0]).toEqual(
       expect.objectContaining({
         tradeId: 'attached-replay-trade',
         stage: 'retained-for-replay',
@@ -2220,16 +2134,16 @@ describe('wallet fee attachment on submission', () => {
     blob.blockchain = blockchain;
     const owner = (
       blob as unknown as {
-        walletReservationOwner(): { installationPlayerId: string; peerSessionId: string };
+        walletOperationOwner(): { installationPlayerId: string; peerSessionId: string };
       }
-    ).walletReservationOwner();
-    walletReservationLedger.registerReserved(
+    ).walletOperationOwner();
+    walletOperationService.registerReserved(
       'retired-trade',
       owner,
       { kind: 'fee', operationId: 'retired-submission' },
       'fee-offer-created',
     );
-    walletReservationLedger.retainForReplay('retired-trade');
+    walletOperationService.retainForReplay('retired-trade');
     (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
       submissionDrain([], ['retired-submission']),
     );
@@ -2437,11 +2351,10 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
     const submission: TransactionSubmission = {
       id: 'rejected-with-fee',
+      attempt_token: 'rejected-with-fee-attempt',
       bundle: testSpendBundle('coin'),
       fee_request: { target: feeTarget, amount: '10' },
-      delivery_goal: 'ensure-broadcast',
       intent_fingerprint: 'aa'.repeat(32),
-      variant_fingerprint: 'bb'.repeat(32),
     };
     (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
       submissionDrain([], [submission.id]),
@@ -2453,7 +2366,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(walletReservationLedger.snapshot()[0]).toEqual(
+    expect(walletOperationService.snapshot()[0]).toEqual(
       expect.objectContaining({ tradeId: 'Offer_fee', stage: 'retained-for-replay' }),
     );
   });

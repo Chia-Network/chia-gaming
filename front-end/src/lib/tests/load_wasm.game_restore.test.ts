@@ -7,7 +7,7 @@ import {
   flushSessionSave,
   peekSession,
   saveSession,
-} from '../../hooks/save';
+} from '../session/sessionCache';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SESSION_DB_NAME } from '../session/indexedDb';

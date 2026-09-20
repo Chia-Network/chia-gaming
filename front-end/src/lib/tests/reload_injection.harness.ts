@@ -9,7 +9,7 @@ import {
   peekSession,
   saveSession,
   type LiveSessionSave,
-} from '../../hooks/save';
+} from '../session/sessionCache';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { sessionModelFromSave } from '../session/model';

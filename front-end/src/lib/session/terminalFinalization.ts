@@ -7,7 +7,7 @@ import {
   stageTerminalSession,
   type SessionPresentationSave,
   type TerminalSessionSave,
-} from '../../hooks/save';
+} from './sessionCache';
 import { destroyFlushedTerminalSessionController } from '../../hooks/blobSingleton';
 import { channelStatusPayloadFromModel } from './normalization';
 import { selectDashboardCoins } from './selectors';

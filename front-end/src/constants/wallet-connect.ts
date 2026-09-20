@@ -10,7 +10,7 @@ import {
 } from './env';
 import { isTestnet } from './currency';
 import { PREFERENCES_KEY } from '../hooks/savePreferences';
-import { getNetwork } from '../hooks/save';
+import { getNetwork } from '../lib/session/sessionCache';
 
 export enum ChiaMethod {
   GetWallets = 'chia_getWallets',

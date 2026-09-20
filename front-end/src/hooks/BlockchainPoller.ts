@@ -15,10 +15,11 @@ import {
   AsyncRequestStartGate,
 } from '../lib/AsyncScheduler';
 import {
-  walletReservationCoordinator,
-  type WalletReservationCoordinator,
-} from '../lib/session/walletReservationLedger';
-import { walletProviderScopeKey } from '../lib/session/walletReservationLedgerSchema';
+  walletOperationService,
+  type WalletOperationService,
+} from '../lib/session/walletOperationService';
+import { walletProviderScopeKey } from '../lib/session/walletOperationStore';
+import type { WalletOperationOwner } from '../lib/session/walletOperationStore';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
@@ -45,6 +46,8 @@ export interface PollingGameSession {
   /** Advance protocol clocks without asserting a complete coin snapshot. */
   reportNewBlock(peak: bigint): Promise<void> | void;
   reportCoinStates(peak: bigint, records: CoinStateRecord[]): Promise<void> | void;
+  /** Raw height plus every required watched coin now form one coherent snapshot. */
+  reportChainSnapshotReady?(peak: bigint): Promise<void> | void;
 }
 
 type BalanceCallbacks = {
@@ -54,13 +57,16 @@ type BalanceCallbacks = {
 
 export class BlockchainPoller {
   readonly rpc: InternalBlockchainInterface;
-  readonly walletReservations: WalletReservationCoordinator;
+  readonly walletOperations: WalletOperationService;
   private readonly adapter: InternalBlockchainInterface;
   private sourceWalletProvider: WalletOfferProvider | null = null;
   private sourceWalletProviderKey: string | null = null;
   private queuedWalletProvider: WalletOfferProvider | null = null;
+  private attachedWalletProvider: WalletOfferProvider | null = null;
   private sessions = new Set<PollingGameSession>();
   private sessionCoins = new Map<PollingGameSession, CoinPollInterest[]>();
+  private sessionInterestGeneration = new Map<PollingGameSession, number>();
+  private snapshotPending = new Set<PollingGameSession>();
   private registeredNames = new Set<string>();
   private running = false;
   private pollIntervalMs: number;
@@ -88,12 +94,12 @@ export class BlockchainPoller {
     blockchain: InternalBlockchainInterface,
     pollIntervalMs: number,
     maxBackoffMs?: number,
-    walletReservations: WalletReservationCoordinator = walletReservationCoordinator,
+    walletOperations: WalletOperationService = walletOperationService,
   ) {
     this.adapter = blockchain;
     this.pollIntervalMs = pollIntervalMs;
     this.maxBackoffMs = maxBackoffMs ?? 60000;
-    this.walletReservations = walletReservations;
+    this.walletOperations = walletOperations;
     this.requestStartGate = new AsyncRequestStartGate(blockchain.requestGapMs ?? 0);
     const queueOptions: AsyncJobQueueOptions = {
       onError: (job, e) => {
@@ -194,7 +200,7 @@ export class BlockchainPoller {
     return this.enqueueRpc(
       this.mutationLane,
       label,
-      () => this.walletReservations.runAfterHydration(run),
+      () => this.walletOperations.runAfterHydration(run),
       preserveActiveCompletion,
     );
   }
@@ -203,8 +209,9 @@ export class BlockchainPoller {
     adapter: InternalBlockchainInterface,
     owner?: Parameters<InternalBlockchainInterface['getWalletOfferProvider']>[0],
   ): WalletOfferProvider | null {
+    if (typeof adapter.getWalletOfferProvider !== 'function') return null;
     const source = adapter.getWalletOfferProvider(owner);
-    if (!source) return null;
+    if (!source || !source.scope) return null;
     const sourceKey = `${source.capability}\0${walletProviderScopeKey(source.scope)}`;
     if (
       this.queuedWalletProvider &&
@@ -215,9 +222,9 @@ export class BlockchainPoller {
     this.sourceWalletProvider = source;
     this.sourceWalletProviderKey = sourceKey;
     this.queuedWalletProvider =
-      source.capability === 'recoverable'
+      source.capability === 'recoverable' || source.capability === 'recoverable-after-begin'
         ? {
-            capability: 'recoverable',
+            capability: source.capability,
             scope: source.scope,
             beginCreation: (operation, request) =>
               this.enqueueMutation(
@@ -241,7 +248,7 @@ export class BlockchainPoller {
               ),
           }
         : {
-            capability: 'best-effort',
+            capability: source.capability,
             scope: source.scope,
             beginCreation: (operation, request) =>
               this.enqueueMutation(
@@ -315,14 +322,49 @@ export class BlockchainPoller {
     return run();
   }
 
+  resolveWalletOperationOwner(
+    owner: Pick<WalletOperationOwner, 'installationPlayerId' | 'peerSessionId'>,
+  ): WalletOperationOwner | null {
+    const provider = this.rpc.getWalletOfferProvider(owner);
+    if (!provider) return null;
+    this.walletOperations.attachProvider(provider);
+    return { ...owner, providerScope: provider.scope };
+  }
+
+  refreshWalletOperationProvider(): void {
+    const provider = this.rpc.getWalletOfferProvider();
+    if (provider === this.attachedWalletProvider) return;
+    if (this.attachedWalletProvider) {
+      this.walletOperations.detachProvider(this.attachedWalletProvider);
+    }
+    this.attachedWalletProvider = provider;
+    if (provider) this.walletOperations.attachProvider(provider);
+  }
+
+  detachWalletOperationProvider(): void {
+    if (!this.attachedWalletProvider) return;
+    this.walletOperations.detachProvider(this.attachedWalletProvider);
+    this.attachedWalletProvider = null;
+  }
+
+  notifyWalletOperationReadiness(
+    owner: Pick<WalletOperationOwner, 'installationPlayerId' | 'peerSessionId'>,
+  ): void {
+    const provider = this.rpc.getWalletOfferProvider(owner);
+    if (provider) this.walletOperations.providerReconnectReady(provider);
+  }
+
   attachGameSession(cradle: PollingGameSession) {
     this.sessions.add(cradle);
+    this.sessionInterestGeneration.set(cradle, 0);
     this.snapshotGameSessionCoinInterest(cradle);
   }
 
   detachGameSession(cradle: PollingGameSession) {
     this.sessions.delete(cradle);
     this.sessionCoins.delete(cradle);
+    this.sessionInterestGeneration.delete(cradle);
+    this.snapshotPending.delete(cradle);
     this.refreshCoinInterest();
   }
 
@@ -333,6 +375,7 @@ export class BlockchainPoller {
     if (!this.sessions.has(cradle)) return;
     const snapshot = watchedCoins ?? cradle.snapshotWatchedCoins();
     this.sessionCoins.set(cradle, snapshot);
+    this.markSnapshotPending(cradle);
     this.refreshCoinInterest();
   }
 
@@ -343,6 +386,7 @@ export class BlockchainPoller {
     );
     byName.set(coin.coin_name, coin);
     this.sessionCoins.set(cradle, [...byName.values()]);
+    this.markSnapshotPending(cradle);
     this.refreshCoinInterest();
   }
 
@@ -352,7 +396,16 @@ export class BlockchainPoller {
       (existing) => existing.coin_name !== coin.coin_name,
     );
     this.sessionCoins.set(cradle, remaining);
+    this.markSnapshotPending(cradle);
     this.refreshCoinInterest();
+  }
+
+  private markSnapshotPending(cradle: PollingGameSession): void {
+    this.sessionInterestGeneration.set(
+      cradle,
+      (this.sessionInterestGeneration.get(cradle) ?? 0) + 1,
+    );
+    this.snapshotPending.add(cradle);
   }
 
   getPeak(): bigint {
@@ -377,6 +430,7 @@ export class BlockchainPoller {
   start() {
     if (this.running) return;
     this.running = true;
+    this.refreshWalletOperationProvider();
     this.firstTick = true;
     this.startedAt = performance.now();
     log(`[blockchain-poller] started, pollMs=${this.pollIntervalMs}`);
@@ -389,8 +443,10 @@ export class BlockchainPoller {
     const unsubscribe = this.adapter.onConnectionChange((connected) => {
       this.connectionActive = connected;
       if (connected) {
+        this.refreshWalletOperationProvider();
         this.resumePollingIfConnected();
       } else {
+        this.detachWalletOperationProvider();
         this.pausePollingForDisconnect();
       }
     });
@@ -422,6 +478,7 @@ export class BlockchainPoller {
   private resumePollingIfConnected(): void {
     if (!this.adapter.isConnected()) return;
     if (this.running) {
+      for (const session of this.sessions) this.markSnapshotPending(session);
       this.heightPollingScheduler.start(this.pollIntervalMs);
       this.refreshCoinInterest();
     }
@@ -449,8 +506,16 @@ export class BlockchainPoller {
     this.releaseConnectionListenerIfIdle();
   }
 
-  private collectGameSessionCoins(): Array<{ c: PollingGameSession; coins: CoinPollInterest[] }> {
-    return [...this.sessions].map((c) => ({ c, coins: this.sessionCoins.get(c) ?? [] }));
+  private collectGameSessionCoins(): Array<{
+    c: PollingGameSession;
+    coins: CoinPollInterest[];
+    generation: number;
+  }> {
+    return [...this.sessions].map((c) => ({
+      c,
+      coins: this.sessionCoins.get(c) ?? [],
+      generation: this.sessionInterestGeneration.get(c) ?? 0,
+    }));
   }
 
   private refreshCoinInterest(): void {
@@ -516,7 +581,20 @@ export class BlockchainPoller {
       // of the slower watched-coin lookup. This is deliberately a
       // manager-owned height-only observation, not an empty coin snapshot.
       await Promise.allSettled(
-        this.collectGameSessionCoins().map(({ c }) => Promise.resolve(c.reportNewBlock(height))),
+        this.collectGameSessionCoins().map(async ({ c, coins, generation }) => {
+          await c.reportNewBlock(height);
+          if (
+            coins.length === 0 &&
+            this.snapshotPending.has(c) &&
+            this.sessions.has(c) &&
+            this.sessionInterestGeneration.get(c) === generation
+          ) {
+            await c.reportChainSnapshotReady?.(height);
+            if (this.sessionInterestGeneration.get(c) === generation) {
+              this.snapshotPending.delete(c);
+            }
+          }
+        }),
       );
 
       if (this.firstTick) {
@@ -648,13 +726,17 @@ export class BlockchainPoller {
   // successful query explicitly represents every registered interest:
   // omitted records are authoritative absences, not partial results.
   private async reportToCradles(
-    perSession: Array<{ c: PollingGameSession; coins: CoinPollInterest[] }>,
+    perSession: Array<{
+      c: PollingGameSession;
+      coins: CoinPollInterest[];
+      generation: number;
+    }>,
     recordByName: Map<string, CoinRecord>,
     height: bigint,
     _previousPeak: bigint,
   ): Promise<void> {
     const deliveries: Array<Promise<void>> = [];
-    for (const { c, coins } of perSession) {
+    for (const { c, coins, generation } of perSession) {
       // The snapshot was captured before asynchronous registration/record/peak
       // RPCs. A session detached while those requests were in flight must not
       // receive the completed snapshot.
@@ -695,7 +777,20 @@ export class BlockchainPoller {
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
       }
       csr.sort((a, b) => a.coin.localeCompare(b.coin));
-      deliveries.push(Promise.resolve(c.reportCoinStates(height, csr)));
+      deliveries.push(
+        Promise.resolve(c.reportCoinStates(height, csr)).then(async () => {
+          if (
+            this.snapshotPending.has(c) &&
+            this.sessions.has(c) &&
+            this.sessionInterestGeneration.get(c) === generation
+          ) {
+            await c.reportChainSnapshotReady?.(height);
+            if (this.sessionInterestGeneration.get(c) === generation) {
+              this.snapshotPending.delete(c);
+            }
+          }
+        }),
+      );
     }
     await Promise.allSettled(deliveries);
   }

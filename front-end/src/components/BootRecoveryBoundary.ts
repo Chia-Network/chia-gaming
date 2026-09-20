@@ -11,14 +11,13 @@ import {
   peekSession,
   shouldOfferResumeOrStartOver,
   hardReset,
-  onFenced,
-  offFenced,
-} from '../hooks/save';
+} from '../lib/session/sessionCache';
 import {
   reloadAfterSuccessfulHardReset,
   startPendingWalletConnectWipe,
 } from '../hooks/saveHardReset';
 import type { SessionSave } from '../lib/session/saveEnvelope';
+import { storageCoordinator } from '../lib/session/storageCoordinator';
 
 export type BootRecoveryState =
   | { kind: 'loading' }
@@ -53,6 +52,12 @@ function unavailableSavedSession(): BootRecoveryState {
   };
 }
 
+function isDurableSession(
+  save: SessionSave | null,
+): save is Exclude<SessionSave, { phase: 'preferences' }> {
+  return save !== null && save.phase !== 'preferences';
+}
+
 export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDependencies): {
   state: BootRecoveryState;
   resuming: boolean;
@@ -65,16 +70,13 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
 } {
   const dependenciesRef = useRef(dependencies);
   dependenciesRef.current = dependencies;
-  const [state, setState] = useState<BootRecoveryState>(() =>
-    peekAutoResumeOnce() && shouldOfferResumeOrStartOver()
-      ? { kind: 'autoResuming' }
-      : { kind: 'loading' },
-  );
+  const [state, setState] = useState<BootRecoveryState>({ kind: 'loading' });
   const stateRef = useRef(state);
   stateRef.current = state;
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
   const autoResumeStartedRef = useRef(false);
+  const claimedRecoveryRef = useRef<SessionSave | null>(null);
   const recoveryGenerationRef = useRef(0);
   const nextRecoveryGeneration = useCallback(() => {
     recoveryGenerationRef.current += 1;
@@ -109,7 +111,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         setState({ kind: 'resumeDialog', loadError: hydration.error });
         return;
       }
-      if (shouldOfferResumeOrStartOver()) {
+      if (hydration.durableSession || shouldOfferResumeOrStartOver()) {
         markSavedSession();
         setState(
           peekAutoResumeOnce()
@@ -126,6 +128,16 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
       try {
         const save = await claimAndHydrateSession();
         if (cancelled || !recoveryIsCurrent(generation)) return;
+        if (isDurableSession(save)) {
+          claimedRecoveryRef.current = save;
+          markSavedSession();
+          setState(
+            peekAutoResumeOnce()
+              ? { kind: 'autoResuming' }
+              : { kind: 'resumeDialog', loadError: null },
+          );
+          return;
+        }
         const sessionId = await ensureHubIdentity();
         if (cancelled || !recoveryIsCurrent(generation)) return;
         dependenciesRef.current.onSessionId(sessionId);
@@ -148,6 +160,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
   useEffect(() => {
     const authorityLost = () => {
       nextRecoveryGeneration();
+      claimedRecoveryRef.current = null;
       dependenciesRef.current.onAuthorityLost();
       setState((current) => {
         if (current.kind === 'tabDead') return current;
@@ -160,8 +173,8 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
       });
       setResuming(false);
     };
-    onFenced(authorityLost);
-    return () => offFenced(authorityLost);
+    storageCoordinator.onAuthorityLost(authorityLost);
+    return () => storageCoordinator.offAuthorityLost(authorityLost);
   }, [nextRecoveryGeneration]);
 
   const restoreClaimed = useCallback(
@@ -190,6 +203,12 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
     const generation = nextRecoveryGeneration();
     setResuming(true);
     try {
+      const alreadyClaimed = claimedRecoveryRef.current;
+      if (alreadyClaimed) {
+        await restoreClaimed(alreadyClaimed, source, generation);
+        if (recoveryIsCurrent(generation)) claimedRecoveryRef.current = null;
+        return;
+      }
       const inspected = await peekSession();
       if (!recoveryIsCurrent(generation)) return;
       if (!inspected) {
@@ -230,6 +249,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
 
   const takeOver = useCallback(async () => {
     if (stateRef.current.kind !== 'tabConflict') return;
+    claimedRecoveryRef.current = null;
     const generation = nextRecoveryGeneration();
     setResuming(true);
     try {
@@ -299,6 +319,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
     takeOver,
     closeTab: () => {
       nextRecoveryGeneration();
+      claimedRecoveryRef.current = null;
       setState({ kind: 'tabDead' });
     },
     retryHardReset,

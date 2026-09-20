@@ -395,21 +395,6 @@ export function validateLive(live: LiveSessionSave['live']): void {
     throw new Error('Garbled save: invalid live.rewardPuzzleHash');
   }
   optionalString(live.durabilityWarning, 'live.durabilityWarning', true);
-  if (live.fundingOutbox !== undefined) {
-    if (!Array.isArray(live.fundingOutbox)) {
-      throw new Error('Garbled save: invalid live.fundingOutbox');
-    }
-    const fundingKeys = new Set<string>();
-    for (const entry of live.fundingOutbox) {
-      if (fundingKeys.has(entry.key)) {
-        throw new Error(`Garbled save: duplicate live.fundingOutbox key ${entry.key}`);
-      }
-      if (fundingKeys.size > 0) {
-        throw new Error('Garbled save: live.fundingOutbox contains more than one distinct request');
-      }
-      fundingKeys.add(entry.key);
-    }
-  }
 }
 
 export function validateChannelStatus(value: unknown): void {

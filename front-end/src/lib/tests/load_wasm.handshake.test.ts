@@ -11,7 +11,7 @@ import {
   peekSession,
   saveSession,
   _resetForTests as resetSaveState,
-} from '../../hooks/save';
+} from '../session/sessionCache';
 import {
   SessionControllerAdapter,
   action_with_messages,

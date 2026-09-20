@@ -6,9 +6,10 @@ import {
   claimLease,
   type SessionPresentationSave,
   type SessionSave,
-} from '../../hooks/save';
+} from '../session/sessionCache';
 import { SESSION_SAVE_SCHEMA } from '../session/saveEnvelope';
-import { deleteSessionRecord, deleteWalletReservationRecord } from '../session/indexedDb';
+
+import { storageCoordinator } from '../session/storageCoordinator';
 
 export const ACTIVE_INSTANCE = {
   id: 'game-1',
@@ -337,8 +338,8 @@ export function installSessionEnvelopeTestSetup(): void {
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
     await claimLease();
-    await deleteSessionRecord();
-    await deleteWalletReservationRecord();
+    await storageCoordinator.persist(storageCoordinator.deleteSession());
+    await storageCoordinator.persist(storageCoordinator.deleteWalletOperations());
   });
 
   afterEach(() => {

@@ -4,7 +4,7 @@ import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/Ch
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
 import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
-import { walletReservationLedger } from '../session/walletReservationLedger';
+import { walletOperationService } from '../session/walletOperationService';
 
 const walletOperation = {
   owner: {
@@ -152,6 +152,7 @@ describe('BlockchainPoller', () => {
     );
     const reportedPeaks: bigint[] = [];
     const heightOnlyPeaks: bigint[] = [];
+    const readyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
       reportCoinStates: (peak) => {
@@ -159,6 +160,9 @@ describe('BlockchainPoller', () => {
       },
       reportNewBlock: (peak) => {
         heightOnlyPeaks.push(peak);
+      },
+      reportChainSnapshotReady: (peak) => {
+        readyPeaks.push(peak);
       },
     };
 
@@ -169,12 +173,14 @@ describe('BlockchainPoller', () => {
     await pollOnce(poller);
     expect(reportedPeaks).toEqual([]);
     expect(heightOnlyPeaks).toEqual([100n]);
+    expect(readyPeaks).toEqual([]);
 
     // Registration succeeds on the retry: the cradle is reported.
     registerOk = true;
     await pollOnce(poller);
     expect(reportedPeaks).toEqual([100n]);
     expect(heightOnlyPeaks).toEqual([100n, 100n]);
+    expect(readyPeaks).toEqual([100n]);
   });
 
   it('does not report an authoritative snapshot when the wallet batch fails', async () => {
@@ -411,12 +417,16 @@ describe('BlockchainPoller', () => {
   it('advances a session with no watched coins through height-only observations', async () => {
     const rpc = makeRpc([100n]);
     const heightOnlyPeaks: bigint[] = [];
+    const readyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [],
       reportNewBlock: (peak) => {
         heightOnlyPeaks.push(peak);
       },
       reportCoinStates: () => {},
+      reportChainSnapshotReady: (peak) => {
+        readyPeaks.push(peak);
+      },
     };
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
@@ -424,6 +434,69 @@ describe('BlockchainPoller', () => {
     await pollOnce(poller);
 
     expect(heightOnlyPeaks).toEqual([100n]);
+    expect(readyPeaks).toEqual([100n]);
+  });
+
+  it('does not mark a stale snapshot ready when reporting adds a watch', async () => {
+    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const readyPeaks: bigint[] = [];
+    let addWatch = () => {};
+    let reports = 0;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportNewBlock: () => {},
+      reportCoinStates: () => {
+        reports += 1;
+        if (reports === 1) addWatch();
+      },
+      reportChainSnapshotReady: (peak) => {
+        readyPeaks.push(peak);
+      },
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    addWatch = () =>
+      poller.watchCoin(cradle, {
+        coin_name: 'bb',
+        coin_string: 'coin-b',
+      });
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+    expect(readyPeaks).toEqual([]);
+
+    await pollOnce(poller);
+    expect(readyPeaks).toEqual([101n]);
+  });
+
+  it('does not clear a newer pending generation when reporting removes a watch', async () => {
+    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const readyPeaks: bigint[] = [];
+    let removeWatch = () => {};
+    let reports = 0;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportNewBlock: () => {},
+      reportCoinStates: () => {
+        reports += 1;
+        if (reports === 1) removeWatch();
+      },
+      reportChainSnapshotReady: (peak) => {
+        readyPeaks.push(peak);
+      },
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    removeWatch = () =>
+      poller.unwatchCoin(cradle, {
+        coin_name: 'aa',
+        coin_string: 'coin-a',
+      });
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+    expect(readyPeaks).toEqual([]);
+
+    await pollOnce(poller);
+    expect(readyPeaks).toEqual([101n]);
   });
 
   it('uses attach-time snapshots and runtime watch deltas instead of resampling every sweep', async () => {
@@ -696,7 +769,7 @@ describe('BlockchainPoller', () => {
   });
 
   it('starts reads immediately but waits for successful ledger hydration before wallet mutation', async () => {
-    walletReservationLedger.resetForTests(false);
+    walletOperationService.resetForTests(false);
     const getHeightInfo = jest.fn().mockResolvedValue(7n);
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created',
@@ -725,18 +798,18 @@ describe('BlockchainPoller', () => {
     await expect(read).resolves.toBe(7n);
     expect(beginWalletOffer).not.toHaveBeenCalled();
 
-    walletReservationLedger.hydrateFromDisk(null);
+    walletOperationService.hydrateFromDisk(null);
     await expect(mutation).resolves.toEqual({
       kind: 'created',
       material: { kind: 'offer', offer: 'offer-ready' },
       tradeId: 'trade-ready',
     });
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
   });
 
   it('fails wallet mutation closed when ledger hydration is malformed', async () => {
-    walletReservationLedger.resetForTests(false);
+    walletOperationService.resetForTests(false);
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created',
       material: { kind: 'offer', offer: 'must-not-launch' },
@@ -757,10 +830,10 @@ describe('BlockchainPoller', () => {
     const mutation = poller.rpc
       .getWalletOfferProvider(walletOperation.owner)!
       .beginCreation(walletOperation, walletRequest);
-    expect(() => walletReservationLedger.hydrateFromDisk({ version: 2n })).toThrow();
+    expect(() => walletOperationService.hydrateFromDisk({ version: 2n })).toThrow();
     await expect(mutation).rejects.toThrow();
     expect(beginWalletOffer).not.toHaveBeenCalled();
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
   });
 
   it('revalidates the connection epoch after waiting at the shared gate', async () => {
@@ -1034,7 +1107,7 @@ describe('BlockchainPoller', () => {
 
   it('returns a stale successful wallet offer to durable lifecycle ownership', async () => {
     jest.useFakeTimers();
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const firstOffer = deferred<{
@@ -1069,10 +1142,10 @@ describe('BlockchainPoller', () => {
       },
     } as unknown as InternalBlockchainInterface;
     const poller = new BlockchainPoller(rpc, 1000);
-    walletReservationLedger.attachProvider(poller.rpc.getWalletOfferProvider()!);
+    walletOperationService.attachProvider(poller.rpc.getWalletOfferProvider()!);
     poller.startBalanceInterest(1000, { onBalance: () => {} });
 
-    const stale = walletReservationLedger.createOffer(
+    const stale = walletOperationService.createOffer(
       walletOperation.owner,
       walletOperation.purpose,
       { ...walletRequest, uniqueId: 'old' },
@@ -1098,7 +1171,7 @@ describe('BlockchainPoller', () => {
       material: { kind: 'offer', offer: 'offer-old' },
       tradeId: 'trade-old',
     });
-    walletReservationLedger.settleOperation(
+    walletOperationService.settleOperation(
       walletOperation.owner,
       walletOperation.purpose,
       'cancel-required',
@@ -1107,17 +1180,17 @@ describe('BlockchainPoller', () => {
     await advanceLane(0);
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-old');
-    expect(walletReservationLedger.entriesFor(walletOperation.owner)).toEqual([
+    expect(walletOperationService.entriesFor(walletOperation.owner)).toEqual([
       expect.objectContaining({ tradeId: 'trade-old', stage: 'cancel-required' }),
     ]);
     await advanceLane(0);
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
     jest.useRealTimers();
   });
 
   it('does not let an inactive constructed poller steal ledger RPC ownership', async () => {
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
     const activeRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const inactiveRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const activeRpc = {
@@ -1132,7 +1205,7 @@ describe('BlockchainPoller', () => {
       }),
       onConnectionChange: () => () => {},
     } as unknown as InternalBlockchainInterface;
-    walletReservationLedger.attachProvider(activeRpc.getWalletOfferProvider()!);
+    walletOperationService.attachProvider(activeRpc.getWalletOfferProvider()!);
     new BlockchainPoller(
       {
         ...makeRpc([1n]),
@@ -1147,18 +1220,18 @@ describe('BlockchainPoller', () => {
     };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
-    walletReservationLedger.registerReserved('trade-active-owner', owner, purpose);
-    walletReservationLedger.requireCancellation('trade-active-owner', 'wallet-outcome-finalized');
-    await walletReservationLedger.awaitOwner(owner);
+    walletOperationService.registerReserved('trade-active-owner', owner, purpose);
+    walletOperationService.requireCancellation('trade-active-owner', 'wallet-outcome-finalized');
+    await walletOperationService.awaitOwner(owner);
 
     expect(activeRelease).toHaveBeenCalledWith('trade-active-owner');
     expect(inactiveRelease).not.toHaveBeenCalled();
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
   });
 
   it('detaches wallet recovery readiness while the active provider is disconnected', () => {
     jest.useFakeTimers();
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
     let connected = true;
     const connectionListeners = new Set<(next: boolean) => void>();
     const sourceProvider = {
@@ -1176,7 +1249,7 @@ describe('BlockchainPoller', () => {
         connectionListeners.delete(listener);
       };
     };
-    walletReservationLedger.registerReserved(
+    walletOperationService.registerReserved(
       'trade-provider-readiness',
       walletOperation.owner,
       walletOperation.purpose,
@@ -1184,18 +1257,18 @@ describe('BlockchainPoller', () => {
 
     try {
       activate(rpc, 60_000);
-      expect(walletReservationLedger.getRecoveryReadiness()).toBe('ready');
+      expect(walletOperationService.getRecoveryReadiness()).toBe('ready');
 
       connected = false;
       for (const listener of connectionListeners) listener(false);
-      expect(walletReservationLedger.getRecoveryReadiness()).toBe('wallet-unavailable');
+      expect(walletOperationService.getRecoveryReadiness()).toBe('wallet-unavailable');
 
       connected = true;
       for (const listener of connectionListeners) listener(true);
-      expect(walletReservationLedger.getRecoveryReadiness()).toBe('ready');
+      expect(walletOperationService.getRecoveryReadiness()).toBe('ready');
     } finally {
       deactivate();
-      walletReservationLedger.resetForTests();
+      walletOperationService.resetForTests();
       jest.useRealTimers();
     }
   });

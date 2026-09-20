@@ -1,5 +1,5 @@
 import { SessionController } from './SessionController';
-import { walletReservationCoordinator } from '../lib/session/walletReservationLedger';
+import { walletOperationService } from '../lib/session/walletOperationService';
 import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
 import { PeerConnectionResult } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
@@ -10,7 +10,7 @@ import {
   markSavedSession,
   LiveSessionSave,
   SessionSave,
-} from './save';
+} from '../lib/session/sessionCache';
 import { coerceToBytes } from '../util';
 import { getGenesisChallenge } from '../constants/wallet-connect';
 import { log } from '../services/log';
@@ -22,8 +22,6 @@ import {
 } from '../lib/session/historyLimits';
 
 export let sessionController: SessionController | null = null;
-/** @deprecated alias for sessionController */
-export { sessionController as blobSingleton };
 export let initStarted = false;
 let transactionPublishNerfed = false;
 const transactionPublishNerfListeners = new Set<(nerfed: boolean) => void>();
@@ -82,9 +80,6 @@ export function destroyFlushedTerminalSessionController(controller: SessionContr
   sessionController = null;
   initStarted = false;
 }
-/** @deprecated use destroySessionController */
-export { destroySessionController as destroyBlobSingleton };
-
 export async function configSessionController(
   sc: SessionController,
   iStarted: boolean,
@@ -166,7 +161,6 @@ export async function restoreSession(
   );
   sc.diagnosticLog = recentDiagnosticEntries(save.history.diagnosticLog ?? []);
   sc.durabilityWarning = save.live.durabilityWarning;
-  sc.restoreFundingOutbox(save.live.fundingOutbox ?? []);
   if (!Array.isArray(save.presentation.activeGameIds)) {
     throw new Error('restoreSession: missing or invalid activeGameIds');
   }
@@ -226,7 +220,7 @@ export function getOrCreateSessionController(
     myContribution,
     theirContribution,
     peerConn,
-    walletReservationCoordinator,
+    walletOperationService,
   );
   if (sessionSave?.phase === 'live') {
     sessionController.restoreTransportCheckpoint(sessionSave.live);
@@ -319,12 +313,4 @@ export function getOrCreateSessionController(
   }
 
   return { sessionController };
-}
-
-/** @deprecated use getOrCreateSessionController */
-export function getBlobSingleton(...args: Parameters<typeof getOrCreateSessionController>): {
-  gameObject: SessionController;
-} {
-  const result = getOrCreateSessionController(...args);
-  return { gameObject: result.sessionController };
 }

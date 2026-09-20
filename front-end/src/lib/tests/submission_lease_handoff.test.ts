@@ -6,10 +6,8 @@ import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
 import type { SessionModel } from '../session/types';
 import { createSessionModel } from '../session/model';
 import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
-import {
-  WalletReservationCoordinator,
-  walletReservationLedger,
-} from '../session/walletReservationLedger';
+import { SubmissionDeliveryCoordinator } from '../session/submissionDeliveryCoordinator';
+import { WalletOperationService, walletOperationService } from '../session/walletOperationService';
 import type { InternalBlockchainInterface, TransactionSubmission } from '../../types/ChiaGaming';
 import {
   makeMockCradle,
@@ -129,6 +127,14 @@ class ControlledLease implements SessionRuntimeLease {
   }
 }
 
+function deferredVoid(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function setup(spend: jest.Mock, rpcOverrides: Partial<InternalBlockchainInterface> = {}) {
   const legacy = rpcOverrides as Record<string, any>;
   const adapter = { ...mockRpc, spend, ...rpcOverrides } as InternalBlockchainInterface;
@@ -162,6 +168,7 @@ function setup(spend: jest.Mock, rpcOverrides: Partial<InternalBlockchainInterfa
     };
   }
   const blockchain = new BlockchainPoller(adapter, 60_000);
+  blockchain.refreshWalletOperationProvider();
   const controller = new SessionController(
     blockchain,
     'submission-handoff',
@@ -184,11 +191,10 @@ function setup(spend: jest.Mock, rpcOverrides: Partial<InternalBlockchainInterfa
 
 const submission = (id: string): TransactionSubmission => ({
   id,
+  attempt_token: `${id}-attempt-1`,
   bundle: testSpendBundle(id),
   fee_request: null,
-  delivery_goal: 'ensure-broadcast',
   intent_fingerprint: 'aa'.repeat(32),
-  variant_fingerprint: 'bb'.repeat(32),
 });
 
 describe('submission delivery lease handoff', () => {
@@ -259,7 +265,6 @@ describe('submission delivery lease handoff', () => {
       expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
       expect(cradle.reject_submission).not.toHaveBeenCalled();
       expect(cradle.drain_submissions).not.toHaveBeenCalled();
-      expect((controller as any).resubmitAfterChainSync).toBe(false);
     } finally {
       controller.cleanup();
     }
@@ -282,13 +287,167 @@ describe('submission delivery lease handoff', () => {
 
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission).toHaveBeenCalledWith(
-        'before-persistence',
-        expect.any(String),
+      expect(cradle.acknowledge_submission).toHaveBeenCalledWith('before-persistence-attempt-1');
+      expect(cradle.relinquish_submission_attempt).toHaveBeenCalledWith(
+        'before-persistence-attempt-1',
       );
     } finally {
       controller.cleanup();
     }
+  });
+
+  it('replaces an unlaunched bridge entry with the latest Rust attempt', async () => {
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const { controller, cradle, submit } = setup(spend);
+    const lease = new ControlledLease(undefined, 'submission-relinquishment:');
+    const first = submission('prelaunch-successor');
+    const successor = { ...first, attempt_token: 'prelaunch-successor-attempt-2' };
+    try {
+      controller.attachTransactionCoordinator(lease);
+      submit(first);
+      submit(successor);
+      for (
+        let pass = 0;
+        pass < 20 && (cradle.relinquish_submission_attempt as jest.Mock).mock.calls.length === 0;
+        pass += 1
+      ) {
+        await Promise.resolve();
+      }
+      expect(cradle.finalize_submission).not.toHaveBeenCalled();
+      const relinquishmentKey =
+        'submission-relinquishment:prelaunch-successor:prelaunch-successor-attempt-1';
+      for (let pass = 0; pass < 20 && !lease.has(relinquishmentKey); pass += 1) {
+        await Promise.resolve();
+      }
+      await lease.launch(relinquishmentKey);
+      await controller.flushTransactionSubmissions();
+      await lease.launch('submission:prelaunch-successor');
+      const successorRelinquishmentKey =
+        'submission-relinquishment:prelaunch-successor:prelaunch-successor-attempt-2';
+      for (let pass = 0; pass < 20 && !lease.has(successorRelinquishmentKey); pass += 1) {
+        await Promise.resolve();
+      }
+      await lease.launch(successorRelinquishmentKey);
+      await controller.flushPendingWork();
+
+      expect(cradle.finalize_submission).toHaveBeenCalledTimes(1);
+      expect(cradle.finalize_submission).toHaveBeenCalledWith(successor.attempt_token, undefined);
+      expect(cradle.acknowledge_submission).toHaveBeenCalledWith(successor.attempt_token);
+      expect(cradle.relinquish_submission_attempt).toHaveBeenCalledWith(first.attempt_token);
+      expect(spend).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('retains coordinator ownership until relinquishment is checkpointed', async () => {
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const { controller, cradle, submit } = setup(spend);
+    const lease = new ControlledLease(undefined, 'submission-relinquishment:');
+    try {
+      controller.attachTransactionCoordinator(lease);
+      submit(submission('checkpointed-relinquishment'));
+      await lease.launch('submission:checkpointed-relinquishment');
+      for (
+        let pass = 0;
+        pass < 20 && (cradle.relinquish_submission_attempt as jest.Mock).mock.calls.length === 0;
+        pass += 1
+      ) {
+        await Promise.resolve();
+      }
+
+      expect(cradle.relinquish_submission_attempt).toHaveBeenCalledWith(
+        'checkpointed-relinquishment-attempt-1',
+      );
+      expect(
+        (
+          controller as unknown as {
+            submissionDeliveries: { hasPending(): boolean };
+          }
+        ).submissionDeliveries.hasPending(),
+      ).toBe(true);
+
+      const relinquishmentKey =
+        'submission-relinquishment:checkpointed-relinquishment:checkpointed-relinquishment-attempt-1';
+      for (let pass = 0; pass < 20 && !lease.has(relinquishmentKey); pass += 1) {
+        await Promise.resolve();
+      }
+      await lease.launch(relinquishmentKey);
+      await controller.flushPendingWork();
+      expect(
+        (
+          controller as unknown as {
+            submissionDeliveries: { hasPending(): boolean };
+          }
+        ).submissionDeliveries.hasPending(),
+      ).toBe(false);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('preserves a successor arriving while a launched failure is being recorded', async () => {
+    const lease = new ControlledLease();
+    const failure = deferredVoid();
+    const first = submission('launched-failure-successor');
+    const successor = { ...first, attempt_token: 'launched-failure-successor-attempt-2' };
+    const recordFailure = jest.fn(() => failure.promise);
+    const coordinator = new SubmissionDeliveryCoordinator({
+      getLease: () => lease,
+      canLaunch: () => true,
+      run: jest.fn().mockRejectedValue(new Error('launch failed')),
+      classifySuccessor: () => 'exact',
+      relinquishAttempt: jest.fn().mockResolvedValue(undefined),
+      requireFreshSync: jest.fn(),
+      recordFailure,
+      reportError: jest.fn(),
+      isRetired: () => false,
+    });
+
+    coordinator.submit(first, false);
+    await lease.launch('submission:launched-failure-successor');
+    for (let pass = 0; pass < 20 && recordFailure.mock.calls.length === 0; pass += 1) {
+      await Promise.resolve();
+    }
+    expect(recordFailure).toHaveBeenCalledWith(first, expect.any(Error));
+
+    coordinator.submit(successor, false);
+    failure.resolve();
+    await coordinator.flush();
+
+    expect(lease.has('submission:launched-failure-successor')).toBe(true);
+  });
+
+  it('preserves a successor arriving while a prelaunch failure is being recorded', async () => {
+    const lease = new ControlledLease();
+    const failure = deferredVoid();
+    const first = submission('prelaunch-failure-successor');
+    const successor = { ...first, attempt_token: 'prelaunch-failure-successor-attempt-2' };
+    const recordFailure = jest.fn(() => failure.promise);
+    const coordinator = new SubmissionDeliveryCoordinator({
+      getLease: () => lease,
+      canLaunch: () => true,
+      run: jest.fn(),
+      classifySuccessor: () => 'exact',
+      relinquishAttempt: jest.fn().mockResolvedValue(undefined),
+      requireFreshSync: jest.fn(),
+      recordFailure,
+      reportError: jest.fn(),
+      isRetired: () => false,
+    });
+
+    coordinator.submit(first, false);
+    lease.reject('submission:prelaunch-failure-successor', new Error('persistence failed'));
+    for (let pass = 0; pass < 20 && recordFailure.mock.calls.length === 0; pass += 1) {
+      await Promise.resolve();
+    }
+    expect(recordFailure).toHaveBeenCalledWith(first, expect.any(Error));
+
+    coordinator.submit(successor, false);
+    failure.resolve();
+    await coordinator.flush();
+
+    expect(lease.has('submission:prelaunch-failure-successor')).toBe(true);
   });
 
   it('keeps a launched delivery queue-owned across lease replacement', async () => {
@@ -348,8 +507,7 @@ describe('submission delivery lease handoff', () => {
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
       expect(cradle.acknowledge_submission).toHaveBeenCalledWith(
-        'finalized-broadcast-handoff',
-        expect.any(String),
+        'finalized-broadcast-handoff-attempt-1',
       );
     } finally {
       controller.cleanup();
@@ -424,10 +582,7 @@ describe('submission delivery lease handoff', () => {
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.finalize_submission).toHaveBeenCalledTimes(1);
       expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission).toHaveBeenCalledWith(
-        'acknowledged-handoff',
-        expect.any(String),
-      );
+      expect(cradle.acknowledge_submission).toHaveBeenCalledWith('acknowledged-handoff-attempt-1');
     } finally {
       controller.cleanup();
     }
@@ -622,7 +777,7 @@ describe('submission delivery lease handoff', () => {
     const { controller, cradle, submit } = setup(spend);
     const lease = new ControlledLease();
     const first = submission('variant-upgrade');
-    const upgrade = { ...first, variant_fingerprint: 'cc'.repeat(32) };
+    const upgrade = { ...first, attempt_token: 'variant-upgrade-attempt-2' };
     try {
       controller.attachTransactionCoordinator(lease);
       submit(first);
@@ -642,10 +797,169 @@ describe('submission delivery lease handoff', () => {
       await controller.flushPendingWork();
 
       expect(spend).toHaveBeenCalledTimes(2);
-      expect((cradle.finalize_submission as jest.Mock).mock.calls.map((call) => call[2])).toEqual([
-        'bb'.repeat(32),
-        'cc'.repeat(32),
+      expect((cradle.finalize_submission as jest.Mock).mock.calls.map((call) => call[0])).toEqual([
+        'variant-upgrade-attempt-1',
+        'variant-upgrade-attempt-2',
       ]);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('schedules a successor without reporting a superseded in-flight wallet result', async () => {
+    let resolveFirstSpend!: (value: { status: 'acknowledged' }) => void;
+    const spend = jest
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ status: 'acknowledged' }>((resolve) => {
+            resolveFirstSpend = resolve;
+          }),
+      )
+      .mockResolvedValue({ status: 'acknowledged' });
+    const { controller, cradle, submit } = setup(spend);
+    const lease = new ControlledLease();
+    const first = submission('superseded-wallet-result');
+    const intermediate = { ...first, attempt_token: 'superseded-wallet-result-attempt-2' };
+    const successor = { ...first, attempt_token: 'superseded-wallet-result-attempt-3' };
+    (cradle.submission_successor_relationship as jest.Mock).mockReturnValue('exact');
+    try {
+      controller.attachTransactionCoordinator(lease);
+      submit(first);
+      const firstLaunch = lease.launch('submission:superseded-wallet-result');
+      for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
+        await Promise.resolve();
+      }
+
+      submit(intermediate);
+      submit(successor);
+      resolveFirstSpend({ status: 'acknowledged' });
+      await firstLaunch;
+      await controller.flushTransactionSubmissions();
+
+      expect(cradle.acknowledge_submission_attempt).not.toHaveBeenCalledWith(first.attempt_token);
+      expect(cradle.submission_attempt_unavailable).not.toHaveBeenCalledWith(first.attempt_token);
+      expect(cradle.relinquish_submission_attempt).not.toHaveBeenCalledWith(first.attempt_token);
+      expect(cradle.relinquish_submission_attempt).toHaveBeenCalledWith(intermediate.attempt_token);
+      expect(lease.has('submission:superseded-wallet-result')).toBe(true);
+
+      await lease.launch('submission:superseded-wallet-result');
+      await controller.flushPendingWork();
+      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(successor.attempt_token);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('gates an exact successor after an unavailable attempted variant until snapshot ready', async () => {
+    let resolveSpend!: (value: { status: 'unavailable'; detail: string }) => void;
+    const spend = jest.fn(
+      () =>
+        new Promise<{ status: 'unavailable'; detail: string }>((resolve) => {
+          resolveSpend = resolve;
+        }),
+    );
+    const { controller, cradle, submit } = setup(spend);
+    const firstLease = new ControlledLease();
+    const replacementLease = new ControlledLease();
+    const first = submission('exact-successor');
+    const successor = { ...first, attempt_token: 'exact-successor-attempt-2' };
+    try {
+      controller.attachTransactionCoordinator(firstLease);
+      submit(first);
+      const launch = firstLease.launch('submission:exact-successor');
+      for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
+        await Promise.resolve();
+      }
+      submit(successor);
+      resolveSpend({ status: 'unavailable', detail: 'wallet syncing' });
+      await launch;
+      await controller.flushTransactionSubmissions();
+
+      expect(cradle.submission_successor_relationship).toHaveBeenCalledWith(
+        successor.attempt_token,
+        first.attempt_token,
+      );
+      expect(firstLease.has('submission:exact-successor')).toBe(false);
+
+      controller.attachTransactionCoordinator(replacementLease);
+      await controller.reportChainSnapshotReady(2n);
+      expect(replacementLease.has('submission:exact-successor')).toBe(true);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('launches a Rust-classified newer fee-bearing successor without fresh sync', async () => {
+    let resolveSpend!: (value: { status: 'unavailable'; detail: string }) => void;
+    const spend = jest.fn(
+      () =>
+        new Promise<{ status: 'unavailable'; detail: string }>((resolve) => {
+          resolveSpend = resolve;
+        }),
+    );
+    const { controller, cradle, submit } = setup(spend);
+    const lease = new ControlledLease();
+    const first = submission('fee-successor');
+    const successor = {
+      ...first,
+      attempt_token: 'fee-successor-attempt-2',
+      fee_request: { target: '22'.repeat(32), amount: '10' },
+    };
+    (cradle.submission_successor_relationship as jest.Mock).mockReturnValue('newer-fee-bearing');
+    try {
+      controller.attachTransactionCoordinator(lease);
+      submit(first);
+      const launch = lease.launch('submission:fee-successor');
+      for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
+        await Promise.resolve();
+      }
+      submit(successor);
+      resolveSpend({ status: 'unavailable', detail: 'wallet syncing' });
+      await launch;
+      await controller.flushTransactionSubmissions();
+
+      expect(lease.has('submission:fee-successor')).toBe(true);
+      expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('does not gate an unrelated submission behind an exact successor fresh-sync wait', async () => {
+    let resolveFirst!: (value: { status: 'unavailable'; detail: string }) => void;
+    const spend = jest
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ status: 'unavailable'; detail: string }>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ status: 'acknowledged' });
+    const { controller, submit } = setup(spend);
+    const lease = new ControlledLease();
+    const first = submission('snapshot-gated');
+    const successor = { ...first, attempt_token: 'snapshot-gated-attempt-2' };
+    const unrelated = submission('unrelated-urgent');
+    try {
+      controller.attachTransactionCoordinator(lease);
+      submit(first);
+      const launch = lease.launch('submission:snapshot-gated');
+      for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
+        await Promise.resolve();
+      }
+      submit(successor);
+      resolveFirst({ status: 'unavailable', detail: 'wallet syncing' });
+      await launch;
+      await controller.flushTransactionSubmissions();
+
+      submit(unrelated);
+      expect(lease.has('submission:snapshot-gated')).toBe(false);
+      expect(lease.has('submission:unrelated-urgent')).toBe(true);
+      await lease.launch('submission:unrelated-urgent');
+      await controller.flushTransactionSubmissions();
+      expect(spend).toHaveBeenCalledTimes(2);
     } finally {
       controller.cleanup();
     }
@@ -663,7 +977,7 @@ describe('submission delivery lease handoff', () => {
         submit({
           ...submission('intent-mismatch'),
           intent_fingerprint: 'dd'.repeat(32),
-          variant_fingerprint: 'cc'.repeat(32),
+          attempt_token: 'intent-mismatch-attempt-2',
         }),
       ).toThrow('mismatched durable intent fingerprint');
       expect(spend).not.toHaveBeenCalled();
@@ -745,10 +1059,12 @@ describe('submission delivery lease handoff', () => {
       controller.processResult(wasmResult());
       await controller.flushPendingWork();
 
-      expect(cradle.reject_submission).toHaveBeenCalledWith('network-rejected-cleanup-fails');
+      expect(cradle.reject_submission).toHaveBeenCalledWith(
+        'network-rejected-cleanup-fails-attempt-1',
+      );
       expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      expect(walletReservationLedger.snapshot()).toEqual([
+      expect(walletOperationService.snapshot()).toEqual([
         expect.objectContaining({
           tradeId: 'trade-cleanup-fails',
           stage: 'cancel-required',
@@ -798,7 +1114,7 @@ describe('submission delivery lease handoff', () => {
 
       expect(spend).not.toHaveBeenCalled();
       expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-finalize-rejected');
-      expect(walletReservationLedger.snapshot()).toEqual([]);
+      expect(walletOperationService.snapshot()).toEqual([]);
     } finally {
       controller.cleanup();
     }
@@ -967,7 +1283,7 @@ describe('submission delivery lease handoff', () => {
   });
 
   it('routes a late funding offer through the global ledger after cleanup', async () => {
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
     let resolveOffer!: (value: {
       kind: 'created';
       material: { kind: 'offer'; offer: string };
@@ -994,7 +1310,8 @@ describe('submission delivery lease handoff', () => {
       fee: '0',
       conditions: [{ opcode: 60n, args: ['launcher'] }],
     });
-    controller.restoreFundingOutbox([{ key: fundingRequestKey(request), request }]);
+    controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    controller.flushDeferredWork();
     controller.attachTransactionCoordinator(lease);
     for (let pass = 0; pass < 20 && beginWalletOffer.mock.calls.length === 0; pass += 1) {
       await Promise.resolve();
@@ -1019,15 +1336,15 @@ describe('submission delivery lease handoff', () => {
       peerSessionId: '00'.repeat(16),
       providerScope: { provider: 'simulator' as const, identity: 'submission-handoff' },
     };
-    await walletReservationLedger.awaitOwner(owner);
+    await walletOperationService.awaitOwner(owner);
 
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late-funding');
-    expect(walletReservationLedger.entriesFor(owner)).toEqual([]);
+    expect(walletOperationService.entriesFor(owner)).toEqual([]);
     expect(cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
   });
 
   it('retires a fee creation whose recovery id arrives after controller cleanup', async () => {
-    walletReservationLedger.resetForTests();
+    walletOperationService.resetForTests();
     let finishBegin!: (value: { kind: 'pending'; recoveryId: string }) => void;
     const beginWalletOffer = jest.fn(
       () =>
@@ -1066,9 +1383,9 @@ describe('submission delivery lease handoff', () => {
     for (let pass = 0; pass < 30 && reconcileWalletOffer.mock.calls.length === 0; pass += 1) {
       await Promise.resolve();
     }
-    const owner = walletReservationLedger.snapshot()[0]!.owner;
-    await walletReservationLedger.awaitOwner(owner);
-    expect(walletReservationLedger.snapshot()).toEqual([
+    const owner = walletOperationService.snapshot()[0]!.owner;
+    await walletOperationService.awaitOwner(owner);
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({
         stage: 'creating',
         disposition: 'cancel-on-create',
@@ -1081,36 +1398,36 @@ describe('submission delivery lease handoff', () => {
       peerSessionId: owner.peerSessionId,
     });
     expect(provider).not.toBeNull();
-    walletReservationLedger.providerReady(provider!);
-    await walletReservationLedger.awaitOwner(owner);
+    walletOperationService.providerReady(provider!);
+    await walletOperationService.awaitOwner(owner);
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(reconcileWalletOffer).toHaveBeenCalledTimes(2);
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late-fee');
-    expect(walletReservationLedger.entriesFor(owner)).toEqual([]);
+    expect(walletOperationService.entriesFor(owner)).toEqual([]);
     expect(cradle.finalize_submission).not.toHaveBeenCalled();
     expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
     expect(cradle.reject_submission).not.toHaveBeenCalled();
   });
 });
 
-describe('durable wallet reservation ledger', () => {
+describe('durable wallet operation record', () => {
   const owner = {
     installationPlayerId: 'submission-handoff',
     peerSessionId: '00'.repeat(16),
     providerScope: { provider: 'simulator' as const, identity: 'submission-handoff' },
   };
 
-  beforeEach(() => walletReservationLedger.resetForTests());
+  beforeEach(() => walletOperationService.resetForTests());
 
-  it('keeps envelope-only funding idle until an adapter establishes scope', async () => {
+  it('keeps a Rust funding request idle until an adapter establishes scope', async () => {
     const controller = new SessionController(
       null,
       'submission-handoff',
       100n,
       100n,
       makePeerConn([], []),
-      walletReservationLedger,
+      walletOperationService,
     );
     const cradle = makeMockCradle();
     controller.rewardPuzzleHash = '11'.repeat(32);
@@ -1124,11 +1441,9 @@ describe('durable wallet reservation ledger', () => {
     });
 
     expect(() =>
-      controller.restoreFundingOutbox([{ key: fundingRequestKey(request), request }]),
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] })),
     ).not.toThrow();
-    expect(controller.getWasmFields()?.fundingOutbox).toEqual([
-      { key: fundingRequestKey(request), request },
-    ]);
+    controller.flushDeferredWork();
 
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created',
@@ -1143,12 +1458,11 @@ describe('durable wallet reservation ledger', () => {
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
-    expect(controller.getWasmFields()?.fundingOutbox).toEqual([]);
     controller.cleanup();
   });
 
   it('keeps a failed independent write dirty and recovers on a later checkpoint', async () => {
-    const ledger = new WalletReservationCoordinator();
+    const ledger = new WalletOperationService();
     let fail = true;
     const writes: string[][] = [];
     ledger.configurePersistence(async (entries) => {
@@ -1169,7 +1483,7 @@ describe('durable wallet reservation ledger', () => {
     expect(ledger.isDirty()).toBe(false);
   });
 
-  it('reconstructs a missing funding outbox from the scoped creating ledger entry', async () => {
+  it('reconciles a scoped creating operation when Rust re-emits funding intent', async () => {
     const beginWalletOffer = jest.fn();
     const reconcileWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created',
@@ -1184,7 +1498,7 @@ describe('durable wallet reservation ledger', () => {
       fee: '0',
       conditions: [{ opcode: 60n, args: ['launcher'] }],
     });
-    walletReservationLedger.restore([
+    walletOperationService.restore([
       {
         owner,
         purpose: {
@@ -1205,7 +1519,8 @@ describe('durable wallet reservation ledger', () => {
       },
     ]);
     const lease = new ControlledLease();
-    controller.restoreFundingOutbox([]);
+    controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    controller.flushDeferredWork();
     controller.attachTransactionCoordinator(lease);
     await controller.flushPendingWork();
 
@@ -1216,12 +1531,11 @@ describe('durable wallet reservation ledger', () => {
       'SR_ledger_only',
     );
     expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
-    expect(controller.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 
   it('reconciles one persisted Cloud creation across session and WASM replacement', async () => {
     const persistedLedgers: unknown[][] = [];
-    walletReservationLedger.configurePersistence(async (entries) => {
+    walletOperationService.configurePersistence(async (entries) => {
       persistedLedgers.push(structuredClone(entries));
     });
     const beginWalletOffer = jest
@@ -1250,34 +1564,34 @@ describe('durable wallet reservation ledger', () => {
       fee: '0',
       conditions: [{ opcode: 60n, args: ['launcher'] }],
     });
-    const envelopeOutbox = [{ key: fundingRequestKey(request), request }];
     const first = setup(jest.fn(), rpcOverrides);
-    let persistedLedger!: ReturnType<typeof walletReservationLedger.snapshot>;
+    let persistedLedger!: ReturnType<typeof walletOperationService.snapshot>;
     try {
-      first.controller.restoreFundingOutbox(envelopeOutbox);
+      first.controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      first.controller.flushDeferredWork();
       first.controller.attachTransactionCoordinator(new ControlledLease());
       await first.controller.flushPendingWork();
 
       expect(beginWalletOffer).toHaveBeenCalledTimes(1);
       expect(reconcileWalletOffer).toHaveBeenCalledTimes(1);
       expect(first.cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
-      expect(first.controller.getWasmFields()?.fundingOutbox).toEqual(envelopeOutbox);
       expect(persistedLedgers).toContainEqual([
         expect.objectContaining({
           stage: 'creating',
           recoveryId: 'SR_full_reload',
         }),
       ]);
-      persistedLedger = walletReservationLedger.snapshot();
+      persistedLedger = walletOperationService.snapshot();
     } finally {
       first.controller.cleanup();
     }
 
-    walletReservationLedger.resetForTests();
-    walletReservationLedger.restore(persistedLedger);
+    walletOperationService.resetForTests();
+    walletOperationService.restore(persistedLedger);
     const restored = setup(jest.fn(), rpcOverrides);
     try {
-      restored.controller.restoreFundingOutbox(envelopeOutbox);
+      restored.controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      restored.controller.flushDeferredWork();
       restored.controller.attachTransactionCoordinator(new ControlledLease());
       await restored.controller.flushPendingWork();
 
@@ -1293,46 +1607,8 @@ describe('durable wallet reservation ledger', () => {
         'SR_full_reload',
       );
       expect(restored.cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
-      expect(restored.controller.getWasmFields()?.fundingOutbox).toEqual([]);
     } finally {
       restored.controller.cleanup();
-    }
-  });
-
-  it('rejects a restored funding outbox that conflicts with its ledger recovery', () => {
-    const { controller } = setup(jest.fn());
-    const envelopeRequest = canonicalizeFundingRequest({
-      amount: '100',
-      fee: '0',
-      conditions: [{ opcode: 60n, args: ['envelope-launcher'] }],
-    });
-    walletReservationLedger.restore([
-      {
-        owner,
-        purpose: { kind: 'funding', operationId: 'ledger-operation' },
-        stage: 'creating',
-        disposition: 'active',
-        recoveryId: 'SR_conflict',
-        request: {
-          kind: 'funding',
-          canonical: canonicalizeFundingRequest({
-            amount: '101',
-            fee: '0',
-            conditions: [{ opcode: 60n, args: ['ledger-launcher'] }],
-          }),
-        },
-        reason: 'pending',
-      },
-    ]);
-
-    try {
-      expect(() =>
-        controller.restoreFundingOutbox([
-          { key: fundingRequestKey(envelopeRequest), request: envelopeRequest },
-        ]),
-      ).toThrow('Session funding outbox conflicts with wallet ledger recovery request');
-    } finally {
-      controller.cleanup();
     }
   });
 
@@ -1357,8 +1633,9 @@ describe('durable wallet reservation ledger', () => {
     });
     const purpose = { kind: 'funding' as const, operationId: fundingRequestKey(request) };
     try {
-      controller.restoreFundingOutbox([{ key: purpose.operationId, request }]);
-      walletReservationLedger.restore([
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      controller.flushDeferredWork();
+      walletOperationService.restore([
         {
           tradeId: 'trade-restored',
           owner,
@@ -1375,7 +1652,7 @@ describe('durable wallet reservation ledger', () => {
 
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
       finishCancel();
-      await walletReservationLedger.awaitOwner(owner);
+      await walletOperationService.awaitOwner(owner);
       await controller.flushPendingWork();
       expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-restored');
       expect(beginWalletOffer).toHaveBeenCalledTimes(1);
@@ -1391,7 +1668,7 @@ describe('durable wallet reservation ledger', () => {
     const { blockchain, controller } = setup(jest.fn(), { beginWalletOfferCancellation });
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
     try {
-      walletReservationLedger.restore([
+      walletOperationService.restore([
         {
           tradeId: 'trade-reconnect',
           owner,
@@ -1400,17 +1677,17 @@ describe('durable wallet reservation ledger', () => {
           reason: 'wallet-outcome-finalized',
         },
       ]);
-      await walletReservationLedger.awaitOwner(owner);
+      await walletOperationService.awaitOwner(owner);
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      expect(walletReservationLedger.entriesFor(owner)).toHaveLength(1);
+      expect(walletOperationService.entriesFor(owner)).toHaveLength(1);
 
       await Promise.resolve();
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
       beginWalletOfferCancellation.mockResolvedValue({ status: 'cancelled' });
       controller.attachBlockchain(blockchain);
-      await walletReservationLedger.awaitOwner(owner);
+      await walletOperationService.awaitOwner(owner);
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(2);
-      expect(walletReservationLedger.entriesFor(owner)).toEqual([]);
+      expect(walletOperationService.entriesFor(owner)).toEqual([]);
     } finally {
       controller.cleanup();
     }
@@ -1422,7 +1699,7 @@ describe('durable wallet reservation ledger', () => {
       .mockResolvedValue({ status: 'already-terminal', detail: 'offer already spent' });
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
     try {
-      walletReservationLedger.restore([
+      walletOperationService.restore([
         {
           tradeId: 'trade-spent',
           owner,
@@ -1431,8 +1708,8 @@ describe('durable wallet reservation ledger', () => {
           reason: 'wallet-outcome-finalized',
         },
       ]);
-      await walletReservationLedger.awaitOwner(owner);
-      expect(walletReservationLedger.entriesFor(owner)).toEqual([]);
+      await walletOperationService.awaitOwner(owner);
+      expect(walletOperationService.entriesFor(owner)).toEqual([]);
     } finally {
       controller.cleanup();
     }
@@ -1445,7 +1722,7 @@ describe('durable wallet reservation ledger', () => {
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
     const lease = new ControlledLease();
     try {
-      walletReservationLedger.restore([
+      walletOperationService.restore([
         {
           tradeId: 'trade-rejected',
           owner,
@@ -1460,7 +1737,7 @@ describe('durable wallet reservation ledger', () => {
         code: 'WALLET_OFFER_CLEANUP_PENDING',
       });
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      expect(walletReservationLedger.entriesFor(owner)).toEqual([
+      expect(walletOperationService.entriesFor(owner)).toEqual([
         expect.objectContaining({ tradeId: 'trade-rejected', stage: 'cancel-required' }),
       ]);
     } finally {
@@ -1472,7 +1749,7 @@ describe('durable wallet reservation ledger', () => {
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation: undefined });
     const lease = new ControlledLease();
     try {
-      walletReservationLedger.restore([
+      walletOperationService.restore([
         {
           tradeId: 'trade-no-api',
           owner,
@@ -1490,17 +1767,62 @@ describe('durable wallet reservation ledger', () => {
     }
   });
 
+  it('blocks terminal teardown on the durable owner when another wallet scope is connected', async () => {
+    const wrongCancel = jest.fn().mockResolvedValue({ status: 'cancelled' as const });
+    const wrongScope = {
+      provider: 'walletconnect' as const,
+      fingerprint: '999',
+      chainId: 'chia:testnet11',
+    };
+    const { controller } = setup(jest.fn(), {
+      getWalletOfferProvider: () => ({
+        capability: 'best-effort' as const,
+        scope: wrongScope,
+        beginCreation: jest.fn(),
+        cancel: wrongCancel,
+      }),
+    });
+    const lease = new ControlledLease();
+    try {
+      walletOperationService.restore([
+        {
+          tradeId: 'trade-original-wallet',
+          owner,
+          purpose: { kind: 'funding', operationId: 'original-wallet-funding' },
+          stage: 'reserved',
+          reason: 'created-before-wallet-switch',
+        },
+      ]);
+      controller.attachTransactionCoordinator(lease);
+
+      await expect(controller.quiesceForTerminalFinalization()).rejects.toMatchObject({
+        code: 'WALLET_OFFER_CLEANUP_PENDING',
+        entries: [
+          expect.objectContaining({
+            tradeId: 'trade-original-wallet',
+            owner,
+            stage: 'cancel-required',
+          }),
+        ],
+      });
+      expect(wrongCancel).not.toHaveBeenCalled();
+      expect(walletOperationService.entriesFor(owner)).toHaveLength(1);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
   it('allows stale cleanup and a newer active trade for one stable operation', () => {
     const purpose = { kind: 'funding' as const, operationId: 'conflicted-operation' };
-    walletReservationLedger.registerReserved('trade-retry', owner, purpose);
-    walletReservationLedger.routeStaleResult(
+    walletOperationService.registerReserved('trade-retry', owner, purpose);
+    walletOperationService.routeStaleResult(
       'trade-stale',
       owner,
       purpose,
       'stale-createOffer-result',
     );
 
-    expect(walletReservationLedger.entriesFor(owner)).toEqual(
+    expect(walletOperationService.entriesFor(owner)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ tradeId: 'trade-retry', stage: 'reserved' }),
         expect.objectContaining({ tradeId: 'trade-stale', stage: 'cancel-required' }),
@@ -1510,19 +1832,19 @@ describe('durable wallet reservation ledger', () => {
 
   it('scopes terminal obligations by the complete owner tuple', () => {
     const otherPeer = { ...owner, peerSessionId: '11'.repeat(16) };
-    walletReservationLedger.registerReserved('trade-first-session', owner, {
+    walletOperationService.registerReserved('trade-first-session', owner, {
       kind: 'funding',
       operationId: 'same-operation',
     });
-    walletReservationLedger.registerReserved('trade-second-session', otherPeer, {
+    walletOperationService.registerReserved('trade-second-session', otherPeer, {
       kind: 'funding',
       operationId: 'same-operation',
     });
 
-    expect(walletReservationLedger.entriesFor(owner).map((entry) => entry.tradeId)).toEqual([
+    expect(walletOperationService.entriesFor(owner).map((entry) => entry.tradeId)).toEqual([
       'trade-first-session',
     ]);
-    expect(walletReservationLedger.entriesFor(otherPeer).map((entry) => entry.tradeId)).toEqual([
+    expect(walletOperationService.entriesFor(otherPeer).map((entry) => entry.tradeId)).toEqual([
       'trade-second-session',
     ]);
   });

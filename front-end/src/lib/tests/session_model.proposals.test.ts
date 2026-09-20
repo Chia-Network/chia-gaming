@@ -17,7 +17,7 @@ import {
   nextGamePresentationAfterLocalTurn,
   projectGameStatus,
 } from '../session/model';
-import type { SessionSave } from '../../hooks/save';
+import type { SessionSave } from '../session/sessionCache';
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';

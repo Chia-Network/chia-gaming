@@ -1,6 +1,6 @@
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
-import { flushSessionSave, peekSession, saveSession } from '../../hooks/save';
+import { flushSessionSave, peekSession, saveSession } from '../session/sessionCache';
 import type { ProposalAcceptedGroupPayload } from '../../types/ChiaGaming';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/serialize';

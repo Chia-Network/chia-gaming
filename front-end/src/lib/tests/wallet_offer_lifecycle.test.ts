@@ -1,17 +1,17 @@
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
+import { log } from '../../services/log';
+import { WalletOperationService, walletOperation } from '../session/walletOperationService';
 import {
-  WalletReservationCoordinator,
-  walletReservationOperation,
-} from '../session/walletReservationLedger';
-import {
-  encodeWalletReservationRecord,
+  encodeWalletOperationRecord,
   walletProviderScopeKey,
-  walletReservationOperationKey,
-  walletReservationOwnerKey,
-  type WalletReservationOwner,
-} from '../session/walletReservationLedgerSchema';
+  walletOperationKey,
+  walletOperationOwnerKey,
+  type WalletOperationOwner,
+} from '../session/walletOperationStore';
 
-const owner: WalletReservationOwner = {
+jest.mock('../../services/log', () => ({ log: jest.fn() }));
+
+const owner: WalletOperationOwner = {
   installationPlayerId: 'player',
   peerSessionId: 'session',
   providerScope: { provider: 'cloud', walletId: 'Wallet_1' },
@@ -38,9 +38,23 @@ function recoverableProvider(
   };
 }
 
+function recoverableAfterBeginProvider(
+  overrides: Partial<Extract<WalletOfferProvider, { capability: 'recoverable-after-begin' }>> = {},
+): Extract<WalletOfferProvider, { capability: 'recoverable-after-begin' }> {
+  return {
+    capability: 'recoverable-after-begin',
+    scope: owner.providerScope,
+    beginCreation: jest.fn().mockResolvedValue({ kind: 'pending', recoveryId: 'SR_exact' }),
+    reconcileCreation: jest.fn().mockResolvedValue({ kind: 'unavailable', reason: 'disconnected' }),
+    beginCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    reconcileCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    ...overrides,
+  };
+}
+
 describe('provider-neutral wallet offer lifecycle', () => {
   it('persists a Cloud recovery id before reconcile and resumes it without recreating', async () => {
-    const ledger = new WalletReservationCoordinator();
+    const ledger = new WalletOperationService();
     const writes: unknown[][] = [];
     ledger.configurePersistence(async (entries) => {
       writes.push(structuredClone(entries));
@@ -59,7 +73,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       reconcileCreation: reconcile,
     });
     ledger.attachProvider(provider);
-    const operation = walletReservationOperation(ledger, owner, fundingPurpose);
+    const operation = walletOperation(ledger, owner, fundingPurpose);
 
     await expect(operation.createFunding(fundingRequest)).resolves.toEqual({
       kind: 'unavailable',
@@ -76,11 +90,11 @@ describe('provider-neutral wallet offer lifecycle', () => {
       }),
     ]);
 
-    const restored = new WalletReservationCoordinator();
+    const restored = new WalletOperationService();
     restored.restore(ledger.snapshot());
     restored.attachProvider(provider);
     await expect(
-      walletReservationOperation(restored, owner, fundingPurpose).createFunding(fundingRequest),
+      walletOperation(restored, owner, fundingPurpose).createFunding(fundingRequest),
     ).resolves.toEqual({
       kind: 'created',
       material: { kind: 'offer', offer: 'offer1canonical' },
@@ -99,7 +113,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
   });
 
   it('quarantines a recovery owned by another provider account', async () => {
-    const ledger = new WalletReservationCoordinator();
+    const ledger = new WalletOperationService();
     ledger.restore([
       {
         owner,
@@ -121,7 +135,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     ledger.attachProvider(wrongProvider);
 
     await expect(
-      walletReservationOperation(ledger, owner, fundingPurpose).createFunding(fundingRequest),
+      walletOperation(ledger, owner, fundingPurpose).createFunding(fundingRequest),
     ).resolves.toEqual({
       kind: 'unavailable',
       reason: expect.stringMatching(/original wallet account/i),
@@ -132,7 +146,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
   });
 
   it('matches equivalent provider scopes independently of object property order', async () => {
-    const scopedOwner: WalletReservationOwner = {
+    const scopedOwner: WalletOperationOwner = {
       installationPlayerId: 'player',
       peerSessionId: 'session',
       providerScope: {
@@ -141,7 +155,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
         chainId: 'chia:testnet11',
       },
     };
-    const ledger = new WalletReservationCoordinator();
+    const ledger = new WalletOperationService();
     ledger.restore([
       {
         owner: scopedOwner,
@@ -170,13 +184,13 @@ describe('provider-neutral wallet offer lifecycle', () => {
 
     expect(ledger.getScopeStatus('player', 'session')).toEqual({ kind: 'ready' });
     await expect(
-      walletReservationOperation(ledger, scopedOwner, fundingPurpose).createFunding(fundingRequest),
+      walletOperation(ledger, scopedOwner, fundingPurpose).createFunding(fundingRequest),
     ).resolves.toMatchObject({ kind: 'created', tradeId: 'trade-ordered' });
     expect(reconcile).toHaveBeenCalledTimes(1);
   });
 
   it('does not match an unavailable provider scope', async () => {
-    const ledger = new WalletReservationCoordinator();
+    const ledger = new WalletOperationService();
     ledger.restore([
       {
         owner,
@@ -200,7 +214,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .fn()
       .mockResolvedValue({ status: 'rejected', detail: 'terminal cancellation failure' });
     const provider = recoverableProvider({ beginCancellation, reconcileCancellation });
-    const coordinator = new WalletReservationCoordinator();
+    const coordinator = new WalletOperationService();
     coordinator.attachProvider(provider);
     coordinator.registerReserved('Offer_cancel', owner, fundingPurpose);
     coordinator.requireCancellation('Offer_cancel', 'retired');
@@ -223,7 +237,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .fn()
       .mockResolvedValue({ status: 'unavailable', detail: 'temporarily missing' });
     const provider = recoverableProvider({ beginCancellation, reconcileCancellation });
-    const coordinator = new WalletReservationCoordinator();
+    const coordinator = new WalletOperationService();
     coordinator.attachProvider(provider);
     coordinator.registerReserved('Offer_cancel', owner, fundingPurpose);
     coordinator.requireCancellation('Offer_cancel', 'retired');
@@ -252,7 +266,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .mockRejectedValueOnce(new Error('wallet disconnected'))
       .mockResolvedValueOnce({ status: 'cancelled', detail: 'SUBMITTED' });
     const provider = recoverableProvider({ beginCancellation, reconcileCancellation });
-    const coordinator = new WalletReservationCoordinator();
+    const coordinator = new WalletOperationService();
     coordinator.attachProvider(provider);
     coordinator.registerReserved('Offer_cancel', owner, fundingPurpose);
     coordinator.requireCancellation('Offer_cancel', 'retired');
@@ -287,7 +301,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
         .mockResolvedValue({ status: 'pending', recoveryId: 'SR_cancel_exact' }),
       reconcileCancellation: jest.fn(() => reconcile),
     });
-    const coordinator = new WalletReservationCoordinator();
+    const coordinator = new WalletOperationService();
     coordinator.attachProvider(provider);
     coordinator.registerReserved('Offer_cancel', owner, fundingPurpose);
     coordinator.requireCancellation('Offer_cancel', 'first-retirement');
@@ -304,13 +318,13 @@ describe('provider-neutral wallet offer lifecycle', () => {
       }),
     ]);
     expect(snapshot[0]).not.toHaveProperty('recoveryId');
-    expect(() => encodeWalletReservationRecord(snapshot)).not.toThrow();
+    expect(() => encodeWalletOperationRecord(snapshot)).not.toThrow();
     finishReconcile();
     await coordinator.awaitOwner(owner);
   });
 
   it('uses collision-free keys for external scope and operation strings', () => {
-    const firstOwner: WalletReservationOwner = {
+    const firstOwner: WalletOperationOwner = {
       installationPlayerId: 'player\0peer',
       peerSessionId: 'session',
       providerScope: {
@@ -319,7 +333,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
         chainId: 'id',
       },
     };
-    const secondOwner: WalletReservationOwner = {
+    const secondOwner: WalletOperationOwner = {
       installationPlayerId: 'player',
       peerSessionId: 'peer\0session',
       providerScope: {
@@ -332,22 +346,22 @@ describe('provider-neutral wallet offer lifecycle', () => {
     expect(walletProviderScopeKey(firstOwner.providerScope)).not.toBe(
       walletProviderScopeKey(secondOwner.providerScope),
     );
-    expect(walletReservationOwnerKey(firstOwner)).not.toBe(walletReservationOwnerKey(secondOwner));
+    expect(walletOperationOwnerKey(firstOwner)).not.toBe(walletOperationOwnerKey(secondOwner));
     expect(
-      walletReservationOperationKey(firstOwner, {
+      walletOperationKey(firstOwner, {
         kind: 'fee',
         operationId: 'operation\0suffix',
       }),
     ).not.toBe(
-      walletReservationOperationKey(secondOwner, {
+      walletOperationKey(secondOwner, {
         kind: 'fee',
         operationId: 'peer\0operation\0suffix',
       }),
     );
   });
 
-  it('uses best-effort replacement when a provider has no reconcile capability', async () => {
-    const ledger = new WalletReservationCoordinator();
+  it('starts one best-effort replacement on a later readiness epoch', async () => {
+    const ledger = new WalletOperationService();
     const begin = jest
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'transport lost' })
@@ -363,12 +377,416 @@ describe('provider-neutral wallet offer lifecycle', () => {
       cancel: jest.fn().mockResolvedValue({ status: 'cancelled' }),
     };
     ledger.attachProvider(provider);
-    const operation = walletReservationOperation(ledger, owner, fundingPurpose);
+    const operation = walletOperation(ledger, owner, fundingPurpose);
 
     await operation.createFunding(fundingRequest);
     await operation.createFunding(fundingRequest);
+    ledger.providerReady(provider);
+    await Promise.resolve();
+    expect(begin).toHaveBeenCalledTimes(1);
+
+    ledger.detachProvider(provider);
+    ledger.attachProvider(provider);
+    await ledger.awaitOwner(owner);
+    await expect(operation.createFunding(fundingRequest)).resolves.toMatchObject({
+      kind: 'created',
+      tradeId: 'trade-retry',
+    });
 
     expect(begin).toHaveBeenCalledTimes(2);
+  });
+
+  it('persists WalletConnect uncertainty and deduplicates readiness epochs across reload', async () => {
+    const scopedOwner: WalletOperationOwner = {
+      ...owner,
+      providerScope: {
+        provider: 'walletconnect',
+        fingerprint: '123',
+        chainId: 'chia:testnet11',
+      },
+    };
+    const begin = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'unavailable', reason: 'response lost' })
+      .mockResolvedValueOnce({
+        kind: 'created',
+        material: { kind: 'offer', offer: 'offer1replacement' },
+        tradeId: 'trade-replacement',
+      });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: scopedOwner.providerScope,
+      beginCreation: begin,
+      cancel: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    const first = new WalletOperationService();
+    first.attachProvider(provider);
+    await walletOperation(first, scopedOwner, fundingPurpose).createFunding(fundingRequest);
+    expect(first.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'best-effort-uncertain',
+        generation: 0n,
+        lastAttemptEpoch: 1n,
+      }),
+    ]);
+
+    const restored = new WalletOperationService();
+    restored.restore(first.snapshot());
+    restored.attachProvider(provider);
+    restored.providerReady(provider);
+    await Promise.resolve();
+    expect(begin).toHaveBeenCalledTimes(1);
+
+    restored.detachProvider(provider);
+    restored.attachProvider(provider);
+    await restored.awaitOwner(scopedOwner);
+    restored.providerReady(provider);
+    await restored.awaitOwner(scopedOwner);
+    expect(begin).toHaveBeenCalledTimes(2);
+  });
+
+  it('rebases a restored high readiness epoch and retries exactly once per new edge', async () => {
+    const scopedOwner: WalletOperationOwner = {
+      ...owner,
+      providerScope: {
+        provider: 'walletconnect',
+        fingerprint: '123',
+        chainId: 'chia:testnet11',
+      },
+    };
+    const begin = jest.fn().mockResolvedValue({ kind: 'unavailable', reason: 'still offline' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: scopedOwner.providerScope,
+      beginCreation: begin,
+      cancel: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    const restored = new WalletOperationService();
+    restored.restore([
+      {
+        owner: scopedOwner,
+        purpose: fundingPurpose,
+        stage: 'best-effort-uncertain',
+        disposition: 'active',
+        request: { kind: 'funding', canonical: fundingRequest },
+        generation: 9n,
+        lastAttemptEpoch: 99n,
+        reason: 'walletconnect-response-unavailable',
+        orphanRisk: 'pre-id-response-lost',
+      },
+    ]);
+
+    restored.attachProvider(provider);
+    await restored.awaitOwner(scopedOwner);
+    expect(begin).toHaveBeenCalledTimes(1);
+    expect(restored.snapshot()).toEqual([
+      expect.objectContaining({ generation: 10n, lastAttemptEpoch: 1n }),
+    ]);
+
+    restored.providerReady(provider);
+    await restored.awaitOwner(scopedOwner);
+    expect(begin).toHaveBeenCalledTimes(1);
+
+    restored.providerReconnectReady(provider);
+    await restored.awaitOwner(scopedOwner);
+    expect(begin).toHaveBeenCalledTimes(2);
+  });
+
+  it('coalesces readiness edges during an in-flight uncertain creation retry', async () => {
+    let finishFirst!: (value: { kind: 'unavailable'; reason: string }) => void;
+    const first = new Promise<{ kind: 'unavailable'; reason: string }>((resolve) => {
+      finishFirst = resolve;
+    });
+    const begin = jest
+      .fn()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValue({ kind: 'unavailable', reason: 'still unavailable' });
+    const provider = recoverableAfterBeginProvider({ beginCreation: begin });
+    const service = new WalletOperationService();
+    service.restore([
+      {
+        owner,
+        purpose: fundingPurpose,
+        stage: 'best-effort-uncertain',
+        disposition: 'active',
+        request: { kind: 'funding', canonical: fundingRequest },
+        generation: 9n,
+        lastAttemptEpoch: 99n,
+        reason: 'cloud-response-unavailable',
+        orphanRisk: 'pre-id-response-lost',
+      },
+    ]);
+
+    service.attachProvider(provider);
+    for (let turn = 0; turn < 10 && begin.mock.calls.length === 0; turn += 1) {
+      await Promise.resolve();
+    }
+    expect(begin).toHaveBeenCalledTimes(1);
+
+    service.providerReconnectReady(provider);
+    service.providerReconnectReady(provider);
+    expect(begin).toHaveBeenCalledTimes(1);
+    finishFirst({ kind: 'unavailable', reason: 'first retry unavailable' });
+    await service.awaitOwner(owner);
+
+    expect(begin).toHaveBeenCalledTimes(2);
+    expect(service.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'best-effort-uncertain',
+        generation: 11n,
+        lastAttemptEpoch: 3n,
+      }),
+    ]);
+    service.providerReady(provider);
+    await service.awaitOwner(owner);
+    expect(begin).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats Cloud loss before a recovery id as uncertainty, then resumes exact recovery', async () => {
+    const begin = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'unavailable', reason: 'accepted response lost' })
+      .mockResolvedValueOnce({ kind: 'pending', recoveryId: 'SR_after_loss' });
+    const reconcile = jest.fn().mockResolvedValue({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer1afterloss' },
+      tradeId: 'Offer_after_loss',
+    });
+    const provider = recoverableAfterBeginProvider({
+      beginCreation: begin,
+      reconcileCreation: reconcile,
+    });
+    const first = new WalletOperationService();
+    first.attachProvider(provider);
+
+    await expect(
+      walletOperation(first, owner, fundingPurpose).createFunding(fundingRequest),
+    ).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'accepted response lost',
+    });
+    expect(first.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'best-effort-uncertain',
+        reason: 'cloud-response-unavailable',
+        orphanRisk: 'pre-id-response-lost',
+      }),
+    ]);
+
+    const restored = new WalletOperationService();
+    restored.restore(first.snapshot());
+    restored.attachProvider(provider);
+    await restored.awaitOwner(owner);
+
+    expect(begin).toHaveBeenCalledTimes(2);
+    expect(reconcile).toHaveBeenCalledWith(
+      { owner, purpose: fundingPurpose },
+      expect.any(Object),
+      'SR_after_loss',
+    );
+    expect(restored.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'reserved',
+        tradeId: 'Offer_after_loss',
+        orphanRisk: 'pre-id-response-lost',
+      }),
+    ]);
+    await expect(
+      walletOperation(restored, owner, fundingPurpose).createFunding(fundingRequest),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        kind: 'created',
+        warning: expect.stringMatching(/prior external reservation may still exist/i),
+      }),
+    );
+  });
+
+  it('persists Cloud cancellation uncertainty before retrying on a later readiness edge', async () => {
+    const beginCancellation = jest
+      .fn()
+      .mockResolvedValueOnce({ status: 'unavailable', detail: 'accepted response lost' })
+      .mockResolvedValueOnce({ status: 'pending', recoveryId: 'SR_cancel_after_loss' });
+    const reconcileCancellation = jest
+      .fn()
+      .mockResolvedValue({ status: 'cancelled', detail: 'SUBMITTED' });
+    const provider = recoverableAfterBeginProvider({
+      beginCancellation,
+      reconcileCancellation,
+    });
+    const service = new WalletOperationService();
+    service.attachProvider(provider);
+    service.registerReserved('Offer_cancel_after_loss', owner, fundingPurpose);
+    service.requireCancellation('Offer_cancel_after_loss', 'retired');
+    await service.awaitOwner(owner);
+
+    expect(service.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'best-effort-cancellation-uncertain',
+        lastAttemptEpoch: 1n,
+        reason: 'cloud-cancellation-response-lost-orphan-risk',
+      }),
+    ]);
+    service.providerReady(provider);
+    await service.awaitOwner(owner);
+    expect(beginCancellation).toHaveBeenCalledTimes(1);
+
+    service.providerReconnectReady(provider);
+    await service.awaitOwner(owner);
+    expect(beginCancellation).toHaveBeenCalledTimes(2);
+    expect(reconcileCancellation).toHaveBeenCalledWith(
+      'Offer_cancel_after_loss',
+      'SR_cancel_after_loss',
+    );
+    expect(service.snapshot()).toEqual([]);
+  });
+
+  it('retries every restored uncertain cancellation trade once per new readiness edge', async () => {
+    const beginCancellation = jest
+      .fn()
+      .mockResolvedValue({ status: 'unavailable', detail: 'still unavailable' });
+    const provider = recoverableAfterBeginProvider({ beginCancellation });
+    const service = new WalletOperationService();
+    service.restore(
+      ['Offer_uncertain_a', 'Offer_uncertain_b'].map((tradeId) => ({
+        tradeId,
+        owner,
+        purpose: fundingPurpose,
+        stage: 'best-effort-cancellation-uncertain' as const,
+        generation: 7n,
+        lastAttemptEpoch: 99n,
+        reason: 'cloud-cancellation-response-lost-orphan-risk',
+      })),
+    );
+
+    service.attachProvider(provider);
+    await service.awaitOwner(owner);
+    expect(beginCancellation.mock.calls.map(([tradeId]) => tradeId).sort()).toEqual([
+      'Offer_uncertain_a',
+      'Offer_uncertain_b',
+    ]);
+    expect(service.snapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tradeId: 'Offer_uncertain_a',
+          generation: 8n,
+          lastAttemptEpoch: 1n,
+        }),
+        expect.objectContaining({
+          tradeId: 'Offer_uncertain_b',
+          generation: 8n,
+          lastAttemptEpoch: 1n,
+        }),
+      ]),
+    );
+
+    service.providerReady(provider);
+    await service.awaitOwner(owner);
+    expect(beginCancellation).toHaveBeenCalledTimes(2);
+
+    service.providerReconnectReady(provider);
+    await service.awaitOwner(owner);
+    expect(beginCancellation).toHaveBeenCalledTimes(4);
+  });
+
+  it('coalesces readiness edges during an in-flight uncertain cancellation retry', async () => {
+    let finishFirst!: (value: { status: 'unavailable'; detail: string }) => void;
+    const first = new Promise<{ status: 'unavailable'; detail: string }>((resolve) => {
+      finishFirst = resolve;
+    });
+    const beginCancellation = jest
+      .fn()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValue({ status: 'unavailable', detail: 'still unavailable' });
+    const provider = recoverableAfterBeginProvider({ beginCancellation });
+    const service = new WalletOperationService();
+    service.restore([
+      {
+        tradeId: 'Offer_deferred_cancel',
+        owner,
+        purpose: fundingPurpose,
+        stage: 'best-effort-cancellation-uncertain',
+        generation: 7n,
+        lastAttemptEpoch: 99n,
+        reason: 'cloud-cancellation-response-lost-orphan-risk',
+      },
+    ]);
+
+    service.attachProvider(provider);
+    for (let turn = 0; turn < 10 && beginCancellation.mock.calls.length === 0; turn += 1) {
+      await Promise.resolve();
+    }
+    expect(beginCancellation).toHaveBeenCalledTimes(1);
+
+    service.providerReconnectReady(provider);
+    service.providerReconnectReady(provider);
+    expect(beginCancellation).toHaveBeenCalledTimes(1);
+    finishFirst({ status: 'unavailable', detail: 'first retry unavailable' });
+    await service.awaitOwner(owner);
+
+    expect(beginCancellation).toHaveBeenCalledTimes(2);
+    expect(service.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'best-effort-cancellation-uncertain',
+        generation: 9n,
+        lastAttemptEpoch: 3n,
+      }),
+    ]);
+    service.providerReady(provider);
+    await service.awaitOwner(owner);
+    expect(beginCancellation).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves Cloud orphan provenance through post-id unavailability and reload', async () => {
+    const begin = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'unavailable', reason: 'accepted response lost' })
+      .mockResolvedValueOnce({ kind: 'pending', recoveryId: 'SR_persisted_after_loss' });
+    const reconcile = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'unavailable', reason: 'approval still pending' })
+      .mockResolvedValueOnce({
+        kind: 'created',
+        material: { kind: 'offer', offer: 'offer1eventual' },
+        tradeId: 'Offer_eventual',
+      });
+    const provider = recoverableAfterBeginProvider({
+      beginCreation: begin,
+      reconcileCreation: reconcile,
+    });
+    const first = new WalletOperationService();
+    first.attachProvider(provider);
+    await walletOperation(first, owner, fundingPurpose).createFunding(fundingRequest);
+    first.providerReconnectReady(provider);
+    await first.awaitOwner(owner);
+    expect(first.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'creating',
+        recoveryId: 'SR_persisted_after_loss',
+        orphanRisk: 'pre-id-response-lost',
+      }),
+    ]);
+
+    const restored = new WalletOperationService();
+    restored.restore(first.snapshot());
+    restored.attachProvider(provider);
+    await expect(
+      walletOperation(restored, owner, fundingPurpose).createFunding(fundingRequest),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        kind: 'created',
+        tradeId: 'Offer_eventual',
+        warning: expect.stringMatching(/prior external reservation may still exist/i),
+      }),
+    );
+    expect(begin).toHaveBeenCalledTimes(2);
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    expect(restored.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'reserved',
+        tradeId: 'Offer_eventual',
+        orphanRisk: 'pre-id-response-lost',
+      }),
+    ]);
   });
 
   it('reconciles a retired creation and cancels its late exact trade', async () => {
@@ -384,9 +802,9 @@ describe('provider-neutral wallet offer lifecycle', () => {
         }),
       beginCancellation: cancel,
     });
-    const coordinator = new WalletReservationCoordinator();
+    const coordinator = new WalletOperationService();
     coordinator.attachProvider(provider);
-    const operation = walletReservationOperation(coordinator, owner, fundingPurpose);
+    const operation = walletOperation(coordinator, owner, fundingPurpose);
     await operation.createFunding(fundingRequest);
     coordinator.promoteReservedForOwner(owner, 'controller-retired');
     expect(coordinator.snapshot()).toEqual([
@@ -401,6 +819,41 @@ describe('provider-neutral wallet offer lifecycle', () => {
     expect(coordinator.snapshot()).toEqual([]);
   });
 
+  it('warns when restored retired exact recovery consumes orphan-risk provenance', async () => {
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const provider = recoverableAfterBeginProvider({
+      reconcileCreation: jest.fn().mockResolvedValue({
+        kind: 'created',
+        material: { kind: 'offer', offer: 'offer1retiredorphan' },
+        tradeId: 'Offer_retired_orphan',
+      }),
+      beginCancellation: cancel,
+    });
+    const service = new WalletOperationService();
+    service.restore([
+      {
+        owner,
+        purpose: fundingPurpose,
+        stage: 'creating',
+        disposition: 'cancel-on-create',
+        recoveryId: 'SR_retired_orphan',
+        request: { kind: 'funding', canonical: fundingRequest },
+        reason: 'approval-pending',
+        orphanRisk: 'pre-id-response-lost',
+      },
+    ]);
+    jest.mocked(log).mockClear();
+
+    service.attachProvider(provider);
+    await service.awaitOwner(owner);
+
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(/prior external reservation may still exist/i),
+    );
+    expect(cancel).toHaveBeenCalledWith('Offer_retired_orphan');
+    expect(service.snapshot()).toEqual([]);
+  });
+
   it('marks a recovery id cancel-on-create when retirement wins before begin returns', async () => {
     let finishBegin!: (value: { kind: 'pending'; recoveryId: string }) => void;
     const begin = new Promise<{ kind: 'pending'; recoveryId: string }>((resolve) => {
@@ -410,9 +863,9 @@ describe('provider-neutral wallet offer lifecycle', () => {
       beginCreation: jest.fn(() => begin),
       reconcileCreation: jest.fn().mockResolvedValue({ kind: 'unavailable', reason: 'pending' }),
     });
-    const coordinator = new WalletReservationCoordinator();
+    const coordinator = new WalletOperationService();
     coordinator.attachProvider(provider);
-    const operation = walletReservationOperation(coordinator, owner, fundingPurpose);
+    const operation = walletOperation(coordinator, owner, fundingPurpose);
 
     const creation = operation.createFunding(fundingRequest);
     operation.retire('controller-retired-before-recovery-id');
@@ -429,7 +882,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
   });
 
   it('retires only reserved funding and fee entries while preserving replay retention', () => {
-    const ledger = new WalletReservationCoordinator();
+    const ledger = new WalletOperationService();
     ledger.registerReserved('funding', owner, fundingPurpose);
     ledger.registerReserved('fee-cancel', owner, { kind: 'fee', operationId: 'fee-a' });
     ledger.registerReserved('fee-replay', owner, { kind: 'fee', operationId: 'fee-b' });
@@ -444,5 +897,45 @@ describe('provider-neutral wallet offer lifecycle', () => {
         expect.objectContaining({ tradeId: 'fee-replay', stage: 'retained-for-replay' }),
       ]),
     );
+  });
+
+  it('retires the whole session before terminal checks and preserves Rust replay ownership', async () => {
+    const reconcile = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'unavailable', reason: 'offline' })
+      .mockResolvedValueOnce({
+        kind: 'created',
+        material: { kind: 'offer', offer: 'offer1terminal' },
+        tradeId: 'terminal-late-trade',
+      });
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const provider = recoverableProvider({
+      reconcileCreation: reconcile,
+      beginCancellation: cancel,
+    });
+    const service = new WalletOperationService();
+    service.attachProvider(provider);
+    await walletOperation(service, owner, fundingPurpose).createFunding(fundingRequest);
+    service.registerReserved('fee-replay', owner, {
+      kind: 'fee',
+      operationId: 'submission-retained',
+    });
+    service.retainForReplay('fee-replay');
+
+    service.retireSession('player', 'session', 'session-terminal');
+    expect(service.snapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ stage: 'creating', disposition: 'cancel-on-create' }),
+        expect.objectContaining({ stage: 'retained-for-replay', tradeId: 'fee-replay' }),
+      ]),
+    );
+
+    service.detachProvider(provider);
+    service.attachProvider(provider);
+    await service.awaitOwner(owner);
+    expect(cancel).toHaveBeenCalledWith('terminal-late-trade');
+    expect(service.snapshot()).toEqual([
+      expect.objectContaining({ stage: 'retained-for-replay', tradeId: 'fee-replay' }),
+    ]);
   });
 });

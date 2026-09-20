@@ -52,7 +52,7 @@ owner in `localStorage` but identifies itself from `sessionStorage`, so a quit
 orphans it and the next launch would read a dead run as a live peer and open the
 "Another tab is active" dialog on every start. `requestSingleInstanceLock` plus a
 single window means a foreign owner here is always stale, so
-`front-end/src/hooks/save.ts` treats it as no peer at all.
+`front-end/src/lib/session/sessionCache.ts` treats it as no peer at all.
 
 Because wallets display the dapp `url` to the user and fetch its icon over the
 public internet, `front-end/src/util/walletConnectMetadata.ts` substitutes a
@@ -263,11 +263,6 @@ and codesign rejects that as "detritus".
 - **Session state at rest is unchanged** — the bencodex session blob still uses
   the front-end's own IndexedDB obfuscation. Electron's `safeStorage` could key
   it to the OS keychain, which needs the front-end to opt in.
-- **The orphaned tab lease is only suppressed, not released.** `clearLease()` is
-  exported from `front-end/src/hooks/save.ts` and still never called, so the dead
-  run's owner id stays in `localStorage` until the next `claimLease()` overwrites
-  it. That is harmless here because the desktop build ignores a foreign owner
-  outright, but the web build still prompts after a tab is closed and reopened.
 - **No code signing, notarization, or auto-update** is configured.
 - **Fuses are only exercised in packaged builds**, so `pnpm start` will not
   catch a fuse-related regression.

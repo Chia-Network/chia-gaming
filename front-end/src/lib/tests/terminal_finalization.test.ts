@@ -28,7 +28,7 @@ import {
   saveSession,
   saveTerminalSession,
   stageTerminalSession,
-} from '../../hooks/save';
+} from '../session/sessionCache';
 import { createSessionModel } from '../session/model';
 import type { SessionModel } from '../session/types';
 import { readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';

@@ -229,7 +229,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.walletOfferProvider.scope.identity !== identity
     ) {
       this.walletOfferProvider = {
-        capability: 'best-effort',
+        capability: 'terminal',
         scope: { provider: 'simulator', identity },
         beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
         cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),

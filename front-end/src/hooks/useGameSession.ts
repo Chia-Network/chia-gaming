@@ -33,8 +33,8 @@ import type { GameSessionParams, PeerConnectionResult } from '../types/ChiaGamin
 import type { BlockchainPoller } from './BlockchainPoller';
 import { getOrCreateSessionController, initStarted, setInitStarted } from './blobSingleton';
 import type { SessionController } from './SessionController';
-import type { SessionSave } from './save';
-import { getDefaultFee, getPlayerId } from './save';
+import type { SessionSave } from '../lib/session/sessionCache';
+import { getDefaultFee, getPlayerId } from '../lib/session/sessionCache';
 
 export type { GameTerminalInfo, QueuedNotification } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';

@@ -13,15 +13,9 @@ import {
   checkLease,
   isLeaseConflict,
   releaseLeaseIfOwner,
-} from '../../hooks/save';
-import {
-  _holdNextStorageMutationForTests,
-  SESSION_DB_NAME,
-  StorageAuthorityLostError,
-  writeRejectionTombstone,
-  writeSessionAndWalletReservationRecords,
-} from '../session/indexedDb';
-import { walletReservationLedger } from '../session/walletReservationLedger';
+} from '../session/sessionCache';
+import { SESSION_DB_NAME, StorageAuthorityLostError } from '../session/indexedDb';
+import { walletOperationService } from '../session/walletOperationService';
 import { liveSave } from './session_save_envelope.fixtures';
 import {
   startPendingWalletConnectWipe,
@@ -36,6 +30,7 @@ import {
   setTestGlobal,
   testIndexedDb,
 } from './save.harness';
+import { storageCoordinator } from '../session/storageCoordinator';
 
 describe('tab lease', () => {
   it('detects a conflicting active-tab owner', async () => {
@@ -130,7 +125,7 @@ describe('hard reset', () => {
   });
 
   it('invalidates a held checkpoint before reset and cannot recreate storage afterward', async () => {
-    walletReservationLedger.registerReserved(
+    walletOperationService.registerReserved(
       'pre-reset-ledger',
       {
         installationPlayerId: 'installation',
@@ -141,34 +136,38 @@ describe('hard reset', () => {
     );
     saveLiveFields(sampleSession);
     await flushSessionSave();
-    await writeRejectionTombstone({
-      kind: 'inbound-receipt',
-      peerId: 'pre-reset-peer',
-      sessionId: 'ab'.repeat(16),
-      messageNumber: 1n,
-      remoteNumber: 1n,
-      unackedMessages: [],
-      createdAt: Date.now(),
-    });
+    await storageCoordinator.persist(
+      storageCoordinator.writeRejection({
+        kind: 'inbound-receipt',
+        peerId: 'pre-reset-peer',
+        sessionId: 'ab'.repeat(16),
+        messageNumber: 1n,
+        remoteNumber: 1n,
+        unackedMessages: [],
+        createdAt: Date.now(),
+      }),
+    );
 
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    _holdNextStorageMutationForTests(held);
-    const staleCheckpoint = writeSessionAndWalletReservationRecords(liveSave(sampleSession), [
-      {
-        tradeId: 'stale-reset-ledger',
-        owner: {
-          installationPlayerId: 'installation',
-          peerSessionId: 'stale-peer',
-          providerScope: { provider: 'simulator', identity: 'installation' },
+    storageCoordinator.holdNextMutationForTests(held);
+    const staleCheckpoint = storageCoordinator.persist(
+      storageCoordinator.checkpoint(liveSave(sampleSession), [
+        {
+          tradeId: 'stale-reset-ledger',
+          owner: {
+            installationPlayerId: 'installation',
+            peerSessionId: 'stale-peer',
+            providerScope: { provider: 'simulator', identity: 'installation' },
+          },
+          purpose: { kind: 'funding', operationId: 'stale-operation' },
+          stage: 'reserved',
+          reason: 'held-before-hard-reset',
         },
-        purpose: { kind: 'funding', operationId: 'stale-operation' },
-        stage: 'reserved',
-        reason: 'held-before-hard-reset',
-      },
-    ]);
+      ]),
+    );
 
     const reset = hardReset();
     release();
@@ -180,7 +179,7 @@ describe('hard reset', () => {
     ).databases();
     expect(databases.map((database) => database.name)).not.toContain(SESSION_DB_NAME);
     expect(loadState().phase).toBe('preferences');
-    expect(walletReservationLedger.snapshot()).toEqual([]);
+    expect(walletOperationService.snapshot()).toEqual([]);
   });
 
   it('deletes only owned IndexedDB databases returned by the browser', async () => {

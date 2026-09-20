@@ -1,5 +1,4 @@
 import type { ChannelStatusPayload, CoinOfInterestEntry } from '../../types/ChiaGaming';
-import type { CanonicalFundingRequest } from './fundingRequest';
 import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
@@ -11,7 +10,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 31n;
+export const SESSION_SAVE_VERSION = 32n;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
@@ -78,7 +77,6 @@ export interface SessionLiveSave extends SessionTransportSave {
   gameSessionSchemaVersion: bigint;
   rewardPuzzleHash: string;
   durabilityWarning?: string;
-  fundingOutbox?: Array<{ key: string; request: CanonicalFundingRequest }>;
 }
 
 export interface SavedGameInstance {

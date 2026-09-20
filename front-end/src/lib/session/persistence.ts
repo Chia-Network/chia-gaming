@@ -67,7 +67,6 @@ import {
   requireUniqueIds,
   parseStringArray,
 } from './persistencePrimitives';
-import { decodeCanonicalFundingRequest, fundingRequestKey } from './fundingRequest';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
@@ -121,11 +120,9 @@ const LIVE_FIELDS = new Set([
   'gameSessionSchemaVersion',
   'rewardPuzzleHash',
   'durabilityWarning',
-  'fundingOutbox',
 ]);
 const TERMINAL_HANDOFF_FIELDS = new Set(['id', 'message', 'msgno', 'sent', 'acknowledged']);
 const UNACKED_MESSAGE_FIELDS = new Set(['msgno', 'msg']);
-const FUNDING_OUTBOX_FIELDS = new Set(['key', 'request']);
 const TERMINAL_FIELDS = new Set(['iStarted', 'coinsOfInterest', 'myAlias', 'opponentAlias']);
 
 const PRESENTATION_FIELDS = new Set([
@@ -329,10 +326,6 @@ function parseTransport(value: unknown): SessionTransportSave {
 function parseLive(value: unknown): LiveSessionSave['live'] {
   const fields = requireRecord(value, 'live');
   requireExactKeys(fields, LIVE_FIELDS, 'live');
-  const fundingOutbox = fields.fundingOutbox;
-  if (fundingOutbox !== undefined && !Array.isArray(fundingOutbox)) {
-    throw new Error('Garbled save: invalid live.fundingOutbox');
-  }
   const live: LiveSessionSave['live'] = {
     ...parseTransportFields(fields, 'live'),
     serializedGameSession:
@@ -347,25 +340,6 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
     ),
     rewardPuzzleHash: requireString(fields.rewardPuzzleHash, 'live.rewardPuzzleHash'),
     durabilityWarning: optionalString(fields.durabilityWarning, 'live.durabilityWarning', true),
-    ...(fundingOutbox === undefined
-      ? {}
-      : {
-          fundingOutbox: fundingOutbox.map((entry, index) => {
-            const record = requireRecord(entry, `live.fundingOutbox[${index}]`);
-            requireExactKeys(record, FUNDING_OUTBOX_FIELDS, `live.fundingOutbox[${index}]`);
-            const key = requireString(record.key, `live.fundingOutbox[${index}].key`);
-            const request = decodeCanonicalFundingRequest(
-              record.request,
-              `live.fundingOutbox[${index}].request`,
-            );
-            if (key !== fundingRequestKey(request)) {
-              throw new Error(
-                `Garbled save: live.fundingOutbox[${index}] key does not match its request`,
-              );
-            }
-            return { key, request };
-          }),
-        }),
   };
   validateLive(live);
   return live;
@@ -617,8 +591,8 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   if (envelope.version !== SESSION_SAVE_ENVELOPE_VERSION) {
     throw new Error(`Garbled save: unsupported version ${String(envelope.version)}`);
   }
-  if (envelope.walletReservationLedger !== undefined) {
-    throw new Error('Garbled save: walletReservationLedger is not session-owned');
+  if (envelope.walletOperationService !== undefined) {
+    throw new Error('Garbled save: walletOperationService is not session-owned');
   }
   const identity = parseIdentity(envelope.identity);
   const preferences = parsePreferences(envelope.preferences);

@@ -19,7 +19,7 @@ import {
   isActivelyPlayingOnChain,
   projectGameStatus,
 } from '../session/model';
-import type { SessionSave } from '../../hooks/save';
+import type { SessionSave } from '../session/sessionCache';
 import { liveSave } from './session_save_envelope.fixtures';
 
 function liveEnvelope(fields: Partial<SessionSave>): SessionSave {

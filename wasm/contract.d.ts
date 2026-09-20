@@ -20,13 +20,12 @@ export interface SpendBundle {
 
 export interface TransactionSubmission {
   id: string;
+  /** Opaque Rust-issued identifier for this exact delivery attempt. */
+  attempt_token: string;
   bundle: SpendBundle;
   fee_request?: { target: string; amount: string } | null;
-  delivery_goal: 'ensure-broadcast' | 'fee-upgrade';
   /** Stable fingerprint of the durable submission intent. */
   intent_fingerprint: string;
-  /** Fingerprint of the exact bytes in `bundle`. */
-  variant_fingerprint: string;
 }
 
 export type SubmissionDrainFailureStage =
@@ -50,6 +49,8 @@ export interface SubmissionDrain {
   retired_submission_ids: string[];
   failures: SubmissionDrainFailure[];
 }
+
+export type SubmissionSuccessorRelationship = 'exact' | 'newer-fee-bearing' | 'other';
 
 export interface IChiaIdentity {
   private_key: string;

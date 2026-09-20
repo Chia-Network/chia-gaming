@@ -22,8 +22,8 @@ import {
   replaceSession,
   CURRENT_VERSION,
   _resetForTests,
-} from '../../hooks/save';
-import { readSessionRecord, SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
+} from '../session/sessionCache';
+import { readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
 import { decodeSessionSaveEnvelope, sessionAmountsFromSave } from '../session/model';
 import { baseSave } from './session_save_envelope.fixtures';
 import {
@@ -35,6 +35,7 @@ import {
   savePreferences,
   setTestGlobal,
 } from './save.harness';
+import { storageCoordinator } from '../session/storageCoordinator';
 
 describe('flat state', () => {
   it('defaults the transaction fee to the effective nonzero floor', () => {
@@ -74,7 +75,7 @@ describe('flat state', () => {
     if (!rawRecord) throw new Error('Expected a persisted session record');
     const record = decodeSessionSaveEnvelope(rawRecord).save;
     delete record.identity.sessionId;
-    await writeSessionRecord(record);
+    await storageCoordinator.persist(storageCoordinator.writeSession(record));
 
     _resetForTests();
     setTestGlobal('localStorage', makeStorage());

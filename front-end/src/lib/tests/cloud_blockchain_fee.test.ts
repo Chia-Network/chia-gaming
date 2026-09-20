@@ -37,7 +37,7 @@ setTestGlobal('window', globalThis);
 // The Cloud Wallet fee comes from the global preference. Mock it so the test
 // controls the fee without exercising the persistence/IndexedDB layer.
 let mockFee = 0n;
-jest.mock('../../hooks/save', () => ({
+jest.mock('../session/sessionCache', () => ({
   getDefaultFee: () => mockFee,
   setDefaultFee: (fee: bigint) => {
     mockFee = fee;
@@ -46,7 +46,7 @@ jest.mock('../../hooks/save', () => ({
 
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
-import { WalletReservationCoordinator } from '../session/walletReservationLedger';
+import { WalletOperationService } from '../session/walletOperationService';
 
 const testOperation = {
   owner: {
@@ -600,7 +600,7 @@ describe('CloudBlockchainInterface fee support', () => {
 
     const iface = new CloudBlockchainInterface();
     const provider = iface.getWalletOfferProvider();
-    expect(provider?.capability).toBe('recoverable');
+    expect(provider?.capability).toBe('recoverable-after-begin');
     if (!provider) throw new Error('expected Cloud wallet provider');
     const owner = {
       installationPlayerId: 'player',
@@ -608,7 +608,7 @@ describe('CloudBlockchainInterface fee support', () => {
       providerScope: provider.scope,
     };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
-    const coordinator = new WalletReservationCoordinator();
+    const coordinator = new WalletOperationService();
     coordinator.attachProvider(provider);
     coordinator.registerReserved('Offer_1', owner, purpose);
     coordinator.requireCancellation('Offer_1', 'retired');
@@ -926,7 +926,7 @@ describe('CloudBlockchainInterface fee support', () => {
     });
   });
 
-  it('spend submits the finalized bundle through Coinset', async () => {
+  it('spend submits the exact Rust-selected bundle through Coinset', async () => {
     mockGraphql(() => ({
       coinset: { response: { success: true, status: 'SUCCESS' } },
     }));

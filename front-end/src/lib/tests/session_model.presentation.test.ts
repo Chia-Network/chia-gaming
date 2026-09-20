@@ -13,7 +13,7 @@ import {
   nextGameInstanceAfterLocalTurn,
 } from '../session/model';
 import { decodeChannelStatusPayload } from '../session/persistence';
-import type { SessionSave } from '../../hooks/save';
+import type { SessionSave } from '../session/sessionCache';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
 function liveEnvelope(fields: Partial<SessionSave>): SessionSave {

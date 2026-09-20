@@ -9,12 +9,12 @@ import {
   hasSavedSessionMarker,
   markSavedSession,
   peekSession,
-} from '../../hooks/save';
+} from '../session/sessionCache';
 import { validateSessionSaveEnvelope } from '../session/persistence';
 import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
-import { walletReservationLedger } from '../session/walletReservationLedger';
-import { encodeWalletReservationRecord } from '../session/walletReservationLedgerSchema';
-import { writeSessionRecord } from '../session/indexedDb';
+import { walletOperationService } from '../session/walletOperationService';
+import { encodeWalletOperationRecord } from '../session/walletOperationStore';
+
 import { liveSave } from './session_save_envelope.fixtures';
 import {
   channelStatus,
@@ -31,6 +31,7 @@ import {
   wasmResult,
 } from './message_protocol.harness';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { storageCoordinator } from '../session/storageCoordinator';
 
 describe('WASM command persistence', () => {
   it('coalesces successful eventless mutations and ignores read-only polling', async () => {
@@ -171,7 +172,7 @@ describe('durability failures', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60_000);
-    walletReservationLedger.attachProvider(
+    walletOperationService.attachProvider(
       blob.blockchain.rpc.getWalletOfferProvider({
         installationPlayerId: 'test',
         peerSessionId: '00'.repeat(16),
@@ -184,8 +185,8 @@ describe('durability failures', () => {
       if (failPersistence) throw new Error('disk full');
     });
 
-    walletReservationLedger.hydrateFromDisk(
-      encodeWalletReservationRecord([
+    walletOperationService.hydrateFromDisk(
+      encodeWalletOperationRecord([
         {
           tradeId: 'trade-unresolved',
           owner: {
@@ -207,7 +208,7 @@ describe('durability failures', () => {
 
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
     expect(blob.durabilityWarning).toContain('continuing without a durable checkpoint');
-    expect(walletReservationLedger.snapshot()).toEqual([
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
 
@@ -217,7 +218,7 @@ describe('durability failures', () => {
     await blob.flushPendingSave();
 
     expect(checkpoints).toHaveLength(2);
-    expect(walletReservationLedger.snapshot()).toEqual([
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
     expect(blob.durabilityWarning).toBeUndefined();
@@ -225,7 +226,7 @@ describe('durability failures', () => {
   });
 
   it('requires the prepared save to update cached synchronously before returning', async () => {
-    const { loadState } = await import('../../hooks/save');
+    const { loadState } = await import('../session/sessionCache');
     const outbound = enc('outbound');
     const { blob, cradle, sentMessages } = createReadyBlob(() => ({
       events: [{ OutboundMessage: outbound }],
@@ -305,10 +306,12 @@ describe('durability failures', () => {
 });
 
 describe('resendUnacked', () => {
-  it('re-sends all un-acked messages via sendMessage', () => {
+  it('re-sends all un-acked messages via sendMessage', async () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
+    await blob.flushPendingSave();
 
+    blob.messageNumber = 3n;
     blob.unackedMessages = [
       { msgno: 1n, msg: enc('a') },
       { msgno: 2n, msg: enc('b') },
@@ -405,7 +408,7 @@ describe('restore ordering', () => {
     expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(sentAcks).toEqual([1]);
     expect(sentMessages).toEqual([]);
-    expect(cradle.resubmit_submitted).not.toHaveBeenCalled();
+    expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();
     expect(blob.messageNumber).toBe(5n);
     expect(blob.remoteNumber).toBe(1n);
     expect(blob.wasmNotificationHistory).toEqual(['notification']);
@@ -506,14 +509,16 @@ describe('cradle serialization schema restore guard', () => {
     async (_label, gameSessionSchemaVersion) => {
       expectConsoleError('[save] rejecting incompatible session record');
       markSavedSession();
-      await writeSessionRecord({
-        version: 22n,
-        playerId: 'restore-schema-player',
-        rewardPuzzleHash: '11'.repeat(32),
-        serializedGameSession: new Uint8Array([1, 2, 3]),
-        gameSessionSchemaVersion,
-        pairingToken: 'restore-schema-test',
-      });
+      await storageCoordinator.persist(
+        storageCoordinator.writeSession({
+          version: 22n,
+          playerId: 'restore-schema-player',
+          rewardPuzzleHash: '11'.repeat(32),
+          serializedGameSession: new Uint8Array([1, 2, 3]),
+          gameSessionSchemaVersion,
+          pairingToken: 'restore-schema-test',
+        }),
+      );
       const { deserializeMock } = makeRestoreHarness(makeMockCradle);
 
       expect(deserializeMock).not.toHaveBeenCalled();

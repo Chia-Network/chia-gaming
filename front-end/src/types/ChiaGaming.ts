@@ -230,6 +230,9 @@ export interface FinalizedSubmission {
   should_broadcast: boolean;
 }
 
+export type SubmissionAttemptStatus = 'applied' | 'stale';
+export type SubmissionFinalizationResult = FinalizedSubmission | { status: 'stale' };
+
 export type WalletSubmitOutcome =
   | { status: 'acknowledged'; detail?: string }
   | { status: 'unavailable'; detail: string }
@@ -271,7 +274,7 @@ export type WalletOfferMaterial =
   | { kind: 'bundle'; bundle: unknown };
 
 export type WalletOfferCompletion =
-  | { kind: 'created'; material: WalletOfferMaterial; tradeId?: string }
+  | { kind: 'created'; material: WalletOfferMaterial; tradeId?: string; warning?: string }
   | { kind: 'failure'; reason: string }
   | { kind: 'unavailable'; reason: string };
 
@@ -301,16 +304,21 @@ export interface WasmConnection {
   snapshot_pending_coin_solution_requests: (cid: number) => string[];
   drain_submissions: (cid: number) => SubmissionDrain;
   configure_submission_fee: (cid: number, amount: string) => void;
-  finalize_submission: (
+  finalize_submission_attempt: (
     cid: number,
-    submission_id: string,
-    delivery_goal: TransactionSubmission['delivery_goal'],
-    variant_fingerprint: string,
+    attempt_token: string,
     fee_source_json?: string,
-  ) => FinalizedSubmission;
-  acknowledge_submission: (cid: number, submission_id: string, variant_fingerprint: string) => void;
-  reject_submission: (cid: number, submission_id: string) => void;
-  resubmit_submitted: (cid: number) => void;
+  ) => SubmissionFinalizationResult;
+  acknowledge_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
+  reject_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
+  submission_attempt_unavailable: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
+  relinquish_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
+  submission_successor_relationship: (
+    cid: number,
+    successor_attempt_token: string,
+    completed_attempt_token: string,
+  ) => WasmContract.SubmissionSuccessorRelationship;
+  chain_snapshot_ready: (cid: number) => void;
   request_fee_upgrades: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
@@ -496,32 +504,42 @@ export class ChiaGame {
     this.wasm.configure_submission_fee(this.session, amount);
   }
 
-  finalize_submission(
-    submissionId: string,
-    deliveryGoal: TransactionSubmission['delivery_goal'],
-    variantFingerprint: string,
+  finalize_submission_attempt(
+    attemptToken: string,
     feeSourceJson?: string,
-  ): FinalizedSubmission {
-    return this.wasm.finalize_submission(
+  ): SubmissionFinalizationResult {
+    return this.wasm.finalize_submission_attempt(this.session, attemptToken, feeSourceJson);
+  }
+
+  acknowledge_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
+    return this.wasm.acknowledge_submission_attempt(this.session, attemptToken);
+  }
+
+  reject_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
+    return this.wasm.reject_submission_attempt(this.session, attemptToken);
+  }
+
+  submission_attempt_unavailable(attemptToken: string): SubmissionAttemptStatus {
+    return this.wasm.submission_attempt_unavailable(this.session, attemptToken);
+  }
+
+  relinquish_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
+    return this.wasm.relinquish_submission_attempt(this.session, attemptToken);
+  }
+
+  submission_successor_relationship(
+    successorAttemptToken: string,
+    completedAttemptToken: string,
+  ): WasmContract.SubmissionSuccessorRelationship {
+    return this.wasm.submission_successor_relationship(
       this.session,
-      submissionId,
-      deliveryGoal,
-      variantFingerprint,
-      feeSourceJson,
+      successorAttemptToken,
+      completedAttemptToken,
     );
   }
 
-  acknowledge_submission(submissionId: string, variantFingerprint: string): void {
-    this.wasm.acknowledge_submission(this.session, submissionId, variantFingerprint);
-  }
-
-  reject_submission(submissionId: string): void {
-    this.wasm.reject_submission(this.session, submissionId);
-  }
-
-  /** Re-queue all retained submissions for resubmission (call after reload). */
-  resubmit_submitted(): void {
-    this.wasm.resubmit_submitted(this.session);
+  chain_snapshot_ready(): void {
+    this.wasm.chain_snapshot_ready(this.session);
   }
 
   request_fee_upgrades(): void {
@@ -624,6 +642,15 @@ export interface BestEffortWalletOfferProvider extends WalletOfferProviderBase {
   cancel(tradeId: string): Promise<WalletOfferCancellationOutcome>;
 }
 
+export interface TerminalWalletOfferProvider extends WalletOfferProviderBase {
+  readonly capability: 'terminal';
+  beginCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferCompletion>;
+  cancel(tradeId: string): Promise<WalletOfferCancellationOutcome>;
+}
+
 export interface RecoverableWalletOfferProvider extends WalletOfferProviderBase {
   readonly capability: 'recoverable';
   beginCreation(
@@ -642,7 +669,34 @@ export interface RecoverableWalletOfferProvider extends WalletOfferProviderBase 
   ): Promise<WalletOfferCancellationOutcome>;
 }
 
-export type WalletOfferProvider = BestEffortWalletOfferProvider | RecoverableWalletOfferProvider;
+/**
+ * Provider whose mutation is exactly recoverable only after its begin response
+ * supplies a provider recovery id. Transport loss before that response remains
+ * best-effort uncertainty.
+ */
+export interface RecoverableAfterBeginWalletOfferProvider extends WalletOfferProviderBase {
+  readonly capability: 'recoverable-after-begin';
+  beginCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferBeginOutcome>;
+  reconcileCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+    recoveryId: string,
+  ): Promise<WalletOfferCompletion>;
+  beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
+  reconcileCancellation(
+    tradeId: string,
+    recoveryId: string,
+  ): Promise<WalletOfferCancellationOutcome>;
+}
+
+export type WalletOfferProvider =
+  | BestEffortWalletOfferProvider
+  | TerminalWalletOfferProvider
+  | RecoverableWalletOfferProvider
+  | RecoverableAfterBeginWalletOfferProvider;
 
 export interface InternalBlockchainInterface {
   requestGapMs?: number;

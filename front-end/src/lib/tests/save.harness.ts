@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { claimLease, saveSession, type SessionSave, _resetForTests } from '../../hooks/save';
+import { claimLease, saveSession, type SessionSave, _resetForTests } from '../session/sessionCache';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import type { BlockchainType } from '../session/saveEnvelope';
 import { liveSave } from './session_save_envelope.fixtures';

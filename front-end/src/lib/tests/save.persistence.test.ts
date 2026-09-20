@@ -18,30 +18,19 @@ import {
   flushSessionSave,
   getPlayerId,
   hydrateSessionCacheFromDisk,
-  offFenced,
-  onFenced,
-  reclaimLease,
   _resetForTests,
-} from '../../hooks/save';
-import { loseAuthority } from '../../hooks/saveCoordination';
+} from '../session/sessionCache';
 import {
   _afterNextStorageAuthorityCheckForTests,
-  _holdNextCombinedCheckpointAfterCommitForTests,
-  _holdNextStorageMutationForTests,
   MAX_DURABLE_REJECTION_TOMBSTONES,
-  pruneRejectionTombstones,
-  readRejectionTombstones,
   readSessionRecord,
-  readWalletReservationRecord,
+  readWalletOperationRecord,
   REJECTION_TOMBSTONE_TTL_MS,
   rejectionTombstoneKey,
   SESSION_DB_NAME,
   StorageAuthorityLostError,
-  writeRejectionTombstone,
-  writeSessionAndWalletReservationRecords,
-  writeSessionRecord,
-  writeWalletReservationRecord,
 } from '../session/indexedDb';
+import { storageCoordinator } from '../session/storageCoordinator';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT,
@@ -50,16 +39,13 @@ import {
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../session/historyLimits';
 import { baseSave } from './session_save_envelope.fixtures';
+import { WalletOperationService, walletOperationService } from '../session/walletOperationService';
 import {
-  WalletReservationCoordinator,
-  walletReservationLedger,
-} from '../session/walletReservationLedger';
-import {
-  decodeWalletReservationLedger,
-  decodeWalletReservationRecord,
-  WALLET_RESERVATION_RECORD_SCHEMA,
-  WALLET_RESERVATION_RECORD_VERSION,
-} from '../session/walletReservationLedgerSchema';
+  decodeWalletOperationEntries,
+  decodeWalletOperationRecord,
+  WALLET_OPERATION_RECORD_SCHEMA,
+  WALLET_OPERATION_RECORD_VERSION,
+} from '../session/walletOperationStore';
 import {
   clearTestGlobal,
   makeStorage,
@@ -71,9 +57,90 @@ import {
   setTestGlobal,
   testIndexedDb,
 } from './save.harness';
+import { storageCoordinator } from '../session/storageCoordinator';
 
 describe('session persistence', () => {
-  it('round-trips the strict wallet reservation record envelope', async () => {
+  it('rejects a claim fenced after commit without installing or rewriting browser state', async () => {
+    _resetForTests();
+    const before = loadState();
+    walletOperationService.registerReserved(
+      'pre-authority-trade',
+      {
+        installationPlayerId: before.identity.playerId,
+        peerSessionId: 'pre-authority-session',
+        providerScope: { provider: 'simulator', identity: before.identity.playerId },
+      },
+      { kind: 'funding', operationId: 'pre-authority-operation' },
+    );
+
+    let release!: () => void;
+    let committed!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reachedCommit = new Promise<void>((resolve) => {
+      committed = resolve;
+    });
+    storageCoordinator.holdNextClaimAfterCommitForTests(barrier, committed);
+
+    const claim = claimAndHydrateSession();
+    await reachedCommit;
+    localStorage.setItem('appState_activeTab', 'winning-tab');
+    const winningPreferences = JSON.stringify({
+      playerId: 'winning-player',
+      extra: 'must-not-be-normalized',
+    });
+    localStorage.setItem('appPreferences', winningPreferences);
+    storageCoordinator.loseAuthority('takeover');
+    release();
+
+    await expect(claim).rejects.toBeInstanceOf(StorageAuthorityLostError);
+    expect(localStorage.getItem('appState_activeTab')).toBe('winning-tab');
+    expect(localStorage.getItem('appPreferences')).toBe(winningPreferences);
+    expect(loadState().identity.playerId).toBe(before.identity.playerId);
+    expect(walletOperationService.snapshot()).toEqual([
+      expect.objectContaining({ tradeId: 'pre-authority-trade' }),
+    ]);
+  });
+
+  it('returns the explicit committed, failed, and authority-lost mutation outcomes', async () => {
+    await expect(storageCoordinator.writeWalletOperations([])).resolves.toEqual({
+      status: 'committed',
+    });
+
+    setTestGlobal('indexedDB', {
+      open: () => {
+        throw new Error('ordinary storage failure');
+      },
+    });
+    await expect(storageCoordinator.writeWalletOperations([])).resolves.toEqual({
+      status: 'failed',
+      error: expect.objectContaining({ message: 'ordinary storage failure' }),
+    });
+    setTestGlobal('indexedDB', testIndexedDb);
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    storageCoordinator.holdNextMutationForTests(held);
+    const stale = storageCoordinator.writeWalletOperations([]);
+    await claimLease();
+    release();
+    await expect(stale).resolves.toEqual({
+      status: 'authority-lost',
+      error: expect.any(StorageAuthorityLostError),
+    });
+  });
+
+  it('treats the localStorage lease as a hint, not a write authority', async () => {
+    localStorage.setItem('appState_activeTab', 'stale-hint');
+    await expect(storageCoordinator.writeWalletOperations([])).resolves.toEqual({
+      status: 'committed',
+    });
+  });
+
+  it('round-trips the strict wallet operation record envelope', async () => {
     const entries = [
       {
         tradeId: 'trade-round-trip',
@@ -88,11 +155,11 @@ describe('session persistence', () => {
       },
     ];
 
-    await writeWalletReservationRecord(entries);
+    await storageCoordinator.persist(storageCoordinator.writeWalletOperations(entries));
 
-    expect(await readWalletReservationRecord()).toEqual({
-      schema: WALLET_RESERVATION_RECORD_SCHEMA,
-      version: WALLET_RESERVATION_RECORD_VERSION,
+    expect(await readWalletOperationRecord()).toEqual({
+      schema: WALLET_OPERATION_RECORD_SCHEMA,
+      version: WALLET_OPERATION_RECORD_VERSION,
       entries,
     });
   });
@@ -113,12 +180,12 @@ describe('session persistence', () => {
       },
     ];
 
-    const combined = writeSessionAndWalletReservationRecords(session, retained);
-    const laterCleanup = writeWalletReservationRecord([]);
+    const combined = storageCoordinator.persist(storageCoordinator.checkpoint(session, retained));
+    const laterCleanup = storageCoordinator.persist(storageCoordinator.writeWalletOperations([]));
     await Promise.all([combined, laterCleanup]);
 
     expect(await readSessionRecord()).toEqual(session);
-    expect((await readWalletReservationRecord())?.entries).toEqual([]);
+    expect((await readWalletOperationRecord())?.entries).toEqual([]);
   });
 
   it.each([
@@ -126,14 +193,14 @@ describe('session persistence', () => {
       'wrong schema',
       {
         schema: 'wrong-wallet-schema',
-        version: WALLET_RESERVATION_RECORD_VERSION,
+        version: WALLET_OPERATION_RECORD_VERSION,
         entries: [],
       },
     ],
     [
       'v3 predecessor',
       {
-        schema: WALLET_RESERVATION_RECORD_SCHEMA,
+        schema: WALLET_OPERATION_RECORD_SCHEMA,
         version: 3n,
         entries: [],
       },
@@ -141,7 +208,7 @@ describe('session persistence', () => {
     [
       'v4 predecessor',
       {
-        schema: WALLET_RESERVATION_RECORD_SCHEMA,
+        schema: WALLET_OPERATION_RECORD_SCHEMA,
         version: 4n,
         entries: [],
       },
@@ -149,28 +216,28 @@ describe('session persistence', () => {
     [
       'wrong version',
       {
-        schema: WALLET_RESERVATION_RECORD_SCHEMA,
-        version: WALLET_RESERVATION_RECORD_VERSION + 1n,
+        schema: WALLET_OPERATION_RECORD_SCHEMA,
+        version: WALLET_OPERATION_RECORD_VERSION + 1n,
         entries: [],
       },
     ],
     [
       'unknown root field',
       {
-        schema: WALLET_RESERVATION_RECORD_SCHEMA,
-        version: WALLET_RESERVATION_RECORD_VERSION,
+        schema: WALLET_OPERATION_RECORD_SCHEMA,
+        version: WALLET_OPERATION_RECORD_VERSION,
         entries: [],
         unknown: true,
       },
     ],
     ['old bare array', []],
-  ])('rejects a wallet reservation record with %s', (_label, record) => {
-    expect(() => decodeWalletReservationRecord(record)).toThrow();
+  ])('rejects a wallet operation record with %s', (_label, record) => {
+    expect(() => decodeWalletOperationRecord(record)).toThrow();
   });
 
   it('does not hydrate a persisted bare ledger array', () => {
-    expect(() => new WalletReservationCoordinator().hydrateFromDisk([])).toThrow(
-      'Garbled wallet reservation record',
+    expect(() => new WalletOperationService().hydrateFromDisk([])).toThrow(
+      'Garbled wallet operation record',
     );
   });
 
@@ -198,7 +265,7 @@ describe('session persistence', () => {
     ],
   ])('rejects a creating recovery with %s', (_label, request) => {
     expect(() =>
-      decodeWalletReservationLedger([
+      decodeWalletOperationEntries([
         {
           owner: {
             installationPlayerId: 'installation',
@@ -235,7 +302,7 @@ describe('session persistence', () => {
     const hydration = await hydrateSessionCacheFromDisk();
     expect(hydration).toEqual({
       status: 'failed',
-      error: 'Stored wallet reservation ledger is malformed',
+      error: 'Stored wallet operation record is malformed',
     });
 
     const verifyDb = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -263,7 +330,7 @@ describe('session persistence', () => {
       purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
     };
     expect(() =>
-      decodeWalletReservationLedger([
+      decodeWalletOperationEntries([
         {
           ...operation,
           stage: 'creating',
@@ -323,7 +390,7 @@ describe('session persistence', () => {
     };
 
     expect(() =>
-      decodeWalletReservationLedger(creatingFirst ? [creating, trade] : [trade, creating]),
+      decodeWalletOperationEntries(creatingFirst ? [creating, trade] : [trade, creating]),
     ).toThrow(/contradictory.*operation ownership/i);
   });
 
@@ -337,7 +404,7 @@ describe('session persistence', () => {
       purpose: { kind: 'fee' as const, operationId: 'submission' },
     };
     expect(
-      decodeWalletReservationLedger([
+      decodeWalletOperationEntries([
         {
           ...operation,
           stage: 'reserved',
@@ -405,19 +472,21 @@ describe('session persistence', () => {
     await flushSessionSave();
     await Promise.all(
       Array.from({ length: MAX_DURABLE_REJECTION_TOMBSTONES + 1 }, (_, index) =>
-        writeRejectionTombstone({
-          kind: 'outbound-reject',
-          peerId: `peer-${index}`,
-          sessionId: index.toString(16).padStart(32, '0'),
-          messageNumber: 2n,
-          remoteNumber: 1n,
-          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
-          createdAt: Date.now() + index,
-        }),
+        storageCoordinator.persist(
+          storageCoordinator.writeRejection({
+            kind: 'outbound-reject',
+            peerId: `peer-${index}`,
+            sessionId: index.toString(16).padStart(32, '0'),
+            messageNumber: 2n,
+            remoteNumber: 1n,
+            unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
+            createdAt: Date.now() + index,
+          }),
+        ),
       ),
     );
 
-    const tombstones = await readRejectionTombstones();
+    const tombstones = await storageCoordinator.readRejections();
     expect(tombstones).toHaveLength(MAX_DURABLE_REJECTION_TOMBSTONES);
     expect(tombstones[0].peerId).toBe('peer-1');
     _resetForTests();
@@ -433,19 +502,21 @@ describe('session persistence', () => {
     expect(routed.size).toBe(2);
     await Promise.all(
       ['peer-a', 'peer-b'].map((peerId, index) =>
-        writeRejectionTombstone({
-          kind: 'outbound-reject',
-          peerId,
-          sessionId,
-          messageNumber: 2n,
-          remoteNumber: 1n,
-          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
-          createdAt: Date.now() + index,
-        }),
+        storageCoordinator.persist(
+          storageCoordinator.writeRejection({
+            kind: 'outbound-reject',
+            peerId,
+            sessionId,
+            messageNumber: 2n,
+            remoteNumber: 1n,
+            unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
+            createdAt: Date.now() + index,
+          }),
+        ),
       ),
     );
 
-    expect(await readRejectionTombstones()).toEqual([
+    expect(await storageCoordinator.readRejections()).toEqual([
       expect.objectContaining({ peerId: 'peer-a', sessionId }),
       expect.objectContaining({ peerId: 'peer-b', sessionId }),
     ]);
@@ -453,27 +524,31 @@ describe('session persistence', () => {
 
   it('retains empty inbound receipts and expires stale rejection records', async () => {
     const now = Date.now();
-    await writeRejectionTombstone({
-      kind: 'inbound-receipt',
-      peerId: 'expired-peer',
-      sessionId: 'cd'.repeat(16),
-      messageNumber: 1n,
-      remoteNumber: 4n,
-      unackedMessages: [],
-      createdAt: now - REJECTION_TOMBSTONE_TTL_MS - 1,
-    });
-    await writeRejectionTombstone({
-      kind: 'inbound-receipt',
-      peerId: 'current-peer',
-      sessionId: 'ef'.repeat(16),
-      messageNumber: 1n,
-      remoteNumber: 7n,
-      unackedMessages: [],
-      createdAt: now,
-    });
+    await storageCoordinator.persist(
+      storageCoordinator.writeRejection({
+        kind: 'inbound-receipt',
+        peerId: 'expired-peer',
+        sessionId: 'cd'.repeat(16),
+        messageNumber: 1n,
+        remoteNumber: 4n,
+        unackedMessages: [],
+        createdAt: now - REJECTION_TOMBSTONE_TTL_MS - 1,
+      }),
+    );
+    await storageCoordinator.persist(
+      storageCoordinator.writeRejection({
+        kind: 'inbound-receipt',
+        peerId: 'current-peer',
+        sessionId: 'ef'.repeat(16),
+        messageNumber: 1n,
+        remoteNumber: 7n,
+        unackedMessages: [],
+        createdAt: now,
+      }),
+    );
 
     const transactionSpy = jest.spyOn(IDBDatabase.prototype, 'transaction');
-    expect(await readRejectionTombstones()).toEqual([
+    expect(await storageCoordinator.readRejections()).toEqual([
       expect.objectContaining({
         kind: 'inbound-receipt',
         peerId: 'current-peer',
@@ -502,7 +577,7 @@ describe('session persistence', () => {
     };
     expect(await countRecords()).toBe(1);
     const pruneSpy = jest.spyOn(IDBDatabase.prototype, 'transaction');
-    await pruneRejectionTombstones();
+    await storageCoordinator.persist(storageCoordinator.pruneRejections());
     expect(pruneSpy).toHaveBeenCalledWith(
       expect.arrayContaining(['rejections', 'coordination']),
       'readwrite',
@@ -516,18 +591,20 @@ describe('session persistence', () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    _holdNextStorageMutationForTests(held);
-    const write = writeRejectionTombstone({
-      kind: 'inbound-receipt',
-      peerId: 'tail-peer',
-      sessionId: 'fa'.repeat(16),
-      messageNumber: 1n,
-      remoteNumber: 3n,
-      unackedMessages: [],
-      createdAt: Date.now(),
-    });
+    storageCoordinator.holdNextMutationForTests(held);
+    const write = storageCoordinator.persist(
+      storageCoordinator.writeRejection({
+        kind: 'inbound-receipt',
+        peerId: 'tail-peer',
+        sessionId: 'fa'.repeat(16),
+        messageNumber: 1n,
+        remoteNumber: 3n,
+        unackedMessages: [],
+        createdAt: Date.now(),
+      }),
+    );
     let readSettled = false;
-    const read = readRejectionTombstones().then((records) => {
+    const read = storageCoordinator.readRejections().then((records) => {
       readSettled = true;
       return records;
     });
@@ -553,7 +630,7 @@ describe('session persistence', () => {
 
     _resetForTests();
     expect(await peekSession()).toBeNull();
-    expect(await readRejectionTombstones()).toEqual([
+    expect(await storageCoordinator.readRejections()).toEqual([
       expect.objectContaining({
         kind: 'inbound-receipt',
         peerId: 'rejecting-peer',
@@ -577,7 +654,7 @@ describe('session persistence', () => {
 
     _resetForTests();
     expect(await peekSession()).toBeNull();
-    expect(await readRejectionTombstones()).toEqual([
+    expect(await storageCoordinator.readRejections()).toEqual([
       expect.objectContaining({
         kind: 'outbound-reject',
         peerId: 'rejected-peer',
@@ -719,7 +796,11 @@ describe('session persistence', () => {
 
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
-    await writeSessionRecord(baseSave({ playerId: 'player', blockchainType: 'simulator' }));
+    await storageCoordinator.persist(
+      storageCoordinator.writeSession(
+        baseSave({ playerId: 'player', blockchainType: 'simulator' }),
+      ),
+    );
     expect(await peekSession()).toMatchObject({
       preferences: { blockchainType: 'simulator' },
     });
@@ -728,7 +809,9 @@ describe('session persistence', () => {
 
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
-    await writeSessionRecord(baseSave({ playerId: 'player' }));
+    await storageCoordinator.persist(
+      storageCoordinator.writeSession(baseSave({ playerId: 'player' })),
+    );
     expect(await peekSession()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(false);
   });
@@ -754,7 +837,7 @@ describe('session persistence', () => {
       peerSessionId: 'peer-session',
       providerScope: { provider: 'simulator' as const, identity: 'installation' },
     };
-    walletReservationLedger.registerReserved(
+    walletOperationService.registerReserved(
       'trade-atomic',
       owner,
       { kind: 'fee', operationId: 'submission-atomic' },
@@ -765,9 +848,9 @@ describe('session persistence', () => {
       serializedGameSession: new Uint8Array([1]),
     });
     await flushSessionSave();
-    await walletReservationLedger.flushPersistence();
+    await walletOperationService.flushPersistence();
 
-    walletReservationLedger.retainForReplayCoordinated('trade-atomic');
+    walletOperationService.retainForReplay('trade-atomic', 'fee-source-attached', true);
     const scheduled = saveLiveFields({
       ...sampleSession,
       serializedGameSession: new Uint8Array([2]),
@@ -801,11 +884,11 @@ describe('session persistence', () => {
 
     const afterAbort = requireLive(await readSessionRecord());
     expect(afterAbort.live.serializedGameSession).toEqual(new Uint8Array([1]));
-    expect((await readWalletReservationRecord())?.entries).toEqual([
+    expect((await readWalletOperationRecord())?.entries).toEqual([
       expect.objectContaining({ tradeId: 'trade-atomic', stage: 'reserved' }),
     ]);
-    expect(walletReservationLedger.isDirty()).toBe(true);
-    expect(walletReservationLedger.snapshot()).toEqual([
+    expect(walletOperationService.isDirty()).toBe(true);
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-atomic', stage: 'retained-for-replay' }),
     ]);
 
@@ -818,15 +901,15 @@ describe('session persistence', () => {
 
     const afterHeal = requireLive(await readSessionRecord());
     expect(afterHeal.live.serializedGameSession).toEqual(new Uint8Array([2]));
-    expect((await readWalletReservationRecord())?.entries).toEqual([
+    expect((await readWalletOperationRecord())?.entries).toEqual([
       expect.objectContaining({ tradeId: 'trade-atomic', stage: 'retained-for-replay' }),
     ]);
-    expect(walletReservationLedger.isDirty()).toBe(false);
+    expect(walletOperationService.isDirty()).toBe(false);
 
     _resetForTests();
     const restored = requireLive(await claimAndHydrateSession());
     expect(restored.live.serializedGameSession).toEqual(new Uint8Array([2]));
-    expect(walletReservationLedger.snapshot()).toEqual([
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-atomic', stage: 'retained-for-replay' }),
     ]);
   });
@@ -931,22 +1014,24 @@ describe('session persistence', () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    _holdNextStorageMutationForTests(held);
-    const oldWrite = writeWalletReservationRecord([
-      {
-        tradeId: 'old-generation',
-        owner: {
-          installationPlayerId: 'installation',
-          peerSessionId: 'old-peer',
-          providerScope: { provider: 'simulator', identity: 'installation' },
+    storageCoordinator.holdNextMutationForTests(held);
+    const oldWrite = storageCoordinator.persist(
+      storageCoordinator.writeWalletOperations([
+        {
+          tradeId: 'old-generation',
+          owner: {
+            installationPlayerId: 'installation',
+            peerSessionId: 'old-peer',
+            providerScope: { provider: 'simulator', identity: 'installation' },
+          },
+          purpose: { kind: 'funding', operationId: 'old-operation' },
+          stage: 'reserved',
+          reason: 'old-tab-result',
         },
-        purpose: { kind: 'funding', operationId: 'old-operation' },
-        stage: 'reserved',
-        reason: 'old-tab-result',
-      },
-    ]);
+      ]),
+    );
 
-    await reclaimLease();
+    await claimLease();
     const winningEntry = {
       tradeId: 'winning-generation',
       owner: {
@@ -958,12 +1043,14 @@ describe('session persistence', () => {
       stage: 'reserved' as const,
       reason: 'winning-tab-result',
     };
-    const winningWrite = writeWalletReservationRecord([winningEntry]);
+    const winningWrite = storageCoordinator.persist(
+      storageCoordinator.writeWalletOperations([winningEntry]),
+    );
     release();
     await expect(oldWrite).rejects.toBeInstanceOf(StorageAuthorityLostError);
     await winningWrite;
 
-    expect((await readWalletReservationRecord())?.entries).toEqual([winningEntry]);
+    expect((await readWalletOperationRecord())?.entries).toEqual([winningEntry]);
   });
 
   it('rejects a combined checkpoint when takeover lands after its IDB commit', async () => {
@@ -976,8 +1063,8 @@ describe('session persistence', () => {
       committed = resolve;
     });
     const authorityLost = jest.fn();
-    onFenced(authorityLost);
-    _holdNextCombinedCheckpointAfterCommitForTests(barrier, committed);
+    storageCoordinator.onAuthorityLost(authorityLost);
+    storageCoordinator.holdNextCheckpointAfterCommitForTests(barrier, committed);
 
     saveLiveFields({
       ...sampleSession,
@@ -985,13 +1072,13 @@ describe('session persistence', () => {
     });
     const checkpoint = flushSessionSave();
     await reachedCommit;
-    await reclaimLease();
+    await claimLease();
     expectConsoleError('Durable storage authority was lost');
     release();
 
     await expect(checkpoint).rejects.toBeInstanceOf(StorageAuthorityLostError);
     expect(authorityLost).toHaveBeenCalledWith('durable-authority-lost');
-    offFenced(authorityLost);
+    storageCoordinator.offAuthorityLost(authorityLost);
   });
 
   it('rejects a scheduled save when authority is lost before the debounce fires', async () => {
@@ -1002,7 +1089,7 @@ describe('session persistence', () => {
         serializedGameSession: new Uint8Array([8]),
       });
 
-      loseAuthority('takeover');
+      storageCoordinator.loseAuthority('takeover');
 
       await expect(scheduled).rejects.toBeInstanceOf(StorageAuthorityLostError);
       jest.advanceTimersByTime(300);
@@ -1016,7 +1103,7 @@ describe('session persistence', () => {
     await claimLease();
     let takeover: Promise<unknown> | undefined;
     _afterNextStorageAuthorityCheckForTests(() => {
-      takeover = reclaimLease();
+      takeover = claimLease();
     });
     const authorizedEntry = {
       tradeId: 'authorized-before-takeover',
@@ -1030,7 +1117,7 @@ describe('session persistence', () => {
       reason: 'authorized-before-takeover',
     };
 
-    await writeWalletReservationRecord([authorizedEntry]);
+    await storageCoordinator.persist(storageCoordinator.writeWalletOperations([authorizedEntry]));
     expect(takeover).toBeDefined();
     await takeover;
 
@@ -1041,9 +1128,9 @@ describe('session persistence', () => {
       purpose: { kind: 'funding' as const, operationId: 'winning-operation' },
       reason: 'winning-generation',
     };
-    await writeWalletReservationRecord([winningEntry]);
+    await storageCoordinator.persist(storageCoordinator.writeWalletOperations([winningEntry]));
 
-    expect((await readWalletReservationRecord())?.entries).toEqual([winningEntry]);
+    expect((await readWalletOperationRecord())?.entries).toEqual([winningEntry]);
   });
 
   it('claims and reads the predecessor write from the same transaction boundary', async () => {
@@ -1056,7 +1143,7 @@ describe('session persistence', () => {
       blockchainType: 'simulator',
     });
 
-    await writeSessionRecord(predecessor);
+    await storageCoordinator.persist(storageCoordinator.writeSession(predecessor));
     expect(claim).toBeDefined();
     await expect(claim).resolves.toMatchObject({
       identity: { playerId: 'predecessor-player' },
@@ -1065,7 +1152,7 @@ describe('session persistence', () => {
   });
 
   it('clearSession deletes the session while preserving the independent ledger', async () => {
-    walletReservationLedger.registerReserved(
+    walletOperationService.registerReserved(
       'trade-clear',
       {
         installationPlayerId: 'installation',
@@ -1074,12 +1161,12 @@ describe('session persistence', () => {
       },
       { kind: 'funding', operationId: 'funding-operation' },
     );
-    await walletReservationLedger.flushPersistence();
+    await walletOperationService.flushPersistence();
     await clearSession();
     _resetForTests();
 
     await claimAndHydrateSession();
-    expect(walletReservationLedger.snapshot()).toEqual([
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-clear',
         stage: 'cancel-required',
@@ -1090,23 +1177,26 @@ describe('session persistence', () => {
 
   it('hydrates the independent ledger without a session record or marker', async () => {
     _resetForTests();
-    await writeWalletReservationRecord([
-      {
-        tradeId: 'trade-independent',
-        owner: {
-          installationPlayerId: 'installation',
-          peerSessionId: 'peer-session',
-          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+    await claimLease();
+    await storageCoordinator.persist(
+      storageCoordinator.writeWalletOperations([
+        {
+          tradeId: 'trade-independent',
+          owner: {
+            installationPlayerId: 'installation',
+            peerSessionId: 'peer-session',
+            providerScope: { provider: 'simulator' as const, identity: 'installation' },
+          },
+          purpose: { kind: 'fee', operationId: 'submission' },
+          stage: 'reserved',
+          reason: 'created-before-reload',
         },
-        purpose: { kind: 'fee', operationId: 'submission' },
-        stage: 'reserved',
-        reason: 'created-before-reload',
-      },
-    ]);
+      ]),
+    );
     clearSavedSessionMarker();
 
     expect(await claimAndHydrateSession()).toMatchObject({ phase: 'preferences' });
-    expect(walletReservationLedger.snapshot()).toEqual([
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-independent',
         stage: 'cancel-required',
@@ -1117,23 +1207,26 @@ describe('session persistence', () => {
 
   it('restores retained fee sources without promoting them to cancellation', async () => {
     _resetForTests();
-    await writeWalletReservationRecord([
-      {
-        tradeId: 'trade-retained',
-        owner: {
-          installationPlayerId: 'installation',
-          peerSessionId: 'peer-session',
-          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+    await claimLease();
+    await storageCoordinator.persist(
+      storageCoordinator.writeWalletOperations([
+        {
+          tradeId: 'trade-retained',
+          owner: {
+            installationPlayerId: 'installation',
+            peerSessionId: 'peer-session',
+            providerScope: { provider: 'simulator' as const, identity: 'installation' },
+          },
+          purpose: { kind: 'fee', operationId: 'submission-7' },
+          stage: 'retained-for-replay',
+          reason: 'fee-source-attached',
         },
-        purpose: { kind: 'fee', operationId: 'submission-7' },
-        stage: 'retained-for-replay',
-        reason: 'fee-source-attached',
-      },
-    ]);
+      ]),
+    );
 
     await claimAndHydrateSession();
 
-    expect(walletReservationLedger.snapshot()).toEqual([
+    expect(walletOperationService.snapshot()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-retained',
         stage: 'retained-for-replay',
@@ -1156,7 +1249,7 @@ describe('session persistence', () => {
         stage: 'cancel-required' as const,
         reason: 'cleanup',
       };
-      await writeWalletReservationRecord([entry]);
+      await storageCoordinator.persist(storageCoordinator.writeWalletOperations([entry]));
       saveLiveFields();
       await flushSessionSave();
       if (kind === 'session deletion') {
@@ -1172,7 +1265,7 @@ describe('session persistence', () => {
           createdAt: Date.now(),
         });
       }
-      expect((await readWalletReservationRecord())?.entries).toEqual([entry]);
+      expect((await readWalletOperationRecord())?.entries).toEqual([entry]);
     },
   );
 

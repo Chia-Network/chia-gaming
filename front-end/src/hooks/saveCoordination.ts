@@ -1,10 +1,6 @@
 import { isElectronDistribution } from '../util/distribution';
-import {
-  beginDurableHardReset,
-  claimAndReadDurableStorage,
-  type ClaimedStorageSnapshot,
-  type DurableStorageAuthority,
-} from '../lib/session/indexedDb';
+import { type ClaimedStorageSnapshot } from '../lib/session/indexedDb';
+import { storageCoordinator } from '../lib/session/storageCoordinator';
 
 const SESSION_MARKER_KEY = 'appState_savedSession';
 const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
@@ -13,16 +9,7 @@ const LEASE_KEY = 'appState_activeTab';
 const TAB_ID_SESSION_KEY = 'appState_tabId';
 
 let autoResumeLatch = false;
-let fenced = false;
-let persistenceGeneration = 0;
-export type StorageAuthorityLossReason = 'takeover' | 'sibling-reset' | 'durable-authority-lost';
-const fencedListeners = new Set<(reason: StorageAuthorityLossReason) => void>();
-
-export interface PersistenceFenceToken {
-  generation: number;
-  leaseOwner: string | null;
-  durableAuthority: DurableStorageAuthority;
-}
+export type { StorageAuthorityLossReason } from '../lib/session/storageCoordinator';
 
 export function randomHex(): string {
   const bytes = new Uint8Array(16);
@@ -46,28 +33,8 @@ const tabId: string = (() => {
   }
   return id;
 })();
-let durableAuthority: DurableStorageAuthority | null = null;
-
 export function getStorageTabId(): string {
   return tabId;
-}
-
-function fireFenced(reason: StorageAuthorityLossReason): void {
-  for (const cb of fencedListeners) {
-    try {
-      cb(reason);
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-export function onFenced(cb: (reason: StorageAuthorityLossReason) => void): void {
-  fencedListeners.add(cb);
-}
-
-export function offFenced(cb: (reason: StorageAuthorityLossReason) => void): void {
-  fencedListeners.delete(cb);
 }
 
 // The lease lives in localStorage but `tabId` lives in sessionStorage, so a
@@ -96,28 +63,13 @@ export function checkLease(): boolean {
 }
 
 export async function claimLease(): Promise<ClaimedStorageSnapshot> {
-  const claimed = await claimAndReadDurableStorage(tabId);
-  durableAuthority = claimed.authority;
-  persistenceGeneration += 1;
-  fenced = false;
+  const claimed = await storageCoordinator.claimAndRead(tabId);
   try {
     localStorage.setItem(LEASE_KEY, tabId);
   } catch {
     /* ignore */
   }
   return claimed;
-}
-
-export function reclaimLease(): Promise<ClaimedStorageSnapshot> {
-  return claimLease();
-}
-
-export function clearLease(): void {
-  try {
-    localStorage.removeItem(LEASE_KEY);
-  } catch {
-    /* ignore */
-  }
 }
 
 /** Drop the lease only if this tab still holds it, so a closed owner does not look like a live conflict. */
@@ -129,56 +81,6 @@ export function releaseLeaseIfOwner(): void {
   } catch {
     /* ignore */
   }
-}
-
-export function isFenced(): boolean {
-  return fenced;
-}
-
-export function fencePersistence(): void {
-  persistenceGeneration += 1;
-  fenced = true;
-}
-
-export function loseAuthority(reason: StorageAuthorityLossReason): void {
-  if (fenced) return;
-  fencePersistence();
-  fireFenced(reason);
-}
-
-export function hasStorageAuthority(): boolean {
-  return durableAuthority !== null && !fenced;
-}
-
-export function capturePersistenceFence(): PersistenceFenceToken {
-  if (!durableAuthority) {
-    throw new Error('Persistence lease has not been durably claimed');
-  }
-  let leaseOwner: string | null = null;
-  try {
-    leaseOwner = localStorage.getItem(LEASE_KEY);
-  } catch {
-    /* ignore */
-  }
-  return { generation: persistenceGeneration, leaseOwner, durableAuthority };
-}
-
-export function isPersistenceFenceCurrent(token: PersistenceFenceToken): boolean {
-  if (fenced || token.generation !== persistenceGeneration) return false;
-  try {
-    const currentOwner = localStorage.getItem(LEASE_KEY);
-    return currentOwner === token.leaseOwner && (currentOwner === null || currentOwner === tabId);
-  } catch {
-    return token.leaseOwner === null;
-  }
-}
-
-export async function beginHardResetPersistence(): Promise<DurableStorageAuthority> {
-  const resetAuthority = await beginDurableHardReset(tabId);
-  durableAuthority = resetAuthority;
-  persistenceGeneration += 1;
-  fenced = true;
-  return resetAuthority;
 }
 
 export function hasSavedSessionMarker(): boolean {
@@ -266,28 +168,25 @@ export function installStorageCoordination(onHardReset: () => void): void {
   if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
   window.addEventListener('storage', (event: StorageEvent) => {
     if (event.key === RESET_KEY) {
-      loseAuthority('sibling-reset');
+      storageCoordinator.loseAuthority('sibling-reset');
       onHardReset();
       return;
     }
-    if (event.key === LEASE_KEY && event.newValue !== tabId && !fenced) {
-      loseAuthority('takeover');
+    if (event.key === LEASE_KEY && event.newValue !== tabId && !storageCoordinator.isFenced()) {
+      storageCoordinator.loseAuthority('takeover');
     }
   });
 
   setInterval(() => {
-    if (fenced) return;
+    if (storageCoordinator.isFenced()) return;
     if (!checkLease()) {
-      loseAuthority('takeover');
+      storageCoordinator.loseAuthority('takeover');
     }
   }, 3000);
 }
 
 export function resetStorageCoordinationForTests(): void {
-  fenced = false;
-  persistenceGeneration += 1;
-  durableAuthority = null;
-  fencedListeners.clear();
+  storageCoordinator.resetForTests();
   autoResumeLatch = false;
   try {
     localStorage.removeItem(LEASE_KEY);

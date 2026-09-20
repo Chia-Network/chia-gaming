@@ -39,8 +39,9 @@ mod gaming_wasm {
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
     use chia_gaming::transaction_manager::{
-        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionDeliveryGoal,
-        SubmissionDrainFailureStage, SubmissionFeeSource, TransactionManager,
+        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionDrainFailureStage,
+        SubmissionAttemptStatus, SubmissionFeeSource, SubmissionSuccessorRelationship,
+        TransactionManager,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
@@ -75,7 +76,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 18;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 19;
 
     #[cfg(test)]
     mod serialization_schema_tests {
@@ -83,7 +84,7 @@ mod gaming_wasm {
 
         #[test]
         fn exported_game_session_serialization_schema_is_current() {
-            assert_eq!(game_session_serialization_schema(), 18);
+            assert_eq!(game_session_serialization_schema(), 19);
         }
     }
 
@@ -96,11 +97,10 @@ mod gaming_wasm {
     #[derive(Serialize)]
     struct JsTransactionSubmission {
         id: String,
+        attempt_token: String,
         bundle: JsSpendBundle,
         fee_request: Option<JsFeeRequest>,
-        delivery_goal: &'static str,
         intent_fingerprint: String,
-        variant_fingerprint: String,
     }
 
     #[derive(Serialize)]
@@ -136,6 +136,11 @@ mod gaming_wasm {
         fee_source_disposition: &'static str,
         variant_fingerprint: String,
         should_broadcast: bool,
+    }
+
+    #[derive(Serialize)]
+    struct JsStaleSubmissionAttempt {
+        status: &'static str,
     }
 
     thread_local! {
@@ -474,6 +479,7 @@ mod gaming_wasm {
                         .iter()
                         .map(|submission| JsTransactionSubmission {
                             id: submission.id.to_string(),
+                            attempt_token: submission.attempt_token.to_string(),
                             bundle: spend_bundle_to_js(&submission.bundle),
                             fee_request: match &submission.fee_intent {
                                 SubmissionFeeIntent::Attach { target, amount, .. } => {
@@ -485,14 +491,7 @@ mod gaming_wasm {
                                 SubmissionFeeIntent::AlreadyPaid
                                 | SubmissionFeeIntent::NoFeeConfigured => None,
                             },
-                            delivery_goal: match submission.goal {
-                                SubmissionDeliveryGoal::EnsureBroadcast => "ensure-broadcast",
-                                SubmissionDeliveryGoal::FeeUpgrade => "fee-upgrade",
-                            },
                             intent_fingerprint: hex::encode(submission.intent_fingerprint.bytes()),
-                            variant_fingerprint: hex::encode(
-                                submission.variant_fingerprint.bytes(),
-                            ),
                         })
                         .collect::<Vec<_>>();
                     let retired_submission_ids = working
@@ -554,41 +553,105 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn acknowledge_submission(
+    pub fn acknowledge_submission_attempt(
         cid: i32,
-        submission_id: &str,
-        variant_fingerprint: &str,
-    ) -> Result<(), JsValue> {
-        let id = submission_id
+        attempt_token: &str,
+    ) -> Result<String, JsValue> {
+        let token = attempt_token
             .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid submission id: {e}")))?;
-        let fingerprint =
-            Hash::from_slice(&hex::decode(variant_fingerprint).into_js()?).into_js()?;
+            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
         with_game(cid, move |cradle: &mut JsGameSession| {
             cradle
                 .cradle
-                .acknowledge_submission_variant(id, &fingerprint)
+                .acknowledge_submission_attempt(token)
+                .map(attempt_status_to_js)
         })
     }
 
     #[wasm_bindgen]
-    pub fn reject_submission(cid: i32, submission_id: &str) -> Result<(), JsValue> {
-        let id = submission_id
+    pub fn reject_submission_attempt(cid: i32, attempt_token: &str) -> Result<String, JsValue> {
+        let token = attempt_token
             .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid submission id: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
         with_game(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.reject_submission(id)
+            cradle
+                .cradle
+                .stop_submission_attempt(token)
+                .map(attempt_status_to_js)
         })
     }
 
-    /// Re-queue unlanded transactions still awaiting wallet acknowledgement.
-    /// Called only after fresh chain synchronization on restore/reconnect;
-    /// rollback-specific replay is queued while reporting chain evidence. The
-    /// host should call `drain_submissions` afterwards to pick up either path.
     #[wasm_bindgen]
-    pub fn resubmit_submitted(cid: i32) -> Result<(), JsValue> {
+    pub fn submission_attempt_unavailable(
+        cid: i32,
+        attempt_token: &str,
+    ) -> Result<String, JsValue> {
+        let token = attempt_token
+            .parse::<u64>()
+            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
         with_game(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.requeue_submitted();
+            cradle
+                .cradle
+                .stop_submission_attempt(token)
+                .map(attempt_status_to_js)
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn relinquish_submission_attempt(
+        cid: i32,
+        attempt_token: &str,
+    ) -> Result<String, JsValue> {
+        let token = attempt_token
+            .parse::<u64>()
+            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle
+                .cradle
+                .relinquish_submission_attempt(token)
+                .map(attempt_status_to_js)
+        })
+    }
+
+    fn attempt_status_to_js(status: SubmissionAttemptStatus) -> String {
+        match status {
+            SubmissionAttemptStatus::Applied => "applied",
+            SubmissionAttemptStatus::Stale => "stale",
+        }
+        .to_string()
+    }
+
+    #[wasm_bindgen]
+    pub fn submission_successor_relationship(
+        cid: i32,
+        successor_attempt_token: &str,
+        completed_attempt_token: &str,
+    ) -> Result<String, JsValue> {
+        let successor_token = successor_attempt_token
+            .parse::<u64>()
+            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
+        let completed_token = completed_attempt_token
+            .parse::<u64>()
+            .map_err(|e| JsValue::from_str(&format!("invalid completed attempt token: {e}")))?;
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            Ok(match cradle
+                .cradle
+                .submission_successor_relationship(successor_token, completed_token)?
+            {
+                SubmissionSuccessorRelationship::Exact => "exact",
+                SubmissionSuccessorRelationship::NewerFeeBearing => "newer-fee-bearing",
+                SubmissionSuccessorRelationship::Other => "other",
+            }
+            .to_string())
+        })
+    }
+
+    /// Signal that raw height and every required watched-coin observation form
+    /// one coherent fresh snapshot. Rust chooses exact replay versus fee upgrade.
+    #[wasm_bindgen]
+    pub fn chain_snapshot_ready(cid: i32) -> Result<(), JsValue> {
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.chain_snapshot_ready();
             Ok(())
         })
     }
@@ -906,26 +969,21 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn finalize_submission(
+    pub fn finalize_submission_attempt(
         cid: i32,
-        submission_id: &str,
-        delivery_goal: &str,
-        variant_fingerprint: &str,
+        attempt_token: &str,
         fee_source_json: Option<String>,
     ) -> Result<JsValue, JsValue> {
-        let id = submission_id
+        let token = attempt_token
             .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid submission id: {e}")))?;
-        let goal = match delivery_goal {
-            "ensure-broadcast" => SubmissionDeliveryGoal::EnsureBroadcast,
-            "fee-upgrade" => SubmissionDeliveryGoal::FeeUpgrade,
-            _ => return Err(JsValue::from_str("invalid submission delivery goal")),
-        };
-        let drained_variant_fingerprint =
-            Hash::from_slice(&hex::decode(variant_fingerprint).into_js()?).into_js()?;
+            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
         let fee_intent = with_game(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.submission_fee_intent(id)
+            cradle.cradle.submission_fee_intent_for_attempt(token)
         })?;
+        let Some(fee_intent) = fee_intent else {
+            return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt { status: "stale" })
+                .map_err(|error| JsValue::from_str(&error.to_string()));
+        };
         let fee_source = match fee_intent {
             SubmissionFeeIntent::Attach { target, amount, .. } => fee_source_json
                 .ok_or_else(|| "the wallet did not provide a fee source".to_string())
@@ -962,14 +1020,21 @@ mod gaming_wasm {
                 &mut cradle.allocator,
                 move |working, _allocator| {
                     let additional_data = working.cradle().agg_sig_me_additional_data().clone();
-                    let finalized = working.finalize_submission_delivery(
-                        id,
-                        goal,
-                        &drained_variant_fingerprint,
+                    let Some(finalized) = working.finalize_submission_attempt(
+                        token,
                         fee_source,
                         &additional_data,
                         working.last_height(),
-                    )?;
+                    )? else {
+                        return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt {
+                            status: "stale",
+                        })
+                        .map_err(|error| {
+                            types::Error::StrErr(format!(
+                                "failed to convert stale submission result: {error}"
+                            ))
+                        });
+                    };
                     let bundle =
                         spend_bundle_to_coinset_js(&finalized.bundle).map_err(|error| {
                             types::Error::StrErr(format!(
