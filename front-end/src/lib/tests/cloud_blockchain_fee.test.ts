@@ -46,6 +46,7 @@ jest.mock('../../hooks/save', () => ({
 
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
+import { WalletReservationCoordinator } from '../session/walletReservationLedger';
 
 const testOperation = {
   owner: {
@@ -402,6 +403,70 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(calls.some((call) => call.query.includes('signatureRequest(id: $id)'))).toBe(true);
   });
 
+  it('keeps temporary creation not-found unavailable for exact recovery', async () => {
+    (globalThis as unknown as { open: () => unknown }).open = () => ({ close: jest.fn() });
+    setTestGlobal('addEventListener', jest.fn());
+    setTestGlobal('removeEventListener', jest.fn());
+    mockGraphql(() => ({ signatureRequest: null }));
+
+    await expect(
+      new CloudBlockchainInterface().reconcileWalletOffer(
+        testOperation,
+        { kind: 'funding', uniqueId: 'uid', offer: { '1': -1n } },
+        'SR_exact_not_found',
+      ),
+    ).resolves.toEqual({
+      kind: 'unavailable',
+      reason: expect.stringMatching(/temporarily not found/i),
+    });
+  });
+
+  it('keeps a blocked creation popup unavailable for exact recovery', async () => {
+    (globalThis as unknown as { open: () => unknown }).open = () => null;
+
+    await expect(
+      new CloudBlockchainInterface().reconcileWalletOffer(
+        testOperation,
+        { kind: 'funding', uniqueId: 'uid', offer: { '1': -1n } },
+        'SR_exact_popup',
+      ),
+    ).resolves.toEqual({
+      kind: 'unavailable',
+      reason: expect.stringMatching(/popup blocked/i),
+    });
+  });
+
+  it('keeps incomplete SUBMITTED creation unavailable after timeout', async () => {
+    jest.useFakeTimers();
+    saveCloudWalletAuth({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      expiresAt: Date.now() + 20 * 60_000,
+      walletId: 'Wallet_1',
+    });
+    (globalThis as unknown as { open: () => unknown }).open = () => ({ close: jest.fn() });
+    setTestGlobal('addEventListener', jest.fn());
+    setTestGlobal('removeEventListener', jest.fn());
+    mockGraphql(() => ({
+      signatureRequest: {
+        id: 'SR_incomplete',
+        status: 'SUBMITTED',
+        transaction: { offer: null },
+      },
+    }));
+    const completion = new CloudBlockchainInterface().reconcileWalletOffer(
+      testOperation,
+      { kind: 'funding', uniqueId: 'uid', offer: { '1': -1n } },
+      'SR_incomplete',
+    );
+    await jest.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await expect(completion).resolves.toEqual({
+      kind: 'unavailable',
+      reason: expect.stringMatching(/timed out/i),
+    });
+    jest.useRealTimers();
+  });
+
   it('cancels a persisted offer off chain by offerId', async () => {
     const calls = mockGraphql(() => ({
       cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'SUBMITTED' } },
@@ -480,6 +545,94 @@ describe('CloudBlockchainInterface fee support', () => {
       status: 'unavailable',
       detail: expect.stringMatching(/popup blocked/i),
     });
+  });
+
+  it.each([
+    ['temporarily missing', { signatureRequest: null }],
+    [
+      'mismatched SUBMITTED response',
+      { signatureRequest: { id: 'SR_other', status: 'SUBMITTED' } },
+    ],
+    ['malformed response', { signatureRequest: { id: 'SR_cancel', status: '' } }],
+  ])('keeps a %s cancellation recovery unavailable', async (_label, response) => {
+    (globalThis as unknown as { open: () => unknown }).open = () => ({ close: jest.fn() });
+    setTestGlobal('addEventListener', jest.fn());
+    setTestGlobal('removeEventListener', jest.fn());
+    mockGraphql(() => response);
+
+    await expect(
+      new CloudBlockchainInterface().reconcileWalletOfferCancellation('Offer_1', 'SR_cancel'),
+    ).resolves.toEqual({
+      status: 'unavailable',
+      detail: expect.stringMatching(/temporarily unavailable|incomplete/i),
+    });
+  });
+
+  it('preserves cancellation recovery across a GraphQL response error without a new mutation', async () => {
+    (globalThis as unknown as { open: () => unknown }).open = () => ({ close: jest.fn() });
+    setTestGlobal('addEventListener', jest.fn());
+    setTestGlobal('removeEventListener', jest.fn());
+    const queries: string[] = [];
+    setTestGlobal(
+      'fetch',
+      jest.fn(async (_url: string, init?: { body?: string }) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { query?: string };
+        const query = body.query ?? '';
+        queries.push(query);
+        return {
+          status: 200,
+          ok: true,
+          text: async () =>
+            JSON.stringify(
+              query.includes('cancelOffer')
+                ? {
+                    data: {
+                      cancelOffer: {
+                        signatureRequest: { id: 'SR_cancel_graphql', status: 'PENDING' },
+                      },
+                    },
+                  }
+                : { errors: [{ message: 'temporary GraphQL failure' }] },
+            ),
+        };
+      }),
+    );
+
+    const iface = new CloudBlockchainInterface();
+    const provider = iface.getWalletOfferProvider();
+    expect(provider?.capability).toBe('recoverable');
+    if (!provider) throw new Error('expected Cloud wallet provider');
+    const owner = {
+      installationPlayerId: 'player',
+      peerSessionId: 'session',
+      providerScope: provider.scope,
+    };
+    const purpose = { kind: 'fee' as const, operationId: 'submission' };
+    const coordinator = new WalletReservationCoordinator();
+    coordinator.attachProvider(provider);
+    coordinator.registerReserved('Offer_1', owner, purpose);
+    coordinator.requireCancellation('Offer_1', 'retired');
+    await coordinator.awaitOwner(owner);
+
+    expect(coordinator.snapshot()).toEqual([
+      expect.objectContaining({
+        tradeId: 'Offer_1',
+        stage: 'cancelling',
+        recoveryId: 'SR_cancel_graphql',
+      }),
+    ]);
+    coordinator.providerReady(provider);
+    await coordinator.awaitOwner(owner);
+
+    expect(queries.filter((query) => query.includes('cancelOffer'))).toHaveLength(1);
+    expect(queries.filter((query) => query.includes('signatureRequest(id: $id)'))).toHaveLength(2);
+    expect(coordinator.snapshot()).toEqual([
+      expect.objectContaining({
+        tradeId: 'Offer_1',
+        stage: 'cancelling',
+        recoveryId: 'SR_cancel_graphql',
+      }),
+    ]);
   });
 
   it('does not complete cancellation while its signature request is pending', async () => {

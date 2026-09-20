@@ -6,6 +6,7 @@ import {
   WalletOfferCompletion,
   WalletOfferOperation,
   WalletOfferRequest,
+  WalletOfferProvider,
   WalletOfferCancellationOutcome,
   WalletOfferCancellationBeginOutcome,
   WalletSubmitOutcome,
@@ -200,6 +201,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult = { puzzleHash: '' };
 
   private auth: CloudWalletAuthState | null = null;
+  private walletOfferProvider: WalletOfferProvider | null = null;
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
@@ -217,10 +219,25 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     );
   }
 
-  getWalletProviderScope() {
-    return this.auth?.walletId
-      ? ({ provider: 'cloud', walletId: this.auth.walletId } as const)
-      : null;
+  getWalletOfferProvider() {
+    const walletId = this.auth?.walletId;
+    if (!walletId) return null;
+    if (
+      this.walletOfferProvider?.scope.provider !== 'cloud' ||
+      this.walletOfferProvider.scope.walletId !== walletId
+    ) {
+      this.walletOfferProvider = {
+        capability: 'recoverable',
+        scope: { provider: 'cloud', walletId },
+        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
+        reconcileCreation: (operation, request, recoveryId) =>
+          this.reconcileWalletOffer(operation, request, recoveryId),
+        beginCancellation: (tradeId) => this.beginWalletOfferCancellation(tradeId),
+        reconcileCancellation: (tradeId, recoveryId) =>
+          this.reconcileWalletOfferCancellation(tradeId, recoveryId),
+      };
+    }
+    return this.walletOfferProvider;
   }
 
   private requireWalletId(): string {
@@ -661,7 +678,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       );
       const sr = data.signatureRequest;
       if (!sr || sr.id !== signatureRequestId) {
-        throw new Error('signatureRequest not found');
+        throw new SignatureRequestUnavailableError('signatureRequest temporarily not found');
       }
       const status = sr.status;
       log(`[cloud-blockchain] signatureRequest id=${sr.id} status=${status}`);
@@ -677,11 +694,13 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         return { offer, tradeId: offerId };
       }
       if (status === 'CANCELLED' || status === 'REJECTED' || status === 'FAILED') {
-        throw new Error(`Cloud Wallet signature request ended with status ${status}`);
+        throw new SignatureRequestRejectedError(
+          `Cloud Wallet signature request ended with status ${status}`,
+        );
       }
       await new Promise((r) => setTimeout(r, SR_POLL_MS));
     }
-    throw new Error('Timed out polling Cloud Wallet signed offer');
+    throw new SignatureRequestUnavailableError('Timed out polling Cloud Wallet signed offer');
   }
 
   private async beginCloudOffer(
@@ -784,13 +803,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       };
     } catch (error) {
       const reason = cloudErrorDetail(error);
-      if (
-        error instanceof CloudWalletTransportError ||
-        error instanceof SignatureRequestUnavailableError
-      ) {
-        return { kind: 'unavailable', reason };
-      }
-      return { kind: 'failure', reason };
+      return error instanceof SignatureRequestRejectedError
+        ? { kind: 'failure', reason }
+        : { kind: 'unavailable', reason };
     }
   }
 
@@ -811,17 +826,19 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         { id: signatureRequestId },
       );
       const request = data.signatureRequest;
+      if (!request || request.id !== signatureRequestId) {
+        throw new SignatureRequestUnavailableError(
+          'Cloud Wallet cancellation signatureRequest is temporarily unavailable',
+        );
+      }
       if (
-        !request ||
-        request.id !== signatureRequestId ||
         typeof request.status !== 'string' ||
         request.status.length === 0 ||
         request.status.length > 64
       ) {
-        return {
-          status: 'rejected',
-          detail: 'Cloud Wallet returned an invalid cancellation signatureRequest',
-        };
+        throw new SignatureRequestUnavailableError(
+          'Cloud Wallet returned an incomplete cancellation signatureRequest',
+        );
       }
       const status = request.status.toUpperCase();
       log(`[cloud-blockchain] cancellation signatureRequest id=${request.id} status=${status}`);
@@ -914,10 +931,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       );
     } catch (error) {
       const detail = boundedCancellationDetail(cloudErrorDetail(error));
-      return error instanceof CloudWalletTransportError ||
-        error instanceof SignatureRequestUnavailableError
-        ? { status: 'unavailable', detail }
-        : { status: 'rejected', detail };
+      return error instanceof SignatureRequestRejectedError
+        ? { status: 'rejected', detail }
+        : { status: 'unavailable', detail };
     }
   }
 
@@ -1009,6 +1025,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   async disconnect(): Promise<void> {
     clearCloudWalletAuth();
     this.auth = null;
+    this.walletOfferProvider = null;
     this.monitoringReady = false;
     this.blockchainAddressData = { puzzleHash: '' };
     this.fireConnectionChange(false);

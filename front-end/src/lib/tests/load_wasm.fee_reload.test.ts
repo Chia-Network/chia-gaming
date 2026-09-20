@@ -15,13 +15,14 @@ import { createReloadableSessionLane, injectSessionReload } from './reload_injec
 import * as assert from 'assert';
 
 it(
-  'checkpoints and exactly replays a simulator transaction with a persisted fee offer',
+  'broadcasts base, upgrades later under one intent, and exactly replays the upgrade',
   async () => {
     const poller = await startSimulator(['cafe00014', 'dead00014']);
     if (!poller) return;
     poller.stop();
     await pollOnce(poller);
-    walletReservationLedger.attachRpc(fakeBlockchainInfo);
+    const provider = fakeBlockchainInfo.getWalletOfferProvider();
+    if (provider) walletReservationLedger.attachProvider(provider);
 
     const adapters = await createActivePair(poller, 14);
     const controller = adapters[0].blob!;
@@ -49,16 +50,26 @@ it(
     const originalBeginWalletOffer = fakeBlockchainInfo.beginWalletOffer;
     const originalReleaseWalletOffer = fakeBlockchainInfo.beginWalletOfferCancellation;
     fakeBlockchainInfo.beginWalletOffer = async (...args) => {
-      if (args[1].kind === 'fee') feeOfferCreations += 1;
+      if (args[1].kind === 'fee') {
+        feeOfferCreations += 1;
+        if (feeOfferCreations === 1) {
+          return { kind: 'unavailable', reason: 'deterministic fee provider outage' };
+        }
+      }
       return originalBeginWalletOffer.apply(fakeBlockchainInfo, args);
     };
     fakeBlockchainInfo.spend = async (...args) => {
       submittedBlobs.push(args[0]);
       submittedFees.push(args[4]);
       if (submittedBlobs.length === 1) {
+        const outcome = { status: 'acknowledged' as const };
+        submissionOutcomes.push(outcome);
+        return outcome;
+      }
+      if (submittedBlobs.length === 2) {
         const outcome = {
           status: 'unavailable' as const,
-          detail: 'deterministic simulated delivery outage',
+          detail: 'deterministic upgraded delivery outage',
         };
         submissionOutcomes.push(outcome);
         return outcome;
@@ -76,11 +87,24 @@ it(
     try {
       assert.equal(lane.controller.goOnChain(), true);
       await flushWrapperDrain(adapters);
-      assert.equal(submittedBlobs.length, 1, 'the first finalized delivery must be attempted once');
-      assert.equal(submittedFees[0], 10n, 'Rust must attach the configured nonzero fee');
-      assert.equal(feeOfferCreations, 1, 'the first delivery must create one fee offer');
+      assert.equal(submittedBlobs.length, 1, 'fee unavailability must broadcast base immediately');
+      assert.equal(submittedFees[0], undefined);
+      assert.equal(feeOfferCreations, 1);
+      assert.deepEqual(walletReservationLedger.snapshot(), []);
 
-      const finalizedBlob = submittedBlobs[0]!;
+      lane.controller.attachBlockchain(poller);
+      await flushWrapperDrain(adapters);
+      await flushWrapperDrain(adapters);
+      assert.equal(submittedBlobs.length, 2, 'provider attachment must publish one fee upgrade');
+      assert.equal(submittedFees[1], 10n);
+      assert.equal(feeOfferCreations, 2);
+      assert.notEqual(
+        submittedBlobs[1],
+        submittedBlobs[0],
+        'fee upgrade must replace the current exact-byte variant',
+      );
+
+      const finalizedBlob = submittedBlobs[1]!;
       const retained = walletReservationLedger.snapshot();
       assert.equal(
         retained.length,
@@ -110,7 +134,8 @@ it(
 
       const restored = await injectSessionReload(lane, poller, undefined, async () => {
         await hydrateWalletReservationLedger();
-        walletReservationLedger.attachRpc(fakeBlockchainInfo);
+        const provider = fakeBlockchainInfo.getWalletOfferProvider();
+        if (provider) walletReservationLedger.attachProvider(provider);
       });
       lane = restored.lane;
       assert.equal(lane.controller.getRestoreStatus(), 'restored');
@@ -120,30 +145,21 @@ it(
         'reload must consume the cradle bytes checkpointed with the fee ledger',
       );
 
-      for (let attempt = 0; attempt < 20 && submittedBlobs.length < 2; attempt += 1) {
+      for (let attempt = 0; attempt < 20 && submittedBlobs.length < 3; attempt += 1) {
         await pollOnce(poller);
         await flushWrapperDrain(adapters);
         await flushWrapperDrain(adapters);
       }
-      assert.equal(submittedBlobs.length, 2, 'fresh synchronization must replay once');
-      assert.equal(submittedBlobs[1], finalizedBlob, 'replay must preserve exact finalized bytes');
-      assert.equal(submittedFees[1], 10n, 'exact replay must retain the original applied fee');
-      assert.equal(feeOfferCreations, 1, 'replay must not request a second fee offer');
-      assert.deepEqual(submissionOutcomes[1], { status: 'acknowledged' });
-
-      for (
-        let attempt = 0;
-        attempt < 20 && walletReservationLedger.snapshot().length > 0;
-        attempt += 1
-      ) {
-        await lane.controller.flushPendingWork();
-        await lane.runtime.persist();
-      }
-      assert.deepEqual(cancellationOutcomes, [
-        { status: 'already-terminal', detail: 'simulator fee offer was spent' },
-      ]);
-      assert.deepEqual(walletReservationLedger.snapshot(), []);
-      assert.deepEqual((await readWalletReservationRecord())?.entries, []);
+      assert.equal(submittedBlobs.length, 3, 'fresh synchronization must replay once');
+      assert.equal(submittedBlobs[2], finalizedBlob, 'replay must preserve exact upgraded bytes');
+      assert.equal(submittedFees[2], 10n, 'exact replay must retain the upgraded fee');
+      assert.equal(feeOfferCreations, 2, 'replay must not request a third fee offer');
+      assert.deepEqual(submissionOutcomes[2], { status: 'acknowledged' });
+      assert.equal(
+        walletReservationLedger.snapshot()[0]?.stage,
+        'retained-for-replay',
+        'wallet acknowledgement must not retire fee material before chain terminality',
+      );
 
       for (
         let block = 0;
@@ -159,6 +175,23 @@ it(
         'Unrolling',
         'the simulator must definitively observe the fee-bearing channel spend',
       );
+      for (
+        let attempt = 0;
+        attempt < 20 && walletReservationLedger.snapshot().length > 0;
+        attempt += 1
+      ) {
+        await pollOnce(poller);
+        await flushWrapperDrain(adapters);
+        await lane.controller.flushPendingWork();
+        await lane.runtime.persist();
+      }
+      assert.deepEqual(
+        cancellationOutcomes,
+        [{ status: 'already-terminal', detail: 'simulator fee offer was spent' }],
+        `landed fee cleanup stalled: ledger=${JSON.stringify(walletReservationLedger.snapshot())} diagnostics=${lane.controller.diagnosticLog.join('|')}`,
+      );
+      assert.deepEqual(walletReservationLedger.snapshot(), []);
+      assert.deepEqual((await readWalletReservationRecord())?.entries, []);
     } finally {
       for (const adapter of adapters) {
         if (adapter.blob) poller.detachGameSession(adapter.blob);
@@ -169,6 +202,38 @@ it(
       fakeBlockchainInfo.spend = originalSpend;
       fakeBlockchainInfo.beginWalletOffer = originalBeginWalletOffer;
       fakeBlockchainInfo.beginWalletOfferCancellation = originalReleaseWalletOffer;
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
+
+it(
+  'propagates an authoritative report_height error before draining real WASM',
+  async () => {
+    const poller = await startSimulator(['cafe00015', 'dead00015']);
+    if (!poller) return;
+    const adapters = await createActivePair(poller, 15);
+    const controller = adapters[0].blob!;
+    const cradle = (
+      controller as unknown as {
+        cradle: { report_height(height: bigint): unknown };
+      }
+    ).cradle;
+    const before = controller.getWasmFields()?.serializedGameSession;
+    assert.ok(before instanceof Uint8Array);
+
+    try {
+      assert.throws(
+        () => cradle.report_height(1_000_000_000_001n),
+        /report_height.*exceeds MAX_REPORTED_HEIGHT/i,
+      );
+      assert.deepEqual(controller.getWasmFields()?.serializedGameSession, before);
+    } finally {
+      for (const adapter of adapters) {
+        if (adapter.blob) poller.detachGameSession(adapter.blob);
+      }
+      poller.stop();
+      for (const adapter of adapters) adapter.blob?.cleanup();
     }
   },
   LONG_WASM_TEST_TIMEOUT,

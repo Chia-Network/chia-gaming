@@ -1,3 +1,5 @@
+import { expectConsoleError } from '../../../scripts/testSetup';
+
 import {
   peekSession,
   clearSession,
@@ -11,23 +13,30 @@ import {
   clearSessionWithInboundRejectionReceipt,
   clearSessionWithRejectionTombstone,
   claimLease,
+  claimAndHydrateSession,
   loadState,
   flushSessionSave,
   getPlayerId,
   hydrateSessionCacheFromDisk,
+  offFenced,
+  onFenced,
   reclaimLease,
   _resetForTests,
 } from '../../hooks/save';
+import { loseAuthority } from '../../hooks/saveCoordination';
 import {
   _afterNextStorageAuthorityCheckForTests,
+  _holdNextCombinedCheckpointAfterCommitForTests,
   _holdNextStorageMutationForTests,
   MAX_DURABLE_REJECTION_TOMBSTONES,
+  pruneRejectionTombstones,
   readRejectionTombstones,
   readSessionRecord,
   readWalletReservationRecord,
   REJECTION_TOMBSTONE_TTL_MS,
   rejectionTombstoneKey,
   SESSION_DB_NAME,
+  StorageAuthorityLostError,
   writeRejectionTombstone,
   writeSessionAndWalletReservationRecords,
   writeSessionRecord,
@@ -42,7 +51,7 @@ import {
 } from '../session/historyLimits';
 import { baseSave } from './session_save_envelope.fixtures';
 import {
-  WalletReservationLedger,
+  WalletReservationCoordinator,
   walletReservationLedger,
 } from '../session/walletReservationLedger';
 import {
@@ -130,6 +139,14 @@ describe('session persistence', () => {
       },
     ],
     [
+      'v4 predecessor',
+      {
+        schema: WALLET_RESERVATION_RECORD_SCHEMA,
+        version: 4n,
+        entries: [],
+      },
+    ],
+    [
       'wrong version',
       {
         schema: WALLET_RESERVATION_RECORD_SCHEMA,
@@ -152,9 +169,51 @@ describe('session persistence', () => {
   });
 
   it('does not hydrate a persisted bare ledger array', () => {
-    expect(() => new WalletReservationLedger().hydrateFromDisk([])).toThrow(
+    expect(() => new WalletReservationCoordinator().hydrateFromDisk([])).toThrow(
       'Garbled wallet reservation record',
     );
+  });
+
+  it.each([
+    [
+      'uppercase funding coin id',
+      {
+        kind: 'funding',
+        canonical: {
+          amount: '1',
+          fee: '0',
+          conditions: [],
+          coin_id: 'AB'.repeat(32),
+        },
+      },
+    ],
+    [
+      'prefixed fee target id',
+      {
+        kind: 'fee',
+        uniqueId: 'installation',
+        fee: 1n,
+        concurrentSpendCoinId: `0x${'ab'.repeat(32)}`,
+      },
+    ],
+  ])('rejects a creating recovery with %s', (_label, request) => {
+    expect(() =>
+      decodeWalletReservationLedger([
+        {
+          owner: {
+            installationPlayerId: 'installation',
+            peerSessionId: 'peer-session',
+            providerScope: { provider: 'simulator', identity: 'installation' },
+          },
+          purpose: { kind: request.kind, operationId: 'operation' },
+          stage: 'creating',
+          disposition: 'active',
+          recoveryId: 'recovery',
+          request,
+          reason: 'pending',
+        },
+      ]),
+    ).toThrow();
   });
 
   it('reports malformed ledger boot hydration and leaves the record on disk', async () => {
@@ -208,15 +267,23 @@ describe('session persistence', () => {
         {
           ...operation,
           stage: 'creating',
+          disposition: 'active',
           recoveryId: 'SignatureRequest_first',
-          request: { kind: 'funding', uniqueId: 'installation', offer: { '1': -1n } },
+          request: {
+            kind: 'funding',
+            canonical: { amount: '1', fee: '0', conditions: [] },
+          },
           reason: 'pending',
         },
         {
           ...operation,
           stage: 'creating',
+          disposition: 'active',
           recoveryId: 'SignatureRequest_second',
-          request: { kind: 'funding', uniqueId: 'installation', offer: { '1': -1n } },
+          request: {
+            kind: 'funding',
+            canonical: { amount: '1', fee: '0', conditions: [] },
+          },
           reason: 'pending',
         },
       ]),
@@ -238,6 +305,7 @@ describe('session persistence', () => {
     const creating = {
       ...operation,
       stage: 'creating' as const,
+      disposition: 'active' as const,
       recoveryId: 'SignatureRequest_pending',
       request: {
         kind: 'fee' as const,
@@ -404,6 +472,7 @@ describe('session persistence', () => {
       createdAt: now,
     });
 
+    const transactionSpy = jest.spyOn(IDBDatabase.prototype, 'transaction');
     expect(await readRejectionTombstones()).toEqual([
       expect.objectContaining({
         kind: 'inbound-receipt',
@@ -412,6 +481,34 @@ describe('session persistence', () => {
         unackedMessages: [],
       }),
     ]);
+    expect(transactionSpy).toHaveBeenCalledWith('rejections', 'readonly');
+    transactionSpy.mockRestore();
+    const countRecords = async () => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(SESSION_DB_NAME);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      try {
+        return await new Promise<number>((resolve, reject) => {
+          const transaction = db.transaction('rejections', 'readonly');
+          const request = transaction.objectStore('rejections').count();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      } finally {
+        db.close();
+      }
+    };
+    expect(await countRecords()).toBe(1);
+    const pruneSpy = jest.spyOn(IDBDatabase.prototype, 'transaction');
+    await pruneRejectionTombstones();
+    expect(pruneSpy).toHaveBeenCalledWith(
+      expect.arrayContaining(['rejections', 'coordination']),
+      'readwrite',
+    );
+    pruneSpy.mockRestore();
+    expect(await countRecords()).toBe(1);
   });
 
   it('waits for the ordered mutation tail before publicly reading tombstones', async () => {
@@ -579,6 +676,22 @@ describe('session persistence', () => {
     expect(loaded.history.diagnosticLog).toEqual(['boot log']);
   });
 
+  it('buffers pre-authority history and merges it into the claimed session', async () => {
+    saveLiveFields();
+    await flushSessionSave();
+
+    _resetForTests();
+    const buffered = saveHistory({ diagnosticLog: ['recovery dialog log'] });
+    await expect(buffered).resolves.toBeUndefined();
+
+    const claimed = requireLive(await claimAndHydrateSession());
+    expect(claimed.live.serializedGameSession).toEqual(sampleSession.serializedGameSession);
+    expect(claimed.history.diagnosticLog).toEqual(['recovery dialog log']);
+    expect(requireLive(await readSessionRecord()).history.diagnosticLog).toEqual([
+      'recovery dialog log',
+    ]);
+  });
+
   it('flush persists a newer in-memory cradle even when sessionId is unset', async () => {
     const first = new Uint8Array([1, 1, 1, 1]);
     const second = new Uint8Array([2, 2, 2, 2, 2, 2]);
@@ -711,7 +824,7 @@ describe('session persistence', () => {
     expect(walletReservationLedger.isDirty()).toBe(false);
 
     _resetForTests();
-    const restored = requireLive(await peekSession());
+    const restored = requireLive(await claimAndHydrateSession());
     expect(restored.live.serializedGameSession).toEqual(new Uint8Array([2]));
     expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-atomic', stage: 'retained-for-replay' }),
@@ -847,9 +960,56 @@ describe('session persistence', () => {
     };
     const winningWrite = writeWalletReservationRecord([winningEntry]);
     release();
-    await Promise.all([oldWrite, winningWrite]);
+    await expect(oldWrite).rejects.toBeInstanceOf(StorageAuthorityLostError);
+    await winningWrite;
 
     expect((await readWalletReservationRecord())?.entries).toEqual([winningEntry]);
+  });
+
+  it('rejects a combined checkpoint when takeover lands after its IDB commit', async () => {
+    let release!: () => void;
+    let committed!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reachedCommit = new Promise<void>((resolve) => {
+      committed = resolve;
+    });
+    const authorityLost = jest.fn();
+    onFenced(authorityLost);
+    _holdNextCombinedCheckpointAfterCommitForTests(barrier, committed);
+
+    saveLiveFields({
+      ...sampleSession,
+      serializedGameSession: new Uint8Array([7]),
+    });
+    const checkpoint = flushSessionSave();
+    await reachedCommit;
+    await reclaimLease();
+    expectConsoleError('Durable storage authority was lost');
+    release();
+
+    await expect(checkpoint).rejects.toBeInstanceOf(StorageAuthorityLostError);
+    expect(authorityLost).toHaveBeenCalledWith('durable-authority-lost');
+    offFenced(authorityLost);
+  });
+
+  it('rejects a scheduled save when authority is lost before the debounce fires', async () => {
+    jest.useFakeTimers();
+    try {
+      const scheduled = saveLiveFields({
+        ...sampleSession,
+        serializedGameSession: new Uint8Array([8]),
+      });
+
+      loseAuthority('takeover');
+
+      await expect(scheduled).rejects.toBeInstanceOf(StorageAuthorityLostError);
+      jest.advanceTimersByTime(300);
+      await Promise.resolve();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('serializes a takeover requested after authorization before the winning write', async () => {
@@ -886,6 +1046,24 @@ describe('session persistence', () => {
     expect((await readWalletReservationRecord())?.entries).toEqual([winningEntry]);
   });
 
+  it('claims and reads the predecessor write from the same transaction boundary', async () => {
+    let claim: ReturnType<typeof claimAndHydrateSession> | undefined;
+    _afterNextStorageAuthorityCheckForTests(() => {
+      claim = claimAndHydrateSession();
+    });
+    const predecessor = baseSave({
+      playerId: 'predecessor-player',
+      blockchainType: 'simulator',
+    });
+
+    await writeSessionRecord(predecessor);
+    expect(claim).toBeDefined();
+    await expect(claim).resolves.toMatchObject({
+      identity: { playerId: 'predecessor-player' },
+      preferences: { blockchainType: 'simulator' },
+    });
+  });
+
   it('clearSession deletes the session while preserving the independent ledger', async () => {
     walletReservationLedger.registerReserved(
       'trade-clear',
@@ -900,7 +1078,7 @@ describe('session persistence', () => {
     await clearSession();
     _resetForTests();
 
-    await peekSession();
+    await claimAndHydrateSession();
     expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-clear',
@@ -927,7 +1105,7 @@ describe('session persistence', () => {
     ]);
     clearSavedSessionMarker();
 
-    expect(await peekSession()).toBeNull();
+    expect(await claimAndHydrateSession()).toMatchObject({ phase: 'preferences' });
     expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-independent',
@@ -953,7 +1131,7 @@ describe('session persistence', () => {
       },
     ]);
 
-    await peekSession();
+    await claimAndHydrateSession();
 
     expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({

@@ -712,7 +712,7 @@ retained, unexpired transactions once per rollback epoch, including
 wallet-acknowledged ones. A lower tip replays the surviving retained set; an
 equal-or-higher replacement tip replays only a transaction whose watched output
 is explicitly absent while an input from that same bundle is explicitly live.
-All replay paths reuse the exact wallet-finalized bundle and original fee.
+All replay paths reuse the current exact Rust-owned broadcast variant.
 This is **transaction rebroadcast**: resubmission of exact chain bytes.
 **Reliable peer-frame replay** is separate transport behavior that resends
 unacknowledged numbered peer frames after reconnect or peer availability.
@@ -837,8 +837,8 @@ submission intent and the frontend submission queue owns only ordered one-shot
 wallet delivery.
 
 The browser session envelope is currently strict version 31, its serialized
-Rust/WASM cradle is schema 17, the app IndexedDB is schema 4, and wallet
-reservations use an independent strict version-4 record. These explicit
+Rust/WASM cradle is schema 18, the app IndexedDB is schema 4, and wallet
+reservations use an independent strict version-5 record. These explicit
 versions remain future migration hooks.
 No app or hub persistence format has shipped, so only each current app-owned
 format is decoded; incompatible predecessors are deleted without fallback
@@ -851,7 +851,8 @@ boundary exposes every present channel state-number field as JavaScript
 `bigint`. Internal host and persisted forms stay `bigint`, with `number`
 conversion allowed only at external APIs that explicitly require it.
 
-Persisted funding and fee offers enter one wallet-level reservation ledger.
+Persisted funding and fee offers enter one provider-owned wallet-level
+reservation coordinator and strict ledger.
 Each trade carries its exact provider trade ID, exact owner
 (`installationPlayerId`, peer session, and strict provider/account scope),
 stable purpose/operation identity, stage, and bounded reason. A `creating`
@@ -868,17 +869,19 @@ cancellation; `retained-for-replay` remains owned by Rust replay.
 An attached fee offer is retained for exact transaction replay until wallet
 acknowledgement or Rust retirement requests typed cancellation; Cloud
 cancellation completes only after its signature request reaches a successful
-terminal state. Cloud persists a pending `signatureRequest` recovery ID before
-waiting for approval and reconciles that exact request after reload without
-creating a second offer; popup source/origin/request correlation and listener
-cleanup remain adapter responsibilities. The deployed WalletConnect API has no
-end-to-end idempotency or response-loss reconciliation capability, so a lost
-create-offer response may orphan an external offer and current retry is
-best-effort. The provider-neutral interface has an optional reconciliation
-capability for providers that can support it.
+terminal state. Cloud's recoverable provider variant persists a pending
+`signatureRequest` recovery ID and must implement paired begin/reconcile
+creation and cancellation; popup source/origin/request correlation and cleanup
+remain adapter responsibilities. Deployed WalletConnect lacks end-to-end
+idempotency and response-loss reconciliation, so it uses the explicit
+best-effort variant. A lost create-offer response may orphan an external offer.
 
-The session envelope and complete independent ledger snapshot are checkpointed
-atomically in one IndexedDB transaction, and strict codecs reject
+`BootRecoveryBoundary` owns pending wipe, read-only preclaim inspection,
+atomic claim-and-hydrate, takeover, malformed-evidence recovery, reset retry,
+and authority loss. The winner receives the exact session and ledger snapshot
+read in the claim transaction; preauthority identity/history/preference patches
+flush only afterward. The session envelope and complete independent ledger
+snapshot are checkpointed atomically in one IndexedDB transaction, and strict codecs reject
 unknown/missing fields, duplicate trades, invalid discriminants, and
 non-current versions. IndexedDB schema 4 stores durable owner, write, and reset
 epochs; every session, ledger, clear, and reset mutation checks that authority
@@ -890,10 +893,14 @@ storage and intentionally erases every reservation, including replay-retained
 entries. It reloads only after every deletion reports success. A blocked or
 failed deletion remains on recovery UI with Retry and leaves a minimal
 pending-wipe marker for the next boot; pre-reset work cannot recreate state.
+The owned reset manifest always covers exact current/historical app and
+WalletConnect names; enumeration discovers only additional owned-prefix names,
+so foreign same-origin databases are preserved.
 
-Persistence failure never gates use, transaction release, or cancellation of
-an offer; the in-memory session and ledger remain dirty for a later full atomic
-checkpoint. Failed cancellation retries only on restore, wallet
+Ordinary IndexedDB I/O failure never gates use, transaction release, or
+cancellation; the in-memory authorities remain dirty for a later checkpoint.
+`StorageAuthorityLostError` instead retires the obsolete owner and suppresses
+its pending writes/effects. Failed cancellation retries only on restore, wallet
 reconnect/attachment, or explicit terminal finalization—never by a timer or
 immediate loop. Terminal finalization is blocked while that session still has
 an unresolved ledger entry. Going offline detaches the provider RPC without
@@ -922,7 +929,15 @@ persistence attempt gates launching that work but does not await its completion;
 the key is removed before launch so reentrant work may schedule the same key for
 a later boundary.
 
-Rust submission draining uses an isolated working copy per candidate. For an
+Rust emits an immediate no-fee base variant when fee acquisition is unavailable
+or rejected, while retaining the stable ID and fee intent until chain
+terminality. Wallet readiness or an explicit fresh-chain rebroadcast epoch may
+later upgrade that ID to a fee-bearing variant; base acknowledgement does not
+end fee seeking. Intent and variant fingerprints bind browser delivery.
+
+Rust submission draining uses a serialized transactional working copy through
+JavaScript conversion, committing only after conversion succeeds, plus an
+isolated working copy per candidate. For an
 `A/B/C` queue with an invalid `B`, `A` and `C` commit, `B` is consumed and
 reported once, and later drains do not rediscover it. Abandonment emits the
 retained submission's retirement ID before removing it so provider reservation

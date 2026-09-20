@@ -20,6 +20,7 @@ import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSes
 import { SessionTransitionSurface } from './SessionTransitionSurface';
 import FinishedSessionGameView from './FinishedSessionGameView';
 import { ConnectionSetupModal } from './ConnectionSetupModal';
+import { useBootRecoveryBoundary } from './BootRecoveryBoundary';
 import QRCode from 'qrcode';
 import {
   GameSessionParams,
@@ -58,13 +59,11 @@ import { reactPropSafeValue } from '../lib/reactPropSafe';
 import {
   getPlayerId,
   getSessionId,
-  ensureHubIdentity,
   clearSessionId,
   regenerateSessionId,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
-  peekSession,
   saveSession,
   patchPreHandshakeTransport,
   replaceSession,
@@ -73,13 +72,8 @@ import {
   clearSessionWithInboundRejectionReceipt,
   clearSessionWithRejectionTombstone,
   clearSessionPairing,
-  hardReset,
-  shouldOfferResumeOrStartOver,
-  hydrateSessionCacheFromDisk,
   markSavedSession,
   clearSavedSessionMarker,
-  peekAutoResumeOnce,
-  clearAutoResumeOnce,
   loadState,
   saveTerminalSession,
   LiveSessionSave,
@@ -100,18 +94,10 @@ import {
   setHubAlert as saveHubAlert,
   getHubUrl,
   setHubUrl as saveHubUrl,
-  isLeaseConflict,
-  claimLease,
-  onFenced,
-  offFenced,
   peekAlias,
   releaseLeaseIfOwner,
   setAlias,
 } from '../hooks/save';
-import {
-  reloadAfterSuccessfulHardReset,
-  startPendingWalletConnectWipe,
-} from '../hooks/saveHardReset';
 import type { ChiaNetwork } from '../lib/session/saveEnvelope';
 import { getCurrencyLabels } from '../constants/currency';
 import { MIN_NONZERO_FEE_MOJOS, isEffectivelyZeroFee } from '../constants/fees';
@@ -911,142 +897,68 @@ const Shell = () => {
     pairingToken: string;
     registeredPlayerId: string;
   } | null>(null);
-  // --- Boot state machine ---
-  //
-  // The boot initializer NEVER claims the lease. Claiming the lease writes
-  // to localStorage, which fences any existing tab via the storage event.
-  // We must not do that until the user has made a conscious choice.
-  //
-  //   1. Anything to resume or discard (marker, wallet choice, and/or
-  //      remembered hub) → 'resumeDialog', or 'autoResuming' when the
-  //      prior navigation was a stale-deploy reload (one-shot, no prompt).
-  //   2. Otherwise if another tab holds the lease → 'tabConflict'
-  //      (the other tab is live even if we don't have its save locally);
-  //      otherwise claim the lease and go 'ready'.
-  //
-  // From 'resumeDialog':
-  //   - Start over → hardReset() + reload.
-  //   - Resume     → load IndexedDB, then if lease conflict, 'tabConflict';
-  //                  otherwise claim + hydrate.
-  // From 'autoResuming':
-  //   - Hydrate + mount the real shell invisibly (hub/GameSession run).
-  //   - Flip to 'ready' only once restore is presentable — one visible paint.
-  //
-  // From 'tabConflict':
-  //   - Take over → claimLease(), hydrate if save available.
-  //   - Close     → 'tabDead' (terminal).
-  //
-  // A mid-session fenced event (another tab claimed the lease while we were
-  // 'ready') also transitions to 'tabConflict' so the user can take control
-  // back.
-  type BootState =
-    | { kind: 'loading' }
-    | { kind: 'ready' }
-    | { kind: 'autoResuming' }
-    | { kind: 'resumeDialog'; loadError: string | null }
-    | { kind: 'tabConflict'; save: SessionSave | null; midSession: boolean }
-    | { kind: 'tabDead' };
-
-  const [bootState, setBootState] = useState<BootState>(() => {
-    // Decide auto-resume synchronously so the first paint never flashes the
-    // Resume/Start Over dialog (async boot used to clear the flag then remount
-    // into resumeDialog under Strict Mode).
-    if (peekAutoResumeOnce() && shouldOfferResumeOrStartOver()) {
-      return { kind: 'autoResuming' };
-    }
-    return { kind: 'loading' };
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const pendingWipe = await startPendingWalletConnectWipe();
-      if (cancelled) return;
-      if (!pendingWipe.success) {
-        markSavedSession();
-        setBootState({
-          kind: 'resumeDialog',
-          loadError:
-            'A pending hard reset is still blocked. Close other app tabs and wallet connections, then retry.',
-        });
-        return;
+  const bootRecovery = useBootRecoveryBoundary({
+    onSessionId: setSessionId,
+    onRestore: async (save, source) => {
+      const resumeTab = tabForResumedSave(save);
+      if (resumeTab) setActiveTab(resumeTab);
+      const hasLiveSession = save.phase === 'live' || save.phase === 'pre-handshake';
+      if (hasLiveSession) {
+        performResume(save);
+      } else if (isTerminalSavedChannel(save)) {
+        restoreFinishedSessionFromSave(save);
+        const bcType = save.preferences.blockchainType ?? getBlockchainType();
+        if (bcType) void handleConnect(bcType, true);
+      } else {
+        const bcType = save.preferences.blockchainType ?? getBlockchainType();
+        if (bcType) void handleConnect(bcType, true);
       }
-      const hydration = await hydrateSessionCacheFromDisk();
-      if (cancelled) return;
-      if (hydration.status === 'failed') {
-        clearAutoResumeOnce();
-        markSavedSession();
-        setBootState({ kind: 'resumeDialog', loadError: hydration.error });
-        return;
-      }
-      // Restore hub session_id from disk before any mint / identify.
-      let sid: string;
-      try {
-        sid = await ensureHubIdentity();
-      } catch (error) {
-        if (cancelled) return;
-        clearAutoResumeOnce();
-        markSavedSession();
-        setBootState({
-          kind: 'resumeDialog',
-          loadError: error instanceof Error ? error.message : String(error),
-        });
-        return;
-      }
-      if (cancelled) return;
-      setSessionId(sid);
-
-      if (shouldOfferResumeOrStartOver()) {
-        markSavedSession();
-        if (peekAutoResumeOnce()) {
-          setBootState({ kind: 'autoResuming' });
-          return;
-        }
-        setBootState({ kind: 'resumeDialog', loadError: null });
-        return;
-      }
-      if (isLeaseConflict()) {
-        setBootState({ kind: 'tabConflict', save: null, midSession: false });
-        return;
-      }
-      await claimLease();
-      if (cancelled) return;
-      setBootState({ kind: 'ready' });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Subscribe to mid-session lease loss. Only meaningful once we're 'ready' —
-  // if we're still in a dialog, we haven't claimed the lease yet.
-  useEffect(() => {
-    const handler = () => {
+      return { deferReady: source === 'automatic' && hasLiveSession };
+    },
+    onFreshClaim: (save, source) => {
+      if (source !== 'takeover') return;
+      const bcType = save?.preferences.blockchainType ?? getBlockchainType();
+      if (bcType) void handleConnect(bcType, true);
+    },
+    onAuthorityLost: () => {
+      destroySessionController();
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
-      // Drop the hub iframe immediately so its reconnect loop stops now,
-      // not only after the async peekSession → tabConflict re-render.
       setIframeUrl('about:blank');
       setHubOrigin(null);
       setHubLiveness(null);
-      // Simulator tears down its WS; WC/Cloud keep durable auth across tab handoff.
       if (blockchainTypeRef.current === 'simulator') {
         activeBlockchainRef.current?.disconnect().catch(() => {});
       }
       deactivate();
       activeBlockchainRef.current = null;
       setActiveBlockchainPoller(null);
-      void peekSession().then((save) => {
-        setBootState((prev) =>
-          prev.kind === 'ready' ? { kind: 'tabConflict', save, midSession: true } : prev,
-        );
-      });
-    };
-    onFenced(handler);
-    return () => {
-      offFenced(handler);
-    };
-  }, []);
+    },
+    beforeHardReset: async () => {
+      hubConnRef.current?.disconnect();
+      hubConnRef.current = null;
+      if (activeBlockchainRef.current) {
+        try {
+          await activeBlockchainRef.current.disconnect();
+        } catch {
+          /* ignore */
+        }
+      }
+      deactivate();
+      activeBlockchainRef.current = null;
+      setActiveBlockchainPoller(null);
+    },
+  });
+  const {
+    state: bootState,
+    resuming,
+    startingOver,
+    resume: handleResume,
+    takeOver: handleTakeOver,
+    closeTab: closeBootBoundary,
+    retryHardReset: handleStartOver,
+    revealReady: revealBootReady,
+  } = bootRecovery;
 
   // Warn before closing a tab with a live session. Disconnect sockets only on
   // actual leave (`pagehide`): `beforeunload` also runs if the user stays, and
@@ -3255,9 +3167,6 @@ const Shell = () => {
     return installHubIframeAuthentication({ iframe, iframeUrl, sessionId });
   }, [hubOrigin, iframeUrl, sessionId]);
 
-  const [resuming, setResuming] = useState(false);
-  const [startingOver, setStartingOver] = useState(false);
-
   /** Restore a finished/terminal session freeze without remounting live WASM. */
   const restoreFinishedSessionFromSave = useCallback(
     (save: SessionSave) => {
@@ -3289,7 +3198,6 @@ const Shell = () => {
       setRestoreStatus('idle');
       setRestoreError(null);
       hubConnRef.current?.setBusy(presenceBusy('resolved'));
-      setResuming(false);
     },
     [
       handleCoinsChange,
@@ -3314,7 +3222,6 @@ const Shell = () => {
       const bcType =
         save.preferences.blockchainType ??
         (isElectronDistribution() ? 'walletconnect' : 'simulator');
-      setResuming(true);
       setRestoreStatus('restoring');
       setRestoreError(null);
       setSessionPhase('none');
@@ -3383,7 +3290,6 @@ const Shell = () => {
       const { iface, pollMs } = getInterface(bcType);
       activeBlockchainRef.current = iface;
       setWalletConnected(iface.isConnected());
-      setResuming(false);
 
       // Restore abandon timer only if the persisted channel is still in that waiting state.
       if (abandonTimerRef.current !== null) {
@@ -3496,89 +3402,12 @@ const Shell = () => {
     ],
   );
 
-  // User clicked "Resume Session" in the resumeDialog, or boot landed on
-  // autoResuming after a stale-deploy reload.
-  // If another tab holds the lease, ask to take over first; otherwise proceed.
-  const handleResume = useCallback(async () => {
-    if (bootState.kind === 'resumeDialog' && bootState.loadError !== null) return;
-    if (bootState.kind !== 'resumeDialog' && bootState.kind !== 'autoResuming') return;
-    const fromAutoResume = bootState.kind === 'autoResuming';
-    setResuming(true);
-    let save: SessionSave | null;
-    try {
-      save = await peekSession();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error('[Shell] resume session load failed:', error);
-      clearAutoResumeOnce();
-      markSavedSession();
-      setBootState({ kind: 'resumeDialog', loadError: message });
-      setResuming(false);
-      return;
-    }
-    if (!save) {
-      // peekSession clears orphan markers when no record exists. Re-arm so a
-      // failed Resume cannot fall through to leftover preference state on the
-      // next reload — the user must Start Over.
-      clearAutoResumeOnce();
-      markSavedSession();
-      setBootState({
-        kind: 'resumeDialog',
-        loadError: 'The saved session is unsupported or could not be loaded.',
-      });
-      setResuming(false);
-      return;
-    }
-    if (isLeaseConflict()) {
-      clearAutoResumeOnce();
-      setBootState({ kind: 'tabConflict', save, midSession: false });
-      setResuming(false);
-      return;
-    }
-    await claimLease();
-    // Select the destination tab before any hydrate so the first ready paint
-    // is already on the right tab.
-    const resumeTab = tabForResumedSave(save);
-    if (resumeTab) setActiveTab(resumeTab);
-
-    const hasLiveSession = save.phase === 'live' || save.phase === 'pre-handshake';
-    if (hasLiveSession) {
-      performResume(save);
-    } else if (isTerminalSavedChannel(save)) {
-      restoreFinishedSessionFromSave(save);
-      if (save.preferences.blockchainType) {
-        void handleConnect(save.preferences.blockchainType, true);
-      }
-    } else if (save.preferences.blockchainType) {
-      void handleConnect(save.preferences.blockchainType, true);
-    } else {
-      setResuming(false);
-    }
-
-    clearAutoResumeOnce();
-    // Auto-resume with a live session: stay blank until restore is presentable.
-    // Manual Resume can show the shell immediately (user just confirmed).
-    if (fromAutoResume && hasLiveSession) {
-      return;
-    }
-    setBootState({ kind: 'ready' });
-  }, [bootState, performResume, handleConnect, restoreFinishedSessionFromSave, setActiveTab]);
-
-  // Stale-deploy reload: resume without prompting.
-  const autoResumeStartedRef = useRef(false);
-  useEffect(() => {
-    if (bootState.kind !== 'autoResuming') return;
-    if (autoResumeStartedRef.current) return;
-    autoResumeStartedRef.current = true;
-    void handleResume();
-  }, [bootState.kind, handleResume]);
-
   // After invisible restore finishes, reveal the shell in one paint.
   useEffect(() => {
     if (bootState.kind !== 'autoResuming') return;
     if (!sessionConfig || !peerConn) return;
     if (restoreStatus === 'failed') {
-      setBootState({ kind: 'ready' });
+      revealBootReady();
       return;
     }
     const restoring = !!sessionConfig.restoring;
@@ -3590,36 +3419,9 @@ const Shell = () => {
       sessionStartedRef.current,
     );
     if (keepSession && !blocked) {
-      setBootState({ kind: 'ready' });
+      revealBootReady();
     }
-  }, [bootState.kind, sessionConfig, peerConn, walletConnected, restoreStatus]);
-
-  // User clicked "Take over" in the tabConflict dialog.
-  // Claim the lease in place (this fences the other tab via storage event)
-  // and continue with whatever action we were about to take.
-  const handleTakeOver = useCallback(async () => {
-    if (bootState.kind !== 'tabConflict') return;
-    const conflict = bootState;
-    await claimLease();
-    if (!conflict.midSession && conflict.save) {
-      const resumeTab = tabForResumedSave(conflict.save);
-      if (resumeTab) setActiveTab(resumeTab);
-      if (conflict.save.phase === 'live' || conflict.save.phase === 'pre-handshake') {
-        performResume(conflict.save);
-      } else if (isTerminalSavedChannel(conflict.save)) {
-        restoreFinishedSessionFromSave(conflict.save);
-        const bcType = conflict.save.preferences.blockchainType ?? getBlockchainType();
-        if (bcType) void handleConnect(bcType, true);
-      } else {
-        const bcType = conflict.save.preferences.blockchainType ?? getBlockchainType();
-        if (bcType) void handleConnect(bcType, true);
-      }
-    } else if (!conflict.midSession) {
-      const bcType = getBlockchainType();
-      if (bcType) void handleConnect(bcType, true);
-    }
-    setBootState({ kind: 'ready' });
-  }, [bootState, performResume, handleConnect, restoreFinishedSessionFromSave, setActiveTab]);
+  }, [bootState.kind, sessionConfig, peerConn, walletConnected, restoreStatus, revealBootReady]);
 
   const handleCloseTab = useCallback(() => {
     stopBalancePolling();
@@ -3629,55 +3431,8 @@ const Shell = () => {
     activeBlockchainRef.current = null;
     setActiveBlockchainPoller(null);
     deactivate();
-    setBootState({ kind: 'tabDead' });
-  }, [stopBalancePolling]);
-
-  const handleStartOver = useCallback(async () => {
-    setStartingOver(true);
-    // Close live connections before wiping storage. Open WalletConnect /
-    // hub sockets can block IndexedDB deleteDatabase and hang Start Over.
-    try {
-      hubConnRef.current?.disconnect();
-      hubConnRef.current = null;
-      if (activeBlockchainRef.current) {
-        try {
-          await activeBlockchainRef.current.disconnect();
-        } catch {
-          /* ignore */
-        }
-      }
-      deactivate();
-      activeBlockchainRef.current = null;
-      setActiveBlockchainPoller(null);
-    } catch (e) {
-      console.error('[Shell] start over connection teardown failed:', e);
-    }
-    try {
-      const result = await hardReset();
-      if (!result.success) {
-        const blocked = result.failures.some((failure) => failure.reason === 'blocked');
-        markSavedSession();
-        setBootState({
-          kind: 'resumeDialog',
-          loadError: blocked
-            ? 'Hard reset is blocked. Close other app tabs and wallet connections, then retry.'
-            : 'Hard reset could not delete all local databases. Close other app tabs and wallet connections, then retry.',
-        });
-        setStartingOver(false);
-        return;
-      }
-      reloadAfterSuccessfulHardReset(result, () => window.location.reload());
-    } catch (e) {
-      console.error('[Shell] start over hard reset failed:', e);
-      markSavedSession();
-      setBootState({
-        kind: 'resumeDialog',
-        loadError:
-          'Hard reset failed. Close other app tabs and wallet connections, then retry hard reset.',
-      });
-      setStartingOver(false);
-    }
-  }, []);
+    closeBootBoundary();
+  }, [closeBootBoundary, stopBalancePolling]);
 
   // Reject/cancel any pending consent prompt or pre-active matchmaking attempt.
   // Shared by wallet and hub disconnect. Active off-chain sessions stay mounted

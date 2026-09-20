@@ -3,6 +3,7 @@ import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/mod
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
+import { StorageAuthorityLostError } from '../session/indexedDb';
 import type { SessionRuntimeLease } from '../session/sessionRuntimeLease';
 import { runSessionMachineTransition, send } from './session_machine.harness';
 import { Subject } from 'rxjs';
@@ -209,6 +210,26 @@ describe('session machine behavior sequences', () => {
 
     await runtime.persist();
     expect(launcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires on storage authority loss without releasing effects', async () => {
+    const authority = { ownerTabId: 'old', writeEpoch: 1n, resetEpoch: 0n };
+    const persist = jest.fn(async () => {
+      throw new StorageAuthorityLostError(authority, {
+        ownerTabId: 'winner',
+        writeEpoch: 2n,
+        resetEpoch: 0n,
+      });
+    });
+    const { runtime, coordinator, controller } = runtimeWithCoordinator(persist);
+    const launcher = jest.fn(async () => {});
+    const effect = coordinator.releaseAfterPersistence('authority-lost', launcher);
+
+    await expect(runtime.persist()).rejects.toBeInstanceOf(StorageAuthorityLostError);
+    await expect(effect).rejects.toBeInstanceOf(SessionRuntimeRetiredError);
+    expect(launcher).not.toHaveBeenCalled();
+    expect(controller.reportDurabilityError).not.toHaveBeenCalled();
+    expect(controller.clearDurabilityError).not.toHaveBeenCalled();
   });
 
   it('clears degraded durability after a full retry without replaying released effects', async () => {

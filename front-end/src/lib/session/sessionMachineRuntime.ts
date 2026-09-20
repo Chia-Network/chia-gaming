@@ -18,6 +18,7 @@ import type {
 import type { RegisteredGameType } from './types';
 import type { coinIdHex } from './gameSessionEvents';
 import type { SessionRuntimeLease } from './sessionRuntimeLease';
+import { StorageAuthorityLostError } from './indexedDb';
 import {
   packageFor,
   restoreRegisteredGameHandState,
@@ -656,6 +657,10 @@ export class SessionMachineRuntime {
         },
         (error) => {
           if (this.retired) throw error;
+          if (error instanceof StorageAuthorityLostError) {
+            this.retire();
+            throw error;
+          }
           persistenceFailed = true;
           this.durabilityDirty = true;
           this.durabilityDegraded = true;

@@ -1,11 +1,13 @@
 import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
 import {
+  type ClaimedStorageSnapshot,
   deleteSessionRecord,
   type DurableRejectionTombstone,
   InvalidSessionRecordError,
   readSessionRecord,
   readWalletReservationRecord,
   replaceSessionWithRejectionTombstone,
+  StorageAuthorityLostError,
   writeSessionAndWalletReservationRecords,
   writeWalletReservationRecord,
 } from '../lib/session/indexedDb';
@@ -48,6 +50,7 @@ import {
   clearSavedSessionMarker,
   fencePersistence,
   hasSavedSessionMarker,
+  hasStorageAuthority,
   hasWalletConnectStorage,
   installStorageCoordination,
   isFenced,
@@ -55,6 +58,7 @@ import {
   isLeaseConflict,
   markAutoResumeOnce,
   markSavedSession,
+  loseAuthority,
   offFenced,
   onFenced,
   peekAutoResumeOnce,
@@ -64,6 +68,7 @@ import {
   resetStorageCoordinationForTests,
 } from './saveCoordination';
 import { walletReservationLedger } from '../lib/session/walletReservationLedger';
+import { decodeWalletReservationRecord } from '../lib/session/walletReservationLedgerSchema';
 
 export {
   checkLease,
@@ -95,6 +100,11 @@ export type {
 export const CURRENT_VERSION = SESSION_SAVE_ENVELOPE_VERSION;
 
 type CommonSaveFields = Pick<SessionSave, 'identity' | 'preferences' | 'history'>;
+type PreAuthorityPatch = {
+  identity?: Partial<SessionIdentitySave>;
+  preferences?: Partial<SessionPreferencesSave>;
+  history?: Partial<SessionHistorySave>;
+};
 
 function commonFields(state: SessionSave): CommonSaveFields {
   return {
@@ -139,6 +149,7 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistPromise: Promise<void> | null = null;
 let resolvePersist: (() => void) | null = null;
 let rejectPersist: ((reason: unknown) => void) | null = null;
+let persistAuthorityLostListener: (() => void) | null = null;
 const PERSIST_DEBOUNCE_MS = 300;
 
 /**
@@ -255,21 +266,34 @@ function queueWrite(state: SessionSave): Promise<void> {
     snapshot,
     ledgerCheckpoint.entries,
     () => !isFenced(),
-  ).then(() => {
-    if (!isPersistenceFenceCurrent(fence)) return;
-    walletReservationLedger.combinedCheckpointPersisted(ledgerCheckpoint);
-    // Only *set* the boot marker for a durable game session here. Pre-game
-    // wallet connection marks explicitly in Shell; preference-only writes must
-    // not clear that marker (previously saveSession({ blockchainType }) wiped
-    // it, so reload restored the wallet type with no Resume/Start Over).
-    if (isDurableSession(snapshot)) {
-      markSavedSession();
-    }
-  });
+  )
+    .then(() => {
+      if (!isPersistenceFenceCurrent(fence)) {
+        throw new StorageAuthorityLostError(fence.durableAuthority, fence.durableAuthority);
+      }
+      walletReservationLedger.combinedCheckpointPersisted(ledgerCheckpoint);
+      // Only *set* the boot marker for a durable game session here. Pre-game
+      // wallet connection marks explicitly in Shell; preference-only writes must
+      // not clear that marker (previously saveSession({ blockchainType }) wiped
+      // it, so reload restored the wallet type with no Resume/Start Over).
+      if (isDurableSession(snapshot)) {
+        markSavedSession();
+      }
+    })
+    .catch((error) => {
+      if (error instanceof StorageAuthorityLostError) {
+        loseAuthority('durable-authority-lost');
+      }
+      throw error;
+    });
   return write;
 }
 
 function settleScheduledPersist(error?: unknown): void {
+  if (persistAuthorityLostListener) {
+    offFenced(persistAuthorityLostListener);
+    persistAuthorityLostListener = null;
+  }
   const resolve = resolvePersist;
   const reject = rejectPersist;
   persistPromise = null;
@@ -280,6 +304,7 @@ function settleScheduledPersist(error?: unknown): void {
 }
 
 export function flushSessionSave(): Promise<void> {
+  if (!hasStorageAuthority()) return Promise.resolve();
   return hydrateSessionCacheFromDiskStrict().then(async () => {
     if (!cached || isFenced()) {
       await walletReservationLedger.persistIfDirty();
@@ -292,6 +317,10 @@ export function flushSessionSave(): Promise<void> {
     const pending = persistPromise;
     const resolve = resolvePersist;
     const reject = rejectPersist;
+    if (persistAuthorityLostListener) {
+      offFenced(persistAuthorityLostListener);
+      persistAuthorityLostListener = null;
+    }
     persistPromise = null;
     resolvePersist = null;
     rejectPersist = null;
@@ -350,16 +379,27 @@ export function flushSessionSave(): Promise<void> {
 }
 
 function schedulePersist(): Promise<void> {
-  if (isFenced()) return Promise.resolve();
+  if (!hasStorageAuthority() || isFenced()) return Promise.resolve();
   if (persistPromise) return persistPromise;
   persistPromise = new Promise<void>((resolve, reject) => {
     resolvePersist = resolve;
     rejectPersist = reject;
   });
   void persistPromise.catch(() => {});
+  const fence = capturePersistenceFence();
+  persistAuthorityLostListener = () => {
+    settleScheduledPersist(
+      new StorageAuthorityLostError(fence.durableAuthority, fence.durableAuthority),
+    );
+  };
+  onFenced(persistAuthorityLostListener);
   const timer = setTimeout(() => {
     persistTimer = null;
-    void flushSessionSave();
+    void flushSessionSave().catch((error) => {
+      // The write path classifies/logs failures. Settle here as well when
+      // hydration failed before flushSessionSave could take the scheduled promise.
+      settleScheduledPersist(error);
+    });
   }, PERSIST_DEBOUNCE_MS);
   if (typeof timer === 'object' && 'unref' in timer) timer.unref();
   persistTimer = timer;
@@ -377,6 +417,7 @@ installStorageCoordination(stopPersistenceForHardReset);
 let identityDiskChecked = false;
 let sessionCacheHydratedFromDisk = false;
 let walletReservationLedgerHydration: Promise<void> | null = null;
+let preAuthorityPatch: PreAuthorityPatch = {};
 
 /** @internal — reset module state between test cases */
 export function _resetForTests(): void {
@@ -390,6 +431,7 @@ export function _resetForTests(): void {
   identityDiskChecked = false;
   sessionCacheHydratedFromDisk = false;
   walletReservationLedgerHydration = null;
+  preAuthorityPatch = {};
   resetStorageCoordinationForTests();
   walletReservationLedger.resetForTests();
 }
@@ -400,6 +442,7 @@ export function loadState(): SessionSave {
 }
 
 export function hydrateWalletReservationLedger(): Promise<void> {
+  if (!hasStorageAuthority()) return Promise.resolve();
   if (walletReservationLedgerHydration) return walletReservationLedgerHydration;
   walletReservationLedger.beginHydration();
   walletReservationLedgerHydration = (async () => {
@@ -510,12 +553,88 @@ async function hydrateSessionCacheFromDiskStrict(): Promise<boolean> {
   return false;
 }
 
+function mergeClaimedSession(record: SessionSave | null, patch: PreAuthorityPatch): SessionSave {
+  const base = record ?? loadPreferences();
+  return {
+    ...base,
+    identity: { ...base.identity, ...patch.identity },
+    preferences: { ...base.preferences, ...patch.preferences },
+    history: { ...base.history, ...patch.history },
+  };
+}
+
+async function installClaimedStorageSnapshot(
+  snapshot: ClaimedStorageSnapshot,
+): Promise<SessionSave | null> {
+  if (snapshot.walletReservationError) {
+    walletReservationLedger.beginHydration();
+    walletReservationLedger.failHydration(snapshot.walletReservationError);
+    throw snapshot.walletReservationError;
+  }
+  walletReservationLedger.hydrateClaimedSnapshot(snapshot.walletReservationRecord);
+  walletReservationLedgerHydration = Promise.resolve();
+
+  let record: SessionSave | null = null;
+  let discarded = false;
+  if (snapshot.sessionError) {
+    console.error('[save] rejecting unreadable session record:', snapshot.sessionError);
+    await deleteSessionRecord();
+    markSavedSession();
+    discarded = true;
+  } else if (snapshot.sessionRecord) {
+    record = decodeCompatibleSessionRecord(snapshot.sessionRecord);
+    if (!record) {
+      await deleteSessionRecord();
+      markSavedSession();
+      discarded = true;
+    }
+  }
+
+  const patch = preAuthorityPatch;
+  preAuthorityPatch = {};
+  cached = mergeClaimedSession(record, patch);
+  capPersistedHistories(cached);
+  identityDiskChecked = true;
+  sessionCacheHydratedFromDisk = true;
+  savePreferences(cached);
+
+  const hasPatch = Object.keys(patch).length > 0;
+  if (hasPatch) await queueWrite(cached);
+  if (discarded) return null;
+  if (record && isDurableSession(record)) {
+    markSavedSession();
+    return cached;
+  }
+  if (
+    hasConnectionPreferences(cached) ||
+    walletReservationLedger.snapshot().length > 0 ||
+    hasSavedSessionMarker()
+  ) {
+    return cached;
+  }
+  return null;
+}
+
+export async function claimAndHydrateSession(): Promise<SessionSave | null> {
+  const snapshot = await claimLease();
+  return installClaimedStorageSnapshot(snapshot);
+}
+
 export type BootStorageHydrationResult =
   | { status: 'ready'; discardedSession: boolean }
   | { status: 'failed'; error: string };
 
 export async function hydrateSessionCacheFromDisk(): Promise<BootStorageHydrationResult> {
   try {
+    if (!hasStorageAuthority()) {
+      const [session, ledger] = await Promise.all([
+        readSessionRecord(),
+        readWalletReservationRecord(),
+      ]);
+      if (session) decodeSessionSaveEnvelope(session);
+      if (ledger) decodeWalletReservationRecord(ledger);
+      return { status: 'ready', discardedSession: false };
+    }
     return {
       status: 'ready',
       discardedSession: await hydrateSessionCacheFromDiskStrict(),
@@ -529,6 +648,40 @@ export async function hydrateSessionCacheFromDisk(): Promise<BootStorageHydratio
 }
 
 function mutate(fn: (state: SessionSave) => SessionSave | void): Promise<void> {
+  if (!hasStorageAuthority()) {
+    const state = loadState();
+    const before = commonFields(state);
+    cached = fn(state) ?? state;
+    const after = commonFields(cached);
+    const changed = <T extends object>(previous: T, next: T): Partial<T> =>
+      Object.fromEntries(
+        Object.keys(next).flatMap((key) => {
+          const beforeValue = previous[key as keyof T];
+          const afterValue = next[key as keyof T];
+          const encodeComparable = (value: unknown) =>
+            JSON.stringify(value, (_name, entry) =>
+              typeof entry === 'bigint' ? `${entry}n` : entry,
+            );
+          return encodeComparable(beforeValue) === encodeComparable(afterValue)
+            ? []
+            : [[key, structuredClone(afterValue)]];
+        }),
+      ) as Partial<T>;
+    const identity = changed(before.identity, after.identity);
+    const preferences = changed(before.preferences, after.preferences);
+    const history = changed(before.history, after.history);
+    if (Object.keys(identity).length > 0) {
+      preAuthorityPatch.identity = { ...preAuthorityPatch.identity, ...identity };
+    }
+    if (Object.keys(preferences).length > 0) {
+      preAuthorityPatch.preferences = { ...preAuthorityPatch.preferences, ...preferences };
+    }
+    if (Object.keys(history).length > 0) {
+      preAuthorityPatch.history = { ...preAuthorityPatch.history, ...history };
+    }
+    savePreferences(cached);
+    return Promise.resolve();
+  }
   // Fast path: memory already has the resumable session, or there is no
   // marked disk session to protect. Keep this synchronous so preference
   // helpers can read their own writes immediately.
@@ -554,7 +707,14 @@ function mutate(fn: (state: SessionSave) => SessionSave | void): Promise<void> {
 
 export function getPlayerId(): string {
   const state = loadState();
-  savePreferences(state);
+  if (hasStorageAuthority()) {
+    savePreferences(state);
+  } else {
+    preAuthorityPatch.identity = {
+      ...preAuthorityPatch.identity,
+      playerId: state.identity.playerId,
+    };
+  }
   return state.identity.playerId;
 }
 
@@ -564,6 +724,11 @@ export function getPlayerId(): string {
  * Hub player_id is assigned by the hub from this secret — never client-chosen.
  */
 export async function ensureHubIdentity(): Promise<string> {
+  if (!hasStorageAuthority()) {
+    await peekSession();
+    if (loadState().identity.sessionId) return loadState().identity.sessionId!;
+    throw new Error('Hub identity cannot be minted before durable storage authority is claimed');
+  }
   if (hasSavedSessionMarker() && !identityDiskChecked) {
     await hydrateSessionCacheFromDiskStrict();
   }
@@ -578,6 +743,11 @@ export function getMyHubPlayerId(): string | undefined {
 export function getSessionId(): string {
   const state = loadState();
   if (state.identity.sessionId) return state.identity.sessionId;
+  if (!hasStorageAuthority()) {
+    throw new Error(
+      'getSessionId called before ensureHubIdentity and durable storage authority was claimed',
+    );
+  }
   // A saved-session marker means disk may still hold the real hub
   // session_id. Minting here would poison preferences and win the merge.
   if (hasSavedSessionMarker() && !identityDiskChecked) {
@@ -598,8 +768,16 @@ export function regenerateSessionId(): string {
   const state = loadState();
   state.identity.sessionId = randomHex();
   state.identity.myHubPlayerId = undefined;
-  savePreferences(state);
-  void schedulePersist();
+  if (hasStorageAuthority()) {
+    savePreferences(state);
+    void schedulePersist();
+  } else {
+    preAuthorityPatch.identity = {
+      ...preAuthorityPatch.identity,
+      sessionId: state.identity.sessionId,
+      myHubPlayerId: undefined,
+    };
+  }
   return state.identity.sessionId;
 }
 
@@ -670,8 +848,16 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
 }
 
 walletReservationLedger.configurePersistence(async (entries) => {
+  if (!hasStorageAuthority()) return;
   const fence = capturePersistenceFence();
-  await writeWalletReservationRecord(entries);
+  try {
+    await writeWalletReservationRecord(entries);
+  } catch (error) {
+    if (error instanceof StorageAuthorityLostError) {
+      loseAuthority('durable-authority-lost');
+    }
+    throw error;
+  }
   if (!isPersistenceFenceCurrent(fence)) {
     throw new Error('Wallet reservation persistence was fenced before it executed');
   }
@@ -798,6 +984,30 @@ export function discardStagedTerminalSession(): void {
  * remembered wallet and/or hub choice, or leftover WalletConnect storage.
  */
 export async function peekSession(): Promise<SessionSave | null> {
+  if (!hasStorageAuthority()) {
+    const [rawSession, rawLedger] = await Promise.all([
+      readSessionRecord(),
+      readWalletReservationRecord(),
+    ]);
+    if (rawLedger) decodeWalletReservationRecord(rawLedger);
+    const inspected = rawSession ? decodeCompatibleSessionRecord(rawSession) : null;
+    if (inspected) {
+      const local = loadPreferences();
+      cached = {
+        ...mergeClaimedSession(inspected, preAuthorityPatch),
+        identity: {
+          playerId: local.identity.playerId || inspected.identity.playerId,
+          sessionId: local.identity.sessionId || inspected.identity.sessionId,
+          myHubPlayerId: local.identity.myHubPlayerId || inspected.identity.myHubPlayerId,
+        },
+      };
+      identityDiskChecked = true;
+      sessionCacheHydratedFromDisk = true;
+      if (isDurableSession(inspected) || hasConnectionPreferences(inspected)) return cached;
+    }
+    const preferences = loadPreferences();
+    return hasConnectionPreferences(preferences) || rawLedger?.entries.length ? preferences : null;
+  }
   // Hydrate before any flush so a prefs-only in-memory cache cannot overwrite
   // a durable resumable record that the boot marker is advertising.
   const wipedIncompatible = await hydrateSessionCacheFromDiskStrict();
@@ -965,7 +1175,11 @@ export function getAlias(): string {
   if (state.preferences.alias) return state.preferences.alias;
   const generated = `Player_${randomHex().substring(0, 8)}`;
   state.preferences.alias = generated;
-  savePreferences(state);
+  if (hasStorageAuthority()) {
+    savePreferences(state);
+  } else {
+    preAuthorityPatch.preferences = { ...preAuthorityPatch.preferences, alias: generated };
+  }
   return generated;
 }
 

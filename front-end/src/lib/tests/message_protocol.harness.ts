@@ -23,10 +23,17 @@ export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy(
   {
     isConnected: () => true,
-    getWalletProviderScope: () => ({
-      provider: 'simulator' as const,
-      identity: 'submission-handoff',
-    }),
+    getWalletOfferProvider(this: Record<string, any>) {
+      return {
+        capability: 'best-effort' as const,
+        scope: {
+          provider: 'simulator' as const,
+          identity: 'submission-handoff',
+        },
+        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
+        cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
+      };
+    },
   } as InternalBlockchainInterface,
   {
     get: (target, property) =>
@@ -127,11 +134,25 @@ export function testSpendBundle(coinHex: string): SpendBundle {
 }
 
 export function submissionDrain(
-  submissions: TransactionSubmission[] = [],
+  submissions: Array<
+    Omit<TransactionSubmission, 'delivery_goal' | 'intent_fingerprint' | 'variant_fingerprint'> &
+      Partial<
+        Pick<TransactionSubmission, 'delivery_goal' | 'intent_fingerprint' | 'variant_fingerprint'>
+      >
+  > = [],
   retired_submission_ids: string[] = [],
   failures: SubmissionDrainFailure[] = [],
 ) {
-  return { submissions, retired_submission_ids, failures };
+  return {
+    submissions: submissions.map((submission) => ({
+      delivery_goal: 'ensure-broadcast' as const,
+      intent_fingerprint: 'aa'.repeat(32),
+      variant_fingerprint: 'bb'.repeat(32),
+      ...submission,
+    })),
+    retired_submission_ids,
+    failures,
+  };
 }
 
 export function makeMockCradle(
@@ -150,16 +171,26 @@ export function makeMockCradle(
     coins_of_interest: jest.fn(() => []),
     drain_submissions: jest.fn(() => submissionDrain()),
     configure_submission_fee: jest.fn(),
-    finalize_submission: jest.fn((_submissionId: string, feeSourceJson?: string) => ({
-      protocol_bundle: testSpendBundle('00'),
-      bundle: {},
-      applied_fee: '0',
-      warning: null,
-      fee_source_disposition: feeSourceJson === undefined ? 'not-requested' : 'attached',
-    })),
+    finalize_submission: jest.fn(
+      (
+        _submissionId: string,
+        _deliveryGoal: TransactionSubmission['delivery_goal'],
+        variantFingerprint: string,
+        feeSourceJson?: string,
+      ) => ({
+        protocol_bundle: testSpendBundle('00'),
+        bundle: {},
+        applied_fee: '0',
+        warning: null,
+        fee_source_disposition: feeSourceJson === undefined ? 'not-requested' : 'attached',
+        variant_fingerprint: variantFingerprint,
+        should_broadcast: true,
+      }),
+    ),
     acknowledge_submission: jest.fn(),
     reject_submission: jest.fn(),
     resubmit_submitted: jest.fn(),
+    request_fee_upgrades: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => wasmResult()),
     abandon: jest.fn(() => wasmResult()),
@@ -399,6 +430,9 @@ export function submitTransaction(
     id: `test-${Math.random()}`,
     bundle,
     fee_request,
+    delivery_goal: 'ensure-broadcast',
+    intent_fingerprint: 'aa'.repeat(32),
+    variant_fingerprint: 'bb'.repeat(32),
   };
   (
     blob as unknown as { submitTransaction: (submission: TransactionSubmission) => void }

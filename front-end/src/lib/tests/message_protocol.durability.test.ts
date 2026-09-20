@@ -171,7 +171,12 @@ describe('durability failures', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60_000);
-    walletReservationLedger.attachRpc(blob.blockchain.rpc);
+    walletReservationLedger.attachProvider(
+      blob.blockchain.rpc.getWalletOfferProvider({
+        installationPlayerId: 'test',
+        peerSessionId: '00'.repeat(16),
+      })!,
+    );
     const checkpoints: Array<ReturnType<typeof blob.getWasmFields>> = [];
     let failPersistence = true;
     setTestPersistence(blob, async () => {

@@ -371,9 +371,9 @@ resumable-session markers, and tab/reset hints inside the same-origin trust
 model described above; it is not storage authority.
 
 The current and only legal browser envelope is `chia-gaming-session` version
-`31`; the serialized Rust/WASM cradle inside a live envelope is schema `17`.
+`31`; the serialized Rust/WASM cradle inside a live envelope is schema `18`.
 The wallet reservation ledger is not an envelope field: it is an independent
-`chia-gaming-wallet-reservations` version-`4` record in its own IndexedDB store,
+`chia-gaming-wallet-reservations` version-`5` record in its own IndexedDB store,
 and the app database itself is IndexedDB schema `4`. These explicit version
 fields remain centralized migration hooks. No player
 app or hub persistence format has shipped, so non-current app-owned versions
@@ -594,7 +594,7 @@ outcome back to Rust.
 The external wallet constructs each funding offer from Rust's canonical
 request; Rust validates the result. Rejection terminates the handshake and does
 not create controller-owned successor or predecessor requests. Persisted
-funding and fee offers enter the independent strict-v4 wallet reservation
+funding and fee offers enter the independent strict-v5 wallet reservation
 ledger. Every trade owns its exact provider trade ID and exact
 `(installationPlayerId, peerSessionId, provider/account scope, purpose kind,
 operationId)` identity;
@@ -604,9 +604,10 @@ and exact recovery ID; pending cancellation uses `cancelling` with its exact
 trade and recovery ID. Recovery reconciles those exact requests instead of
 starting replacements. Funding unavailability remains pending; it is not
 converted into rejection. Post-creation stages include `reserved`,
-`retained-for-replay`, and `cancel-required`. An attached fee source remains retained while Rust may
-replay the exact finalized transaction; acknowledgement, retirement, rejection,
-or unused finalization moves it through typed cancellation before removal.
+`retained-for-replay`, and `cancel-required`. `creating` also records active
+versus cancel-on-create disposition. An attached fee source remains retained
+while Rust may replay its current exact variant; chain terminality or Rust
+retirement moves it through typed cancellation before removal.
 Controller retirement promotes only `reserved` entries; replay-retained fee
 sources stay retained until Rust explicitly retires their stable submission.
 Wallet mutation is held until ledger hydration succeeds and fails closed if the
@@ -633,8 +634,12 @@ transitions, and the next matching lifecycle attachment drains them.
 
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
-Each drained submission has a stable Rust identifier, expiry, and captured fee
-intent. Rust deduplicates only an exact canonical intent fingerprint; two
+Each drained submission has a stable Rust identifier, expiry, delivery goal,
+intent fingerprint, and variant fingerprint. Rust emits the no-fee base
+immediately when fee acquisition fails or is unavailable and continues seeking
+after base acknowledgement. Matching provider readiness or an explicit
+fresh-chain rebroadcast epoch may later upgrade that ID to a fee-bearing
+variant; chain terminality stops acquisition. Rust deduplicates only an exact canonical intent fingerprint; two
 different transactions that spend the same inputs retain different IDs.
 Rejection retires only its exact ID. The manager separately retains wallet
 delivery acknowledgement and chain finality. JavaScript makes one wallet call
@@ -644,8 +649,8 @@ eligible for replay after fresh chain synchronization. A lower-tip rollback
 queues every surviving retained transaction once for that epoch. An
 equal-or-higher replacement tip queues only the retained transaction whose
 watched output is explicitly absent and whose own input is explicitly live.
-Rollback and fresh-sync replay use the exact wallet-finalized bundle without
-rebuilding its fee or creating a second wallet trade. Successful poll batches
+Rollback and fresh-sync replay use the current exact Rust-owned variant without
+rebuilding it or creating a second wallet trade. Successful poll batches
 represent every queried interest explicitly;
 failed or malformed batches are not reported as authoritative snapshots.
 This chain operation is **transaction rebroadcast**. It is distinct from
@@ -655,8 +660,9 @@ frames only at reconnect or peer-availability boundaries.
 The controller's nonserialized `PendingSubmissionDelivery` map bridges only
 the interval after Rust drains an intent and before its persistence-gated
 launch, allowing a committed lease replacement to reschedule that launch.
-After launch, `TransactionSubmitQueue` owns ordered exactly-once completion;
-the bridge is neither persisted nor a retry authority.
+After launch, the ordered queue owns exactly-once completion and terminal
+quiescence; the bridge is neither persisted nor a retry authority. Duplicate
+browser IDs must carry the same intent fingerprint.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
 frontend does not persist a move journal or receive replay instructions.
 Following browser restore, an ordinary game effect may submit an automatic move
@@ -676,6 +682,9 @@ fatal protocol evidence, leaves the request terminally blocked, and is not
 retried on ordinary readiness or height triggers.
 
 Submission draining applies the same isolation principle at item granularity.
+WASM drains on a serialized canonical working copy and constructs the
+JavaScript result before committing it, so conversion failure rolls back the
+whole drain.
 Each candidate is planned against a working copy; a malformed middle candidate
 is consumed and reported once while valid candidates before and after it
 commit. Rust emits retirement for abandoned retained submissions before
@@ -959,17 +968,17 @@ fetch the module and binary CLVM presets, then bind the protocol game
 identities calculated by the package build. Handshake uses that already-loaded
 module for BLS identity only.
 
-On page load, `Shell.tsx` runs a boot sequence that determines which dialog
-(if any) to show before the app becomes interactive. The initializer never
-claims the tab lease (that would fence other tabs) and never blocks the dialog
-on IndexedDB:
+On page load, Shell delegates storage/recovery ownership to
+`BootRecoveryBoundary`. It completes a pending owned-storage wipe and visible
+read-only IndexedDB inspection before choosing recovery UI. Hub and wallet
+promises are not part of this local boundary. Resume/takeover then use one
+atomic claim-and-hydrate transaction over coordination, session, wallet-ledger,
+and rejection stores:
 
 ```
 hasSavedSessionMarker()?
                  │
-                 ├─ yes → show Resume / Start Over (hydrate IndexedDB into the
-                 │         in-memory cache in the background so incidental
-                 │         preference patches cannot clobber a durable cradle)
+                 ├─ yes → inspect IndexedDB → show Resume / Start Over
                  │       │
                  │       ├─ Start Over → hardReset(), reload
                  │       │                (separate "Starting over…" UI state;
@@ -983,16 +992,16 @@ hasSavedSessionMarker()?
                  │           └─ save loaded → is there a lease conflict?
                  │               │
                  │               ├─ Yes → show Take Over dialog
-                 │               │   ├─ Take Over → claimLease(), restore
+                 │               │   ├─ Take Over → claimAndHydrate(), restore
                  │               │   └─ Close Tab → dead
                  │               │
-                 │               └─ No → claimLease(), restore
+                 │               └─ No → claimAndHydrate(), restore
                  │
                  ├─ no marker, lease conflict (another tab is active)
                  │   → show Take Over dialog (save: null)
                  │
                  └─ no marker, no conflict
-                     → claimLease(), ready (fresh start)
+                     → claimAndHydrate(), ready (fresh start)
 ```
 
 **Start over hard reset:** Start over is deliberately not graceful cleanup. It
@@ -1020,8 +1029,10 @@ pre-reset work cannot recreate the database or cached state afterward.
    graceful cancellation.
 3. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
    marker and prefs must not outlive a later IndexedDB hang).
-4. Deletes every known app / WalletConnect IndexedDB database, then enumerates
-   and deletes any remaining targeted origin databases. `onsuccess` confirms
+4. Deletes every exact name in the owned app / WalletConnect manifest even
+   without enumeration, then enumerates only to discover additional names
+   matching owned prefixes. Foreign same-origin databases are preserved.
+   `onsuccess` confirms
    deletion; `onblocked` or `onerror` returns a typed unsuccessful result,
    keeps recovery UI open with **Retry Hard Reset**, and leaves a minimal
    generalized pending-wipe marker for retry or next boot. Reload occurs only
@@ -1033,10 +1044,13 @@ A full save triggers `performResume` (WASM restore + hub reconnect). A
 pre-game save triggers `handleConnect(save.blockchainType)` to re-establish
 the wallet connection without attempting WASM deserialization.
 
-**Lease claiming:** The lease is never claimed during the boot initializer's
-read phase. It is only claimed inside resume/takeover handlers after the user
-has made a choice. Start over does not claim a lease; it wipes local browser
-state and reloads.
+**Authority claiming:** Read-only inspection never claims storage.
+`claimAndHydrate` commits the durable epochs and returns the exact session and
+ledger snapshot read in that transaction; `localStorage` is updated afterward
+as a UX hint. Preauthority patches remain buffered without a timer. Ordinary
+I/O failure is durability degradation; `StorageAuthorityLostError` retires the
+obsolete runtime and suppresses effects. Start over advances reset authority
+and wipes only the owned manifest.
 
 #### Restore path
 
@@ -1400,16 +1414,13 @@ Shell manages wallet connections through two abstractions defined in
   wallet reservation. The wallet chooses the offer inputs, so Cloud no longer
   selects or pins a funding coin in JavaScript.
 
-  The provider-neutral offer lifecycle has an optional reconciliation
-  capability. Cloud persists the exact pending `signatureRequest` recovery ID
-  before awaiting approval; after ledger reload it polls that request and never
-  starts a duplicate `createOffer`. Approval messages must match origin, popup
-  source, and canonical request ID, and every terminal path closes the popup and
-  removes its listener exactly once. The currently deployed WalletConnect API
-  does not expose end-to-end create-offer idempotency or response-loss
-  reconciliation. If its successful response is lost, an external offer may be
-  orphaned; retry is therefore explicitly best-effort until WalletConnect
-  provides the optional capability.
+  `WalletOfferProvider` is a required discriminated capability, not optional
+  methods. Cloud uses the recoverable variant, persists the exact
+  `signatureRequest` recovery ID, and implements paired begin/reconcile
+  creation and cancellation. Approval messages must match origin, popup source,
+  and canonical request ID, with exact cleanup. Deployed WalletConnect lacks
+  end-to-end create idempotency and response-loss reconciliation, so it uses the
+  explicit best-effort variant; a lost successful response may orphan an offer.
 
   The simulator mirrors wallet reservation semantics with synthetic trade
   identities. Each synthetic fee offer reserves the exact input identity

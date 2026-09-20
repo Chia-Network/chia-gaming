@@ -439,15 +439,18 @@ The hub does not create a session. It can only advise and relay:
   small preferences and the resumable-session boot marker in localStorage
   (`front-end/src/hooks/save.ts`). The app database is schema 4: durable owner,
   write, and reset epochs are checked atomically with every mutation;
-  localStorage lease/reset state is only an early UI hint. Diagnostic history
+  localStorage lease/reset state is only an early UI hint. Ordinary I/O failure
+  leaves the owner degraded; typed authority loss retires it and suppresses
+  pending effects. Diagnostic history
   retains newest complete entries within 256 KiB total UTF-8 text, with the
   2,000-entry cap secondary.
-- **Resume on reload**: Marker-first boot state machine with Resume /
-  Start Over dialog, full `hardReset` obliteration, and lease system for tab
-  conflict detection (`Shell.tsx`). A malformed strict-v4 wallet ledger is
-  preserved and displayed there. Hard reset reloads only after confirmed
-  deletion success; blocked/failed deletion stays on recovery UI with Retry and
-  a pending-wipe fallback for the next boot.
+- **Resume on reload**: `BootRecoveryBoundary` owns pending wipe, visible local
+  loading, read-only inspection, atomic claim-and-hydrate, takeover, malformed
+  evidence, reset retry, and authority loss. A malformed strict-v5 ledger is
+  preserved and displayed there. Local dashboard/game presentation does not
+  wait for hub or wallet reconnection; only dependent controls remain gated.
+  Hard reset deletes the owned manifest/prefixes, preserves foreign databases,
+  and reloads only after confirmed success.
 - **Game dashboard banner**: Selector-driven channel / lifecycle /
   balance strip from `SessionModel`
   (`selectGameDashboardView`, `selectStatusBarBalances`).
@@ -471,15 +474,24 @@ The hub does not create a session. It can only advise and relay:
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
   chain id than the existing WASM cradle. (`Shell.tsx`)
 
-- **Wallet reservation recovery**: strict-v4 entries bind installation,
+- **Wallet reservation recovery**: strict-v5 entries bind installation,
   peer-session, and provider/account scope. Pending creation embeds the
-  canonical request and exact recovery ID; pending cancellation preserves the
-  exact trade and cancellation recovery ID. A scope mismatch is visible and
+  canonical request, exact recovery ID, and active/cancel-on-create disposition;
+  pending cancellation preserves its exact IDs. Retired creation is cancelled
+  after exact reconciliation; failed cancellation returns to `cancel-required`
+  and waits for a later trigger without looping. A scope mismatch is visible and
   cannot mutate another wallet. Funding unavailability remains pending.
   Disconnect detaches the provider RPC without discarding cleanup; controller
   retirement records cleanup, and matching restore/reconnect attachment drains
-  it. Deployed WalletConnect still cannot reconcile a lost successful
-  create-offer response end to end, so that case remains best-effort.
+  it. Recoverable providers require paired begin/reconcile operations. Deployed
+  WalletConnect cannot reconcile a lost successful create response end to end,
+  so it uses the explicit best-effort variant.
+
+- **Submission evolution**: Rust broadcasts the no-fee base immediately while
+  continuing to seek a fee under the same ID. Base acknowledgement does not stop
+  seeking; readiness or an explicit fresh-chain epoch triggers retry, and chain
+  terminality stops it. Fingerprints and transactional WASM drain conversion
+  keep browser delivery single-owner before and after launch.
 
 - **Session state surfaced to Shell**: `GameSession` reports coarse session
   phase (`off-chain | on-chain | resolved`) and an error flag to Shell via

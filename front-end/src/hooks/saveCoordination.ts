@@ -1,7 +1,8 @@
 import { isElectronDistribution } from '../util/distribution';
 import {
   beginDurableHardReset,
-  claimDurableStorageAuthority,
+  claimAndReadDurableStorage,
+  type ClaimedStorageSnapshot,
   type DurableStorageAuthority,
 } from '../lib/session/indexedDb';
 
@@ -14,7 +15,8 @@ const TAB_ID_SESSION_KEY = 'appState_tabId';
 let autoResumeLatch = false;
 let fenced = false;
 let persistenceGeneration = 0;
-const fencedListeners = new Set<() => void>();
+export type StorageAuthorityLossReason = 'takeover' | 'sibling-reset' | 'durable-authority-lost';
+const fencedListeners = new Set<(reason: StorageAuthorityLossReason) => void>();
 
 export interface PersistenceFenceToken {
   generation: number;
@@ -50,21 +52,21 @@ export function getStorageTabId(): string {
   return tabId;
 }
 
-function fireFenced(): void {
+function fireFenced(reason: StorageAuthorityLossReason): void {
   for (const cb of fencedListeners) {
     try {
-      cb();
+      cb(reason);
     } catch {
       /* ignore */
     }
   }
 }
 
-export function onFenced(cb: () => void): void {
+export function onFenced(cb: (reason: StorageAuthorityLossReason) => void): void {
   fencedListeners.add(cb);
 }
 
-export function offFenced(cb: () => void): void {
+export function offFenced(cb: (reason: StorageAuthorityLossReason) => void): void {
   fencedListeners.delete(cb);
 }
 
@@ -93,9 +95,9 @@ export function checkLease(): boolean {
   }
 }
 
-export async function claimLease(): Promise<void> {
-  const claimed = await claimDurableStorageAuthority(tabId);
-  durableAuthority = claimed;
+export async function claimLease(): Promise<ClaimedStorageSnapshot> {
+  const claimed = await claimAndReadDurableStorage(tabId);
+  durableAuthority = claimed.authority;
   persistenceGeneration += 1;
   fenced = false;
   try {
@@ -103,9 +105,10 @@ export async function claimLease(): Promise<void> {
   } catch {
     /* ignore */
   }
+  return claimed;
 }
 
-export function reclaimLease(): Promise<void> {
+export function reclaimLease(): Promise<ClaimedStorageSnapshot> {
   return claimLease();
 }
 
@@ -137,6 +140,16 @@ export function fencePersistence(): void {
   fenced = true;
 }
 
+export function loseAuthority(reason: StorageAuthorityLossReason): void {
+  if (fenced) return;
+  fencePersistence();
+  fireFenced(reason);
+}
+
+export function hasStorageAuthority(): boolean {
+  return durableAuthority !== null && !fenced;
+}
+
 export function capturePersistenceFence(): PersistenceFenceToken {
   if (!durableAuthority) {
     throw new Error('Persistence lease has not been durably claimed');
@@ -165,7 +178,6 @@ export async function beginHardResetPersistence(): Promise<DurableStorageAuthori
   durableAuthority = resetAuthority;
   persistenceGeneration += 1;
   fenced = true;
-  fireFenced();
   return resetAuthority;
 }
 
@@ -254,20 +266,19 @@ export function installStorageCoordination(onHardReset: () => void): void {
   if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
   window.addEventListener('storage', (event: StorageEvent) => {
     if (event.key === RESET_KEY) {
+      loseAuthority('sibling-reset');
       onHardReset();
       return;
     }
     if (event.key === LEASE_KEY && event.newValue !== tabId && !fenced) {
-      fenced = true;
-      fireFenced();
+      loseAuthority('takeover');
     }
   });
 
   setInterval(() => {
     if (fenced) return;
     if (!checkLease()) {
-      fenced = true;
-      fireFenced();
+      loseAuthority('takeover');
     }
   }, 3000);
 }

@@ -44,6 +44,14 @@ let storageMutationRunning = false;
 let storageMutationTail: Promise<void> = Promise.resolve();
 let holdNextStorageMutationForTests: Promise<void> | null = null;
 let afterNextAuthorityCheckForTests: (() => void) | null = null;
+let holdNextCombinedCheckpointAfterCommitForTests: {
+  barrier: Promise<void>;
+  committed: () => void;
+} | null = null;
+let holdNextClaimAfterCommitForTests: {
+  barrier: Promise<void>;
+  claimed: () => void;
+} | null = null;
 const OBFUSCATION_KEY = new Uint8Array([
   0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b, 0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
 ]);
@@ -63,6 +71,27 @@ export class InvalidWalletReservationRecordError extends Error {
     super('Stored wallet reservation ledger is malformed', { cause });
     this.name = 'InvalidWalletReservationRecordError';
   }
+}
+
+export class StorageAuthorityLostError extends Error {
+  readonly code = 'STORAGE_AUTHORITY_LOST';
+
+  constructor(
+    readonly expected: DurableStorageAuthority,
+    readonly actual: DurableStorageAuthority,
+  ) {
+    super('Durable storage authority was lost to another owner or epoch');
+    this.name = 'StorageAuthorityLostError';
+  }
+}
+
+export interface ClaimedStorageSnapshot {
+  authority: DurableStorageAuthority;
+  sessionRecord: unknown | null;
+  sessionError?: InvalidSessionRecordError;
+  walletReservationRecord: WalletReservationRecord | null;
+  walletReservationError?: InvalidWalletReservationRecordError;
+  rejectionTombstones: DurableRejectionTombstone[];
 }
 
 function rc4Keystream(key: Uint8Array, length: number): Uint8Array {
@@ -177,6 +206,43 @@ function deobfuscateRecord(masked: Uint8Array): unknown {
   return fromBencodexValue(decode(plaintext));
 }
 
+function decodeRawSessionRecord(record: unknown): unknown | null {
+  if (record == null) return null;
+  if (!(record instanceof Uint8Array)) {
+    throw new InvalidSessionRecordError(
+      new Error('Session record is not an obfuscated binary envelope'),
+    );
+  }
+  try {
+    const decoded = deobfuscateRecord(record);
+    if (
+      !decoded ||
+      typeof decoded !== 'object' ||
+      Array.isArray(decoded) ||
+      decoded instanceof Uint8Array
+    ) {
+      throw new Error('Obfuscated session record did not decode to an object');
+    }
+    return decoded;
+  } catch (error) {
+    throw new InvalidSessionRecordError(error);
+  }
+}
+
+function decodeRawWalletReservationRecord(record: unknown): WalletReservationRecord | null {
+  if (record == null) return null;
+  if (!(record instanceof Uint8Array)) {
+    throw new InvalidWalletReservationRecordError(
+      new Error('Wallet reservation ledger is not an obfuscated binary record'),
+    );
+  }
+  try {
+    return decodeWalletReservationRecord(deobfuscateRecord(record));
+  } catch (error) {
+    throw new InvalidWalletReservationRecordError(error);
+  }
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(SESSION_DB_NAME, SESSION_DB_VERSION);
@@ -285,7 +351,7 @@ async function openValidatedMutation(
   db: IDBDatabase,
   stores: string | string[],
   authority: DurableStorageAuthority,
-): Promise<IDBTransaction | null> {
+): Promise<IDBTransaction> {
   const names = typeof stores === 'string' ? [stores] : stores;
   const transaction = db.transaction(
     [...new Set([...names, COORDINATION_STORE_NAME])],
@@ -299,7 +365,11 @@ async function openValidatedMutation(
     } catch {
       // The abort is intentional: stale authority must not mutate any store.
     }
-    return null;
+    throw new StorageAuthorityLostError(authority, {
+      ownerTabId: record.ownerTabId,
+      writeEpoch: record.writeEpoch,
+      resetEpoch: record.resetEpoch,
+    });
   }
   const afterAuthorityCheck = afterNextAuthorityCheckForTests;
   afterNextAuthorityCheckForTests = null;
@@ -359,12 +429,26 @@ function enqueueStorageWrite(
 export async function claimDurableStorageAuthority(
   ownerTabId: string,
 ): Promise<DurableStorageAuthority> {
+  return (await claimAndReadDurableStorage(ownerTabId)).authority;
+}
+
+export async function claimAndReadDurableStorage(
+  ownerTabId: string,
+): Promise<ClaimedStorageSnapshot> {
   if (typeof indexedDB === 'undefined') {
     throw new Error('IndexedDB is unavailable; durable storage authority cannot be claimed');
   }
   const db = await openDatabase();
   try {
-    const transaction = db.transaction(COORDINATION_STORE_NAME, 'readwrite');
+    const transaction = db.transaction(
+      [
+        COORDINATION_STORE_NAME,
+        SESSION_STORE_NAME,
+        WALLET_RESERVATION_STORE_NAME,
+        REJECTION_STORE_NAME,
+      ],
+      'readwrite',
+    );
     const current = await readCoordinationRecord(transaction);
     if (current.resetStatus === 'pending') {
       transaction.abort();
@@ -376,6 +460,18 @@ export async function claimDurableStorageAuthority(
       writeEpoch: current.writeEpoch + 1n,
       resetStatus: 'active',
     };
+    const sessionRaw = await requestResult(
+      transaction.objectStore(SESSION_STORE_NAME).get(SESSION_RECORD_KEY),
+      'Failed to read session record while claiming storage authority',
+    );
+    const walletRaw = await requestResult(
+      transaction.objectStore(WALLET_RESERVATION_STORE_NAME).get(WALLET_RESERVATION_RECORD_KEY),
+      'Failed to read wallet reservation ledger while claiming storage authority',
+    );
+    const rejectionRaw = await requestResult(
+      transaction.objectStore(REJECTION_STORE_NAME).getAll(),
+      'Failed to read rejection records while claiming storage authority',
+    );
     putCoordinationRecord(transaction, claimed);
     await transactionComplete(transaction);
     currentAuthority = {
@@ -383,7 +479,36 @@ export async function claimDurableStorageAuthority(
       writeEpoch: claimed.writeEpoch,
       resetEpoch: claimed.resetEpoch,
     };
-    return { ...currentAuthority };
+    const hold = holdNextClaimAfterCommitForTests;
+    holdNextClaimAfterCommitForTests = null;
+    if (hold) {
+      hold.claimed();
+      await hold.barrier;
+    }
+    let sessionRecord: unknown | null = null;
+    let sessionError: InvalidSessionRecordError | undefined;
+    try {
+      sessionRecord = decodeRawSessionRecord(sessionRaw);
+    } catch (error) {
+      if (!(error instanceof InvalidSessionRecordError)) throw error;
+      sessionError = error;
+    }
+    let walletReservationRecord: WalletReservationRecord | null = null;
+    let walletReservationError: InvalidWalletReservationRecordError | undefined;
+    try {
+      walletReservationRecord = decodeRawWalletReservationRecord(walletRaw);
+    } catch (error) {
+      if (!(error instanceof InvalidWalletReservationRecordError)) throw error;
+      walletReservationError = error;
+    }
+    return {
+      authority: { ...currentAuthority },
+      sessionRecord,
+      ...(sessionError ? { sessionError } : {}),
+      walletReservationRecord,
+      ...(walletReservationError ? { walletReservationError } : {}),
+      rejectionTombstones: parseCurrentRejectionTombstones(rejectionRaw),
+    };
   } finally {
     db.close();
   }
@@ -427,7 +552,13 @@ export function enqueueHardResetStorageMutation(
       const transaction = db.transaction(COORDINATION_STORE_NAME, 'readonly');
       const record = await readCoordinationRecord(transaction);
       await transactionComplete(transaction);
-      if (!authorityMatches(record, captured, 'pending')) return;
+      if (!authorityMatches(record, captured, 'pending')) {
+        throw new StorageAuthorityLostError(captured, {
+          ownerTabId: record.ownerTabId,
+          writeEpoch: record.writeEpoch,
+          resetEpoch: record.resetEpoch,
+        });
+      }
     } finally {
       db.close();
     }
@@ -445,6 +576,22 @@ export function _afterNextStorageAuthorityCheckForTests(callback: () => void): v
   afterNextAuthorityCheckForTests = callback;
 }
 
+/** @internal test-only: hold a combined checkpoint after its IDB transaction commits. */
+export function _holdNextCombinedCheckpointAfterCommitForTests(
+  barrier: Promise<void>,
+  committed: () => void,
+): void {
+  holdNextCombinedCheckpointAfterCommitForTests = { barrier, committed };
+}
+
+/** @internal test-only: hold a durable claim after commit but before snapshot delivery. */
+export function _holdNextClaimAfterCommitForTests(
+  barrier: Promise<void>,
+  claimed: () => void,
+): void {
+  holdNextClaimAfterCommitForTests = { barrier, claimed };
+}
+
 export async function readSessionRecord(): Promise<unknown | null> {
   if (typeof indexedDB === 'undefined') return null;
   await storageMutationTail;
@@ -457,26 +604,7 @@ export async function readSessionRecord(): Promise<unknown | null> {
       request.onerror = () => reject(request.error ?? new Error('Failed to read session record'));
     });
     await transactionComplete(transaction);
-    if (record == null) return null;
-    if (!(record instanceof Uint8Array)) {
-      throw new InvalidSessionRecordError(
-        new Error('Session record is not an obfuscated binary envelope'),
-      );
-    }
-    try {
-      const decoded = deobfuscateRecord(record);
-      if (
-        !decoded ||
-        typeof decoded !== 'object' ||
-        Array.isArray(decoded) ||
-        decoded instanceof Uint8Array
-      ) {
-        throw new Error('Obfuscated session record did not decode to an object');
-      }
-      return decoded;
-    } catch (error) {
-      throw new InvalidSessionRecordError(error);
-    }
+    return decodeRawSessionRecord(record);
   } finally {
     db.close();
   }
@@ -492,7 +620,6 @@ async function performWriteSessionRecord(
   const db = await openDatabase();
   try {
     const transaction = await openValidatedMutation(db, SESSION_STORE_NAME, authority);
-    if (!transaction) return;
     transaction.objectStore(SESSION_STORE_NAME).put(obfuscateRecord(record), SESSION_RECORD_KEY);
     await transactionComplete(transaction);
   } finally {
@@ -518,16 +645,19 @@ export function writeSessionAndWalletReservationRecords(
   const sessionSnapshot = structuredClone(session);
   const ledgerRecord = encodeWalletReservationRecord(structuredClone(entries));
   return enqueueStorageWrite(async (authority) => {
-    if (!shouldWrite()) return;
+    if (!shouldWrite()) throw new StorageAuthorityLostError(authority, authority);
     const db = await openDatabase();
     try {
-      if (!shouldWrite()) return;
+      if (!shouldWrite()) throw new StorageAuthorityLostError(authority, authority);
       const transaction = await openValidatedMutation(
         db,
         [SESSION_STORE_NAME, WALLET_RESERVATION_STORE_NAME],
         authority,
       );
-      if (!transaction || !shouldWrite()) return;
+      if (!shouldWrite()) {
+        transaction.abort();
+        throw new StorageAuthorityLostError(authority, authority);
+      }
       transaction
         .objectStore(SESSION_STORE_NAME)
         .put(obfuscateRecord(sessionSnapshot), SESSION_RECORD_KEY);
@@ -535,6 +665,12 @@ export function writeSessionAndWalletReservationRecords(
         .objectStore(WALLET_RESERVATION_STORE_NAME)
         .put(obfuscateRecord(ledgerRecord), WALLET_RESERVATION_RECORD_KEY);
       await transactionComplete(transaction);
+      const hold = holdNextCombinedCheckpointAfterCommitForTests;
+      holdNextCombinedCheckpointAfterCommitForTests = null;
+      if (hold) {
+        hold.committed();
+        await hold.barrier;
+      }
     } finally {
       db.close();
     }
@@ -542,12 +678,13 @@ export function writeSessionAndWalletReservationRecords(
 }
 
 export function deleteSessionRecord(): Promise<void> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('IndexedDB is unavailable; session record was not deleted'));
+  }
   return enqueueStorageWrite(async (authority) => {
     const db = await openDatabase();
     try {
       const transaction = await openValidatedMutation(db, SESSION_STORE_NAME, authority);
-      if (!transaction) return;
       transaction.objectStore(SESSION_STORE_NAME).delete(SESSION_RECORD_KEY);
       await transactionComplete(transaction);
     } finally {
@@ -571,17 +708,7 @@ export async function readWalletReservationRecord(): Promise<WalletReservationRe
         reject(request.error ?? new Error('Failed to read wallet reservation ledger'));
     });
     await transactionComplete(transaction);
-    if (record == null) return null;
-    if (!(record instanceof Uint8Array)) {
-      throw new InvalidWalletReservationRecordError(
-        new Error('Wallet reservation ledger is not an obfuscated binary record'),
-      );
-    }
-    try {
-      return decodeWalletReservationRecord(deobfuscateRecord(record));
-    } catch (error) {
-      throw new InvalidWalletReservationRecordError(error);
-    }
+    return decodeRawWalletReservationRecord(record);
   } finally {
     db.close();
   }
@@ -600,7 +727,6 @@ export function writeWalletReservationRecord(
     const db = await openDatabase();
     try {
       const transaction = await openValidatedMutation(db, WALLET_RESERVATION_STORE_NAME, authority);
-      if (!transaction) return;
       transaction
         .objectStore(WALLET_RESERVATION_STORE_NAME)
         .put(obfuscateRecord(record), WALLET_RESERVATION_RECORD_KEY);
@@ -612,12 +738,15 @@ export function writeWalletReservationRecord(
 }
 
 export function deleteWalletReservationRecord(): Promise<void> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(
+      new Error('IndexedDB is unavailable; wallet reservation record was not deleted'),
+    );
+  }
   return enqueueStorageWrite(async (authority) => {
     const db = await openDatabase();
     try {
       const transaction = await openValidatedMutation(db, WALLET_RESERVATION_STORE_NAME, authority);
-      if (!transaction) return;
       transaction.objectStore(WALLET_RESERVATION_STORE_NAME).delete(WALLET_RESERVATION_RECORD_KEY);
       await transactionComplete(transaction);
     } finally {
@@ -662,6 +791,19 @@ function parseRejectionTombstone(value: unknown): DurableRejectionTombstone | nu
   return candidate as DurableRejectionTombstone;
 }
 
+function parseCurrentRejectionTombstones(records: unknown[]): DurableRejectionTombstone[] {
+  const cutoff = Date.now() - REJECTION_TOMBSTONE_TTL_MS;
+  return records
+    .flatMap((record) => {
+      if (!(record instanceof Uint8Array)) return [];
+      const parsed = parseRejectionTombstone(deobfuscateRecord(record));
+      return parsed ? [parsed] : [];
+    })
+    .filter((record) => record.createdAt >= cutoff)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-MAX_DURABLE_REJECTION_TOMBSTONES);
+}
+
 async function listRejectionTombstonesInTransaction(
   transaction: IDBTransaction,
   deleteExpired: boolean,
@@ -687,23 +829,34 @@ async function listRejectionTombstonesInTransaction(
     .slice(-MAX_DURABLE_REJECTION_TOMBSTONES);
 }
 
-export async function readRejectionTombstones(
-  deleteExpired = true,
-): Promise<DurableRejectionTombstone[]> {
+export async function readRejectionTombstones(): Promise<DurableRejectionTombstone[]> {
   if (typeof indexedDB === 'undefined') return [];
   await storageMutationTail;
   const db = await openDatabase();
   try {
-    const transaction = db.transaction(
-      REJECTION_STORE_NAME,
-      deleteExpired ? 'readwrite' : 'readonly',
-    );
-    const records = await listRejectionTombstonesInTransaction(transaction, deleteExpired);
+    const transaction = db.transaction(REJECTION_STORE_NAME, 'readonly');
+    const records = await listRejectionTombstonesInTransaction(transaction, false);
     await transactionComplete(transaction);
     return records;
   } finally {
     db.close();
   }
+}
+
+export function pruneRejectionTombstones(): Promise<void> {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('IndexedDB is unavailable; rejection records were not pruned'));
+  }
+  return enqueueStorageWrite(async (authority) => {
+    const db = await openDatabase();
+    try {
+      const transaction = await openValidatedMutation(db, REJECTION_STORE_NAME, authority);
+      await listRejectionTombstonesInTransaction(transaction, true);
+      await transactionComplete(transaction);
+    } finally {
+      db.close();
+    }
+  });
 }
 
 async function performWriteRejectionTombstone(
@@ -721,7 +874,6 @@ async function performWriteRejectionTombstone(
       clearSession ? [REJECTION_STORE_NAME, SESSION_STORE_NAME] : REJECTION_STORE_NAME,
       authority,
     );
-    if (!transaction) return;
     const store = transaction.objectStore(REJECTION_STORE_NAME);
     const existing = await listRejectionTombstonesInTransaction(transaction, true);
     const retained = existing
@@ -761,12 +913,13 @@ export function replaceSessionWithRejectionTombstone(
 }
 
 export function deleteRejectionTombstone(peerId: string, sessionId: string): Promise<void> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('IndexedDB is unavailable; rejection record was not deleted'));
+  }
   return enqueueStorageWrite(async (authority) => {
     const db = await openDatabase();
     try {
       const transaction = await openValidatedMutation(db, REJECTION_STORE_NAME, authority);
-      if (!transaction) return;
       transaction
         .objectStore(REJECTION_STORE_NAME)
         .delete(rejectionTombstoneKey(peerId, sessionId));

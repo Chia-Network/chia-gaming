@@ -616,6 +616,7 @@ describe('transaction submission', () => {
       new Proxy(
         {
           getHeightInfo: () => Promise.resolve(1n),
+          getWalletOfferProvider: () => null,
           registerCoins: () => Promise.resolve(),
           getCoinRecordsByNames: (names: string[]) => {
             queriedNames.push(names);
@@ -675,6 +676,7 @@ describe('transaction submission', () => {
       new Proxy(
         {
           getHeightInfo: () => Promise.resolve(1n),
+          getWalletOfferProvider: () => null,
           registerCoins: () => Promise.resolve(),
           getCoinRecordsByNames: (names: string[]) => {
             queriedNames.push(names);
@@ -768,13 +770,13 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
-    expect(cradle.drain_submissions).toHaveBeenCalledTimes(4);
+    expect(cradle.drain_submissions).toHaveBeenCalledTimes(5);
     expect(spend).toHaveBeenCalledTimes(1);
     blob.detachBlockchain(blockchain);
     errorSpy.mockRestore();
   });
 
-  it('handles lifecycle retirement and typed drain failure without a blockchain', () => {
+  it('keeps a global drain invariant failure fatal without a blockchain', () => {
     const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn([], []));
     attachTestCommitCoordinator(blob);
     const recoverableErrors: string[] = [];
@@ -783,32 +785,20 @@ describe('transaction submission', () => {
     });
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() =>
-        submissionDrain(
-          [{ id: 'offline-retired', bundle: testSpendBundle('07'), fee_request: null }],
-          ['offline-retired'],
-          [
-            {
-              candidate_index: '0',
-              retained_submission_id: 'offline-retired',
-              candidate_submission_id: 'offline-retired',
-              intent_fingerprint: null,
-              stage: 'retained-state',
-              message: 'retained mismatch',
-              rust_context: 'offline retirement test',
-            },
-          ],
-        ),
-      ),
+      drain_submissions: jest.fn(() => {
+        throw new Error('transaction submission drain invariant failed');
+      }),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.processResult(wasmResult());
+    expect(() => blob.processResult(wasmResult())).toThrow(
+      'transaction submission drain invariant failed',
+    );
 
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
-    expect(recoverableErrors).toEqual([expect.stringMatching(/retained-state/)]);
-    expect((blob as any).pendingSubmissionDeliveries.size).toBe(0);
+    expect(recoverableErrors).toEqual([]);
+    expect((blob as any).submissionDeliveries.hasPending()).toBe(false);
     blob.cleanup();
   });
 
@@ -902,6 +892,8 @@ describe('transaction submission', () => {
       applied_fee: '10',
       warning: null,
       fee_source_disposition: 'attached',
+      variant_fingerprint: 'bb'.repeat(32),
+      should_broadcast: true,
     }));
     const cradle = {
       ...makeMockCradle(),
@@ -927,7 +919,7 @@ describe('transaction submission', () => {
     expect(finalizeSubmission).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith(submission.id);
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith(submission.id, expect.any(String));
     blob.detachBlockchain(blockchain);
   });
 
@@ -1022,15 +1014,15 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(spend).toHaveBeenCalledTimes(2);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent');
-    expect(cradle.acknowledge_submission).not.toHaveBeenCalledWith('awaiting');
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent', expect.any(String));
+    expect(cradle.acknowledge_submission).not.toHaveBeenCalledWith('awaiting', expect.any(String));
 
     blob.reportNewBlock(2n);
     await transactionSubmitQueue(blob);
 
     expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(3);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('awaiting');
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('awaiting', expect.any(String));
   });
 
   it('retains a locally failed submission and advances to the urgent next submission', async () => {
@@ -1068,6 +1060,8 @@ describe('transaction submission', () => {
           applied_fee: '0',
           warning: null,
           fee_source_disposition: 'not-requested',
+          variant_fingerprint: 'bb'.repeat(32),
+          should_broadcast: true,
         };
       }),
     } as unknown as ChiaGame;
@@ -1078,7 +1072,7 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(cradle.reject_submission).not.toHaveBeenCalled();
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent');
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent', expect.any(String));
     expect(spend).toHaveBeenCalledTimes(1);
     expect((blob as any).resubmitAfterChainSync).toBe(true);
     expect(errors).toEqual([
@@ -1213,7 +1207,7 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
     expect(spend).toHaveBeenCalledTimes(2);
     expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('4');
+    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('4', expect.any(String));
     expect(cradle.reject_submission).not.toHaveBeenCalled();
     expect(errors).toEqual([]);
   });

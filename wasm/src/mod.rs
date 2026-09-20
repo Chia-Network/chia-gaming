@@ -26,9 +26,8 @@ mod gaming_wasm {
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
         convert_coinset_org_spend_to_spend, normalize_fee_offer_bundle, Aggsig, AllocEncoder,
-        Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
-        CoinsetSpendRecord, GameID, GameType, Hash, LocalProposalId, Node, PrivateKey, Program,
-        ProgramRef, PublicKey,
+        Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
+        GameID, GameType, Hash, LocalProposalId, Node, PrivateKey, Program, ProgramRef, PublicKey,
         Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
     };
     use chia_gaming::game_session::{GameSession, GameSessionConfig, TerminalHandoffCommand};
@@ -40,8 +39,8 @@ mod gaming_wasm {
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
     use chia_gaming::transaction_manager::{
-        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionDrainFailureStage,
-        SubmissionFeeSource, TransactionManager,
+        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionDeliveryGoal,
+        SubmissionDrainFailureStage, SubmissionFeeSource, TransactionManager,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
@@ -76,7 +75,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 17;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 18;
 
     #[cfg(test)]
     mod serialization_schema_tests {
@@ -84,7 +83,7 @@ mod gaming_wasm {
 
         #[test]
         fn exported_game_session_serialization_schema_is_current() {
-            assert_eq!(game_session_serialization_schema(), 17);
+            assert_eq!(game_session_serialization_schema(), 18);
         }
     }
 
@@ -99,6 +98,9 @@ mod gaming_wasm {
         id: String,
         bundle: JsSpendBundle,
         fee_request: Option<JsFeeRequest>,
+        delivery_goal: &'static str,
+        intent_fingerprint: String,
+        variant_fingerprint: String,
     }
 
     #[derive(Serialize)]
@@ -132,6 +134,8 @@ mod gaming_wasm {
         applied_fee: String,
         warning: Option<String>,
         fee_source_disposition: &'static str,
+        variant_fingerprint: String,
+        should_broadcast: bool,
     }
 
     thread_local! {
@@ -460,60 +464,79 @@ mod gaming_wasm {
     /// is needed.
     #[wasm_bindgen]
     pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
-        let result = with_game(cid, move |cradle: &mut JsGameSession| {
-            let drained = cradle.cradle.drain_submissions()?;
-            let submissions = drained
-                .submissions
-                .iter()
-                .map(|submission| JsTransactionSubmission {
-                    id: submission.id.to_string(),
-                    bundle: spend_bundle_to_js(&submission.bundle),
-                    fee_request: match &submission.fee_intent {
-                        SubmissionFeeIntent::Attach { target, amount, .. } => Some(JsFeeRequest {
-                            target: hex::encode(target.bytes()),
-                            amount: amount.to_u64().to_string(),
-                        }),
-                        SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
-                            None
-                        }
-                    },
-                })
-                .collect::<Vec<_>>();
-            let failures = drained
-                .failures
-                .into_iter()
-                .map(|failure| JsSubmissionDrainFailure {
-                    candidate_index: failure.candidate_index.to_string(),
-                    retained_submission_id: failure.retained_submission_id.map(|id| id.to_string()),
-                    candidate_submission_id: failure
-                        .candidate_submission_id
-                        .map(|id| id.to_string()),
-                    intent_fingerprint: failure
-                        .intent_fingerprint
-                        .map(|fingerprint| hex::encode(fingerprint.bytes())),
-                    stage: match failure.stage {
-                        SubmissionDrainFailureStage::Fingerprint => "fingerprint",
-                        SubmissionDrainFailureStage::RetainedState => "retained-state",
-                        SubmissionDrainFailureStage::ExpectedOutputs => "expected-outputs",
-                        SubmissionDrainFailureStage::SubmissionId => "submission-id",
-                    },
-                    message: failure.message,
-                    rust_context: failure.rust_context,
-                })
-                .collect();
-            let retired_submission_ids = cradle
-                .cradle
-                .drain_retired_submission_ids()
-                .into_iter()
-                .map(|id| id.to_string())
-                .collect();
-            Ok(JsSubmissionDrain {
-                submissions,
-                retired_submission_ids,
-                failures,
-            })
-        })?;
-        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.apply_working_copy_transaction(
+                &mut cradle.allocator,
+                |working, _allocator| {
+                    let drained = working.drain_submissions()?;
+                    let submissions = drained
+                        .submissions
+                        .iter()
+                        .map(|submission| JsTransactionSubmission {
+                            id: submission.id.to_string(),
+                            bundle: spend_bundle_to_js(&submission.bundle),
+                            fee_request: match &submission.fee_intent {
+                                SubmissionFeeIntent::Attach { target, amount, .. } => {
+                                    Some(JsFeeRequest {
+                                        target: hex::encode(target.bytes()),
+                                        amount: amount.to_u64().to_string(),
+                                    })
+                                }
+                                SubmissionFeeIntent::AlreadyPaid
+                                | SubmissionFeeIntent::NoFeeConfigured => None,
+                            },
+                            delivery_goal: match submission.goal {
+                                SubmissionDeliveryGoal::EnsureBroadcast => "ensure-broadcast",
+                                SubmissionDeliveryGoal::FeeUpgrade => "fee-upgrade",
+                            },
+                            intent_fingerprint: hex::encode(submission.intent_fingerprint.bytes()),
+                            variant_fingerprint: hex::encode(
+                                submission.variant_fingerprint.bytes(),
+                            ),
+                        })
+                        .collect::<Vec<_>>();
+                    let retired_submission_ids = working
+                        .drain_retired_submission_ids()
+                        .into_iter()
+                        .map(|id| id.to_string())
+                        .collect();
+                    let failures = drained
+                        .failures
+                        .into_iter()
+                        .map(|failure| JsSubmissionDrainFailure {
+                            candidate_index: failure.candidate_index.to_string(),
+                            retained_submission_id: failure
+                                .retained_submission_id
+                                .map(|id| id.to_string()),
+                            candidate_submission_id: failure
+                                .candidate_submission_id
+                                .map(|id| id.to_string()),
+                            intent_fingerprint: failure
+                                .intent_fingerprint
+                                .map(|fingerprint| hex::encode(fingerprint.bytes())),
+                            stage: match failure.stage {
+                                SubmissionDrainFailureStage::Fingerprint => "fingerprint",
+                                SubmissionDrainFailureStage::RetainedState => "retained-state",
+                                SubmissionDrainFailureStage::ExpectedOutputs => "expected-outputs",
+                                SubmissionDrainFailureStage::SubmissionId => "submission-id",
+                            },
+                            message: failure.message,
+                            rust_context: failure.rust_context,
+                        })
+                        .collect();
+                    serde_wasm_bindgen::to_value(&JsSubmissionDrain {
+                        submissions,
+                        retired_submission_ids,
+                        failures,
+                    })
+                    .map_err(|error| {
+                        types::Error::StrErr(format!(
+                            "failed to convert transaction submission drain: {error}"
+                        ))
+                    })
+                },
+            )
+        })
     }
 
     #[wasm_bindgen]
@@ -531,12 +554,20 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn acknowledge_submission(cid: i32, submission_id: &str) -> Result<(), JsValue> {
+    pub fn acknowledge_submission(
+        cid: i32,
+        submission_id: &str,
+        variant_fingerprint: &str,
+    ) -> Result<(), JsValue> {
         let id = submission_id
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid submission id: {e}")))?;
+        let fingerprint =
+            Hash::from_slice(&hex::decode(variant_fingerprint).into_js()?).into_js()?;
         with_game(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.acknowledge_submission(id)
+            cradle
+                .cradle
+                .acknowledge_submission_variant(id, &fingerprint)
         })
     }
 
@@ -558,6 +589,14 @@ mod gaming_wasm {
     pub fn resubmit_submitted(cid: i32) -> Result<(), JsValue> {
         with_game(cid, move |cradle: &mut JsGameSession| {
             cradle.cradle.requeue_submitted();
+            Ok(())
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn request_fee_upgrades(cid: i32) -> Result<(), JsValue> {
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.request_fee_upgrades();
             Ok(())
         })
     }
@@ -601,9 +640,10 @@ mod gaming_wasm {
     /// empty coin list is an authoritative watched-coin snapshot.
     #[wasm_bindgen]
     pub fn report_height(cid: i32, height: u64) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut JsGameSession| {
             cradle.cradle.report_height(&mut cradle.allocator, height)
-        })
+        })?;
+        with_game_drain(cid, |_| Ok(()))
     }
 
     fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {
@@ -869,11 +909,20 @@ mod gaming_wasm {
     pub fn finalize_submission(
         cid: i32,
         submission_id: &str,
+        delivery_goal: &str,
+        variant_fingerprint: &str,
         fee_source_json: Option<String>,
     ) -> Result<JsValue, JsValue> {
         let id = submission_id
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid submission id: {e}")))?;
+        let goal = match delivery_goal {
+            "ensure-broadcast" => SubmissionDeliveryGoal::EnsureBroadcast,
+            "fee-upgrade" => SubmissionDeliveryGoal::FeeUpgrade,
+            _ => return Err(JsValue::from_str("invalid submission delivery goal")),
+        };
+        let drained_variant_fingerprint =
+            Hash::from_slice(&hex::decode(variant_fingerprint).into_js()?).into_js()?;
         let fee_intent = with_game(cid, move |cradle: &mut JsGameSession| {
             cradle.cradle.submission_fee_intent(id)
         })?;
@@ -885,18 +934,12 @@ mod gaming_wasm {
                         .map_err(|e| format!("bad wallet fee source json: {e}"))
                 })
                 .and_then(|source| match source {
-                    JsWalletFeeSource::Offer { offer } => {
-                        decode_offer_to_spend_bundle(&offer)
-                            .map_err(|e| format!("fee offer decode error: {e}"))
-                            .and_then(|maker_bundle| {
-                                normalize_fee_offer_bundle(
-                                    maker_bundle,
-                                    amount.to_u64(),
-                                    &target,
-                                )
+                    JsWalletFeeSource::Offer { offer } => decode_offer_to_spend_bundle(&offer)
+                        .map_err(|e| format!("fee offer decode error: {e}"))
+                        .and_then(|maker_bundle| {
+                            normalize_fee_offer_bundle(maker_bundle, amount.to_u64(), &target)
                                 .map_err(|e| format!("fee offer completion error: {e:?}"))
-                            })
-                    }
+                        }),
                     JsWalletFeeSource::Bundle { bundle } => {
                         coinset_spend_bundle_to_spend_bundle(&bundle)
                             .map_err(|e| format!("fee bundle decode error: {e:?}"))
@@ -914,31 +957,46 @@ mod gaming_wasm {
                 SubmissionFeeSource::NotRequested
             }
         };
-        let finalized = with_game(cid, move |cradle: &mut JsGameSession| {
-            let additional_data = cradle
-                .cradle
-                .cradle()
-                .agg_sig_me_additional_data()
-                .clone();
-            cradle.cradle.finalize_submission(
-                id,
-                fee_source,
-                &additional_data,
-                cradle.cradle.last_height(),
+        with_game(cid, move |cradle: &mut JsGameSession| {
+            cradle.cradle.apply_working_copy_transaction(
+                &mut cradle.allocator,
+                move |working, _allocator| {
+                    let additional_data = working.cradle().agg_sig_me_additional_data().clone();
+                    let finalized = working.finalize_submission_delivery(
+                        id,
+                        goal,
+                        &drained_variant_fingerprint,
+                        fee_source,
+                        &additional_data,
+                        working.last_height(),
+                    )?;
+                    let bundle =
+                        spend_bundle_to_coinset_js(&finalized.bundle).map_err(|error| {
+                            types::Error::StrErr(format!(
+                                "failed to convert finalized transaction bundle: {error:?}"
+                            ))
+                        })?;
+                    let result = JsFinalizedSubmission {
+                        protocol_bundle: spend_bundle_to_js(&finalized.bundle),
+                        bundle,
+                        applied_fee: finalized.applied_fee.to_string(),
+                        warning: finalized.warning,
+                        fee_source_disposition: match finalized.fee_source_disposition {
+                            FeeSourceDisposition::Attached => "attached",
+                            FeeSourceDisposition::Unused => "unused",
+                            FeeSourceDisposition::NotRequested => "not-requested",
+                        },
+                        variant_fingerprint: hex::encode(finalized.variant_fingerprint.bytes()),
+                        should_broadcast: finalized.should_broadcast,
+                    };
+                    serde_wasm_bindgen::to_value(&result).map_err(|error| {
+                        types::Error::StrErr(format!(
+                            "failed to convert finalized transaction result: {error}"
+                        ))
+                    })
+                },
             )
-        })?;
-        let result = JsFinalizedSubmission {
-            protocol_bundle: spend_bundle_to_js(&finalized.bundle),
-            bundle: spend_bundle_to_coinset_js(&finalized.bundle)?,
-            applied_fee: finalized.applied_fee.to_string(),
-            warning: finalized.warning,
-            fee_source_disposition: match finalized.fee_source_disposition {
-                FeeSourceDisposition::Attached => "attached",
-                FeeSourceDisposition::Unused => "unused",
-                FeeSourceDisposition::NotRequested => "not-requested",
-            },
-        };
-        serde_wasm_bindgen::to_value(&result).into_js()
+        })
     }
 
     #[wasm_bindgen]
@@ -1056,11 +1114,8 @@ mod gaming_wasm {
             let pending_terminal = cradle.cradle.pending_terminal_handoff();
             let terminal = cradle.cradle.is_fully_resolved();
             let result = manager_drain_to_js(&dr, pending_terminal, terminal, true)?;
-            let _ = js_sys::Reflect::set(
-                &result,
-                &"id".into(),
-                &JsValue::from_str(&id.to_string()),
-            );
+            let _ =
+                js_sys::Reflect::set(&result, &"id".into(), &JsValue::from_str(&id.to_string()));
             Ok(result)
         })
     }

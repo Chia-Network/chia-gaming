@@ -5,12 +5,52 @@ import {
 } from '../lib/session/indexedDb';
 import { isWalletConnectStorageKey, signalHardResetToOtherTabs } from './saveCoordination';
 
-const KNOWN_WALLETCONNECT_DB_NAMES = [
+export const OWNED_INDEXED_DB_EXACT_NAMES = [
+  SESSION_DB_NAME,
+  'app-state',
   'WALLET_CONNECT_V2_INDEXED_DB',
   'walletconnect',
   'walletconnect-v2',
-];
-const KNOWN_HARD_RESET_DB_NAMES = [SESSION_DB_NAME, ...KNOWN_WALLETCONNECT_DB_NAMES];
+] as const;
+export const OWNED_INDEXED_DB_PREFIXES = [
+  'chia-gaming-',
+  'WALLET_CONNECT_',
+  'walletconnect-',
+] as const;
+export const OWNED_LOCAL_STORAGE_EXACT_KEYS = [
+  'appPreferences',
+  'appState',
+  'appState_savedSession',
+  'appState_hardReset',
+  'appState_activeTab',
+  'appState_pendingWipe',
+  'appState_cloudWalletConfig',
+  'appState_cloudWalletAuth',
+] as const;
+export const OWNED_LOCAL_STORAGE_PREFIXES = [
+  'appState_',
+  'wc@',
+  'WALLET_CONNECT_',
+  'walletconnect',
+] as const;
+export const OWNED_SESSION_STORAGE_EXACT_KEYS = [
+  'appState_autoResumeOnce',
+  'appState_tabId',
+  'appState_pendingWipe',
+] as const;
+export const OWNED_SESSION_STORAGE_PREFIXES = ['appState_'] as const;
+
+export function isOwnedIndexedDbName(name: string): boolean {
+  return (
+    (OWNED_INDEXED_DB_EXACT_NAMES as readonly string[]).includes(name) ||
+    OWNED_INDEXED_DB_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
+}
+
+function isWalletConnectIndexedDbName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.includes('walletconnect') || name.startsWith('WALLET_CONNECT_');
+}
 
 export interface HardResetFailure {
   database: string;
@@ -82,6 +122,21 @@ function clearWalletConnectLocalStorageKeys(): void {
   }
 }
 
+function clearOwnedStorageKeys(
+  storage: Storage,
+  exactKeys: readonly string[],
+  prefixes: readonly string[],
+): void {
+  const toRemove = new Set(exactKeys);
+  for (let index = 0; index < storage.length; index++) {
+    const key = storage.key(index);
+    if (key && prefixes.some((prefix) => key.startsWith(prefix))) {
+      toRemove.add(key);
+    }
+  }
+  for (const key of toRemove) storage.removeItem(key);
+}
+
 /** Resolves true when every WalletConnect database was actually deleted. */
 async function clearWalletConnectIndexedDb(): Promise<boolean> {
   if (typeof indexedDB === 'undefined') return true;
@@ -95,7 +150,7 @@ async function clearWalletConnectIndexedDb(): Promise<boolean> {
       const toDelete = databases
         .map((db) => db.name)
         .filter(
-          (name): name is string => typeof name === 'string' && isWalletConnectStorageKey(name),
+          (name): name is string => typeof name === 'string' && isWalletConnectIndexedDbName(name),
         );
       const deleted = await Promise.all(
         toDelete.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
@@ -107,7 +162,7 @@ async function clearWalletConnectIndexedDb(): Promise<boolean> {
   }
 
   const deleted = await Promise.all(
-    KNOWN_WALLETCONNECT_DB_NAMES.map((name) =>
+    OWNED_INDEXED_DB_EXACT_NAMES.filter(isWalletConnectIndexedDbName).map((name) =>
       deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup'),
     ),
   );
@@ -122,8 +177,8 @@ export async function clearWalletConnectStorage(): Promise<void> {
 // A hard reset can be blocked from deleting the WalletConnect IndexedDB while a
 // live client still holds it open. In that case we defer the wipe to the next
 // boot, when nothing has opened the database yet, via this sessionStorage
-// marker. It is deliberately recreated after localStorage is cleared because
-// the app database metadata is itself deleted by a successful wipe.
+// marker. It is deliberately retained in the owned-key manifest because the
+// app database metadata is itself deleted by a successful wipe.
 const PENDING_WIPE_KEY = 'appState_pendingWipe';
 
 function markPendingWipe(): void {
@@ -188,7 +243,9 @@ async function clearAllIndexedDbForHardReset(): Promise<HardResetResult> {
   if (typeof indexedDB === 'undefined') return { success: true };
 
   const failures = (
-    await Promise.all(KNOWN_HARD_RESET_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset')))
+    await Promise.all(
+      OWNED_INDEXED_DB_EXACT_NAMES.map((name) => deleteIndexedDb(name, 'hard reset')),
+    )
   ).filter((failure): failure is HardResetFailure => failure !== null);
 
   const dynamicDatabaseLookup = indexedDB as IDBFactory & {
@@ -203,14 +260,17 @@ async function clearAllIndexedDbForHardReset(): Promise<HardResetResult> {
 
   try {
     const databases = await dynamicDatabaseLookup.databases();
-    const known = new Set(KNOWN_HARD_RESET_DB_NAMES);
+    const known = new Set<string>(OWNED_INDEXED_DB_EXACT_NAMES);
     const enumeratedFailures = (
       await Promise.all(
         databases
           .map((db) => db.name)
           .filter(
             (name): name is string =>
-              typeof name === 'string' && name.length > 0 && !known.has(name),
+              typeof name === 'string' &&
+              name.length > 0 &&
+              !known.has(name) &&
+              isOwnedIndexedDbName(name),
           )
           .map((name) => deleteIndexedDb(name, 'hard reset')),
       )
@@ -232,14 +292,22 @@ export function hardResetStorage(authority: DurableStorageAuthority): Promise<Ha
   let result: HardResetResult = { success: false, failures: [] };
   return enqueueHardResetStorageMutation(authority, async () => {
     try {
-      localStorage.clear();
+      clearOwnedStorageKeys(
+        localStorage,
+        OWNED_LOCAL_STORAGE_EXACT_KEYS,
+        OWNED_LOCAL_STORAGE_PREFIXES,
+      );
     } catch (error) {
-      console.error('[save] failed to clear localStorage during hard reset:', error);
+      console.error('[save] failed to clear owned localStorage during hard reset:', error);
     }
     try {
-      sessionStorage.clear();
+      clearOwnedStorageKeys(
+        sessionStorage,
+        OWNED_SESSION_STORAGE_EXACT_KEYS,
+        OWNED_SESSION_STORAGE_PREFIXES,
+      );
     } catch (error) {
-      console.error('[save] failed to clear sessionStorage during hard reset:', error);
+      console.error('[save] failed to clear owned sessionStorage during hard reset:', error);
     }
     result = await clearAllIndexedDbForHardReset();
     if (result.success) clearPendingWipe();

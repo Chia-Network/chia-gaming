@@ -105,17 +105,21 @@ The same ownership applies to submission intent: Rust
 nonserialized `PendingSubmissionDelivery` map bridges only a submission already
 drained from Rust but not yet launched when the committed runtime lease is
 replaced. Lease replacement may reschedule that persistence-gated launch. Once
-the launch has entered `TransactionSubmitQueue`, that ordered queue owns
-exactly-once completion and the bridge cannot schedule it again.
+launched, the ordered queue owns exactly-once completion and terminal
+quiescence; the bridge cannot schedule it again. Duplicate IDs must have the
+same Rust intent fingerprint.
 
 **Retained transaction rebroadcast.** When the manager drains a transaction for
 submission, it keeps a retained copy for reload/reorg recovery and derives the
 output coins that transaction should create from its `CREATE_COIN` conditions.
 Those expected outputs are replay/conflict metadata only. They do not become host
 poll targets unless a protocol handler separately registers the coin as watched.
-After the wallet accepts the transaction, the host acknowledges that retained
-entry and stores the exact wallet-finalized aggregate bundle. Wallet delivery and
-chain landing are independent durable facts.
+Fee acquisition and broadcast are separate durable facts. On unavailable or
+rejected fee acquisition, Rust immediately emits the no-fee base under the
+stable ID and keeps seeking after base acknowledgement. Matching readiness or
+an explicit fresh-chain rebroadcast epoch may later install one fee-bearing
+variant; chain terminality stops acquisition. Intent and variant fingerprints
+bind browser delivery. Wallet delivery and chain landing remain independent.
 
 There are exactly two replay paths:
 
@@ -135,9 +139,8 @@ There are exactly two replay paths:
   evidence and sets delivery back to awaiting acknowledgement, so a replay
   drained but unavailable before another reload remains recoverable.
 
-Every rollback replay reuses the exact stored wallet-finalized bundle and
-`AlreadyPaid` fee intent; it never asks the wallet to construct a second fee
-spend. `rollback_replayed_ids` survives drain and acknowledgement for the current
+Every rollback replay reuses the current exact Rust-owned variant; an upgraded
+fee-bearing variant is never rebuilt. `rollback_replayed_ids` survives drain and acknowledgement for the current
 epoch, preventing the height report and its following same-tip snapshot from
 duplicating a replay. Re-observing the expected output closes that transaction's
 epoch so a later independent rollback can replay it once again.
@@ -164,7 +167,7 @@ older scope.
 
 Focused coverage lives in `src/transaction_manager.rs`, including
 `height_only_rollback_replay_survives_drain_failure_and_restore`,
-`restored_equal_or_higher_tip_reorg_replays_exact_finalized_bundle_per_epoch`,
+`restored_equal_or_higher_tip_reorg_replays_exact_current_variant_per_epoch`,
 `conflicting_spend_prunes_once_expected_output_is_watched`, and
 `requeue_submitted_discards_expired_transactions`. The browser/simulator restore
 boundary is covered by the offline equal-tip replacement case in
@@ -370,6 +373,10 @@ phases.
 
 ### Transaction Submission Drain Isolation
 
+WASM runs the drain on a serialized canonical working copy and constructs the
+JavaScript result before committing, so conversion failure leaves the original
+manager exact.
+
 `TransactionManager::drain_submissions` is availability-first only where it can
 prove isolation. Each queued candidate is planned on a working copy and commits
 independently. If `B` fails in an `A/B/C` queue, `A` and `C` commit, `B` is
@@ -504,8 +511,8 @@ offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
 The current app-owned persistence contracts are browser session envelope v31,
-Rust/WASM cradle schema 17, app IndexedDB schema 4, and independent wallet
-reservation record v4.
+Rust/WASM cradle schema 18, app IndexedDB schema 4, and independent wallet
+reservation record v5.
 Their explicit versions are future migration hooks. None has shipped, so strict
 codecs accept only the current shape and version; they do not migrate, alias, or
 fallback-decode predecessors. Deployed Cloud/WalletConnect RPC, Chia offer
@@ -516,7 +523,8 @@ all internal/persisted JavaScript channel state-number fields are `bigint`.
 Conversion to `number` is restricted to external APIs that require it, and
 number-valued persistence or event decodes are rejected.
 
-Persisted funding and fee offers enter the strict wallet-level durable ledger
+Persisted funding and fee offers enter the provider-owned
+`WalletReservationCoordinator` and strict wallet-level durable ledger
 shared across controller lifetimes. Entries preserve the exact provider trade
 ID and exact `(installationPlayerId, peerSessionId, provider/account scope,
 purpose kind, operationId)` owner, so multiple trades for one operation remain independent.
@@ -526,7 +534,8 @@ closed on malformed hydration. A malformed ledger remains on disk and is shown
 at Resume / Start Over; a connected wallet under a different scope reports a
 visible recovery mismatch. The durable post-creation stages are `reserved`,
 `retained-for-replay`, and `cancel-required`; `creating` embeds the canonical
-request plus exact recovery ID, while `cancelling` preserves the exact trade and
+request plus exact recovery ID and active/cancel-on-create disposition, while
+`cancelling` preserves the exact trade and
 cancellation recovery ID. Funding unavailability remains pending. Controller
 retirement promotes only `reserved` entries and preserves
 `retained-for-replay`.
@@ -537,10 +546,14 @@ success. Reloaded Cloud creation reconciles the same request without another
 begin call, with popup source/origin/request correlation and exact listener and
 popup cleanup. Deployed WalletConnect lacks end-to-end create-offer idempotency
 and response-loss reconciliation; a lost successful response may orphan an
-external offer, so retry is currently best-effort. The provider boundary keeps
-an optional reconciliation capability for future support.
+external offer, so WalletConnect uses the explicit best-effort provider
+variant. Recoverable providers such as Cloud must implement paired
+begin/reconcile creation and cancellation operations.
 
-One IndexedDB transaction checkpoints the complete session envelope and
+`BootRecoveryBoundary` owns pending wipe, read-only inspection, atomic
+claim-and-hydrate, takeover, malformed evidence, reset retry, and authority
+loss. The winning claim returns the exact session and ledger snapshot; buffered
+preauthority patches flush only afterward. One IndexedDB transaction checkpoints the complete session envelope and
 independent ledger snapshot atomically. Strict codecs reject unknown/missing
 fields, duplicate trade IDs, invalid discriminants, and non-current versions.
 IndexedDB schema 4 durably stores owner, write, and reset epochs. One
@@ -554,6 +567,10 @@ retention; pre-reset writes cannot recreate the database or cached state after
 the wipe. Reload occurs only after confirmed deletion success. Blocked or
 failed deletion stays on recovery UI with Retry and records a minimal
 pending-wipe fallback for the next boot.
+Ordinary IndexedDB I/O degradation keeps the in-memory owner dirty and
+available; `StorageAuthorityLostError` retires the owner and suppresses pending
+writes/effects. The reset manifest deletes exact owned names and enumerated
+owned prefixes while preserving foreign same-origin databases.
 Ledger persistence does not gate wallet use, transaction release, or
 `cancelOffer`; a failed write leaves both in-memory authorities dirty for a
 later full checkpoint. A failed cancellation stays in the ledger and is

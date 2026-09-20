@@ -1,5 +1,4 @@
 import {
-  peekSession,
   loadState,
   getAlias,
   setAlias,
@@ -18,6 +17,7 @@ import {
 import {
   _holdNextStorageMutationForTests,
   SESSION_DB_NAME,
+  StorageAuthorityLostError,
   writeRejectionTombstone,
   writeSessionAndWalletReservationRecords,
 } from '../session/indexedDb';
@@ -95,15 +95,38 @@ describe('hard reset', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('clears localStorage, sessionStorage, and cached session state', async () => {
+  it('clears owned browser keys while preserving foreign same-origin keys', async () => {
     saveLiveFields({ ...sampleSession, blockchainType: 'walletconnect' });
+    localStorage.setItem('appState', 'historical-app-state');
+    localStorage.setItem('appState_wcChangeAddress:123', 'xch1owned');
+    localStorage.setItem('appState_wcRemoteWalletId:123', '2');
+    localStorage.setItem('wc@2:client:0.3//session', 'walletconnect-owned');
+    localStorage.setItem('foreign-app-key', 'preserve-local');
+    localStorage.setItem('foreign-walletconnect-settings', 'preserve-walletconnect-lookalike');
     sessionStorage.setItem('appState_tabId', 'tab-1');
+    sessionStorage.setItem('foreign-session-key', 'preserve-session');
+    sessionStorage.setItem(
+      'foreign-walletconnect-settings',
+      'preserve-session-walletconnect-lookalike',
+    );
 
     await hardReset();
 
-    expect(localStorage.length).toBe(0);
-    expect(sessionStorage.length).toBe(0);
-    expect(await peekSession()).toBeNull();
+    expect(localStorage.getItem('appPreferences')).toBeNull();
+    expect(localStorage.getItem('appState')).toBeNull();
+    expect(localStorage.getItem('appState_wcChangeAddress:123')).toBeNull();
+    expect(localStorage.getItem('appState_wcRemoteWalletId:123')).toBeNull();
+    expect(localStorage.getItem('wc@2:client:0.3//session')).toBeNull();
+    expect(localStorage.getItem('foreign-app-key')).toBe('preserve-local');
+    expect(localStorage.getItem('foreign-walletconnect-settings')).toBe(
+      'preserve-walletconnect-lookalike',
+    );
+    expect(sessionStorage.getItem('appState_tabId')).toBeNull();
+    expect(sessionStorage.getItem('foreign-session-key')).toBe('preserve-session');
+    expect(sessionStorage.getItem('foreign-walletconnect-settings')).toBe(
+      'preserve-session-walletconnect-lookalike',
+    );
+    expect(loadState().phase).toBe('preferences');
   });
 
   it('invalidates a held checkpoint before reset and cannot recreate storage afterward', async () => {
@@ -149,7 +172,8 @@ describe('hard reset', () => {
 
     const reset = hardReset();
     release();
-    await Promise.all([staleCheckpoint, reset]);
+    await expect(staleCheckpoint).rejects.toBeInstanceOf(StorageAuthorityLostError);
+    await reset;
 
     const databases = await (
       indexedDB as IDBFactory & { databases: () => Promise<Array<{ name?: string }>> }
@@ -159,7 +183,7 @@ describe('hard reset', () => {
     expect(walletReservationLedger.snapshot()).toEqual([]);
   });
 
-  it('starts deletion for every IndexedDB database returned by the browser', async () => {
+  it('deletes only owned IndexedDB databases returned by the browser', async () => {
     const deleteDatabase = jest.fn((_name: string) => {
       const request: {
         onsuccess?: () => void;
@@ -175,7 +199,8 @@ describe('hard reset', () => {
       databases: jest
         .fn()
         .mockResolvedValue([
-          { name: 'app-state' },
+          { name: 'chia-gaming-historical' },
+          { name: 'foreign-app-state' },
           { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
           { name: undefined },
         ]),
@@ -187,6 +212,8 @@ describe('hard reset', () => {
     expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
     expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
     expect(deleteDatabase).toHaveBeenCalledWith('app-state');
+    expect(deleteDatabase).toHaveBeenCalledWith('chia-gaming-historical');
+    expect(deleteDatabase).not.toHaveBeenCalledWith('foreign-app-state');
     expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
     expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');
   });
@@ -221,12 +248,14 @@ describe('hard reset', () => {
   it('logs but does not throw when hard reset storage APIs fail', async () => {
     const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const local = makeStorage();
-    local.clear = () => {
-      throw new Error('local clear failed');
+    local.setItem('appState_savedSession', '1');
+    local.removeItem = () => {
+      throw new Error('local remove failed');
     };
     const session = makeStorage();
-    session.clear = () => {
-      throw new Error('session clear failed');
+    session.setItem('appState_tabId', 'tab');
+    session.removeItem = () => {
+      throw new Error('session remove failed');
     };
     setTestGlobal('localStorage', local);
     setTestGlobal('sessionStorage', session);
@@ -291,7 +320,7 @@ describe('hard reset', () => {
     expect(releaseEnumeration).toBeDefined();
     releaseEnumeration!([{ name: 'extra-unknown-db' }]);
     await done;
-    expect(deleteDatabase).toHaveBeenCalledWith('extra-unknown-db');
+    expect(deleteDatabase).not.toHaveBeenCalledWith('extra-unknown-db');
   });
 
   it('returns unsuccessful when a database deletion is blocked by an open connection', async () => {

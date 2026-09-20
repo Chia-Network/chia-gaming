@@ -62,7 +62,7 @@ import {
   WalletConnectTransportError,
 } from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
-import { WalletReservationLedger } from '../session/walletReservationLedger';
+import { WalletReservationCoordinator } from '../session/walletReservationLedger';
 import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
@@ -342,7 +342,7 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
-  it('reuses cached change address and remote wallet id across reloads', async () => {
+  it('reuses the change address but verifies monitoring wallet existence across reloads', async () => {
     jest.useFakeTimers();
     try {
       const puzzleHash = '11'.repeat(32);
@@ -352,6 +352,7 @@ describe('RealBlockchainInterface', () => {
       const first = new RealBlockchainInterface();
       first.onConnectionChange(() => {});
       await connectAndWait(first);
+      const firstScope = first.getWalletOfferProvider()?.scope;
       expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
       expect(mockGetWallets).toHaveBeenCalledTimes(1);
 
@@ -362,10 +363,39 @@ describe('RealBlockchainInterface', () => {
       await connectAndWait(second);
 
       expect(mockGetNextAddress).toHaveBeenCalledTimes(1);
-      expect(mockGetWallets).toHaveBeenCalledTimes(1);
+      expect(mockGetWallets).toHaveBeenCalledTimes(2);
       expect((await second.getAddress()).puzzleHash).toBe(puzzleHash);
       expect(events).toEqual([true]);
       expect(second.getRegistrationScopeKey()).toBe('7');
+      expect(second.getWalletOfferProvider()?.scope).toEqual(firstScope);
+      expect(second.getWalletOfferProvider()?.scope).toEqual({
+        provider: 'walletconnect',
+        fingerprint: '123456',
+        chainId: expect.any(String),
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('recreates a missing monitoring wallet without changing offer ownership scope', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([]);
+      mockCreateNewRemoteWallet.mockResolvedValue({ walletId: 9n });
+
+      const blockchain = new RealBlockchainInterface();
+      blockchain.onConnectionChange(() => {});
+      await connectAndWait(blockchain);
+
+      expect(mockCreateNewRemoteWallet).toHaveBeenCalledTimes(1);
+      expect(blockchain.getRegistrationScopeKey()).toBe('9');
+      expect(blockchain.getWalletOfferProvider()?.scope).toEqual({
+        provider: 'walletconnect',
+        fingerprint: '123456',
+        chainId: expect.any(String),
+      });
     } finally {
       jest.useRealTimers();
     }
@@ -688,7 +718,7 @@ describe('RealBlockchainInterface', () => {
   });
 
   it('preserves already-spent cancellation detail and converges the ledger', async () => {
-    const ledger = new WalletReservationLedger();
+    const ledger = new WalletReservationCoordinator();
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({
       success: false,
@@ -699,19 +729,23 @@ describe('RealBlockchainInterface', () => {
         },
       },
     });
-    jest.spyOn(blockchain, 'getWalletProviderScope').mockReturnValue({
-      provider: 'walletconnect',
-      fingerprint: '123456',
-      remoteWalletId: '7',
+    ledger.attachProvider({
+      capability: 'best-effort',
+      scope: {
+        provider: 'walletconnect',
+        fingerprint: '123456',
+        chainId: 'chia:testnet11',
+      },
+      beginCreation: (operation, request) => blockchain.beginWalletOffer(operation, request),
+      cancel: (tradeId) => blockchain.beginWalletOfferCancellation(tradeId),
     });
-    ledger.attachRpc(blockchain);
     const owner = {
       installationPlayerId: 'installation',
       peerSessionId: 'peer-session',
       providerScope: {
         provider: 'walletconnect' as const,
         fingerprint: '123456',
-        remoteWalletId: '7',
+        chainId: 'chia:testnet11',
       },
     };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
@@ -1158,7 +1192,7 @@ describe('simulator wallet scope', () => {
   it('uses the exact stable simulator identity', async () => {
     const blockchain = new FakeBlockchainInterface('ws://simulator.invalid');
     await blockchain.beginConnect('player-exact-identity');
-    expect(blockchain.getWalletProviderScope()).toEqual({
+    expect(blockchain.getWalletOfferProvider()?.scope).toEqual({
       provider: 'simulator',
       identity: 'player-exact-identity',
     });
@@ -1169,7 +1203,7 @@ describe('simulator wallet scope', () => {
     await blockchain.beginConnect('last-registered-player');
     const poller = new BlockchainPoller(blockchain, 60_000);
 
-    expect(poller.rpc.getWalletProviderScope?.(offerOperation.owner)).toEqual({
+    expect(poller.rpc.getWalletOfferProvider(offerOperation.owner)?.scope).toEqual({
       provider: 'simulator',
       identity: 'player',
     });

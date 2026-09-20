@@ -55,14 +55,16 @@ struct SubmittedTx {
     /// Canonical identity of the exact Rust-owned submission intent. Bundle
     /// diagnostic metadata (`SpendBundle::name`) is deliberately excluded.
     intent_fingerprint: Hash,
-    delivery_state: SubmissionDeliveryState,
-    bundle: SpendBundle,
-    fee_intent: SubmissionFeeIntent,
-    /// Exact bundle produced by Rust after incorporating the wallet's fee
-    /// source. Once present, every retry replays these bytes unchanged.
-    finalized_bundle: Option<SpendBundle>,
-    finalized_applied_fee: u64,
-    finalized_fee_source_disposition: Option<FeeSourceDisposition>,
+    /// Canonical protocol bundle before any optional wallet fee source.
+    base_bundle: SpendBundle,
+    /// Exact bytes currently authorized for broadcast.
+    current_variant: SubmissionBroadcastVariant,
+    /// Fee acquisition progresses independently from wallet delivery.
+    fee_intent: DurableFeeIntent,
+    /// Exact variant last acknowledged by the submission adapter.
+    wallet_acknowledged_variant: Option<Hash>,
+    /// Chain evidence is independent from fee and wallet delivery state.
+    chain_terminality: SubmissionChainTerminality,
     /// Coin ids this transaction spends.  An output coin's parent is one of
     /// these, which is how a vanished output is matched back to its creator.
     spent_coin_ids: Vec<CoinID>,
@@ -71,17 +73,39 @@ struct SubmittedTx {
     /// they do not become poll targets unless a protocol handler separately
     /// registers the coin as watched.
     expected_output_coins: Vec<CoinString>,
-    /// Set once any expected output is observed on-chain.
-    landed: bool,
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
     expiry: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum SubmissionBroadcastVariant {
+    Base,
+    FeeBearing {
+        bundle: SpendBundle,
+        applied_fee: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum DurableFeeIntent {
+    Unresolved(SubmissionFeeIntent),
+    Resolved {
+        intent: SubmissionFeeIntent,
+        resolution: FeeResolution,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SubmissionDeliveryState {
-    AwaitingWalletAck,
-    Acknowledged,
+enum FeeResolution {
+    NotRequested,
+    Attached,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum SubmissionChainTerminality {
+    Active,
+    Landed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +121,15 @@ pub struct DrainedSubmission {
     pub bundle: SpendBundle,
     pub expiry: Option<u64>,
     pub fee_intent: SubmissionFeeIntent,
+    pub goal: SubmissionDeliveryGoal,
+    pub intent_fingerprint: Hash,
+    pub variant_fingerprint: Hash,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubmissionDeliveryGoal {
+    EnsureBroadcast,
+    FeeUpgrade,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +163,8 @@ pub struct FinalizedSubmission {
     pub applied_fee: u64,
     pub warning: Option<String>,
     pub fee_source_disposition: FeeSourceDisposition,
+    pub variant_fingerprint: Hash,
+    pub should_broadcast: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +227,91 @@ fn submission_intent_fingerprint(
     Ok(Sha256Input::Bytes(&canonical_bytes).hash())
 }
 
+fn submission_variant_fingerprint(bundle: &SpendBundle) -> Result<Hash, Error> {
+    let canonical_bytes = bencodex::to_vec(&bundle.spends)
+        .map_err(|e| Error::StrErr(format!("failed to encode transaction variant: {e}")))?;
+    Ok(Sha256Input::Bytes(&canonical_bytes).hash())
+}
+
+impl SubmittedTx {
+    fn current_bundle(&self) -> &SpendBundle {
+        match &self.current_variant {
+            SubmissionBroadcastVariant::Base => &self.base_bundle,
+            SubmissionBroadcastVariant::FeeBearing { bundle, .. } => bundle,
+        }
+    }
+
+    fn current_applied_fee(&self) -> u64 {
+        match &self.current_variant {
+            SubmissionBroadcastVariant::Base => 0,
+            SubmissionBroadcastVariant::FeeBearing { applied_fee, .. } => *applied_fee,
+        }
+    }
+
+    fn current_variant_fingerprint(&self) -> Result<Hash, Error> {
+        submission_variant_fingerprint(self.current_bundle())
+    }
+
+    fn current_variant_acknowledged(&self) -> Result<bool, Error> {
+        Ok(self.wallet_acknowledged_variant.as_ref() == Some(&self.current_variant_fingerprint()?))
+    }
+
+    fn unresolved_fee_intent(&self) -> Option<&SubmissionFeeIntent> {
+        match &self.fee_intent {
+            DurableFeeIntent::Unresolved(intent) => Some(intent),
+            DurableFeeIntent::Resolved { .. } => None,
+        }
+    }
+
+    fn canonical_fee_intent(&self) -> &SubmissionFeeIntent {
+        match &self.fee_intent {
+            DurableFeeIntent::Unresolved(intent) | DurableFeeIntent::Resolved { intent, .. } => {
+                intent
+            }
+        }
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        match (&self.fee_intent, &self.current_variant) {
+            (
+                DurableFeeIntent::Unresolved(SubmissionFeeIntent::Attach { .. }),
+                SubmissionBroadcastVariant::Base,
+            )
+            | (
+                DurableFeeIntent::Resolved {
+                    resolution: FeeResolution::NotRequested,
+                    ..
+                },
+                SubmissionBroadcastVariant::Base,
+            )
+            | (
+                DurableFeeIntent::Resolved {
+                    resolution: FeeResolution::Attached,
+                    ..
+                },
+                SubmissionBroadcastVariant::FeeBearing { .. },
+            ) => {}
+            _ => {
+                return Err(Error::StrErr(format!(
+                    "submission {} has inconsistent fee intent and broadcast variant",
+                    self.id
+                )))
+            }
+        }
+        if let Some(acknowledged) = &self.wallet_acknowledged_variant {
+            if acknowledged != &submission_variant_fingerprint(&self.base_bundle)?
+                && acknowledged != &self.current_variant_fingerprint()?
+            {
+                return Err(Error::StrErr(format!(
+                    "submission {} acknowledges an unknown variant",
+                    self.id
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 const SUBMISSION_DRAIN_MESSAGE_LIMIT: usize = 512;
 const SUBMISSION_DRAIN_RUST_CONTEXT_LIMIT: usize = 4096;
 
@@ -225,6 +345,7 @@ struct SubmissionPlanDelta {
 
 fn plan_pending_submission(
     pending: &PendingSubmission,
+    goal: SubmissionDeliveryGoal,
     submitted: &[SubmittedTx],
     next_submission_id: u64,
     emitted_ids: &HashSet<u64>,
@@ -264,7 +385,7 @@ fn plan_pending_submission(
         existing_index
     {
         let retained = &submitted[index];
-        if pending.fee_intent != retained.fee_intent {
+        if &pending.fee_intent != retained.canonical_fee_intent() {
             return Err(SubmissionPlanError {
                 stage: SubmissionDrainFailureStage::RetainedState,
                 retained_submission_id: Some(retained.id),
@@ -278,6 +399,19 @@ fn plan_pending_submission(
                     "retained.id={}; retained.fingerprint={:?}; candidate.fingerprint={fingerprint:?}",
                     retained.id, retained.intent_fingerprint
                 ),
+            });
+        }
+        if let Err(error) = retained.validate() {
+            return Err(SubmissionPlanError {
+                stage: SubmissionDrainFailureStage::RetainedState,
+                retained_submission_id: Some(retained.id),
+                candidate_submission_id: Some(retained.id),
+                intent_fingerprint: Some(fingerprint.clone()),
+                message: format!(
+                    "Queued submission {} has invalid retained state",
+                    retained.id
+                ),
+                rust_context: format!("{error:?}"),
             });
         }
         if retained.intent_fingerprint != fingerprint {
@@ -296,9 +430,27 @@ fn plan_pending_submission(
                 ),
             });
         }
+        let should_emit = match goal {
+            SubmissionDeliveryGoal::EnsureBroadcast => !retained
+                .current_variant_acknowledged()
+                .map_err(|error| SubmissionPlanError {
+                    stage: SubmissionDrainFailureStage::RetainedState,
+                    retained_submission_id: Some(retained.id),
+                    candidate_submission_id: Some(retained.id),
+                    intent_fingerprint: Some(fingerprint.clone()),
+                    message: format!(
+                        "Queued submission {} has an invalid current variant",
+                        retained.id
+                    ),
+                    rust_context: format!("{error:?}"),
+                })?,
+            SubmissionDeliveryGoal::FeeUpgrade => {
+                retained.chain_terminality == SubmissionChainTerminality::Active
+                    && retained.unresolved_fee_intent().is_some()
+            }
+        };
         (
-            (retained.delivery_state == SubmissionDeliveryState::AwaitingWalletAck)
-                .then_some(retained.id),
+            should_emit.then_some(retained.id),
             Some((
                 retained.id,
                 min_expiry(retained.expiry, pending.submission.expiry),
@@ -354,15 +506,23 @@ fn plan_pending_submission(
         let retained = SubmittedTx {
             id: candidate_id,
             intent_fingerprint: fingerprint.clone(),
-            delivery_state: SubmissionDeliveryState::AwaitingWalletAck,
-            bundle: pending.submission.bundle.clone(),
-            fee_intent: pending.fee_intent.clone(),
-            finalized_bundle: None,
-            finalized_applied_fee: 0,
-            finalized_fee_source_disposition: None,
+            base_bundle: pending.submission.bundle.clone(),
+            current_variant: SubmissionBroadcastVariant::Base,
+            fee_intent: match &pending.fee_intent {
+                SubmissionFeeIntent::Attach { .. } => {
+                    DurableFeeIntent::Unresolved(pending.fee_intent.clone())
+                }
+                SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
+                    DurableFeeIntent::Resolved {
+                        intent: pending.fee_intent.clone(),
+                        resolution: FeeResolution::NotRequested,
+                    }
+                }
+            },
+            wallet_acknowledged_variant: None,
+            chain_terminality: SubmissionChainTerminality::Active,
             spent_coin_ids,
             expected_output_coins: outputs,
-            landed: false,
             expiry: pending.submission.expiry,
         };
         (
@@ -383,18 +543,19 @@ fn plan_pending_submission(
         });
         DrainedSubmission {
             id,
-            bundle: retained
-                .finalized_bundle
-                .clone()
-                .unwrap_or_else(|| pending.submission.bundle.clone()),
+            bundle: retained.current_bundle().clone(),
             expiry: retained_expiry_update
                 .map(|(_, expiry)| expiry)
                 .unwrap_or(retained.expiry),
-            fee_intent: if retained.finalized_bundle.is_some() {
-                SubmissionFeeIntent::AlreadyPaid
-            } else {
-                pending.fee_intent.clone()
-            },
+            fee_intent: retained
+                .unresolved_fee_intent()
+                .cloned()
+                .unwrap_or(SubmissionFeeIntent::AlreadyPaid),
+            goal,
+            intent_fingerprint: retained.intent_fingerprint.clone(),
+            variant_fingerprint: retained
+                .current_variant_fingerprint()
+                .expect("validated retained variant must be fingerprintable"),
         }
     });
     Ok(SubmissionPlanDelta {
@@ -603,6 +764,12 @@ pub struct TransactionManager<C> {
     /// handler (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`), so it lands on the retained
     /// `SubmittedTx` when drained.
     pending_submissions: Vec<PendingSubmission>,
+    /// Retained IDs whose queued delivery exists only to seek a fee upgrade.
+    fee_upgrade_delivery_ids: HashSet<u64>,
+    /// Provider readiness consumes only fee-upgrade deliveries; unrelated
+    /// protocol broadcasts remain queued for their normal drain boundary.
+    #[serde(skip)]
+    fee_upgrade_only_next_drain: bool,
     /// Events for the hosting layer that were not intercepted by the manager.
     #[serde(skip)]
     pending_events: GameSessionEventQueue,
@@ -746,6 +913,8 @@ impl<C> TransactionManager<C> {
             fee_configuration: FeeConfiguration::default(),
             watched_coins: HashMap::new(),
             pending_submissions: Vec::new(),
+            fee_upgrade_delivery_ids: HashSet::new(),
+            fee_upgrade_only_next_drain: false,
             pending_events: GameSessionEventQueue::default(),
             pending_watch_coins: Vec::new(),
             pending_unwatch_coins: Vec::new(),
@@ -791,11 +960,9 @@ impl<C> TransactionManager<C> {
             .iter()
             .find(|tx| tx.id == id)
             .map(|tx| {
-                if tx.finalized_bundle.is_some() {
-                    SubmissionFeeIntent::AlreadyPaid
-                } else {
-                    tx.fee_intent.clone()
-                }
+                tx.unresolved_fee_intent()
+                    .cloned()
+                    .unwrap_or(SubmissionFeeIntent::AlreadyPaid)
             })
             .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))
     }
@@ -818,7 +985,7 @@ impl<C> TransactionManager<C> {
         self.submitted
             .iter()
             .filter(|tx| {
-                if !tx.landed {
+                if tx.chain_terminality == SubmissionChainTerminality::Active {
                     return true;
                 }
                 tx.expected_output_coins.iter().any(|coin| {
@@ -830,7 +997,7 @@ impl<C> TransactionManager<C> {
                         })
                 })
             })
-            .flat_map(|tx| tx.bundle.spends.iter().map(|spend| spend.coin.clone()))
+            .flat_map(|tx| tx.base_bundle.spends.iter().map(|spend| spend.coin.clone()))
             .collect()
     }
 
@@ -858,7 +1025,18 @@ impl<C> TransactionManager<C> {
     /// intent fingerprint so its outputs can be resubmitted if a reorg rolls
     /// them back.
     pub fn drain_submissions(&mut self) -> Result<SubmissionDrainResult, Error> {
-        let mut pending = std::mem::take(&mut self.pending_submissions)
+        let pending_all = std::mem::take(&mut self.pending_submissions);
+        let (pending_for_drain, mut deferred) =
+            if std::mem::take(&mut self.fee_upgrade_only_next_drain) {
+                pending_all.into_iter().partition(|pending| {
+                    pending
+                        .id
+                        .is_some_and(|id| self.fee_upgrade_delivery_ids.contains(&id))
+                })
+            } else {
+                (pending_all, Vec::new())
+            };
+        let mut pending = pending_for_drain
             .into_iter()
             .enumerate()
             .map(|(index, pending)| (index as u64, pending))
@@ -869,8 +1047,17 @@ impl<C> TransactionManager<C> {
         };
         let mut emitted_ids = HashSet::new();
         while let Some((candidate_index, candidate)) = pending.pop_front() {
+            let goal = if candidate
+                .id
+                .is_some_and(|id| self.fee_upgrade_delivery_ids.remove(&id))
+            {
+                SubmissionDeliveryGoal::FeeUpgrade
+            } else {
+                SubmissionDeliveryGoal::EnsureBroadcast
+            };
             match plan_pending_submission(
                 &candidate,
+                goal,
                 &self.submitted,
                 self.next_submission_id,
                 &emitted_ids,
@@ -914,6 +1101,8 @@ impl<C> TransactionManager<C> {
                 }
             }
         }
+        deferred.append(&mut self.pending_submissions);
+        self.pending_submissions = deferred;
         Ok(result)
     }
 
@@ -927,51 +1116,71 @@ impl<C> TransactionManager<C> {
         agg_sig_me_additional_data: &Hash,
         height: u64,
     ) -> Result<FinalizedSubmission, Error> {
+        let fingerprint = self
+            .submitted
+            .iter()
+            .find(|tx| tx.id == id)
+            .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))?
+            .current_variant_fingerprint()?;
+        self.finalize_submission_delivery(
+            id,
+            SubmissionDeliveryGoal::EnsureBroadcast,
+            &fingerprint,
+            fee_source,
+            agg_sig_me_additional_data,
+            height,
+        )
+    }
+
+    pub fn finalize_submission_delivery(
+        &mut self,
+        id: u64,
+        goal: SubmissionDeliveryGoal,
+        drained_variant_fingerprint: &Hash,
+        fee_source: SubmissionFeeSource,
+        agg_sig_me_additional_data: &Hash,
+        height: u64,
+    ) -> Result<FinalizedSubmission, Error> {
         let submission = self
             .submitted
             .iter_mut()
             .find(|tx| tx.id == id)
             .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))?;
-        if let Some(bundle) = &submission.finalized_bundle {
-            if !matches!(fee_source, SubmissionFeeSource::NotRequested) {
-                return Err(Error::StrErr(format!(
-                    "finalized submission {id} received another fee source"
-                )));
-            }
-            return Ok(FinalizedSubmission {
-                bundle: bundle.clone(),
-                applied_fee: submission.finalized_applied_fee,
-                warning: None,
-                fee_source_disposition: submission
-                    .finalized_fee_source_disposition
-                    .expect("finalized bundle must retain its fee-source disposition"),
-            });
+        submission.validate()?;
+        let current_fingerprint = submission.current_variant_fingerprint()?;
+        if &current_fingerprint != drained_variant_fingerprint {
+            return Err(Error::StrErr(format!(
+                "submission {id} delivery refers to a stale broadcast variant"
+            )));
         }
-        let finalized = match &submission.fee_intent {
-            SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
+        let unresolved_fee_intent = submission.unresolved_fee_intent().cloned();
+        let mut finalized = match unresolved_fee_intent {
+            None => {
                 if !matches!(fee_source, SubmissionFeeSource::NotRequested) {
                     return Err(Error::StrErr(format!(
                         "submission {id} received a fee source without requesting one"
                     )));
                 }
                 Ok(FinalizedSubmission {
-                    bundle: submission.bundle.clone(),
-                    applied_fee: 0,
+                    bundle: submission.current_bundle().clone(),
+                    applied_fee: submission.current_applied_fee(),
                     warning: None,
                     fee_source_disposition: FeeSourceDisposition::NotRequested,
+                    variant_fingerprint: current_fingerprint.clone(),
+                    should_broadcast: goal == SubmissionDeliveryGoal::EnsureBroadcast,
                 })
             }
-            SubmissionFeeIntent::Attach {
+            Some(SubmissionFeeIntent::Attach {
                 target,
                 amount,
                 attachment_failure_policy,
-            } => {
+            }) => {
                 let attached = match fee_source {
                     SubmissionFeeSource::Available(fee_bundle) => aggregate_wallet_fee_bundle(
-                        submission.bundle.clone(),
+                        submission.base_bundle.clone(),
                         fee_bundle,
                         amount.to_u64(),
-                        target,
+                        &target,
                         agg_sig_me_additional_data,
                         height,
                     )
@@ -982,38 +1191,83 @@ impl<C> TransactionManager<C> {
                     }
                 };
                 match attached {
-                    Ok(bundle) => Ok(FinalizedSubmission {
+                    Ok(bundle) => {
+                        let variant_fingerprint = submission_variant_fingerprint(&bundle)?;
+                        submission.current_variant = SubmissionBroadcastVariant::FeeBearing {
+                            bundle: bundle.clone(),
+                            applied_fee: amount.to_u64(),
+                        };
+                        submission.fee_intent = DurableFeeIntent::Resolved {
+                            intent: SubmissionFeeIntent::Attach {
+                                target,
+                                amount: amount.clone(),
+                                attachment_failure_policy,
+                            },
+                            resolution: FeeResolution::Attached,
+                        };
+                        Ok(FinalizedSubmission {
                         bundle,
                         applied_fee: amount.to_u64(),
                         warning: None,
                         fee_source_disposition: FeeSourceDisposition::Attached,
-                    }),
+                        variant_fingerprint,
+                        should_broadcast: true,
+                    })
+                    }
                     Err(reason) => match attachment_failure_policy {
                         AttachmentFailurePolicy::SubmitWithoutFee => Ok(FinalizedSubmission {
-                            bundle: submission.bundle.clone(),
+                            bundle: submission.base_bundle.clone(),
                             applied_fee: 0,
                             warning: Some(format!(
                                 "Configured fee was not applied: {reason}. The transaction will be attempted without a fee."
                             )),
                             fee_source_disposition: FeeSourceDisposition::Unused,
+                            variant_fingerprint: current_fingerprint.clone(),
+                            should_broadcast: goal == SubmissionDeliveryGoal::EnsureBroadcast,
                         }),
                     },
                 }
             }
+            Some(SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured) => {
+                return Err(Error::StrErr(format!(
+                    "submission {id} retained an invalid unresolved fee intent"
+                )));
+            }
         }?;
-        submission.finalized_bundle = Some(finalized.bundle.clone());
-        submission.finalized_applied_fee = finalized.applied_fee;
-        submission.finalized_fee_source_disposition = Some(finalized.fee_source_disposition);
+        if finalized.should_broadcast && submission.current_variant_acknowledged()? {
+            finalized.should_broadcast = false;
+        }
+        submission.validate()?;
         Ok(finalized)
     }
 
     pub fn acknowledge_submission(&mut self, id: u64) -> Result<(), Error> {
+        let fingerprint = self
+            .submitted
+            .iter()
+            .find(|tx| tx.id == id)
+            .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))?
+            .current_variant_fingerprint()?;
+        self.acknowledge_submission_variant(id, &fingerprint)
+    }
+
+    pub fn acknowledge_submission_variant(
+        &mut self,
+        id: u64,
+        variant_fingerprint: &Hash,
+    ) -> Result<(), Error> {
         let Some(submission) = self.submitted.iter_mut().find(|tx| tx.id == id) else {
             return Err(Error::StrErr(format!("unknown submission id {id}")));
         };
-        submission.delivery_state = SubmissionDeliveryState::Acknowledged;
+        if &submission.current_variant_fingerprint()? != variant_fingerprint {
+            return Err(Error::StrErr(format!(
+                "submission {id} acknowledgement refers to a stale broadcast variant"
+            )));
+        }
+        submission.wallet_acknowledged_variant = Some(variant_fingerprint.clone());
         self.pending_submissions
             .retain(|pending| pending.id != Some(id));
+        self.fee_upgrade_delivery_ids.remove(&id);
         Ok(())
     }
 
@@ -1021,31 +1275,12 @@ impl<C> TransactionManager<C> {
     where
         C: ManagedGameSession,
     {
-        let rejected = self
-            .submitted
-            .iter()
-            .find(|tx| tx.id == id)
-            .cloned()
-            .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))?;
-        let mut rearmed = Vec::new();
-        for watched in self.watched_coins.values_mut() {
-            if !watched.claim_submitted {
-                continue;
-            }
-            let Some(timeout_spend) = &watched.timeout_spend else {
-                continue;
-            };
-            if submission_intent_fingerprint(timeout_spend, &rejected.fee_intent)?
-                == rejected.intent_fingerprint
-            {
-                watched.claim_submitted = false;
-                if let Some(semantic) = watched.timeout_claim_semantic {
-                    rearmed.push(semantic);
-                }
-            }
+        if !self.submitted.iter().any(|tx| tx.id == id) {
+            return Err(Error::StrErr(format!("unknown submission id {id}")));
         }
-        self.retain_submitted(|tx| tx.id != id);
-        self.report_timeout_claim_rearms(rearmed)?;
+        self.pending_submissions
+            .retain(|pending| pending.id != Some(id));
+        self.fee_upgrade_delivery_ids.remove(&id);
         Ok(())
     }
 
@@ -1062,15 +1297,21 @@ impl<C> TransactionManager<C> {
         let mut removed_ids_sorted = removed_ids.iter().copied().collect::<Vec<_>>();
         removed_ids_sorted.sort_unstable();
         for id in removed_ids_sorted {
-            if !self.retired_submission_ids.contains(&id) {
-                self.retired_submission_ids.push(id);
-            }
+            self.emit_submission_retirement(id);
         }
         self.submitted.retain(|tx| !removed_ids.contains(&tx.id));
         self.pending_submissions
             .retain(|pending| !pending.id.is_some_and(|id| removed_ids.contains(&id)));
+        self.fee_upgrade_delivery_ids
+            .retain(|id| !removed_ids.contains(id));
         self.rollback_replayed_ids
             .retain(|id| !removed_ids.contains(id));
+    }
+
+    fn emit_submission_retirement(&mut self, id: u64) {
+        if !self.retired_submission_ids.contains(&id) {
+            self.retired_submission_ids.push(id);
+        }
     }
 
     pub fn drain_retired_submission_ids(&mut self) -> Vec<u64> {
@@ -1084,21 +1325,73 @@ impl<C> TransactionManager<C> {
     pub fn requeue_submitted(&mut self) {
         let height = self.last_height;
         self.retain_submitted(|tx| !matches!(tx.expiry, Some(expiry) if height >= expiry));
-        for tx in self.submitted.iter().filter(|tx| {
-            tx.delivery_state == SubmissionDeliveryState::AwaitingWalletAck && !tx.landed
-        }) {
-            if self
-                .pending_submissions
-                .iter()
-                .any(|pending| pending.id == Some(tx.id))
-            {
+        let ids = self
+            .submitted
+            .iter()
+            .filter(|tx| tx.chain_terminality == SubmissionChainTerminality::Active)
+            .map(|tx| tx.id)
+            .collect::<Vec<_>>();
+        self.queue_rebroadcast_epoch(&ids);
+    }
+
+    /// A matching provider attach/readiness edge may request fee acquisition
+    /// without rebroadcasting an already-acknowledged base variant.
+    pub fn request_fee_upgrades(&mut self) {
+        let height = self.last_height;
+        self.retain_submitted(|tx| !matches!(tx.expiry, Some(expiry) if height >= expiry));
+        let ids = self
+            .submitted
+            .iter()
+            .filter(|tx| {
+                tx.chain_terminality == SubmissionChainTerminality::Active
+                    && tx.unresolved_fee_intent().is_some()
+            })
+            .map(|tx| tx.id)
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.queue_retained_delivery(id, SubmissionDeliveryGoal::FeeUpgrade);
+        }
+        self.fee_upgrade_only_next_drain = true;
+    }
+
+    fn queue_rebroadcast_epoch(&mut self, ids: &[u64]) {
+        for id in ids {
+            let Some(tx) = self.submitted.iter().find(|tx| tx.id == *id) else {
                 continue;
-            }
-            self.pending_submissions.push(PendingSubmission {
-                id: Some(tx.id),
-                submission: TransactionSubmission::already_paid(tx.bundle.clone(), tx.expiry),
-                fee_intent: tx.fee_intent.clone(),
-            });
+            };
+            let goal = if tx
+                .current_variant_acknowledged()
+                .expect("retained broadcast variant must remain fingerprintable")
+            {
+                SubmissionDeliveryGoal::FeeUpgrade
+            } else {
+                SubmissionDeliveryGoal::EnsureBroadcast
+            };
+            self.queue_retained_delivery(*id, goal);
+        }
+    }
+
+    fn queue_retained_delivery(&mut self, id: u64, goal: SubmissionDeliveryGoal) {
+        if self
+            .pending_submissions
+            .iter()
+            .any(|pending| pending.id == Some(id))
+        {
+            return;
+        }
+        let Some(tx) = self.submitted.iter().find(|tx| tx.id == id) else {
+            return;
+        };
+        if goal == SubmissionDeliveryGoal::FeeUpgrade && tx.unresolved_fee_intent().is_none() {
+            return;
+        }
+        self.pending_submissions.push(PendingSubmission {
+            id: Some(tx.id),
+            submission: TransactionSubmission::already_paid(tx.base_bundle.clone(), tx.expiry),
+            fee_intent: tx.canonical_fee_intent().clone(),
+        });
+        if goal == SubmissionDeliveryGoal::FeeUpgrade {
+            self.fee_upgrade_delivery_ids.insert(id);
         }
     }
 
@@ -1122,20 +1415,17 @@ impl<C> TransactionManager<C> {
             // height report arrives before the authoritative coin snapshot.
             // Keeping `landed` set here would make a drained-but-unresolved
             // replay disappear across a reload in that interval.
-            tx.landed = false;
-            tx.delivery_state = SubmissionDeliveryState::AwaitingWalletAck;
-            if self
-                .pending_submissions
-                .iter()
-                .any(|pending| pending.id == Some(tx.id))
-            {
-                continue;
-            }
-            self.pending_submissions.push(PendingSubmission {
-                id: Some(tx.id),
-                submission: TransactionSubmission::already_paid(tx.bundle.clone(), tx.expiry),
-                fee_intent: tx.fee_intent.clone(),
-            });
+            tx.chain_terminality = SubmissionChainTerminality::Active;
+            tx.wallet_acknowledged_variant = None;
+        }
+        let replay_ids = self
+            .submitted
+            .iter()
+            .filter(|tx| ids.contains(&tx.id))
+            .map(|tx| tx.id)
+            .collect::<Vec<_>>();
+        for id in replay_ids {
+            self.queue_retained_delivery(id, SubmissionDeliveryGoal::EnsureBroadcast);
         }
     }
 
@@ -1198,14 +1488,14 @@ impl<C> TransactionManager<C> {
 }
 
 impl<C: ManagedGameSession> TransactionManager<C> {
-    fn apply_working_copy_transaction<F>(
+    pub fn apply_working_copy_transaction<T, F>(
         &mut self,
         _allocator: &mut AllocEncoder,
         apply: F,
-    ) -> Result<(), Error>
+    ) -> Result<T, Error>
     where
         C: Serialize + DeserializeOwned,
-        F: FnOnce(&mut Self, &mut AllocEncoder) -> Result<(), Error>,
+        F: FnOnce(&mut Self, &mut AllocEncoder) -> Result<T, Error>,
     {
         let mut transients = ObservationTransients::detach(self);
         let result = (|| {
@@ -1223,16 +1513,16 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             // so. Programs retained by durable state serialize their trees, so
             // no NodePtr needs to escape this scratch allocator.
             let mut scratch_allocator = AllocEncoder::new();
-            apply(&mut working, &mut scratch_allocator)?;
+            let value = apply(&mut working, &mut scratch_allocator)?;
 
             transients.merge(&mut working);
-            Ok(working)
+            Ok((working, value))
         })();
 
         match result {
-            Ok(working) => {
+            Ok((working, value)) => {
                 *self = working;
-                Ok(())
+                Ok(value)
             }
             Err(error) => {
                 transients.restore(self);
@@ -1288,12 +1578,9 @@ impl<C: ManagedGameSession> TransactionManager<C> {
     ) -> Result<(), Error> {
         let reorg = height < self.last_height;
         self.last_height = height;
+        self.retain_submitted(|tx| !matches!(tx.expiry, Some(expiry) if height >= expiry));
         let rollback_rearms = self.invalidate_timeout_claims_for_rollback_epoch(height, reorg);
         if reorg {
-            let current_height = self.last_height;
-            self.retain_submitted(
-                |tx| !matches!(tx.expiry, Some(expiry) if current_height >= expiry),
-            );
             self.collect_rollback_epoch_replay();
         }
         if let Some(rearmed) = rollback_rearms {
@@ -1393,6 +1680,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
     fn discard_local_artifacts(&mut self) {
         self.retain_submitted(|_| false);
         self.pending_submissions.clear();
+        self.fee_upgrade_delivery_ids.clear();
         self.pending_events.clear();
         self.pending_watch_coins.clear();
         self.pending_unwatch_coins.clear();
@@ -1503,7 +1791,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             .submitted
             .iter()
             .filter(|tx| {
-                tx.landed
+                tx.chain_terminality == SubmissionChainTerminality::Landed
                     && tx
                         .expected_output_coins
                         .iter()
@@ -1639,15 +1927,18 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                     .iter()
                     .any(|coin| observed_created.contains(coin));
                 if output_observed {
-                    tx.landed = true;
+                    tx.chain_terminality = SubmissionChainTerminality::Landed;
                     newly_landed_ids.push(tx.id);
                 } else if reorg || spend_reversal || causally_rolled_back_ids.contains(&tx.id) {
-                    tx.landed = false;
+                    tx.chain_terminality = SubmissionChainTerminality::Active;
                 }
             }
         }
         for id in newly_landed_ids {
             self.rollback_replayed_ids.remove(&id);
+            self.pending_submissions
+                .retain(|pending| pending.id != Some(id));
+            self.emit_submission_retirement(id);
         }
         let current_height = height;
         let watched_outputs = self
@@ -1669,7 +1960,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                     .iter()
                     .any(|coin| watched_outputs.contains(coin));
                 return !spends_observed_input
-                    || tx.landed
+                    || tx.chain_terminality == SubmissionChainTerminality::Landed
                     || tx.expected_output_coins.is_empty()
                     || !expected_output_watched;
             }
@@ -1825,9 +2116,10 @@ impl<C: ManagedGameSession> TransactionManager<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::constants::CREATE_COIN;
+    use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
     use crate::common::types::{
-        Amount, CoinID, CoinSpend, Hash, Program, Puzzle, PuzzleHash, Spend, ToQuotedProgram,
+        Amount, CoinID, CoinSpend, Hash, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
+        ToQuotedProgram,
     };
     use crate::session_phases::effects::{GameSessionEvent, TimeoutClaimSemantic};
     use clvm_traits::ToClvm;
@@ -1878,6 +2170,79 @@ mod tests {
                 },
             }],
         }
+    }
+
+    fn test_protocol_and_fee_bundles(fee: u64) -> (SpendBundle, SpendBundle, CoinString, CoinID) {
+        let mut allocator = AllocEncoder::new();
+        let output_ph = PuzzleHash::from_bytes([0x7b; 32]);
+        let protocol_conditions = vec![(CREATE_COIN, (output_ph.clone(), (Amount::new(100), ())))
+            .to_clvm(&mut allocator)
+            .expect("protocol CREATE_COIN")];
+        let protocol_condition_list = protocol_conditions
+            .to_clvm(&mut allocator)
+            .expect("protocol condition list");
+        let protocol_puzzle: Puzzle = protocol_condition_list
+            .to_quoted_program(&mut allocator)
+            .expect("protocol puzzle")
+            .into();
+        let protocol_coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([0x7c; 32])),
+            &protocol_puzzle.sha256tree(&mut allocator),
+            &Amount::new(100),
+        );
+        let target = protocol_coin.to_coin_id();
+        let fee_conditions = vec![
+            (
+                CREATE_COIN,
+                (output_ph, (Amount::new(100_u64.saturating_sub(fee)), ())),
+            )
+                .to_clvm(&mut allocator)
+                .expect("fee CREATE_COIN"),
+            (52_u8, (Amount::new(fee), ()))
+                .to_clvm(&mut allocator)
+                .expect("RESERVE_FEE"),
+            (64_u8, (target.clone(), ()))
+                .to_clvm(&mut allocator)
+                .expect("ASSERT_CONCURRENT_SPEND"),
+        ];
+        let fee_condition_list = fee_conditions
+            .to_clvm(&mut allocator)
+            .expect("fee condition list");
+        let fee_puzzle: Puzzle = fee_condition_list
+            .to_quoted_program(&mut allocator)
+            .expect("fee puzzle")
+            .into();
+        let fee_coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([0x7d; 32])),
+            &fee_puzzle.sha256tree(&mut allocator),
+            &Amount::new(100),
+        );
+        (
+            SpendBundle {
+                name: Some("transactional-finalization".to_string()),
+                spends: vec![CoinSpend {
+                    coin: protocol_coin.clone(),
+                    bundle: Spend {
+                        puzzle: protocol_puzzle,
+                        solution: Program::nil().into(),
+                        signature: Default::default(),
+                    },
+                }],
+            },
+            SpendBundle {
+                name: None,
+                spends: vec![CoinSpend {
+                    coin: fee_coin,
+                    bundle: Spend {
+                        puzzle: fee_puzzle,
+                        solution: Program::nil().into(),
+                        signature: Default::default(),
+                    },
+                }],
+            },
+            protocol_coin,
+            target,
+        )
     }
 
     fn test_bundle_with_invalid_conditions(name: &str, input: &CoinString) -> SpendBundle {
@@ -2211,6 +2576,134 @@ mod tests {
     }
 
     #[test]
+    fn failed_drain_conversion_keeps_canonical_bytes_and_next_drain_succeeds_once() {
+        let mut allocator = AllocEncoder::new();
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
+            test_submission("transactional-drain", None),
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator)
+            .expect("capture submission");
+        let before = bencodex::to_vec(&mgr).expect("serialize before failed conversion");
+
+        let error = mgr
+            .apply_working_copy_transaction(&mut allocator, |working, _allocator| {
+                let drained = working.drain_submissions()?;
+                assert_eq!(drained.submissions.len(), 1);
+                Err::<(), _>(Error::StrErr(
+                    "forced JS-facing conversion failure".to_string(),
+                ))
+            })
+            .expect_err("conversion failure must abort the working copy");
+
+        assert!(format!("{error:?}").contains("forced JS-facing conversion failure"));
+        assert_eq!(
+            bencodex::to_vec(&mgr).expect("serialize after failed conversion"),
+            before
+        );
+        assert_eq!(mgr.drain_submissions().unwrap().submissions.len(), 1);
+        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
+    }
+
+    #[test]
+    fn failed_finalization_conversion_keeps_canonical_bytes_and_retry_succeeds_once() {
+        let (base_bundle, fee_source, target_coin, target) = test_protocol_and_fee_bundles(15);
+        let mut mgr = TransactionManager::new(PersistableMockGameSession);
+        mgr.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: TransactionSubmission::attach_to(base_bundle.clone(), None, &target_coin),
+            fee_intent: SubmissionFeeIntent::Attach {
+                target,
+                amount: Amount::new(15),
+                attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+            },
+        });
+        let drained = mgr.drain_submissions().unwrap().submissions.remove(0);
+        let before = bencodex::to_vec(&mgr).expect("serialize before failed conversion");
+        let mut expected: TransactionManager<PersistableMockGameSession> =
+            bencodex::from_slice(&before).expect("clone pre-finalization state");
+        let expected_finalized = expected
+            .finalize_submission_delivery(
+                drained.id,
+                drained.goal,
+                &drained.variant_fingerprint,
+                SubmissionFeeSource::Available(fee_source.clone()),
+                &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+                1,
+            )
+            .expect("valid fee source must upgrade the working state");
+        assert_eq!(
+            expected_finalized.fee_source_disposition,
+            FeeSourceDisposition::Attached
+        );
+        assert_ne!(expected_finalized.bundle, base_bundle);
+        let expected_after = bencodex::to_vec(&expected).expect("serialize upgraded state");
+        let mut allocator = AllocEncoder::new();
+
+        let error = mgr
+            .apply_working_copy_transaction(&mut allocator, |working, _allocator| {
+                let finalized = working.finalize_submission_delivery(
+                    drained.id,
+                    drained.goal,
+                    &drained.variant_fingerprint,
+                    SubmissionFeeSource::Available(fee_source.clone()),
+                    &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+                    1,
+                )?;
+                assert_eq!(finalized.bundle, expected_finalized.bundle);
+                assert!(matches!(
+                    &working.submitted[0].current_variant,
+                    SubmissionBroadcastVariant::FeeBearing { .. }
+                ));
+                assert!(matches!(
+                    &working.submitted[0].fee_intent,
+                    DurableFeeIntent::Resolved {
+                        resolution: FeeResolution::Attached,
+                        ..
+                    }
+                ));
+                assert!(finalized.should_broadcast);
+                Err::<(), _>(Error::StrErr(
+                    "forced finalized JS conversion failure".to_string(),
+                ))
+            })
+            .expect_err("conversion failure must abort finalization");
+
+        assert!(format!("{error:?}").contains("forced finalized JS conversion failure"));
+        assert_eq!(
+            bencodex::to_vec(&mgr).expect("serialize after failed conversion"),
+            before
+        );
+        let retried = mgr
+            .finalize_submission_delivery(
+                drained.id,
+                drained.goal,
+                &drained.variant_fingerprint,
+                SubmissionFeeSource::Available(fee_source),
+                &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+                1,
+            )
+            .expect("retry finalization");
+        assert_eq!(
+            retried.fee_source_disposition,
+            FeeSourceDisposition::Attached
+        );
+        assert_eq!(retried.bundle, expected_finalized.bundle);
+        assert_eq!(
+            retried.variant_fingerprint,
+            expected_finalized.variant_fingerprint
+        );
+        assert!(retried.should_broadcast);
+        assert_eq!(mgr.submitted.len(), 1);
+        assert_eq!(mgr.submitted[0].current_bundle(), &retried.bundle);
+        assert_eq!(
+            bencodex::to_vec(&mgr).expect("serialize retried upgrade"),
+            expected_after
+        );
+    }
+
+    #[test]
     fn serialization_prunes_transient_event_and_watch_delivery_queues() {
         let coin = test_coin(2);
         let mut mgr = TransactionManager::new(PersistableMockGameSession);
@@ -2391,7 +2884,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_timeout_submission_rearms_only_matching_canonical_intent() {
+    fn rejected_timeout_submission_retains_same_intent_without_immediate_retry() {
         let mut allocator = AllocEncoder::new();
         let rejected_coin = test_coin(20);
         let other_coin = test_coin(21);
@@ -2463,32 +2956,25 @@ mod tests {
         });
         mgr.reject_submission(rejected.id).unwrap();
 
-        assert!(!mgr.watched_coin(&rejected_coin).unwrap().claim_submitted);
+        assert!(mgr.watched_coin(&rejected_coin).unwrap().claim_submitted);
         assert!(mgr.watched_coin(&other_coin).unwrap().claim_submitted);
-        assert_eq!(mgr.cradle().rearmed_timeout_claims, vec![rejected_semantic]);
+        assert!(mgr.cradle().rearmed_timeout_claims.is_empty());
 
         mgr.report_coin_states(&mut allocator, 15, &live)
             .expect("same mature snapshot");
         let retry = mgr.drain_submissions().unwrap().submissions;
-        assert_eq!(retry.len(), 1);
-        assert_ne!(retry[0].id, rejected.id);
-        assert_eq!(retry[0].bundle.name.as_deref(), Some("rejected-timeout"));
-        assert!(matches!(
-            &retry[0].fee_intent,
-            SubmissionFeeIntent::Attach { amount, .. } if amount == &Amount::new(20)
-        ));
+        assert!(retry.is_empty());
         let submitted = &mgr.cradle().submitted_timeout_claims;
-        assert_eq!(submitted.len(), 3);
-        assert_eq!(submitted.last(), Some(&rejected_semantic));
+        assert_eq!(submitted.len(), 2);
         assert_eq!(
-            submitted[..2]
+            submitted
                 .iter()
                 .filter(|semantic| **semantic == rejected_semantic)
                 .count(),
             1
         );
         assert_eq!(
-            submitted[..2]
+            submitted
                 .iter()
                 .filter(|semantic| **semantic == other_semantic)
                 .count(),
@@ -4032,7 +4518,7 @@ mod tests {
         assert!(mgr
             .submitted
             .iter()
-            .all(|submission| submission.bundle.name.as_deref() != Some("candidate-b")));
+            .all(|submission| submission.base_bundle.name.as_deref() != Some("candidate-b")));
 
         let next = mgr
             .drain_submissions()
@@ -4066,9 +4552,15 @@ mod tests {
             .expect("drain submission")
             .submissions
             .remove(0);
-        mgr.submitted[0].finalized_bundle = Some(mgr.submitted[0].bundle.clone());
-        mgr.submitted[0].finalized_applied_fee = 10;
-        mgr.submitted[0].finalized_fee_source_disposition = Some(FeeSourceDisposition::Attached);
+        mgr.submitted[0].current_variant = SubmissionBroadcastVariant::FeeBearing {
+            bundle: mgr.submitted[0].base_bundle.clone(),
+            applied_fee: 10,
+        };
+        let intent = mgr.submitted[0].canonical_fee_intent().clone();
+        mgr.submitted[0].fee_intent = DurableFeeIntent::Resolved {
+            intent,
+            resolution: FeeResolution::Attached,
+        };
         assert!(mgr.drain_retired_submission_ids().is_empty());
 
         mgr.cradle.abandoned = true;
@@ -4185,13 +4677,13 @@ mod tests {
         assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
         assert_eq!(mgr.submitted.len(), 1);
         assert_eq!(
-            mgr.submitted[0].delivery_state,
-            SubmissionDeliveryState::Acknowledged
+            mgr.submitted[0].wallet_acknowledged_variant,
+            Some(submission.variant_fingerprint)
         );
     }
 
     #[test]
-    fn rejected_submission_removes_only_that_exact_id() {
+    fn rejected_submission_waits_for_explicit_rebroadcast_epoch() {
         let mut allocator = AllocEncoder::new();
         let mut mock = MockGameSession::default();
         mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
@@ -4202,11 +4694,14 @@ mod tests {
         let submission = mgr.drain_submissions().unwrap().submissions.remove(0);
 
         mgr.reject_submission(submission.id).unwrap();
+        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
         mgr.requeue_submitted();
 
-        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
-        assert!(mgr.submitted.is_empty());
-        assert_eq!(mgr.drain_retired_submission_ids(), vec![submission.id]);
+        let replay = mgr.drain_submissions().unwrap().submissions;
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].id, submission.id);
+        assert_eq!(mgr.submitted.len(), 1);
+        assert!(mgr.drain_retired_submission_ids().is_empty());
     }
 
     #[test]
@@ -4326,7 +4821,8 @@ mod tests {
             &Amount::new(1),
         );
         let protocol_bundle = test_bundle_spending_creating("rollback-protocol", &input, &output);
-        let finalized_bundle = test_bundle_spending_creating("rollback-finalized", &input, &output);
+        let fee_bearing_bundle =
+            test_bundle_spending_creating("rollback-fee-bearing", &input, &output);
         let mut mgr = TransactionManager::new(PersistableMockGameSession);
         mgr.register_watch(output.clone(), Timeout::new(50), None, None);
         mgr.pending_submissions.push(PendingSubmission {
@@ -4340,9 +4836,14 @@ mod tests {
             .iter_mut()
             .find(|tx| tx.id == first.id)
             .expect("retained submission");
-        retained.finalized_bundle = Some(finalized_bundle.clone());
-        retained.finalized_applied_fee = 42;
-        retained.finalized_fee_source_disposition = Some(FeeSourceDisposition::Attached);
+        retained.current_variant = SubmissionBroadcastVariant::FeeBearing {
+            bundle: fee_bearing_bundle.clone(),
+            applied_fee: 42,
+        };
+        retained.fee_intent = DurableFeeIntent::Resolved {
+            intent: SubmissionFeeIntent::AlreadyPaid,
+            resolution: FeeResolution::Attached,
+        };
         mgr.acknowledge_submission(first.id).unwrap();
 
         let mut allocator = AllocEncoder::new();
@@ -4363,14 +4864,20 @@ mod tests {
             ],
         )
         .unwrap();
-        assert!(mgr.submitted[0].landed);
+        assert_eq!(
+            mgr.submitted[0].chain_terminality,
+            SubmissionChainTerminality::Landed
+        );
 
         mgr.report_height(&mut allocator, 19).unwrap();
         let rollback_replay = mgr.drain_submissions().unwrap().submissions.remove(0);
         assert_eq!(rollback_replay.id, first.id);
-        assert_eq!(rollback_replay.bundle, finalized_bundle);
+        assert_eq!(rollback_replay.bundle, fee_bearing_bundle);
         assert_eq!(rollback_replay.fee_intent, SubmissionFeeIntent::AlreadyPaid);
-        assert!(!mgr.submitted[0].landed);
+        assert_eq!(
+            mgr.submitted[0].chain_terminality,
+            SubmissionChainTerminality::Active
+        );
 
         // The host failed to complete submission and reloads before the
         // authoritative same-tip coin snapshot arrives.
@@ -4394,7 +4901,7 @@ mod tests {
         let replay_after_restore = restored.drain_submissions().unwrap().submissions;
         assert_eq!(replay_after_restore.len(), 1);
         assert_eq!(replay_after_restore[0].id, first.id);
-        assert_eq!(replay_after_restore[0].bundle, finalized_bundle);
+        assert_eq!(replay_after_restore[0].bundle, fee_bearing_bundle);
         assert_eq!(
             replay_after_restore[0].fee_intent,
             SubmissionFeeIntent::AlreadyPaid
@@ -4506,7 +5013,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_equal_or_higher_tip_reorg_replays_exact_finalized_bundle_per_epoch() {
+    fn restored_equal_or_higher_tip_reorg_replays_exact_current_variant_per_epoch() {
         for replacement_height in [21, 22] {
             let input = test_coin(replacement_height as u8 + 70);
             let output = CoinString::from_parts(
@@ -4516,8 +5023,8 @@ mod tests {
             );
             let protocol_bundle =
                 test_bundle_spending_creating("offline-protocol", &input, &output);
-            let finalized_bundle =
-                test_bundle_spending_creating("offline-finalized", &input, &output);
+            let fee_bearing_bundle =
+                test_bundle_spending_creating("offline-fee-bearing", &input, &output);
             let mut mgr = TransactionManager::new(PersistableMockGameSession);
             mgr.register_watch(input.clone(), Timeout::new(50), None, None);
             mgr.register_watch(output.clone(), Timeout::new(50), None, None);
@@ -4532,9 +5039,14 @@ mod tests {
                 .iter_mut()
                 .find(|tx| tx.id == first.id)
                 .unwrap();
-            retained.finalized_bundle = Some(finalized_bundle.clone());
-            retained.finalized_applied_fee = 42;
-            retained.finalized_fee_source_disposition = Some(FeeSourceDisposition::Attached);
+            retained.current_variant = SubmissionBroadcastVariant::FeeBearing {
+                bundle: fee_bearing_bundle.clone(),
+                applied_fee: 42,
+            };
+            retained.fee_intent = DurableFeeIntent::Resolved {
+                intent: SubmissionFeeIntent::AlreadyPaid,
+                resolution: FeeResolution::Attached,
+            };
             mgr.acknowledge_submission(first.id).unwrap();
 
             let mut allocator = AllocEncoder::new();
@@ -4579,7 +5091,7 @@ mod tests {
             let first_epoch = restored.drain_submissions().unwrap().submissions;
             assert_eq!(first_epoch.len(), 1);
             assert_eq!(first_epoch[0].id, first.id);
-            assert_eq!(first_epoch[0].bundle, finalized_bundle);
+            assert_eq!(first_epoch[0].bundle, fee_bearing_bundle);
             assert_eq!(first_epoch[0].fee_intent, SubmissionFeeIntent::AlreadyPaid);
             restored.acknowledge_submission(first.id).unwrap();
 
@@ -4607,7 +5119,10 @@ mod tests {
                     ],
                 )
                 .unwrap();
-            assert!(restored.submitted[0].landed);
+            assert_eq!(
+                restored.submitted[0].chain_terminality,
+                SubmissionChainTerminality::Landed
+            );
 
             restored
                 .report_coin_states(&mut allocator, remine_height, &replacement)
@@ -4615,7 +5130,7 @@ mod tests {
             let second_epoch = restored.drain_submissions().unwrap().submissions;
             assert_eq!(second_epoch.len(), 1);
             assert_eq!(second_epoch[0].id, first.id);
-            assert_eq!(second_epoch[0].bundle, finalized_bundle);
+            assert_eq!(second_epoch[0].bundle, fee_bearing_bundle);
         }
     }
 
@@ -4769,11 +5284,14 @@ mod tests {
         let replay = manager.drain_submissions().unwrap().submissions.remove(0);
         assert_eq!(replay.id, drained.id);
         assert_eq!(replay.bundle, finalized.bundle);
-        assert_eq!(replay.fee_intent, SubmissionFeeIntent::AlreadyPaid);
+        assert!(matches!(
+            replay.fee_intent,
+            SubmissionFeeIntent::Attach { .. }
+        ));
         let replay_finalized = manager
             .finalize_submission(
                 replay.id,
-                SubmissionFeeSource::NotRequested,
+                SubmissionFeeSource::Failed("still unavailable".to_string()),
                 &Hash::default(),
                 1,
             )
@@ -4792,6 +5310,97 @@ mod tests {
                 1,
             )
             .is_err());
+    }
+
+    #[test]
+    fn base_ack_keeps_fee_intent_until_explicit_trigger_or_chain_terminal() {
+        let input = test_coin(0x73);
+        let output = CoinString::from_parts(
+            &input.to_coin_id(),
+            &PuzzleHash::from_bytes([0x74; 32]),
+            &Amount::new(1),
+        );
+        let base = test_bundle_spending_creating("base-then-fee-upgrade", &input, &output);
+        let mut manager = TransactionManager::new(PersistableMockGameSession);
+        manager.configure_fee(FeeConfiguration {
+            amount: Amount::new(15),
+            attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+        });
+        let fee_intent = SubmissionFeeIntent::Attach {
+            target: input.to_coin_id(),
+            amount: Amount::new(15),
+            attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+        };
+        manager.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: TransactionSubmission::attach_to(base.clone(), None, &input),
+            fee_intent,
+        });
+
+        let first = manager.drain_submissions().unwrap().submissions.remove(0);
+        assert_eq!(first.goal, SubmissionDeliveryGoal::EnsureBroadcast);
+        let fallback = manager
+            .finalize_submission_delivery(
+                first.id,
+                first.goal,
+                &first.variant_fingerprint,
+                SubmissionFeeSource::Failed("provider unavailable".to_string()),
+                &Hash::default(),
+                1,
+            )
+            .unwrap();
+        assert_eq!(fallback.bundle, base);
+        assert!(fallback.should_broadcast);
+        manager
+            .acknowledge_submission_variant(first.id, &fallback.variant_fingerprint)
+            .unwrap();
+        assert!(manager.drain_submissions().unwrap().submissions.is_empty());
+
+        let encoded = bencodex::to_vec(&manager).unwrap();
+        let mut restored: TransactionManager<PersistableMockGameSession> =
+            bencodex::from_slice(&encoded).unwrap();
+        restored.request_fee_upgrades();
+        let triggered = bencodex::to_vec(&restored).unwrap();
+        restored = bencodex::from_slice(&triggered).unwrap();
+        let upgrade = restored.drain_submissions().unwrap().submissions.remove(0);
+        assert_eq!(upgrade.id, first.id);
+        assert_eq!(upgrade.goal, SubmissionDeliveryGoal::FeeUpgrade);
+        assert_eq!(upgrade.intent_fingerprint, first.intent_fingerprint);
+        let unavailable_upgrade = restored
+            .finalize_submission_delivery(
+                upgrade.id,
+                upgrade.goal,
+                &upgrade.variant_fingerprint,
+                SubmissionFeeSource::Failed("still unavailable".to_string()),
+                &Hash::default(),
+                2,
+            )
+            .unwrap();
+        assert!(!unavailable_upgrade.should_broadcast);
+        assert!(restored.drain_submissions().unwrap().submissions.is_empty());
+
+        let mut allocator = AllocEncoder::new();
+        restored
+            .report_coin_states(
+                &mut allocator,
+                3,
+                &[
+                    CoinStateRecord {
+                        coin: input,
+                        created_height: Some(1),
+                        spent_height: Some(3),
+                    },
+                    CoinStateRecord {
+                        coin: output,
+                        created_height: Some(3),
+                        spent_height: None,
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(restored.drain_retired_submission_ids(), vec![first.id]);
+        restored.request_fee_upgrades();
+        assert!(restored.drain_submissions().unwrap().submissions.is_empty());
     }
 
     #[test]
@@ -4996,7 +5605,10 @@ mod tests {
             ],
         )
         .unwrap();
-        assert!(mgr.submitted[0].landed);
+        assert_eq!(
+            mgr.submitted[0].chain_terminality,
+            SubmissionChainTerminality::Landed
+        );
 
         mgr.report_coin_states(
             &mut allocator,

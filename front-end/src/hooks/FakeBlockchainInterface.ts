@@ -8,7 +8,8 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
-  WalletOfferBeginOutcome,
+  WalletOfferCompletion,
+  WalletOfferProvider,
   WalletOfferOperation,
   WalletOfferRequest,
   WalletOfferCancellationOutcome,
@@ -210,6 +211,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private setupComplete = false;
   private nextSyntheticTradeId = 0;
   private syntheticFeeOffers = new SyntheticFeeOfferTracker();
+  private walletOfferProvider: WalletOfferProvider | null = null;
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
@@ -217,11 +219,23 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.deleted = false;
   }
 
-  getWalletProviderScope(
+  getWalletOfferProvider(
     owner?: Pick<WalletOfferOperation['owner'], 'installationPlayerId' | 'peerSessionId'>,
   ) {
     const identity = owner?.installationPlayerId ?? this.uniqueId;
-    return identity ? ({ provider: 'simulator', identity } as const) : null;
+    if (!identity) return null;
+    if (
+      this.walletOfferProvider?.scope.provider !== 'simulator' ||
+      this.walletOfferProvider.scope.identity !== identity
+    ) {
+      this.walletOfferProvider = {
+        capability: 'best-effort',
+        scope: { provider: 'simulator', identity },
+        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
+        cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
+      };
+    }
+    return this.walletOfferProvider;
   }
 
   private connect(): Promise<void> {
@@ -490,7 +504,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   async beginWalletOffer(
     _operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<WalletOfferBeginOutcome> {
+  ): Promise<WalletOfferCompletion> {
     if (request.kind === 'fee') {
       return this.beginFeeOffer(request);
     }
@@ -512,7 +526,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   private async beginFeeOffer(
     request: Extract<WalletOfferRequest, { kind: 'fee' }>,
-  ): Promise<WalletOfferBeginOutcome> {
+  ): Promise<WalletOfferCompletion> {
     const { fee, concurrentSpendCoinId } = request;
     if (fee <= 0n) return { kind: 'failure', reason: 'fee must be positive' };
     try {

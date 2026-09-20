@@ -1,4 +1,5 @@
 import { SessionController } from './SessionController';
+import { walletReservationCoordinator } from '../lib/session/walletReservationLedger';
 import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
 import { PeerConnectionResult } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
@@ -225,6 +226,7 @@ export function getOrCreateSessionController(
     myContribution,
     theirContribution,
     peerConn,
+    walletReservationCoordinator,
   );
   if (sessionSave?.phase === 'live') {
     sessionController.restoreTransportCheckpoint(sessionSave.live);

@@ -1,4 +1,8 @@
-import { InternalBlockchainInterface, CoinStateRecord } from '../types/ChiaGaming';
+import {
+  InternalBlockchainInterface,
+  CoinStateRecord,
+  type WalletOfferProvider,
+} from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { coinRecordToName } from '../util/coinWatch';
 import { log, diagStack } from '../services/log';
@@ -10,7 +14,11 @@ import {
   AsyncPollingTarget,
   AsyncRequestStartGate,
 } from '../lib/AsyncScheduler';
-import { walletReservationLedger } from '../lib/session/walletReservationLedger';
+import {
+  walletReservationCoordinator,
+  type WalletReservationCoordinator,
+} from '../lib/session/walletReservationLedger';
+import { walletProviderScopeKey } from '../lib/session/walletReservationLedgerSchema';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
@@ -46,7 +54,11 @@ type BalanceCallbacks = {
 
 export class BlockchainPoller {
   readonly rpc: InternalBlockchainInterface;
+  readonly walletReservations: WalletReservationCoordinator;
   private readonly adapter: InternalBlockchainInterface;
+  private sourceWalletProvider: WalletOfferProvider | null = null;
+  private sourceWalletProviderKey: string | null = null;
+  private queuedWalletProvider: WalletOfferProvider | null = null;
   private sessions = new Set<PollingGameSession>();
   private sessionCoins = new Map<PollingGameSession, CoinPollInterest[]>();
   private registeredNames = new Set<string>();
@@ -76,10 +88,12 @@ export class BlockchainPoller {
     blockchain: InternalBlockchainInterface,
     pollIntervalMs: number,
     maxBackoffMs?: number,
+    walletReservations: WalletReservationCoordinator = walletReservationCoordinator,
   ) {
     this.adapter = blockchain;
     this.pollIntervalMs = pollIntervalMs;
     this.maxBackoffMs = maxBackoffMs ?? 60000;
+    this.walletReservations = walletReservations;
     this.requestStartGate = new AsyncRequestStartGate(blockchain.requestGapMs ?? 0);
     const queueOptions: AsyncJobQueueOptions = {
       onError: (job, e) => {
@@ -131,7 +145,7 @@ export class BlockchainPoller {
     return {
       requestGapMs: adapter.requestGapMs,
       fundingMode: adapter.fundingMode,
-      getWalletProviderScope: (owner) => adapter.getWalletProviderScope?.(owner) ?? null,
+      getWalletOfferProvider: (owner) => this.getQueuedWalletProvider(adapter, owner),
       getRegistrationScopeKey: () => adapter.getRegistrationScopeKey?.(),
       spend: async (blob, spendBundle, changePuzzleHash, source, fee) => {
         try {
@@ -146,32 +160,6 @@ export class BlockchainPoller {
           throw error;
         }
       },
-      beginWalletOffer: (operation, request) =>
-        this.enqueueMutation(
-          'beginWalletOffer',
-          () => adapter.beginWalletOffer(operation, request),
-          true,
-        ),
-      reconcileWalletOffer: adapter.reconcileWalletOffer
-        ? (operation, request, recoveryId) =>
-            this.enqueueMutation(
-              'reconcileWalletOffer',
-              () => adapter.reconcileWalletOffer!(operation, request, recoveryId),
-              true,
-            )
-        : undefined,
-      beginWalletOfferCancellation: adapter.beginWalletOfferCancellation
-        ? (tradeId) =>
-            this.enqueueMutation('beginWalletOfferCancellation', () =>
-              adapter.beginWalletOfferCancellation!(tradeId),
-            )
-        : undefined,
-      reconcileWalletOfferCancellation: adapter.reconcileWalletOfferCancellation
-        ? (tradeId, recoveryId) =>
-            this.enqueueMutation('reconcileWalletOfferCancellation', () =>
-              adapter.reconcileWalletOfferCancellation!(tradeId, recoveryId),
-            )
-        : undefined,
       getAddress: () => this.enqueueRead('getAddress', () => adapter.getAddress()),
       getBalance: () => this.enqueueRead('getBalance', () => adapter.getBalance()),
       getPuzzleAndSolution: (coin) =>
@@ -206,9 +194,65 @@ export class BlockchainPoller {
     return this.enqueueRpc(
       this.mutationLane,
       label,
-      () => walletReservationLedger.runAfterHydration(run),
+      () => this.walletReservations.runAfterHydration(run),
       preserveActiveCompletion,
     );
+  }
+
+  private getQueuedWalletProvider(
+    adapter: InternalBlockchainInterface,
+    owner?: Parameters<InternalBlockchainInterface['getWalletOfferProvider']>[0],
+  ): WalletOfferProvider | null {
+    const source = adapter.getWalletOfferProvider(owner);
+    if (!source) return null;
+    const sourceKey = `${source.capability}\0${walletProviderScopeKey(source.scope)}`;
+    if (
+      this.queuedWalletProvider &&
+      (source === this.sourceWalletProvider || sourceKey === this.sourceWalletProviderKey)
+    ) {
+      return this.queuedWalletProvider;
+    }
+    this.sourceWalletProvider = source;
+    this.sourceWalletProviderKey = sourceKey;
+    this.queuedWalletProvider =
+      source.capability === 'recoverable'
+        ? {
+            capability: 'recoverable',
+            scope: source.scope,
+            beginCreation: (operation, request) =>
+              this.enqueueMutation(
+                'beginWalletOffer',
+                () => source.beginCreation(operation, request),
+                true,
+              ),
+            reconcileCreation: (operation, request, recoveryId) =>
+              this.enqueueMutation(
+                'reconcileWalletOffer',
+                () => source.reconcileCreation(operation, request, recoveryId),
+                true,
+              ),
+            beginCancellation: (tradeId) =>
+              this.enqueueMutation('beginWalletOfferCancellation', () =>
+                source.beginCancellation(tradeId),
+              ),
+            reconcileCancellation: (tradeId, recoveryId) =>
+              this.enqueueMutation('reconcileWalletOfferCancellation', () =>
+                source.reconcileCancellation(tradeId, recoveryId),
+              ),
+          }
+        : {
+            capability: 'best-effort',
+            scope: source.scope,
+            beginCreation: (operation, request) =>
+              this.enqueueMutation(
+                'beginWalletOffer',
+                () => source.beginCreation(operation, request),
+                true,
+              ),
+            cancel: (tradeId) =>
+              this.enqueueMutation('beginWalletOfferCancellation', () => source.cancel(tradeId)),
+          };
+    return this.queuedWalletProvider;
   }
 
   private enqueueRpc<T>(

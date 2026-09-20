@@ -1,4 +1,5 @@
 import type { WalletOfferRequest, WalletProviderScope } from '../../types/ChiaGaming';
+import { decodeCanonicalFundingRequest, type CanonicalFundingRequest } from './fundingRequest';
 
 export interface WalletReservationOwner {
   installationPlayerId: string;
@@ -25,9 +26,14 @@ interface WalletReservationEntryBase {
 
 export type WalletReservationRecoveryEntry = WalletReservationEntryBase & {
   stage: 'creating';
+  disposition: 'active' | 'cancel-on-create';
   recoveryId: string;
-  request: WalletOfferRequest;
+  request: WalletReservationRecoveryRequest;
 };
+
+export type WalletReservationRecoveryRequest =
+  | { kind: 'funding'; canonical: CanonicalFundingRequest }
+  | Extract<WalletOfferRequest, { kind: 'fee' }>;
 
 export type WalletReservationTradeEntry = WalletReservationEntryBase & {
   stage: Exclude<WalletReservationStage, 'creating' | 'cancelling'>;
@@ -46,7 +52,7 @@ export type WalletReservationLedgerEntry =
   | WalletReservationCancellationEntry;
 
 export const WALLET_RESERVATION_RECORD_SCHEMA = 'chia-gaming-wallet-reservations' as const;
-export const WALLET_RESERVATION_RECORD_VERSION = 4n;
+export const WALLET_RESERVATION_RECORD_VERSION = 5n;
 
 export interface WalletReservationRecord {
   schema: typeof WALLET_RESERVATION_RECORD_SCHEMA;
@@ -57,10 +63,11 @@ export interface WalletReservationRecord {
 const MAX_TRADE_ID_LENGTH = 256;
 const MAX_IDENTITY_LENGTH = 256;
 const MAX_OPERATION_ID_LENGTH = 1024;
-const MAX_CONDITION_COUNT = 64;
-const MAX_CONDITION_ARGS = 64;
-const MAX_CONDITION_ARG_LENGTH = 4096;
 export const MAX_WALLET_RESERVATION_REASON_LENGTH = 256;
+
+function tupleKey(parts: readonly string[]): string {
+  return parts.map((part) => `${part.length}:${part}`).join('');
+}
 
 function requireBoundedString(
   value: unknown,
@@ -78,21 +85,30 @@ export function walletReservationOperationKey(
   owner: WalletReservationOwner,
   purpose: WalletReservationPurpose,
 ): string {
-  return `${walletReservationOwnerKey(owner)}\0${purpose.kind}\0${purpose.operationId}`;
+  return tupleKey([walletReservationOwnerKey(owner), purpose.kind, purpose.operationId]);
+}
+
+export function walletReservationOperationPrefix(owner: WalletReservationOwner): string {
+  const ownerKey = walletReservationOwnerKey(owner);
+  return `${ownerKey.length}:${ownerKey}`;
 }
 
 export function walletReservationOwnerKey(owner: WalletReservationOwner): string {
-  return `${owner.installationPlayerId}\0${owner.peerSessionId}\0${walletProviderScopeKey(owner.providerScope)}`;
+  return tupleKey([
+    owner.installationPlayerId,
+    owner.peerSessionId,
+    walletProviderScopeKey(owner.providerScope),
+  ]);
 }
 
 export function walletProviderScopeKey(scope: WalletProviderScope): string {
   switch (scope.provider) {
     case 'cloud':
-      return `cloud\0${scope.walletId}`;
+      return tupleKey(['cloud', scope.walletId]);
     case 'walletconnect':
-      return `walletconnect\0${scope.fingerprint}\0${scope.remoteWalletId}`;
+      return tupleKey(['walletconnect', scope.fingerprint, scope.chainId]);
     case 'simulator':
-      return `simulator\0${scope.identity}`;
+      return tupleKey(['simulator', scope.identity]);
   }
 }
 
@@ -115,11 +131,7 @@ function decodeProviderScope(value: unknown, label: string): WalletProviderScope
         `${label}.fingerprint`,
         MAX_IDENTITY_LENGTH,
       ),
-      remoteWalletId: requireBoundedString(
-        fields.remoteWalletId,
-        `${label}.remoteWalletId`,
-        MAX_IDENTITY_LENGTH,
-      ),
+      chainId: requireBoundedString(fields.chainId, `${label}.chainId`, MAX_IDENTITY_LENGTH),
     };
   }
   if (fields.provider === 'simulator' && Object.keys(fields).length === 2) {
@@ -138,11 +150,20 @@ function requireU64(value: unknown, label: string): bigint {
   return value;
 }
 
-function decodeOfferRequest(value: unknown, label: string): WalletOfferRequest {
+function decodeOfferRequest(value: unknown, label: string): WalletReservationRecoveryRequest {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error(`Garbled save: invalid ${label}`);
   }
   const fields = value as Record<string, unknown>;
+  if (fields.kind === 'funding') {
+    if (Object.keys(fields).length !== 2 || !Object.hasOwn(fields, 'canonical')) {
+      throw new Error(`Garbled save: invalid ${label} fields`);
+    }
+    return {
+      kind: 'funding',
+      canonical: decodeCanonicalFundingRequest(fields.canonical, `${label}.canonical`),
+    };
+  }
   const uniqueId = requireBoundedString(fields.uniqueId, `${label}.uniqueId`, MAX_IDENTITY_LENGTH);
   if (fields.kind === 'fee') {
     if (
@@ -156,105 +177,20 @@ function decodeOfferRequest(value: unknown, label: string): WalletOfferRequest {
       kind: 'fee',
       uniqueId,
       fee: requireU64(fields.fee, `${label}.fee`),
-      concurrentSpendCoinId: requireBoundedString(
+      concurrentSpendCoinId: requireCanonicalCoinId(
         fields.concurrentSpendCoinId,
         `${label}.concurrentSpendCoinId`,
-        66,
       ),
     };
   }
-  const allowed = new Set([
-    'kind',
-    'uniqueId',
-    'offer',
-    'extraConditions',
-    'coinIds',
-    'maxHeight',
-    'openingFee',
-  ]);
-  if (
-    fields.kind !== 'funding' ||
-    Object.keys(fields).some((key) => !allowed.has(key)) ||
-    typeof fields.offer !== 'object' ||
-    fields.offer === null ||
-    Array.isArray(fields.offer)
-  ) {
-    throw new Error(`Garbled save: invalid ${label} fields`);
-  }
-  const offer = fields.offer as Record<string, unknown>;
-  if (
-    Object.keys(offer).length !== 1 ||
-    !Object.hasOwn(offer, '1') ||
-    typeof offer['1'] !== 'bigint' ||
-    offer['1'] >= 0n ||
-    offer['1'] < -0xffff_ffff_ffff_ffffn
-  ) {
-    throw new Error(`Garbled save: invalid ${label}.offer`);
-  }
-  const extraConditions =
-    fields.extraConditions === undefined
-      ? undefined
-      : decodeConditions(fields.extraConditions, `${label}.extraConditions`);
-  const coinIds =
-    fields.coinIds === undefined
-      ? undefined
-      : (() => {
-          if (!Array.isArray(fields.coinIds) || fields.coinIds.length > MAX_CONDITION_ARGS) {
-            throw new Error(`Garbled save: invalid ${label}.coinIds`);
-          }
-          return fields.coinIds.map((coinId, index) =>
-            requireBoundedString(coinId, `${label}.coinIds[${index}]`, 64),
-          );
-        })();
-  return {
-    kind: 'funding',
-    uniqueId,
-    offer: { '1': offer['1'] },
-    ...(extraConditions === undefined ? {} : { extraConditions }),
-    ...(coinIds === undefined ? {} : { coinIds }),
-    ...(fields.maxHeight === undefined
-      ? {}
-      : { maxHeight: requireU64(fields.maxHeight, `${label}.maxHeight`) }),
-    ...(fields.openingFee === undefined
-      ? {}
-      : { openingFee: requireU64(fields.openingFee, `${label}.openingFee`) }),
-  };
+  throw new Error(`Garbled save: invalid ${label} fields`);
 }
 
-function decodeConditions(
-  value: unknown,
-  label: string,
-): Array<{ opcode: bigint; args: string[] }> {
-  if (!Array.isArray(value) || value.length > MAX_CONDITION_COUNT) {
+function requireCanonicalCoinId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
     throw new Error(`Garbled save: invalid ${label}`);
   }
-  return value.map((condition, index) => {
-    if (typeof condition !== 'object' || condition === null || Array.isArray(condition)) {
-      throw new Error(`Garbled save: invalid ${label}[${index}]`);
-    }
-    const fields = condition as Record<string, unknown>;
-    if (
-      Object.keys(fields).length !== 2 ||
-      typeof fields.opcode !== 'bigint' ||
-      fields.opcode < 0n ||
-      fields.opcode > 0xffff_ffffn ||
-      !Array.isArray(fields.args) ||
-      fields.args.length > MAX_CONDITION_ARGS
-    ) {
-      throw new Error(`Garbled save: invalid ${label}[${index}]`);
-    }
-    return {
-      opcode: fields.opcode,
-      args: fields.args.map((arg, argIndex) =>
-        requireBoundedString(
-          arg,
-          `${label}[${index}].args[${argIndex}]`,
-          MAX_CONDITION_ARG_LENGTH,
-          true,
-        ),
-      ),
-    };
-  });
+  return value;
 }
 
 export function decodeWalletReservationLedgerEntry(
@@ -269,13 +205,13 @@ export function decodeWalletReservationLedgerEntry(
   const creating = fields.stage === 'creating';
   const cancelling = fields.stage === 'cancelling';
   if (
-    keys.length !== (creating || cancelling ? 6 : 5) ||
+    keys.length !== (creating ? 7 : cancelling ? 6 : 5) ||
     !keys.includes('owner') ||
     !keys.includes('purpose') ||
     !keys.includes('stage') ||
     !keys.includes('reason') ||
     (creating
-      ? !keys.includes('recoveryId') || !keys.includes('request')
+      ? !keys.includes('disposition') || !keys.includes('recoveryId') || !keys.includes('request')
       : !keys.includes('tradeId') || (cancelling && !keys.includes('recoveryId')))
   ) {
     throw new Error(`Garbled save: invalid ${label} fields`);
@@ -345,9 +281,13 @@ export function decodeWalletReservationLedgerEntry(
     ),
   };
   if (fields.stage === 'creating') {
+    if (fields.disposition !== 'active' && fields.disposition !== 'cancel-on-create') {
+      throw new Error(`Garbled save: invalid ${label}.disposition`);
+    }
     return {
       ...common,
       stage: 'creating',
+      disposition: fields.disposition,
       recoveryId: requireBoundedString(
         fields.recoveryId,
         `${label}.recoveryId`,

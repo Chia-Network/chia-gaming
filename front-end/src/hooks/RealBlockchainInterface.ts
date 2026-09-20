@@ -8,7 +8,8 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
-  WalletOfferBeginOutcome,
+  WalletOfferCompletion,
+  WalletOfferProvider,
   WalletOfferOperation,
   WalletOfferRequest,
   WalletOfferCancellationOutcome,
@@ -26,7 +27,7 @@ import {
   toHexString,
 } from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
-import { ChiaMethod } from '../constants/wallet-connect';
+import { ChiaMethod, getChainId } from '../constants/wallet-connect';
 import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 import { jsonStringify } from '../util/jsonSafe';
@@ -82,16 +83,6 @@ function saveCachedChangeAddress(fingerprint: string, address: string): void {
     localStorage.setItem(changeAddressStorageKey(fingerprint), address);
   } catch {
     // Best-effort cache; a miss only means we ask the wallet again.
-  }
-}
-
-function loadCachedRemoteWalletId(fingerprint: string): bigint | null {
-  try {
-    const raw = localStorage.getItem(remoteWalletStorageKey(fingerprint));
-    if (!raw || !/^\d+$/.test(raw)) return null;
-    return BigInt(raw);
-  } catch {
-    return null;
   }
 }
 
@@ -357,6 +348,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult;
 
   private remoteWalletId: bigint | undefined;
+  private walletOfferProvider: WalletOfferProvider | null = null;
   private remoteWalletEnsurePromise: Promise<void> | null = null;
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
@@ -375,15 +367,23 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     this.blockchainAddressData = { puzzleHash: '' };
   }
 
-  getWalletProviderScope() {
+  getWalletOfferProvider() {
     const fingerprint = walletConnectState.getAddress();
-    return fingerprint && this.remoteWalletId !== undefined
-      ? ({
-          provider: 'walletconnect',
-          fingerprint,
-          remoteWalletId: this.remoteWalletId.toString(),
-        } as const)
-      : null;
+    const chainId = walletConnectState.getChainId?.() ?? getChainId();
+    if (!fingerprint) return null;
+    if (
+      this.walletOfferProvider?.scope.provider !== 'walletconnect' ||
+      this.walletOfferProvider.scope.fingerprint !== fingerprint ||
+      this.walletOfferProvider.scope.chainId !== chainId
+    ) {
+      this.walletOfferProvider = {
+        capability: 'best-effort',
+        scope: { provider: 'walletconnect', fingerprint, chainId },
+        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
+        cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
+      };
+    }
+    return this.walletOfferProvider;
   }
 
   async getAddress() {
@@ -531,7 +531,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async beginWalletOffer(
     _operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<WalletOfferBeginOutcome> {
+  ): Promise<WalletOfferCompletion> {
     if (request.kind === 'funding') {
       return this.createFundingOffer(request);
     }
@@ -627,7 +627,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private async createFundingOffer(
     request: Extract<WalletOfferRequest, { kind: 'funding' }>,
-  ): Promise<WalletOfferBeginOutcome> {
+  ): Promise<WalletOfferCompletion> {
     const { offer, extraConditions, coinIds, maxHeight } = request;
     try {
       const conditions = [...(extraConditions ?? [])];
@@ -838,12 +838,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     const fp = fingerprint ?? walletConnectState.getAddress();
     if (!fp) {
       log('[wc-blockchain] ensureRemoteWallet skipped: no fingerprint');
-      return;
-    }
-    const cachedRemote = loadCachedRemoteWalletId(fp);
-    if (cachedRemote !== null) {
-      this.remoteWalletId = cachedRemote;
-      log(`[wc-blockchain] remote wallet restored from cache id=${cachedRemote}`);
       return;
     }
     log('[wc-blockchain] ensuring remote wallet exists...');

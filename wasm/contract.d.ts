@@ -22,6 +22,11 @@ export interface TransactionSubmission {
   id: string;
   bundle: SpendBundle;
   fee_request?: { target: string; amount: string } | null;
+  delivery_goal: 'ensure-broadcast' | 'fee-upgrade';
+  /** Stable fingerprint of the durable submission intent. */
+  intent_fingerprint: string;
+  /** Fingerprint of the exact bytes in `bundle`. */
+  variant_fingerprint: string;
 }
 
 export type SubmissionDrainFailureStage =

@@ -226,6 +226,8 @@ export interface FinalizedSubmission {
   applied_fee: string;
   warning?: string | null;
   fee_source_disposition: 'attached' | 'unused' | 'not-requested';
+  variant_fingerprint: string;
+  should_broadcast: boolean;
 }
 
 export type WalletSubmitOutcome =
@@ -244,7 +246,7 @@ export type WalletOfferOperation = {
 
 export type WalletProviderScope =
   | { provider: 'cloud'; walletId: string }
-  | { provider: 'walletconnect'; fingerprint: string; remoteWalletId: string }
+  | { provider: 'walletconnect'; fingerprint: string; chainId: string }
   | { provider: 'simulator'; identity: string };
 
 export type WalletOfferRequest =
@@ -302,11 +304,14 @@ export interface WasmConnection {
   finalize_submission: (
     cid: number,
     submission_id: string,
+    delivery_goal: TransactionSubmission['delivery_goal'],
+    variant_fingerprint: string,
     fee_source_json?: string,
   ) => FinalizedSubmission;
-  acknowledge_submission: (cid: number, submission_id: string) => void;
+  acknowledge_submission: (cid: number, submission_id: string, variant_fingerprint: string) => void;
   reject_submission: (cid: number, submission_id: string) => void;
   resubmit_submitted: (cid: number) => void;
+  request_fee_upgrades: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
   convert_coinset_to_coin_string: (
@@ -491,12 +496,23 @@ export class ChiaGame {
     this.wasm.configure_submission_fee(this.session, amount);
   }
 
-  finalize_submission(submissionId: string, feeSourceJson?: string): FinalizedSubmission {
-    return this.wasm.finalize_submission(this.session, submissionId, feeSourceJson);
+  finalize_submission(
+    submissionId: string,
+    deliveryGoal: TransactionSubmission['delivery_goal'],
+    variantFingerprint: string,
+    feeSourceJson?: string,
+  ): FinalizedSubmission {
+    return this.wasm.finalize_submission(
+      this.session,
+      submissionId,
+      deliveryGoal,
+      variantFingerprint,
+      feeSourceJson,
+    );
   }
 
-  acknowledge_submission(submissionId: string): void {
-    this.wasm.acknowledge_submission(this.session, submissionId);
+  acknowledge_submission(submissionId: string, variantFingerprint: string): void {
+    this.wasm.acknowledge_submission(this.session, submissionId, variantFingerprint);
   }
 
   reject_submission(submissionId: string): void {
@@ -506,6 +522,10 @@ export class ChiaGame {
   /** Re-queue all retained submissions for resubmission (call after reload). */
   resubmit_submitted(): void {
     this.wasm.resubmit_submitted(this.session);
+  }
+
+  request_fee_upgrades(): void {
+    this.wasm.request_fee_upgrades(this.session);
   }
 }
 
@@ -591,12 +611,45 @@ export type WalletOfferCancellationBeginOutcome =
   | WalletOfferCancellationOutcome
   | { status: 'pending'; recoveryId: string };
 
+interface WalletOfferProviderBase {
+  readonly scope: WalletProviderScope;
+}
+
+export interface BestEffortWalletOfferProvider extends WalletOfferProviderBase {
+  readonly capability: 'best-effort';
+  beginCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferCompletion>;
+  cancel(tradeId: string): Promise<WalletOfferCancellationOutcome>;
+}
+
+export interface RecoverableWalletOfferProvider extends WalletOfferProviderBase {
+  readonly capability: 'recoverable';
+  beginCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferBeginOutcome>;
+  reconcileCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+    recoveryId: string,
+  ): Promise<WalletOfferCompletion>;
+  beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
+  reconcileCancellation(
+    tradeId: string,
+    recoveryId: string,
+  ): Promise<WalletOfferCancellationOutcome>;
+}
+
+export type WalletOfferProvider = BestEffortWalletOfferProvider | RecoverableWalletOfferProvider;
+
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
   fundingMode?: 'offer-settlement';
-  getWalletProviderScope?(
+  getWalletOfferProvider(
     owner?: Pick<WalletOfferOperation['owner'], 'installationPlayerId' | 'peerSessionId'>,
-  ): WalletProviderScope | null;
+  ): WalletOfferProvider | null;
   getRegistrationScopeKey?(): string | undefined;
   spend(
     blob: string,
@@ -605,22 +658,6 @@ export interface InternalBlockchainInterface {
     source?: string,
     fee?: bigint,
   ): Promise<WalletSubmitOutcome>;
-  beginWalletOffer(
-    operation: WalletOfferOperation,
-    request: WalletOfferRequest,
-  ): Promise<WalletOfferBeginOutcome>;
-  // Optional capability seam. Providers without it retain best-effort retry:
-  // they never return `pending`, so reconnect starts the same operation again.
-  reconcileWalletOffer?(
-    operation: WalletOfferOperation,
-    request: WalletOfferRequest,
-    recoveryId: string,
-  ): Promise<WalletOfferCompletion>;
-  beginWalletOfferCancellation?(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
-  reconcileWalletOfferCancellation?(
-    tradeId: string,
-    recoveryId: string,
-  ): Promise<WalletOfferCancellationOutcome>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

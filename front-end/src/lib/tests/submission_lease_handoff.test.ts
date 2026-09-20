@@ -7,7 +7,7 @@ import type { SessionModel } from '../session/types';
 import { createSessionModel } from '../session/model';
 import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
 import {
-  WalletReservationLedger,
+  WalletReservationCoordinator,
   walletReservationLedger,
 } from '../session/walletReservationLedger';
 import type { InternalBlockchainInterface, TransactionSubmission } from '../../types/ChiaGaming';
@@ -18,6 +18,7 @@ import {
   mockWasmConnection,
   submissionDrain,
   testSpendBundle,
+  wasmResult,
 } from './message_protocol.harness';
 
 interface PendingRelease {
@@ -129,11 +130,38 @@ class ControlledLease implements SessionRuntimeLease {
 }
 
 function setup(spend: jest.Mock, rpcOverrides: Partial<InternalBlockchainInterface> = {}) {
-  const blockchain = new BlockchainPoller(
-    { ...mockRpc, spend, ...rpcOverrides } as InternalBlockchainInterface,
-    60_000,
-  );
-  walletReservationLedger.attachRpc(blockchain.rpc);
+  const legacy = rpcOverrides as Record<string, any>;
+  const adapter = { ...mockRpc, spend, ...rpcOverrides } as InternalBlockchainInterface;
+  if (!rpcOverrides.getWalletOfferProvider) {
+    adapter.getWalletOfferProvider = () => {
+      const scope = { provider: 'simulator' as const, identity: 'submission-handoff' };
+      if (legacy.reconcileWalletOffer) {
+        return {
+          capability: 'recoverable' as const,
+          scope,
+          beginCreation: legacy.beginWalletOffer,
+          reconcileCreation: legacy.reconcileWalletOffer,
+          beginCancellation:
+            legacy.beginWalletOfferCancellation ??
+            (async () => ({ status: 'unavailable' as const, detail: 'cancellation unavailable' })),
+          reconcileCancellation:
+            legacy.reconcileWalletOfferCancellation ??
+            (async () => ({ status: 'unavailable' as const, detail: 'cancellation unavailable' })),
+        };
+      }
+      return {
+        capability: 'best-effort' as const,
+        scope,
+        beginCreation:
+          legacy.beginWalletOffer ??
+          (async () => ({ kind: 'unavailable' as const, reason: 'creation unavailable' })),
+        cancel:
+          legacy.beginWalletOfferCancellation ??
+          (async () => ({ status: 'unavailable' as const, detail: 'cancellation unavailable' })),
+      };
+    };
+  }
+  const blockchain = new BlockchainPoller(adapter, 60_000);
   const controller = new SessionController(
     blockchain,
     'submission-handoff',
@@ -158,6 +186,9 @@ const submission = (id: string): TransactionSubmission => ({
   id,
   bundle: testSpendBundle(id),
   fee_request: null,
+  delivery_goal: 'ensure-broadcast',
+  intent_fingerprint: 'aa'.repeat(32),
+  variant_fingerprint: 'bb'.repeat(32),
 });
 
 describe('submission delivery lease handoff', () => {
@@ -185,9 +216,9 @@ describe('submission delivery lease handoff', () => {
       expect(
         (
           controller as unknown as {
-            pendingSubmissionDeliveries: Map<string, unknown>;
+            submissionDeliveries: { hasPrelaunch(id: string): boolean };
           }
-        ).pendingSubmissionDeliveries.has('retired-before-launch'),
+        ).submissionDeliveries.hasPrelaunch('retired-before-launch'),
       ).toBe(false);
     } finally {
       controller.cleanup();
@@ -251,7 +282,10 @@ describe('submission delivery lease handoff', () => {
 
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission).toHaveBeenCalledWith('before-persistence');
+      expect(cradle.acknowledge_submission).toHaveBeenCalledWith(
+        'before-persistence',
+        expect.any(String),
+      );
     } finally {
       controller.cleanup();
     }
@@ -297,11 +331,12 @@ describe('submission delivery lease handoff', () => {
       controller.attachTransactionCoordinator(first);
       submit(submission('finalized-broadcast-handoff'));
       const launch = first.launch('submission:finalized-broadcast-handoff');
-      for (let i = 0; i < 50 && !first.has('broadcast:finalized-broadcast-handoff'); i += 1) {
+      const broadcastKey = `broadcast:finalized-broadcast-handoff:${'bb'.repeat(32)}`;
+      for (let i = 0; i < 50 && !first.has(broadcastKey); i += 1) {
         await Promise.resolve();
       }
 
-      expect(first.has('broadcast:finalized-broadcast-handoff')).toBe(true);
+      expect(first.has(broadcastKey)).toBe(true);
       expect(cradle.finalize_submission).toHaveBeenCalledTimes(1);
       expect(spend).not.toHaveBeenCalled();
 
@@ -312,7 +347,10 @@ describe('submission delivery lease handoff', () => {
       expect(cradle.finalize_submission).toHaveBeenCalledTimes(1);
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission).toHaveBeenCalledWith('finalized-broadcast-handoff');
+      expect(cradle.acknowledge_submission).toHaveBeenCalledWith(
+        'finalized-broadcast-handoff',
+        expect.any(String),
+      );
     } finally {
       controller.cleanup();
     }
@@ -347,10 +385,11 @@ describe('submission delivery lease handoff', () => {
       }
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.reject_submission).toHaveBeenCalledTimes(1);
-      expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-fee');
+      expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
 
       controller.attachTransactionCoordinator(replacement);
       await launch;
+      controller.processResult(wasmResult());
       await controller.flushPendingWork();
 
       expect(spend).toHaveBeenCalledTimes(1);
@@ -385,7 +424,10 @@ describe('submission delivery lease handoff', () => {
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.finalize_submission).toHaveBeenCalledTimes(1);
       expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission).toHaveBeenCalledWith('acknowledged-handoff');
+      expect(cradle.acknowledge_submission).toHaveBeenCalledWith(
+        'acknowledged-handoff',
+        expect.any(String),
+      );
     } finally {
       controller.cleanup();
     }
@@ -566,6 +608,71 @@ describe('submission delivery lease handoff', () => {
     }
   });
 
+  it('accepts and orders a variant upgrade under the same durable intent', async () => {
+    let resolveFirstSpend!: (value: { status: 'acknowledged' }) => void;
+    const spend = jest
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ status: 'acknowledged' }>((resolve) => {
+            resolveFirstSpend = resolve;
+          }),
+      )
+      .mockResolvedValue({ status: 'acknowledged' });
+    const { controller, cradle, submit } = setup(spend);
+    const lease = new ControlledLease();
+    const first = submission('variant-upgrade');
+    const upgrade = { ...first, variant_fingerprint: 'cc'.repeat(32) };
+    try {
+      controller.attachTransactionCoordinator(lease);
+      submit(first);
+      await lease.launch('submission:variant-upgrade');
+      for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
+        await Promise.resolve();
+      }
+      expect(spend).toHaveBeenCalledTimes(1);
+
+      submit(upgrade);
+      resolveFirstSpend({ status: 'acknowledged' });
+      for (let pass = 0; pass < 20 && !lease.has('submission:variant-upgrade'); pass += 1) {
+        await Promise.resolve();
+      }
+      expect(lease.has('submission:variant-upgrade')).toBe(true);
+      await lease.launch('submission:variant-upgrade');
+      await controller.flushPendingWork();
+
+      expect(spend).toHaveBeenCalledTimes(2);
+      expect((cradle.finalize_submission as jest.Mock).mock.calls.map((call) => call[2])).toEqual([
+        'bb'.repeat(32),
+        'cc'.repeat(32),
+      ]);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('fails a duplicate stable id with a mismatched intent before wallet side effects', () => {
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const { controller, cradle, submit } = setup(spend);
+    const lease = new ControlledLease();
+    try {
+      controller.attachTransactionCoordinator(lease);
+      submit(submission('intent-mismatch'));
+
+      expect(() =>
+        submit({
+          ...submission('intent-mismatch'),
+          intent_fingerprint: 'dd'.repeat(32),
+          variant_fingerprint: 'cc'.repeat(32),
+        }),
+      ).toThrow('mismatched durable intent fingerprint');
+      expect(spend).not.toHaveBeenCalled();
+      expect(cradle.finalize_submission).not.toHaveBeenCalled();
+    } finally {
+      controller.cleanup();
+    }
+  });
+
   it('records an unexpected release failure once and retires the delivery', async () => {
     expectConsoleError('release exploded');
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
@@ -584,9 +691,9 @@ describe('submission delivery lease handoff', () => {
         i < 10 &&
         (
           controller as unknown as {
-            pendingSubmissionDeliveries: Map<string, unknown>;
+            submissionDeliveries: { hasPrelaunch(id: string): boolean };
           }
-        ).pendingSubmissionDeliveries.has('release-failure');
+        ).submissionDeliveries.hasPrelaunch('release-failure');
         i += 1
       ) {
         await Promise.resolve();
@@ -599,9 +706,9 @@ describe('submission delivery lease handoff', () => {
       expect(
         (
           controller as unknown as {
-            pendingSubmissionDeliveries: Map<string, unknown>;
+            submissionDeliveries: { hasPrelaunch(id: string): boolean };
           }
-        ).pendingSubmissionDeliveries.has('release-failure'),
+        ).submissionDeliveries.hasPrelaunch('release-failure'),
       ).toBe(false);
     } finally {
       subscription.unsubscribe();
@@ -634,6 +741,8 @@ describe('submission delivery lease handoff', () => {
         fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:network-rejected-cleanup-fails');
+      await controller.flushTransactionSubmissions();
+      controller.processResult(wasmResult());
       await controller.flushPendingWork();
 
       expect(cradle.reject_submission).toHaveBeenCalledWith('network-rejected-cleanup-fails');
@@ -708,11 +817,15 @@ describe('submission delivery lease handoff', () => {
     try {
       controller.attachTransactionCoordinator(lease);
       submit(submission('slow-wallet'));
-      const launch = lease.launch('submission:slow-wallet');
       let quiesced = false;
       const quiescence = controller.quiesceForTerminalFinalization().then(() => {
         quiesced = true;
       });
+      await Promise.resolve();
+      expect(spend).not.toHaveBeenCalled();
+      expect(quiesced).toBe(false);
+
+      const launch = lease.launch('submission:slow-wallet');
       for (let i = 0; i < 10 && spend.mock.calls.length === 0; i += 1) {
         await Promise.resolve();
       }
@@ -722,10 +835,14 @@ describe('submission delivery lease handoff', () => {
       expect(
         (
           controller as unknown as {
-            pendingSubmissionDeliveries: Map<string, unknown>;
+            submissionDeliveries: {
+              hasPrelaunch(id: string): boolean;
+              hasPending(): boolean;
+            };
           }
-        ).pendingSubmissionDeliveries.has('slow-wallet'),
-      ).toBe(true);
+        ).submissionDeliveries.hasPrelaunch('slow-wallet'),
+      ).toBe(false);
+      expect((controller as any).submissionDeliveries.hasPending()).toBe(true);
 
       resolveSpend({ status: 'acknowledged' });
       await launch;
@@ -812,10 +929,10 @@ describe('submission delivery lease handoff', () => {
     expect(
       (
         controller as unknown as {
-          pendingSubmissionDeliveries: Map<string, unknown>;
+          submissionDeliveries: { hasPending(): boolean };
         }
-      ).pendingSubmissionDeliveries.size,
-    ).toBe(0);
+      ).submissionDeliveries.hasPending(),
+    ).toBe(false);
     finishEffect();
   });
 
@@ -908,6 +1025,73 @@ describe('submission delivery lease handoff', () => {
     expect(walletReservationLedger.entriesFor(owner)).toEqual([]);
     expect(cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
   });
+
+  it('retires a fee creation whose recovery id arrives after controller cleanup', async () => {
+    walletReservationLedger.resetForTests();
+    let finishBegin!: (value: { kind: 'pending'; recoveryId: string }) => void;
+    const beginWalletOffer = jest.fn(
+      () =>
+        new Promise<{ kind: 'pending'; recoveryId: string }>((resolve) => {
+          finishBegin = resolve;
+        }),
+    );
+    const reconcileWalletOffer = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'unavailable', reason: 'wallet disconnected' })
+      .mockResolvedValueOnce({
+        kind: 'created',
+        material: { kind: 'offer', offer: 'offer1latefee' },
+        tradeId: 'trade-late-fee',
+      });
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const { blockchain, controller, cradle, submit } = setup(jest.fn(), {
+      beginWalletOffer,
+      reconcileWalletOffer,
+      beginWalletOfferCancellation,
+    });
+    const lease = new ControlledLease();
+    controller.attachTransactionCoordinator(lease);
+    submit({
+      ...submission('late-fee-recovery'),
+      fee_request: { target: '22'.repeat(32), amount: '10' },
+    });
+    await lease.launch('submission:late-fee-recovery');
+    for (let pass = 0; pass < 20 && beginWalletOffer.mock.calls.length === 0; pass += 1) {
+      await Promise.resolve();
+    }
+    expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+
+    controller.cleanup();
+    finishBegin({ kind: 'pending', recoveryId: 'SR_late_fee' });
+    for (let pass = 0; pass < 30 && reconcileWalletOffer.mock.calls.length === 0; pass += 1) {
+      await Promise.resolve();
+    }
+    const owner = walletReservationLedger.snapshot()[0]!.owner;
+    await walletReservationLedger.awaitOwner(owner);
+    expect(walletReservationLedger.snapshot()).toEqual([
+      expect.objectContaining({
+        stage: 'creating',
+        disposition: 'cancel-on-create',
+        recoveryId: 'SR_late_fee',
+      }),
+    ]);
+
+    const provider = blockchain.rpc.getWalletOfferProvider({
+      installationPlayerId: owner.installationPlayerId,
+      peerSessionId: owner.peerSessionId,
+    });
+    expect(provider).not.toBeNull();
+    walletReservationLedger.providerReady(provider!);
+    await walletReservationLedger.awaitOwner(owner);
+
+    expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+    expect(reconcileWalletOffer).toHaveBeenCalledTimes(2);
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late-fee');
+    expect(walletReservationLedger.entriesFor(owner)).toEqual([]);
+    expect(cradle.finalize_submission).not.toHaveBeenCalled();
+    expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
+    expect(cradle.reject_submission).not.toHaveBeenCalled();
+  });
 });
 
 describe('durable wallet reservation ledger', () => {
@@ -926,6 +1110,7 @@ describe('durable wallet reservation ledger', () => {
       100n,
       100n,
       makePeerConn([], []),
+      walletReservationLedger,
     );
     const cradle = makeMockCradle();
     controller.rewardPuzzleHash = '11'.repeat(32);
@@ -953,7 +1138,6 @@ describe('durable wallet reservation ledger', () => {
       { ...mockRpc, beginWalletOffer } as InternalBlockchainInterface,
       60_000,
     );
-    walletReservationLedger.attachRpc(blockchain.rpc);
     controller.attachBlockchain(blockchain);
     await controller.flushPendingWork();
 
@@ -964,7 +1148,7 @@ describe('durable wallet reservation ledger', () => {
   });
 
   it('keeps a failed independent write dirty and recovers on a later checkpoint', async () => {
-    const ledger = new WalletReservationLedger();
+    const ledger = new WalletReservationCoordinator();
     let fail = true;
     const writes: string[][] = [];
     ledger.configurePersistence(async (entries) => {
@@ -995,13 +1179,11 @@ describe('durable wallet reservation ledger', () => {
       beginWalletOffer,
       reconcileWalletOffer,
     });
-    const request = {
-      kind: 'funding' as const,
-      uniqueId: 'submission-handoff',
-      offer: { '1': -100n },
-      extraConditions: [{ opcode: 60n, args: ['launcher'] }],
-      openingFee: 0n,
-    };
+    const request = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60n, args: ['launcher'] }],
+    });
     walletReservationLedger.restore([
       {
         owner,
@@ -1011,13 +1193,14 @@ describe('durable wallet reservation ledger', () => {
             canonicalizeFundingRequest({
               amount: '100',
               fee: '0',
-              conditions: request.extraConditions,
+              conditions: request.conditions,
             }),
           ),
         },
         stage: 'creating',
+        disposition: 'active',
         recoveryId: 'SR_ledger_only',
-        request,
+        request: { kind: 'funding', canonical: request },
         reason: 'pending',
       },
     ]);
@@ -1029,7 +1212,7 @@ describe('durable wallet reservation ledger', () => {
     expect(beginWalletOffer).not.toHaveBeenCalled();
     expect(reconcileWalletOffer).toHaveBeenCalledWith(
       expect.any(Object),
-      request,
+      expect.objectContaining({ kind: 'funding', offer: { '1': -100n } }),
       'SR_ledger_only',
     );
     expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
@@ -1053,9 +1236,14 @@ describe('durable wallet reservation ledger', () => {
         tradeId: 'Offer_full_reload',
       });
     const rpcOverrides = {
-      beginWalletOffer,
-      reconcileWalletOffer,
-      getWalletProviderScope: () => ({ provider: 'cloud' as const, walletId: 'Wallet_1' }),
+      getWalletOfferProvider: () => ({
+        capability: 'recoverable' as const,
+        scope: { provider: 'cloud' as const, walletId: 'Wallet_1' },
+        beginCreation: beginWalletOffer,
+        reconcileCreation: reconcileWalletOffer,
+        beginCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' as const }),
+        reconcileCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' as const }),
+      }),
     };
     const request = canonicalizeFundingRequest({
       amount: '100',
@@ -1064,6 +1252,7 @@ describe('durable wallet reservation ledger', () => {
     });
     const envelopeOutbox = [{ key: fundingRequestKey(request), request }];
     const first = setup(jest.fn(), rpcOverrides);
+    let persistedLedger!: ReturnType<typeof walletReservationLedger.snapshot>;
     try {
       first.controller.restoreFundingOutbox(envelopeOutbox);
       first.controller.attachTransactionCoordinator(new ControlledLease());
@@ -1079,11 +1268,11 @@ describe('durable wallet reservation ledger', () => {
           recoveryId: 'SR_full_reload',
         }),
       ]);
+      persistedLedger = walletReservationLedger.snapshot();
     } finally {
       first.controller.cleanup();
     }
 
-    const persistedLedger = walletReservationLedger.snapshot();
     walletReservationLedger.resetForTests();
     walletReservationLedger.restore(persistedLedger);
     const restored = setup(jest.fn(), rpcOverrides);
@@ -1122,13 +1311,15 @@ describe('durable wallet reservation ledger', () => {
         owner,
         purpose: { kind: 'funding', operationId: 'ledger-operation' },
         stage: 'creating',
+        disposition: 'active',
         recoveryId: 'SR_conflict',
         request: {
           kind: 'funding',
-          uniqueId: 'submission-handoff',
-          offer: { '1': -101n },
-          extraConditions: [{ opcode: 60n, args: ['ledger-launcher'] }],
-          openingFee: 0n,
+          canonical: canonicalizeFundingRequest({
+            amount: '101',
+            fee: '0',
+            conditions: [{ opcode: 60n, args: ['ledger-launcher'] }],
+          }),
         },
         reason: 'pending',
       },
