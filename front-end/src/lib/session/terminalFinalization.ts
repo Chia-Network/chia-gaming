@@ -49,7 +49,6 @@ export interface TerminalFinalizationResult {
 export function finalizeTerminalSession(
   args: {
     controller: SessionController;
-    model: SessionModel;
     identity: TerminalSessionIdentity;
     coins: CoinOfInterestEntry[];
   },
@@ -62,12 +61,7 @@ export function finalizeTerminalSession(
   const coins = args.coins.map((coin) => ({ ...coin }));
 
   const finalization = (async () => {
-    await args.controller.quiesceForTerminalFinalization();
-    const handState = structuredClone(args.model.game.handState);
-    const model: SessionModel = {
-      ...args.model,
-      game: { ...args.model.game, handState },
-    };
+    const model = await args.controller.quiesceForTerminalFinalization();
     const terminalFields = structuredClone({
       terminal: {
         iStarted: identity.iStarted,

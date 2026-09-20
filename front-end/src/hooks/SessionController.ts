@@ -51,8 +51,29 @@ import {
   type ReliableCommitCoordinator,
   type ReliableMessageConsumer,
 } from '../services/PeerSession';
+import type { SessionRuntimeLease } from '../lib/session/sessionRuntimeLease';
+import type { SessionModel } from '../lib/session/types';
+import { SessionRuntimeRetiredError } from '../lib/session/sessionMachineRuntime';
+import {
+  decodeWalletOfferCleanupEntries,
+  type WalletOfferCleanupEntry,
+  type WalletOfferCleanupSource,
+} from '../lib/session/walletOfferCleanup';
 
 export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
+
+export class WalletOfferCleanupPendingError extends Error {
+  readonly code = 'WALLET_OFFER_CLEANUP_PENDING';
+
+  constructor(readonly entries: readonly WalletOfferCleanupEntry[]) {
+    super(
+      `Cannot finish session while ${entries.length} wallet offer reservation${
+        entries.length === 1 ? '' : 's'
+      } remain. Reconnect the wallet and retry cleanup.`,
+    );
+    this.name = 'WalletOfferCleanupPendingError';
+  }
+}
 
 class TransactionSubmitQueue {
   private tail: Promise<void> = Promise.resolve();
@@ -85,6 +106,7 @@ export interface WasmFields {
   diagnosticLog: string[];
   durabilityWarning: string | undefined;
   fundingOutbox: Array<{ key: string; request: CanonicalFundingRequest }>;
+  walletOfferCleanup: WalletOfferCleanupEntry[];
   transportDisposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
   activeGameIds: string[];
   channelStatus: ChannelStatusPayload | null;
@@ -175,8 +197,29 @@ type FundingAttemptLaunchState =
 interface ActiveFundingAttempt {
   readonly key: string;
   readonly request: CanonicalFundingRequest;
-  readonly predecessorCancellation?: Promise<void>;
   launchState: FundingAttemptLaunchState;
+}
+
+type SubmissionDeliveryState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'scheduled-with-lease'; readonly lease: SessionRuntimeLease }
+  | { readonly kind: 'launched' };
+
+interface PendingSubmissionDelivery {
+  readonly submission: TransactionSubmission;
+  readonly completion: Promise<void>;
+  readonly complete: () => void;
+  state: SubmissionDeliveryState;
+}
+
+type WalletOfferCleanupState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'scheduled-with-lease'; readonly lease: SessionRuntimeLease }
+  | { readonly kind: 'launched' };
+
+interface OwnedWalletOfferCleanup {
+  readonly entry: WalletOfferCleanupEntry;
+  state: WalletOfferCleanupState;
 }
 
 export class SessionController implements PollingGameSession {
@@ -232,17 +275,18 @@ export class SessionController implements PollingGameSession {
   diagnosticLog: string[] = [];
   private readonly receivePolicy: ReadonlySessionReceivePolicy;
   private pendingPeerFailure: string | null = null;
-  private transactionCoordinator: ReliableCommitCoordinator | null = null;
+  private transactionCoordinator: SessionRuntimeLease | null = null;
   private restoreStatus: RestoreStatus = 'idle';
   private restoreError: string | null = null;
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private readonly transactionSubmitQueue = new TransactionSubmitQueue();
-  private queuedSubmissionIds = new Set<string>();
+  private readonly pendingSubmissionDeliveries = new Map<string, PendingSubmissionDelivery>();
   private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
   private activeFundingAttempt: ActiveFundingAttempt | null = null;
+  private readonly walletOfferCleanup = new Map<string, OwnedWalletOfferCleanup>();
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: {
@@ -355,23 +399,27 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  attachTransactionCoordinator(coordinator: ReliableCommitCoordinator): void {
+  attachTransactionCoordinator(lease: SessionRuntimeLease): void {
     if (this.retired) {
-      coordinator.retire();
+      lease.retire();
       return;
     }
-    if (this.transactionCoordinator && this.transactionCoordinator !== coordinator) {
+    if (this.transactionCoordinator && this.transactionCoordinator !== lease) {
       this.transactionCoordinator.retire();
     }
-    this.transactionCoordinator = coordinator;
-    this.reliableTransport.attachCommitCoordinator(coordinator);
+    this.transactionCoordinator = lease;
+    this.reliableTransport.attachCommitCoordinator(lease);
     if (this.activeFundingAttempt) this.scheduleFundingRequest(this.activeFundingAttempt);
-    if (this.eventQueue.length > 0) coordinator.requestCommit();
+    for (const delivery of this.pendingSubmissionDeliveries.values()) {
+      this.scheduleSubmissionDelivery(delivery);
+    }
+    this.scheduleIdleWalletOfferCleanup();
+    if (this.eventQueue.length > 0) lease.requestCommit();
   }
 
-  detachTransactionCoordinator(coordinator: ReliableCommitCoordinator): void {
-    if (this.transactionCoordinator !== coordinator) return;
-    this.reliableTransport.detachCommitCoordinator(coordinator);
+  detachTransactionCoordinator(lease: SessionRuntimeLease): void {
+    if (this.transactionCoordinator !== lease) return;
+    this.reliableTransport.detachCommitCoordinator(lease);
     this.transactionCoordinator = null;
   }
 
@@ -457,6 +505,7 @@ export class SessionController implements PollingGameSession {
     this.resubmitAfterChainSync = true;
     this.resubmitNeedsCoinSnapshot = this.cradle ? this.snapshotWatchedCoins().length > 0 : null;
     this.flushPendingCoinStates();
+    this.scheduleIdleWalletOfferCleanup();
   }
 
   detachBlockchain(blockchain: BlockchainPoller) {
@@ -743,7 +792,6 @@ export class SessionController implements PollingGameSession {
       return;
     }
     try {
-      await attempt.predecessorCancellation;
       const offerAmount = -BigInt(request.amount);
       const extraConditions = request.conditions.map(({ opcode, args }) => ({
         opcode,
@@ -770,13 +818,10 @@ export class SessionController implements PollingGameSession {
             ? bundle.tradeId
             : undefined;
         if (staleTradeId) {
-          try {
-            await this.cancelRejectedFundingOffer(staleTradeId);
-          } catch (error) {
-            log(
-              `[wasm] failed to cancel retired funding offer trade_id=${staleTradeId}: ${extractErrorMessage(error)}`,
-            );
-          }
+          await this.enqueueResult(() => {
+            this.queueWalletOfferCleanup(staleTradeId, 'funding-offer-stale');
+            this.requestCommit();
+          });
         }
         return;
       }
@@ -811,43 +856,42 @@ export class SessionController implements PollingGameSession {
         if (!this.cradle) {
           log('[wasm] handleNeedCoinSpend: cradle gone after wallet RPC; dropping');
           if (persistedTradeId) {
-            await this.cancelRejectedFundingOffer(persistedTradeId);
+            await this.enqueueResult(() => {
+              this.queueWalletOfferCleanup(persistedTradeId, 'funding-cradle-unavailable');
+              this.retireFundingAttempt(attempt);
+              this.requestCommit();
+            });
+          } else {
+            this.enqueueStimulus(() => {
+              this.retireFundingAttempt(attempt);
+              this.requestCommit();
+            });
           }
-          this.enqueueStimulus(() => {
-            this.retireFundingAttempt(attempt);
-            this.requestCommit();
-          });
           return;
         }
-        let successorCancellation: Promise<void> | undefined;
         try {
           await this.enqueueResult(() => {
-            this.retireFundingAttempt(attempt);
             if (!this.cradle) {
+              if (persistedTradeId) {
+                this.queueWalletOfferCleanup(persistedTradeId, 'funding-cradle-unavailable');
+              }
+              this.retireFundingAttempt(attempt);
               this.requestCommit();
               return;
             }
             const result = requireWasmResult(this.cradle.provide_offer_bech32(offerString));
-            const replacement = result.events.find((event) => 'NeedCoinSpend' in event);
-            if (persistedTradeId && replacement && 'NeedCoinSpend' in replacement) {
-              const canonicalReplacement = canonicalizeFundingRequest(
-                replacement.NeedCoinSpend,
-                'WASM replacement NeedCoinSpend request',
-              );
-              const replacementKey = fundingRequestKey(canonicalReplacement);
-              const cancellation = this.releaseAfterPersistence(
-                `funding-cancel:${persistedTradeId}`,
-                () => this.cancelRejectedFundingOffer(persistedTradeId),
-              );
-              successorCancellation = cancellation;
-              this.queueCanonicalFundingRequest(replacementKey, canonicalReplacement, cancellation);
-            }
             this.processResult(result);
+            this.flushDeferredWork();
+            this.retireFundingAttempt(attempt);
             this.requestCommit();
           });
         } catch (error) {
-          if (persistedTradeId && !successorCancellation) {
-            await this.cancelRejectedFundingOffer(persistedTradeId);
+          if (persistedTradeId) {
+            await this.enqueueResult(() => {
+              this.queueWalletOfferCleanup(persistedTradeId, 'funding-offer-rejected');
+              this.retireFundingAttempt(attempt);
+              this.requestCommit();
+            });
           }
           throw error;
         }
@@ -894,11 +938,7 @@ export class SessionController implements PollingGameSession {
     this.queueCanonicalFundingRequest(key, canonical);
   }
 
-  private queueCanonicalFundingRequest(
-    key: string,
-    request: CanonicalFundingRequest,
-    predecessorCancellation?: Promise<void>,
-  ): void {
+  private queueCanonicalFundingRequest(key: string, request: CanonicalFundingRequest): void {
     const active = this.activeFundingAttempt;
     if (active) {
       if (active.key === key) return;
@@ -911,7 +951,6 @@ export class SessionController implements PollingGameSession {
       key,
       request,
       launchState: { kind: 'idle' },
-      ...(predecessorCancellation ? { predecessorCancellation } : {}),
     };
     this.activeFundingAttempt = attempt;
     this.scheduleFundingRequest(attempt);
@@ -963,29 +1002,123 @@ export class SessionController implements PollingGameSession {
     if (restored) this.scheduleFundingRequest(restored);
   }
 
-  private async cancelRejectedFundingOffer(tradeId: string): Promise<void> {
-    const cancelOffer = this.blockchain?.rpc.cancelOffer;
-    if (!cancelOffer) {
-      throw new Error('wallet cannot release the rejected persisted funding offer');
+  restoreWalletOfferCleanup(entries: WalletOfferCleanupEntry[]): void {
+    const decoded = decodeWalletOfferCleanupEntries(entries, 'live.walletOfferCleanup');
+    if (this.walletOfferCleanup.size > 0) {
+      throw new Error('Wallet offer cleanup was already restored');
     }
-    await cancelOffer(tradeId);
-    log(`[wasm] cancelled rejected persisted funding offer trade_id=${tradeId}`);
+    for (const entry of decoded) {
+      this.walletOfferCleanup.set(entry.tradeId, {
+        entry,
+        state: { kind: 'idle' },
+      });
+    }
+    this.scheduleIdleWalletOfferCleanup();
   }
 
-  private async releaseFeeOfferReservation(tradeId: string, reason: string): Promise<void> {
-    const cancelOffer = this.blockchain?.rpc.cancelOffer;
-    if (!cancelOffer) {
-      log(`[wasm] cannot release fee offer ${tradeId}: wallet has no cancelOffer`);
+  private queueWalletOfferCleanup(tradeId: string, source: WalletOfferCleanupSource): void {
+    const entry = decodeWalletOfferCleanupEntries([{ tradeId, source }], 'wallet offer cleanup')[0];
+    if (this.walletOfferCleanup.has(entry.tradeId)) return;
+    const owned: OwnedWalletOfferCleanup = { entry, state: { kind: 'idle' } };
+    this.walletOfferCleanup.set(entry.tradeId, owned);
+    this.scheduleWalletOfferCleanup(owned);
+  }
+
+  private scheduleIdleWalletOfferCleanup(): void {
+    for (const owned of this.walletOfferCleanup.values()) {
+      if (owned.state.kind === 'idle') this.scheduleWalletOfferCleanup(owned);
+    }
+  }
+
+  private scheduleWalletOfferCleanup(owned: OwnedWalletOfferCleanup): void {
+    const lease = this.transactionCoordinator;
+    if (!lease || this.walletOfferCleanup.get(owned.entry.tradeId) !== owned) return;
+    if (owned.state.kind === 'launched') return;
+    if (owned.state.kind === 'scheduled-with-lease' && owned.state.lease === lease) return;
+
+    owned.state = { kind: 'scheduled-with-lease', lease };
+    let release: Promise<void>;
+    try {
+      release = lease.releaseAfterPersistence(
+        `wallet-offer-cleanup:${owned.entry.tradeId}`,
+        async () => {
+          const scheduled = owned.state;
+          if (
+            this.walletOfferCleanup.get(owned.entry.tradeId) !== owned ||
+            scheduled.kind !== 'scheduled-with-lease' ||
+            scheduled.lease !== lease
+          ) {
+            return;
+          }
+          owned.state = { kind: 'launched' };
+          await this.attemptWalletOfferCleanup(owned);
+        },
+      );
+    } catch (error) {
+      this.handleWalletOfferCleanupReleaseError(owned, lease, error);
       return;
     }
-    try {
-      await cancelOffer(tradeId);
-      log(`[wasm] cancelled fee offer trade_id=${tradeId} reason=${reason}`);
-    } catch (error) {
-      log(
-        `[wasm] failed to cancel fee offer trade_id=${tradeId} reason=${reason}: ${extractErrorMessage(error)}`,
-      );
+    this.trackEffect(release);
+    void release.catch((error) => this.handleWalletOfferCleanupReleaseError(owned, lease, error));
+  }
+
+  private handleWalletOfferCleanupReleaseError(
+    owned: OwnedWalletOfferCleanup,
+    lease: SessionRuntimeLease,
+    error: unknown,
+  ): void {
+    const scheduled = owned.state;
+    if (
+      this.walletOfferCleanup.get(owned.entry.tradeId) !== owned ||
+      scheduled.kind !== 'scheduled-with-lease' ||
+      scheduled.lease !== lease
+    ) {
+      return;
     }
+    owned.state = { kind: 'idle' };
+    if (error instanceof SessionRuntimeRetiredError) {
+      if (this.transactionCoordinator !== lease) this.scheduleWalletOfferCleanup(owned);
+      return;
+    }
+    this.reportWalletOfferCleanupFailure(owned.entry, error);
+  }
+
+  private async attemptWalletOfferCleanup(owned: OwnedWalletOfferCleanup): Promise<void> {
+    try {
+      const cancelOffer = this.blockchain?.rpc.cancelOffer;
+      if (!cancelOffer) {
+        throw new Error('the connected wallet does not provide cancelOffer');
+      }
+      await cancelOffer(owned.entry.tradeId);
+      await this.runSubmissionMutation(() => {
+        if (this.walletOfferCleanup.get(owned.entry.tradeId) !== owned) return;
+        this.walletOfferCleanup.delete(owned.entry.tradeId);
+        this.requestCommit();
+      });
+      log(
+        `[wasm] cancelled wallet offer trade_id=${owned.entry.tradeId} source=${owned.entry.source}`,
+      );
+    } catch (error) {
+      if (this.retired && error instanceof SessionRuntimeRetiredError) throw error;
+      await this.runSubmissionMutation(() => {
+        if (this.walletOfferCleanup.get(owned.entry.tradeId) !== owned) return;
+        owned.state = { kind: 'idle' };
+        this.reportWalletOfferCleanupFailure(owned.entry, error);
+      });
+    }
+  }
+
+  private reportWalletOfferCleanupFailure(entry: WalletOfferCleanupEntry, error: unknown): void {
+    const detail = extractErrorMessage(error);
+    log(
+      `[wasm] wallet offer cleanup failed trade_id=${entry.tradeId} source=${entry.source}: ${detail}`,
+    );
+    this.rxjsEmitter?.next({
+      type: 'error',
+      error:
+        `Wallet offer ${entry.tradeId} remains reserved after ${entry.source}. ` +
+        `Reconnect the wallet and retry cleanup. (${detail})`,
+    });
   }
 
   emitRewardAddress() {
@@ -1036,7 +1169,7 @@ export class SessionController implements PollingGameSession {
         try {
           const feeSource = await blockchain.rpc.createFeeSpend?.(BigInt(amount), target);
           if (feeSource?.kind === 'unavailable') {
-            await this.enqueueResult(() => {
+            await this.runSubmissionMutation(() => {
               log(`[wasm] fee source unavailable id=${submission.id}: ${feeSource.reason}`);
               this.deferSubmissionUntilFreshSync();
               this.requestCommit();
@@ -1059,32 +1192,74 @@ export class SessionController implements PollingGameSession {
           feeSourceJson = jsonStringify({ kind: 'failure', reason: extractErrorMessage(e) });
         }
       }
-      const completion = await this.enqueueResult(() => {
-        try {
+      let completion: Promise<void>;
+      try {
+        const finalized = await this.runSubmissionMutation(() => {
           if (!this.cradle) {
             throw new Error('WASM cradle became unavailable before submission finalization');
           }
-          const finalized = this.cradle.finalize_submission(submission.id, feeSourceJson);
+          const result = this.cradle.finalize_submission(submission.id, feeSourceJson);
           this.requestCommit();
-          const broadcast = this.releaseAfterPersistence(`broadcast:${submission.id}`, () =>
-            this.broadcastFinalizedSubmission(submission, finalized, feeOfferTradeId),
+          const broadcast = this.releaseSubmissionEffect(`broadcast:${submission.id}`, () =>
+            this.broadcastFinalizedSubmission(submission, result, feeOfferTradeId),
           );
-          return broadcast;
-        } catch (error) {
-          if (feeOfferTradeId) {
-            const cleanup = this.releaseAfterPersistence(`fee-release:${submission.id}`, () =>
-              this.releaseFeeOfferReservation(feeOfferTradeId!, 'Rust rejected fee offer'),
-            );
-            return cleanup.then(() => {
-              throw error;
-            });
-          }
-          throw error;
+          return { broadcast };
+        });
+        completion = finalized.broadcast;
+      } catch (error) {
+        if (error instanceof SessionRuntimeRetiredError && this.retired) throw error;
+        if (feeOfferTradeId) {
+          await this.runSubmissionMutation(() => {
+            this.queueWalletOfferCleanup(feeOfferTradeId!, 'fee-finalization-rejected');
+            this.requestCommit();
+          });
         }
-      });
+        throw error;
+      }
       await completion;
     } catch (e) {
-      this.enqueueStimulus(() => this.recordLocalSubmissionFailure(submission, e));
+      await this.runSubmissionMutation(() => this.recordLocalSubmissionFailure(submission, e));
+    }
+  }
+
+  private async runSubmissionMutation<T>(work: () => T): Promise<T> {
+    let lease = this.transactionCoordinator;
+    if (!lease) {
+      if (this.retired) throw new SessionRuntimeRetiredError();
+      throw new Error('Submission mutations require SessionMachineRuntime coordination');
+    }
+    for (;;) {
+      try {
+        return await lease.enqueueResult(work);
+      } catch (error) {
+        if (!(error instanceof SessionRuntimeRetiredError) || this.retired) throw error;
+        const replacement = this.transactionCoordinator;
+        if (!replacement || replacement === lease) throw error;
+        lease = replacement;
+      }
+    }
+  }
+
+  private async releaseSubmissionEffect(key: string, launcher: () => Promise<void>): Promise<void> {
+    let lease = this.transactionCoordinator;
+    if (!lease) {
+      if (this.retired) throw new SessionRuntimeRetiredError();
+      throw new Error('Submission effects require SessionMachineRuntime coordination');
+    }
+    for (;;) {
+      let started = false;
+      try {
+        await lease.releaseAfterPersistence(key, () => {
+          started = true;
+          return launcher();
+        });
+        return;
+      } catch (error) {
+        if (started || !(error instanceof SessionRuntimeRetiredError) || this.retired) throw error;
+        const replacement = this.transactionCoordinator;
+        if (!replacement || replacement === lease) throw error;
+        lease = replacement;
+      }
     }
   }
 
@@ -1109,7 +1284,10 @@ export class SessionController implements PollingGameSession {
     log(`[wasm] submitTransaction blobLen=${blob.length}`);
     if (finalized.warning) {
       if (feeOfferTradeId) {
-        await this.releaseFeeOfferReservation(feeOfferTradeId, 'fee attachment failed');
+        await this.runSubmissionMutation(() => {
+          this.queueWalletOfferCleanup(feeOfferTradeId!, 'fee-finalization-warning');
+          this.requestCommit();
+        });
         feeOfferTradeId = undefined;
       }
       log(`[wasm] submitTransaction: ${finalized.warning}`);
@@ -1122,11 +1300,8 @@ export class SessionController implements PollingGameSession {
       'submitTransaction',
       appliedFee || undefined,
     );
-    await this.enqueueResult(() => {
+    await this.runSubmissionMutation(() => {
       if (!this.cradle) {
-        if (this.retired) {
-          return;
-        }
         throw new Error('WASM cradle became unavailable before recording the wallet outcome');
       }
       if (outcome.status === 'acknowledged') {
@@ -1141,19 +1316,17 @@ export class SessionController implements PollingGameSession {
         return;
       }
       this.cradle.reject_submission(submission.id);
+      if (feeOfferTradeId) {
+        this.queueWalletOfferCleanup(feeOfferTradeId, 'fee-network-rejected');
+      }
       this.requestCommit();
-      const cleanup = feeOfferTradeId
-        ? this.releaseAfterPersistence(`fee-release:${submission.id}`, () =>
-            this.releaseFeeOfferReservation(feeOfferTradeId!, 'network rejected transaction'),
-          )
-        : undefined;
       const message = rewriteFeeRateRejection(outcome.detail);
       log(`[wasm] submitTransaction rejected id=${submission.id}: ${message}`);
       this.rxjsEmitter?.next({
         type: 'error',
         error: `Wallet rejected transaction ${submission.id}: ${message}`,
       });
-      return cleanup;
+      return;
     });
   }
 
@@ -1182,14 +1355,45 @@ export class SessionController implements PollingGameSession {
 
   private submitTransaction(submission: TransactionSubmission) {
     if (this.transactionPublishNerfed) return;
-    if (this.queuedSubmissionIds.has(submission.id)) {
+    if (this.pendingSubmissionDeliveries.has(submission.id)) {
       log(`[wasm] submitTransaction skipped duplicate queued submission id=${submission.id}`);
       return;
     }
-    this.queuedSubmissionIds.add(submission.id);
+    let complete!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const delivery: PendingSubmissionDelivery = {
+      submission,
+      completion,
+      complete,
+      state: { kind: 'idle' },
+    };
+    this.pendingSubmissionDeliveries.set(submission.id, delivery);
+    this.trackEffect(completion);
+    this.scheduleSubmissionDelivery(delivery);
+  }
+
+  private scheduleSubmissionDelivery(delivery: PendingSubmissionDelivery): void {
+    const lease = this.transactionCoordinator;
+    if (!lease || this.pendingSubmissionDeliveries.get(delivery.submission.id) !== delivery) return;
+    if (delivery.state.kind === 'launched') return;
+    if (delivery.state.kind === 'scheduled-with-lease' && delivery.state.lease === lease) return;
+
+    delivery.state = { kind: 'scheduled-with-lease', lease };
+    let release: Promise<void>;
     try {
-      const release = this.releaseAfterPersistence(`submission:${submission.id}`, () =>
-        this.transactionSubmitQueue.enqueue(async () => {
+      release = lease.releaseAfterPersistence(`submission:${delivery.submission.id}`, () => {
+        const scheduled = delivery.state;
+        if (
+          this.pendingSubmissionDeliveries.get(delivery.submission.id) !== delivery ||
+          scheduled.kind !== 'scheduled-with-lease' ||
+          scheduled.lease !== lease
+        ) {
+          return Promise.resolve();
+        }
+        delivery.state = { kind: 'launched' };
+        const queued = this.transactionSubmitQueue.enqueue(async () => {
           if (this.retired) {
             log('[wasm] submitTransaction dropped because controller is retired');
             return;
@@ -1198,20 +1402,58 @@ export class SessionController implements PollingGameSession {
             log('[wasm] submitTransaction dropped because publishing is nerfed');
             return;
           }
-          await this.submitTransactionNow(submission);
-        }),
-      )
-        .catch((error) => {
-          diagStack('transactionSubmitQueue rejected', error);
-        })
-        .finally(() => {
-          this.queuedSubmissionIds.delete(submission.id);
+          await this.submitTransactionNow(delivery.submission);
         });
-      this.trackEffect(release);
+        return queued.then(
+          () => this.completeSubmissionDelivery(delivery),
+          async (error) => {
+            if (this.retired && error instanceof SessionRuntimeRetiredError) return;
+            await this.runSubmissionMutation(() =>
+              this.recordLocalSubmissionFailure(delivery.submission, error),
+            );
+            this.completeSubmissionDelivery(delivery);
+          },
+        );
+      });
     } catch (error) {
-      this.queuedSubmissionIds.delete(submission.id);
-      throw error;
+      this.handleSubmissionReleaseError(delivery, lease, error);
+      return;
     }
+    void release.catch((error) => this.handleSubmissionReleaseError(delivery, lease, error));
+  }
+
+  private handleSubmissionReleaseError(
+    delivery: PendingSubmissionDelivery,
+    lease: SessionRuntimeLease,
+    error: unknown,
+  ): void {
+    const scheduled = delivery.state;
+    if (
+      this.pendingSubmissionDeliveries.get(delivery.submission.id) !== delivery ||
+      scheduled.kind !== 'scheduled-with-lease' ||
+      scheduled.lease !== lease
+    ) {
+      return;
+    }
+    if (error instanceof SessionRuntimeRetiredError) {
+      delivery.state = { kind: 'idle' };
+      if (this.transactionCoordinator !== lease) this.scheduleSubmissionDelivery(delivery);
+      return;
+    }
+    void this.runSubmissionMutation(() =>
+      this.recordLocalSubmissionFailure(delivery.submission, error),
+    ).then(
+      () => this.completeSubmissionDelivery(delivery),
+      (recordingError) => {
+        if (!this.retired) this.reportRuntimeError(recordingError);
+      },
+    );
+  }
+
+  private completeSubmissionDelivery(delivery: PendingSubmissionDelivery): void {
+    if (this.pendingSubmissionDeliveries.get(delivery.submission.id) !== delivery) return;
+    this.pendingSubmissionDeliveries.delete(delivery.submission.id);
+    delivery.complete();
   }
 
   /**
@@ -1475,8 +1717,9 @@ export class SessionController implements PollingGameSession {
     return this.transactionSubmitQueue.flush();
   }
 
-  async quiesceForTerminalFinalization(): Promise<void> {
+  async quiesceForTerminalFinalization(): Promise<SessionModel> {
     const maxPasses = 20;
+    this.scheduleIdleWalletOfferCleanup();
     for (let pass = 0; pass < maxPasses; pass += 1) {
       this.flushDeferredWork();
       await this.flushPendingSave();
@@ -1494,8 +1737,26 @@ export class SessionController implements PollingGameSession {
         !this.drainScheduled &&
         !this.reliableTransport.hasPendingDurability()
       ) {
-        return;
+        if (this.walletOfferCleanup.size > 0) {
+          throw new WalletOfferCleanupPendingError(
+            [...this.walletOfferCleanup.values()].map(({ entry }) => ({ ...entry })),
+          );
+        }
+        const lease = this.transactionCoordinator;
+        if (!lease) {
+          throw new Error(
+            'SessionController terminal finalization requires an active runtime lease',
+          );
+        }
+        const model = structuredClone(lease.snapshotModel());
+        if (this.transactionCoordinator !== lease) continue;
+        return model;
       }
+    }
+    if (this.walletOfferCleanup.size > 0) {
+      throw new WalletOfferCleanupPendingError(
+        [...this.walletOfferCleanup.values()].map(({ entry }) => ({ ...entry })),
+      );
     }
     throw new Error(
       `SessionController terminal quiescence did not settle after ${maxPasses} persistence passes`,
@@ -1875,6 +2136,7 @@ export class SessionController implements PollingGameSession {
             },
           ]
         : [],
+      walletOfferCleanup: [...this.walletOfferCleanup.values()].map(({ entry }) => ({ ...entry })),
       transportDisposition: this.reliableState.disposition ?? 'active',
       activeGameIds: [...this.activeGameIds],
       channelStatus: this.lastChannelStatus,

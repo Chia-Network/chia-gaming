@@ -143,7 +143,7 @@ describe('delayed PeerSession message-handler binding', () => {
     const normalPersist = jest.fn(async () => {
       order.push('normal-persist');
     });
-    new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
       controller,
       iStarted: false,
       restoring: false,
@@ -152,6 +152,7 @@ describe('delayed PeerSession message-handler binding', () => {
       onError: jest.fn(),
       persist: normalPersist,
     });
+    runtime.activate();
     controller.setInboundSessionRejectPersistence(async () => {
       order.push('persist-receipt');
     });

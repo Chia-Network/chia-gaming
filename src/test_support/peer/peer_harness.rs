@@ -459,6 +459,7 @@ where
         }
     }
 
+    let mut completed: [Option<OffChainPhase>; 2] = [None, None];
     for _ in 0..100 {
         for who in 0..2 {
             if let Some(msg) = pipes[who ^ 1].message_pipe().queue.pop_front() {
@@ -516,14 +517,28 @@ where
             }
         }
 
-        let r0 = extract_off_chain_phase(&mut handlers[0]);
-        let r1 = extract_off_chain_phase(&mut handlers[1]);
-        if let (Some(p0), Some(p1)) = (r0, r1) {
-            return Ok([p0, p1]);
+        for who in 0..2 {
+            if completed[who].is_none() {
+                completed[who] = extract_off_chain_phase(&mut handlers[who]);
+            }
+        }
+        if completed.iter().all(Option::is_some) {
+            return Ok([
+                completed[0]
+                    .take()
+                    .expect("first completed off-chain phase retained"),
+                completed[1]
+                    .take()
+                    .expect("second completed off-chain phase retained"),
+            ]);
         }
     }
 
-    Err(Error::StrErr("handshake did not complete".to_string()))
+    Err(Error::StrErr(format!(
+        "handshake did not complete (retained off-chain phases: first={}, second={})",
+        completed[0].is_some(),
+        completed[1].is_some(),
+    )))
 }
 
 #[cfg(test)]

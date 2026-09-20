@@ -99,6 +99,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
         disposition: wasm.transportDisposition,
         durabilityWarning: wasm.durabilityWarning,
         fundingOutbox: wasm.fundingOutbox,
+        walletOfferCleanup: wasm.walletOfferCleanup,
       },
       presentation,
       history: {

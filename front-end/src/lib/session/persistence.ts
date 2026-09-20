@@ -64,6 +64,7 @@ import {
   parseStringArray,
 } from './persistencePrimitives';
 import { decodeCanonicalFundingRequest, fundingRequestKey } from './fundingRequest';
+import { decodeWalletOfferCleanupEntries } from './walletOfferCleanup';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
@@ -248,6 +249,14 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
             }
             return { key, request };
           }),
+        }),
+    ...(fields.walletOfferCleanup === undefined
+      ? {}
+      : {
+          walletOfferCleanup: decodeWalletOfferCleanupEntries(
+            fields.walletOfferCleanup,
+            'live.walletOfferCleanup',
+          ),
         }),
   };
   validateLive(live);

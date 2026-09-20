@@ -122,9 +122,12 @@ fn test_finalization_failure_preserves_full_queue() {
     let (mut outcome, args_program, holder) = settled_debug_outcome(&mut allocator, &mut rng);
 
     let proposal = debug_proposal(&mut allocator, &args_program);
-    outcome.cradles[holder]
+    let proposal_id = outcome.cradles[holder]
         .propose(&mut allocator, &proposal)
         .expect("queue proposal");
+    outcome.cradles[holder]
+        .queue_game_action_for_testing(GameAction::QueuedCancelProposal(proposal_id))
+        .expect("queue cancellation with staged notification");
     outcome.cradles[holder]
         .fail_next_cached_unroll_update_for_testing()
         .expect("inject finalization failure");
@@ -144,24 +147,53 @@ fn test_finalization_failure_preserves_full_queue() {
         .events
         .iter()
         .any(|event| matches!(event, GameSessionEvent::OutboundMessage(_))));
+    assert!(!failed.events.iter().any(|event| matches!(
+        event,
+        GameSessionEvent::Notification(GameNotification::ProposalCancelled { id, .. })
+            if *id == proposal_id
+    )));
     assert_eq!(
-        outcome.cradles[holder].queued_game_action_count_for_testing(),
-        1,
+        outcome.cradles[holder]
+            .queued_game_action_count_for_testing()
+            .expect("off-chain queue after failed finalization"),
+        2,
         "finalization failure must preserve the complete original queue"
     );
 
     let retry = outcome.cradles[holder]
         .flush_and_collect(&mut allocator)
         .expect("retry finalization");
+    assert_eq!(
+        retry
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                GameSessionEvent::Notification(GameNotification::ProposalCancelled { id, .. })
+                    if *id == proposal_id
+            ))
+            .count(),
+        1,
+        "staged cancellation notification must publish exactly once after retry"
+    );
     assert!(retry.events.iter().any(|event| matches!(
         event,
         GameSessionEvent::OutboundMessage(bytes)
             if matches!(
                 crate::session_phases::peer_wire::decode_peer_message(bytes),
                 Ok(PeerMessage::Batch { ref actions, .. })
-                    if actions.len() == 1 && matches!(actions[0], BatchAction::Propose(_))
+                    if actions.len() == 2
+                        && matches!(actions[0], BatchAction::Propose(_))
+                        && matches!(actions[1], BatchAction::CancelProposal(_))
             )
     )));
+    assert_eq!(
+        outcome.cradles[holder]
+            .queued_game_action_count_for_testing()
+            .expect("off-chain queue after successful retry"),
+        0,
+        "successful retry must commit the complete planned queue"
+    );
 }
 
 fn test_deferred_cheat_preserves_order() {
@@ -198,7 +230,9 @@ fn test_deferred_cheat_preserves_order() {
             )
     )));
     assert_eq!(
-        outcome.cradles[holder].queued_game_action_count_for_testing(),
+        outcome.cradles[holder]
+            .queued_game_action_count_for_testing()
+            .expect("off-chain queue after deferred cheat"),
         1,
         "deferred cheat must remain before no other queued action"
     );

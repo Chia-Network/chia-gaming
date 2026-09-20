@@ -7,6 +7,9 @@ import {
   createSessionModel,
   sessionModelFromSave,
 } from '../session/model';
+import { isTerminalChannelSnapshot } from '../session/selectors';
+import { coinIdFromBytes, toUint8 } from '../../util';
+import { coinRecordToName } from '../../util/coinWatch';
 import type { HandProposal } from '../session/types';
 import {
   action_with_messages,
@@ -38,12 +41,12 @@ async function runBoundedPollAttempts(
   maxAttempts: number,
   done: () => boolean,
   pollAttempt: () => Promise<void>,
-): Promise<number> {
+): Promise<{ attempts: number; completed: boolean }> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await pollAttempt();
-    if (done()) return attempt;
+    if (done()) return { attempts: attempt, completed: true };
   }
-  return maxAttempts;
+  return { attempts: maxAttempts, completed: false };
 }
 
 async function createAsymmetricActivePair(
@@ -293,7 +296,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
   await exchangeUntilIdle(adapters);
 
   const submittedBlobs: string[] = [];
-  const puzzleSolutionCoins: string[] = [];
+  const puzzleSolutionCoinIds: string[] = [];
   const originalSpend = fakeBlockchainInfo.spend;
   const originalGetPuzzleAndSolution = fakeBlockchainInfo.getPuzzleAndSolution;
   fakeBlockchainInfo.spend = async (...args: Parameters<typeof originalSpend>) => {
@@ -303,7 +306,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
   fakeBlockchainInfo.getPuzzleAndSolution = async (
     ...args: Parameters<typeof originalGetPuzzleAndSolution>
   ) => {
-    puzzleSolutionCoins.push(args[0]);
+    puzzleSolutionCoinIds.push(await coinIdFromBytes(toUint8(args[0])));
     return originalGetPuzzleAndSolution.apply(fakeBlockchainInfo, args);
   };
 
@@ -353,8 +356,9 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     const landedHeight = await fakeBlockchainInfo.getHeightInfo();
     assert.ok(landedHeight > preLandingHeight, 'landing must advance the simulator tip');
     const preReplacementSubmissionCount = submittedBlobs.length;
-    const puzzleRequestsBeforeReload = puzzleSolutionCoins.length;
+    const puzzleRequestsBeforeReload = puzzleSolutionCoinIds.length;
     const controllerBeforeReplacementReload = lane.controller;
+    let vanishedOutputCoinIds: string[] = [];
 
     lane = (
       await injectSessionReload(lane, poller, undefined, async () => {
@@ -366,6 +370,50 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
           replacementHeight,
           landedHeight,
           'replacement chain must reach the persisted tip',
+        );
+        const replacementRecords = await fakeBlockchainInfo.getCoinRecordsByNames(
+          landedWatches.map(({ coin_name }) => coin_name),
+        );
+        const landedRecordEntries = await Promise.all(
+          landedRecords.map(async (record) => [await coinRecordToName(record), record] as const),
+        );
+        const replacementRecordEntries = await Promise.all(
+          replacementRecords.map(
+            async (record) => [await coinRecordToName(record), record] as const,
+          ),
+        );
+        const landedRecordsByName = new Map(
+          landedRecordEntries.filter(
+            (entry): entry is readonly [string, (typeof landedRecords)[number]] =>
+              entry[0] !== undefined,
+          ),
+        );
+        const replacementRecordsByName = new Map(
+          replacementRecordEntries.filter(
+            (entry): entry is readonly [string, (typeof replacementRecords)[number]] =>
+              entry[0] !== undefined,
+          ),
+        );
+        vanishedOutputCoinIds = landedWatches
+          .map(({ coin_name }) => coin_name)
+          .filter(
+            (coinName) =>
+              landedRecordsByName.has(coinName) && !replacementRecordsByName.has(coinName),
+          );
+        assert.ok(
+          vanishedOutputCoinIds.length > 0,
+          'equal-tip replacement must remove at least one landed watched output',
+        );
+        const revivedInputCoinIds = landedWatches
+          .map(({ coin_name }) => coin_name)
+          .filter(
+            (coinName) =>
+              landedRecordsByName.get(coinName)?.spent === true &&
+              replacementRecordsByName.get(coinName)?.spent === false,
+          );
+        assert.ok(
+          revivedInputCoinIds.length > 0,
+          'equal-tip replacement must revive a spent input from the retained transaction',
         );
         // Force the poll that used to race teardown. Before the reload harness
         // retired the old controller first, it consumed this replacement and
@@ -379,7 +427,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     // intentionally decline to report after exhausting its coherent-snapshot
     // attempts. The recorder is shared by both controllers, so only the exact
     // retained bundle proves that the restored controller rebroadcast its transaction.
-    const transactionRebroadcastPollAttempts = await runBoundedPollAttempts(
+    const transactionRebroadcastPoll = await runBoundedPollAttempts(
       100,
       () => submittedBlobs.slice(preReplacementSubmissionCount).includes(finalizedBlob),
       async () => {
@@ -390,14 +438,20 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
         await flushWrapperDrain(adapters);
       },
     );
+    assert.equal(
+      transactionRebroadcastPoll.completed,
+      true,
+      `exact retained transaction did not rebroadcast within ${transactionRebroadcastPoll.attempts} attempts`,
+    );
     const transactionRebroadcasts = submittedBlobs.slice(preReplacementSubmissionCount);
     const watchedCoins = lane.controller.snapshotWatchedCoins();
-    const transactionRebroadcastProvenance =
-      `attempts=${transactionRebroadcastPollAttempts}/100 ` +
+    const rebroadcastProvenance = async (observed: string[]): Promise<string> =>
+      `attempts=${transactionRebroadcastPoll.attempts}/100 completed=${transactionRebroadcastPoll.completed} ` +
       `peak=${await fakeBlockchainInfo.getHeightInfo()} ` +
-      `submissions={total=${submittedBlobs.length},baseline=${baselineSubmissionCount},preReplacement=${preReplacementSubmissionCount},postReplacement=${transactionRebroadcasts.length}} ` +
+      `submissions={total=${submittedBlobs.length},baseline=${baselineSubmissionCount},preReplacement=${preReplacementSubmissionCount},postReplacement=${observed.length}} ` +
       `expected={hash=${diagnosticBlobHash(finalizedBlob)},length=${finalizedBlob.length}} ` +
-      `observed=[${diagnosticBlobSummary(transactionRebroadcasts)}] ` +
+      `observed=[${diagnosticBlobSummary(observed)}] ` +
+      `vanishedOutputCoinIds=[${vanishedOutputCoinIds.join(',')}] ` +
       `channelStatus=${lane.controller.lastChannelStatus?.state ?? 'none'} ` +
       `watchedCoins={count=${watchedCoins.length},ids=[${watchedCoins.map(({ coin_name }) => coin_name).join(',')}]} ` +
       `controller={uniqueId=${lane.controller.uniqueId},replaced=${controllerBeforeReplacementReload !== lane.controller},adapterOwnsController=${lane.adapter.blob === lane.controller}} ` +
@@ -406,16 +460,18 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     assert.equal(
       transactionRebroadcasts.filter((blob) => blob === finalizedBlob).length,
       1,
-      `restore must rebroadcast exact transaction bytes once: ${transactionRebroadcastProvenance}`,
+      `restore must rebroadcast exact transaction bytes once: ${await rebroadcastProvenance(transactionRebroadcasts)}`,
     );
-    assert.equal(
-      puzzleSolutionCoins.length,
-      puzzleRequestsBeforeReload,
-      'vanished output must not request a nonexistent puzzle and solution',
+    const replacementPuzzleRequests = puzzleSolutionCoinIds.slice(puzzleRequestsBeforeReload);
+    assert.deepEqual(
+      replacementPuzzleRequests.filter((coinId) => vanishedOutputCoinIds.includes(coinId)),
+      [],
+      `vanished output IDs must not request nonexistent puzzles and solutions; vanished=[${vanishedOutputCoinIds.join(',')}], requested=[${replacementPuzzleRequests.join(',')}]`,
     );
     assert.equal((await peekSession())?.phase, 'live');
-    assert.notEqual(lane.controller.lastChannelStatus?.state, 'ResolvedClean');
-    assert.notEqual(lane.controller.lastChannelStatus?.state, 'ResolvedAborted');
+    assert.equal(lane.controller.lastChannelStatus?.state, 'Unrolling');
+    assert.notEqual(lane.controller.lastChannelStatus?.session_disposition, 'Abandoned');
+    assert.equal(isTerminalChannelSnapshot(lane.controller.lastChannelStatus), false);
 
     await pollOnce(poller);
     await flushWrapperDrain(adapters);
@@ -424,7 +480,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     assert.equal(
       submissionsAfterRepeatedSnapshot.filter((blob) => blob === finalizedBlob).length,
       1,
-      `a repeated replacement snapshot must not duplicate the transaction rebroadcast: ${transactionRebroadcastProvenance} repeatedObserved=[${diagnosticBlobSummary(submissionsAfterRepeatedSnapshot)}] repeatedTotal=${submittedBlobs.length}`,
+      `a repeated replacement snapshot must not duplicate the transaction rebroadcast: ${await rebroadcastProvenance(submissionsAfterRepeatedSnapshot)}`,
     );
   } finally {
     fakeBlockchainInfo.spend = originalSpend;

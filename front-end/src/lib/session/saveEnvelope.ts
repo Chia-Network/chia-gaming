@@ -1,5 +1,6 @@
 import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import type { CanonicalFundingRequest } from './fundingRequest';
+import type { WalletOfferCleanupEntry } from './walletOfferCleanup';
 import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
@@ -70,6 +71,7 @@ export interface SessionLiveSave extends SessionTransportSave {
   rewardPuzzleHash: string;
   durabilityWarning?: string;
   fundingOutbox?: Array<{ key: string; request: CanonicalFundingRequest }>;
+  walletOfferCleanup?: WalletOfferCleanupEntry[];
 }
 
 export interface SavedGameInstance {

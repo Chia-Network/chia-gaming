@@ -3,7 +3,7 @@ import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/mod
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
-import type { ReliableCommitCoordinator } from '../../services/PeerSession';
+import type { SessionRuntimeLease } from '../session/sessionRuntimeLease';
 import { runSessionMachineTransition, send } from './session_machine.harness';
 
 function deferred() {
@@ -21,18 +21,18 @@ describe('session machine behavior sequences', () => {
     persist: () => Promise<void>,
     flushDeferredWork: () => void = () => {},
   ) {
-    let coordinator: ReliableCommitCoordinator | undefined;
-    let attachedCoordinator: ReliableCommitCoordinator | undefined;
+    let coordinator: SessionRuntimeLease | undefined;
+    let attachedCoordinator: SessionRuntimeLease | undefined;
     const controller = {
       clearDerivedGamePresentation: () => {},
-      attachTransactionCoordinator: (next: ReliableCommitCoordinator) => {
+      attachTransactionCoordinator: (next: SessionRuntimeLease) => {
         coordinator = next;
         if (attachedCoordinator && attachedCoordinator !== next) {
           attachedCoordinator.retire();
         }
         attachedCoordinator = next;
       },
-      detachTransactionCoordinator: (detached: ReliableCommitCoordinator) => {
+      detachTransactionCoordinator: (detached: SessionRuntimeLease) => {
         if (attachedCoordinator === detached) attachedCoordinator = undefined;
       },
       flushDeferredWork,
@@ -53,9 +53,43 @@ describe('session machine behavior sequences', () => {
       onError: () => {},
       persist,
     });
+    runtime.activate();
     if (!coordinator) throw new Error('runtime did not attach its commit coordinator');
     return { runtime, coordinator, controller };
   }
+
+  it('constructs without attaching or revoking controller authority', async () => {
+    const controller = new SessionController(null, 'session-id', 0n, 0n, {
+      sendMessage: () => true,
+      sendAck: () => true,
+    });
+    const current = {
+      retire: jest.fn(() => controller.detachTransactionCoordinator(current)),
+      requestCommit: jest.fn(),
+      flush: jest.fn(async () => {}),
+      enqueue: jest.fn(),
+      enqueueResult: jest.fn(),
+      releaseAfterPersistence: jest.fn(),
+      snapshotModel: jest.fn(() => createSessionModel()),
+    } as unknown as SessionRuntimeLease;
+    controller.attachTransactionCoordinator(current);
+
+    new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      controller,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: jest.fn(),
+      persist: async () => {},
+    });
+
+    expect(current.retire).not.toHaveBeenCalled();
+    await controller.flushPendingSave();
+    expect(current.flush).toHaveBeenCalledTimes(1);
+    controller.cleanup();
+    expect(current.retire).toHaveBeenCalledTimes(1);
+  });
 
   it('synchronously revokes a replaced controller owner and ignores stale release', async () => {
     const controller = new SessionController(null, 'session-id', 0n, 0n, {
@@ -69,7 +103,8 @@ describe('session machine behavior sequences', () => {
       enqueue: jest.fn(),
       enqueueResult: jest.fn(),
       releaseAfterPersistence: jest.fn(),
-    } as unknown as ReliableCommitCoordinator;
+      snapshotModel: jest.fn(() => createSessionModel()),
+    } as unknown as SessionRuntimeLease;
     const second = {
       retire: jest.fn(() => controller.detachTransactionCoordinator(second)),
       requestCommit: jest.fn(),
@@ -77,7 +112,8 @@ describe('session machine behavior sequences', () => {
       enqueue: jest.fn(),
       enqueueResult: jest.fn(),
       releaseAfterPersistence: jest.fn(),
-    } as unknown as ReliableCommitCoordinator;
+      snapshotModel: jest.fn(() => createSessionModel()),
+    } as unknown as SessionRuntimeLease;
 
     controller.attachTransactionCoordinator(first);
     controller.attachTransactionCoordinator(second);
@@ -253,6 +289,7 @@ describe('session machine behavior sequences', () => {
           persist: async () => {},
         },
       );
+      replacement.activate();
       if (writeError) write.reject(writeError);
       else write.resolve();
 

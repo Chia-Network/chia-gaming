@@ -12,6 +12,9 @@ import {
   isDictionary,
   type BencodexValue,
 } from 'chia-gaming-bencodex';
+import type { ReliableCommitCoordinator } from '../lib/session/sessionRuntimeLease';
+
+export type { ReliableCommitCoordinator } from '../lib/session/sessionRuntimeLease';
 
 export const RELIABLE_DATA_HEADER_BYTES = 21;
 export const RELIABLE_ACK_HEADER_BYTES = 21;
@@ -59,15 +62,6 @@ export interface ReliableMessageConsumer {
   sent?: (msgno: bigint) => void;
   keepalive?: () => void;
   committed?: () => void;
-}
-
-export interface ReliableCommitCoordinator {
-  retire(): void;
-  requestCommit(): void;
-  flush(): Promise<void>;
-  enqueue(work: () => void): void;
-  enqueueResult<T>(work: () => T): Promise<T>;
-  releaseAfterPersistence(key: string, launcher: () => Promise<void>): Promise<void>;
 }
 
 export interface PreparedReliableCommit {

@@ -290,6 +290,40 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() => decodeSessionSaveEnvelope(save)).toThrow('more than one distinct request');
   });
 
+  it('round-trips strict wallet offer cleanup entries', () => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    save.live.walletOfferCleanup = [
+      { tradeId: 'funding-trade', source: 'funding-offer-rejected' },
+      { tradeId: 'fee-trade', source: 'fee-network-rejected' },
+    ];
+
+    const decoded = decodeSessionSaveEnvelope(save);
+    if (decoded.save.phase !== 'live') throw new Error('expected decoded live fixture');
+    expect(decoded.save.live.walletOfferCleanup).toEqual(save.live.walletOfferCleanup);
+  });
+
+  it.each([
+    ['unknown source', [{ tradeId: 'trade', source: 'unknown' }]],
+    ['empty trade id', [{ tradeId: '', source: 'fee-network-rejected' }]],
+    [
+      'extra field',
+      [{ tradeId: 'trade', source: 'fee-network-rejected', reason: 'unbounded text' }],
+    ],
+    [
+      'duplicate trade id',
+      [
+        { tradeId: 'trade', source: 'fee-network-rejected' },
+        { tradeId: 'trade', source: 'funding-offer-rejected' },
+      ],
+    ],
+  ])('rejects wallet offer cleanup with %s', (_label, entries) => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    save.live.walletOfferCleanup = entries as typeof save.live.walletOfferCleanup;
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow();
+  });
+
   it('accepts cloud as preferences.blockchainType', () => {
     const decoded = decodeSessionSaveEnvelope(baseSave({ blockchainType: 'cloud' }));
     expect(decoded.phase).toBe('preferences');

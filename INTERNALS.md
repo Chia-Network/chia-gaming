@@ -100,6 +100,14 @@ manager converts authoritative raw snapshots into ordered `Created`, `Spent`,
 then height observations for `GameSession`. The session never maintains or
 filters a second watch set.
 
+The same ownership applies to submission intent: Rust
+`TransactionManager` is its durable retained owner. The controller's
+nonserialized `PendingSubmissionDelivery` map bridges only a submission already
+drained from Rust but not yet launched when the committed runtime lease is
+replaced. Lease replacement may reschedule that persistence-gated launch. Once
+the launch has entered `TransactionSubmitQueue`, that ordered queue owns
+exactly-once completion and the bridge cannot schedule it again.
+
 **Retained transaction rebroadcast.** When the manager drains a transaction for
 submission, it keeps a retained copy for reload/reorg recovery and derives the
 output coins that transaction should create from its `CREATE_COIN` conditions.
@@ -292,7 +300,9 @@ attributed through `ActionFailed`; every other queued action remains in its
 original order. If finalization fails, the full original queue remains. This is
 atomic batch packaging, not general rollback or retry. `OffChainPhase` owns both
 halves of the boundary: planning mutates only `BatchPlan`; commit installs its
-channel, queue disposition, and effects together.
+channel, queue disposition, and effects together. The plan owns and mutates
+only durable protocol and queue working state. Transient, nonserialized caches
+remain outside it and are not transactionally cloned.
 
 A valid received batch commits before a post-receive drain reconciles known
 stale local actions and emits `ActionFailed`; any remaining unexpected drain
@@ -333,8 +343,9 @@ The invariant is therefore:
   commits before explicit reconciliation removes known stale game actions and
   emits `ActionFailed`; the remaining queue drains once. Unexpected local
   failures stay fail-fast. Its local `BatchPlan` protects only package
-  construction: cloned channel state, queue disposition, and staged effects
-  commit after cached-unroll finalization, with no nested retry loop.
+  construction: cloned durable channel state, queue disposition, and staged
+  effects commit after cached-unroll finalization, with no nested retry loop.
+  Transient caches are not members of that transactional clone.
 
 Do not generalize this rollback mechanism. Its purpose is to quarantine
 partially applied, untrusted peer input. Local UI calls, block-height and coin
@@ -390,7 +401,14 @@ cross the boundary.
 
 ## Browser Commit Boundary
 
-For an active or rehydrated browser session, `SessionMachineRuntime` is the only
+`SessionMachineRuntime` construction is inert. The committed React layout
+effect installs its render callback and calls `activate()`; only then does it
+attach an exclusive `SessionRuntimeLease`. Layout-effect cleanup calls only
+`clearRender()`. It does not retire the lease or protocol. Replacement of the
+committed lease and `SessionController` cleanup—including terminal
+cleanup—own retirement.
+
+For an active or rehydrated browser session, the activated runtime is the only
 commit owner. One stimulus is not finished merely because its first reducer or
 WASM call returned. The runtime must continue through reducer effects,
 controller/WASM callbacks, generated events, UX-model changes, and reliable
@@ -412,13 +430,14 @@ is both the commit-boundary mechanism and the general flicker-avoidance
 mechanism. Work arriving during the write belongs to the next commit and cannot
 change the captured payload.
 
-A persistence failure is serious but must not stop a game for money for an
-internal storage reason. Report a persistent warning, publish and release the
-captured boundary once, retain the latest in-memory state as dirty, and retry
-only after later activity. Persisted and released generations are distinct: a
-later successful checkpoint must not resend effects already released in
-degraded mode. This availability choice admits a crash window in which external
-effects are newer than the last durable local checkpoint.
+A live-checkpoint failure is serious but must not stop a game for money for an
+internal storage reason. Report a persistent durability warning, publish and
+release the captured gameplay/network boundary once, retain the latest
+in-memory state as dirty, and retry only after later activity. Persisted and
+released generations are distinct: a later successful checkpoint must not
+resend effects already released in degraded mode. This availability choice
+admits a crash window in which external effects are newer than the last durable
+local checkpoint.
 
 Do not add active-session save timers, direct reducer/effect persistence,
 mid-drain React updates, or eager peer sends. Every new event source must feed
@@ -426,8 +445,10 @@ the same coordinator. Pre-runtime negotiation may use the standalone reliable
 transport flush, but it follows the same attempt-persistence-before-release
 ordering and degraded failure policy.
 
-The controller grants this coordinator an exclusive, retire-aware runtime
-lease. Replacing or unmounting it retires the old runtime, discards queued
+`SessionRuntimeLease` is the peer transport's narrow
+`ReliableCommitCoordinator` plus one capability:
+`snapshotModel()` returns the authoritative runtime model. Replacing a committed
+lease or cleaning up its controller retires the old runtime, discards queued
 events and fire-and-forget controller work, and rejects queued result promises
 and persistence-gated effects. Completion callbacks from an in-flight write
 also become inert after retirement.
@@ -435,10 +456,29 @@ also become inert after retirement.
 The funding outbox is single-flight and persists exactly zero or one canonical
 request. A replacement request carries the predecessor wallet-offer
 cancellation promise and cannot launch until that cancellation settles.
+Rust creates the canonical request, the external wallet constructs the funding
+offer from it, and Rust validates the returned offer. Rejection ends the
+handshake; it never creates controller-owned successor or predecessor requests.
+
+Rejected persisted funding and fee offers instead enter a separate strict
+durable wallet-offer cleanup outbox. Its entry must be persisted before
+`cancelOffer` is released. A failed cancellation stays in the outbox and is
+retried only on restore, wallet reconnect, attachment of a new committed lease,
+or an explicit terminal-finalization attempt—never by a timer or immediate
+retry loop. Unresolved cleanup blocks terminal quiescence.
+
 Transaction submission promises span persistence-gated launch, ordered wallet
 delivery, Rust acknowledgement/rejection, and fee-offer cleanup. Terminal
 finalization drains those promises, controller events, persistence, and reliable
-transport repeatedly to quiescence before writing the terminal snapshot.
+transport repeatedly to quiescence, then takes the terminal snapshot from that
+post-quiescence authoritative runtime model. The terminal record must be
+written before ownership is retired. Unlike a live-checkpoint failure, a
+terminal-record write failure retains live ownership and blocks teardown.
+
+These browser ownership and persistence rules require no peer wire schema
+change. Transaction rebroadcast remains the exact-chain-byte behavior described
+above; reliable peer-frame replay remains the separate numbered-frame transport
+behavior.
 
 ---
 

@@ -3,7 +3,10 @@ import 'fake-indexeddb/auto';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import type { SessionController } from '../../hooks/SessionController';
+import {
+  WalletOfferCleanupPendingError,
+  type SessionController,
+} from '../../hooks/SessionController';
 import {
   initialKrunkGameState,
   krunkStateCodec,
@@ -26,6 +29,7 @@ import {
   stageTerminalSession,
 } from '../../hooks/save';
 import { createSessionModel } from '../session/model';
+import type { SessionModel } from '../session/types';
 import { readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
 import { decodeSessionSaveEnvelope } from '../session/persistence';
 import { createSessionMachineState } from '../session/sessionMachine';
@@ -141,6 +145,7 @@ function makeController(events: string[]): SessionController {
     handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
     quiesceForTerminalFinalization: async () => {
       events.push('controller-quiesce');
+      return structuredClone(model);
     },
   } as unknown as SessionController;
 }
@@ -211,7 +216,6 @@ afterEach(() => {
 function finalizationArgs(controller: SessionController) {
   return {
     controller,
-    model,
     identity: {
       myName: 'Alice',
       opponentName: 'Bob',
@@ -298,8 +302,8 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
 });
 
 it('does not stage or tear down before controller terminal quiescence', async () => {
-  let releaseQuiescence!: () => void;
-  const quiescenceGate = new Promise<void>((resolve) => {
+  let releaseQuiescence!: (model: SessionModel) => void;
+  const quiescenceGate = new Promise<SessionModel>((resolve) => {
     releaseQuiescence = resolve;
   });
   const controller = {
@@ -321,11 +325,108 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   expect(stageTerminal).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
 
-  releaseQuiescence();
+  releaseQuiescence(structuredClone(model));
   await finalization;
 
   expect(stageTerminal).toHaveBeenCalledTimes(1);
   expect(teardown).toHaveBeenCalledTimes(1);
+});
+
+it('does not stage or tear down while wallet offer cleanup remains unresolved', async () => {
+  const controller = {
+    quiesceForTerminalFinalization: jest.fn(async () => {
+      throw new WalletOfferCleanupPendingError([
+        { tradeId: 'trade-terminal', source: 'fee-finalization-warning' },
+      ]);
+    }),
+  } as unknown as SessionController;
+  const stageTerminal = jest.fn(async () => {});
+  const teardown = jest.fn();
+
+  await expect(
+    finalizeTerminalSession(finalizationArgs(controller), {
+      stageTerminal,
+      flushSave: async () => {},
+      discardTerminal: () => {},
+      updateMarker: () => {},
+      teardown,
+    }),
+  ).rejects.toMatchObject({ code: 'WALLET_OFFER_CLEANUP_PENDING' });
+
+  expect(stageTerminal).not.toHaveBeenCalled();
+  expect(teardown).not.toHaveBeenCalled();
+});
+
+it('stages and returns the model produced after terminal quiescence', async () => {
+  const authoritativeModel = createSessionModel({
+    channel: {
+      ...model.channel,
+      status: {
+        ...model.channel.status,
+        state: 'ResolvedUnrolled',
+        ourBalance: '75',
+        theirBalance: '25',
+      },
+    },
+    game: {
+      ...model.game,
+      handState: {
+        ...handState,
+        state: {
+          ...handState.state,
+          moveNumber: 42n,
+          displaySnapshot: {
+            ...handState.state.displaySnapshot,
+            gameState: 'finished',
+            winner: 'player',
+          },
+        },
+      },
+      instances: {
+        ...model.game.instances,
+        'game-1': {
+          ...model.game.instances['game-1'],
+          terminal: {
+            ...model.game.instances['game-1'].terminal,
+            label: 'Runtime finished',
+          },
+        },
+      },
+    },
+    betweenHand: model.betweenHand,
+  });
+  const controller = {
+    quiesceForTerminalFinalization: jest.fn(async () => structuredClone(authoritativeModel)),
+  } as unknown as SessionController;
+  const stageTerminal = jest.fn(async () => {});
+
+  const terminal = await finalizeTerminalSession(finalizationArgs(controller), {
+    stageTerminal,
+    flushSave: async () => {},
+    discardTerminal: () => {},
+    updateMarker: () => {},
+    teardown: () => {},
+  });
+
+  expect(terminal.model).toEqual(authoritativeModel);
+  expect(terminal.model).not.toBe(authoritativeModel);
+  expect(stageTerminal).toHaveBeenCalledWith(
+    expect.objectContaining({
+      presentation: expect.objectContaining({
+        channelStatus: expect.objectContaining({
+          state: 'ResolvedUnrolled',
+          our_balance: '75',
+          their_balance: '25',
+        }),
+        handState: authoritativeModel.game.handState,
+        gameInstances: expect.objectContaining({
+          'game-1': expect.objectContaining({
+            terminal: expect.objectContaining({ label: 'Runtime finished' }),
+          }),
+        }),
+      }),
+    }),
+  );
 });
 
 it('round-trips an explicitly empty local alias without converting it to null', async () => {
@@ -804,14 +905,13 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   });
   const controller = {
     handState: acceptedHandState,
-    quiesceForTerminalFinalization: async () => {},
+    quiesceForTerminalFinalization: async () => structuredClone(timeoutModel),
   } as unknown as SessionController;
   const stageTerminal = jest.fn(async () => {});
 
   const terminal = await finalizeTerminalSession(
     {
       controller,
-      model: timeoutModel,
       identity: {
         myName: 'Alice',
         opponentName: 'Bob',
@@ -879,7 +979,13 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
 
 it('keeps live state and ownership after failure, then retries without teardown durability', async () => {
   const events: string[] = [];
-  const controller = makeController(events);
+  let latestModel = structuredClone(model);
+  const controller = {
+    quiesceForTerminalFinalization: async () => {
+      events.push('controller-quiesce');
+      return structuredClone(latestModel);
+    },
+  } as unknown as SessionController;
   const teardown = jest.fn();
   let failWrite = true;
   const dependencies: TerminalFinalizationDependencies = {
@@ -908,6 +1014,25 @@ it('keeps live state and ownership after failure, then retries without teardown 
   );
 
   failWrite = false;
+  latestModel = createSessionModel({
+    channel: {
+      ...model.channel,
+      status: {
+        ...model.channel.status,
+        state: 'ResolvedUnrolled',
+        ourBalance: '70',
+        theirBalance: '30',
+      },
+    },
+    game: {
+      ...model.game,
+      handState: {
+        ...handState,
+        state: { ...handState.state, moveNumber: 77n },
+      },
+    },
+    betweenHand: model.betweenHand,
+  });
   await finalizeTerminalSession(finalizationArgs(controller), dependencies);
 
   expect(events).toEqual(['controller-quiesce', 'controller-quiesce']);
@@ -916,6 +1041,14 @@ it('keeps live state and ownership after failure, then retries without teardown 
   const restored = await peekSession();
   expect(restored).not.toHaveProperty('live');
   expect(restored?.phase === 'terminal' && restored.presentation.channelStatus?.state).toBe(
-    'ResolvedClean',
+    'ResolvedUnrolled',
   );
+  expect(
+    restored?.phase === 'terminal' &&
+      (
+        restored.presentation.handState as {
+          state: { moveNumber: bigint };
+        }
+      ).state.moveNumber,
+  ).toBe(77n);
 });

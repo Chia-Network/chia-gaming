@@ -104,7 +104,7 @@ export function createCoordinatorOnlySessionMachineRuntime(
   controller: SessionController,
   persist: () => void | Promise<void> = () => {},
 ): SessionMachineRuntime {
-  return new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+  const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
     controller,
     iStarted: controller.iStarted,
     restoring: false,
@@ -115,4 +115,6 @@ export function createCoordinatorOnlySessionMachineRuntime(
       await persist();
     },
   });
+  runtime.activate();
+  return runtime;
 }

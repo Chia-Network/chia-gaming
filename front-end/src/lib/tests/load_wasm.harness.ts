@@ -191,6 +191,7 @@ export class SessionControllerAdapter {
 
   bindRuntime(runtime: SessionMachineRuntime) {
     if (this.runtime !== runtime) this.retireRuntime();
+    runtime.activate();
     this.runtime = runtime;
   }
 

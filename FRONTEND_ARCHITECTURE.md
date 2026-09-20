@@ -371,11 +371,11 @@ resumable-session marker, and tab/reset coordination keys, inside the same-origi
 trust model described above.
 
 The current and only legal envelope schema is `chia-gaming-session` version
-`23`. Early-beta compatibility is best-effort, and every other version is
-currently deleted wholesale without decoding or migration. A decoded v23
+`26`. Early-beta compatibility is best-effort, and every other version is
+currently deleted wholesale without decoding or migration. A decoded v26
 record must also satisfy the complete phase-owned
 envelope contract (keyed game membership, generic game-state envelope agreement,
-terminal data, and frozen terminal coin list); malformed v23 records are
+terminal data, and frozen terminal coin list); malformed v26 records are
 deleted rather than partially restored. The boot marker is retained after an
 incompatible or malformed resumable record is discarded so the failure remains
 visible at the Resume / Start Over boundary. The `version` field is kept as a
@@ -404,7 +404,7 @@ are grouped under those phase-owned payloads:
 
 | Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `23`.                                                                                                                                                                                                                                                                          |
+| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `26`.                                                                                                                                                                                                                                                                          |
 | `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                     | `string?`                                                                                                  | Local master secret used to derive a distinct hub iframe/game-channel credential for each canonical hub origin.                                                                                                                                                                                                 |
 | `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -438,6 +438,7 @@ are grouped under those phase-owned payloads:
 | `wasmNotificationHistory`       | `string[]?`                                                                                                | Recent serialized WASM notifications (capped at 1,000).                                                                                                                                                                                                                                                         |
 | `diagnosticLog`                 | `string[]?`                                                                                                | Recent diagnostic entries (capped at 2,000).                                                                                                                                                                                                                                                                    |
 | `durabilityWarning`             | `string?`                                                                                                  | Last delivery-boundary storage failure warning.                                                                                                                                                                                                                                                                 |
+| `walletOfferCleanup`            | `Array<{ tradeId, source }>`                                                                                | Strict durable outbox of rejected funding or fee offers that must be cancelled after their entry is persisted.                                                                                                                                                                                                 |
 | `activeGameIds`                 | `string[]`                                                                                                 | IDs of currently live games in an atomic group; empty when none are active.                                                                                                                                                                                                                                     |
 | `currentHandGameIds`            | `string[]`                                                                                                 | IDs belonging to the current hand group; empty when there is no retained hand.                                                                                                                                                                                                                                  |
 | `lastDisplayedGameId`           | `string \| null`                                                                                           | Key of the game instance selected for display when no active game supersedes it.                                                                                                                                                                                                                                |
@@ -546,13 +547,18 @@ result-bearing companion to `enqueue`: it runs typed controller work inside the
 same serialized runtime transaction and resolves or rejects its promise when
 that work executes, including when an active commit temporarily queues it.
 
-The coordinator attachment is an exclusive, retire-aware runtime lease.
-Attaching a replacement retires the previous runtime; unmount, reload, and
-controller cleanup retire the current owner. Retirement discards queued events
-and fire-and-forget controller work, rejects queued result promises and
+Runtime construction itself is inert. The committed React layout effect first
+installs the render callback and then calls `activate()`, which attaches an
+exclusive, retire-aware `SessionRuntimeLease`; its cleanup only calls
+`clearRender()`. React cleanup therefore cannot retire protocol ownership.
+Replacement of the committed lease and `SessionController` cleanup—including
+terminal cleanup—own retirement. Retirement discards queued events and
+fire-and-forget controller work, rejects queued result promises and
 not-yet-launched persistence-gated effects, and makes completion from an
 in-flight write inert. An obsolete runtime therefore cannot publish, persist,
-or release effects after replacement.
+or release effects after replacement. `SessionRuntimeLease` is deliberately a
+narrow extension of the peer `ReliableCommitCoordinator`: its only additional
+capability is `snapshotModel()`, which returns the authoritative runtime model.
 
 The funding outbox persists an explicit `CanonicalFundingRequest`, not the loose
 WASM boundary shape. `amount`, `fee`, and optional `max_height` are canonical
@@ -565,6 +571,16 @@ Distinct concurrent requests are an internal protocol-state violation. Rust
 remains the durable owner of submission/retry intent; the controller's
 submission queue only serializes one-shot wallet delivery and reports the typed
 outcome back to Rust.
+
+The external wallet constructs each funding offer from Rust's canonical
+request; Rust validates the result. Rejection terminates the handshake and does
+not create controller-owned successor or predecessor requests. Rejected
+persisted funding and fee offers instead enter the separate strict
+`walletOfferCleanup` outbox. An entry must be committed before its cancellation
+effect launches. A failed cancellation stays durable and retries only on
+restore, wallet reconnect, attachment of a new committed lease, or an explicit
+terminal-finalization attempt. There is no timer or immediate retry loop, and
+terminal quiescence fails while any cleanup entry remains.
 
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
@@ -585,6 +601,12 @@ failed or malformed batches are not reported as authoritative snapshots.
 This chain operation is **transaction rebroadcast**. It is distinct from
 **reliable peer-frame replay**, which resends unacknowledged numbered transport
 frames only at reconnect or peer-availability boundaries.
+`TransactionManager` is the durable retained owner of each transaction intent.
+The controller's nonserialized `PendingSubmissionDelivery` map bridges only
+the interval after Rust drains an intent and before its persistence-gated
+launch, allowing a committed lease replacement to reschedule that launch.
+After launch, `TransactionSubmitQueue` owns ordered exactly-once completion;
+the bridge is neither persisted nor a retry authority.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
 frontend does not persist a move journal or receive replay instructions.
 Following browser restore, an ordinary game effect may submit an automatic move
@@ -596,9 +618,14 @@ Rust local batch packaging is modular and host-invisible. `OffChainPhase`
 exclusively owns a `BatchPlan` containing cloned channel state, queue
 disposition, actions, and staged effects; planning changes only that value, and
 commit installs the live state only after cached-unroll finalization succeeds.
+The plan clones only durable protocol and queue working state. Transient,
+nonserialized caches stay outside the transactional plan and are not cloned.
 Rust tests access this through `GameSession`'s concrete test-only
 `OffChainPhase` seam rather than production debug operations on the lifecycle
 trait.
+
+These runtime, persistence, and host ownership changes do not alter the peer
+wire schema.
 
 `GameSlice` atomically owns `activeIds`, `currentHandIds`, `currentHandOrigin`,
 keyed instances, `lastDisplayedId`, hand key, and active game type. Its reducer updates a game
@@ -937,6 +964,12 @@ When the user chooses to resume a full save, `performResume` fires:
    the restored transaction manager attaches.
 
 #### Cleanup
+
+React and protocol cleanup are intentionally different. The committed layout
+effect in `useGameSession` activates the runtime lease, while its cleanup only
+clears the render callback. `SessionController.cleanup()` and
+`cleanupAfterTerminalFlush()` own protocol retirement, including retirement of
+the active lease and detachment of controller resources.
 
 There are two different reset paths:
 
@@ -1457,11 +1490,15 @@ presentation event updates the `SessionModel`. Shell then stages one terminal
 snapshot only after terminal quiescence repeatedly drains controller events,
 persistence, reliable transport, and end-to-end transaction submission
 promises. Those promises cover persistence-gated launch, ordered wallet
-delivery, Rust acknowledgement or rejection, and fee-offer cleanup. Shell then
-awaits the IndexedDB write attempt, destroys the controller, and releases the
-peer relay/hub busy state exactly once. A persistence failure reports the
-durability warning and may leave the last checkpoint stale, but it does not
-suppress already prepared terminal effects or teardown.
+delivery, Rust acknowledgement or rejection, and fee-offer cleanup. The
+terminal presentation is taken from the authoritative runtime model returned
+after that quiescence, not from a pre-drain React projection. Shell then
+requires the terminal IndexedDB record write to succeed before it destroys the
+controller and releases the peer relay/hub busy state. If that terminal write
+fails, live protocol ownership is retained and teardown is blocked. This is
+stricter than a live checkpoint failure, which warns, releases already prepared
+gameplay/network effects once, leaves the in-memory boundary dirty, and retries
+on later activity.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes
@@ -1613,11 +1650,14 @@ matches. The player app never reads from or writes to the iframe's DOM.
 
 The `GameSession` component manages one game session (a channel with a series of
 individual hands). `useGameSession` is a thin React interpreter boundary: it
-obtains the `SessionController`, creates one `SessionMachineRuntime`, subscribes
-to host events, dispatches typed machine events, attaches/detaches the
-blockchain poller, and returns selector-derived view data plus dispatch
-callbacks. It does not contain notification policy, command interpretation,
-durable game reduction, or persistence assembly.
+obtains the `SessionController` and constructs one inert
+`SessionMachineRuntime`. Its committed layout effect installs the render
+callback and activates the lease; layout-effect cleanup clears only that
+callback. The hook also subscribes to host events, dispatches typed machine
+events, attaches/detaches the blockchain poller, and returns selector-derived
+view data plus dispatch callbacks. Controller cleanup, not React cleanup, owns
+protocol retirement. The hook does not contain notification policy, command
+interpretation, durable game reduction, or persistence assembly.
 
 When Shell supplies a finalized terminal presentation, `useGameSession`
 atomically projects every model-derived field from that model, replaces the live

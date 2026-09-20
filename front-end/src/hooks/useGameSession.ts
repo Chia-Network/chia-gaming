@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   createComposeDraftState,
   createSessionModel,
@@ -206,11 +206,11 @@ export function useGameSession(
     hand: runtime.getGameHand(),
     port: liveGamePort,
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     runtime.setRender(setMachineState);
+    runtime.activate();
     return () => {
       runtime.clearRender();
-      runtime.retire();
     };
   }, [runtime]);
   const dispatchHostProjection = useCallback(() => {

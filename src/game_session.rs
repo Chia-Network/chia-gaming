@@ -1237,10 +1237,10 @@ impl GameSession {
     }
 
     #[cfg(test)]
-    pub(crate) fn queued_game_action_count_for_testing(&mut self) -> usize {
-        self.peer
-            .off_chain_phase_for_testing()
-            .map_or(0, |phase| phase.queued_game_action_count_for_testing())
+    pub(crate) fn queued_game_action_count_for_testing(&mut self) -> Result<usize, Error> {
+        Ok(self
+            .off_chain_phase_for_testing()?
+            .queued_game_action_count_for_testing())
     }
 
     pub fn cheat(

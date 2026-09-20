@@ -63,6 +63,7 @@ function bindRuntime(
       saveTerminal: (update) => persistOutsideReload(controller, () => saveTerminalSession(update)),
     },
   );
+  runtime.activate();
   adapter.bindRuntime(runtime);
   const dispatchHostProjection = () => {
     const status = controller.getRestoreStatus();

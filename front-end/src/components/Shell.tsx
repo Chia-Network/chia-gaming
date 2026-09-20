@@ -2992,7 +2992,6 @@ const Shell = () => {
       try {
         terminal = await finalizeTerminalSession({
           controller,
-          model,
           identity,
           coins: terminalCoins,
         });

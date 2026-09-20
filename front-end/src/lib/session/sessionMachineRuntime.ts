@@ -14,7 +14,7 @@ import type {
 } from './sessionMachineTypes';
 import type { RegisteredGameType } from './types';
 import type { coinIdHex } from './gameSessionEvents';
-import type { ReliableCommitCoordinator } from '../../services/PeerSession';
+import type { SessionRuntimeLease } from './sessionRuntimeLease';
 import {
   packageFor,
   restoreRegisteredGameHandState,
@@ -147,7 +147,8 @@ export class SessionMachineRuntime {
     state: SessionMachineState,
   ) => PreparedSessionPersistence | null;
   private readonly onError: (error: unknown) => void;
-  private readonly commitCoordinator: ReliableCommitCoordinator;
+  private readonly runtimeLease: SessionRuntimeLease;
+  private activated = false;
   private retired = false;
 
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
@@ -175,19 +176,29 @@ export class SessionMachineRuntime {
       onError: dependencies.onError,
       enrichCoin: dependencies.enrichCoin,
     });
-    this.commitCoordinator = {
+    this.runtimeLease = {
       retire: () => this.retire(),
       requestCommit: () => this.requestCommit(),
       flush: () => this.flush(),
       enqueue: (work) => this.enqueueControllerWork(work),
       enqueueResult: (work) => this.enqueueControllerWorkResult(work),
       releaseAfterPersistence: (key, effect) => this.releaseAfterPersistence(key, effect),
+      snapshotModel: () => this.snapshotModel(),
     };
-    this.controller.attachTransactionCoordinator(this.commitCoordinator);
   }
 
   getState(): SessionMachineState {
     return this.state;
+  }
+
+  snapshotModel(): SessionMachineState['model'] {
+    return structuredClone(this.state.model);
+  }
+
+  activate(): void {
+    if (this.activated || this.retired) return;
+    this.activated = true;
+    this.controller.attachTransactionCoordinator(this.runtimeLease);
   }
 
   setRender(render: (state: SessionMachineState) => void): void {
@@ -215,7 +226,9 @@ export class SessionMachineRuntime {
     }
     this.pendingExternalEffects.clear();
     this.pendingEvents.length = 0;
-    this.controller.detachTransactionCoordinator(this.commitCoordinator);
+    if (this.activated) {
+      this.controller.detachTransactionCoordinator(this.runtimeLease);
+    }
   }
 
   dispatch(event: SessionMachineEvent): void {
