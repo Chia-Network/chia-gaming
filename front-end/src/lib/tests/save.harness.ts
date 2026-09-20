@@ -50,8 +50,6 @@ export const sampleSession = {
   perGameAmount: '10',
   rewardPuzzleHash: '11'.repeat(32),
   betweenHandLastHandProposal: {
-    player_a_contribution: '10',
-    player_b_contribution: '10',
     sender_is_player_a: false,
     game_timeout: '15',
     game_type: 'calpoker',

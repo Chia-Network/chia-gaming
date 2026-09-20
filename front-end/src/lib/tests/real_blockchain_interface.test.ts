@@ -67,6 +67,7 @@ import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
   SimulatorTransportError,
+  SyntheticFeeOfferTracker,
 } from '../../hooks/FakeBlockchainInterface';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinIdFromBytes, toUint8 } from '../../util';
@@ -647,7 +648,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({ success: true });
 
-    await blockchain.cancelOffer('trade-id');
+    await expect(blockchain.cancelOffer('trade-id')).resolves.toEqual({ status: 'cancelled' });
 
     expect(mockCancelOffer).toHaveBeenCalledWith({
       tradeId: 'trade-id',
@@ -661,15 +662,20 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({
       success: false,
-      error: 'Offer trade already spent on chain',
+      error: {
+        structuredError: {
+          code: 'OFFER_ALREADY_SPENT',
+          message: 'Offer trade already spent on chain',
+        },
+      },
     });
     ledger.attachRpc(blockchain);
-    const owner = { sessionId: 'session', gameSessionId: 'game-session' };
+    const owner = { installationPlayerId: 'installation', peerSessionId: 'peer-session' };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
     ledger.registerReserved('trade-already-spent', owner, purpose);
-    ledger.requireCancellation(owner, purpose, 'wallet-outcome-finalized');
-    await ledger.awaitSession(owner.gameSessionId);
+    ledger.requireCancellation('trade-already-spent', 'wallet-outcome-finalized');
+    await ledger.awaitOwner(owner);
 
     expect(ledger.snapshot()).toEqual([]);
     expect(mockCancelOffer).toHaveBeenCalledWith({
@@ -686,9 +692,36 @@ describe('RealBlockchainInterface', () => {
       detail: 'temporary wallet database failure',
     });
 
-    await expect(blockchain.cancelOffer('trade-uncertain')).rejects.toThrow(
-      /temporary wallet database failure/,
+    await expect(blockchain.cancelOffer('trade-uncertain')).resolves.toEqual({
+      status: 'rejected',
+      detail: expect.stringMatching(/temporary wallet database failure/),
+    });
+  });
+
+  it('classifies WalletConnect transport cancellation failures as unavailable', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCancelOffer.mockRejectedValue(
+      new WalletConnectTransportError('WalletConnect cancellation transport failed'),
     );
+
+    await expect(blockchain.cancelOffer('trade-offline')).resolves.toEqual({
+      status: 'unavailable',
+      detail: expect.stringMatching(/transport failed/),
+    });
+  });
+
+  it('accepts a structured exact-trade not-found code as already terminal', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCancelOffer.mockRejectedValue({
+      message: 'trade missing',
+      code: 'TRADE_NOT_FOUND',
+      tradeId: 'trade-missing',
+    });
+
+    await expect(blockchain.cancelOffer('trade-missing')).resolves.toEqual({
+      status: 'already-terminal',
+      detail: expect.stringMatching(/trade missing/),
+    });
   });
 
   it('persists receiver funding offers to reserve wallet-selected inputs', async () => {
@@ -933,6 +966,31 @@ describe('RealBlockchainInterface', () => {
         '11'.repeat(32),
       ),
     ).resolves.toMatchObject({ status });
+  });
+
+  it('terminalizes only the synthetic fee offer included in the acknowledged bundle', async () => {
+    const walletBundle = (parentByte: string) => ({
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: `0x${parentByte.repeat(32)}`,
+            puzzle_hash: `0x${'ab'.repeat(32)}`,
+            amount: 100n,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
+        },
+      ],
+      aggregated_signature: '0x',
+    });
+    const tracker = new SyntheticFeeOfferTracker();
+    tracker.reserve('trade-a', walletBundle('11'));
+    tracker.reserve('trade-b', walletBundle('22'));
+
+    tracker.markSubmitted(walletBundle('11'));
+
+    expect(tracker.cancel('trade-a')).toBe('submitted');
+    expect(tracker.cancel('trade-b')).toBe('reserved');
   });
 
   it('applies conservative simulator outcome defaults', () => {

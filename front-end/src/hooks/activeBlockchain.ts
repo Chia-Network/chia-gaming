@@ -1,6 +1,7 @@
 import { InternalBlockchainInterface } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
 import { walletReservationLedger } from '../lib/session/walletReservationLedger';
+import { hydrateWalletReservationLedger } from './save';
 
 let active: BlockchainPoller | null = null;
 
@@ -15,6 +16,10 @@ export function activate(
   }
   active = new BlockchainPoller(blockchain, pollIntervalMs);
   walletReservationLedger.attachRpc(active.rpc);
+  void hydrateWalletReservationLedger().then(
+    () => walletReservationLedger.retryCancelRequired(),
+    (error) => console.error('[save] failed to hydrate wallet reservation ledger:', error),
+  );
   active.start();
   return active;
 }

@@ -78,6 +78,11 @@ export function canonicalizeFundingRequest(
 ): CanonicalFundingRequest {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid(label);
   const request = value as Record<string, unknown>;
+  if (persisted) {
+    const allowed = new Set(['amount', 'fee', 'conditions', 'coin_id', 'max_height']);
+    const unexpected = Object.keys(request).find((key) => !allowed.has(key));
+    if (unexpected !== undefined) invalid(label, unexpected);
+  }
   const amount = canonicalU64(request.amount, label, 'amount');
   const fee = canonicalU64(request.fee, label, 'fee');
   if (!Array.isArray(request.conditions)) invalid(label, 'conditions');
@@ -87,6 +92,10 @@ export function canonicalizeFundingRequest(
       invalid(label, `conditions[${index}]`);
     }
     const condition = value as Record<string, unknown>;
+    if (persisted) {
+      const unexpected = Object.keys(condition).find((key) => key !== 'opcode' && key !== 'args');
+      if (unexpected !== undefined) invalid(label, `conditions[${index}].${unexpected}`);
+    }
     if (!Array.isArray(condition.args) || !condition.args.every((arg) => typeof arg === 'string')) {
       invalid(label, `conditions[${index}]`);
     }

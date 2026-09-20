@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::types::{
     aggregate_wallet_fee_bundle, AllocEncoder, CoinCondition, CoinID, CoinString, Error, Hash,
-    Sha256Input, SpendBundle, Timeout,
+    Program, Sha256Input, SpendBundle, Timeout,
 };
 use crate::game_session::{CoinObservation, DrainResult, GameSession};
 use crate::session_phases::effects::{
@@ -60,10 +60,9 @@ struct SubmittedTx {
     fee_intent: SubmissionFeeIntent,
     /// Exact bundle produced by Rust after incorporating the wallet's fee
     /// source. Once present, every retry replays these bytes unchanged.
-    #[serde(default)]
     finalized_bundle: Option<SpendBundle>,
-    #[serde(default)]
     finalized_applied_fee: u64,
+    finalized_fee_source_disposition: Option<FeeSourceDisposition>,
     /// Coin ids this transaction spends.  An output coin's parent is one of
     /// these, which is how a vanished output is matched back to its creator.
     spent_coin_ids: Vec<CoinID>,
@@ -71,10 +70,8 @@ struct SubmittedTx {
     /// `CREATE_COIN` conditions.  These are replay/conflict metadata only:
     /// they do not become poll targets unless a protocol handler separately
     /// registers the coin as watched.
-    #[serde(default)]
     expected_output_coins: Vec<CoinString>,
     /// Set once any expected output is observed on-chain.
-    #[serde(default)]
     landed: bool,
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
@@ -107,6 +104,14 @@ pub struct FinalizedSubmission {
     pub bundle: SpendBundle,
     pub applied_fee: u64,
     pub warning: Option<String>,
+    pub fee_source_disposition: FeeSourceDisposition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FeeSourceDisposition {
+    Attached,
+    Unused,
+    NotRequested,
 }
 
 pub enum SubmissionFeeSource {
@@ -185,7 +190,6 @@ pub struct WatchedCoin {
     /// manager is the sole submitter and can resubmit across reorgs.
     pub timeout_spend: Option<TransactionSubmission>,
     /// UI context emitted when the manager submits this timeout spend.
-    #[serde(default)]
     pub timeout_claim_semantic: Option<TimeoutClaimSemantic>,
     pub creation_spend: Option<SpendBundle>,
 }
@@ -241,6 +245,19 @@ pub trait ManagedGameSession {
         observations: Option<&[CoinObservation]>,
     ) -> Result<(), Error>;
 
+    /// Handle one host-delivered puzzle/solution result inside the manager's
+    /// durable working-copy transaction.
+    fn session_report_puzzle_and_solution(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _coin_id: &CoinString,
+        _puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<(), Error> {
+        Err(Error::StrErr(
+            "puzzle-and-solution callbacks are not supported by this session".to_string(),
+        ))
+    }
+
     fn session_flush_and_collect(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -291,6 +308,20 @@ impl ManagedGameSession for GameSession {
             Some(observations) => GameSession::new_block(self, allocator, height, observations),
             None => GameSession::new_block_height_only(self, allocator, height),
         }
+    }
+
+    fn session_report_puzzle_and_solution(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<(), Error> {
+        GameSession::report_puzzle_and_solution_in_place(
+            self,
+            allocator,
+            coin_id,
+            puzzle_and_solution,
+        )
     }
 
     fn session_flush_and_collect(
@@ -352,26 +383,17 @@ pub struct TransactionManager<C> {
     /// snapshot. Kept separately from `last_height`: a height-only observation
     /// must advance protocol clocks without masking a later reorg from the
     /// snapshot reconciliation path.
-    #[serde(default)]
     last_snapshot_height: u64,
     /// Tip of the rollback epoch whose timeout claims have already been
     /// invalidated. A height-only report is normally followed by a same-height
     /// authoritative snapshot; both describe one rollback and must not re-arm
     /// claims or replay retained submissions twice.
-    #[serde(default)]
     timeout_rollback_height: Option<u64>,
     /// Exact retained intent ids already queued during the current rollback
     /// epoch. This survives an intervening drain/ack so the authoritative
     /// snapshot following a height-only rollback cannot emit the same intent
     /// again.
-    #[serde(default)]
     rollback_replayed_ids: HashSet<u64>,
-    /// Restore-only projection guard. `claim_submitted` is durable manager
-    /// truth, while the session semantic phase may be absent from a legacy
-    /// save; replay it once after deserialization without re-notifying the
-    /// session on every ordinary poll.
-    #[serde(skip)]
-    timeout_claim_status_reconciled: bool,
     /// Watched coins that left the live set without a confirmed spend (e.g.
     /// reorged out before their creating transaction re-confirmed).  Surfaced to
     /// the resubmission layer so the creating transaction can be replayed.
@@ -380,6 +402,8 @@ pub struct TransactionManager<C> {
     /// protocol output can be replayed by resubmitting the transaction that
     /// created it.
     submitted: Vec<SubmittedTx>,
+    /// Stable IDs retired by Rust since the host last drained lifecycle output.
+    retired_submission_ids: Vec<u64>,
     /// Monotonic durable identifier source for retained submissions.
     next_submission_id: u64,
     /// Coins observed live on-chain in the previous report.  Used to compute
@@ -394,6 +418,10 @@ impl TransactionManager<GameSession> {
     pub fn restore_runtime(&mut self) {
         self.cradle.restore_runtime();
     }
+
+    pub fn snapshot_pending_coin_solution_requests(&self) -> Vec<CoinString> {
+        self.cradle.pending_coin_solution_requests()
+    }
 }
 
 /// State intentionally excluded from the serialized observation working copy.
@@ -405,7 +433,6 @@ struct ObservationTransients {
     pending_watch_coins: Vec<CoinString>,
     pending_unwatch_coins: Vec<CoinString>,
     session_output: Option<DrainResult>,
-    timeout_claim_status_reconciled: bool,
 }
 
 impl ObservationTransients {
@@ -415,19 +442,13 @@ impl ObservationTransients {
             pending_watch_coins: std::mem::take(&mut manager.pending_watch_coins),
             pending_unwatch_coins: std::mem::take(&mut manager.pending_unwatch_coins),
             session_output: manager.cradle.session_detach_observation_output(),
-            timeout_claim_status_reconciled: manager.timeout_claim_status_reconciled,
         }
-    }
-
-    fn seed_working_copy<C: ManagedGameSession>(&self, working: &mut TransactionManager<C>) {
-        working.timeout_claim_status_reconciled = self.timeout_claim_status_reconciled;
     }
 
     fn restore<C: ManagedGameSession>(&mut self, manager: &mut TransactionManager<C>) {
         manager.pending_events = std::mem::take(&mut self.pending_events);
         manager.pending_watch_coins = std::mem::take(&mut self.pending_watch_coins);
         manager.pending_unwatch_coins = std::mem::take(&mut self.pending_unwatch_coins);
-        manager.timeout_claim_status_reconciled = self.timeout_claim_status_reconciled;
         manager
             .cradle
             .session_prepend_observation_output(self.session_output.take());
@@ -494,10 +515,10 @@ impl<C> TransactionManager<C> {
             last_snapshot_height: 0,
             timeout_rollback_height: None,
             rollback_replayed_ids: HashSet::new(),
-            timeout_claim_status_reconciled: false,
             present_coins: std::collections::HashSet::new(),
             vanished_coins: std::collections::HashSet::new(),
             submitted: Vec::new(),
+            retired_submission_ids: Vec::new(),
             next_submission_id: 0,
         }
     }
@@ -664,6 +685,7 @@ impl<C> TransactionManager<C> {
                     fee_intent: fee_intent.clone(),
                     finalized_bundle: None,
                     finalized_applied_fee: 0,
+                    finalized_fee_source_disposition: None,
                     spent_coin_ids,
                     expected_output_coins: outputs,
                     landed: false,
@@ -720,6 +742,9 @@ impl<C> TransactionManager<C> {
                 bundle: bundle.clone(),
                 applied_fee: submission.finalized_applied_fee,
                 warning: None,
+                fee_source_disposition: submission
+                    .finalized_fee_source_disposition
+                    .expect("finalized bundle must retain its fee-source disposition"),
             });
         }
         let finalized = match &submission.fee_intent {
@@ -733,6 +758,7 @@ impl<C> TransactionManager<C> {
                     bundle: submission.bundle.clone(),
                     applied_fee: 0,
                     warning: None,
+                    fee_source_disposition: FeeSourceDisposition::NotRequested,
                 })
             }
             SubmissionFeeIntent::Attach {
@@ -760,6 +786,7 @@ impl<C> TransactionManager<C> {
                         bundle,
                         applied_fee: amount.to_u64(),
                         warning: None,
+                        fee_source_disposition: FeeSourceDisposition::Attached,
                     }),
                     Err(reason) => match attachment_failure_policy {
                         AttachmentFailurePolicy::SubmitWithoutFee => Ok(FinalizedSubmission {
@@ -768,6 +795,7 @@ impl<C> TransactionManager<C> {
                             warning: Some(format!(
                                 "Configured fee was not applied: {reason}. The transaction will be attempted without a fee."
                             )),
+                            fee_source_disposition: FeeSourceDisposition::Unused,
                         }),
                     },
                 }
@@ -775,6 +803,7 @@ impl<C> TransactionManager<C> {
         }?;
         submission.finalized_bundle = Some(finalized.bundle.clone());
         submission.finalized_applied_fee = finalized.applied_fee;
+        submission.finalized_fee_source_disposition = Some(finalized.fee_source_disposition);
         Ok(finalized)
     }
 
@@ -830,11 +859,22 @@ impl<C> TransactionManager<C> {
         if removed_ids.is_empty() {
             return;
         }
+        let mut removed_ids_sorted = removed_ids.iter().copied().collect::<Vec<_>>();
+        removed_ids_sorted.sort_unstable();
+        for id in removed_ids_sorted {
+            if !self.retired_submission_ids.contains(&id) {
+                self.retired_submission_ids.push(id);
+            }
+        }
         self.submitted.retain(|tx| !removed_ids.contains(&tx.id));
         self.pending_submissions
             .retain(|pending| !pending.id.is_some_and(|id| removed_ids.contains(&id)));
         self.rollback_replayed_ids
             .retain(|id| !removed_ids.contains(id));
+    }
+
+    pub fn drain_retired_submission_ids(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.retired_submission_ids)
     }
 
     /// Re-queue retained, unexpired submissions after the host has supplied a
@@ -958,7 +998,7 @@ impl<C> TransactionManager<C> {
 }
 
 impl<C: ManagedGameSession> TransactionManager<C> {
-    fn apply_observation_transaction<F>(
+    fn apply_working_copy_transaction<F>(
         &mut self,
         _allocator: &mut AllocEncoder,
         apply: F,
@@ -971,19 +1011,17 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         let result = (|| {
             let checkpoint = bencodex::to_vec(&self).map_err(|e| {
                 Error::StrErr(format!(
-                    "failed to encode blockchain observation working copy: {e}"
+                    "failed to encode transaction-manager working copy: {e}"
                 ))
             })?;
             let mut working: Self = bencodex::from_slice(&checkpoint).map_err(|e| {
                 Error::StrErr(format!(
-                    "failed to decode blockchain observation working copy: {e}"
+                    "failed to decode transaction-manager working copy: {e}"
                 ))
             })?;
-            transients.seed_working_copy(&mut working);
-
-            // Observation callbacks may allocate aggressively and can still fail
-            // after doing so. Programs retained by durable state serialize their
-            // trees, so no NodePtr needs to escape this scratch allocator.
+            // Callbacks may allocate aggressively and can still fail after doing
+            // so. Programs retained by durable state serialize their trees, so
+            // no NodePtr needs to escape this scratch allocator.
             let mut scratch_allocator = AllocEncoder::new();
             apply(&mut working, &mut scratch_allocator)?;
 
@@ -1003,6 +1041,26 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         }
     }
 
+    /// Deliver one puzzle/solution lookup result atomically with every phase
+    /// mutation, emitted effect, and pending-request retirement it causes.
+    pub fn report_puzzle_and_solution(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<(), Error>
+    where
+        C: Serialize + DeserializeOwned,
+    {
+        self.apply_working_copy_transaction(allocator, |working, allocator| {
+            working.cradle.session_report_puzzle_and_solution(
+                allocator,
+                coin_id,
+                puzzle_and_solution,
+            )
+        })
+    }
+
     /// Report a trusted chain height when the watched-coin snapshot is not
     /// available or is known partial. This advances handshake protocol clocks
     /// through the manager without inventing coin creations/deletions or
@@ -1018,7 +1076,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 "report_height: height {height} exceeds MAX_REPORTED_HEIGHT {MAX_REPORTED_HEIGHT}"
             )));
         }
-        self.apply_observation_transaction(allocator, |working, allocator| {
+        self.apply_working_copy_transaction(allocator, |working, allocator| {
             working.report_height_in_place(allocator, height)
         })
     }
@@ -1041,7 +1099,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         if let Some(rearmed) = rollback_rearms {
             self.report_timeout_claim_rearms(rearmed)?;
         }
-        self.reconcile_timeout_claim_status()?;
         self.cradle.session_observe(allocator, height, None)
     }
 
@@ -1091,27 +1148,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 reported.push(semantic);
             }
         }
-        Ok(())
-    }
-
-    /// Re-project durable manager truth after restore. The session's serialized
-    /// phase metadata may be absent in legacy saves, while `claim_submitted`
-    /// remains the authoritative record that this manager already queued the
-    /// timeout spend.
-    fn reconcile_timeout_claim_status(&mut self) -> Result<(), Error> {
-        if self.timeout_claim_status_reconciled {
-            return Ok(());
-        }
-        let semantics = self
-            .watched_coins
-            .values()
-            .filter(|watched| watched.claim_submitted && watched.spent_confirmed_at.is_none())
-            .filter_map(|watched| watched.timeout_claim_semantic)
-            .collect::<Vec<_>>();
-        for semantic in semantics {
-            self.cradle.session_timeout_claim_submitted(semantic)?;
-        }
-        self.timeout_claim_status_reconciled = true;
         Ok(())
     }
 
@@ -1202,7 +1238,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 }
             }
         }
-        self.apply_observation_transaction(allocator, |working, allocator| {
+        self.apply_working_copy_transaction(allocator, |working, allocator| {
             working.report_coin_states_in_place(allocator, height, records)
         })
     }
@@ -1516,7 +1552,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
 
         self.report_timeout_claim_rearms(rearmed_timeout_claims)?;
 
-        self.reconcile_timeout_claim_status()?;
         self.evaluate_mature_timeout_claims(height)?;
 
         let observations = created_watched
@@ -1828,6 +1863,75 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        fn session_flush_and_collect(
+            &mut self,
+            _allocator: &mut AllocEncoder,
+        ) -> Result<DrainResult, Error> {
+            Ok(DrainResult {
+                events: std::mem::take(&mut self.output),
+            })
+        }
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct TransactionalCallbackSession {
+        pending: std::collections::BTreeSet<CoinString>,
+        durable_mutations: Vec<CoinString>,
+        fail_after_mutation: bool,
+        #[serde(skip)]
+        output: GameSessionEventQueue,
+    }
+
+    impl ManagedGameSession for TransactionalCallbackSession {
+        fn session_detach_observation_output(&mut self) -> Option<DrainResult> {
+            Some(DrainResult {
+                events: std::mem::take(&mut self.output),
+            })
+        }
+
+        fn session_prepend_observation_output(&mut self, output: Option<DrainResult>) {
+            if let Some(mut old_output) = output {
+                old_output.events.append(&mut self.output);
+                self.output = old_output.events;
+            }
+        }
+
+        fn session_observe(
+            &mut self,
+            _allocator: &mut AllocEncoder,
+            _height: u64,
+            _observations: Option<&[CoinObservation]>,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
+
+        fn session_report_puzzle_and_solution(
+            &mut self,
+            _allocator: &mut AllocEncoder,
+            coin_id: &CoinString,
+            _puzzle_and_solution: Option<(&Program, &Program)>,
+        ) -> Result<(), Error> {
+            if !self.pending.contains(coin_id) {
+                return Err(Error::StrErr("no pending callback".to_string()));
+            }
+            self.durable_mutations.push(coin_id.clone());
+            self.output
+                .push_back(GameSessionEvent::Log("callback output".to_string()));
+            self.output.push_back(watch_event(coin_id, 9));
+            self.output
+                .push_back(GameSessionEvent::OutboundTransaction(test_submission(
+                    "callback submission",
+                    None,
+                )));
+            if self.fail_after_mutation {
+                return Err(Error::StrErr(
+                    "forced puzzle callback failure after mutation".to_string(),
+                ));
+            }
+            self.pending.remove(coin_id);
+            Ok(())
         }
 
         fn session_flush_and_collect(
@@ -2533,40 +2637,6 @@ mod tests {
     }
 
     #[test]
-    fn restored_submitted_claim_reprojects_canonical_timeout_status() {
-        let mut allocator = AllocEncoder::new();
-        let coin = test_coin(15);
-        let mut mgr = TransactionManager::new(RestoreMockGameSession::default());
-        mgr.watched_coins.insert(
-            coin.clone(),
-            WatchedCoin {
-                coin: coin.clone(),
-                timeout_blocks: Timeout::new(5),
-                name: None,
-                birthday: Some(10),
-                spent_confirmed_at: None,
-                claim_submitted: true,
-                timeout_spend: Some(timeout_submission(&coin, test_bundle("restored-timeout"))),
-                timeout_claim_semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
-                creation_spend: None,
-            },
-        );
-
-        let bytes = bencodex::to_vec(&mgr).expect("serialize restored manager");
-        let mut restored: TransactionManager<RestoreMockGameSession> =
-            bencodex::from_slice(&bytes).expect("restore manager");
-        restored
-            .report_height(&mut allocator, 15)
-            .expect("reconcile restored timeout status");
-
-        assert_eq!(
-            restored.cradle().submitted_timeout_claims,
-            vec![TimeoutClaimSemantic::ChannelTimeoutFinish]
-        );
-        assert!(restored.drain_submissions().unwrap().is_empty());
-    }
-
-    #[test]
     fn semantic_timeout_claim_rearms_after_reorg_and_resubmits() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(12);
@@ -3197,6 +3267,112 @@ mod tests {
     }
 
     #[test]
+    fn puzzle_callback_failure_restores_durable_and_transient_manager_state_exactly() {
+        let mut allocator = AllocEncoder::new();
+        let requested = test_coin(23);
+        let old_watch = test_coin(24);
+        let old_unwatch = test_coin(25);
+        let mut session = TransactionalCallbackSession {
+            pending: std::collections::BTreeSet::from([requested.clone()]),
+            durable_mutations: Vec::new(),
+            fail_after_mutation: true,
+            output: GameSessionEventQueue::from([GameSessionEvent::Log(
+                "session output before".to_string(),
+            )]),
+        };
+        session
+            .output
+            .push_back(GameSessionEvent::Log("session output second".to_string()));
+        let mut mgr = TransactionManager::new(session);
+        mgr.pending_events
+            .push_back(GameSessionEvent::Log("manager output before".to_string()));
+        mgr.pending_watch_coins.push(old_watch.clone());
+        mgr.pending_unwatch_coins.push(old_unwatch.clone());
+        mgr.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: test_submission("existing submission", None),
+            fee_intent: SubmissionFeeIntent::AlreadyPaid,
+        });
+        let before = bencodex::to_vec(&mgr).expect("serialize callback checkpoint");
+
+        let error = mgr
+            .report_puzzle_and_solution(&mut allocator, &requested, None)
+            .expect_err("late callback failure");
+        assert!(format!("{error:?}").contains("forced puzzle callback failure after mutation"));
+        assert_eq!(
+            bencodex::to_vec(&mgr).expect("serialize after callback"),
+            before,
+            "durable manager and nested phase state must roll back byte-for-byte"
+        );
+        assert_eq!(
+            mgr.cradle.pending,
+            std::collections::BTreeSet::from([requested])
+        );
+        assert!(mgr.cradle.durable_mutations.is_empty());
+
+        let drain = mgr
+            .flush_and_collect(&mut allocator)
+            .expect("collect restored transient output");
+        let logs = drain
+            .events
+            .into_iter()
+            .map(|event| match event {
+                GameSessionEvent::Log(message) => message,
+                other => panic!("unexpected event {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            logs,
+            [
+                "manager output before",
+                "session output before",
+                "session output second"
+            ]
+        );
+        assert_eq!(drain.watch_coins, [old_watch]);
+        assert_eq!(drain.unwatch_coins, [old_unwatch]);
+        assert_eq!(
+            mgr.drain_submissions()
+                .expect("pre-existing submission remains")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn puzzle_callback_success_commits_and_retires_pending_request_once() {
+        let mut allocator = AllocEncoder::new();
+        let requested = test_coin(26);
+        let session = TransactionalCallbackSession {
+            pending: std::collections::BTreeSet::from([requested.clone()]),
+            durable_mutations: Vec::new(),
+            fail_after_mutation: false,
+            output: GameSessionEventQueue::default(),
+        };
+        let mut mgr = TransactionManager::new(session);
+
+        mgr.report_puzzle_and_solution(&mut allocator, &requested, None)
+            .expect("successful callback");
+        assert!(mgr.cradle.pending.is_empty());
+        assert_eq!(mgr.cradle.durable_mutations, [requested.clone()]);
+        let drain = mgr
+            .flush_and_collect(&mut allocator)
+            .expect("collect committed callback output");
+        assert_eq!(drain.watch_coins, [requested.clone()]);
+        assert!(drain.events.iter().any(
+            |event| matches!(event, GameSessionEvent::Log(message) if message == "callback output")
+        ));
+        assert_eq!(
+            mgr.drain_submissions().expect("callback submission").len(),
+            1
+        );
+
+        mgr.report_puzzle_and_solution(&mut allocator, &requested, None)
+            .expect_err("retired request cannot complete twice");
+        assert_eq!(mgr.cradle.durable_mutations, [requested]);
+    }
+
+    #[test]
     fn mock_observation_transaction_preserves_scripted_drain_sequence() {
         let mut allocator = AllocEncoder::new();
         let mut session = MockGameSession::default();
@@ -3726,6 +3902,7 @@ mod tests {
 
         assert!(mgr.drain_submissions().unwrap().is_empty());
         assert!(mgr.submitted.is_empty());
+        assert_eq!(mgr.drain_retired_submission_ids(), vec![submission.id]);
     }
 
     #[test]
@@ -3861,6 +4038,7 @@ mod tests {
             .expect("retained submission");
         retained.finalized_bundle = Some(finalized_bundle.clone());
         retained.finalized_applied_fee = 42;
+        retained.finalized_fee_source_disposition = Some(FeeSourceDisposition::Attached);
         mgr.acknowledge_submission(first.id).unwrap();
 
         let mut allocator = AllocEncoder::new();
@@ -4048,6 +4226,7 @@ mod tests {
                 .unwrap();
             retained.finalized_bundle = Some(finalized_bundle.clone());
             retained.finalized_applied_fee = 42;
+            retained.finalized_fee_source_disposition = Some(FeeSourceDisposition::Attached);
             mgr.acknowledge_submission(first.id).unwrap();
 
             let mut allocator = AllocEncoder::new();
@@ -4264,6 +4443,10 @@ mod tests {
         assert_eq!(finalized.bundle, protocol_bundle);
         assert_eq!(finalized.applied_fee, 0);
         assert_eq!(
+            finalized.fee_source_disposition,
+            FeeSourceDisposition::Unused
+        );
+        assert_eq!(
             finalized.warning.as_deref(),
             Some(
                 "Configured fee was not applied: malformed provider source. The transaction will be attempted without a fee."
@@ -4288,6 +4471,10 @@ mod tests {
             .unwrap();
         assert_eq!(replay_finalized.bundle, finalized.bundle);
         assert_eq!(replay_finalized.applied_fee, finalized.applied_fee);
+        assert_eq!(
+            replay_finalized.fee_source_disposition,
+            finalized.fee_source_disposition
+        );
         assert!(manager
             .finalize_submission(
                 drained.id + 1,
@@ -4319,6 +4506,10 @@ mod tests {
             .unwrap();
         assert_eq!(finalized.bundle, protocol_bundle);
         assert_eq!(finalized.applied_fee, 0);
+        assert_eq!(
+            finalized.fee_source_disposition,
+            FeeSourceDisposition::NotRequested
+        );
         assert!(manager
             .finalize_submission(
                 drained.id,
@@ -4338,12 +4529,14 @@ mod tests {
         )]);
         let mut mgr = TransactionManager::new(mock);
         mgr.flush_and_collect(&mut allocator).expect("drain");
-        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+        let expired = mgr.drain_submissions().unwrap().remove(0);
 
         mgr.last_height = 10;
         mgr.requeue_submitted();
         assert!(mgr.drain_submissions().unwrap().is_empty());
         assert!(mgr.submitted.is_empty());
+        assert_eq!(mgr.drain_retired_submission_ids(), vec![expired.id]);
+        assert!(mgr.drain_retired_submission_ids().is_empty());
 
         let mut allocator = AllocEncoder::new();
         mgr.report_height(&mut allocator, 9).unwrap();
@@ -4373,7 +4566,7 @@ mod tests {
         mgr.flush_and_collect(&mut allocator).expect("drain");
 
         // Host submits the spend; the manager retains it.
-        assert_eq!(mgr.drain_submissions().unwrap().len(), 1);
+        let submitted = mgr.drain_submissions().unwrap().remove(0);
         assert!(!mgr.snapshot_watched_coins().contains(&child));
 
         // The first input-spent snapshot was queried before the handler could
@@ -4407,6 +4600,7 @@ mod tests {
         .expect("report");
         mgr.requeue_submitted();
         assert!(mgr.drain_submissions().unwrap().is_empty());
+        assert_eq!(mgr.drain_retired_submission_ids(), vec![submitted.id]);
     }
 
     #[test]

@@ -84,8 +84,6 @@ describe('validateSessionSaveEnvelope', () => {
           error: null,
         }),
         betweenHandLastHandProposal: {
-          player_a_contribution: '20',
-          player_b_contribution: '20',
           sender_is_player_a: false,
           game_timeout: '15',
           game_type: 'calpoker',
@@ -115,8 +113,6 @@ describe('validateSessionSaveEnvelope', () => {
           error: null,
         }),
         betweenHandLastHandProposal: {
-          player_a_contribution: '20',
-          player_b_contribution: '20',
           sender_is_player_a: false,
           game_timeout: '15',
           game_type: 'calpoker',
@@ -171,8 +167,6 @@ describe('validateSessionSaveEnvelope', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
       betweenHandLastHandProposal: {
-        player_a_contribution: '20',
-        player_b_contribution: '20',
         sender_is_player_a: false,
         game_timeout: '15',
         game_type: 'calpoker',
@@ -290,63 +284,6 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() => decodeSessionSaveEnvelope(save)).toThrow('more than one distinct request');
   });
 
-  it.each([
-    ['preferences', baseSave()],
-    [
-      'pre-handshake',
-      baseSave({
-        pairingToken: 'pair',
-        iStarted: true,
-        myContribution: '1',
-        theirContribution: '1',
-        perGameAmount: '1',
-      }),
-    ],
-    ['live', liveSave()],
-    ['terminal', baseSave({ channelStatus: { state: 'ResolvedClean' }, coinsOfInterest: [] })],
-  ])('round-trips the strict wallet reservation ledger in %s phase', (_phase, save) => {
-    save.walletReservationLedger = [
-      {
-        tradeId: 'funding-trade',
-        owner: { sessionId: 'session', gameSessionId: 'game-session' },
-        purpose: { kind: 'funding', operationId: 'funding-operation' },
-        stage: 'cancel-required',
-        reason: 'funding-offer-rejected',
-      },
-    ];
-
-    const decoded = decodeSessionSaveEnvelope(save);
-    expect(decoded.save.walletReservationLedger).toEqual(save.walletReservationLedger);
-  });
-
-  it.each([
-    ['empty trade id', [{ tradeId: '' }]],
-    ['extra field', [{ tradeId: 'trade', unexpected: true }]],
-    [
-      'duplicate trade id',
-      [
-        {
-          tradeId: 'trade',
-          owner: { sessionId: 'session', gameSessionId: 'game-session' },
-          purpose: { kind: 'fee', operationId: 'one' },
-          stage: 'reserved',
-          reason: '',
-        },
-        {
-          tradeId: 'trade',
-          owner: { sessionId: 'session', gameSessionId: 'game-session' },
-          purpose: { kind: 'fee', operationId: 'two' },
-          stage: 'reserved',
-          reason: '',
-        },
-      ],
-    ],
-  ])('rejects wallet reservation ledger with %s', (_label, entries) => {
-    const save = liveSave();
-    save.walletReservationLedger = entries as typeof save.walletReservationLedger;
-    expect(() => decodeSessionSaveEnvelope(save)).toThrow();
-  });
-
   it('accepts cloud as preferences.blockchainType', () => {
     const decoded = decodeSessionSaveEnvelope(baseSave({ blockchainType: 'cloud' }));
     expect(decoded.phase).toBe('preferences');
@@ -357,6 +294,15 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() => decodeSessionSaveEnvelope(baseSave({ blockchainType: 'not-a-wallet' }))).toThrow(
       'Garbled save: invalid preferences.blockchainType: not-a-wallet',
     );
+  });
+
+  it('rejects the wallet ledger inside a session envelope', () => {
+    expect(() =>
+      decodeSessionSaveEnvelope({
+        ...liveSave(),
+        walletReservationLedger: [],
+      }),
+    ).toThrow('walletReservationLedger is not session-owned');
   });
 
   it.each([
@@ -473,6 +419,268 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() => validateSessionSaveEnvelope(save)).toThrow(
       'unexpected presentation field unknownPresentationFact',
     );
+  });
+
+  it.each([
+    ['preferences envelope', () => ({ ...baseSave(), unknown: true })],
+    [
+      'pre-handshake envelope',
+      () => ({
+        ...baseSave({
+          pairingToken: 'pair',
+          iStarted: true,
+          myContribution: '20',
+          theirContribution: '20',
+          perGameAmount: '2',
+        }),
+        unknown: true,
+      }),
+    ],
+    ['live envelope', () => ({ ...liveSave(), unknown: true })],
+    [
+      'terminal envelope',
+      () => ({
+        ...baseSave({
+          channelStatus: { state: 'ResolvedClean' },
+          coinsOfInterest: [],
+        }),
+        unknown: true,
+      }),
+    ],
+    [
+      'identity',
+      () => {
+        const save = liveSave() as any;
+        save.identity.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'preferences',
+      () => {
+        const save = liveSave() as any;
+        save.preferences.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'history',
+      () => {
+        const save = liveSave() as any;
+        save.history.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'pairing',
+      () => {
+        const save = liveSave() as any;
+        save.pairing.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'transport',
+      () => {
+        const save = baseSave({
+          pairingToken: 'pair',
+          iStarted: true,
+          myContribution: '20',
+          theirContribution: '20',
+          perGameAmount: '2',
+        }) as any;
+        save.transport.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'unacked message',
+      () => {
+        const save = liveSave({
+          messageNumber: 2n,
+          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([1]), unknown: true }],
+        });
+        return save;
+      },
+    ],
+    [
+      'terminal handoff',
+      () => {
+        const save = liveSave({
+          messageNumber: 2n,
+          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([1]) }],
+          terminalHandoff: {
+            id: 'close',
+            message: new Uint8Array([1]),
+            msgno: 1n,
+            sent: true,
+            acknowledged: false,
+            unknown: true,
+          },
+        });
+        return save;
+      },
+    ],
+    [
+      'live',
+      () => {
+        const save = liveSave() as any;
+        save.live.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'funding outbox entry',
+      () => {
+        const save = liveSave() as any;
+        const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+        save.live.fundingOutbox = [{ key: fundingRequestKey(request), request, unknown: true }];
+        return save;
+      },
+    ],
+    [
+      'funding request',
+      () => {
+        const save = liveSave() as any;
+        const request = { amount: '100', fee: '0', conditions: [], unknown: true };
+        save.live.fundingOutbox = [
+          {
+            key: fundingRequestKey(
+              canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] }),
+            ),
+            request,
+          },
+        ];
+        return save;
+      },
+    ],
+    [
+      'funding condition',
+      () => {
+        const save = liveSave() as any;
+        const request = {
+          amount: '100',
+          fee: '0',
+          conditions: [{ opcode: 60n, args: [], unknown: true }],
+        };
+        save.live.fundingOutbox = [
+          {
+            key: fundingRequestKey(
+              canonicalizeFundingRequest({
+                amount: '100',
+                fee: '0',
+                conditions: [{ opcode: 60n, args: [] }],
+              }),
+            ),
+            request,
+          },
+        ];
+        return save;
+      },
+    ],
+    [
+      'notification',
+      () =>
+        liveSave({
+          channelNotifQueue: [
+            { id: 1n, kind: 'channel-state', title: 'Title', message: 'Message', unknown: true },
+          ],
+        }),
+    ],
+    ['channel status', () => liveSave({ channelStatus: { state: 'Active', unknown: true } })],
+    [
+      'channel status amount',
+      () =>
+        liveSave({
+          channelStatus: {
+            state: 'Active',
+            our_balance: { Amount: 20n, unknown: true },
+          },
+        }),
+    ],
+    [
+      'game instance',
+      () =>
+        activeSave({
+          gameInstances: { 'game-1': { ...ACTIVE_INSTANCE, unknown: true } },
+        }),
+    ],
+    [
+      'game terminal',
+      () =>
+        activeSave({
+          gameInstances: {
+            'game-1': {
+              ...ACTIVE_INSTANCE,
+              terminal: { ...ACTIVE_INSTANCE.terminal, unknown: true },
+            },
+          },
+        }),
+    ],
+    [
+      'hand state envelope',
+      () => {
+        const save = activeSave() as any;
+        save.presentation.handState.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'compose record',
+      () => {
+        const save = liveSave() as any;
+        save.presentation.betweenHandCompose.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'proposal record',
+      () => {
+        const save = liveSave() as any;
+        save.presentation.betweenHandLastHandProposal.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'pending proposal',
+      () =>
+        liveSave({
+          pendingProposals: [
+            {
+              id: 'proposal-1',
+              lifecycle: 'local-outgoing',
+              hand_proposal: {
+                sender_is_player_a: false,
+                game_timeout: '15',
+                game_type: 'calpoker',
+                parameters: 20n,
+              },
+              unknown: true,
+            },
+          ],
+        }),
+    ],
+    [
+      'terminal session',
+      () => {
+        const save = baseSave({
+          channelStatus: { state: 'ResolvedClean' },
+          coinsOfInterest: [],
+        }) as any;
+        save.terminal.unknown = true;
+        return save;
+      },
+    ],
+    [
+      'terminal coin',
+      () =>
+        baseSave({
+          channelStatus: { state: 'ResolvedClean' },
+          coinsOfInterest: [{ label: 'Coin', id: 'coin', unknown: true }],
+        }),
+    ],
+  ])('rejects an unknown host-owned field at the %s boundary', (_label, makeSave) => {
+    expect(() => decodeSessionSaveEnvelope(makeSave())).toThrow(/unexpected|invalid/i);
   });
 
   it.each([
@@ -603,8 +811,6 @@ describe('validateSessionSaveEnvelope', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
       betweenHandLastHandProposal: {
-        player_a_contribution: '20',
-        player_b_contribution: '20',
         sender_is_player_a: false,
         game_timeout: '15',
         game_type: 'calpoker',
@@ -663,8 +869,6 @@ describe('validateSessionSaveEnvelope', () => {
             settlementOutcome: null,
           }),
           betweenHandLastHandProposal: {
-            player_a_contribution: '20',
-            player_b_contribution: '20',
             sender_is_player_a: false,
             game_timeout: '15',
             game_type: 'calpoker',
@@ -880,8 +1084,6 @@ describe('validateSessionSaveEnvelope', () => {
         proposal_sent: false,
       },
       betweenHandLastHandProposal: {
-        player_a_contribution: '12',
-        player_b_contribution: '12',
         sender_is_player_a: false,
         game_timeout: '20',
         game_type: 'calpoker',

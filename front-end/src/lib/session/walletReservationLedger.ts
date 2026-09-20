@@ -2,8 +2,10 @@ import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
 import { log } from '../../services/log';
 import {
   decodeWalletReservationLedger,
+  decodeWalletReservationRecord,
   MAX_WALLET_RESERVATION_REASON_LENGTH,
   walletReservationOperationKey,
+  walletReservationOwnerKey,
   type WalletReservationLedgerEntry,
   type WalletReservationOwner,
   type WalletReservationPurpose,
@@ -11,24 +13,20 @@ import {
 
 type PersistLedger = (entries: WalletReservationLedgerEntry[]) => Promise<void>;
 
+export interface WalletReservationLedgerCheckpoint {
+  entries: WalletReservationLedgerEntry[];
+  revision: number;
+}
+
 function boundedReason(reason: string): string {
   return reason.slice(0, MAX_WALLET_RESERVATION_REASON_LENGTH);
 }
 
-function cancellationIsTerminalSuccess(error: unknown): boolean {
-  const detail = error instanceof Error ? error.message : String(error);
-  return (
-    /\balready[- ]?(?:spent|cancelled|canceled)\b/i.test(detail) ||
-    /\b(?:offer|trade)\b.{0,80}\b(?:gone|not[- ]?found|does not exist|unknown)\b/i.test(detail) ||
-    /\b(?:gone|not[- ]?found)\b.{0,80}\b(?:offer|trade)\b/i.test(detail)
-  );
-}
-
 export class WalletReservationLedger {
   private readonly entriesByTradeId = new Map<string, WalletReservationLedgerEntry>();
-  private readonly tradeIdByOperation = new Map<string, string>();
   private readonly inFlightAttempts = new Map<string, Promise<unknown>>();
   private readonly inFlightCancellations = new Map<string, Promise<void>>();
+  private readonly coordinatedLaunchRequired = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private rpc: InternalBlockchainInterface | null = null;
   private persist: PersistLedger | null = null;
@@ -36,6 +34,8 @@ export class WalletReservationLedger {
   private initialized = false;
   private dirty = false;
   private revision = 0;
+  private coordinatedDirtyRevision: number | null = null;
+  private lastPersistence: Promise<void> = Promise.resolve();
 
   configurePersistence(persist: PersistLedger): void {
     this.persist = persist;
@@ -78,31 +78,54 @@ export class WalletReservationLedger {
     return this.dirty;
   }
 
-  hydrateFromDisk(entries: unknown): void {
-    const decoded = decodeWalletReservationLedger(entries, 'walletReservationLedger');
+  hydrateFromDisk(record: unknown | null): void {
+    const entries = record === null ? [] : decodeWalletReservationRecord(record).entries;
+    this.hydrateEntries(entries);
+  }
+
+  private hydrateEntries(decoded: WalletReservationLedgerEntry[]): void {
     if (!this.initialized) {
-      if (this.entriesByTradeId.size > 0 || this.tradeIdByOperation.size > 0 || this.dirty) {
-        throw new Error('Wallet reservation ledger is uninitialized with in-memory state');
-      }
-      for (const entry of decoded) this.install(this.promoteRestoredEntry(entry));
       this.initialized = true;
-      if (decoded.some((entry) => entry.stage === 'reserved')) this.markDirty();
-    } else {
-      for (const diskEntry of decoded) this.assertDiskEntryCompatible(diskEntry);
-      for (const diskEntry of decoded) this.mergeDiskEntry(diskEntry);
     }
-    this.retryCancelRequired();
+    for (const diskEntry of decoded) this.mergeDiskEntry(diskEntry);
+    this.persistIfDirty();
+    for (const entry of this.entriesByTradeId.values()) {
+      if (entry.stage === 'cancel-required') this.scheduleCancellationAfterPersistence(entry);
+    }
     this.notify();
   }
 
   /** Test/standalone restore; production hydration checkpoints after cache merge. */
   restore(entries: unknown): void {
-    this.hydrateFromDisk(entries);
+    this.hydrateEntries(decodeWalletReservationLedger(entries, 'walletReservationLedger'));
     this.persistIfDirty();
   }
 
-  persistIfDirty(): void {
-    if (this.dirty) this.persistSnapshot();
+  persistIfDirty(): Promise<void> {
+    if (this.dirty && this.coordinatedDirtyRevision === null) this.persistSnapshot();
+    return this.lastPersistence;
+  }
+
+  flushPersistence(): Promise<void> {
+    return this.lastPersistence;
+  }
+
+  checkpoint(): WalletReservationLedgerCheckpoint {
+    return { entries: this.snapshot(), revision: this.revision };
+  }
+
+  combinedCheckpointPersisted(checkpoint: WalletReservationLedgerCheckpoint): void {
+    if (
+      this.coordinatedDirtyRevision !== null &&
+      this.coordinatedDirtyRevision <= checkpoint.revision
+    ) {
+      this.coordinatedDirtyRevision = null;
+    }
+    if (this.revision === checkpoint.revision) {
+      this.dirty = false;
+    } else if (this.dirty && this.coordinatedDirtyRevision === null) {
+      this.persistSnapshot();
+    }
   }
 
   registerReserved(
@@ -124,43 +147,67 @@ export class WalletReservationLedger {
       ],
       'wallet reservation registration',
     )[0]!;
-    const operation = walletReservationOperationKey(owner, purpose);
-    const existingTradeId = this.tradeIdByOperation.get(operation);
-    if (existingTradeId) {
-      const existing = this.entriesByTradeId.get(existingTradeId)!;
-      if (existing.tradeId !== decoded.tradeId) {
-        throw new Error(`Wallet reservation operation already owns trade ${existing.tradeId}`);
-      }
-      return structuredClone(existing);
-    }
     const existingTrade = this.entriesByTradeId.get(decoded.tradeId);
     if (existingTrade) {
-      throw new Error(`Wallet trade ${decoded.tradeId} belongs to another operation`);
+      if (
+        walletReservationOperationKey(existingTrade.owner, existingTrade.purpose) !==
+        walletReservationOperationKey(decoded.owner, decoded.purpose)
+      ) {
+        throw new Error(`Wallet trade ${decoded.tradeId} belongs to another operation`);
+      }
+      return structuredClone(existingTrade);
     }
     this.install(decoded);
     this.changed();
     return structuredClone(decoded);
   }
 
-  resolve(owner: WalletReservationOwner, purpose: WalletReservationPurpose): void {
-    const tradeId = this.tradeIdByOperation.get(walletReservationOperationKey(owner, purpose));
-    if (!tradeId) return;
+  resolve(tradeId: string): void {
     this.remove(tradeId);
     this.changed();
   }
 
-  requireCancellation(
-    owner: WalletReservationOwner,
-    purpose: WalletReservationPurpose,
-    reason: string,
-  ): void {
-    const tradeId = this.tradeIdByOperation.get(walletReservationOperationKey(owner, purpose));
-    if (!tradeId) return;
-    const entry = this.entriesByTradeId.get(tradeId)!;
+  resolveCoordinated(tradeId: string): void {
+    this.remove(tradeId);
+    this.changed(true);
+  }
+
+  requireCancellation(tradeId: string, reason: string): void {
+    const entry = this.entriesByTradeId.get(tradeId);
+    if (!entry) return;
     entry.stage = 'cancel-required';
     entry.reason = boundedReason(reason);
     this.changed();
-    this.attemptCancellation(entry);
+    this.scheduleCancellationAfterPersistence(entry);
+  }
+
+  requireCancellationCoordinated(tradeId: string, reason: string): void {
+    const entry = this.entriesByTradeId.get(tradeId);
+    if (!entry) return;
+    entry.stage = 'cancel-required';
+    entry.reason = boundedReason(reason);
+    this.coordinatedLaunchRequired.add(tradeId);
+    this.changed(true);
+  }
+
+  retainForReplay(tradeId: string, reason = 'fee-source-attached'): void {
+    const entry = this.entriesByTradeId.get(tradeId);
+    if (!entry) {
+      throw new Error(`Cannot retain unknown wallet trade ${tradeId}`);
+    }
+    entry.stage = 'retained-for-replay';
+    entry.reason = boundedReason(reason);
+    this.changed();
+  }
+
+  retainForReplayCoordinated(tradeId: string, reason = 'fee-source-attached'): void {
+    const entry = this.entriesByTradeId.get(tradeId);
+    if (!entry) {
+      throw new Error(`Cannot retain unknown wallet trade ${tradeId}`);
+    }
+    entry.stage = 'retained-for-replay';
+    entry.reason = boundedReason(reason);
+    this.changed(true);
   }
 
   routeStaleResult(
@@ -169,16 +216,50 @@ export class WalletReservationLedger {
     purpose: WalletReservationPurpose,
     reason: string,
   ): void {
-    this.registerReserved(tradeId, owner, purpose, reason);
-    this.requireCancellation(owner, purpose, reason);
+    const decoded = decodeWalletReservationLedger(
+      [{ tradeId, owner, purpose, stage: 'cancel-required', reason: boundedReason(reason) }],
+      'stale wallet reservation result',
+    )[0]!;
+    const existing = this.entriesByTradeId.get(tradeId);
+    if (existing) {
+      if (
+        walletReservationOperationKey(existing.owner, existing.purpose) !==
+        walletReservationOperationKey(owner, purpose)
+      ) {
+        throw new Error(`Wallet trade ${tradeId} belongs to another operation`);
+      }
+      existing.stage = 'cancel-required';
+      existing.reason = decoded.reason;
+    } else {
+      this.install(decoded);
+    }
+    this.changed();
+    const entry = this.entriesByTradeId.get(tradeId)!;
+    this.scheduleCancellationAfterPersistence(entry);
   }
 
-  hasOperation(owner: WalletReservationOwner, purpose: WalletReservationPurpose): boolean {
-    return this.tradeIdByOperation.has(walletReservationOperationKey(owner, purpose));
+  hasBlockingOperation(owner: WalletReservationOwner, purpose: WalletReservationPurpose): boolean {
+    const operation = walletReservationOperationKey(owner, purpose);
+    return [...this.entriesByTradeId.values()].some(
+      (entry) => walletReservationOperationKey(entry.owner, entry.purpose) === operation,
+    );
   }
 
-  entriesForSession(gameSessionId: string): WalletReservationLedgerEntry[] {
-    return this.snapshot().filter((entry) => entry.owner.gameSessionId === gameSessionId);
+  entriesFor(owner: WalletReservationOwner): WalletReservationLedgerEntry[] {
+    const ownerKey = walletReservationOwnerKey(owner);
+    return this.snapshot().filter((entry) => walletReservationOwnerKey(entry.owner) === ownerKey);
+  }
+
+  retainedEntriesForOperation(
+    owner: WalletReservationOwner,
+    purpose: WalletReservationPurpose,
+  ): WalletReservationLedgerEntry[] {
+    const operation = walletReservationOperationKey(owner, purpose);
+    return this.snapshot().filter(
+      (entry) =>
+        entry.stage === 'retained-for-replay' &&
+        walletReservationOperationKey(entry.owner, entry.purpose) === operation,
+    );
   }
 
   async runAttempt<T>(
@@ -187,7 +268,7 @@ export class WalletReservationLedger {
     launch: () => Promise<T>,
   ): Promise<T> {
     const key = walletReservationOperationKey(owner, purpose);
-    if (this.hasOperation(owner, purpose)) {
+    if (this.hasBlockingOperation(owner, purpose)) {
       throw new Error('Wallet reservation cleanup is pending for this operation');
     }
     const existing = this.inFlightAttempts.get(key);
@@ -199,32 +280,39 @@ export class WalletReservationLedger {
     return attempt;
   }
 
-  retryCancelRequired(gameSessionId?: string): void {
+  retryCancelRequired(owner?: WalletReservationOwner): void {
+    const ownerKey = owner ? walletReservationOwnerKey(owner) : undefined;
     for (const entry of this.entriesByTradeId.values()) {
       if (
         entry.stage === 'cancel-required' &&
-        (gameSessionId === undefined || entry.owner.gameSessionId === gameSessionId)
+        !this.coordinatedLaunchRequired.has(entry.tradeId) &&
+        (ownerKey === undefined || walletReservationOwnerKey(entry.owner) === ownerKey)
       ) {
         this.attemptCancellation(entry);
       }
     }
   }
 
-  async awaitSession(gameSessionId: string): Promise<void> {
+  launchCancellation(tradeId: string): Promise<void> {
+    this.coordinatedLaunchRequired.delete(tradeId);
+    const entry = this.entriesByTradeId.get(tradeId);
+    if (!entry || entry.stage !== 'cancel-required') return Promise.resolve();
+    return this.attemptCancellation(entry);
+  }
+
+  async awaitOwner(owner: WalletReservationOwner): Promise<void> {
+    const ownerKey = walletReservationOwnerKey(owner);
     const pending = [...this.inFlightCancellations.entries()]
-      .filter(
-        ([tradeId]) => this.entriesByTradeId.get(tradeId)?.owner.gameSessionId === gameSessionId,
-      )
+      .filter(([tradeId]) => {
+        const entry = this.entriesByTradeId.get(tradeId);
+        return entry !== undefined && walletReservationOwnerKey(entry.owner) === ownerKey;
+      })
       .map(([, promise]) => promise);
     await Promise.allSettled(pending);
   }
 
   private install(entry: WalletReservationLedgerEntry): void {
     this.entriesByTradeId.set(entry.tradeId, entry);
-    this.tradeIdByOperation.set(
-      walletReservationOperationKey(entry.owner, entry.purpose),
-      entry.tradeId,
-    );
   }
 
   private promoteRestoredEntry(entry: WalletReservationLedgerEntry): WalletReservationLedgerEntry {
@@ -238,44 +326,36 @@ export class WalletReservationLedger {
   }
 
   private mergeDiskEntry(diskEntry: WalletReservationLedgerEntry): void {
-    const operation = walletReservationOperationKey(diskEntry.owner, diskEntry.purpose);
     const byTrade = this.entriesByTradeId.get(diskEntry.tradeId);
-    const operationTradeId = this.tradeIdByOperation.get(operation);
-    if (byTrade || operationTradeId) return;
-    this.install(this.promoteRestoredEntry(diskEntry));
-    if (diskEntry.stage === 'reserved') this.markDirty();
-  }
-
-  private assertDiskEntryCompatible(diskEntry: WalletReservationLedgerEntry): void {
-    const operation = walletReservationOperationKey(diskEntry.owner, diskEntry.purpose);
-    const byTrade = this.entriesByTradeId.get(diskEntry.tradeId);
-    const operationTradeId = this.tradeIdByOperation.get(operation);
     if (
-      (byTrade || operationTradeId) &&
-      (!byTrade ||
-        operationTradeId !== diskEntry.tradeId ||
-        walletReservationOperationKey(byTrade.owner, byTrade.purpose) !== operation)
+      byTrade &&
+      walletReservationOperationKey(byTrade.owner, byTrade.purpose) !==
+        walletReservationOperationKey(diskEntry.owner, diskEntry.purpose)
     ) {
       throw new Error(`Wallet reservation ledger conflict for trade ${diskEntry.tradeId}`);
     }
+    if (byTrade) return;
+    this.install(this.promoteRestoredEntry(diskEntry));
+    if (diskEntry.stage === 'reserved') this.markDirty();
   }
 
   private remove(tradeId: string): void {
     const entry = this.entriesByTradeId.get(tradeId);
     if (!entry) return;
     this.entriesByTradeId.delete(tradeId);
-    this.tradeIdByOperation.delete(walletReservationOperationKey(entry.owner, entry.purpose));
+    this.coordinatedLaunchRequired.delete(tradeId);
   }
 
-  private changed(): void {
-    this.markDirty();
-    this.persistSnapshot();
+  private changed(coordinated = false): void {
+    this.markDirty(coordinated);
+    if (this.coordinatedDirtyRevision === null) this.persistSnapshot();
     this.notify();
   }
 
-  private markDirty(): void {
+  private markDirty(coordinated = false): void {
     this.dirty = true;
     this.revision += 1;
+    if (coordinated) this.coordinatedDirtyRevision = this.revision;
   }
 
   private persistSnapshot(): void {
@@ -283,7 +363,7 @@ export class WalletReservationLedger {
     if (!persist) return;
     const snapshot = this.snapshot();
     const revision = this.revision;
-    void persist(snapshot).then(
+    const attempt = persist(snapshot).then(
       () => {
         if (this.revision === revision) this.dirty = false;
       },
@@ -292,35 +372,75 @@ export class WalletReservationLedger {
         log(`[wallet-reservation-ledger] persistence failed: ${String(error)}`);
       },
     );
+    this.lastPersistence = attempt;
   }
 
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
 
-  private attemptCancellation(entry: WalletReservationLedgerEntry): void {
-    if (this.inFlightCancellations.has(entry.tradeId)) return;
-    const cancelOffer = this.rpc?.cancelOffer;
-    if (!cancelOffer) return;
-    const attempt = (async () => {
-      try {
-        await cancelOffer(entry.tradeId);
-        this.remove(entry.tradeId);
-        this.changed();
-      } catch (error) {
-        if (cancellationIsTerminalSuccess(error)) {
-          this.remove(entry.tradeId);
-          this.changed();
-          return;
+  private scheduleCancellationAfterPersistence(entry: WalletReservationLedgerEntry): Promise<void> {
+    const existing = this.inFlightCancellations.get(entry.tradeId);
+    if (existing) return existing;
+    const scheduled = this.flushPersistence()
+      .then(() => this.performCancellation(entry))
+      .finally(() => {
+        if (this.inFlightCancellations.get(entry.tradeId) === scheduled) {
+          this.inFlightCancellations.delete(entry.tradeId);
         }
-        log(
-          `[wallet-reservation-ledger] cancel failed trade_id=${entry.tradeId}: ${String(error)}`,
-        );
-      } finally {
+      });
+    this.inFlightCancellations.set(entry.tradeId, scheduled);
+    return scheduled;
+  }
+
+  private attemptCancellation(entry: WalletReservationLedgerEntry): Promise<void> {
+    const existing = this.inFlightCancellations.get(entry.tradeId);
+    if (existing) return existing;
+    const cancelOffer = this.rpc?.cancelOffer;
+    if (!cancelOffer) return Promise.resolve();
+    const attempt = this.performCancellation(entry).finally(() => {
+      if (this.inFlightCancellations.get(entry.tradeId) === attempt) {
         this.inFlightCancellations.delete(entry.tradeId);
       }
-    })();
+    });
     this.inFlightCancellations.set(entry.tradeId, attempt);
+    return attempt;
+  }
+
+  private async performCancellation(entry: WalletReservationLedgerEntry): Promise<void> {
+    const cancelOffer = this.rpc?.cancelOffer;
+    if (!cancelOffer) return;
+    try {
+      const outcome = await cancelOffer(entry.tradeId);
+      if (this.entriesByTradeId.get(entry.tradeId) !== entry) return;
+      if (outcome.status === 'cancelled' || outcome.status === 'already-terminal') {
+        this.remove(entry.tradeId);
+        this.changed();
+        return;
+      }
+      log(
+        `[wallet-reservation-ledger] cancel ${outcome.status} trade_id=${entry.tradeId}: ${outcome.detail}`,
+      );
+    } catch (error) {
+      if (this.entriesByTradeId.get(entry.tradeId) !== entry) return;
+      log(`[wallet-reservation-ledger] cancel threw trade_id=${entry.tradeId}: ${String(error)}`);
+    }
+  }
+
+  /** @internal */
+  clearForHardReset(): void {
+    this.connectionUnsubscribe?.();
+    this.connectionUnsubscribe = null;
+    this.rpc = null;
+    this.initialized = true;
+    this.entriesByTradeId.clear();
+    this.inFlightAttempts.clear();
+    this.inFlightCancellations.clear();
+    this.coordinatedLaunchRequired.clear();
+    this.dirty = false;
+    this.coordinatedDirtyRevision = null;
+    this.revision += 1;
+    this.notify();
   }
 
   /** @internal */
@@ -330,12 +450,14 @@ export class WalletReservationLedger {
     this.rpc = null;
     this.initialized = false;
     this.entriesByTradeId.clear();
-    this.tradeIdByOperation.clear();
     this.inFlightAttempts.clear();
     this.inFlightCancellations.clear();
+    this.coordinatedLaunchRequired.clear();
     this.listeners.clear();
     this.dirty = false;
     this.revision = 0;
+    this.coordinatedDirtyRevision = null;
+    this.lastPersistence = Promise.resolve();
   }
 }
 

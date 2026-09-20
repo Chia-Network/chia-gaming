@@ -1,14 +1,22 @@
 import type { SessionSave } from './saveEnvelope';
+import {
+  decodeWalletReservationRecord,
+  encodeWalletReservationRecord,
+  type WalletReservationLedgerEntry,
+  type WalletReservationRecord,
+} from './walletReservationLedgerSchema';
 import { decode, encode, type BencodexValue } from 'chia-gaming-bencodex';
 
 export const SESSION_DB_NAME = 'chia-gaming-session';
-const SESSION_DB_VERSION = 2;
+const SESSION_DB_VERSION = 3;
 const SESSION_STORE_NAME = 'session';
 const SESSION_RECORD_KEY = 'current';
 const REJECTION_STORE_NAME = 'rejections';
+const WALLET_RESERVATION_STORE_NAME = 'wallet-reservations';
+const WALLET_RESERVATION_RECORD_KEY = 'current';
 export const MAX_DURABLE_REJECTION_TOMBSTONES = 8;
 export const REJECTION_TOMBSTONE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
-let rejectionWriteQueue: Promise<void> = Promise.resolve();
+let storageWriteQueue: Promise<void> = Promise.resolve();
 const OBFUSCATION_KEY = new Uint8Array([
   0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b, 0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
 ]);
@@ -20,6 +28,13 @@ export class InvalidSessionRecordError extends Error {
   constructor(cause: unknown) {
     super('Stored session record is malformed', { cause });
     this.name = 'InvalidSessionRecordError';
+  }
+}
+
+export class InvalidWalletReservationRecordError extends Error {
+  constructor(cause: unknown) {
+    super('Stored wallet reservation ledger is malformed', { cause });
+    this.name = 'InvalidWalletReservationRecordError';
   }
 }
 
@@ -118,7 +133,7 @@ function obfuscateRecord(record: unknown): Uint8Array {
   return masked;
 }
 
-function deobfuscateSessionRecord(masked: Uint8Array): unknown {
+function deobfuscateRecord(masked: Uint8Array): unknown {
   if (masked.length < SALT_LEN) {
     throw new Error('Obfuscated session record is missing its salt');
   }
@@ -132,16 +147,7 @@ function deobfuscateSessionRecord(masked: Uint8Array): unknown {
   for (let i = 0; i < ciphertext.length; i++) {
     plaintext[i] = ciphertext[i] ^ stream[i];
   }
-  const record = fromBencodexValue(decode(plaintext));
-  if (
-    !record ||
-    typeof record !== 'object' ||
-    Array.isArray(record) ||
-    record instanceof Uint8Array
-  ) {
-    throw new Error('Obfuscated session record did not decode to an object');
-  }
-  return record;
+  return fromBencodexValue(decode(plaintext));
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -154,6 +160,9 @@ function openDatabase(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(REJECTION_STORE_NAME)) {
         db.createObjectStore(REJECTION_STORE_NAME);
+      }
+      if (!db.objectStoreNames.contains(WALLET_RESERVATION_STORE_NAME)) {
+        db.createObjectStore(WALLET_RESERVATION_STORE_NAME);
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -172,28 +181,16 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function deleteDatabase(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
-    request.onsuccess = () => resolve();
-    request.onerror = () =>
-      reject(request.error ?? new Error('Failed to delete stale session database'));
-    request.onblocked = () => reject(new Error('Stale session database deletion was blocked'));
-  });
+function enqueueStorageWrite(write: () => Promise<void>): Promise<void> {
+  const queued = storageWriteQueue.catch(() => {}).then(write);
+  storageWriteQueue = queued;
+  return queued;
 }
 
 export async function readSessionRecord(): Promise<unknown | null> {
   if (typeof indexedDB === 'undefined') return null;
-  let db: IDBDatabase;
-  try {
-    db = await openDatabase();
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'VersionError') {
-      await deleteDatabase();
-      return null;
-    }
-    throw error;
-  }
+  await storageWriteQueue.catch(() => {});
+  const db = await openDatabase();
   try {
     const transaction = db.transaction(SESSION_STORE_NAME, 'readonly');
     const request = transaction.objectStore(SESSION_STORE_NAME).get(SESSION_RECORD_KEY);
@@ -209,23 +206,25 @@ export async function readSessionRecord(): Promise<unknown | null> {
       );
     }
     try {
-      return deobfuscateSessionRecord(record);
+      const decoded = deobfuscateRecord(record);
+      if (
+        !decoded ||
+        typeof decoded !== 'object' ||
+        Array.isArray(decoded) ||
+        decoded instanceof Uint8Array
+      ) {
+        throw new Error('Obfuscated session record did not decode to an object');
+      }
+      return decoded;
     } catch (error) {
       throw new InvalidSessionRecordError(error);
     }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'NotFoundError') {
-      db.close();
-      await deleteDatabase();
-      return null;
-    }
-    throw error;
   } finally {
     db.close();
   }
 }
 
-export async function writeSessionRecord(record: SessionSave): Promise<void> {
+async function performWriteSessionRecord(record: SessionSave): Promise<void> {
   if (typeof indexedDB === 'undefined') {
     throw new Error('IndexedDB is unavailable; refusing to send without durable session storage');
   }
@@ -239,16 +238,124 @@ export async function writeSessionRecord(record: SessionSave): Promise<void> {
   }
 }
 
-export async function deleteSessionRecord(): Promise<void> {
-  if (typeof indexedDB === 'undefined') return;
+export function writeSessionRecord(record: SessionSave): Promise<void> {
+  const snapshot = structuredClone(record);
+  return enqueueStorageWrite(() => performWriteSessionRecord(snapshot));
+}
+
+export function writeSessionAndWalletReservationRecords(
+  session: SessionSave,
+  entries: WalletReservationLedgerEntry[],
+  shouldWrite: () => boolean = () => true,
+): Promise<void> {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(
+      new Error('IndexedDB is unavailable; session and wallet ledger remain dirty'),
+    );
+  }
+  const sessionSnapshot = structuredClone(session);
+  const ledgerRecord = encodeWalletReservationRecord(structuredClone(entries));
+  return enqueueStorageWrite(async () => {
+    if (!shouldWrite()) return;
+    const db = await openDatabase();
+    try {
+      const transaction = db.transaction(
+        [SESSION_STORE_NAME, WALLET_RESERVATION_STORE_NAME],
+        'readwrite',
+      );
+      transaction
+        .objectStore(SESSION_STORE_NAME)
+        .put(obfuscateRecord(sessionSnapshot), SESSION_RECORD_KEY);
+      transaction
+        .objectStore(WALLET_RESERVATION_STORE_NAME)
+        .put(obfuscateRecord(ledgerRecord), WALLET_RESERVATION_RECORD_KEY);
+      await transactionComplete(transaction);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+export function deleteSessionRecord(): Promise<void> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  return enqueueStorageWrite(async () => {
+    const db = await openDatabase();
+    try {
+      const transaction = db.transaction(SESSION_STORE_NAME, 'readwrite');
+      transaction.objectStore(SESSION_STORE_NAME).delete(SESSION_RECORD_KEY);
+      await transactionComplete(transaction);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+export async function readWalletReservationRecord(): Promise<WalletReservationRecord | null> {
+  if (typeof indexedDB === 'undefined') return null;
+  await storageWriteQueue.catch(() => {});
   const db = await openDatabase();
   try {
-    const transaction = db.transaction(SESSION_STORE_NAME, 'readwrite');
-    transaction.objectStore(SESSION_STORE_NAME).delete(SESSION_RECORD_KEY);
+    const transaction = db.transaction(WALLET_RESERVATION_STORE_NAME, 'readonly');
+    const request = transaction
+      .objectStore(WALLET_RESERVATION_STORE_NAME)
+      .get(WALLET_RESERVATION_RECORD_KEY);
+    const record = await new Promise<unknown>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        reject(request.error ?? new Error('Failed to read wallet reservation ledger'));
+    });
     await transactionComplete(transaction);
+    if (record == null) return null;
+    if (!(record instanceof Uint8Array)) {
+      throw new InvalidWalletReservationRecordError(
+        new Error('Wallet reservation ledger is not an obfuscated binary record'),
+      );
+    }
+    try {
+      return decodeWalletReservationRecord(deobfuscateRecord(record));
+    } catch (error) {
+      throw new InvalidWalletReservationRecordError(error);
+    }
   } finally {
     db.close();
   }
+}
+
+export function writeWalletReservationRecord(
+  entries: WalletReservationLedgerEntry[],
+): Promise<void> {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(
+      new Error('IndexedDB is unavailable; wallet reservation ledger remains dirty'),
+    );
+  }
+  const record = encodeWalletReservationRecord(structuredClone(entries));
+  return enqueueStorageWrite(async () => {
+    const db = await openDatabase();
+    try {
+      const transaction = db.transaction(WALLET_RESERVATION_STORE_NAME, 'readwrite');
+      transaction
+        .objectStore(WALLET_RESERVATION_STORE_NAME)
+        .put(obfuscateRecord(record), WALLET_RESERVATION_RECORD_KEY);
+      await transactionComplete(transaction);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+export function deleteWalletReservationRecord(): Promise<void> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  return enqueueStorageWrite(async () => {
+    const db = await openDatabase();
+    try {
+      const transaction = db.transaction(WALLET_RESERVATION_STORE_NAME, 'readwrite');
+      transaction.objectStore(WALLET_RESERVATION_STORE_NAME).delete(WALLET_RESERVATION_RECORD_KEY);
+      await transactionComplete(transaction);
+    } finally {
+      db.close();
+    }
+  });
 }
 
 export interface DurableRejectionTombstone {
@@ -287,7 +394,9 @@ function parseRejectionTombstone(value: unknown): DurableRejectionTombstone | nu
   return candidate as DurableRejectionTombstone;
 }
 
-export async function readRejectionTombstones(): Promise<DurableRejectionTombstone[]> {
+export async function readRejectionTombstones(
+  deleteExpired = true,
+): Promise<DurableRejectionTombstone[]> {
   if (typeof indexedDB === 'undefined') return [];
   const db = await openDatabase();
   try {
@@ -301,14 +410,16 @@ export async function readRejectionTombstones(): Promise<DurableRejectionTombsto
     await transactionComplete(transaction);
     const parsed = records.flatMap((record) => {
       if (!(record instanceof Uint8Array)) return [];
-      const parsed = parseRejectionTombstone(deobfuscateSessionRecord(record));
+      const parsed = parseRejectionTombstone(deobfuscateRecord(record));
       return parsed ? [parsed] : [];
     });
     const cutoff = Date.now() - REJECTION_TOMBSTONE_TTL_MS;
     const expired = parsed.filter((record) => record.createdAt < cutoff);
-    await Promise.all(
-      expired.map((record) => deleteRejectionTombstone(record.peerId, record.sessionId)),
-    );
+    if (deleteExpired) {
+      await Promise.all(
+        expired.map((record) => deleteRejectionTombstone(record.peerId, record.sessionId)),
+      );
+    }
     return parsed
       .filter((record) => record.createdAt >= cutoff)
       .sort((a, b) => a.createdAt - b.createdAt)
@@ -325,7 +436,7 @@ async function performWriteRejectionTombstone(
   if (typeof indexedDB === 'undefined') {
     throw new Error('IndexedDB is unavailable; refusing to reject without durable storage');
   }
-  const existing = await readRejectionTombstones();
+  const existing = await readRejectionTombstones(false);
   const db = await openDatabase();
   try {
     const transaction = db.transaction(
@@ -356,27 +467,27 @@ async function performWriteRejectionTombstone(
 }
 
 export function writeRejectionTombstone(tombstone: DurableRejectionTombstone): Promise<void> {
-  const write = rejectionWriteQueue.then(() => performWriteRejectionTombstone(tombstone, false));
-  rejectionWriteQueue = write.catch(() => {});
-  return write;
+  return enqueueStorageWrite(() => performWriteRejectionTombstone(tombstone, false));
 }
 
 export function replaceSessionWithRejectionTombstone(
   tombstone: DurableRejectionTombstone,
 ): Promise<void> {
-  const write = rejectionWriteQueue.then(() => performWriteRejectionTombstone(tombstone, true));
-  rejectionWriteQueue = write.catch(() => {});
-  return write;
+  return enqueueStorageWrite(() => performWriteRejectionTombstone(tombstone, true));
 }
 
-export async function deleteRejectionTombstone(peerId: string, sessionId: string): Promise<void> {
-  if (typeof indexedDB === 'undefined') return;
-  const db = await openDatabase();
-  try {
-    const transaction = db.transaction(REJECTION_STORE_NAME, 'readwrite');
-    transaction.objectStore(REJECTION_STORE_NAME).delete(rejectionTombstoneKey(peerId, sessionId));
-    await transactionComplete(transaction);
-  } finally {
-    db.close();
-  }
+export function deleteRejectionTombstone(peerId: string, sessionId: string): Promise<void> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  return enqueueStorageWrite(async () => {
+    const db = await openDatabase();
+    try {
+      const transaction = db.transaction(REJECTION_STORE_NAME, 'readwrite');
+      transaction
+        .objectStore(REJECTION_STORE_NAME)
+        .delete(rejectionTombstoneKey(peerId, sessionId));
+      await transactionComplete(transaction);
+    } finally {
+      db.close();
+    }
+  });
 }

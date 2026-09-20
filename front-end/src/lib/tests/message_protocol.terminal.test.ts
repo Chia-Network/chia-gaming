@@ -21,6 +21,7 @@ import {
   mockWasmConnection,
   setActiveBlob,
   setTestPersistence,
+  submissionDrain,
   submitTransaction,
   testSpendBundle,
   transactionSubmitQueue,
@@ -749,8 +750,10 @@ describe('transaction submission', () => {
       snapshot_watched_coins: jest.fn(() => [{ coin_name: 'cc', coin_string: 'coin-c' }]),
       drain_submissions: jest
         .fn()
-        .mockReturnValueOnce([])
-        .mockReturnValueOnce([{ id: '5', bundle: testSpendBundle('05'), fee_request: null }]),
+        .mockReturnValueOnce(submissionDrain())
+        .mockReturnValueOnce(
+          submissionDrain([{ id: '5', bundle: testSpendBundle('05'), fee_request: null }]),
+        ),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -857,14 +860,15 @@ describe('transaction submission', () => {
       bundle: {},
       applied_fee: '10',
       warning: null,
+      fee_source_disposition: 'attached',
     }));
     const cradle = {
       ...makeMockCradle(),
       drain_submissions: jest
         .fn()
-        .mockReturnValueOnce([submission])
-        .mockReturnValueOnce([submission])
-        .mockReturnValue([]),
+        .mockReturnValueOnce(submissionDrain([submission]))
+        .mockReturnValueOnce(submissionDrain([submission]))
+        .mockReturnValue(submissionDrain()),
       finalize_submission: finalizeSubmission,
     } as unknown as ChiaGame;
 
@@ -923,10 +927,12 @@ describe('transaction submission', () => {
     blob.rewardPuzzleHash = '11'.repeat(32);
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() => [
-        { id: '1', bundle: testSpendBundle('01'), fee_request: null },
-        { id: '2', bundle: testSpendBundle('02'), fee_request: null },
-      ]),
+      drain_submissions: jest.fn(() =>
+        submissionDrain([
+          { id: '1', bundle: testSpendBundle('01'), fee_request: null },
+          { id: '2', bundle: testSpendBundle('02'), fee_request: null },
+        ]),
+      ),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -963,10 +969,10 @@ describe('transaction submission', () => {
       ...makeMockCradle(),
       drain_submissions: jest
         .fn()
-        .mockReturnValueOnce([first, urgent])
-        .mockReturnValueOnce([])
-        .mockReturnValueOnce([first])
-        .mockReturnValue([]),
+        .mockReturnValueOnce(submissionDrain([first, urgent]))
+        .mockReturnValueOnce(submissionDrain())
+        .mockReturnValueOnce(submissionDrain([first]))
+        .mockReturnValue(submissionDrain()),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -1007,10 +1013,12 @@ describe('transaction submission', () => {
     });
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() => [
-        { id: 'local-failure', bundle: testSpendBundle('01'), fee_request: null },
-        { id: 'urgent', bundle: testSpendBundle('02'), fee_request: null },
-      ]),
+      drain_submissions: jest.fn(() =>
+        submissionDrain([
+          { id: 'local-failure', bundle: testSpendBundle('01'), fee_request: null },
+          { id: 'urgent', bundle: testSpendBundle('02'), fee_request: null },
+        ]),
+      ),
       finalize_submission: jest.fn((id: string) => {
         if (id === 'local-failure') throw new Error('finalization exploded');
         return {
@@ -1018,6 +1026,7 @@ describe('transaction submission', () => {
           bundle: {},
           applied_fee: '0',
           warning: null,
+          fee_source_disposition: 'not-requested',
         };
       }),
     } as unknown as ChiaGame;
@@ -1056,9 +1065,10 @@ describe('transaction submission', () => {
       ...makeMockCradle(),
       drain_submissions: jest
         .fn()
-        .mockReturnValueOnce([
-          { id: 'rejected', bundle: testSpendBundle('03'), fee_request: null },
-        ]),
+        .mockReturnValueOnce(
+          submissionDrain([{ id: 'rejected', bundle: testSpendBundle('03'), fee_request: null }]),
+        )
+        .mockReturnValue(submissionDrain()),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -1095,9 +1105,9 @@ describe('transaction submission', () => {
     blob.rewardPuzzleHash = '11'.repeat(32);
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() => [
-        { id: '6', bundle: testSpendBundle('06'), fee_request: null },
-      ]),
+      drain_submissions: jest.fn(() =>
+        submissionDrain([{ id: '6', bundle: testSpendBundle('06'), fee_request: null }]),
+      ),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
@@ -1147,10 +1157,12 @@ describe('transaction submission', () => {
     });
     const cradle = {
       ...makeMockCradle(),
-      drain_submissions: jest.fn(() => [
-        { id: '3', bundle: testSpendBundle('03'), fee_request: null },
-        { id: '4', bundle: testSpendBundle('04'), fee_request: null },
-      ]),
+      drain_submissions: jest.fn(() =>
+        submissionDrain([
+          { id: '3', bundle: testSpendBundle('03'), fee_request: null },
+          { id: '4', bundle: testSpendBundle('04'), fee_request: null },
+        ]),
+      ),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);

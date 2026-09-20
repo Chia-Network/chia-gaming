@@ -92,8 +92,6 @@ describe('session machine behavior sequences', () => {
         betweenHandMode: 'compose-proposal',
 
         betweenHandLastHandProposal: {
-          player_a_contribution: '20',
-          player_b_contribution: '20',
           sender_is_player_a: false,
 
           game_timeout: '15',
@@ -120,8 +118,6 @@ describe('session machine behavior sequences', () => {
             id: '11',
             lifecycle: 'local-outgoing',
             hand_proposal: {
-              player_a_contribution: '10',
-              player_b_contribution: '10',
               sender_is_player_a: false,
               game_timeout: '15',
               game_type: 'calpoker',

@@ -668,7 +668,7 @@ pub fn test_peer_smoke() {
             .coin_spent(&mut env, &channel_coin)
             .expect("advance to channel conditions");
         spend_phase
-            .coin_puzzle_and_solution(&mut env, &channel_coin, None)
+            .coin_puzzle_and_solution_in_place(&mut env, &channel_coin, None)
             .expect("malformed callback transitions to failed terminal");
         let failed_checkpoint =
             bencodex::to_vec(&spend_phase).expect("serialize failed terminal successor");

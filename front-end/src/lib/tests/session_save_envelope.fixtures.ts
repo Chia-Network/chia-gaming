@@ -7,7 +7,7 @@ import {
   type SessionSave,
 } from '../../hooks/save';
 import { SESSION_SAVE_SCHEMA } from '../session/saveEnvelope';
-import { deleteSessionRecord } from '../session/indexedDb';
+import { deleteSessionRecord, deleteWalletReservationRecord } from '../session/indexedDb';
 
 export const ACTIVE_INSTANCE = {
   id: 'game-1',
@@ -110,7 +110,6 @@ function common(fields: LegacyFields) {
       wasmNotificationHistory: fields.wasmNotificationHistory,
       diagnosticLog: fields.diagnosticLog,
     },
-    walletReservationLedger: fields.walletReservationLedger ?? [],
   };
 }
 
@@ -337,6 +336,7 @@ export function installSessionEnvelopeTestSetup(): void {
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
     await deleteSessionRecord();
+    await deleteWalletReservationRecord();
   });
 
   afterEach(() => {

@@ -76,7 +76,7 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error>;
-    fn coin_puzzle_and_solution(
+    fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
@@ -197,7 +197,7 @@ impl SpendWalletReceiver for Box<dyn PeerLifecyclePhase> {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
-        (**self).coin_puzzle_and_solution(env, coin_id, puzzle_and_solution)
+        (**self).coin_puzzle_and_solution_in_place(env, coin_id, puzzle_and_solution)
     }
 }
 
@@ -294,19 +294,12 @@ struct GameSessionState {
 
     pub is_failed: bool,
     pub is_on_chain: bool,
-    #[serde(default)]
     session_disposition: Option<SessionDisposition>,
-    #[serde(default)]
     pending_outbound_terminal: Option<TerminalHandoffCommand>,
-    #[serde(default)]
     next_terminal_handoff_id: u64,
-    #[serde(default)]
     channel_creation_expiry: Option<u64>,
-    #[serde(default)]
     channel_established: bool,
-    #[serde(default)]
     channel_expired: bool,
-    #[serde(default)]
     pending_coin_solution_requests: BTreeSet<CoinString>,
 
     /// Genesis challenge (AGG_SIG_ME additional data) for the network this
@@ -1541,7 +1534,10 @@ impl GameSession {
         Ok(())
     }
 
-    pub fn report_puzzle_and_solution(
+    /// Internal callback implementation. Production callers must enter through
+    /// `TransactionManager::report_puzzle_and_solution` so phase mutations,
+    /// effects, and pending-request retirement commit atomically.
+    pub(crate) fn report_puzzle_and_solution_in_place(
         &mut self,
         allocator: &mut AllocEncoder,
         coin_id: &CoinString,
@@ -1560,11 +1556,19 @@ impl GameSession {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer
-                .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
+                .coin_puzzle_and_solution_in_place(&mut env, coin_id, puzzle_and_solution)?
         };
         self.process_effects(reported_effects, allocator)?;
         self.state.pending_coin_solution_requests.remove(coin_id);
         Ok(())
+    }
+
+    pub(crate) fn pending_coin_solution_requests(&self) -> Vec<CoinString> {
+        self.state
+            .pending_coin_solution_requests
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Rebuild transient host delivery after an explicit persisted-session
@@ -1595,8 +1599,15 @@ impl GameSession {
 #[cfg(test)]
 mod sequencing_tests {
     use super::*;
-    use crate::common::types::CoinID;
+    use crate::channel_state::types::{OnChainGameState, TimeoutClaimState};
+    use crate::common::types::{CoinID, PrivateKey};
+    use crate::session_phases::on_chain::{OnChainPhase, OnChainPhaseArgs};
+    use crate::session_phases::types::PotatoState;
+    use crate::transaction_manager::TransactionManager;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
     use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::rc::Rc;
 
     fn unrolling_snapshot(
@@ -1778,6 +1789,98 @@ mod sequencing_tests {
             "coin_created went to the handshake handler, not the replacement"
         );
     }
+
+    #[test]
+    fn invalid_on_chain_puzzle_callback_preserves_game_map_and_pending_request() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([0x52; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([0x53; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x54; 32]),
+            },
+            rng.random(),
+        );
+        let game_id = GameID(7);
+        let game_coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([0x55; 32])),
+            &PuzzleHash::from_bytes([0x56; 32]),
+            &Amount::new(20),
+        );
+        session.peer = Box::new(OnChainPhase::new(OnChainPhaseArgs {
+            have_potato: PotatoState::Present,
+            channel_timeout: Timeout::new(5),
+            game_action_queue: VecDeque::new(),
+            game_map: HashMap::from([(
+                game_coin.clone(),
+                OnChainGameState {
+                    game_id,
+                    puzzle_hash: PuzzleHash::from_bytes([0x56; 32]),
+                    our_turn: false,
+                    state_number: 0,
+                    timeout_claim: TimeoutClaimState::Waiting,
+                    pending_slash_amount: None,
+                    cheating_move_mover_share: None,
+                    timeout_claim_armed: false,
+                    notification_sent: false,
+                    game_timeout: Timeout::new(10),
+                    game_finished: false,
+                },
+            )]),
+            pending_moves: HashMap::new(),
+            private_keys: rng.random(),
+            reward_puzzle_hash: PuzzleHash::from_bytes([0x57; 32]),
+            their_reward_puzzle_hash: PuzzleHash::from_bytes([0x58; 32]),
+            my_out_of_game_balance: Amount::new(80),
+            their_out_of_game_balance: Amount::new(100),
+            my_allocated_balance: Amount::new(20),
+            their_allocated_balance: Amount::new(0),
+            live_games: Vec::new(),
+            pending_settlements: Vec::new(),
+            unroll_advance_timeout: Timeout::new(15),
+            is_initial_potato: true,
+            state_number: 0,
+            was_stale: false,
+            resolved_clean: false,
+            terminal_reward_coin: None,
+            game_payout_coins: Vec::new(),
+        }));
+        session
+            .state
+            .pending_coin_solution_requests
+            .insert(game_coin.clone());
+        let mut manager = TransactionManager::new(session);
+        let before = bencodex::to_vec(&manager).expect("serialize before invalid callback");
+        let invalid_puzzle = Program::from_bytes(&[0x02]).expect("serialized atom");
+        let solution = Program::nil();
+
+        manager
+            .report_puzzle_and_solution(
+                &mut allocator,
+                &game_coin,
+                Some((&invalid_puzzle, &solution)),
+            )
+            .expect_err("invalid puzzle must fail");
+
+        assert_eq!(
+            bencodex::to_vec(&manager).expect("serialize after invalid callback"),
+            before
+        );
+        assert_eq!(manager.get_game_coin(&game_id), Some(game_coin.clone()));
+        assert_eq!(
+            manager.snapshot_pending_coin_solution_requests(),
+            [game_coin]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1956,11 +2059,11 @@ mod genesis_challenge_tests {
         );
 
         restored
-            .report_puzzle_and_solution(&mut allocator, &coin, None)
+            .report_puzzle_and_solution_in_place(&mut allocator, &coin, None)
             .expect("matching callback");
         assert!(restored.state.pending_coin_solution_requests.is_empty());
         let duplicate = restored
-            .report_puzzle_and_solution(&mut allocator, &coin, None)
+            .report_puzzle_and_solution_in_place(&mut allocator, &coin, None)
             .expect_err("duplicate callback must be rejected");
         assert!(format!("{duplicate:?}").contains("no pending puzzle-and-solution request"));
     }
@@ -2001,7 +2104,7 @@ mod genesis_challenge_tests {
             .expect("request");
 
         session
-            .report_puzzle_and_solution(&mut allocator, &unknown, None)
+            .report_puzzle_and_solution_in_place(&mut allocator, &unknown, None)
             .expect_err("unknown callback must be rejected");
         assert_eq!(
             session.state.pending_coin_solution_requests,

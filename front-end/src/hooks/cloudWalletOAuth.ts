@@ -622,7 +622,7 @@ export async function graphqlRequest<T>(
         ?.map((e) => e.message)
         .filter(Boolean)
         .join('; ') || `GraphQL request failed (${res.status})`;
-    throw new CloudWalletResponseError(msg);
+    throw new CloudWalletResponseError(msg, payload.errors);
   }
   if (payload.data === undefined) {
     throw new CloudWalletResponseError('Cloud Wallet GraphQL response missing data');

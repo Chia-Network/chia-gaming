@@ -370,16 +370,19 @@ they are not base64-expanded. localStorage holds only small preferences, the
 resumable-session marker, and tab/reset coordination keys, inside the same-origin
 trust model described above.
 
-The current and only legal envelope schema is `chia-gaming-session` version
-`28`. Early-beta compatibility is best-effort, and every other version is
-currently deleted wholesale without decoding or migration. A decoded v28
-record must also satisfy the complete phase-owned
-envelope contract (keyed game membership, generic game-state envelope agreement,
-terminal data, and frozen terminal coin list); malformed v26 records are
-deleted rather than partially restored. The boot marker is retained after an
-incompatible or malformed resumable record is discarded so the failure remains
-visible at the Resume / Start Over boundary. The `version` field is kept as a
-future migration hook for when there is an installed base to preserve.
+The current and only legal browser envelope is `chia-gaming-session` version
+`30`; the serialized Rust/WASM cradle inside a live envelope is schema `17`.
+The wallet reservation ledger is not an envelope field: it is an independent
+`chia-gaming-wallet-reservations` version-`2` record in its own IndexedDB store.
+All three explicit version fields remain centralized migration hooks. No player
+app or hub persistence format has shipped, so non-current app-owned versions
+are deleted without fallback decoding, aliases, or migrations. A decoded v30
+record must also satisfy the complete phase-owned envelope contract (keyed game
+membership, generic game-state envelope agreement, terminal data, and frozen
+terminal coin list); malformed records are deleted rather than partially
+restored. The boot marker is retained after an incompatible or malformed
+resumable record is discarded so the failure remains visible at the Resume /
+Start Over boundary.
 `decodeSessionSaveEnvelope` is the one envelope decoder used by both the
 pre-write check and the IndexedDB read check. Acceptance always constructs the
 normalized `SessionModel`; validation is not maintained as a second,
@@ -405,7 +408,7 @@ are grouped under those phase-owned payloads:
 
 | Field                                 | Type                                                | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                             | `bigint`                                            | Save envelope version; currently `28`.                                                                                                                                                                                                                                                                          |
+| `version`                             | `bigint`                                            | Save envelope version; currently `30`.                                                                                                                                                                                                                                                                          |
 | `playerId`                            | `string`                                            | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                           | `string?`                                           | Local master secret used to derive a distinct hub iframe/game-channel credential for each canonical hub origin.                                                                                                                                                                                                 |
 | `alias`                               | `string?`                                           | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -419,7 +422,7 @@ are grouped under those phase-owned payloads:
 | `hubAlert`                            | `boolean?`                                          | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
 | `blockchainType`                      | `'simulator' \| 'walletconnect' \| 'cloud'?`        | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`               | `Uint8Array?`                                       | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
-| `gameSessionSchemaVersion`            | `bigint?`                                           | Rust-owned schema ID for `serializedGameSession`; currently `12`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                 |
+| `gameSessionSchemaVersion`            | `bigint?`                                           | Rust-owned schema ID for `serializedGameSession`; currently `17`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                 |
 | `pairingToken`                        | `string?`                                           | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                       | `string?`                                           | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                       | `string?`                                           | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
@@ -440,7 +443,6 @@ are grouped under those phase-owned payloads:
 | `wasmNotificationHistory`             | `string[]?`                                         | Recent serialized WASM notifications (capped at 1,000).                                                                                                                                                                                                                                                         |
 | `diagnosticLog`                       | `string[]?`                                         | Recent diagnostic entries (capped at 2,000).                                                                                                                                                                                                                                                                    |
 | `durabilityWarning`                   | `string?`                                           | Last delivery-boundary storage failure warning.                                                                                                                                                                                                                                                                 |
-| `walletReservationLedger`             | `Array<{ tradeId, owner, purpose, stage, reason }>` | Wallet-level reservation ledger preserved in every save phase; reserved restore or finalized fee entries require cancellation.                                                                                                                                                                                  |
 | `handKey`                             | `bigint`                                            | Monotonic host hand lifetime key. Reload preserves values greater than one so a restored hand keeps its identity.                                                                                                                                                                                               |
 | `activeGameIds`                       | `string[]`                                          | IDs of currently live games in an atomic group; empty when none are active.                                                                                                                                                                                                                                     |
 | `currentHandGameIds`                  | `string[]`                                          | IDs belonging to the current hand group; empty when there is no retained hand.                                                                                                                                                                                                                                  |
@@ -591,15 +593,26 @@ outcome back to Rust.
 The external wallet constructs each funding offer from Rust's canonical
 request; Rust validates the result. Rejection terminates the handshake and does
 not create controller-owned successor or predecessor requests. Rejected
-persisted funding and fee offers instead enter one strict wallet-level
-reservation ledger. Persistence failure does not gate offer use or
-cancellation; the in-memory ledger remains dirty for a later complete
-checkpoint. Disk hydration initializes an empty ledger or merges compatible
-entries into newer memory state; it never replaces dirty reservations, and
-identity conflicts fail restoration. Only the active-blockchain lifecycle
-attaches the ledger's cancellation RPC. A failed cancellation stays durable
-and retries only on restore, wallet reconnect/attachment, or an explicit
-terminal-finalization attempt.
+persisted funding and fee offers instead enter the independent strict-v2 wallet
+reservation ledger. Every trade owns its exact provider trade ID and exact
+`(installationPlayerId, peerSessionId, purpose kind, operationId)` identity;
+one operation may retain multiple historical trades without conflating owners
+or cleanup. Stages are strictly `reserved`, `retained-for-replay`, or
+`cancel-required`. An attached fee source remains retained while Rust may
+replay the exact finalized transaction; acknowledgement, retirement, rejection,
+or unused finalization moves it through typed cancellation before removal.
+
+The active session envelope and complete ledger snapshot are written in one
+IndexedDB transaction. Strict codecs reject unknown/missing fields, duplicate
+trade IDs, invalid discriminants, and non-current versions. Persistence failure
+does not gate offer use, transaction release, or cancellation; the in-memory
+session and ledger remain dirty for a later full atomic checkpoint. Disk
+hydration initializes an empty ledger or merges compatible entries into newer
+memory state; it never replaces dirty reservations, and identity conflicts fail
+restoration. Only the active-blockchain lifecycle attaches the ledger's
+cancellation RPC. A failed cancellation stays durable and retries only on
+restore, wallet reconnect/attachment, or an explicit terminal-finalization
+attempt.
 There is no timer or immediate retry loop, and terminal quiescence fails while
 that session has any unresolved ledger entry.
 
@@ -616,8 +629,9 @@ eligible for replay after fresh chain synchronization. A lower-tip rollback
 queues every surviving retained transaction once for that epoch. An
 equal-or-higher replacement tip queues only the retained transaction whose
 watched output is explicitly absent and whose own input is explicitly live.
-Rollback replay uses the exact wallet-finalized bundle without rebuilding its
-fee. Successful poll batches represent every queried interest explicitly;
+Rollback and fresh-sync replay use the exact wallet-finalized bundle without
+rebuilding its fee or creating a second wallet trade. Successful poll batches
+represent every queried interest explicitly;
 failed or malformed batches are not reported as authoritative snapshots.
 This chain operation is **transaction rebroadcast**. It is distinct from
 **reliable peer-frame replay**, which resends unacknowledged numbered transport
@@ -634,6 +648,14 @@ Following browser restore, an ordinary game effect may submit an automatic move
 again only when the restored canonical state still precedes it. An action
 accepted into Rust's durable queue commits the advanced hand state in the same
 snapshot, so that queued or applied action does not autoplay again.
+
+Puzzle/solution callbacks obey the same transaction boundary as coin
+observations: Rust applies each callback against a serialized working copy of
+the complete `TransactionManager` and nested session, committing manager state,
+watch deltas, effects, and callback completion together only on success.
+Outstanding requested coin IDs are durable Rust state; restore reissues each
+still-live request once, while retire-aware controller completion prevents an
+old runtime from delivering into its replacement.
 
 Rust local batch packaging is modular and host-invisible. `OffChainPhase`
 exclusively owns a `BatchPlan` containing cloned channel state, queue
@@ -678,7 +700,7 @@ Acceptance removes
 the proposal and creates factory-ordered game members in `GameSlice`;
 `InsufficientBalance` and proposal cancellation remove only the proposal.
 Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
-independently by `GameID`. The current v26 envelope makes
+independently by `GameID`. The current v30 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
@@ -1335,7 +1357,10 @@ Shell manages wallet connections through two abstractions defined in
   or nil-puzzle spend. Both shapes then pass through the same Rust checks for
   target, amount, deficit, input overlap, aggregate signatures, expiry, and
   combined consensus validity. Rejected or unusable Cloud fee offers are
-  cancelled off chain using their offer IDs.
+  cancelled off chain using their offer IDs. Cancellation is typed and complete
+  only when the Cloud signature request reaches a terminal success status;
+  transport unavailability and wallet rejection remain distinct durable
+  cleanup outcomes.
 
   Cloud's wallet address, balance, consent, and offer operations remain on the
   wallet GraphQL API. Full-node reads and final `push_tx` calls use its typed
@@ -1354,7 +1379,7 @@ Shell manages wallet connections through two abstractions defined in
   field) reject a nonzero fee below it. Zero (a free transaction) and
   floor-or-above are allowed. This is a floor below which a fee definitely cannot
   work, not a guarantee of inclusion. For ordinary WalletConnect submissions,
-  `createFeeSpend` makes a validate-only offer whose wallet spend asserts the
+  `createFeeSpend` makes a persisted signed offer whose wallet spend asserts the
   Rust-specified target coin is spent concurrently and reserves the fee. Cloud
   Wallet returns its native-fee offer instead. JavaScript passes
   either tagged provider result opaquely to one Rust/WASM attachment operation.
@@ -1946,8 +1971,8 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                                                                       |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                                                           |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules                    |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v26 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v26 presentation snapshot encoder                                                                                                    |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v30 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v30 presentation snapshot encoder                                                                                                    |
 | `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                                                                  |
 | `front-end/src/lib/session/incomingProposal.ts`  | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                                                                            |
 | `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                                                                     |

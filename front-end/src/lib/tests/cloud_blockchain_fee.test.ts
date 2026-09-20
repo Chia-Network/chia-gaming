@@ -201,8 +201,13 @@ describe('CloudBlockchainInterface fee support', () => {
   });
 
   it('cancels a persisted offer off chain by offerId', async () => {
-    const calls = mockGraphql(() => ({ cancelOffer: { id: 'SR_cancel' } }));
-    await new CloudBlockchainInterface().cancelOffer('Offer_1');
+    const calls = mockGraphql(() => ({
+      cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'SUBMITTED' } },
+    }));
+    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+      status: 'cancelled',
+      detail: 'SUBMITTED',
+    });
     const input = calls[0]!.variables.input as Record<string, unknown>;
     expect(input).toEqual({
       walletId: 'Wallet_1',
@@ -223,9 +228,97 @@ describe('CloudBlockchainInterface fee support', () => {
       })),
     );
 
-    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).rejects.toThrow(
-      /Offer already cancelled by another client/,
+    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+      status: 'rejected',
+      detail: expect.stringMatching(/Offer already cancelled by another client/),
+    });
+  });
+
+  it('accepts a structured exact-offer not-found code as already terminal', async () => {
+    setTestGlobal(
+      'fetch',
+      jest.fn(async () => ({
+        status: 200,
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            errors: [
+              {
+                message: 'offer is gone',
+                extensions: { code: 'OFFER_NOT_FOUND', offerId: 'Offer_1' },
+              },
+            ],
+          }),
+      })),
     );
+
+    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+      status: 'already-terminal',
+      detail: expect.stringMatching(/offer is gone/),
+    });
+  });
+
+  it('classifies a blocked cancellation approval popup as unavailable', async () => {
+    mockGraphql(() => ({
+      cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'PENDING' } },
+    }));
+
+    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+      status: 'unavailable',
+      detail: expect.stringMatching(/popup blocked/i),
+    });
+  });
+
+  it('does not complete cancellation while its signature request is pending', async () => {
+    jest.useFakeTimers();
+    let status = 'PENDING';
+    const close = jest.fn();
+    (globalThis as unknown as { open: () => unknown }).open = () => ({ close });
+    setTestGlobal('addEventListener', jest.fn());
+    setTestGlobal('removeEventListener', jest.fn());
+    const calls = mockGraphql((query) => {
+      if (query.includes('cancelOffer')) {
+        return {
+          cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'PENDING' } },
+        };
+      }
+      return { signatureRequest: { id: 'SR_cancel', status } };
+    });
+
+    let settled = false;
+    const cancellation = new CloudBlockchainInterface().cancelOffer('Offer_1').then((outcome) => {
+      settled = true;
+      return outcome;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(calls.some((call) => call.query.includes('signatureRequest'))).toBe(true);
+
+    status = 'SUBMITTED';
+    await jest.advanceTimersByTimeAsync(1500);
+    await expect(cancellation).resolves.toEqual({ status: 'cancelled', detail: 'SUBMITTED' });
+    expect(close).toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('returns rejected for an explicitly failed cancellation signature request', async () => {
+    (globalThis as unknown as { open: () => unknown }).open = () => ({ close: jest.fn() });
+    setTestGlobal('addEventListener', jest.fn());
+    setTestGlobal('removeEventListener', jest.fn());
+    mockGraphql((query) => {
+      if (query.includes('cancelOffer')) {
+        return {
+          cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'PENDING' } },
+        };
+      }
+      return { signatureRequest: { id: 'SR_cancel', status: 'FAILED' } };
+    });
+
+    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+      status: 'rejected',
+      detail: 'Cloud Wallet cancellation ended with status FAILED',
+    });
   });
 
   it('does not preselect or pin Cloud wallet coins', async () => {

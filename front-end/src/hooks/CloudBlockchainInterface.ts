@@ -3,6 +3,7 @@ import {
   BlockchainInboundAddressResult,
   ConnectionSetup,
   WalletFeeSourceOutcome,
+  WalletOfferCancellationOutcome,
   WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
@@ -45,6 +46,16 @@ export { absAmountFromOffer, conditionsForGraphql, jsonSafeVariables };
 const APPROVE_TIMEOUT_MS = 10 * 60 * 1000;
 const SR_POLL_MS = 1500;
 const MAX_CANCELLATION_ERROR_LENGTH = 512;
+const TERMINAL_CANCELLATION_CODES = new Set([
+  'ALREADY_CANCELLED',
+  'ALREADY_CANCELED',
+  'OFFER_ALREADY_CANCELLED',
+  'OFFER_ALREADY_CANCELED',
+  'OFFER_ALREADY_SPENT',
+  'OFFER_NOT_FOUND',
+  'UNKNOWN_OFFER',
+]);
+const FAILED_SIGNATURE_REQUEST_STATUSES = new Set(['CANCELLED', 'REJECTED', 'FAILED']);
 
 const ACCEPTED_BROADCAST_STATUSES = new Set([
   'SUCCESS',
@@ -120,6 +131,48 @@ function cloudErrorDetail(error: unknown): string {
     }
   }
   return [...new Set(parts)].join(': ');
+}
+
+function boundedCancellationDetail(detail: string): string {
+  return detail.slice(0, MAX_CANCELLATION_ERROR_LENGTH);
+}
+
+class SignatureRequestUnavailableError extends Error {}
+class SignatureRequestRejectedError extends Error {}
+
+function cloudCancellationIsAlreadyTerminal(error: unknown, offerId: string): boolean {
+  const seen = new Set<unknown>();
+  let matchedCode = false;
+  let conflictingOfferId = false;
+  const visit = (value: unknown) => {
+    if (value == null || seen.has(value)) return;
+    seen.add(value);
+    if (value instanceof Error) {
+      visit((value as Error & { cause?: unknown }).cause);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    const code =
+      typeof record.code === 'string'
+        ? record.code
+        : typeof record.errorCode === 'string'
+          ? record.errorCode
+          : undefined;
+    if (code && TERMINAL_CANCELLATION_CODES.has(code.toUpperCase())) matchedCode = true;
+    for (const key of ['offerId', 'offer_id', 'tradeId', 'trade_id']) {
+      if (typeof record[key] === 'string' && record[key] !== offerId) conflictingOfferId = true;
+    }
+    visit(record.extensions);
+    visit(record.data);
+    visit(record.error);
+  };
+  visit(error);
+  return matchedCode && !conflictingOfferId;
 }
 
 export function classifyCloudWalletSubmitError(error: unknown): WalletSubmitOutcome {
@@ -322,35 +375,33 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
-    try {
-      const coinBytes = toUint8(coin);
-      const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
-      const coinName = toHexString(new Uint8Array(hashBuf));
-      const recordResponse = await this.coinset<{
-        success?: boolean;
-        coin_record?: CoinsetCoinRecord | null;
-      }>('get_coin_record_by_name', { name: coinName });
-      if (recordResponse.success !== true) {
-        throw new Error('Coinset get_coin_record_by_name failed');
-      }
-      if (!recordResponse.coin_record) return null;
-      const record = coinRecordFromCoinset(recordResponse.coin_record);
-      if (!record.spent || record.spentBlockIndex === 0n) return null;
-
-      const response = await this.coinset<{
-        success?: boolean;
-        coin_solution?: { puzzle_reveal?: unknown; solution?: unknown } | null;
-      }>('get_puzzle_and_solution', {
-        coin_id: coinName,
-        height: Number(record.spentBlockIndex),
-      });
-      const payload = response.coin_solution;
-      if (response.success !== true || !payload?.puzzle_reveal || !payload.solution) return null;
-      return [normalizeHex(payload.puzzle_reveal), normalizeHex(payload.solution)];
-    } catch (e) {
-      log(`[cloud-blockchain] getPuzzleAndSolution error: ${String(e)}`);
-      return null;
+    const coinBytes = toUint8(coin);
+    const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
+    const coinName = toHexString(new Uint8Array(hashBuf));
+    const recordResponse = await this.coinset<{
+      success?: boolean;
+      coin_record?: CoinsetCoinRecord | null;
+    }>('get_coin_record_by_name', { name: coinName });
+    if (recordResponse.success !== true) {
+      throw new Error('Coinset get_coin_record_by_name failed');
     }
+    if (!recordResponse.coin_record) return null;
+    const record = coinRecordFromCoinset(recordResponse.coin_record);
+    if (!record.spent || record.spentBlockIndex === 0n) return null;
+
+    const response = await this.coinset<{
+      success?: boolean;
+      coin_solution?: { puzzle_reveal?: unknown; solution?: unknown } | null;
+    }>('get_puzzle_and_solution', {
+      coin_id: coinName,
+      height: Number(record.spentBlockIndex),
+    });
+    if (response.success !== true) {
+      throw new Error('Coinset get_puzzle_and_solution failed');
+    }
+    const payload = response.coin_solution;
+    if (!payload?.puzzle_reveal || !payload.solution) return null;
+    return [normalizeHex(payload.puzzle_reveal), normalizeHex(payload.solution)];
   }
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
@@ -467,7 +518,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     );
   }
 
-  private waitForSignatureApproval(signatureRequestId: string): Promise<'approved'> {
+  private waitForSignatureApproval(
+    signatureRequestId: string,
+    source: string,
+  ): Promise<'approved'> {
     const uiOrigin = new URL(getCloudWalletUiUrl()).origin;
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -480,7 +534,13 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       };
 
       const timer = setTimeout(() => {
-        finish(() => reject(new Error('Timed out waiting for Cloud Wallet funding approval')));
+        finish(() =>
+          reject(
+            new SignatureRequestUnavailableError(
+              `Timed out waiting for Cloud Wallet ${source} approval`,
+            ),
+          ),
+        );
       }, APPROVE_TIMEOUT_MS);
 
       const onMessage = (event: MessageEvent) => {
@@ -501,16 +561,59 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           return;
         }
         if (data.status === 'rejected') {
-          finish(() => reject(new Error('Cloud Wallet funding approval was rejected')));
+          finish(() =>
+            reject(
+              new SignatureRequestRejectedError(`Cloud Wallet ${source} approval was rejected`),
+            ),
+          );
           return;
         }
         if (data.status === 'error') {
-          finish(() => reject(new Error(data.message || 'Cloud Wallet funding approval failed')));
+          finish(() =>
+            reject(
+              new SignatureRequestUnavailableError(
+                data.message || `Cloud Wallet ${source} approval failed`,
+              ),
+            ),
+          );
         }
       };
 
       window.addEventListener('message', onMessage);
     });
+  }
+
+  private async trackSignatureRequest<T>(
+    signatureRequestId: string,
+    source: string,
+    poll: () => Promise<T>,
+  ): Promise<T> {
+    const popup = this.openApprovePopup(signatureRequestId);
+    if (!popup) {
+      throw new SignatureRequestUnavailableError(
+        `Popup blocked — allow popups to approve Cloud Wallet ${source}`,
+      );
+    }
+    const approvalFailure = new Promise<never>((_resolve, reject) => {
+      void this.waitForSignatureApproval(signatureRequestId, source).catch((error: unknown) => {
+        if (
+          error instanceof SignatureRequestUnavailableError &&
+          /^Timed out waiting/.test(error.message)
+        ) {
+          return;
+        }
+        reject(error);
+      });
+    });
+    try {
+      return await Promise.race([poll(), approvalFailure]);
+    } finally {
+      try {
+        popup.close();
+      } catch {
+        // ignore
+      }
+    }
   }
 
   private async pollSignatureRequestOffer(
@@ -604,31 +707,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       throw new Error('createOffer did not return a signatureRequest');
     }
 
-    const popup = this.openApprovePopup(srId);
-    if (!popup) {
-      throw new Error(`Popup blocked — allow popups to approve Cloud Wallet ${source}`);
-    }
-
-    // Poll until the signed offer is persisted; fail fast on postMessage
-    // rejected/error (ignore its timeout because GraphQL polling is authoritative).
-    const approvalFailure = new Promise<never>((_resolve, reject) => {
-      void this.waitForSignatureApproval(srId).catch((e: unknown) => {
-        const err = e instanceof Error ? e : new Error(String(e));
-        if (!/timed out/i.test(err.message)) {
-          reject(err);
-        }
-      });
-    });
-
-    try {
-      return await Promise.race([this.pollSignatureRequestOffer(srId), approvalFailure]);
-    } finally {
-      try {
-        popup.close();
-      } catch {
-        // ignore
-      }
-    }
+    return this.trackSignatureRequest(srId, source, () => this.pollSignatureRequestOffer(srId));
   }
 
   async createOfferForIds(
@@ -674,12 +753,62 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async cancelOffer(offerId: string): Promise<void> {
+  private async pollCancellationSignatureRequest(
+    signatureRequestId: string,
+  ): Promise<WalletOfferCancellationOutcome> {
+    const started = Date.now();
+    while (Date.now() - started < APPROVE_TIMEOUT_MS) {
+      const data = await this.gql<{
+        signatureRequest: { id: string; status: string } | null;
+      }>(
+        `query($id: ID!) {
+          signatureRequest(id: $id) {
+            id
+            status
+          }
+        }`,
+        { id: signatureRequestId },
+      );
+      const request = data.signatureRequest;
+      if (
+        !request ||
+        request.id !== signatureRequestId ||
+        typeof request.status !== 'string' ||
+        request.status.length === 0 ||
+        request.status.length > 64
+      ) {
+        return {
+          status: 'rejected',
+          detail: 'Cloud Wallet returned an invalid cancellation signatureRequest',
+        };
+      }
+      const status = request.status.toUpperCase();
+      log(`[cloud-blockchain] cancellation signatureRequest id=${request.id} status=${status}`);
+      if (status === 'SUBMITTED') {
+        return { status: 'cancelled', detail: status };
+      }
+      if (FAILED_SIGNATURE_REQUEST_STATUSES.has(status)) {
+        return {
+          status: 'rejected',
+          detail: `Cloud Wallet cancellation ended with status ${status}`,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, SR_POLL_MS));
+    }
+    return {
+      status: 'unavailable',
+      detail: 'Timed out polling Cloud Wallet cancellation',
+    };
+  }
+
+  async cancelOffer(offerId: string): Promise<WalletOfferCancellationOutcome> {
     try {
-      await this.gql<{ cancelOffer: unknown }>(
+      const data = await this.gql<{
+        cancelOffer: { signatureRequest: { id: string; status: string } | null } | null;
+      }>(
         `mutation($input: CancelOfferInput!) {
           cancelOffer(input: $input) {
-            signatureRequest { id }
+            signatureRequest { id status }
           }
         }`,
         {
@@ -691,11 +820,46 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           },
         },
       );
+      const request = data.cancelOffer?.signatureRequest;
+      if (
+        !request ||
+        typeof request.id !== 'string' ||
+        request.id.length === 0 ||
+        request.id.length > MAX_CANCELLATION_ERROR_LENGTH ||
+        typeof request.status !== 'string' ||
+        request.status.length === 0 ||
+        request.status.length > 64
+      ) {
+        return {
+          status: 'rejected',
+          detail: 'Cloud Wallet cancelOffer returned an invalid signatureRequest',
+        };
+      }
+      const initialStatus = request.status.toUpperCase();
+      if (initialStatus === 'SUBMITTED') {
+        return { status: 'cancelled', detail: initialStatus };
+      }
+      if (FAILED_SIGNATURE_REQUEST_STATUSES.has(initialStatus)) {
+        return {
+          status: 'rejected',
+          detail: `Cloud Wallet cancellation ended with status ${initialStatus}`,
+        };
+      }
+      return await this.trackSignatureRequest(request.id, 'offer cancellation', () =>
+        this.pollCancellationSignatureRequest(request.id),
+      );
     } catch (error) {
-      const detail = cloudErrorDetail(error).slice(0, MAX_CANCELLATION_ERROR_LENGTH);
-      throw new Error(`Cloud Wallet failed to cancel offer ${offerId}: ${detail}`, {
-        cause: error,
-      });
+      const detail = boundedCancellationDetail(cloudErrorDetail(error));
+      if (cloudCancellationIsAlreadyTerminal(error, offerId)) {
+        return { status: 'already-terminal', detail };
+      }
+      if (
+        error instanceof CloudWalletTransportError ||
+        error instanceof SignatureRequestUnavailableError
+      ) {
+        return { status: 'unavailable', detail };
+      }
+      return { status: 'rejected', detail };
     }
   }
 

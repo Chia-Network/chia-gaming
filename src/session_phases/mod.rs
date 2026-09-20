@@ -1923,7 +1923,7 @@ impl PeerLifecyclePhase for OffChainPhase {
     ) -> Result<Option<Vec<Effect>>, Error> {
         <Self as SpendWalletReceiver>::coin_created(self, env, coin_id)
     }
-    fn coin_puzzle_and_solution(
+    fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,

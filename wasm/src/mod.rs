@@ -40,7 +40,8 @@ mod gaming_wasm {
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
     use chia_gaming::transaction_manager::{
-        CoinStateRecord, ManagerDrain, SubmissionFeeSource, TransactionManager,
+        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionFeeSource,
+        TransactionManager,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
@@ -75,7 +76,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 15;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 17;
 
     #[cfg(test)]
     mod serialization_schema_tests {
@@ -83,7 +84,7 @@ mod gaming_wasm {
 
         #[test]
         fn exported_game_session_serialization_schema_is_current() {
-            assert_eq!(game_session_serialization_schema(), 15);
+            assert_eq!(game_session_serialization_schema(), 17);
         }
     }
 
@@ -101,6 +102,12 @@ mod gaming_wasm {
     }
 
     #[derive(Serialize)]
+    struct JsSubmissionDrain {
+        submissions: Vec<JsTransactionSubmission>,
+        retired_submission_ids: Vec<String>,
+    }
+
+    #[derive(Serialize)]
     struct JsFeeRequest {
         target: String,
         amount: String,
@@ -112,6 +119,7 @@ mod gaming_wasm {
         bundle: CoinsetSpendBundle,
         applied_fee: String,
         warning: Option<String>,
+        fee_source_disposition: &'static str,
     }
 
     thread_local! {
@@ -419,13 +427,29 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Durable outstanding puzzle/solution requests. The browser uses this
+    /// snapshot to rebuild nonpersistent delivery after live lease replacement
+    /// and provider reconnection without inventing a second request journal.
+    #[wasm_bindgen]
+    pub fn snapshot_pending_coin_solution_requests(cid: i32) -> Result<JsValue, JsValue> {
+        let result = with_game(cid, move |cradle: &mut JsGameSession| {
+            Ok(cradle
+                .cradle
+                .snapshot_pending_coin_solution_requests()
+                .iter()
+                .map(coin_string_to_hex)
+                .collect::<Vec<_>>())
+        })?;
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Typed submissions captured by the manager. The bundle remains opaque to
     /// the host; Rust supplies the complete provider request when a fee source
     /// is needed.
     #[wasm_bindgen]
     pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
         let result = with_game(cid, move |cradle: &mut JsGameSession| {
-            Ok(cradle
+            let submissions = cradle
                 .cradle
                 .drain_submissions()?
                 .iter()
@@ -443,7 +467,17 @@ mod gaming_wasm {
                         | SubmissionFeeIntent::NoFeeConfigured => None,
                     },
                 })
-                .collect::<Vec<_>>())
+                .collect::<Vec<_>>();
+            let retired_submission_ids = cradle
+                .cradle
+                .drain_retired_submission_ids()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect();
+            Ok(JsSubmissionDrain {
+                submissions,
+                retired_submission_ids,
+            })
         })?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -864,6 +898,11 @@ mod gaming_wasm {
             bundle: spend_bundle_to_coinset_js(&finalized.bundle)?,
             applied_fee: finalized.applied_fee.to_string(),
             warning: finalized.warning,
+            fee_source_disposition: match finalized.fee_source_disposition {
+                FeeSourceDisposition::Attached => "attached",
+                FeeSourceDisposition::Unused => "unused",
+                FeeSourceDisposition::NotRequested => "not-requested",
+            },
         };
         serde_wasm_bindgen::to_value(&result).into_js()
     }

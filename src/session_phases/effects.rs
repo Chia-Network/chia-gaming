@@ -49,7 +49,6 @@ pub enum SessionDisposition {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelStatusSnapshot {
     pub state: ChannelStatus,
-    #[serde(default)]
     pub session_disposition: Option<SessionDisposition>,
     pub advisory: Option<String>,
     pub coin: Option<CoinString>,
@@ -57,7 +56,6 @@ pub struct ChannelStatusSnapshot {
     pub their_balance: Option<Amount>,
     pub game_allocated: Option<Amount>,
     pub have_potato: Option<bool>,
-    #[serde(default)]
     pub zero_payout: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unroll_initiator: Option<UnrollInitiator>,
@@ -549,41 +547,6 @@ pub fn apply_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[derive(serde::Serialize)]
-    struct LegacyChannelStatusSnapshot {
-        state: ChannelStatus,
-        advisory: Option<String>,
-        coin: Option<CoinString>,
-        our_balance: Option<Amount>,
-        their_balance: Option<Amount>,
-        game_allocated: Option<Amount>,
-        have_potato: Option<bool>,
-    }
-
-    #[test]
-    fn legacy_channel_status_restores_new_progress_fields_as_unknown() {
-        let legacy = LegacyChannelStatusSnapshot {
-            state: ChannelStatus::Active,
-            advisory: None,
-            coin: None,
-            our_balance: None,
-            their_balance: None,
-            game_allocated: None,
-            have_potato: None,
-        };
-
-        let encoded = bencodex::to_vec(&legacy).expect("serialize legacy snapshot");
-        let restored: ChannelStatusSnapshot =
-            bencodex::from_slice(&encoded).expect("restore legacy snapshot");
-
-        assert_eq!(restored.zero_payout, None);
-        assert_eq!(restored.unroll_initiator, None);
-        assert_eq!(restored.semantic_phase, None);
-        assert_eq!(restored.state_number, None);
-        assert_eq!(restored.unrolling_state_number, None);
-        assert_eq!(restored.preempting_state_number, None);
-    }
 
     #[test]
     fn coin_of_interest_labels_describe_coin_provenance() {

@@ -9,6 +9,7 @@ import {
   BlockchainInboundAddressResult,
   ConnectionSetup,
   WalletFeeSourceOutcome,
+  WalletOfferCancellationOutcome,
   WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 import { WalletType } from '../types/WalletType';
@@ -205,6 +206,77 @@ function collectErrorText(err: unknown): string {
 function boundedCancellationError(value: unknown): string {
   const detail = collectErrorText(value) || 'wallet returned success=false without details';
   return detail.slice(0, MAX_WALLET_CANCELLATION_ERROR_LENGTH);
+}
+
+const TERMINAL_CANCELLATION_CODES = new Set([
+  'CANCELLED',
+  'CANCELED',
+  'SPENT',
+  'ALREADY_CANCELLED',
+  'ALREADY_CANCELED',
+  'OFFER_ALREADY_CANCELLED',
+  'OFFER_ALREADY_CANCELED',
+  'TRADE_ALREADY_CANCELLED',
+  'TRADE_ALREADY_CANCELED',
+  'ALREADY_SPENT',
+  'OFFER_ALREADY_SPENT',
+  'TRADE_ALREADY_SPENT',
+  'NOT_FOUND',
+  'OFFER_NOT_FOUND',
+  'TRADE_NOT_FOUND',
+  'UNKNOWN_OFFER',
+  'UNKNOWN_TRADE',
+]);
+
+function cancellationCodes(value: unknown): Set<string> {
+  const codes = new Set<string>();
+  const seen = new Set<unknown>();
+  const visit = (candidate: unknown) => {
+    if (candidate == null || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (candidate instanceof Error) {
+      visit((candidate as Error & { cause?: unknown }).cause);
+      return;
+    }
+    if (typeof candidate !== 'object') return;
+    const record = candidate as Record<string, unknown>;
+    for (const key of ['code', 'errorCode', 'error_code', 'status']) {
+      if (typeof record[key] === 'string') codes.add(record[key].toUpperCase());
+    }
+    for (const key of ['error', 'data', 'detail', 'structuredError', 'tradeRecord']) {
+      visit(record[key]);
+    }
+  };
+  visit(value);
+  return codes;
+}
+
+function isStructurallyTerminalCancellation(value: unknown, tradeId: string): boolean {
+  let terminalCode = false;
+  for (const code of cancellationCodes(value)) {
+    if (TERMINAL_CANCELLATION_CODES.has(code)) terminalCode = true;
+  }
+  if (!terminalCode) return false;
+  const identities = new Set<string>();
+  const seen = new Set<unknown>();
+  const visit = (candidate: unknown) => {
+    if (candidate == null || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (candidate instanceof Error) {
+      visit((candidate as Error & { cause?: unknown }).cause);
+      return;
+    }
+    if (typeof candidate !== 'object') return;
+    const record = candidate as Record<string, unknown>;
+    for (const key of ['tradeId', 'trade_id', 'offerId', 'offer_id']) {
+      if (typeof record[key] === 'string') identities.add(record[key]);
+    }
+    for (const key of ['error', 'data', 'detail', 'structuredError', 'tradeRecord']) {
+      visit(record[key]);
+    }
+  };
+  visit(value);
+  return identities.size === 0 || (identities.size === 1 && identities.has(tradeId));
 }
 
 function isCoinRecordMiss(err: unknown): boolean {
@@ -456,8 +528,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         offer: { '1': -fee },
         driverDict: {},
         // Persist the offer so the wallet reserves its selected fee input
-        // until the aggregate transaction spends it. A validate-only offer can
-        // select the same still-unconfirmed coin for concurrent submissions.
+        // until the aggregate transaction spends it; otherwise concurrent
+        // submissions can select the same still-unconfirmed coin.
         validateOnly: false,
         allowUnsynced: true,
         extraConditions: [
@@ -499,18 +571,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
-    try {
-      const coinBytes = toUint8(coin);
-      const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
-      const coinName = toHexString(new Uint8Array(hashBuf));
-      const resp = await rpc.getPuzzleAndSolution({ coinName });
-      if (!resp?.puzzleReveal || !resp?.solution) return null;
-      return [resp.puzzleReveal, resp.solution];
-    } catch (e) {
-      console.error('[wc-blockchain] getPuzzleAndSolution error', e);
-      log(`[wc-blockchain] getPuzzleAndSolution error: ${String(e)}`);
-      return null;
-    }
+    const coinBytes = toUint8(coin);
+    const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
+    const coinName = toHexString(new Uint8Array(hashBuf));
+    const resp = await rpc.getPuzzleAndSolution({ coinName });
+    if (!resp?.puzzleReveal || !resp?.solution) return null;
+    return [resp.puzzleReveal, resp.solution];
   }
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
@@ -679,13 +745,26 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async cancelOffer(tradeId: string): Promise<void> {
-    const response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });
-    if (!response.success) {
-      throw new Error(
-        `wallet failed to cancel offer ${tradeId}: ${boundedCancellationError(response)}`,
-      );
+  async cancelOffer(tradeId: string): Promise<WalletOfferCancellationOutcome> {
+    let response: Awaited<ReturnType<typeof rpc.cancelOffer>>;
+    try {
+      response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });
+    } catch (error) {
+      const detail = boundedCancellationError(error);
+      if (isStructurallyTerminalCancellation(error, tradeId)) {
+        return { status: 'already-terminal', detail };
+      }
+      return error instanceof WalletConnectTransportError
+        ? { status: 'unavailable', detail }
+        : { status: 'rejected', detail };
     }
+    if (response.success) {
+      return { status: 'cancelled' };
+    }
+    const detail = boundedCancellationError(response);
+    return isStructurallyTerminalCancellation(response, tradeId)
+      ? { status: 'already-terminal', detail }
+      : { status: 'rejected', detail };
   }
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {

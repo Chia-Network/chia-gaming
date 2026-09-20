@@ -48,7 +48,6 @@ pub struct HandshakeReceiverPhase {
 
     channel_state: Option<ChannelState>,
     channel_finished_transaction: Option<SpendBundle>,
-    #[serde(default)]
     opening_fee: Amount,
 
     private_keys: ChannelPrivateKeys,
@@ -71,7 +70,6 @@ pub struct HandshakeReceiverPhase {
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     failed: bool,
-    #[serde(default)]
     failure_advisory: Option<String>,
 
     replacement: Option<Box<OffChainPhase>>,
@@ -558,7 +556,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
     ) -> Result<Option<Vec<Effect>>, Error> {
         <Self as SpendWalletReceiver>::coin_created(self, env, coin_id)
     }
-    fn coin_puzzle_and_solution(
+    fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,

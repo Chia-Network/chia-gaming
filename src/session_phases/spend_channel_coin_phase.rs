@@ -88,9 +88,7 @@ pub struct SpendChannelCoinPhase {
     advisory: Option<String>,
     was_stale: bool,
     terminal_reward_coin: Option<CoinString>,
-    #[serde(default)]
     unroll_initiator: Option<UnrollInitiator>,
-    #[serde(default)]
     timeout_finish_submitted: bool,
 
     expected_clean_shutdown_solution: Option<ProgramRef>,
@@ -450,7 +448,7 @@ impl SpendChannelCoinPhase {
         Ok(None)
     }
 
-    pub fn coin_puzzle_and_solution(
+    pub(crate) fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
@@ -1177,7 +1175,12 @@ impl SpendWalletReceiver for SpendChannelCoinPhase {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        SpendChannelCoinPhase::coin_puzzle_and_solution_in_place(
+            self,
+            env,
+            coin_id,
+            puzzle_and_solution,
+        )
     }
 }
 
@@ -1219,13 +1222,18 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
     ) -> Result<Option<Vec<Effect>>, Error> {
         SpendChannelCoinPhase::coin_created(self, env, coin_id)
     }
-    fn coin_puzzle_and_solution(
+    fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        SpendChannelCoinPhase::coin_puzzle_and_solution_in_place(
+            self,
+            env,
+            coin_id,
+            puzzle_and_solution,
+        )
     }
     fn make_move(
         &mut self,
@@ -1517,7 +1525,7 @@ mod tests {
         );
     }
 
-    fn legacy_base() -> ChannelStateBase {
+    fn test_base() -> ChannelStateBase {
         ChannelStateBase::new(
             None,
             VecDeque::new(),
@@ -1525,45 +1533,6 @@ mod tests {
             Timeout::new(10),
             Timeout::new(5),
         )
-    }
-
-    #[derive(Serialize)]
-    struct LegacyInFlightSpendChannelCoinPhase {
-        state: SpendChannelCoinState,
-        base: ChannelStateBase,
-        advisory: Option<String>,
-        was_stale: bool,
-        terminal_reward_coin: Option<CoinString>,
-        expected_clean_shutdown_solution: Option<ProgramRef>,
-        last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
-    }
-
-    #[test]
-    fn legacy_in_flight_on_chain_phase_restores_progress_defaults() {
-        let legacy = LegacyInFlightSpendChannelCoinPhase {
-            state: SpendChannelCoinState::UnrollTimeoutOrSpend {
-                unroll_coin: test_coin(),
-                state_number: 1,
-            },
-            base: legacy_base(),
-            advisory: None,
-            was_stale: false,
-            terminal_reward_coin: None,
-            expected_clean_shutdown_solution: None,
-            last_channel_coin_spend_info: None,
-        };
-
-        let bytes = bencodex::to_vec(&legacy).expect("serialize legacy in-flight phase");
-        let restored: SpendChannelCoinPhase =
-            bencodex::from_slice(&bytes).expect("restore legacy in-flight phase");
-        let snapshot = restored.channel_status_snapshot().expect("snapshot");
-        assert_eq!(snapshot.unroll_initiator, None);
-        assert_eq!(
-            snapshot.semantic_phase,
-            Some(ChannelSemanticPhase::FinishingWaitingTimeout)
-        );
-        assert_eq!(snapshot.unrolling_state_number, Some(1));
-        assert_eq!(snapshot.preempting_state_number, None);
     }
 
     #[test]
@@ -1672,7 +1641,7 @@ mod tests {
                 unroll_coin: test_coin(),
                 state_number: 1,
             },
-            base: legacy_base(),
+            base: test_base(),
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
@@ -1718,7 +1687,7 @@ mod tests {
                 preempting: true,
                 preempting_state_number: Some(5),
             },
-            base: legacy_base(),
+            base: test_base(),
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,

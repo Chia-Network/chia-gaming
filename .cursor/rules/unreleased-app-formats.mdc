@@ -1,0 +1,26 @@
+---
+description: Keep unreleased app formats strict and external contracts compatible
+alwaysApply: true
+---
+
+# Unreleased app formats and deployed compatibility
+
+No player app or hub persistence format has been released. Keep explicit
+browser envelope versions, WASM cradle schemas, IndexedDB upgrade boundaries,
+and peer capability hooks so future released formats have centralized migration
+and negotiation points.
+
+For unreleased app-owned persistence and internal schemas:
+- Advance the relevant version for incompatible changes.
+- Decode only the current format unless a released predecessor explicitly
+  requires migration.
+- Do not add migrations, fallback decoders, aliases, dual reads, or
+  compatibility-only serde defaults for formats that never shipped.
+- Keep the current encoder and decoder symmetric: data written by this build
+  must round-trip and restore in this build.
+
+This policy does not relax compatibility with deployed external contracts.
+Preserve wallet RPC and simulator JSON behavior, Chia offer compression
+dictionaries and bech32 handling, on-chain and peer protocol behavior, and
+historical signed-unroll recognition. Treat changes to those contracts as
+compatibility-sensitive even while app-owned save formats remain unreleased.

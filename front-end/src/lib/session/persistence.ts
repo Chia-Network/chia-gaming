@@ -59,7 +59,6 @@ import {
   parseDiscriminant,
   requireBigintString,
   requireBigint,
-  requireOptionalBigint,
   requireBoolean,
   requireNullableString,
   requireExactKeys,
@@ -69,11 +68,65 @@ import {
   parseStringArray,
 } from './persistencePrimitives';
 import { decodeCanonicalFundingRequest, fundingRequestKey } from './fundingRequest';
-import { decodeWalletReservationLedger } from './walletReservationLedgerSchema';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
 export const SESSION_SAVE_ENVELOPE_VERSION = SESSION_SAVE_VERSION;
+
+const COMMON_ENVELOPE_FIELDS = ['schema', 'version', 'phase', 'identity', 'preferences', 'history'];
+const ENVELOPE_FIELDS = {
+  preferences: new Set(COMMON_ENVELOPE_FIELDS),
+  'pre-handshake': new Set([...COMMON_ENVELOPE_FIELDS, 'pairing', 'transport']),
+  live: new Set([...COMMON_ENVELOPE_FIELDS, 'pairing', 'live', 'presentation']),
+  terminal: new Set([...COMMON_ENVELOPE_FIELDS, 'terminal', 'presentation']),
+} as const;
+const IDENTITY_FIELDS = new Set(['playerId', 'sessionId', 'myHubPlayerId']);
+const PREFERENCE_FIELDS = new Set([
+  'alias',
+  'theme',
+  'defaultFee',
+  'feeUnit',
+  'hubUrl',
+  'activeTab',
+  'unreadGame',
+  'walletAlert',
+  'hubAlert',
+  'blockchainType',
+  'network',
+]);
+const HISTORY_FIELDS = new Set(['humanHistory', 'wasmNotificationHistory', 'diagnosticLog']);
+const PAIRING_FIELDS = new Set([
+  'token',
+  'peerId',
+  'gameSessionId',
+  'iStarted',
+  'myContribution',
+  'theirContribution',
+  'perGameAmount',
+  'channelTimeout',
+  'unrollTimeout',
+  'myAlias',
+  'opponentAlias',
+]);
+const TRANSPORT_FIELDS = new Set([
+  'messageNumber',
+  'remoteNumber',
+  'unackedMessages',
+  'disposition',
+  'terminalHandoff',
+]);
+const LIVE_FIELDS = new Set([
+  ...TRANSPORT_FIELDS,
+  'serializedGameSession',
+  'gameSessionSchemaVersion',
+  'rewardPuzzleHash',
+  'durabilityWarning',
+  'fundingOutbox',
+]);
+const TERMINAL_HANDOFF_FIELDS = new Set(['id', 'message', 'msgno', 'sent', 'acknowledged']);
+const UNACKED_MESSAGE_FIELDS = new Set(['msgno', 'msg']);
+const FUNDING_OUTBOX_FIELDS = new Set(['key', 'request']);
+const TERMINAL_FIELDS = new Set(['iStarted', 'coinsOfInterest', 'myAlias', 'opponentAlias']);
 
 const PRESENTATION_FIELDS = new Set([
   'handKey',
@@ -103,6 +156,7 @@ const PRESENTATION_FIELDS = new Set([
 
 function parseIdentity(value: unknown): SessionIdentitySave {
   const fields = requireRecord(value, 'identity');
+  requireExactKeys(fields, IDENTITY_FIELDS, 'identity');
   return {
     playerId: requireString(fields.playerId, 'identity.playerId'),
     sessionId: optionalString(fields.sessionId, 'identity.sessionId'),
@@ -112,6 +166,7 @@ function parseIdentity(value: unknown): SessionIdentitySave {
 
 function parsePreferences(value: unknown): SessionPreferencesSave {
   const fields = requireRecord(value, 'preferences');
+  requireExactKeys(fields, PREFERENCE_FIELDS, 'preferences');
   const theme =
     fields.theme === undefined
       ? undefined
@@ -173,6 +228,7 @@ function parsePreferences(value: unknown): SessionPreferencesSave {
 
 function parseHistory(value: unknown): SessionHistorySave {
   const fields = requireRecord(value, 'history');
+  requireExactKeys(fields, HISTORY_FIELDS, 'history');
   return {
     humanHistory:
       fields.humanHistory === undefined
@@ -191,6 +247,7 @@ function parseHistory(value: unknown): SessionHistorySave {
 
 function parsePairing(value: unknown): SessionPairingSave {
   const fields = requireRecord(value, 'pairing');
+  requireExactKeys(fields, PAIRING_FIELDS, 'pairing');
   const pairing: SessionPairingSave = {
     token: requireString(fields.token, 'pairing.token'),
     peerId: optionalString(fields.peerId, 'pairing.peerId'),
@@ -223,6 +280,7 @@ function parseTransportFields(
       ? null
       : (() => {
           const record = requireRecord(fields.terminalHandoff, `${label}.terminalHandoff`);
+          requireExactKeys(record, TERMINAL_HANDOFF_FIELDS, `${label}.terminalHandoff`);
           if (!(record.message instanceof Uint8Array)) {
             throw new Error(`Garbled save: invalid ${label}.terminalHandoff.message`);
           }
@@ -242,6 +300,7 @@ function parseTransportFields(
     remoteNumber: requireBigint(fields.remoteNumber, `${label}.remoteNumber`),
     unackedMessages: fields.unackedMessages.map((message, index) => {
       const record = requireRecord(message, `${label}.unackedMessages[${index}]`);
+      requireExactKeys(record, UNACKED_MESSAGE_FIELDS, `${label}.unackedMessages[${index}]`);
       if (!(record.msg instanceof Uint8Array)) {
         throw new Error(`Garbled save: invalid ${label}.unackedMessages[${index}].msg`);
       }
@@ -261,6 +320,7 @@ function parseTransportFields(
 
 function parseTransport(value: unknown): SessionTransportSave {
   const fields = requireRecord(value, 'transport');
+  requireExactKeys(fields, TRANSPORT_FIELDS, 'transport');
   const transport = parseTransportFields(fields, 'transport');
   validateTransport(transport, 'transport');
   return transport;
@@ -268,6 +328,7 @@ function parseTransport(value: unknown): SessionTransportSave {
 
 function parseLive(value: unknown): LiveSessionSave['live'] {
   const fields = requireRecord(value, 'live');
+  requireExactKeys(fields, LIVE_FIELDS, 'live');
   const fundingOutbox = fields.fundingOutbox;
   if (fundingOutbox !== undefined && !Array.isArray(fundingOutbox)) {
     throw new Error('Garbled save: invalid live.fundingOutbox');
@@ -291,6 +352,7 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
       : {
           fundingOutbox: fundingOutbox.map((entry, index) => {
             const record = requireRecord(entry, `live.fundingOutbox[${index}]`);
+            requireExactKeys(record, FUNDING_OUTBOX_FIELDS, `live.fundingOutbox[${index}]`);
             const key = requireString(record.key, `live.fundingOutbox[${index}].key`);
             const request = decodeCanonicalFundingRequest(
               record.request,
@@ -311,7 +373,7 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
 
 export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload | null {
   if (value === null) return null;
-  validateChannelStatus(value);
+  validateChannelStatus(value, { allowNumberStateNumbers: true });
   const fields = requireRecord(value, 'channelStatus');
   for (const required of ['advisory', 'coin', 'our_balance', 'their_balance', 'game_allocated']) {
     if (!Object.hasOwn(fields, required)) {
@@ -356,7 +418,12 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
         );
   const optionalStateNumber = (
     field: 'state_number' | 'unrolling_state_number' | 'preempting_state_number',
-  ) => requireOptionalBigint(fields[field], `channelStatus.${field}`);
+  ): bigint | null | undefined => {
+    const value = fields[field];
+    if (value === undefined || value === null) return value;
+    if (typeof value === 'number') return BigInt(value);
+    return requireBigint(value, `channelStatus.${field}`);
+  };
   return {
     state: parseDiscriminant<ChannelStatus>(fields.state, CHANNEL_STATUSES, 'channelStatus.state'),
     session_disposition: sessionDisposition,
@@ -551,26 +618,25 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   if (envelope.version !== SESSION_SAVE_ENVELOPE_VERSION) {
     throw new Error(`Garbled save: unsupported version ${String(envelope.version)}`);
   }
+  if (envelope.walletReservationLedger !== undefined) {
+    throw new Error('Garbled save: walletReservationLedger is not session-owned');
+  }
   const identity = parseIdentity(envelope.identity);
   const preferences = parsePreferences(envelope.preferences);
   const history = parseHistory(envelope.history);
-  const walletReservationLedger = decodeWalletReservationLedger(
-    envelope.walletReservationLedger,
-    'walletReservationLedger',
-  );
   const common = {
     schema: SESSION_SAVE_SCHEMA,
     version: SESSION_SAVE_VERSION,
     identity,
     preferences,
     history,
-    walletReservationLedger,
   } as const;
   let typedEnvelope: SessionSave;
   let presentation: SessionPresentationSave | null = null;
   let restoring = false;
   switch (envelope.phase) {
     case 'preferences':
+      requireExactKeys(envelope, ENVELOPE_FIELDS.preferences, 'session envelope');
       if (
         envelope.pairing !== undefined ||
         envelope.transport !== undefined ||
@@ -583,6 +649,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       typedEnvelope = { ...common, phase: 'preferences' } satisfies PreferencesSessionSave;
       break;
     case 'pre-handshake':
+      requireExactKeys(envelope, ENVELOPE_FIELDS['pre-handshake'], 'session envelope');
       if (
         envelope.live !== undefined ||
         envelope.presentation !== undefined ||
@@ -598,6 +665,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       } satisfies PreHandshakeSessionSave;
       break;
     case 'live':
+      requireExactKeys(envelope, ENVELOPE_FIELDS.live, 'session envelope');
       if (envelope.terminal !== undefined) {
         throw new Error('Garbled save: unexpected live phase payload');
       }
@@ -615,6 +683,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       restoring = true;
       break;
     case 'terminal': {
+      requireExactKeys(envelope, ENVELOPE_FIELDS.terminal, 'session envelope');
       if (
         envelope.pairing !== undefined ||
         envelope.transport !== undefined ||
@@ -623,6 +692,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         throw new Error('Garbled save: unexpected terminal phase payload');
       }
       const terminal = requireRecord(envelope.terminal, 'terminal');
+      requireExactKeys(terminal, TERMINAL_FIELDS, 'terminal');
       validateTerminalCoins(terminal.coinsOfInterest);
       const coins = terminal.coinsOfInterest as unknown[];
       presentation = parsePresentation(envelope.presentation);

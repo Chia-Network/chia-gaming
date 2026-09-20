@@ -5,10 +5,11 @@ codebase — a system for playing two-player games over Chia state channels.
 For detailed coverage of specific areas, see [Further Reading](#further-reading)
 at the end of this document.
 
-**Early beta status:** The project works, but bugs are still likely. Backwards
-compatibility is attempted across on-chain wire formats, persistence formats,
-browser localStorage, external APIs, and internal interfaces, but it remains
-best-effort and may be unreliable. Breaking changes are still possible.
+**Early beta status:** The project works, but bugs are still likely. No player
+app or hub persistence format has been released. Explicit browser, WASM, and
+wallet-ledger versions are retained as future migration hooks, while app-owned
+state decodes only the current format today. Compatibility remains mandatory
+for deployed wallet APIs and Chia, on-chain, and peer protocol contracts.
 
 ## Table of Contents
 
@@ -828,14 +829,34 @@ there is no successor/predecessor funding protocol. Rust owns transaction
 submission intent and the frontend submission queue owns only ordered one-shot
 wallet delivery.
 
+The browser session envelope is currently strict version 30, its serialized
+Rust/WASM cradle is schema 17, and wallet reservations use an independent
+strict version-2 record. These explicit versions remain future migration hooks.
+No app or hub persistence format has shipped, so only each current app-owned
+format is decoded; incompatible predecessors are deleted without fallback
+decoders, aliases, or migrations. This does not relax deployed compatibility:
+Cloud Wallet GraphQL, WalletConnect RPC, Chia bech32m offer compression
+dictionaries, Coinset JSON, peer/on-chain protocols, and historical signed
+unroll recognition remain compatibility-sensitive external contracts.
+
 Persisted funding and fee offers enter one wallet-level reservation ledger.
-Each entry carries its trade ID, owning session, stable operation identity,
-stage, and bounded reason, and the ledger survives every session-save phase and
-controller teardown. Persistence failure never gates use or cancellation of an
-offer; the in-memory ledger remains dirty for a later full checkpoint. Failed
-cancellation retries only on restore, wallet reconnect/attachment, or explicit
-terminal finalization—never by a timer or immediate loop. Terminal finalization
-is blocked while that session still has an unresolved ledger entry.
+Each trade carries its exact provider trade ID, exact owner
+(`installationPlayerId` plus peer session), stable purpose/operation identity,
+stage, and bounded reason. Multiple trades for one operation remain distinct.
+An attached fee offer is retained for exact transaction replay until wallet
+acknowledgement or Rust retirement requests typed cancellation; Cloud
+cancellation completes only after its signature request reaches a successful
+terminal state. The session envelope and complete independent ledger snapshot
+are checkpointed atomically in one IndexedDB transaction, and strict codecs
+reject unknown/missing fields, duplicate trades, invalid discriminants, and
+non-current versions.
+
+Persistence failure never gates use, transaction release, or cancellation of
+an offer; the in-memory session and ledger remain dirty for a later full atomic
+checkpoint. Failed cancellation retries only on restore, wallet
+reconnect/attachment, or explicit terminal finalization—never by a timer or
+immediate loop. Terminal finalization is blocked while that session still has
+an unresolved ledger entry.
 
 Persistence is checkpointing, not permission to continue a game for money. If
 the browser write fails, the runtime reports a persistent durability warning

@@ -39,8 +39,8 @@ export type CoinPollInterest = { coin_name: string; coin_string: string };
 export interface PollingGameSession {
   snapshotWatchedCoins(): CoinPollInterest[];
   /** Advance protocol clocks without asserting a complete coin snapshot. */
-  reportNewBlock(peak: bigint): void;
-  reportCoinStates(peak: bigint, records: CoinStateRecord[]): void;
+  reportNewBlock(peak: bigint): Promise<void> | void;
+  reportCoinStates(peak: bigint, records: CoinStateRecord[]): Promise<void> | void;
 }
 
 type BalanceCallbacks = {
@@ -210,8 +210,8 @@ export class BlockchainPoller {
       disconnect: () => adapter.disconnect(),
       isConnected: () => adapter.isConnected(),
       onConnectionChange: (cb) => adapter.onConnectionChange(cb),
-      isReadyForPlay: () => adapter.isReadyForPlay(),
-      onPlayReadinessChange: (cb) => adapter.onPlayReadinessChange(cb),
+      isReadyForPlay: () => adapter.isReadyForPlay?.() ?? adapter.isConnected(),
+      onPlayReadinessChange: (cb) => adapter.onPlayReadinessChange?.(cb) ?? (() => {}),
     };
   }
 
@@ -322,10 +322,11 @@ export class BlockchainPoller {
 
   snapshotGameSessionCoinInterest(
     cradle: PollingGameSession,
-    watchedCoins = cradle.snapshotWatchedCoins(),
+    watchedCoins?: CoinPollInterest[],
   ): void {
     if (!this.sessions.has(cradle)) return;
-    this.sessionCoins.set(cradle, watchedCoins);
+    const snapshot = watchedCoins ?? cradle.snapshotWatchedCoins();
+    this.sessionCoins.set(cradle, snapshot);
     this.refreshCoinInterest();
   }
 
@@ -508,9 +509,9 @@ export class BlockchainPoller {
       // Advance every session as soon as a height is available, independently
       // of the slower watched-coin lookup. This is deliberately a
       // manager-owned height-only observation, not an empty coin snapshot.
-      for (const { c } of this.collectGameSessionCoins()) {
-        c.reportNewBlock(height);
-      }
+      await Promise.all(
+        this.collectGameSessionCoins().map(({ c }) => Promise.resolve(c.reportNewBlock(height))),
+      );
 
       if (this.firstTick) {
         this.firstTick = false;
@@ -574,7 +575,7 @@ export class BlockchainPoller {
         if (!this.isConnectionEpochActive(connectionEpoch)) return;
         if (recordByName) {
           this.peak = closingPeak;
-          this.reportToCradles(
+          await this.reportToCradles(
             perSession,
             recordByName,
             closingPeak,
@@ -640,12 +641,13 @@ export class BlockchainPoller {
   // Hand each cradle its complete coin-state snapshot for `height`. A
   // successful query explicitly represents every registered interest:
   // omitted records are authoritative absences, not partial results.
-  private reportToCradles(
+  private async reportToCradles(
     perSession: Array<{ c: PollingGameSession; coins: CoinPollInterest[] }>,
     recordByName: Map<string, CoinRecord>,
     height: bigint,
     _previousPeak: bigint,
-  ): void {
+  ): Promise<void> {
+    const deliveries: Array<Promise<void>> = [];
     for (const { c, coins } of perSession) {
       // The snapshot was captured before asynchronous registration/record/peak
       // RPCs. A session detached while those requests were in flight must not
@@ -687,8 +689,9 @@ export class BlockchainPoller {
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
       }
       csr.sort((a, b) => a.coin.localeCompare(b.coin));
-      c.reportCoinStates(height, csr);
+      deliveries.push(Promise.resolve(c.reportCoinStates(height, csr)));
     }
+    await Promise.all(deliveries);
   }
 
   private currentBackoffMs(): number {

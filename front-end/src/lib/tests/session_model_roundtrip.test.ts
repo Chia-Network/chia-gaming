@@ -32,17 +32,26 @@ const CAL_HAND_STATE = calpokerStateCodec.encode({
 });
 
 describe('session model round trips', () => {
-  it('normalizes restored notification ids to bigint', () => {
+  it('round-trips current bigint notification ids', () => {
     const save = liveEnvelope({
       activeGameIds: [],
-      channelNotifQueue: [{ id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
-      gameNotifQueue: [{ id: '8', kind: 'proposal-rejected', title: 'Game', message: 'Done' }],
+      channelNotifQueue: [{ id: 7n, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
+      gameNotifQueue: [{ id: 8n, kind: 'proposal-rejected', title: 'Game', message: 'Done' }],
     } as unknown as Partial<SessionSave>);
 
     const restored = sessionModelFromSave(save);
 
     expect(restored.channel.queue[0].id).toBe(7n);
     expect(restored.game.queue[0].id).toBe(8n);
+  });
+
+  it('rejects noncanonical persisted notification ids', () => {
+    const save = liveEnvelope({
+      activeGameIds: [],
+      channelNotifQueue: [{ id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
+    } as unknown as Partial<SessionSave>);
+
+    expect(() => sessionModelFromSave(save)).toThrow('Garbled save: missing notification id');
   });
 
   it('round-trips keyed hand status without aggregate snapshot fields', () => {

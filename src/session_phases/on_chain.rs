@@ -67,7 +67,6 @@ pub struct OnChainPhase {
     was_stale: bool,
     resolved_clean: bool,
     terminal_reward_coin: Option<CoinString>,
-    #[serde(default)]
     game_payout_coins: Vec<(GameID, CoinString)>,
     advisory: Option<String>,
 }
@@ -1907,7 +1906,7 @@ impl OnChainPhase {
         Ok(None)
     }
 
-    pub fn coin_puzzle_and_solution(
+    pub(crate) fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
@@ -1989,13 +1988,13 @@ impl PeerLifecyclePhase for OnChainPhase {
         OnChainPhase::coin_created(self, env, coin_id)
     }
 
-    fn coin_puzzle_and_solution(
+    fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
-        OnChainPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        OnChainPhase::coin_puzzle_and_solution_in_place(self, env, coin_id, puzzle_and_solution)
     }
 
     fn make_move(

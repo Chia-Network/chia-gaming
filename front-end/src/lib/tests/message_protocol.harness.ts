@@ -17,6 +17,7 @@ import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
 import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
+import { deleteWalletReservationRecord } from '../session/indexedDb';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
   get: (target, property) =>
@@ -115,6 +116,13 @@ export function testSpendBundle(coinHex: string): SpendBundle {
   };
 }
 
+export function submissionDrain(
+  submissions: TransactionSubmission[] = [],
+  retired_submission_ids: string[] = [],
+) {
+  return { submissions, retired_submission_ids };
+}
+
 export function makeMockCradle(
   onDeliver: (msg: Uint8Array) => Partial<WasmResult> | undefined = () => wasmResult(),
 ): ChiaGame {
@@ -125,15 +133,18 @@ export function makeMockCradle(
     }),
     report_coin_states: jest.fn(() => wasmResult()),
     report_height: jest.fn(() => wasmResult()),
+    report_puzzle_and_solution: jest.fn(() => wasmResult()),
     snapshot_watched_coins: jest.fn(() => []),
+    snapshot_pending_coin_solution_requests: jest.fn(() => []),
     coins_of_interest: jest.fn(() => []),
-    drain_submissions: jest.fn(() => []),
+    drain_submissions: jest.fn(() => submissionDrain()),
     configure_submission_fee: jest.fn(),
-    finalize_submission: jest.fn(() => ({
+    finalize_submission: jest.fn((_submissionId: string, feeSourceJson?: string) => ({
       protocol_bundle: testSpendBundle('00'),
       bundle: {},
       applied_fee: '0',
       warning: null,
+      fee_source_disposition: feeSourceJson === undefined ? 'not-requested' : 'attached',
     })),
     acknowledge_submission: jest.fn(),
     reject_submission: jest.fn(),
@@ -321,10 +332,12 @@ export function clearTestGlobal(key: string) {
   Reflect.deleteProperty(globalThis, key);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
+  resetSaveState();
+  await deleteWalletReservationRecord();
 });
 
 afterEach(async () => {

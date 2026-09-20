@@ -702,7 +702,7 @@ describe('session machine controller command failures', () => {
     controller.setGameSession({
       pendingTerminalHandoff: () => null,
       snapshot_watched_coins: () => [],
-      drain_submissions: () => [],
+      drain_submissions: () => ({ submissions: [], retired_submission_ids: [] }),
       configure_submission_fee: () => {},
       accept_proposal: () =>
         wasmResult({

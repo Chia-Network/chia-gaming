@@ -18,11 +18,15 @@ import {
 import {
   MAX_DURABLE_REJECTION_TOMBSTONES,
   readRejectionTombstones,
+  readSessionRecord,
+  readWalletReservationRecord,
   REJECTION_TOMBSTONE_TTL_MS,
   rejectionTombstoneKey,
   SESSION_DB_NAME,
   writeRejectionTombstone,
+  writeSessionAndWalletReservationRecords,
   writeSessionRecord,
+  writeWalletReservationRecord,
 } from '../session/indexedDb';
 import {
   DIAGNOSTIC_LOG_LIMIT,
@@ -30,7 +34,15 @@ import {
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../session/historyLimits';
 import { baseSave } from './session_save_envelope.fixtures';
-import { walletReservationLedger } from '../session/walletReservationLedger';
+import {
+  WalletReservationLedger,
+  walletReservationLedger,
+} from '../session/walletReservationLedger';
+import {
+  decodeWalletReservationRecord,
+  WALLET_RESERVATION_RECORD_SCHEMA,
+  WALLET_RESERVATION_RECORD_VERSION,
+} from '../session/walletReservationLedgerSchema';
 import {
   clearTestGlobal,
   makeStorage,
@@ -44,6 +56,83 @@ import {
 } from './save.harness';
 
 describe('session persistence', () => {
+  it('round-trips the strict wallet reservation record envelope', async () => {
+    const entries = [
+      {
+        tradeId: 'trade-round-trip',
+        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
+        stage: 'reserved' as const,
+        reason: 'wallet-offer-created',
+      },
+    ];
+
+    await writeWalletReservationRecord(entries);
+
+    expect(await readWalletReservationRecord()).toEqual({
+      schema: WALLET_RESERVATION_RECORD_SCHEMA,
+      version: WALLET_RESERVATION_RECORD_VERSION,
+      entries,
+    });
+  });
+
+  it('orders ledger-only writes after an already-requested combined checkpoint', async () => {
+    const session = baseSave({ playerId: 'ordered-session' });
+    const retained = [
+      {
+        tradeId: 'trade-ordered',
+        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        purpose: { kind: 'fee' as const, operationId: 'submission-ordered' },
+        stage: 'retained-for-replay' as const,
+        reason: 'fee-source-attached',
+      },
+    ];
+
+    const combined = writeSessionAndWalletReservationRecords(session, retained);
+    const laterCleanup = writeWalletReservationRecord([]);
+    await Promise.all([combined, laterCleanup]);
+
+    expect(await readSessionRecord()).toEqual(session);
+    expect((await readWalletReservationRecord())?.entries).toEqual([]);
+  });
+
+  it.each([
+    [
+      'wrong schema',
+      {
+        schema: 'wrong-wallet-schema',
+        version: WALLET_RESERVATION_RECORD_VERSION,
+        entries: [],
+      },
+    ],
+    [
+      'wrong version',
+      {
+        schema: WALLET_RESERVATION_RECORD_SCHEMA,
+        version: WALLET_RESERVATION_RECORD_VERSION + 1n,
+        entries: [],
+      },
+    ],
+    [
+      'unknown root field',
+      {
+        schema: WALLET_RESERVATION_RECORD_SCHEMA,
+        version: WALLET_RESERVATION_RECORD_VERSION,
+        entries: [],
+        unknown: true,
+      },
+    ],
+    ['old bare array', []],
+  ])('rejects a wallet reservation record with %s', (_label, record) => {
+    expect(() => decodeWalletReservationRecord(record)).toThrow();
+  });
+
+  it('does not hydrate a persisted bare ledger array', () => {
+    expect(() => new WalletReservationLedger().hydrateFromDisk([])).toThrow(
+      'Garbled wallet reservation record',
+    );
+  });
+
   it('obfuscates and round-trips one raw binary/bigint record through IndexedDB', async () => {
     saveLiveFields({
       ...sampleSession,
@@ -364,6 +453,85 @@ describe('session persistence', () => {
     }
   });
 
+  it('atomically checkpoints coordinated session and ledger transitions and heals after abort', async () => {
+    const owner = { installationPlayerId: 'installation', peerSessionId: 'peer-session' };
+    walletReservationLedger.registerReserved(
+      'trade-atomic',
+      owner,
+      { kind: 'fee', operationId: 'submission-atomic' },
+      'fee-offer-created',
+    );
+    saveLiveFields({
+      ...sampleSession,
+      serializedGameSession: new Uint8Array([1]),
+    });
+    await flushSessionSave();
+    await walletReservationLedger.flushPersistence();
+
+    walletReservationLedger.retainForReplayCoordinated('trade-atomic');
+    const scheduled = saveLiveFields({
+      ...sampleSession,
+      serializedGameSession: new Uint8Array([2]),
+    });
+    const originalTransaction = IDBDatabase.prototype.transaction;
+    const transactionSpy = jest
+      .spyOn(IDBDatabase.prototype, 'transaction')
+      .mockImplementation(function (
+        this: IDBDatabase,
+        storeNames: string | string[],
+        mode?: IDBTransactionMode,
+        options?: IDBTransactionOptions,
+      ) {
+        const transaction = originalTransaction.call(this, storeNames, mode, options);
+        if (
+          Array.isArray(storeNames) &&
+          storeNames.includes('session') &&
+          storeNames.includes('wallet-reservations') &&
+          mode === 'readwrite'
+        ) {
+          queueMicrotask(() => transaction.abort());
+        }
+        return transaction;
+      });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(flushSessionSave()).rejects.toThrow();
+    await expect(scheduled).rejects.toThrow();
+    transactionSpy.mockRestore();
+    errorSpy.mockRestore();
+
+    const afterAbort = requireLive(await readSessionRecord());
+    expect(afterAbort.live.serializedGameSession).toEqual(new Uint8Array([1]));
+    expect((await readWalletReservationRecord())?.entries).toEqual([
+      expect.objectContaining({ tradeId: 'trade-atomic', stage: 'reserved' }),
+    ]);
+    expect(walletReservationLedger.isDirty()).toBe(true);
+    expect(walletReservationLedger.snapshot()).toEqual([
+      expect.objectContaining({ tradeId: 'trade-atomic', stage: 'retained-for-replay' }),
+    ]);
+
+    const healed = saveLiveFields({
+      ...sampleSession,
+      serializedGameSession: new Uint8Array([2]),
+    });
+    await flushSessionSave();
+    await healed;
+
+    const afterHeal = requireLive(await readSessionRecord());
+    expect(afterHeal.live.serializedGameSession).toEqual(new Uint8Array([2]));
+    expect((await readWalletReservationRecord())?.entries).toEqual([
+      expect.objectContaining({ tradeId: 'trade-atomic', stage: 'retained-for-replay' }),
+    ]);
+    expect(walletReservationLedger.isDirty()).toBe(false);
+
+    _resetForTests();
+    const restored = requireLive(await peekSession());
+    expect(restored.live.serializedGameSession).toEqual(new Uint8Array([2]));
+    expect(walletReservationLedger.snapshot()).toEqual([
+      expect.objectContaining({ tradeId: 'trade-atomic', stage: 'retained-for-replay' }),
+    ]);
+  });
+
   it('keeps serialized session bytes out of localStorage', async () => {
     saveLiveFields();
     await flushSessionSave();
@@ -375,6 +543,15 @@ describe('session persistence', () => {
     expect(localValues).not.toMatch(
       /serializedGameSession|unackedMessages|\$bytes|000102ff|AAEC\/w==/,
     );
+  });
+
+  it('leaves obsolete monolithic localStorage state untouched', () => {
+    _resetForTests();
+    localStorage.setItem('appState', '{"obsolete":true}');
+
+    loadState();
+
+    expect(localStorage.getItem('appState')).toBe('{"obsolete":true}');
   });
 
   it('persists only the configured recent history entries', async () => {
@@ -411,118 +588,101 @@ describe('session persistence', () => {
     expect(await peekSession()).toBeNull();
   });
 
-  it('clearSession preserves wallet reservation obligations in preferences phase', async () => {
+  it('clearSession deletes the session while preserving the independent ledger', async () => {
     walletReservationLedger.registerReserved(
       'trade-clear',
-      { sessionId: 'session', gameSessionId: 'game-session' },
+      { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
       { kind: 'funding', operationId: 'funding-operation' },
     );
+    await walletReservationLedger.flushPersistence();
     await clearSession();
     _resetForTests();
 
-    const restored = await peekSession();
-    expect(restored?.phase).toBe('preferences');
-    expect(restored?.walletReservationLedger).toEqual([
+    await peekSession();
+    expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-clear',
         stage: 'cancel-required',
         reason: 'orphaned-reservation-restored',
       }),
     ]);
-    await flushSessionSave();
-    _resetForTests();
-    expect((await peekSession())?.walletReservationLedger).toEqual([
-      expect.objectContaining({
-        tradeId: 'trade-clear',
-        stage: 'cancel-required',
-        reason: 'orphaned-reservation-restored',
-      }),
-    ]);
-    walletReservationLedger.resetForTests();
-    await clearSession();
   });
 
-  it.each([
-    ['preferences', baseSave({ blockchainType: 'walletconnect' })],
-    [
-      'terminal',
-      baseSave({
-        channelStatus: { state: 'ResolvedClean' },
-        coinsOfInterest: [],
+  it('hydrates the independent ledger without a session record or marker', async () => {
+    _resetForTests();
+    await writeWalletReservationRecord([
+      {
+        tradeId: 'trade-independent',
+        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        purpose: { kind: 'fee', operationId: 'submission' },
+        stage: 'reserved',
+        reason: 'created-before-reload',
+      },
+    ]);
+    clearSavedSessionMarker();
+
+    expect(await peekSession()).toBeNull();
+    expect(walletReservationLedger.snapshot()).toEqual([
+      expect.objectContaining({
+        tradeId: 'trade-independent',
+        stage: 'cancel-required',
+        reason: 'orphaned-reservation-restored',
       }),
-    ],
-  ])(
-    'preserves a late reservation while hydrating a marked %s record',
-    async (_phase, diskRecord) => {
-      _resetForTests();
-      await writeSessionRecord(diskRecord);
-      markSavedSession();
-      loadState();
-      const owner = { sessionId: 'late-session', gameSessionId: 'late-game-session' };
-      const purpose = { kind: 'funding' as const, operationId: 'late-funding' };
+    ]);
+  });
 
-      walletReservationLedger.registerReserved('trade-late-hydrate', owner, purpose);
-      walletReservationLedger.requireCancellation(owner, purpose, 'late-controller-result');
+  it('restores retained fee sources without promoting them to cancellation', async () => {
+    _resetForTests();
+    await writeWalletReservationRecord([
+      {
+        tradeId: 'trade-retained',
+        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        purpose: { kind: 'fee', operationId: 'submission-7' },
+        stage: 'retained-for-replay',
+        reason: 'fee-source-attached',
+      },
+    ]);
+
+    await peekSession();
+
+    expect(walletReservationLedger.snapshot()).toEqual([
+      expect.objectContaining({
+        tradeId: 'trade-retained',
+        stage: 'retained-for-replay',
+        reason: 'fee-source-attached',
+      }),
+    ]);
+  });
+
+  it.each(['session deletion', 'rejection tombstone'])(
+    '%s preserves the ledger store',
+    async (kind) => {
+      const entry = {
+        tradeId: `trade-${kind}`,
+        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        purpose: { kind: 'funding' as const, operationId: 'funding' },
+        stage: 'cancel-required' as const,
+        reason: 'cleanup',
+      };
+      await writeWalletReservationRecord([entry]);
+      saveLiveFields();
       await flushSessionSave();
-
-      expect(walletReservationLedger.snapshot()).toEqual([
-        expect.objectContaining({
-          tradeId: 'trade-late-hydrate',
-          stage: 'cancel-required',
-        }),
-      ]);
-      _resetForTests();
-      const restored = await peekSession();
-      expect(restored?.phase).toBe(diskRecord.phase);
-      expect(restored?.walletReservationLedger).toEqual([
-        expect.objectContaining({
-          tradeId: 'trade-late-hydrate',
-          stage: 'cancel-required',
-        }),
-      ]);
-      walletReservationLedger.resetForTests();
-      await clearSession();
+      if (kind === 'session deletion') {
+        await clearSession();
+      } else {
+        await clearSessionWithRejectionTombstone({
+          kind: 'outbound-reject',
+          peerId: 'peer',
+          sessionId: '0'.repeat(32),
+          messageNumber: 2n,
+          remoteNumber: 1n,
+          unackedMessages: [],
+          createdAt: Date.now(),
+        });
+      }
+      expect((await readWalletReservationRecord())?.entries).toEqual([entry]);
     },
   );
-
-  it('merges an old disk obligation with a newer in-memory reservation', async () => {
-    _resetForTests();
-    const diskRecord = baseSave({ blockchainType: 'walletconnect' });
-    diskRecord.walletReservationLedger = [
-      {
-        tradeId: 'trade-disk-old',
-        owner: { sessionId: 'disk-session', gameSessionId: 'disk-game-session' },
-        purpose: { kind: 'fee', operationId: 'disk-submission' },
-        stage: 'cancel-required',
-        reason: 'disk-old',
-      },
-    ];
-    await writeSessionRecord(diskRecord);
-    markSavedSession();
-    loadState();
-
-    walletReservationLedger.registerReserved(
-      'trade-memory-new',
-      { sessionId: 'memory-session', gameSessionId: 'memory-game-session' },
-      { kind: 'funding', operationId: 'memory-funding' },
-    );
-    await flushSessionSave();
-
-    expect(
-      walletReservationLedger
-        .snapshot()
-        .map(({ tradeId }) => tradeId)
-        .sort(),
-    ).toEqual(['trade-disk-old', 'trade-memory-new']);
-    _resetForTests();
-    const restored = await peekSession();
-    expect(restored?.walletReservationLedger.map(({ tradeId }) => tradeId).sort()).toEqual([
-      'trade-disk-old',
-      'trade-memory-new',
-    ]);
-    walletReservationLedger.resetForTests();
-    await clearSession();
-  });
 
   it('saveSession preserves blockchainType', async () => {
     saveLiveFields({ ...sampleSession, blockchainType: 'walletconnect' });

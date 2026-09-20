@@ -6,9 +6,19 @@ import { isUncancelledProposalLifecycle } from './proposalPolicy';
 import {
   parseDecimalString,
   requireBoolean,
+  requireExactKeys,
   requireRecord,
   requireString,
 } from './persistencePrimitives';
+
+const COMPOSE_KEYS = new Set(['selected_game', 'game_timeout', 'proposal_sent']);
+const HAND_PROPOSAL_KEYS = new Set([
+  'sender_is_player_a',
+  'game_timeout',
+  'game_type',
+  'parameters',
+]);
+const PENDING_PROPOSAL_KEYS = new Set(['id', 'lifecycle', 'hand_proposal']);
 
 export function encodeComposeDraftState(
   compose: ComposeDraftState,
@@ -22,6 +32,7 @@ export function encodeComposeDraftState(
 
 export function parseComposeDraftState(value: unknown): ComposeDraftState {
   const saved = requireRecord(value, 'betweenHandCompose');
+  requireExactKeys(saved, COMPOSE_KEYS, 'betweenHandCompose');
   const selectedGame = saved.selected_game;
   if (!isCatalogGameType(selectedGame)) {
     throw new Error('Garbled save: invalid betweenHandCompose.selected_game');
@@ -35,6 +46,7 @@ export function parseComposeDraftState(value: unknown): ComposeDraftState {
 
 export function parseHandProposalSnapshot(value: unknown, label: string): HandProposal {
   const saved = requireRecord(value, label);
+  requireExactKeys(saved, HAND_PROPOSAL_KEYS, label);
   const gameType = saved.game_type;
   if (!isCatalogGameType(gameType)) {
     throw new Error(`Garbled save: unknown ${label}.game_type ${String(gameType)}`);
@@ -68,6 +80,7 @@ export function parsePendingProposals(value: unknown, label: string): PendingPro
   const proposals = value.map((entry, index): PendingProposalModel => {
     const proposalLabel = `${label}[${index}]`;
     const saved = requireRecord(entry, proposalLabel);
+    requireExactKeys(saved, PENDING_PROPOSAL_KEYS, proposalLabel);
     const id = requireString(saved.id, `${proposalLabel}.id`);
     if (seen.has(id)) throw new Error(`Garbled save: duplicate pending proposal ${id}`);
     seen.add(id);

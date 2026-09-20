@@ -417,6 +417,30 @@ describe('BlockchainPoller', () => {
     expect(queriedNames).toEqual([['aa'], ['aa'], ['aa', 'bb']]);
   });
 
+  it('preserves prior interests when an authoritative resnapshot fails', () => {
+    let fail = false;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => {
+        if (fail) throw new Error('WASM watch query failed');
+        return [{ coin_name: 'aa', coin_string: 'coin-a' }];
+      },
+      reportCoinStates: () => {},
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(makeRpc([100n]), 1000);
+    poller.attachGameSession(cradle);
+
+    fail = true;
+    expect(() => poller.snapshotGameSessionCoinInterest(cradle)).toThrow('WASM watch query failed');
+    expect(
+      (
+        poller as unknown as {
+          sessionCoins: Map<PollingGameSession, Array<{ coin_name: string; coin_string: string }>>;
+        }
+      ).sessionCoins.get(cradle),
+    ).toEqual([{ coin_name: 'aa', coin_string: 'coin-a' }]);
+  });
+
   it('serializes public read RPC calls through the read lane', async () => {
     jest.useFakeTimers();
     const first = deferred<bigint>();
@@ -885,7 +909,9 @@ describe('BlockchainPoller', () => {
       .fn()
       .mockReturnValueOnce(firstOffer.promise)
       .mockResolvedValueOnce({ offer: 'offer-new', tradeId: 'trade-new' });
-    const cancelOffer = jest.fn().mockRejectedValue(new Error('wallet offline'));
+    const cancelOffer = jest
+      .fn()
+      .mockResolvedValue({ status: 'unavailable', detail: 'wallet offline' });
     const rpc = {
       createOfferForIds,
       cancelOffer,
@@ -902,7 +928,7 @@ describe('BlockchainPoller', () => {
     poller.startBalanceInterest(1000, { onBalance: () => {} });
 
     const reservation = {
-      owner: { sessionId: 'session', gameSessionId: 'game-session' },
+      owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
       purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
     };
     const stale = poller.rpc.createOfferForIds(
@@ -930,7 +956,7 @@ describe('BlockchainPoller', () => {
     await expect(replacement).resolves.toEqual({ offer: 'offer-new', tradeId: 'trade-new' });
     await advanceLane(0);
     expect(cancelOffer).toHaveBeenCalledWith('trade-old');
-    expect(walletReservationLedger.entriesForSession('game-session')).toEqual([
+    expect(walletReservationLedger.entriesFor(reservation.owner)).toEqual([
       expect.objectContaining({ tradeId: 'trade-old', stage: 'cancel-required' }),
     ]);
     await advanceLane(0);
@@ -941,8 +967,8 @@ describe('BlockchainPoller', () => {
 
   it('does not let an inactive constructed poller steal ledger RPC ownership', async () => {
     walletReservationLedger.resetForTests();
-    const activeCancel = jest.fn().mockResolvedValue(undefined);
-    const inactiveCancel = jest.fn().mockResolvedValue(undefined);
+    const activeCancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const inactiveCancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const activeRpc = {
       cancelOffer: activeCancel,
       onConnectionChange: () => () => {},
@@ -955,12 +981,12 @@ describe('BlockchainPoller', () => {
       },
       1000,
     );
-    const owner = { sessionId: 'session', gameSessionId: 'game-session' };
+    const owner = { installationPlayerId: 'installation', peerSessionId: 'peer-session' };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
     walletReservationLedger.registerReserved('trade-active-owner', owner, purpose);
-    walletReservationLedger.requireCancellation(owner, purpose, 'wallet-outcome-finalized');
-    await walletReservationLedger.awaitSession(owner.gameSessionId);
+    walletReservationLedger.requireCancellation('trade-active-owner', 'wallet-outcome-finalized');
+    await walletReservationLedger.awaitOwner(owner);
 
     expect(activeCancel).toHaveBeenCalledWith('trade-active-owner');
     expect(inactiveCancel).not.toHaveBeenCalled();

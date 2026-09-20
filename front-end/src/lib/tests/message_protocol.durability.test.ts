@@ -12,6 +12,7 @@ import {
 } from '../../hooks/save';
 import { validateSessionSaveEnvelope } from '../session/persistence';
 import { walletReservationLedger } from '../session/walletReservationLedger';
+import { encodeWalletReservationRecord } from '../session/walletReservationLedgerSchema';
 import { writeSessionRecord } from '../session/indexedDb';
 import { liveSave } from './session_save_envelope.fixtures';
 import {
@@ -161,9 +162,9 @@ describe('durability failures', () => {
   });
 
   it('launches cleanup after a failed write and checkpoints unresolved intent on retry', async () => {
-    let rejectCleanup!: (error: Error) => void;
-    const cleanup = new Promise<void>((_resolve, reject) => {
-      rejectCleanup = reject;
+    let finishCleanup!: () => void;
+    const cleanup = new Promise<{ status: 'unavailable'; detail: string }>((resolve) => {
+      finishCleanup = () => resolve({ status: 'unavailable', detail: 'wallet offline' });
     });
     const cancelOffer = jest.fn(() => cleanup);
     const { blob } = createReadyBlob();
@@ -177,31 +178,33 @@ describe('durability failures', () => {
       if (failPersistence) throw new Error('disk full');
     });
 
-    walletReservationLedger.hydrateFromDisk([
-      {
-        tradeId: 'trade-unresolved',
-        owner: { sessionId: '00'.repeat(16), gameSessionId: 'test' },
-        purpose: { kind: 'funding', operationId: 'funding-operation' },
-        stage: 'cancel-required',
-        reason: 'funding-offer-rejected',
-      },
-    ]);
+    walletReservationLedger.hydrateFromDisk(
+      encodeWalletReservationRecord([
+        {
+          tradeId: 'trade-unresolved',
+          owner: { installationPlayerId: 'test', peerSessionId: '00'.repeat(16) },
+          purpose: { kind: 'funding', operationId: 'funding-operation' },
+          stage: 'cancel-required',
+          reason: 'funding-offer-rejected',
+        },
+      ]),
+    );
 
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full');
 
     expect(cancelOffer).toHaveBeenCalledTimes(1);
     expect(blob.durabilityWarning).toContain('continuing without a durable checkpoint');
-    expect(blob.getWasmFields()?.walletReservationLedger).toEqual([
+    expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
 
     failPersistence = false;
-    rejectCleanup(new Error('wallet offline'));
+    finishCleanup();
     await blob.flushPendingWork();
     await blob.flushPendingSave();
 
     expect(checkpoints).toHaveLength(2);
-    expect(checkpoints[1]?.walletReservationLedger).toEqual([
+    expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
     expect(blob.durabilityWarning).toBeUndefined();
@@ -253,6 +256,9 @@ describe('durability failures', () => {
       events: [{ OutboundMessage: outbound }],
     }));
     setActiveBlob(blob);
+    setTestPersistence(blob, () => Promise.resolve());
+    await blob.flushPendingWork();
+    await blob.flushPendingSave();
     const previousFields = blob.getWasmFields();
     if (!previousFields) throw new Error('expected save fields');
     void saveLiveSession({

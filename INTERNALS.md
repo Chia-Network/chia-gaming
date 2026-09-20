@@ -372,7 +372,7 @@ phases.
 
 ## Blockchain Observation Boundary
 
-Each height or coin-snapshot observation runs against a fresh
+Each height, coin-snapshot, or puzzle/solution callback runs against a fresh
 `TransactionManager<GameSession>` working copy created by a Bencodex
 serialize/deserialize round trip. This cost is intentional: the durable
 transaction scope includes both the manager and the complete nested
@@ -392,7 +392,10 @@ Callbacks execute with a fresh scratch `AllocEncoder`, not the caller's
 allocator. A failed callback therefore leaves no CLVM allocations behind in
 the caller. Any state or effect that survives the observation owns its CLVM
 data as serialized `Program` bytes; allocator-local `NodePtr` values must not
-cross the boundary.
+cross the boundary. Requested puzzle/solution coin IDs are durable manager
+state. Explicit restore reissues each still-live request once; retire-aware
+controller deliveries prevent a callback owned by an obsolete runtime from
+committing into its replacement.
 
 **Key code:** `src/transaction_manager.rs` — `ObservationTransients`,
 `apply_observation_transaction`, `report_height`, and `report_coin_states`.
@@ -467,13 +470,33 @@ Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-Persisted funding and fee offers instead enter one strict wallet-level durable
-reservation ledger shared across controller lifetimes. Ledger persistence does
-not gate wallet use or `cancelOffer`; a failed write leaves the complete
-in-memory ledger dirty for a later checkpoint. A failed cancellation stays in
-the ledger and is retried only on restore, wallet reconnect/attachment, or an
-explicit terminal-finalization attempt—never by a timer or immediate
-retry loop. Unresolved cleanup blocks terminal quiescence.
+The current app-owned persistence contracts are browser session envelope v30,
+Rust/WASM cradle schema 17, and independent wallet reservation record v2.
+Their explicit versions are future migration hooks. None has shipped, so strict
+codecs accept only the current shape and version; they do not migrate, alias, or
+fallback-decode predecessors. Deployed Cloud/WalletConnect RPC, Chia offer
+compression and Coinset JSON, peer/on-chain protocols, and signed-unroll
+recognition remain compatibility-sensitive external contracts.
+
+Persisted funding and fee offers enter the strict wallet-level durable ledger
+shared across controller lifetimes. Entries preserve the exact provider trade
+ID and exact `(installationPlayerId, peerSessionId, purpose kind,
+operationId)` owner, so multiple trades for one operation remain independent.
+The only stages are `reserved`, `retained-for-replay`, and `cancel-required`.
+An attached fee stays retained while Rust owns exact-byte replay; wallet
+acknowledgement or Rust retirement requests typed cancellation. Cloud
+cancellation is complete only after its signature request reaches terminal
+success.
+
+One IndexedDB transaction checkpoints the complete session envelope and
+independent ledger snapshot atomically. Strict codecs reject unknown/missing
+fields, duplicate trade IDs, invalid discriminants, and non-current versions.
+Ledger persistence does not gate wallet use, transaction release, or
+`cancelOffer`; a failed write leaves both in-memory authorities dirty for a
+later full checkpoint. A failed cancellation stays in the ledger and is
+retried only on restore, wallet reconnect/attachment, or an explicit
+terminal-finalization attempt—never by a timer or immediate retry loop.
+Unresolved cleanup blocks terminal quiescence.
 
 Transaction submission promises span persistence-gated launch, ordered wallet
 delivery, Rust acknowledgement/rejection, and fee-offer cleanup. Terminal

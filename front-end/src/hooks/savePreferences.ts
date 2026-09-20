@@ -7,7 +7,6 @@ import {
 } from '../lib/session/saveEnvelope';
 import { randomHex } from './saveCoordination';
 
-const STATE_KEY = 'appState';
 export const PREFERENCES_KEY = 'appPreferences';
 
 interface StoredPreferences {
@@ -53,8 +52,6 @@ export function savePreferences(state: SessionSave): void {
 
 export function loadPreferences(): SessionSave {
   try {
-    // The obsolete payload may contain arbitrary stale encoding. Never inspect it.
-    localStorage.removeItem(STATE_KEY);
     const raw = localStorage.getItem(PREFERENCES_KEY);
     if (raw) {
       const preferences = JSON.parse(raw) as StoredPreferences;
@@ -83,7 +80,6 @@ export function loadPreferences(): SessionSave {
             network: preferences.network,
           },
           history: {},
-          walletReservationLedger: [],
         };
       }
     }
@@ -97,10 +93,5 @@ export function loadPreferences(): SessionSave {
     identity: { playerId: randomHex() },
     preferences: {},
     history: {},
-    walletReservationLedger: [],
   };
-}
-
-export function writeRawObsoleteState(obj: Record<string, unknown>): void {
-  localStorage.setItem(STATE_KEY, JSON.stringify(obj));
 }

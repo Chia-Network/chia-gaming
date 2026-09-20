@@ -490,7 +490,9 @@ impl GameRunner {
         let change = coin_amount.to_u64().saturating_sub(requested_amount);
 
         let mut create_targets: Vec<(PuzzleHash, Amount)> = Vec::new();
-        create_targets.push((settlement_ph, Amount::new(requested_amount)));
+        if !req.native_fee {
+            create_targets.push((settlement_ph, Amount::new(requested_amount)));
+        }
         if change > 0 {
             create_targets.push((identity.puzzle_hash.clone(), Amount::new(change)));
         }
@@ -519,7 +521,7 @@ impl GameRunner {
                     })?;
                     create_targets.push((PuzzleHash::from_bytes(arr), Amount::new(amt_val)));
                 }
-                ASSERT_COIN_ANNOUNCEMENT | CREATE_COIN_ANNOUNCEMENT => {
+                ASSERT_COIN_ANNOUNCEMENT | 64 | CREATE_COIN_ANNOUNCEMENT => {
                     if ec.args.len() != 1 {
                         return Err(Error::StrErr(format!(
                             "announcement condition opcode {} must have exactly one arg",
@@ -527,11 +529,12 @@ impl GameRunner {
                         )));
                     }
                     let arg = check_for_hex(&ec.args[0])?;
-                    if ec.opcode == ASSERT_COIN_ANNOUNCEMENT && arg.len() != 32 {
-                        return Err(Error::StrErr(
-                            "ASSERT_COIN_ANNOUNCEMENT arg must be 32-byte announcement id"
-                                .to_string(),
-                        ));
+                    if (ec.opcode == ASSERT_COIN_ANNOUNCEMENT || ec.opcode == 64) && arg.len() != 32
+                    {
+                        return Err(Error::StrErr(format!(
+                            "condition {} arg must be a 32-byte id",
+                            ec.opcode
+                        )));
                     }
                     atom_conditions.push((ec.opcode, arg));
                 }
@@ -790,6 +793,8 @@ struct CreateOfferForIdsRequest {
     coin_ids: Vec<String>,
     #[serde(default, rename = "extraConditions")]
     extra_conditions: Vec<ExtraCondition>,
+    #[serde(default, rename = "nativeFee")]
+    native_fee: bool,
 }
 
 // ---------------------------------------------------------------------------

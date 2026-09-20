@@ -1,6 +1,5 @@
 import type { ChannelStatusPayload, CoinOfInterestEntry } from '../../types/ChiaGaming';
 import type { CanonicalFundingRequest } from './fundingRequest';
-import type { WalletReservationLedgerEntry } from './walletReservationLedgerSchema';
 import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
@@ -12,7 +11,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 28n;
+export const SESSION_SAVE_VERSION = 30n;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
@@ -153,7 +152,6 @@ interface SessionSaveBase {
   identity: SessionIdentitySave;
   preferences: SessionPreferencesSave;
   history: SessionHistorySave;
-  walletReservationLedger: WalletReservationLedgerEntry[];
 }
 
 export interface PreferencesSessionSave extends SessionSaveBase {

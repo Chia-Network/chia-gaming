@@ -23,10 +23,33 @@ import {
   parseStringArray,
   requireBigint,
   requireBoolean,
+  requireExactKeys,
   requireNullableString,
   requireRecord,
   requireString,
 } from './persistencePrimitives';
+
+const NOTIFICATION_KEYS = new Set(['kind', 'id', 'title', 'message']);
+const GAME_TERMINAL_KEYS = new Set(['type', 'outcome', 'label', 'myReward', 'rewardCoinHex']);
+const GAME_INSTANCE_KEYS = new Set(['id', 'amount', 'coinHex', 'presentation', 'terminal']);
+const AMOUNT_KEYS = new Set(['Amount']);
+export const CHANNEL_STATUS_KEYS = new Set([
+  'state',
+  'session_disposition',
+  'advisory',
+  'coin',
+  'our_balance',
+  'their_balance',
+  'game_allocated',
+  'have_potato',
+  'zero_payout',
+  'unroll_initiator',
+  'semantic_phase',
+  'state_number',
+  'unrolling_state_number',
+  'preempting_state_number',
+]);
+export const TERMINAL_COIN_KEYS = new Set(['label', 'id', 'game_id', 'game_coin_kind']);
 
 export const CHANNEL_STATUSES: ReadonlySet<string> = new Set<ChannelStatus>([
   'Handshaking',
@@ -88,14 +111,6 @@ const SAVED_GAME_PRESENTATIONS: ReadonlySet<string> = new Set<GameProtocolPresen
 
 function parseNotificationId(id: unknown): bigint {
   if (typeof id === 'bigint' && id >= 0n) return id;
-  if (typeof id === 'number' && Number.isInteger(id) && id >= 0) return BigInt(id);
-  if (typeof id === 'string') {
-    try {
-      return parseDecimalString(id, 'notification id', 0n);
-    } catch {
-      throw new Error(`Garbled save: invalid notification id: ${id}`);
-    }
-  }
   throw new Error('Garbled save: missing notification id');
 }
 
@@ -103,6 +118,7 @@ export function parseQueuedNotifications(queue: unknown): QueuedNotificationMode
   if (!Array.isArray(queue)) throw new Error('Garbled save: invalid notification queue');
   const parsed = queue.map((notification, index) => {
     const record = requireRecord(notification, `notification[${index}]`);
+    requireExactKeys(record, NOTIFICATION_KEYS, `notification[${index}]`);
     return {
       kind: parseDiscriminant<QueuedNotificationModel['kind']>(
         record.kind,
@@ -122,6 +138,7 @@ export function parseQueuedNotifications(queue: unknown): QueuedNotificationMode
 
 function parseGameTerminal(value: unknown, label: string): GameTerminalModel {
   const fields = requireRecord(value, label);
+  requireExactKeys(fields, GAME_TERMINAL_KEYS, label);
   const type = parseDiscriminant<GameTerminalType>(
     fields.type,
     GAME_TERMINAL_TYPES,
@@ -151,6 +168,7 @@ function parseGameTerminal(value: unknown, label: string): GameTerminalModel {
 
 export function parseSavedGameInstance(key: string, value: unknown): GameInstanceModel {
   const instance = requireRecord(value, `gameInstances.${key}`);
+  requireExactKeys(instance, GAME_INSTANCE_KEYS, `gameInstances.${key}`);
   if (instance.id !== key) {
     throw new Error(`Garbled save: game instance ${key} has mismatched id ${String(instance.id)}`);
   }
@@ -393,9 +411,13 @@ export function validateLive(live: LiveSessionSave['live']): void {
   }
 }
 
-export function validateChannelStatus(value: unknown): void {
+export function validateChannelStatus(
+  value: unknown,
+  options: { allowNumberStateNumbers?: boolean } = {},
+): void {
   if (value == null) return;
   const status = requireRecord(value, 'channelStatus');
+  requireExactKeys(status, CHANNEL_STATUS_KEYS, 'channelStatus');
   parseDiscriminant<ChannelStatus>(status.state, CHANNEL_STATUSES, 'channelStatus.state');
   if (
     status.session_disposition !== undefined &&
@@ -416,10 +438,12 @@ export function validateChannelStatus(value: unknown): void {
   for (const field of ['our_balance', 'their_balance', 'game_allocated'] as const) {
     const amount = status[field];
     if (amount === undefined || amount === null) continue;
-    const raw =
-      typeof amount === 'object' && !Array.isArray(amount) && amount !== null
-        ? requireRecord(amount, `channelStatus.${field}`).Amount
-        : amount;
+    const raw = (() => {
+      if (typeof amount !== 'object' || Array.isArray(amount) || amount === null) return amount;
+      const record = requireRecord(amount, `channelStatus.${field}`);
+      requireExactKeys(record, AMOUNT_KEYS, `channelStatus.${field}`);
+      return record.Amount;
+    })();
     if (typeof raw === 'bigint') requireBigint(raw, `channelStatus.${field}`);
     else parseDecimalString(raw, `channelStatus.${field}`, 0n);
   }
@@ -450,13 +474,15 @@ export function validateChannelStatus(value: unknown): void {
   ] as const) {
     const value = status[field];
     if (value === undefined || value === null) continue;
-    if (typeof value === 'bigint') {
-      if (value < 0n) throw new Error(`Garbled save: invalid channelStatus.${field}`);
+    if (
+      options.allowNumberStateNumbers &&
+      typeof value === 'number' &&
+      Number.isInteger(value) &&
+      value >= 0
+    ) {
       continue;
     }
-    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-      throw new Error(`Garbled save: invalid channelStatus.${field}`);
-    }
+    requireBigint(value, `channelStatus.${field}`);
   }
 }
 
@@ -467,6 +493,7 @@ export function validateTerminalCoins(value: unknown): void {
   const coinIds = new Set<string>();
   value.forEach((coin, index) => {
     const record = requireRecord(coin, `terminal.coinsOfInterest[${index}]`);
+    requireExactKeys(record, TERMINAL_COIN_KEYS, `terminal.coinsOfInterest[${index}]`);
     const label = requireString(record.label, `terminal.coinsOfInterest[${index}].label`);
     const id = requireString(record.id, `terminal.coinsOfInterest[${index}].id`);
     if (!label || !id) throw new Error(`Garbled save: invalid terminal coin ${index}`);

@@ -1,12 +1,18 @@
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import {
+  CURRENT_VERSION,
   flushSessionSave,
   hasSavedSessionMarker,
   markSavedSession,
   peekSession,
   saveSession,
 } from '../../hooks/save';
-import { readSessionRecord, writeSessionRecord } from '../session/indexedDb';
+import {
+  readSessionRecord,
+  readWalletReservationRecord,
+  writeSessionRecord,
+  writeWalletReservationRecord,
+} from '../session/indexedDb';
 import {
   ACTIVE_INSTANCE,
   activeSave,
@@ -18,10 +24,144 @@ import {
 installSessionEnvelopeTestSetup();
 
 describe('save boundary enforcement', () => {
-  it('deletes an obsolete v11 envelope without migration and keeps the marker', async () => {
+  it('preserves wallet storage when session reading encounters a newer database version', async () => {
+    const sentinel = new Uint8Array([9, 8, 7]);
+    await new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('chia-gaming-session', 4);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction('wallet-reservations', 'readwrite');
+        tx.objectStore('wallet-reservations').put(sentinel, 'current');
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+      };
+    });
+
+    try {
+      await expect(readSessionRecord()).rejects.toMatchObject({ name: 'VersionError' });
+      const rawLedger = await new Promise<unknown>((resolve, reject) => {
+        const open = indexedDB.open('chia-gaming-session', 4);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction('wallet-reservations', 'readonly');
+          const request = tx.objectStore('wallet-reservations').get('current');
+          tx.onerror = () => reject(tx.error);
+          tx.oncomplete = () => {
+            db.close();
+            resolve(request.result);
+          };
+        };
+      });
+      expect(rawLedger).toEqual(sentinel);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.deleteDatabase('chia-gaming-session');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('test database deletion was blocked'));
+      });
+    }
+  });
+
+  it('preserves wallet storage when the session object store is missing', async () => {
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('chia-gaming-session');
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error('test database deletion was blocked'));
+    });
+    const sentinel = new Uint8Array([6, 5, 4]);
+    await new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('chia-gaming-session', 3);
+      open.onerror = () => reject(open.error);
+      open.onupgradeneeded = () => {
+        open.result.createObjectStore('wallet-reservations');
+      };
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction('wallet-reservations', 'readwrite');
+        tx.objectStore('wallet-reservations').put(sentinel, 'current');
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+      };
+    });
+
+    try {
+      await expect(readSessionRecord()).rejects.toMatchObject({ name: 'NotFoundError' });
+      const rawLedger = await new Promise<unknown>((resolve, reject) => {
+        const open = indexedDB.open('chia-gaming-session', 3);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction('wallet-reservations', 'readonly');
+          const request = tx.objectStore('wallet-reservations').get('current');
+          tx.onerror = () => reject(tx.error);
+          tx.oncomplete = () => {
+            db.close();
+            resolve(request.result);
+          };
+        };
+      });
+      expect(rawLedger).toEqual(sentinel);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.deleteDatabase('chia-gaming-session');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('test database deletion was blocked'));
+      });
+    }
+  });
+
+  it('blocks session hydration when the independent wallet ledger is malformed', async () => {
+    const session = liveSave();
+    await writeSessionRecord(session);
+    const malformedLedger = new Uint8Array([1, 2, 3]);
+    await new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('chia-gaming-session');
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction('wallet-reservations', 'readwrite');
+        tx.objectStore('wallet-reservations').put(malformedLedger, 'current');
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+      };
+    });
+    markSavedSession();
+
+    await expect(peekSession()).rejects.toThrow('Stored wallet reservation ledger is malformed');
+    expect(await readSessionRecord()).toEqual(session);
+    await expect(readWalletReservationRecord()).rejects.toThrow(
+      'Stored wallet reservation ledger is malformed',
+    );
+  });
+
+  it('deletes the previous envelope version without migration and keeps the marker', async () => {
+    const ledger = [
+      {
+        tradeId: 'trade-preserved',
+        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        purpose: { kind: 'funding' as const, operationId: 'funding' },
+        stage: 'cancel-required' as const,
+        reason: 'cleanup',
+      },
+    ];
+    await writeWalletReservationRecord(ledger);
     markSavedSession();
     await writeSessionRecord({
-      version: 22n,
+      version: CURRENT_VERSION - 1n,
       playerId: 'old-player',
       serializedGameSession: new Uint8Array([1, 2, 3]),
     } as unknown as Parameters<typeof writeSessionRecord>[0]);
@@ -29,6 +169,7 @@ describe('save boundary enforcement', () => {
 
     expect(await peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
+    expect((await readWalletReservationRecord())?.entries).toEqual(ledger);
     expect(hasSavedSessionMarker()).toBe(true);
     errorSpy.mockRestore();
   });

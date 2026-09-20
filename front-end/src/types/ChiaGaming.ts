@@ -218,11 +218,17 @@ export interface TransactionSubmission {
   fee_request?: { target: string; amount: string } | null;
 }
 
+export interface SubmissionDrain {
+  submissions: TransactionSubmission[];
+  retired_submission_ids: string[];
+}
+
 export interface FinalizedSubmission {
   protocol_bundle: SpendBundle;
   bundle: unknown;
   applied_fee: string;
   warning?: string | null;
+  fee_source_disposition: 'attached' | 'unused' | 'not-requested';
 }
 
 export type WalletSubmitOutcome =
@@ -232,7 +238,7 @@ export type WalletSubmitOutcome =
 
 export type WalletFeeSourceOutcome =
   | { kind: 'offer'; offer: string; tradeId: string }
-  | { kind: 'bundle'; bundle: unknown }
+  | { kind: 'bundle'; bundle: unknown; tradeId?: string }
   | { kind: 'failure'; reason: string }
   | { kind: 'unavailable'; reason: string };
 
@@ -255,7 +261,8 @@ export interface WasmConnection {
   report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult;
   report_height: (cid: number, height: bigint) => WasmResult;
   snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
-  drain_submissions: (cid: number) => TransactionSubmission[];
+  snapshot_pending_coin_solution_requests: (cid: number) => string[];
+  drain_submissions: (cid: number) => SubmissionDrain;
   configure_submission_fee: (cid: number, amount: string) => void;
   finalize_submission: (
     cid: number,
@@ -339,6 +346,10 @@ export class ChiaGame {
 
   coins_of_interest(): CoinOfInterestEntry[] {
     return this.wasm.coins_of_interest(this.session);
+  }
+
+  snapshot_pending_coin_solution_requests(): string[] {
+    return this.wasm.snapshot_pending_coin_solution_requests(this.session);
   }
 
   serialize(): Uint8Array {
@@ -437,7 +448,7 @@ export class ChiaGame {
   }
 
   /** Typed submissions the manager captured and the host should submit. */
-  drain_submissions(): TransactionSubmission[] {
+  drain_submissions(): SubmissionDrain {
     return this.wasm.drain_submissions(this.session);
   }
 
@@ -535,6 +546,12 @@ export interface ConnectionSetup {
   finalize(values?: ConnectionFieldValues): Promise<void>;
 }
 
+export type WalletOfferCancellationOutcome =
+  | { status: 'cancelled'; detail?: string }
+  | { status: 'already-terminal'; detail: string }
+  | { status: 'unavailable'; detail: string }
+  | { status: 'rejected'; detail: string };
+
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
   fundingMode?: 'offer-settlement';
@@ -553,7 +570,7 @@ export interface InternalBlockchainInterface {
     fee: bigint,
     concurrentSpendCoinId: string,
     reservation?: {
-      owner: { sessionId: string; gameSessionId: string };
+      owner: { installationPlayerId: string; peerSessionId: string };
       purpose: { kind: 'fee'; operationId: string };
     },
   ): Promise<WalletFeeSourceOutcome | null>;
@@ -570,11 +587,11 @@ export interface InternalBlockchainInterface {
     maxHeight?: bigint,
     openingFee?: bigint,
     reservation?: {
-      owner: { sessionId: string; gameSessionId: string };
+      owner: { installationPlayerId: string; peerSessionId: string };
       purpose: { kind: 'funding'; operationId: string };
     },
   ): Promise<any | null>;
-  cancelOffer?(tradeId: string): Promise<void>;
+  cancelOffer?(tradeId: string): Promise<WalletOfferCancellationOutcome>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;
