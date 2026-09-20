@@ -530,7 +530,7 @@ describe('session machine causal sequences', () => {
         proposalSent: false,
       },
     });
-    expect(transition.state.coordination.sameTermsRequested).toBe(false);
+    expect(transition.state.model.betweenHand.newHandRequested).toBe(false);
     expect(transition.effects).toEqual([]);
   });
 

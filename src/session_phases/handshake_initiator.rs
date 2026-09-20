@@ -134,7 +134,6 @@ pub struct HandshakeInitiatorPhase {
     #[serde(default)]
     failure_advisory: Option<String>,
 
-    #[serde(skip)]
     replacement: Option<Box<OffChainPhase>>,
 }
 

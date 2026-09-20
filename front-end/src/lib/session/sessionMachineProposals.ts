@@ -174,7 +174,6 @@ export function reduceProposalEvent(
                   ),
                 },
               },
-              coordination: { ...state.coordination, sameTermsRequested: false },
             },
             effects: [],
           };

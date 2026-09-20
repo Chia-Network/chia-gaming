@@ -19,7 +19,6 @@ function initialCoordination(
 ): SessionMachineCoordination {
   return {
     firstGameAccepted,
-    sameTermsRequested: false,
     nextNotificationId: [...model.channel.queue, ...model.game.queue].reduce(
       (maximum, notification) => (notification.id > maximum ? notification.id : maximum),
       0n,
@@ -103,6 +102,7 @@ export function reduceSessionMachine(
     case 'start-clean-shutdown':
     case 'go-on-chain':
     case 'go-on-chain-result':
+    case 'clear-durability-error':
     case 'enqueue-error':
     case 'coin-enrichment-completed':
       return classifyTransition(event, reduceChannelEvent(state, event));
@@ -115,7 +115,6 @@ export function reduceSessionMachine(
     case 'select-compose-game':
     case 'set-compose-timeout':
     case 'set-compose-proposal-sent':
-    case 'set-same-terms-requested':
     case 'set-first-game-accepted':
       return classifyTransition(event, reduceBetweenHandEvent(state, event));
 

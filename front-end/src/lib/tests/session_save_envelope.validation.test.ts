@@ -150,7 +150,7 @@ describe('validateSessionSaveEnvelope', () => {
     ).toThrow('unexpected');
   });
 
-  it('decodes one legitimate snapshot for every v13 phase', () => {
+  it('decodes one legitimate snapshot for every current phase', () => {
     const preferences = baseSave({ blockchainType: 'simulator' });
     const preHandshake = baseSave({
       pairingToken: 'pair',
@@ -290,37 +290,60 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() => decodeSessionSaveEnvelope(save)).toThrow('more than one distinct request');
   });
 
-  it('round-trips strict wallet offer cleanup entries', () => {
-    const save = liveSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    save.live.walletOfferCleanup = [
-      { tradeId: 'funding-trade', source: 'funding-offer-rejected' },
-      { tradeId: 'fee-trade', source: 'fee-network-rejected' },
+  it.each([
+    ['preferences', baseSave()],
+    [
+      'pre-handshake',
+      baseSave({
+        pairingToken: 'pair',
+        iStarted: true,
+        myContribution: '1',
+        theirContribution: '1',
+        perGameAmount: '1',
+      }),
+    ],
+    ['live', liveSave()],
+    ['terminal', baseSave({ channelStatus: { state: 'ResolvedClean' }, coinsOfInterest: [] })],
+  ])('round-trips the strict wallet reservation ledger in %s phase', (_phase, save) => {
+    save.walletReservationLedger = [
+      {
+        tradeId: 'funding-trade',
+        owner: { sessionId: 'session', gameSessionId: 'game-session' },
+        purpose: { kind: 'funding', operationId: 'funding-operation' },
+        stage: 'cancel-required',
+        reason: 'funding-offer-rejected',
+      },
     ];
 
     const decoded = decodeSessionSaveEnvelope(save);
-    if (decoded.save.phase !== 'live') throw new Error('expected decoded live fixture');
-    expect(decoded.save.live.walletOfferCleanup).toEqual(save.live.walletOfferCleanup);
+    expect(decoded.save.walletReservationLedger).toEqual(save.walletReservationLedger);
   });
 
   it.each([
-    ['unknown source', [{ tradeId: 'trade', source: 'unknown' }]],
-    ['empty trade id', [{ tradeId: '', source: 'fee-network-rejected' }]],
-    [
-      'extra field',
-      [{ tradeId: 'trade', source: 'fee-network-rejected', reason: 'unbounded text' }],
-    ],
+    ['empty trade id', [{ tradeId: '' }]],
+    ['extra field', [{ tradeId: 'trade', unexpected: true }]],
     [
       'duplicate trade id',
       [
-        { tradeId: 'trade', source: 'fee-network-rejected' },
-        { tradeId: 'trade', source: 'funding-offer-rejected' },
+        {
+          tradeId: 'trade',
+          owner: { sessionId: 'session', gameSessionId: 'game-session' },
+          purpose: { kind: 'fee', operationId: 'one' },
+          stage: 'reserved',
+          reason: '',
+        },
+        {
+          tradeId: 'trade',
+          owner: { sessionId: 'session', gameSessionId: 'game-session' },
+          purpose: { kind: 'fee', operationId: 'two' },
+          stage: 'reserved',
+          reason: '',
+        },
       ],
     ],
-  ])('rejects wallet offer cleanup with %s', (_label, entries) => {
+  ])('rejects wallet reservation ledger with %s', (_label, entries) => {
     const save = liveSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    save.live.walletOfferCleanup = entries as typeof save.live.walletOfferCleanup;
+    save.walletReservationLedger = entries as typeof save.walletReservationLedger;
     expect(() => decodeSessionSaveEnvelope(save)).toThrow();
   });
 
@@ -351,6 +374,57 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() => validateSessionSaveEnvelope(liveSave(fields))).toThrow();
   });
 
+  it('requires the nullable terminal handoff field in every current transport save', () => {
+    const live = liveSave();
+    if (live.phase !== 'live') throw new Error('expected live fixture');
+    Reflect.deleteProperty(live.live, 'terminalHandoff');
+    expect(() => validateSessionSaveEnvelope(live)).toThrow('terminalHandoff is required');
+
+    const preHandshake = baseSave({
+      pairingToken: 'pair',
+      iStarted: true,
+      myContribution: '20',
+      theirContribution: '20',
+      perGameAmount: '2',
+    });
+    if (preHandshake.phase !== 'pre-handshake') throw new Error('expected pre-handshake fixture');
+    Reflect.deleteProperty(preHandshake.transport, 'terminalHandoff');
+    expect(() => validateSessionSaveEnvelope(preHandshake)).toThrow('terminalHandoff is required');
+  });
+
+  it('rejects terminal handoff bindings inconsistent with reliable transport', () => {
+    expect(() =>
+      validateSessionSaveEnvelope(
+        liveSave({
+          messageNumber: 2n,
+          terminalHandoff: {
+            id: 'close',
+            message: new Uint8Array([1]),
+            msgno: 1n,
+            sent: true,
+            acknowledged: false,
+          },
+          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([2]) }],
+        }),
+      ),
+    ).toThrow('does not match its unacked reliable frame');
+
+    expect(() =>
+      validateSessionSaveEnvelope(
+        liveSave({
+          messageNumber: 2n,
+          terminalHandoff: {
+            id: 'close',
+            message: new Uint8Array([1]),
+            msgno: 1n,
+            sent: false,
+            acknowledged: true,
+          },
+        }),
+      ),
+    ).toThrow('was never sent');
+  });
+
   it('rejects a live/current hand without its game-owned payload', () => {
     const save = activeSave();
     if (save.phase !== 'live') throw new Error('expected live fixture');
@@ -359,6 +433,7 @@ describe('validateSessionSaveEnvelope', () => {
   });
 
   it.each([
+    'handKey',
     'activeGameIds',
     'currentHandGameIds',
     'currentHandOrigin',
@@ -377,6 +452,7 @@ describe('validateSessionSaveEnvelope', () => {
     'betweenHandLastHandProposal',
     'betweenHandRejectedOnceHandProposal',
     'betweenHandPendingRetryHandProposal',
+    'newHandRequested',
     'pendingProposals',
     'waitingStateEnteredAt',
     'cleanShutdownGraceStartedAt',
@@ -389,6 +465,15 @@ describe('validateSessionSaveEnvelope', () => {
       expect(() => validateSessionSaveEnvelope(save)).toThrow();
     },
   );
+
+  it('rejects unknown presentation fields', () => {
+    const save = liveSave();
+    if (save.phase !== 'live') throw new Error('expected live fixture');
+    Object.assign(save.presentation, { unknownPresentationFact: true });
+    expect(() => validateSessionSaveEnvelope(save)).toThrow(
+      'unexpected presentation field unknownPresentationFact',
+    );
+  });
 
   it.each([
     ['activeGameIds', { activeGameIds: ['game-1', 'game-1'] }],
@@ -442,7 +527,7 @@ describe('validateSessionSaveEnvelope', () => {
     ).toThrow('presentation and terminal state disagree');
   });
 
-  it('rejects only a generic hand-envelope game type mismatch', () => {
+  it('rejects a hand-envelope game type mismatch', () => {
     expect(() =>
       validateSessionSaveEnvelope(
         activeSave({
@@ -459,6 +544,26 @@ describe('validateSessionSaveEnvelope', () => {
       ),
     ).toThrow('activeGameType does not match');
   });
+
+  it.each(['calpoker', 'spacepoker', 'krunk'] as const)(
+    'rejects malformed $gameType state through its registered restore codec',
+    (gameType) => {
+      expect(() =>
+        validateSessionSaveEnvelope(
+          activeSave({
+            activeGameType: gameType,
+            handState: { gameType, state: {} },
+            betweenHandLastHandProposal: {
+              sender_is_player_a: gameType === 'krunk',
+              game_timeout: '15',
+              game_type: gameType,
+              parameters: gameType === 'spacepoker' ? [2n, 10n] : 20n,
+            },
+          }),
+        ),
+      ).toThrow(`${gameType} handState cannot be restored`);
+    },
+  );
 
   it('rejects unrelated keyed instances but retains a terminal display member', () => {
     expect(() =>
@@ -515,12 +620,13 @@ describe('validateSessionSaveEnvelope', () => {
               presentation: {
                 ...terminal.presentation,
                 handState: calpokerStateCodec.encode({
+                  perPlayerStake: 20n,
                   playerHand: [1n, 2n],
                   opponentHand: [3n, 4n],
                   moveNumber: 1n,
                   isPlayerTurn: false,
                   iStarted: false,
-                  error: null,
+                  settlementOutcome: null,
                 }),
               },
             }
@@ -538,6 +644,7 @@ describe('validateSessionSaveEnvelope', () => {
         activeSave({
           activeGameType: 'spacepoker',
           handState: spacepokerStateCodec.encode({
+            perPlayerStake: 20n,
             gameState: { handler: 2n, myTurn: true, N: 4n },
             playerHoleCards: [1n, 2n],
             playerBoost: false,
@@ -553,7 +660,7 @@ describe('validateSessionSaveEnvelope', () => {
             coinTossIOpen: true,
             unitSizeMojos: 10n,
             displayMode: 'mojos',
-            error: null,
+            settlementOutcome: null,
           }),
           betweenHandLastHandProposal: {
             player_a_contribution: '20',
@@ -573,6 +680,7 @@ describe('validateSessionSaveEnvelope', () => {
     [{ label: '', id: 'coin' }],
     [{ label: 'Coin', id: '' }],
     [{ label: 'Coin', id: 'coin', parentId: '' }],
+    [{ label: 'Coin', id: 'coin', parentId: 'parent' }],
     [{ label: 'Coin', id: 'coin', parentId: 7 }],
     [
       { label: 'Coin A', id: 'same' },

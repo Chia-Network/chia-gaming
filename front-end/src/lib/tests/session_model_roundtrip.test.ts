@@ -22,12 +22,13 @@ const CAL_TERMS = {
   parameters: 100n,
 };
 const CAL_HAND_STATE = calpokerStateCodec.encode({
+  perPlayerStake: 100n,
   playerHand: [],
   opponentHand: [],
   moveNumber: 0n,
   isPlayerTurn: true,
   iStarted: true,
-  error: null,
+  settlementOutcome: null,
 });
 
 describe('session model round trips', () => {

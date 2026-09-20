@@ -97,7 +97,9 @@ describe('GameSession render boundary', () => {
     );
     expect(registrations).toBe(1);
     expect(observedController).not.toBeNull();
-    expect(observedController!.storedMessages).toEqual([{ msgno: 1n, msg: Uint8Array.from([1]) }]);
+    expect([
+      ...(observedController as any).reliableTransport.runtime.reorderQueue.entries(),
+    ]).toEqual([[1n, Uint8Array.from([1])]]);
   });
 
   it('dismisses terminal errors locally while protocol controls stay frozen', () => {

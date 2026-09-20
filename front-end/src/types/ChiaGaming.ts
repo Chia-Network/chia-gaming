@@ -231,7 +231,7 @@ export type WalletSubmitOutcome =
   | { status: 'rejected'; detail: string };
 
 export type WalletFeeSourceOutcome =
-  | { kind: 'offer'; offer: string; tradeId?: string }
+  | { kind: 'offer'; offer: string; tradeId: string }
   | { kind: 'bundle'; bundle: unknown }
   | { kind: 'failure'; reason: string }
   | { kind: 'unavailable'; reason: string };
@@ -552,6 +552,10 @@ export interface InternalBlockchainInterface {
   createFeeSpend?(
     fee: bigint,
     concurrentSpendCoinId: string,
+    reservation?: {
+      owner: { sessionId: string; gameSessionId: string };
+      purpose: { kind: 'fee'; operationId: string };
+    },
   ): Promise<WalletFeeSourceOutcome | null>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
@@ -565,6 +569,10 @@ export interface InternalBlockchainInterface {
     coinIds?: string[],
     maxHeight?: bigint,
     openingFee?: bigint,
+    reservation?: {
+      owner: { sessionId: string; gameSessionId: string };
+      purpose: { kind: 'funding'; operationId: string };
+    },
   ): Promise<any | null>;
   cancelOffer?(tradeId: string): Promise<void>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;

@@ -44,6 +44,7 @@ export { absAmountFromOffer, conditionsForGraphql, jsonSafeVariables };
 
 const APPROVE_TIMEOUT_MS = 10 * 60 * 1000;
 const SR_POLL_MS = 1500;
+const MAX_CANCELLATION_ERROR_LENGTH = 512;
 
 const ACCEPTED_BROADCAST_STATUSES = new Set([
   'SUCCESS',
@@ -674,21 +675,28 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async cancelOffer(offerId: string): Promise<void> {
-    await this.gql<{ cancelOffer: unknown }>(
-      `mutation($input: CancelOfferInput!) {
-        cancelOffer(input: $input) {
-          signatureRequest { id }
-        }
-      }`,
-      {
-        input: {
-          walletId: this.requireWalletId(),
-          offerId,
-          fee: 0n,
-          cancelOffChain: true,
+    try {
+      await this.gql<{ cancelOffer: unknown }>(
+        `mutation($input: CancelOfferInput!) {
+          cancelOffer(input: $input) {
+            signatureRequest { id }
+          }
+        }`,
+        {
+          input: {
+            walletId: this.requireWalletId(),
+            offerId,
+            fee: 0n,
+            cancelOffChain: true,
+          },
         },
-      },
-    );
+      );
+    } catch (error) {
+      const detail = cloudErrorDetail(error).slice(0, MAX_CANCELLATION_ERROR_LENGTH);
+      throw new Error(`Cloud Wallet failed to cancel offer ${offerId}: ${detail}`, {
+        cause: error,
+      });
+    }
   }
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {

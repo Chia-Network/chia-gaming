@@ -4,11 +4,9 @@ import { isSettlementOutcome, type SettlementOutcome } from '../settlement';
 import type {
   LiveSessionSave,
   SessionPairingSave,
-  SessionPresentationSave,
   SessionSave,
   SessionTransportSave,
 } from './saveEnvelope';
-import { decodeWalletOfferCleanupEntries } from './walletOfferCleanup';
 import type {
   BetweenHandModeModel,
   GameInstanceModel,
@@ -328,6 +326,43 @@ export function validateTransport(
       throw new Error(`Garbled save: invalid ${label}.unackedMessages[${index}].msg`);
     }
   });
+  const terminalHandoff = transport.terminalHandoff;
+  if (terminalHandoff !== null) {
+    const record = requireRecord(terminalHandoff, `${label}.terminalHandoff`);
+    const id = requireString(record.id, `${label}.terminalHandoff.id`);
+    const msgno = requireBigint(record.msgno, `${label}.terminalHandoff.msgno`);
+    const sent = requireBoolean(record.sent, `${label}.terminalHandoff.sent`);
+    const acknowledged = requireBoolean(
+      record.acknowledged,
+      `${label}.terminalHandoff.acknowledged`,
+    );
+    if (id.length === 0 || msgno < 1n || msgno >= messageNumber) {
+      throw new Error(`Garbled save: invalid ${label}.terminalHandoff`);
+    }
+    const commandMessage = record.message;
+    if (!(commandMessage instanceof Uint8Array)) {
+      throw new Error(`Garbled save: invalid ${label}.terminalHandoff.message`);
+    }
+    if (acknowledged && !sent) {
+      throw new Error(`Garbled save: acknowledged ${label}.terminalHandoff was never sent`);
+    }
+    const boundFrame = transport.unackedMessages.find((message) => message.msgno === msgno);
+    if (acknowledged) {
+      if (transport.unackedMessages.some((message) => message.msgno <= msgno)) {
+        throw new Error(
+          `Garbled save: acknowledged ${label}.terminalHandoff remains in the unacked window`,
+        );
+      }
+    } else if (
+      !boundFrame ||
+      boundFrame.msg.length !== commandMessage.length ||
+      !boundFrame.msg.every((byte, index) => byte === commandMessage[index])
+    ) {
+      throw new Error(
+        `Garbled save: ${label}.terminalHandoff does not match its unacked reliable frame`,
+      );
+    }
+  }
 }
 
 export function validateLive(live: LiveSessionSave['live']): void {
@@ -356,26 +391,6 @@ export function validateLive(live: LiveSessionSave['live']): void {
       fundingKeys.add(entry.key);
     }
   }
-  if (live.walletOfferCleanup !== undefined) {
-    decodeWalletOfferCleanupEntries(live.walletOfferCleanup, 'live.walletOfferCleanup');
-  }
-}
-
-export function validatePresentationScalarFields(save: SessionPresentationSave): void {
-  if (save.waitingStateEnteredAt !== null) {
-    requireBigint(save.waitingStateEnteredAt, 'waitingStateEnteredAt');
-  }
-  if (save.cleanShutdownGraceStartedAt !== null) {
-    requireBigint(save.cleanShutdownGraceStartedAt, 'cleanShutdownGraceStartedAt');
-  }
-  if (
-    save.currentHandOrigin !== null &&
-    save.currentHandOrigin !== 'local' &&
-    save.currentHandOrigin !== 'peer'
-  ) {
-    throw new Error('Garbled save: invalid currentHandOrigin');
-  }
-  requireBoolean(save.cleanShutdownStarted, 'cleanShutdownStarted');
 }
 
 export function validateChannelStatus(value: unknown): void {
@@ -456,11 +471,18 @@ export function validateTerminalCoins(value: unknown): void {
     const id = requireString(record.id, `terminal.coinsOfInterest[${index}].id`);
     if (!label || !id) throw new Error(`Garbled save: invalid terminal coin ${index}`);
     if (record.parentId !== undefined) {
-      const parentId = requireString(
-        record.parentId,
-        `terminal.coinsOfInterest[${index}].parentId`,
-      );
-      if (!parentId) throw new Error(`Garbled save: invalid terminal coin parent ${index}`);
+      throw new Error(`Garbled save: unexpected terminal coin parent ${index}`);
+    }
+    if (record.game_id !== undefined) {
+      const gameId = requireString(record.game_id, `terminal.coinsOfInterest[${index}].game_id`);
+      if (!gameId) throw new Error(`Garbled save: invalid terminal coin game id ${index}`);
+    }
+    if (
+      record.game_coin_kind !== undefined &&
+      record.game_coin_kind !== 'current' &&
+      record.game_coin_kind !== 'reward'
+    ) {
+      throw new Error(`Garbled save: invalid terminal coin kind ${index}`);
     }
     if (coinIds.has(id)) throw new Error(`Garbled save: duplicate terminal coin ${id}`);
     coinIds.add(id);

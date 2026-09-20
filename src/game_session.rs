@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use clvm_traits::ToClvm;
 
@@ -306,6 +306,8 @@ struct GameSessionState {
     channel_established: bool,
     #[serde(default)]
     channel_expired: bool,
+    #[serde(default)]
+    pending_coin_solution_requests: BTreeSet<CoinString>,
 
     /// Genesis challenge (AGG_SIG_ME additional data) for the network this
     /// session is bound to. Threaded in at creation so all on-chain signing
@@ -360,6 +362,9 @@ impl WalletSpendInterface for GameSessionState {
         Ok(())
     }
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
+        if !self.pending_coin_solution_requests.insert(coin_id.clone()) {
+            return Ok(());
+        }
         self.events
             .push_back(GameSessionEvent::CoinSolutionRequest(coin_id.clone()));
         Ok(())
@@ -429,6 +434,7 @@ impl GameSession {
                 channel_creation_expiry: None,
                 channel_established: false,
                 channel_expired: false,
+                pending_coin_solution_requests: BTreeSet::new(),
                 agg_sig_me_additional_data: config.agg_sig_me_additional_data.clone(),
                 events: GameSessionEventQueue::default(),
                 inbound_messages: VecDeque::default(),
@@ -648,6 +654,7 @@ impl GameSession {
     fn mark_abandoned(&mut self) {
         self.state.session_disposition = Some(SessionDisposition::Abandoned);
         self.state.pending_outbound_terminal = None;
+        self.state.pending_coin_solution_requests.clear();
         self.state.peer_disconnected = true;
         self.state.inbound_messages.clear();
         // Abandonment replaces the session's pending presentation with one
@@ -1543,6 +1550,12 @@ impl GameSession {
         if self.state.session_disposition.is_some() {
             return Ok(());
         }
+        if !self.state.pending_coin_solution_requests.contains(coin_id) {
+            return Err(Error::StrErr(format!(
+                "no pending puzzle-and-solution request for coin {}",
+                coin_id.to_coin_id()
+            )));
+        }
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
@@ -1550,7 +1563,24 @@ impl GameSession {
                 .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
         };
         self.process_effects(reported_effects, allocator)?;
+        self.state.pending_coin_solution_requests.remove(coin_id);
         Ok(())
+    }
+
+    /// Rebuild transient host delivery after an explicit persisted-session
+    /// restore. Observation working copies must not call this: their detached
+    /// event journals are restored separately by `TransactionManager`.
+    pub fn restore_runtime(&mut self) {
+        for coin in self.state.pending_coin_solution_requests.iter().cloned() {
+            let already_queued = self.state.events.iter().any(
+                |event| matches!(event, GameSessionEvent::CoinSolutionRequest(queued) if queued == &coin),
+            );
+            if !already_queued {
+                self.state
+                    .events
+                    .push_back(GameSessionEvent::CoinSolutionRequest(coin));
+            }
+        }
     }
 }
 
@@ -1754,7 +1784,7 @@ mod sequencing_tests {
 mod genesis_challenge_tests {
     use super::*;
     use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-    use crate::common::types::PrivateKey;
+    use crate::common::types::{CoinID, PrivateKey};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
@@ -1853,5 +1883,129 @@ mod genesis_challenge_tests {
             Error::StrErr(message)
                 if message == "propose is not available in handshake receiver phase"
         ));
+    }
+
+    #[test]
+    fn pending_coin_solution_request_survives_restore_and_reissues_once() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([3u8; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([2; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x11; 32]),
+            },
+            rng.random(),
+        );
+        let coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([4; 32])),
+            &PuzzleHash::from_bytes([5; 32]),
+            &Amount::new(6),
+        );
+
+        session
+            .state
+            .request_puzzle_and_solution(&coin)
+            .expect("first request");
+        session
+            .state
+            .request_puzzle_and_solution(&coin)
+            .expect("duplicate request");
+        let drained = session
+            .flush_and_collect(&mut allocator)
+            .expect("drain request");
+        assert_eq!(
+            drained
+                .events
+                .iter()
+                .filter(
+                    |event| matches!(event, GameSessionEvent::CoinSolutionRequest(c) if c == &coin)
+                )
+                .count(),
+            1,
+            "a live pending request must emit once"
+        );
+
+        let bytes = bencodex::to_vec(&session).expect("serialize pending request");
+        let mut restored: GameSession =
+            bencodex::from_slice(&bytes).expect("restore pending request");
+        assert!(restored.state.events.is_empty(), "events are transient");
+        restored.restore_runtime();
+        restored.restore_runtime();
+        let reissued = restored
+            .flush_and_collect(&mut allocator)
+            .expect("drain restored request");
+        assert_eq!(
+            reissued
+                .events
+                .iter()
+                .filter(
+                    |event| matches!(event, GameSessionEvent::CoinSolutionRequest(c) if c == &coin)
+                )
+                .count(),
+            1,
+            "restore must reissue pending work exactly once"
+        );
+
+        restored
+            .report_puzzle_and_solution(&mut allocator, &coin, None)
+            .expect("matching callback");
+        assert!(restored.state.pending_coin_solution_requests.is_empty());
+        let duplicate = restored
+            .report_puzzle_and_solution(&mut allocator, &coin, None)
+            .expect_err("duplicate callback must be rejected");
+        assert!(format!("{duplicate:?}").contains("no pending puzzle-and-solution request"));
+    }
+
+    #[test]
+    fn unknown_coin_solution_callback_does_not_clear_pending_request() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([4u8; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: false,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([2; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x11; 32]),
+            },
+            rng.random(),
+        );
+        let pending = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([6; 32])),
+            &PuzzleHash::from_bytes([7; 32]),
+            &Amount::new(8),
+        );
+        let unknown = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([9; 32])),
+            &PuzzleHash::from_bytes([10; 32]),
+            &Amount::new(11),
+        );
+        session
+            .state
+            .request_puzzle_and_solution(&pending)
+            .expect("request");
+
+        session
+            .report_puzzle_and_solution(&mut allocator, &unknown, None)
+            .expect_err("unknown callback must be rejected");
+        assert_eq!(
+            session.state.pending_coin_solution_requests,
+            BTreeSet::from([pending])
+        );
     }
 }

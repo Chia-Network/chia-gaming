@@ -406,7 +406,9 @@ effect installs its render callback and calls `activate()`; only then does it
 attach an exclusive `SessionRuntimeLease`. Layout-effect cleanup calls only
 `clearRender()`. It does not retire the lease or protocol. Replacement of the
 committed lease and `SessionController` cleanup—including terminal
-cleanup—own retirement.
+cleanup—own retirement. The controller retains the committed runtime while no
+renderer is mounted; a later renderer reads and reattaches that same runtime
+without changing protocol ownership during render.
 
 For an active or rehydrated browser session, the activated runtime is the only
 commit owner. One stimulus is not finished merely because its first reducer or
@@ -432,12 +434,14 @@ change the captured payload.
 
 A live-checkpoint failure is serious but must not stop a game for money for an
 internal storage reason. Report a persistent durability warning, publish and
-release the captured gameplay/network boundary once, retain the latest
-in-memory state as dirty, and retry only after later activity. Persisted and
-released generations are distinct: a later successful checkpoint must not
-resend effects already released in degraded mode. This availability choice
-admits a crash window in which external effects are newer than the last durable
-local checkpoint.
+release the captured gameplay/network boundary once—including cleanup,
+transaction submission, and peer frame/ACK work—retain the latest in-memory
+state as dirty, and retry only after later activity. Persisted and released
+generations are distinct: a later successful full checkpoint captures every
+still-unresolved durable intent, clears degraded durability, and does not resend
+effects already released in degraded mode. There is no durability-required
+effect gate. This availability choice admits a crash window in which external
+effects are newer than the last durable local checkpoint.
 
 Do not add active-session save timers, direct reducer/effect persistence,
 mid-drain React updates, or eager peer sends. Every new event source must feed
@@ -451,20 +455,24 @@ ordering and degraded failure policy.
 lease or cleaning up its controller retires the old runtime, discards queued
 events and fire-and-forget controller work, and rejects queued result promises
 and persistence-gated effects. Completion callbacks from an in-flight write
-also become inert after retirement.
+also become inert after retirement. Final controller cleanup settles unlaunched
+submission deliveries and queued jobs and removes tracked effects from
+quiescence. A wallet RPC that returns afterward can only register/cancel its
+trade through the wallet-level ledger; it cannot mutate the dropped cradle.
 
 The funding outbox is single-flight and persists exactly zero or one canonical
-request. A replacement request carries the predecessor wallet-offer
-cancellation promise and cannot launch until that cancellation settles.
+request. A restored request cannot launch while the ledger still owns a wallet
+reservation for that same stable operation.
 Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-Rejected persisted funding and fee offers instead enter a separate strict
-durable wallet-offer cleanup outbox. Its entry must be persisted before
-`cancelOffer` is released. A failed cancellation stays in the outbox and is
-retried only on restore, wallet reconnect, attachment of a new committed lease,
-or an explicit terminal-finalization attempt—never by a timer or immediate
+Persisted funding and fee offers instead enter one strict wallet-level durable
+reservation ledger shared across controller lifetimes. Ledger persistence does
+not gate wallet use or `cancelOffer`; a failed write leaves the complete
+in-memory ledger dirty for a later checkpoint. A failed cancellation stays in
+the ledger and is retried only on restore, wallet reconnect/attachment, or an
+explicit terminal-finalization attempt—never by a timer or immediate
 retry loop. Unresolved cleanup blocks terminal quiescence.
 
 Transaction submission promises span persistence-gated launch, ordered wallet
@@ -474,6 +482,16 @@ transport repeatedly to quiescence, then takes the terminal snapshot from that
 post-quiescence authoritative runtime model. The terminal record must be
 written before ownership is retired. Unlike a live-checkpoint failure, a
 terminal-record write failure retains live ownership and blocks teardown.
+
+The live transport checkpoint includes the cooperative terminal handoff's Rust
+command identity, exact reliable frame bytes and message number, sent state, and
+ACK state. Restore strictly reconciles that binding with both Rust and the
+unacknowledged frame journal. An ACKed binding completes Rust without
+retransmission; an unacknowledged binding reuses the same frame. The receive
+reorder queue is not persisted: retransmission from the sender's durable
+unacknowledged journal reconstructs the gap. Outstanding puzzle/solution host
+requests are different: Rust persists their coin IDs independently of drained
+events and reissues each once during explicit runtime restore.
 
 These browser ownership and persistence rules require no peer wire schema
 change. Transaction rebroadcast remains the exact-chain-byte behavior described

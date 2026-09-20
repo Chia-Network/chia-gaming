@@ -51,19 +51,6 @@ export function subscribeTransactionPublishNerfed(listener: (nerfed: boolean) =>
   return () => transactionPublishNerfListeners.delete(listener);
 }
 
-function requireBigIntCounter(value: unknown, label: string): bigint {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
-  if (typeof value === 'string') {
-    try {
-      return BigInt(value);
-    } catch {
-      /* fall through */
-    }
-  }
-  throw new Error(`restoreSession: missing or invalid ${label}`);
-}
-
 function requireBoolean(value: unknown, label: string): boolean {
   if (typeof value === 'boolean') return value;
   throw new Error(`restoreSession: missing or invalid ${label}`);
@@ -166,17 +153,9 @@ export async function restoreSession(
   if (sc.getGameSessionId() !== save.pairing.gameSessionId) {
     throw new Error('restoreSession: reliable session id does not match persisted pairing');
   }
-  sc.messageNumber = requireBigIntCounter(save.live.messageNumber, 'messageNumber');
-  sc.remoteNumber = requireBigIntCounter(save.live.remoteNumber, 'remoteNumber');
+  sc.restoreTransportCheckpoint(save.live);
   sc.iStarted = requireBoolean(save.pairing.iStarted, 'iStarted');
   sc.pairingToken = requireString(save.pairing.token, 'pairingToken');
-  if (!Array.isArray(save.live.unackedMessages)) {
-    throw new Error('restoreSession: missing or invalid unackedMessages');
-  }
-  sc.unackedMessages = save.live.unackedMessages.map((m) => ({
-    msgno: requireBigIntCounter(m.msgno, 'unackedMessages.msgno'),
-    msg: m.msg,
-  }));
   if (save.live.disposition !== 'active') {
     throw new Error('restoreSession: live reliable transport is not active');
   }
@@ -187,11 +166,14 @@ export async function restoreSession(
   sc.diagnosticLog = recentEntries(save.history.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
   sc.durabilityWarning = save.live.durabilityWarning;
   sc.restoreFundingOutbox(save.live.fundingOutbox ?? []);
-  sc.restoreWalletOfferCleanup(save.live.walletOfferCleanup ?? []);
   if (!Array.isArray(save.presentation.activeGameIds)) {
     throw new Error('restoreSession: missing or invalid activeGameIds');
   }
   sc.activeGameIds = [...save.presentation.activeGameIds];
+  sc.restorePresentationTiming({
+    waitingStateEnteredAt: save.presentation.waitingStateEnteredAt,
+    cleanShutdownGraceStartedAt: save.presentation.cleanShutdownGraceStartedAt,
+  });
   sc.restoreChannelStatus(
     save.presentation.channelStatus
       ? {
@@ -244,6 +226,9 @@ export function getOrCreateSessionController(
     theirContribution,
     peerConn,
   );
+  if (sessionSave?.phase === 'live') {
+    sessionController.restoreTransportCheckpoint(sessionSave.live);
+  }
   sessionController.iStarted = iStarted;
   sessionController.pairingToken = pairingToken ?? '';
   sessionController.perGameAmount = perGameAmount ?? 0n;

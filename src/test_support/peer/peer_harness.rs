@@ -519,6 +519,16 @@ where
 
         for who in 0..2 {
             if completed[who].is_none() {
+                let checkpoint = bencodex::to_vec(&handlers[who]).map_err(|error| {
+                    Error::StrErr(format!(
+                        "serialize staged handshake successor for player {who}: {error}"
+                    ))
+                })?;
+                handlers[who] = bencodex::from_slice(&checkpoint).map_err(|error| {
+                    Error::StrErr(format!(
+                        "restore staged handshake successor for player {who}: {error}"
+                    ))
+                })?;
                 completed[who] = extract_off_chain_phase(&mut handlers[who]);
             }
         }
@@ -624,6 +634,55 @@ pub fn test_peer_smoke() {
         &mut pipe_sender,
     )
     .expect("handshake should complete");
+
+    {
+        let off_chain_checkpoint =
+            bencodex::to_vec(&peers[0]).expect("serialize active off-chain phase");
+        let mut staged_off_chain: OffChainPhase =
+            bencodex::from_slice(&off_chain_checkpoint).expect("restore active off-chain phase");
+        let channel_coin = staged_off_chain
+            .channel_state()
+            .expect("restored channel")
+            .channel_coin()
+            .clone();
+        {
+            let mut env = ChannelEnv::new(&mut allocator).expect("env");
+            staged_off_chain
+                .go_on_chain(&mut env, false)
+                .expect("stage channel-spend successor");
+        }
+        let staged_checkpoint =
+            bencodex::to_vec(&staged_off_chain).expect("serialize staged channel-spend successor");
+        let mut restored_off_chain: OffChainPhase = bencodex::from_slice(&staged_checkpoint)
+            .expect("restore staged channel-spend successor");
+        let mut spend_phase = restored_off_chain
+            .take_channel_spend_next_phase()
+            .expect("take restored channel-spend successor");
+        assert!(
+            restored_off_chain.take_channel_spend_next_phase().is_none(),
+            "restored off-chain successor must be taken exactly once"
+        );
+
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        spend_phase
+            .coin_spent(&mut env, &channel_coin)
+            .expect("advance to channel conditions");
+        spend_phase
+            .coin_puzzle_and_solution(&mut env, &channel_coin, None)
+            .expect("malformed callback transitions to failed terminal");
+        let failed_checkpoint =
+            bencodex::to_vec(&spend_phase).expect("serialize failed terminal successor");
+        let mut restored_spend: crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase =
+            bencodex::from_slice(&failed_checkpoint).expect("restore failed terminal successor");
+        assert!(
+            restored_spend.take_next_phase().is_some(),
+            "error after successor creation must retain its serializable owner"
+        );
+        assert!(
+            restored_spend.take_next_phase().is_none(),
+            "restored on-chain successor must be taken exactly once"
+        );
+    }
 
     let rollback_probe = GameProposal {
         sender_is_player_a: true,

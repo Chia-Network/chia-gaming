@@ -3,6 +3,7 @@ import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/Ch
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
 import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
+import { walletReservationLedger } from '../session/walletReservationLedger';
 
 function makeRpc(heights: bigint[]): InternalBlockchainInterface {
   let lastHeight = heights[0] ?? 0n;
@@ -874,8 +875,9 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
-  it('cancels a stale successful wallet offer before running its replacement', async () => {
+  it('routes a stale successful wallet offer through the durable ledger', async () => {
     jest.useFakeTimers();
+    walletReservationLedger.resetForTests();
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const firstOffer = deferred<{ offer: string; tradeId: string }>();
@@ -883,7 +885,7 @@ describe('BlockchainPoller', () => {
       .fn()
       .mockReturnValueOnce(firstOffer.promise)
       .mockResolvedValueOnce({ offer: 'offer-new', tradeId: 'trade-new' });
-    const cancelOffer = jest.fn().mockResolvedValue(undefined);
+    const cancelOffer = jest.fn().mockRejectedValue(new Error('wallet offline'));
     const rpc = {
       createOfferForIds,
       cancelOffer,
@@ -896,9 +898,22 @@ describe('BlockchainPoller', () => {
       },
     } as unknown as InternalBlockchainInterface;
     const poller = new BlockchainPoller(rpc, 1000);
+    walletReservationLedger.attachRpc(poller.rpc);
     poller.startBalanceInterest(1000, { onBalance: () => {} });
 
-    const stale = poller.rpc.createOfferForIds('old', {});
+    const reservation = {
+      owner: { sessionId: 'session', gameSessionId: 'game-session' },
+      purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
+    };
+    const stale = poller.rpc.createOfferForIds(
+      'old',
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      reservation,
+    );
     await advanceLane(0);
     connected = false;
     onConnectionChange?.(false);
@@ -911,13 +926,45 @@ describe('BlockchainPoller', () => {
 
     firstOffer.resolve({ offer: 'offer-old', tradeId: 'trade-old' });
     await advanceLane(0);
-    expect(cancelOffer).toHaveBeenCalledWith('trade-old');
     expect(createOfferForIds).toHaveBeenCalledTimes(2);
-    expect(cancelOffer.mock.invocationCallOrder[0]).toBeLessThan(
-      createOfferForIds.mock.invocationCallOrder[1],
-    );
     await expect(replacement).resolves.toEqual({ offer: 'offer-new', tradeId: 'trade-new' });
+    await advanceLane(0);
+    expect(cancelOffer).toHaveBeenCalledWith('trade-old');
+    expect(walletReservationLedger.entriesForSession('game-session')).toEqual([
+      expect.objectContaining({ tradeId: 'trade-old', stage: 'cancel-required' }),
+    ]);
+    await advanceLane(0);
+    expect(cancelOffer).toHaveBeenCalledTimes(1);
+    walletReservationLedger.resetForTests();
     jest.useRealTimers();
+  });
+
+  it('does not let an inactive constructed poller steal ledger RPC ownership', async () => {
+    walletReservationLedger.resetForTests();
+    const activeCancel = jest.fn().mockResolvedValue(undefined);
+    const inactiveCancel = jest.fn().mockResolvedValue(undefined);
+    const activeRpc = {
+      cancelOffer: activeCancel,
+      onConnectionChange: () => () => {},
+    } as unknown as InternalBlockchainInterface;
+    walletReservationLedger.attachRpc(activeRpc);
+    new BlockchainPoller(
+      {
+        ...makeRpc([1n]),
+        cancelOffer: inactiveCancel,
+      },
+      1000,
+    );
+    const owner = { sessionId: 'session', gameSessionId: 'game-session' };
+    const purpose = { kind: 'fee' as const, operationId: 'submission' };
+
+    walletReservationLedger.registerReserved('trade-active-owner', owner, purpose);
+    walletReservationLedger.requireCancellation(owner, purpose, 'wallet-outcome-finalized');
+    await walletReservationLedger.awaitSession(owner.gameSessionId);
+
+    expect(activeCancel).toHaveBeenCalledWith('trade-active-owner');
+    expect(inactiveCancel).not.toHaveBeenCalled();
+    walletReservationLedger.resetForTests();
   });
 
   it('discards a stale coin registration before reconnect polling resumes', async () => {

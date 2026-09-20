@@ -29,6 +29,148 @@ import {
 import { pollOnce } from './blockchain_poller.driver';
 
 describe('terminal protocol cleanup', () => {
+  it('restores an acknowledged handoff by completing Rust without allocating or retransmitting', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, []),
+    );
+    const message = enc('complete clean close');
+    const cradle = {
+      ...makeMockCradle(),
+      pendingTerminalHandoff: jest.fn(() => ({ id: 'restored', message })),
+      completeOutboundTerminalHandoff: jest.fn(() =>
+        wasmResult({ disposition: { kind: 'terminal' } }),
+      ),
+    } as unknown as ChiaGame;
+    blob.messageNumber = 2n;
+    blob.restoreTerminalHandoff({
+      id: 'restored',
+      message,
+      msgno: 1n,
+      sent: true,
+      acknowledged: true,
+    });
+    blob.loadWasm(mockWasmConnection);
+
+    blob.setGameSession(cradle);
+
+    expect(cradle.completeOutboundTerminalHandoff).toHaveBeenCalledTimes(1);
+    expect(blob.messageNumber).toBe(2n);
+    expect(sentMessages).toEqual([]);
+    expect((blob as any).terminalHandoff).toBeNull();
+  });
+
+  it('retains an ACK that arrives after transport restore but before Rust restore', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, []),
+    );
+    const message = enc('complete clean close');
+    blob.restoreTransportCheckpoint({
+      messageNumber: 2n,
+      remoteNumber: 0n,
+      unackedMessages: [{ msgno: 1n, msg: message }],
+      disposition: 'active',
+      terminalHandoff: {
+        id: 'restored',
+        message,
+        msgno: 1n,
+        sent: true,
+        acknowledged: false,
+      },
+    });
+
+    blob.receiveAck(1n);
+    expect(blob.unackedMessages).toEqual([]);
+    expect(blob.getWasmFields()).toBeNull();
+
+    const cradle = {
+      ...makeMockCradle(),
+      pendingTerminalHandoff: jest.fn(() => ({ id: 'restored', message })),
+      completeOutboundTerminalHandoff: jest.fn(() =>
+        wasmResult({ disposition: { kind: 'terminal' } }),
+      ),
+    } as unknown as ChiaGame;
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+
+    expect(cradle.completeOutboundTerminalHandoff).toHaveBeenCalledTimes(1);
+    expect(blob.messageNumber).toBe(2n);
+    expect(sentMessages).toEqual([]);
+  });
+
+  it('restores an unacknowledged handoff on its exact reliable frame', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, []),
+    );
+    const message = enc('complete clean close');
+    const cradle = {
+      ...makeMockCradle(),
+      pendingTerminalHandoff: jest.fn(() => ({ id: 'restored', message })),
+    } as unknown as ChiaGame;
+    blob.messageNumber = 2n;
+    blob.unackedMessages = [{ msgno: 1n, msg: Uint8Array.from(message) }];
+    blob.restoreTerminalHandoff({
+      id: 'restored',
+      message,
+      msgno: 1n,
+      sent: true,
+      acknowledged: false,
+    });
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+
+    expect(blob.resendUnacked()).toBe(true);
+    expect(blob.messageNumber).toBe(2n);
+    expect(sentMessages).toEqual([{ msgno: 1, msg: message }]);
+  });
+
+  it('rejects a restored handoff that disagrees with Rust instead of allocating a replacement', () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const blob = new SessionController(
+      mockBlockchain,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, []),
+    );
+    blob.messageNumber = 2n;
+    blob.unackedMessages = [{ msgno: 1n, msg: enc('persisted close') }];
+    blob.restoreTerminalHandoff({
+      id: 'persisted',
+      message: enc('persisted close'),
+      msgno: 1n,
+      sent: true,
+      acknowledged: false,
+    });
+    blob.loadWasm(mockWasmConnection);
+
+    expect(() =>
+      blob.setGameSession({
+        ...makeMockCradle(),
+        pendingTerminalHandoff: jest.fn(() => ({
+          id: 'different',
+          message: enc('different close'),
+        })),
+      } as unknown as ChiaGame),
+    ).toThrow('does not match Rust pending command');
+    expect(blob.messageNumber).toBe(2n);
+    expect(sentMessages).toEqual([]);
+  });
+
   it('completes a restored cooperative terminal handoff', async () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
@@ -184,7 +326,7 @@ describe('terminal protocol cleanup', () => {
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
   });
 
-  it('leaves a failed terminal completion recoverable without scheduling retries', async () => {
+  it('persists a failed terminal completion as acknowledged and retries on future transport work', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { blob, cradle } = createReadyBlob();
     (cradle.completeOutboundTerminalHandoff as jest.Mock)
@@ -208,6 +350,11 @@ describe('terminal protocol cleanup', () => {
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
     expect((blob as any).terminalCompletionRetryTimer).toBeUndefined();
     expect((blob as any).protocolStopped).toBe(false);
+    expect(blob.getWasmFields()?.terminalHandoff).toMatchObject({
+      id: '1',
+      sent: true,
+      acknowledged: true,
+    });
 
     blob.receiveAck(1n);
 

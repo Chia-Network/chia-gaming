@@ -390,6 +390,12 @@ pub struct TransactionManager<C> {
     present_coins: std::collections::HashSet<CoinString>,
 }
 
+impl TransactionManager<GameSession> {
+    pub fn restore_runtime(&mut self) {
+        self.cradle.restore_runtime();
+    }
+}
+
 /// State intentionally excluded from the serialized observation working copy.
 ///
 /// An observation either restores this journal unchanged on failure or prepends

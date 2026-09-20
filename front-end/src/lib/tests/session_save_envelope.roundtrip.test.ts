@@ -87,7 +87,9 @@ describe('durable game envelope round trips', () => {
       await writeSessionRecord(save);
       const restored = await readSessionRecord();
       expect(restored).not.toBeNull();
-      expect(decodeSessionSaveEnvelope(restored!).phase).toBe(kind);
+      const decoded = decodeSessionSaveEnvelope(restored!);
+      expect(decoded.phase).toBe(kind);
+      expect(decoded.save).toEqual(save);
       await deleteSessionRecord();
     },
   );
@@ -97,19 +99,21 @@ describe('durable game envelope round trips', () => {
       gameType: 'calpoker',
       ids: ['game-1'],
       handState: calpokerStateCodec.encode({
+        perPlayerStake: 20n,
         playerHand: [1n, 2n, 3n, 4n],
         opponentHand: [5n, 6n, 7n, 8n],
         moveNumber: 1n,
         isPlayerTurn: true,
         iStarted: true,
         cardSelections: [1n, 2n],
-        error: null,
+        settlementOutcome: null,
       }),
     },
     {
       gameType: 'spacepoker',
       ids: ['game-1'],
       handState: spacepokerStateCodec.encode({
+        perPlayerStake: 20n,
         gameState: { handler: 2n, myTurn: true, N: 4n },
         playerHoleCards: [1n, 2n],
         playerBoost: false,
@@ -125,7 +129,7 @@ describe('durable game envelope round trips', () => {
         coinTossIOpen: true,
         unitSizeMojos: 10n,
         displayMode: 'mojos',
-        error: null,
+        settlementOutcome: null,
       }),
     },
     {
@@ -266,41 +270,46 @@ describe('durable game envelope round trips', () => {
     expect(Object.hasOwn(restored.betweenHand.compose, 'drafts')).toBe(false);
   });
 
-  it('keeps timer patches narrow without producing a sparse durable presentation', async () => {
-    await saveLiveEnvelope(liveSave());
-    await saveSession({
-      scope: 'presentation',
-      presentation: { waitingStateEnteredAt: 123n },
+  it('round-trips multi-hand identity and same-terms intent', () => {
+    const save = liveSave({
+      handKey: 4n,
+      newHandRequested: true,
+      pendingProposals: [
+        {
+          id: 'next-hand',
+          lifecycle: 'local-outgoing',
+          hand_proposal: {
+            sender_is_player_a: false,
+            game_timeout: '15',
+            game_type: 'calpoker',
+            parameters: 20n,
+          },
+        },
+      ],
     });
-    await flushSessionSave();
-    let loaded = await peekSession();
-    expect(loaded?.phase === 'live' && loaded.presentation.waitingStateEnteredAt).toBe(123n);
-    expect(() => decodeSessionSaveEnvelope(loaded)).not.toThrow();
-
-    await saveSession({
-      scope: 'presentation',
-      presentation: { waitingStateEnteredAt: null },
-    });
-    await flushSessionSave();
-    loaded = await peekSession();
-    expect(loaded?.phase === 'live' && loaded.presentation).toHaveProperty(
-      'waitingStateEnteredAt',
-      null,
-    );
-    expect(loaded?.phase === 'live' && loaded.presentation.currentHandGameIds).toEqual([]);
-    expect(loaded?.phase === 'live' && loaded.presentation.gameInstances).toEqual({});
+    const decoded = decodeSessionSaveEnvelope(save);
+    expect(decoded.model.game.handKey).toBe(4);
+    expect(decoded.model.betweenHand.newHandRequested).toBe(true);
+    expect(
+      snapshotFromSessionModel(decoded.model, {
+        channelStatus: save.presentation.channelStatus,
+        waitingStateEnteredAt: save.presentation.waitingStateEnteredAt,
+        cleanShutdownGraceStartedAt: save.presentation.cleanShutdownGraceStartedAt,
+      }),
+    ).toEqual(save.presentation);
   });
 
   it('cold-decodes a live save written while protocol identities were bound', () => {
     const hashes = TEST_PROTOCOL_IDS;
     const handState = calpokerStateCodec.encode({
+      perPlayerStake: 20n,
       playerHand: [1n, 2n, 3n, 4n],
       opponentHand: [5n, 6n, 7n, 8n],
       moveNumber: 1n,
       isPlayerTurn: true,
       iStarted: true,
       cardSelections: [1n, 2n],
-      error: null,
+      settlementOutcome: null,
     });
     setProtocolIds(hashes);
     try {

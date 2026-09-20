@@ -1,7 +1,5 @@
 import {
   saveSession,
-  patchLiveSessionPresentation,
-  saveTerminalSession,
   peekSession,
   clearSession,
   clearSessionPairing,
@@ -27,7 +25,6 @@ import {
 import { readSessionRecord, SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
 import { decodeSessionSaveEnvelope, sessionAmountsFromSave } from '../session/model';
 import { baseSave } from './session_save_envelope.fixtures';
-import { channelStatus } from './message_protocol.harness';
 import {
   makeStorage,
   requireLive,
@@ -245,31 +242,6 @@ describe('flat state', () => {
     expect(live.pairing.gameSessionId).toBe('22'.repeat(16));
   });
 
-  it('ignores late live-presentation cleanup after terminal replacement', async () => {
-    await saveLiveFields(sampleSession);
-    const presentation = {
-      ...requireLive(loadState()).presentation,
-      channelStatus: channelStatus({ state: 'ResolvedClean' }),
-      waitingStateEnteredAt: 42n,
-    };
-    await saveTerminalSession({
-      terminal: {
-        iStarted: true,
-        coinsOfInterest: [],
-        myAlias: null,
-        opponentAlias: null,
-      },
-      presentation,
-    });
-
-    await expect(
-      patchLiveSessionPresentation({ waitingStateEnteredAt: null }),
-    ).resolves.toBeUndefined();
-    const terminal = loadState();
-    if (terminal.phase !== 'terminal') throw new Error('expected terminal session');
-    expect(terminal.presentation.waitingStateEnteredAt).toBe(42n);
-  });
-
   it('clearSession wipes game state but preserves identity, preferences, blockchainType, and boot marker', async () => {
     const sid = getSessionId();
     markSavedSession();
@@ -464,6 +436,7 @@ describe('flat state', () => {
       handState: {
         gameType: 'spacepoker',
         state: {
+          perPlayerStake: 20n,
           gameState: { handler: 2n, myTurn: true, N: 4n },
           playerHoleCards: [1n, 2n],
           playerBoost: false,
@@ -479,7 +452,7 @@ describe('flat state', () => {
           coinTossIOpen: null,
           unitSizeMojos: 10n,
           displayMode: 'mojos',
-          error: null,
+          settlementOutcome: null,
         },
       },
       activeGameType: 'spacepoker',
@@ -529,13 +502,14 @@ describe('flat state', () => {
       handState: {
         gameType: 'calpoker',
         state: {
+          perPlayerStake: 20n,
           playerHand: [8n, 7n, 6n, 5n],
           opponentHand: [4n, 3n, 2n, 1n],
           moveNumber: 1n,
           isPlayerTurn: true,
           iStarted: false,
           cardSelections: [8n, 7n],
-          error: null,
+          settlementOutcome: null,
           displaySnapshot: {
             gameState: 'selecting',
             winner: null,

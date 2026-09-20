@@ -24,6 +24,7 @@ export type ChannelEvent = Extract<
   | { type: 'start-clean-shutdown' }
   | { type: 'go-on-chain' }
   | { type: 'go-on-chain-result' }
+  | { type: 'clear-durability-error' }
   | { type: 'enqueue-error' }
   | { type: 'coin-enrichment-completed' }
 >;
@@ -187,7 +188,6 @@ export function reduceChannelEvent(
                   compose: { ...state.model.betweenHand.compose, proposalSent: false },
                 },
               },
-              coordination: { ...state.coordination, sameTermsRequested: false },
             }
           : state;
       return reduceChannelEvent(retryable, {
@@ -216,6 +216,22 @@ export function reduceChannelEvent(
         state: {
           ...state,
           coordination: { ...state.coordination, hostOnChain: event.started },
+        },
+        effects: [],
+      };
+    case 'clear-durability-error':
+      return {
+        state: {
+          ...state,
+          model: {
+            ...state.model,
+            channel: {
+              ...state.model.channel,
+              queue: state.model.channel.queue.filter(
+                (notification) => notification.kind !== 'durability-error',
+              ),
+            },
+          },
         },
         effects: [],
       };

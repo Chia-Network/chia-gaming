@@ -10,6 +10,7 @@ import {
 } from '../../hooks/save';
 import { destroyFlushedTerminalSessionController } from '../../hooks/blobSingleton';
 import { channelStatusPayloadFromModel } from './normalization';
+import { selectDashboardCoins } from './selectors';
 import { snapshotFromSessionModel } from './sessionSnapshot';
 import type { SessionModel } from './types';
 
@@ -40,6 +41,13 @@ const defaultDependencies: TerminalFinalizationDependencies = {
 
 const pendingFinalizations = new WeakMap<SessionController, Promise<TerminalFinalizationResult>>();
 
+export class TerminalSessionStorageError extends Error {
+  constructor(readonly cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'TerminalSessionStorageError';
+  }
+}
+
 export interface TerminalFinalizationResult {
   model: SessionModel;
   identity: TerminalSessionIdentity;
@@ -50,7 +58,6 @@ export function finalizeTerminalSession(
   args: {
     controller: SessionController;
     identity: TerminalSessionIdentity;
-    coins: CoinOfInterestEntry[];
   },
   dependencies: TerminalFinalizationDependencies = defaultDependencies,
 ): Promise<TerminalFinalizationResult> {
@@ -58,10 +65,11 @@ export function finalizeTerminalSession(
   if (existing) return existing;
 
   const identity = { ...args.identity };
-  const coins = args.coins.map((coin) => ({ ...coin }));
 
   const finalization = (async () => {
-    const model = await args.controller.quiesceForTerminalFinalization();
+    const snapshot = await args.controller.quiesceForTerminalFinalization();
+    const model = structuredClone(snapshot.model);
+    const coins = selectDashboardCoins(model, snapshot.coinsOfInterest);
     const terminalFields = structuredClone({
       terminal: {
         iStarted: identity.iStarted,
@@ -75,12 +83,12 @@ export function finalizeTerminalSession(
         cleanShutdownGraceStartedAt: null,
       }),
     });
-    await dependencies.stageTerminal(terminalFields);
     try {
+      await dependencies.stageTerminal(terminalFields);
       await dependencies.flushSave();
     } catch (error) {
       dependencies.discardTerminal();
-      throw error;
+      throw new TerminalSessionStorageError(error);
     }
     dependencies.updateMarker();
     dependencies.teardown(args.controller);

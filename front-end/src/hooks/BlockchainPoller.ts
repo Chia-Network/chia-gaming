@@ -10,6 +10,11 @@ import {
   AsyncPollingTarget,
   AsyncRequestStartGate,
 } from '../lib/AsyncScheduler';
+import { walletReservationLedger } from '../lib/session/walletReservationLedger';
+import type {
+  WalletReservationOwner,
+  WalletReservationPurpose,
+} from '../lib/session/walletReservationLedgerSchema';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
@@ -145,12 +150,13 @@ export class BlockchainPoller {
         }
       },
       createFeeSpend: adapter.createFeeSpend
-        ? async (fee, concurrentSpendCoinId) => {
+        ? async (fee, concurrentSpendCoinId, reservation) => {
             try {
               return await this.enqueueMutation(
                 'createFeeSpend',
-                () => adapter.createFeeSpend!(fee, concurrentSpendCoinId),
+                () => adapter.createFeeSpend!(fee, concurrentSpendCoinId, reservation),
                 true,
+                reservation,
               );
             } catch (error) {
               if (error instanceof BlockchainRpcUnavailableError) {
@@ -167,7 +173,15 @@ export class BlockchainPoller {
       selectCoins: (uniqueId, amount) =>
         this.enqueueMutation('selectCoins', () => adapter.selectCoins(uniqueId, amount)),
       getHeightInfo: () => this.enqueueRead('getHeightInfo', () => adapter.getHeightInfo()),
-      createOfferForIds: (uniqueId, offer, extraConditions, coinIds, maxHeight, openingFee) =>
+      createOfferForIds: (
+        uniqueId,
+        offer,
+        extraConditions,
+        coinIds,
+        maxHeight,
+        openingFee,
+        reservation,
+      ) =>
         this.enqueueMutation(
           'createOfferForIds',
           () =>
@@ -178,8 +192,10 @@ export class BlockchainPoller {
               coinIds,
               maxHeight,
               openingFee,
+              reservation,
             ),
           true,
+          reservation,
         ),
       cancelOffer: adapter.cancelOffer
         ? (tradeId) => this.enqueueMutation('cancelOffer', () => adapter.cancelOffer!(tradeId))
@@ -207,8 +223,9 @@ export class BlockchainPoller {
     label: string,
     run: () => Promise<T> | T,
     cancelStaleOffer = false,
+    reservation?: { owner: WalletReservationOwner; purpose: WalletReservationPurpose },
   ): Promise<T> {
-    return this.enqueueRpc(this.mutationLane, label, run, cancelStaleOffer);
+    return this.enqueueRpc(this.mutationLane, label, run, cancelStaleOffer, reservation);
   }
 
   private enqueueRpc<T>(
@@ -216,6 +233,7 @@ export class BlockchainPoller {
     label: string,
     run: () => Promise<T> | T,
     cancelStaleOffer = false,
+    reservation?: { owner: WalletReservationOwner; purpose: WalletReservationPurpose },
   ): Promise<T> {
     if (!this.isConnected()) {
       return Promise.reject(new BlockchainRpcUnavailableError(label));
@@ -241,7 +259,7 @@ export class BlockchainPoller {
           try {
             const result = await this.runAdapterRpc(connectionEpoch, label, run);
             if (!this.isConnectionEpochActive(connectionEpoch)) {
-              if (cancelStaleOffer) await this.cancelStaleOfferResult(label, result);
+              if (cancelStaleOffer) this.routeStaleOfferResult(label, result, reservation);
               rejectForDisconnect();
               return;
             }
@@ -268,34 +286,27 @@ export class BlockchainPoller {
     return run();
   }
 
-  private async cancelStaleOfferResult(label: string, result: unknown): Promise<void> {
+  private routeStaleOfferResult(
+    label: string,
+    result: unknown,
+    reservation?: { owner: WalletReservationOwner; purpose: WalletReservationPurpose },
+  ): void {
     const tradeId =
       typeof result === 'object' &&
       result !== null &&
       typeof (result as { tradeId?: unknown }).tradeId === 'string'
         ? (result as { tradeId: string }).tradeId
         : undefined;
-    if (!tradeId) {
-      log(
-        `[blockchain-poller] stale ${label} result has no tradeId; wallet reservation cannot be released`,
-      );
+    if (!tradeId || !reservation) {
+      log(`[blockchain-poller] stale ${label} result lacks reservation identity or tradeId`);
       return;
     }
-    if (!this.adapter.cancelOffer) {
-      log(
-        `[blockchain-poller] stale ${label} offer trade_id=${tradeId} cannot be released; adapter has no cancelOffer`,
-      );
-      return;
-    }
-    try {
-      await this.requestStartGate.wait();
-      await this.adapter.cancelOffer(tradeId);
-      log(`[blockchain-poller] cancelled stale ${label} offer trade_id=${tradeId}`);
-    } catch (error) {
-      log(
-        `[blockchain-poller] failed to cancel stale ${label} offer trade_id=${tradeId}: ${String(error)}`,
-      );
-    }
+    walletReservationLedger.routeStaleResult(
+      tradeId,
+      reservation.owner,
+      reservation.purpose,
+      `stale-${label}-result`,
+    );
   }
 
   attachGameSession(cradle: PollingGameSession) {

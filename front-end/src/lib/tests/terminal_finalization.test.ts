@@ -33,7 +33,7 @@ import type { SessionModel } from '../session/types';
 import { readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
 import { decodeSessionSaveEnvelope } from '../session/persistence';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { persistSessionSnapshot } from '../session/sessionMachinePersist';
+import { assembleSessionSave, persistSessionSnapshot } from '../session/sessionMachinePersist';
 import { selectFinishedSessionDisplay } from '../session/finishedSessionDisplay';
 import { renderFrozenGameMount } from '../gameMountRegistry';
 import { transitionToFreshSession } from '../restoreLifecycle';
@@ -48,13 +48,14 @@ const liveCradle = new Uint8Array([1, 2, 3]);
 const handState = {
   gameType: 'calpoker',
   state: {
+    perPlayerStake: 10n,
     playerHand: [8n, 7n, 6n, 5n],
     opponentHand: [4n, 3n, 2n, 1n],
     moveNumber: 1n,
     isPlayerTurn: true,
     iStarted: true,
     cardSelections: [8n, 7n],
-    error: null,
+    settlementOutcome: null,
     displaySnapshot: {
       gameState: 'selecting',
       winner: null,
@@ -145,7 +146,10 @@ function makeController(events: string[]): SessionController {
     handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
     quiesceForTerminalFinalization: async () => {
       events.push('controller-quiesce');
-      return structuredClone(model);
+      return {
+        model: structuredClone(model),
+        coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+      };
     },
   } as unknown as SessionController;
 }
@@ -221,7 +225,6 @@ function finalizationArgs(controller: SessionController) {
       opponentName: 'Bob',
       iStarted: true,
     },
-    coins: [{ label: 'Reward coin', id: 'coin-1' }],
   };
 }
 
@@ -302,8 +305,14 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
 });
 
 it('does not stage or tear down before controller terminal quiescence', async () => {
-  let releaseQuiescence!: (model: SessionModel) => void;
-  const quiescenceGate = new Promise<SessionModel>((resolve) => {
+  let releaseQuiescence!: (snapshot: {
+    model: SessionModel;
+    coinsOfInterest: Array<{ label: string; id: string }>;
+  }) => void;
+  const quiescenceGate = new Promise<{
+    model: SessionModel;
+    coinsOfInterest: Array<{ label: string; id: string }>;
+  }>((resolve) => {
     releaseQuiescence = resolve;
   });
   const controller = {
@@ -325,7 +334,10 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   expect(stageTerminal).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
 
-  releaseQuiescence(structuredClone(model));
+  releaseQuiescence({
+    model: structuredClone(model),
+    coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+  });
   await finalization;
 
   expect(stageTerminal).toHaveBeenCalledTimes(1);
@@ -396,7 +408,17 @@ it('stages and returns the model produced after terminal quiescence', async () =
     betweenHand: model.betweenHand,
   });
   const controller = {
-    quiesceForTerminalFinalization: jest.fn(async () => structuredClone(authoritativeModel)),
+    quiesceForTerminalFinalization: jest.fn(async () => ({
+      model: structuredClone(authoritativeModel),
+      coinsOfInterest: [
+        {
+          label: 'Game 1 reward coin',
+          id: 'coin-after-drain',
+          game_id: 'game-1',
+          game_coin_kind: 'reward' as const,
+        },
+      ],
+    })),
   } as unknown as SessionController;
   const stageTerminal = jest.fn(async () => {});
 
@@ -424,6 +446,16 @@ it('stages and returns the model produced after terminal quiescence', async () =
             terminal: expect.objectContaining({ label: 'Runtime finished' }),
           }),
         }),
+      }),
+      terminal: expect.objectContaining({
+        coinsOfInterest: [
+          {
+            label: 'Hand 1 reward coin',
+            id: 'coin-after-drain',
+            game_id: 'game-1',
+            game_coin_kind: 'reward',
+          },
+        ],
       }),
     }),
   );
@@ -679,9 +711,8 @@ it('keeps the resolved display and terminal checkpoint when fresh persistence fa
   expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('terminal');
 });
 
-it('routes a normally resolved on-chain snapshot through terminal persistence', async () => {
+it('keeps a fully resolved live checkpoint until terminal finalization succeeds', async () => {
   const save = jest.fn(async () => {});
-  const saveTerminal = jest.fn(async () => {});
   const controller = {
     getWasmFields: () => ({
       serializedGameSession: liveCradle,
@@ -695,6 +726,8 @@ it('routes a normally resolved on-chain snapshot through terminal persistence', 
       channelStatus: { state: 'ResolvedClean' },
       wasmNotificationHistory: [],
       diagnosticLog: [],
+      waitingStateEnteredAt: null,
+      cleanShutdownGraceStartedAt: null,
     }),
     getCoinsOfInterest: () => [{ label: 'Reward coin', id: 'coin-1' }],
   } as unknown as SessionController;
@@ -706,19 +739,18 @@ it('routes a normally resolved on-chain snapshot through terminal persistence', 
     getRestoreStatus: () => 'idle',
     getRestoreError: () => null,
     save,
-    saveTerminal,
   });
 
-  expect(save).not.toHaveBeenCalled();
-  expect(saveTerminal).toHaveBeenCalledTimes(1);
-  expect(saveTerminal).toHaveBeenCalledWith(
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(
     expect.objectContaining({
-      terminal: expect.objectContaining({
-        coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+      scope: 'live',
+      live: expect.objectContaining({
+        serializedGameSession: liveCradle,
       }),
       presentation: expect.objectContaining({
+        activeGameIds: [],
         channelStatus: { state: 'ResolvedClean' },
-        handState,
       }),
     }),
   );
@@ -726,7 +758,6 @@ it('routes a normally resolved on-chain snapshot through terminal persistence', 
 
 it('keeps a resolved unroll live while an on-chain game is still unresolved', async () => {
   const save = jest.fn(async () => {});
-  const saveTerminal = jest.fn(async () => {});
   const activeModel = createSessionModel({
     ...model,
     channel: { ...model.channel, status: { ...model.channel.status, state: 'ResolvedUnrolled' } },
@@ -757,6 +788,8 @@ it('keeps a resolved unroll live while an on-chain game is still unresolved', as
       channelStatus: { state: 'ResolvedUnrolled' },
       wasmNotificationHistory: [],
       diagnosticLog: [],
+      waitingStateEnteredAt: null,
+      cleanShutdownGraceStartedAt: null,
     }),
   } as unknown as SessionController;
 
@@ -767,10 +800,8 @@ it('keeps a resolved unroll live while an on-chain game is still unresolved', as
     getRestoreStatus: () => 'idle',
     getRestoreError: () => null,
     save,
-    saveTerminal,
   });
 
-  expect(saveTerminal).not.toHaveBeenCalled();
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({
       scope: 'live',
@@ -806,6 +837,8 @@ it('persists live machine hand state instead of a former controller bundle value
       channelStatus: { state: 'Active' },
       wasmNotificationHistory: [],
       diagnosticLog: [],
+      waitingStateEnteredAt: null,
+      cleanShutdownGraceStartedAt: null,
     }),
   } as unknown as SessionController;
 
@@ -826,6 +859,39 @@ it('persists live machine hand state instead of a former controller bundle value
     }),
   );
   expect(save.mock.calls[0][0].presentation.handState).not.toEqual(formerControllerHandState);
+});
+
+it('assembles current timer ownership instead of stale checkpoint timing', () => {
+  let waitingStateEnteredAt: bigint | null = 200n;
+  const staleMachineCheckpoint = createSessionMachineState(model);
+  const controller = {
+    getWasmFields: () => ({
+      serializedGameSession: liveCradle,
+      gameSessionSchemaVersion: 3n,
+      pairingToken: 'live-token',
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      iStarted: true,
+      rewardPuzzleHash: '11'.repeat(32),
+      channelStatus: { state: 'Active' },
+      wasmNotificationHistory: [],
+      diagnosticLog: [],
+      waitingStateEnteredAt,
+      cleanShutdownGraceStartedAt: null,
+    }),
+  } as unknown as SessionController;
+  const dependencies = {
+    controller,
+    getState: () => staleMachineCheckpoint,
+    restoring: false,
+    getRestoreStatus: () => 'idle' as const,
+    getRestoreError: () => null,
+  };
+
+  waitingStateEnteredAt = 300n;
+  const assembledFromStaleMachine = assembleSessionSave(dependencies);
+
+  expect(assembledFromStaleMachine?.live.presentation.waitingStateEnteredAt).toBe(300n);
 });
 
 it('freezes both role-aware Krunk timeout boards after queued terminal reductions', async () => {
@@ -905,7 +971,10 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   });
   const controller = {
     handState: acceptedHandState,
-    quiesceForTerminalFinalization: async () => structuredClone(timeoutModel),
+    quiesceForTerminalFinalization: async () => ({
+      model: structuredClone(timeoutModel),
+      coinsOfInterest: [],
+    }),
   } as unknown as SessionController;
   const stageTerminal = jest.fn(async () => {});
 
@@ -917,7 +986,6 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
         opponentName: 'Bob',
         iStarted: false,
       },
-      coins: [],
     },
     {
       stageTerminal,
@@ -980,10 +1048,14 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
 it('keeps live state and ownership after failure, then retries without teardown durability', async () => {
   const events: string[] = [];
   let latestModel = structuredClone(model);
+  let latestCoins = [{ label: 'Reward coin', id: 'coin-1' }];
   const controller = {
     quiesceForTerminalFinalization: async () => {
       events.push('controller-quiesce');
-      return structuredClone(latestModel);
+      return {
+        model: structuredClone(latestModel),
+        coinsOfInterest: structuredClone(latestCoins),
+      };
     },
   } as unknown as SessionController;
   const teardown = jest.fn();
@@ -1028,11 +1100,12 @@ it('keeps live state and ownership after failure, then retries without teardown 
       ...model.game,
       handState: {
         ...handState,
-        state: { ...handState.state, moveNumber: 77n },
+        state: { ...handState.state, moveNumber: 2n },
       },
     },
     betweenHand: model.betweenHand,
   });
+  latestCoins = [{ label: 'Fresh reward coin', id: 'coin-after-retry' }];
   await finalizeTerminalSession(finalizationArgs(controller), dependencies);
 
   expect(events).toEqual(['controller-quiesce', 'controller-quiesce']);
@@ -1050,5 +1123,6 @@ it('keeps live state and ownership after failure, then retries without teardown 
           state: { moveNumber: bigint };
         }
       ).state.moveNumber,
-  ).toBe(77n);
+  ).toBe(2n);
+  expect(restored?.phase === 'terminal' && restored.terminal.coinsOfInterest).toEqual(latestCoins);
 });

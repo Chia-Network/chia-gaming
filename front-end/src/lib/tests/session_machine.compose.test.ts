@@ -103,6 +103,7 @@ describe('session machine behavior sequences', () => {
         },
 
         handState: calpokerStateCodec.encode({
+          perPlayerStake: 20n,
           playerHand: [],
 
           opponentHand: [],
@@ -111,7 +112,7 @@ describe('session machine behavior sequences', () => {
 
           isPlayerTurn: false,
           iStarted: true,
-          error: null,
+          settlementOutcome: null,
         }),
 
         pendingProposals: [

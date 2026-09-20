@@ -15,7 +15,6 @@ export type BetweenHandEvent = Extract<
   | { type: 'select-compose-game' }
   | { type: 'set-compose-timeout' }
   | { type: 'set-compose-proposal-sent' }
-  | { type: 'set-same-terms-requested' }
   | { type: 'set-first-game-accepted' }
   | { type: 'set-last-outcome' }
 >;
@@ -106,12 +105,6 @@ export function reduceBetweenHandEvent(
             compose: { ...state.model.betweenHand.compose, proposalSent: event.sent },
           },
         },
-      };
-      break;
-    case 'set-same-terms-requested':
-      next = {
-        ...state,
-        coordination: { ...state.coordination, sameTermsRequested: event.requested },
       };
       break;
     case 'set-first-game-accepted':

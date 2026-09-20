@@ -48,7 +48,14 @@ export interface DecodedPersistedGameState {
 export function decodePersistedGameState(value: unknown): DecodedPersistedGameState | null {
   if (typeof value !== 'object' || value === null) return null;
   const persisted = value as Partial<PersistedGameState>;
-  if (!isCatalogGameType(persisted.gameType) || !Object.hasOwn(persisted, 'state')) return null;
+  if (
+    Object.keys(persisted).length !== 2 ||
+    !Object.hasOwn(persisted, 'gameType') ||
+    !Object.hasOwn(persisted, 'state') ||
+    !isCatalogGameType(persisted.gameType)
+  ) {
+    return null;
+  }
   return {
     persisted: { gameType: persisted.gameType, state: persisted.state },
   };

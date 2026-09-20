@@ -1,0 +1,145 @@
+export interface WalletReservationOwner {
+  sessionId: string;
+  gameSessionId: string;
+}
+
+export type WalletReservationPurpose =
+  | { kind: 'funding'; operationId: string }
+  | { kind: 'fee'; operationId: string };
+
+export type WalletReservationStage = 'reserved' | 'cancel-required';
+
+export interface WalletReservationLedgerEntry {
+  tradeId: string;
+  owner: WalletReservationOwner;
+  purpose: WalletReservationPurpose;
+  stage: WalletReservationStage;
+  reason: string;
+}
+
+const MAX_TRADE_ID_LENGTH = 256;
+const MAX_IDENTITY_LENGTH = 256;
+const MAX_OPERATION_ID_LENGTH = 1024;
+export const MAX_WALLET_RESERVATION_REASON_LENGTH = 256;
+
+function requireBoundedString(
+  value: unknown,
+  label: string,
+  maximum: number,
+  allowEmpty = false,
+): string {
+  if (typeof value !== 'string' || (!allowEmpty && value.length === 0) || value.length > maximum) {
+    throw new Error(`Garbled save: invalid ${label}`);
+  }
+  return value;
+}
+
+export function walletReservationOperationKey(
+  owner: WalletReservationOwner,
+  purpose: WalletReservationPurpose,
+): string {
+  return `${owner.sessionId}\0${owner.gameSessionId}\0${purpose.kind}\0${purpose.operationId}`;
+}
+
+export function decodeWalletReservationLedgerEntry(
+  value: unknown,
+  label = 'wallet reservation ledger entry',
+): WalletReservationLedgerEntry {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`Garbled save: invalid ${label}`);
+  }
+  const fields = value as Record<string, unknown>;
+  const keys = Object.keys(fields);
+  if (
+    keys.length !== 5 ||
+    !keys.includes('tradeId') ||
+    !keys.includes('owner') ||
+    !keys.includes('purpose') ||
+    !keys.includes('stage') ||
+    !keys.includes('reason')
+  ) {
+    throw new Error(`Garbled save: invalid ${label} fields`);
+  }
+  const owner = fields.owner;
+  if (typeof owner !== 'object' || owner === null || Array.isArray(owner)) {
+    throw new Error(`Garbled save: invalid ${label}.owner`);
+  }
+  const ownerFields = owner as Record<string, unknown>;
+  if (
+    Object.keys(ownerFields).length !== 2 ||
+    !Object.hasOwn(ownerFields, 'sessionId') ||
+    !Object.hasOwn(ownerFields, 'gameSessionId')
+  ) {
+    throw new Error(`Garbled save: invalid ${label}.owner fields`);
+  }
+  const purpose = fields.purpose;
+  if (typeof purpose !== 'object' || purpose === null || Array.isArray(purpose)) {
+    throw new Error(`Garbled save: invalid ${label}.purpose`);
+  }
+  const purposeFields = purpose as Record<string, unknown>;
+  if (
+    Object.keys(purposeFields).length !== 2 ||
+    !Object.hasOwn(purposeFields, 'kind') ||
+    !Object.hasOwn(purposeFields, 'operationId') ||
+    (purposeFields.kind !== 'funding' && purposeFields.kind !== 'fee')
+  ) {
+    throw new Error(`Garbled save: invalid ${label}.purpose fields`);
+  }
+  if (fields.stage !== 'reserved' && fields.stage !== 'cancel-required') {
+    throw new Error(`Garbled save: invalid ${label}.stage`);
+  }
+  return {
+    tradeId: requireBoundedString(fields.tradeId, `${label}.tradeId`, MAX_TRADE_ID_LENGTH),
+    owner: {
+      sessionId: requireBoundedString(
+        ownerFields.sessionId,
+        `${label}.owner.sessionId`,
+        MAX_IDENTITY_LENGTH,
+      ),
+      gameSessionId: requireBoundedString(
+        ownerFields.gameSessionId,
+        `${label}.owner.gameSessionId`,
+        MAX_IDENTITY_LENGTH,
+      ),
+    },
+    purpose: {
+      kind: purposeFields.kind,
+      operationId: requireBoundedString(
+        purposeFields.operationId,
+        `${label}.purpose.operationId`,
+        MAX_OPERATION_ID_LENGTH,
+      ),
+    },
+    stage: fields.stage,
+    reason: requireBoundedString(
+      fields.reason,
+      `${label}.reason`,
+      MAX_WALLET_RESERVATION_REASON_LENGTH,
+      true,
+    ),
+  };
+}
+
+export function decodeWalletReservationLedger(
+  value: unknown,
+  label = 'wallet reservation ledger',
+): WalletReservationLedgerEntry[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Garbled save: invalid ${label}`);
+  }
+  const tradeIds = new Set<string>();
+  const operations = new Set<string>();
+  return value.map((entry, index) => {
+    const decoded = decodeWalletReservationLedgerEntry(entry, `${label}[${index}]`);
+    if (tradeIds.has(decoded.tradeId)) {
+      throw new Error(`Garbled save: duplicate ${label} tradeId ${decoded.tradeId}`);
+    }
+    const operation = walletReservationOperationKey(decoded.owner, decoded.purpose);
+    if (operations.has(operation)) {
+      throw new Error(`Garbled save: duplicate ${label} operation`);
+    }
+    tradeIds.add(decoded.tradeId);
+    operations.add(operation);
+    return decoded;
+  });
+}

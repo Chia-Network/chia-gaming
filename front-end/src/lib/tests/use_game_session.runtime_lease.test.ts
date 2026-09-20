@@ -1,19 +1,38 @@
-import { createElement, StrictMode } from 'react';
+import { Component, createElement, StrictMode, type ReactNode } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Subject } from 'rxjs';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import { useGameSession } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
+import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionRuntimeLease } from '../session/sessionRuntimeLease';
 import type { GameSessionParams, WasmEvent } from '../../types/ChiaGaming';
+
+class TestErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch() {}
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 
 describe('useGameSession runtime lease', () => {
   function setup() {
     let lease: SessionRuntimeLease | undefined;
+    let runtime: SessionMachineRuntime | null = null;
     const attachTransactionCoordinator = jest.fn((next: SessionRuntimeLease) => {
       if (lease && lease !== next) lease.retire();
       lease = next;
     });
-    const detachTransactionCoordinator = jest.fn();
+    const detachTransactionCoordinator = jest.fn((detached: SessionRuntimeLease) => {
+      if (lease === detached) lease = undefined;
+    });
     const events = new Subject<WasmEvent>();
     const controller = {
       cleanShutdownCalled: false,
@@ -22,11 +41,21 @@ describe('useGameSession runtime lease', () => {
       diagnosticLog: [],
       attachTransactionCoordinator,
       detachTransactionCoordinator,
+      getCommittedSessionRuntime: () => runtime,
+      commitSessionRuntime: (
+        nextRuntime: SessionMachineRuntime,
+        nextLease: SessionRuntimeLease,
+      ) => {
+        if (runtime && runtime !== nextRuntime) runtime.retire();
+        runtime = nextRuntime;
+        attachTransactionCoordinator(nextLease);
+      },
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
       reportRuntimeError: jest.fn(),
       clearDerivedGamePresentation: jest.fn(),
       flushDeferredWork: jest.fn(),
+      getWasmFields: () => null,
       prepareReliableCommit: jest.fn(() => ({
         generation: 0,
         outboundCount: 0,
@@ -49,13 +78,15 @@ describe('useGameSession runtime lease', () => {
       controller,
       params,
       getLease: () => lease,
+      getRuntime: () => runtime,
+      events,
       attachTransactionCoordinator,
       detachTransactionCoordinator,
     };
   }
 
   it('keeps the committed runtime active when the hook unmounts', () => {
-    const { controller, params, getLease, detachTransactionCoordinator } = setup();
+    const { controller, params, getLease, getRuntime, detachTransactionCoordinator } = setup();
     function Harness() {
       useGameSession(params, controller, () => {});
       return null;
@@ -66,9 +97,18 @@ describe('useGameSession runtime lease', () => {
       renderer = create(createElement(Harness));
     });
     expect(getLease()).toBeDefined();
+    const runtime = getRuntime();
+    expect(runtime).not.toBeNull();
 
     act(() => renderer?.unmount());
     expect(detachTransactionCoordinator).not.toHaveBeenCalled();
+
+    act(() => {
+      renderer = create(createElement(Harness));
+    });
+    expect(getRuntime()).toBe(runtime);
+    expect(getLease()).toBeDefined();
+    act(() => renderer?.unmount());
   });
 
   it('keeps the same lease through Strict Effects setup-cleanup-setup replay', () => {
@@ -88,5 +128,70 @@ describe('useGameSession runtime lease', () => {
 
     act(() => renderer?.unmount());
     expect(getLease()).toBe(lease);
+  });
+
+  it('keeps reducing controller events while unmounted and projects them on remount', () => {
+    const { controller, params, events, getRuntime } = setup();
+    let latestQueue: readonly unknown[] = [];
+    function Harness() {
+      const session = useGameSession(params, controller, () => {});
+      latestQueue = session.channelQueue;
+      return null;
+    }
+
+    let renderer: ReactTestRenderer | undefined;
+    act(() => {
+      renderer = create(createElement(Harness));
+    });
+    const runtime = getRuntime();
+    act(() => renderer?.unmount());
+
+    act(() => {
+      events.next({ type: 'error', error: 'while absent' });
+    });
+    expect(runtime?.getState().model.channel.queue).toContainEqual(
+      expect.objectContaining({ message: 'while absent' }),
+    );
+
+    act(() => {
+      renderer = create(createElement(Harness));
+    });
+    expect(getRuntime()).toBe(runtime);
+    expect(latestQueue).toContainEqual(expect.objectContaining({ message: 'while absent' }));
+    act(() => renderer?.unmount());
+  });
+
+  it('reattaches the committed runtime after a renderer crash and remount', () => {
+    expectConsoleError('renderer crashed');
+    const { controller, params, getRuntime } = setup();
+    function Harness() {
+      useGameSession(params, controller, () => {});
+      return null;
+    }
+    function CrashingHarness() {
+      useGameSession(params, controller, () => {});
+      throw new Error('renderer crashed');
+    }
+
+    let renderer: ReactTestRenderer | undefined;
+    act(() => {
+      renderer = create(
+        createElement(TestErrorBoundary, { key: 'before' }, createElement(Harness)),
+      );
+    });
+    const runtime = getRuntime();
+
+    act(() => {
+      renderer?.update(
+        createElement(TestErrorBoundary, { key: 'before' }, createElement(CrashingHarness)),
+      );
+    });
+    expect(getRuntime()).toBe(runtime);
+
+    act(() => {
+      renderer?.update(createElement(TestErrorBoundary, { key: 'after' }, createElement(Harness)));
+    });
+    expect(getRuntime()).toBe(runtime);
+    act(() => renderer?.unmount());
   });
 });

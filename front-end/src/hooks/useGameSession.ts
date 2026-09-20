@@ -13,7 +13,6 @@ import {
   type HandProposal,
 } from '../lib/session/model';
 import type { GameIntent } from '@games/host';
-import { dispatchWasmNotification } from '../lib/session/gameSessionEvents';
 import { createSessionMachineState } from '../lib/session/sessionMachine';
 import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
 import {
@@ -30,8 +29,7 @@ import type { RegisteredGameType } from '../lib/session/types';
 import { DEFAULT_CATALOG_GAME_TYPE } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 import type { GameHandSource } from '../lib/gameHandSource';
-import { log } from '../services/log';
-import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
+import type { GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
 import { getOrCreateSessionController, initStarted, setInitStarted } from './blobSingleton';
 import type { SessionController } from './SessionController';
@@ -148,18 +146,31 @@ export function useGameSession(
       },
     );
   }, [controller, iStarted, perGameAmount, restoredModel, sessionSave]);
-  const runtimeRef = useRef<SessionMachineRuntime | null>(null);
-  if (!runtimeRef.current) {
-    runtimeRef.current = new SessionMachineRuntime(initialState, {
+  const runtimeRef = useRef<{
+    controller: SessionController;
+    runtime: SessionMachineRuntime;
+  } | null>(null);
+  const committedRuntime = controller.getCommittedSessionRuntime();
+  if (
+    runtimeRef.current?.controller !== controller ||
+    (committedRuntime !== null && runtimeRef.current.runtime !== committedRuntime)
+  ) {
+    runtimeRef.current = {
       controller,
-      iStarted,
-      restoring: params.restoring ?? false,
-      getRestoreStatus: () => controller.getRestoreStatus(),
-      getRestoreError: () => controller.getRestoreError(),
-      onError: (error) => controller.reportRuntimeError(error),
-    });
+      runtime:
+        committedRuntime ??
+        new SessionMachineRuntime(initialState, {
+          controller,
+          iStarted,
+          restoring: params.restoring ?? false,
+          getRestoreStatus: () => controller.getRestoreStatus(),
+          getRestoreError: () => controller.getRestoreError(),
+          onError: (error) => controller.reportRuntimeError(error),
+          bindControllerEvents: true,
+        }),
+    };
   }
-  const runtime = runtimeRef.current;
+  const runtime = runtimeRef.current.runtime;
   const [machineState, setMachineState] = useState(runtime.getState());
   const dispatch = useCallback((event: SessionMachineEvent) => runtime.dispatch(event), [runtime]);
   const liveGamePort = useMemo(
@@ -209,72 +220,14 @@ export function useGameSession(
   useLayoutEffect(() => {
     runtime.setRender(setMachineState);
     runtime.activate();
+    if (!initStarted) setInitStarted(true);
     return () => {
       runtime.clearRender();
     };
   }, [runtime]);
-  const dispatchHostProjection = useCallback(() => {
-    const status = controller.getRestoreStatus();
-    dispatch({
-      type: 'host-projection',
-      restore: {
-        restoring: params.restoring ?? false,
-        status,
-        error: controller.getRestoreError(),
-        hubReconciled: status === 'restored',
-      },
-      wasmNotificationHistory: controller.wasmNotificationHistory,
-      diagnosticLog: controller.diagnosticLog,
-    });
-  }, [controller, dispatch, params.restoring]);
-
-  useEffect(() => {
-    if (terminalMode) return;
-    return controller.onRestoreStatusChange(() => {
-      dispatchHostProjection();
-    });
-  }, [controller, dispatchHostProjection, terminalMode]);
-
-  useEffect(() => {
-    if (terminalMode) return;
-    const subscription = controller.getObservable().subscribe({
-      next: (event: WasmEvent) => {
-        switch (event.type) {
-          case 'notification':
-            dispatchWasmNotification(
-              event.data,
-              (notification) => dispatch({ type: 'wasm-notification', notification, iStarted }),
-              (error) =>
-                dispatch({ type: 'enqueue-error', kind: 'infra-error', message: String(error) }),
-            );
-            dispatchHostProjection();
-            break;
-          case 'error':
-            dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
-            break;
-          case 'game-action-error':
-            dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
-            break;
-          case 'durability-error':
-            dispatch({ type: 'enqueue-error', kind: 'durability-error', message: event.error });
-            break;
-          case 'log':
-            log(`[wasm] ${event.message}`);
-            dispatchHostProjection();
-            break;
-          case 'address':
-            break;
-        }
-      },
-    });
-    if (!initStarted) setInitStarted(true);
-    return () => subscription.unsubscribe();
-  }, [controller, dispatch, dispatchHostProjection, iStarted, terminalMode]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!blockchain || terminalMode) return;
     controller.attachBlockchain(blockchain);
-    return () => controller.detachBlockchain(blockchain);
   }, [blockchain, controller, terminalMode]);
 
   const setComposeGameTimeout = useCallback(

@@ -790,6 +790,9 @@ cannot claim protocol ownership. Its committed React layout effect installs the
 render callback and activates an exclusive lease; React cleanup clears only
 that render callback. Protocol retirement belongs to `SessionController`
 cleanup, including terminal cleanup and replacement of the committed lease.
+The controller retains the committed runtime across presentation unmounts, so a
+renderer remount resumes the same accumulated model rather than reconstructing
+one from an older checkpoint.
 
 Once activated, `SessionMachineRuntime` is the sole active browser durability
 coordinator. It drains every consequence of a stimulus to a fixed point:
@@ -810,33 +813,40 @@ coordinator. Attaching a replacement retires the previous committed runtime;
 reload and controller cleanup retire the current one. Retirement discards
 queued reducer/controller work and rejects pending result promises and
 not-yet-launched external effects, so an obsolete runtime cannot publish,
-persist, or release work after replacement.
+persist, or release work after replacement. Final controller cleanup also
+settles submission deliveries and detaches in-flight external operations from
+controller quiescence; late persisted-wallet results transfer to the wallet
+reservation ledger.
 
 Durable funding requests use one explicit canonical model: `amount`, `fee`, and
 optional `max_height` are canonical decimal `u64` strings; condition opcodes are
 bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
 omitted rather than stored as null. The controller owns the durable funding
-outbox as a single-flight zero-or-one request. A replacement cannot launch
-until cancellation of its predecessor wallet offer settles. Rust owns
-transaction submission intent and the frontend submission queue owns only
-ordered one-shot wallet delivery.
+outbox as a single-flight zero-or-one request. After restore, the same operation
+cannot launch another wallet offer until its orphaned reservation has settled;
+there is no successor/predecessor funding protocol. Rust owns transaction
+submission intent and the frontend submission queue owns only ordered one-shot
+wallet delivery.
 
-Rejected funding and fee offers enter a separate strict durable wallet-offer
-cleanup outbox. The cleanup entry is persisted before cancellation is released.
-Failures remain recorded and retry only on restore, wallet reconnect, a newly
-committed lease, or an explicit terminal-finalization attempt; there is no
-timer or immediate retry loop. Terminal finalization is blocked while any entry
-remains unresolved.
+Persisted funding and fee offers enter one wallet-level reservation ledger.
+Each entry carries its trade ID, owning session, stable operation identity,
+stage, and bounded reason, and the ledger survives every session-save phase and
+controller teardown. Persistence failure never gates use or cancellation of an
+offer; the in-memory ledger remains dirty for a later full checkpoint. Failed
+cancellation retries only on restore, wallet reconnect/attachment, or explicit
+terminal finalization—never by a timer or immediate loop. Terminal finalization
+is blocked while that session still has an unresolved ledger entry.
 
 Persistence is checkpointing, not permission to continue a game for money. If
 the browser write fails, the runtime reports a persistent durability warning
-but still projects and releases that captured boundary exactly once. The
-in-memory state remains dirty and a later activity retries the checkpoint
-without resending already released effects; there is no immediate retry spin.
-This deliberately accepts a degraded crash window: if the page dies before a
-later write succeeds, the peer or chain may have advanced beyond the last local
-checkpoint. Refusing to continue solely because local storage failed would be
-the worse failure mode.
+but still projects and releases that captured boundary exactly once, including
+wallet cleanup, transaction submission, and peer frame/ACK work. The in-memory
+state remains dirty and a later activity retries a full checkpoint containing
+all still-unresolved durable intent without resending already released effects;
+success clears the degraded warning. There is no immediate retry spin or
+durability-required effect gate. This deliberately accepts a degraded crash
+window: if the page dies before a later write succeeds, the peer or chain may
+have advanced beyond the last local checkpoint.
 
 A released effect is deduplicated by key only while pending. Duplicate callers
 receive the same promise, which settles with the launched external work. The
@@ -847,6 +857,16 @@ a later boundary.
 No active-session adapter, reducer effect, or protocol callback may establish a
 competing save, render, or send boundary. New event sources must enter the same
 fixed-point drain.
+
+Reliable transport persists unacknowledged frames and the cooperative terminal
+handoff's exact command, frame bytes, message number, sent state, and ACK state.
+Restore either reuses that exact frame or completes the still-pending Rust
+handoff after an already-durable ACK; it never allocates a replacement frame.
+The receive reorder buffer remains transient: a restored sender retransmits its
+durable unacknowledged frames to reconstruct any gap without replaying an
+authoritative move twice. Likewise, Rust persists outstanding coin
+puzzle/solution requests and reissues them once after restore; chain
+observations themselves are rebuilt from a fresh coherent poll.
 
 The browser also separates three lifetimes that end at different moments.
 Protocol lifetime ends only after queued terminal reductions and the durable

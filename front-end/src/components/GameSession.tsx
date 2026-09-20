@@ -548,7 +548,10 @@ export interface GameSessionProps {
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionSave;
   onGameActivity?: () => void;
-  onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
+  onSessionPhaseChange?: (
+    phase: Exclude<SessionPhase, 'none'>,
+    hasError: boolean,
+  ) => void | boolean | Promise<boolean>;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
   onCoinsChange?: (coins: import('../types/ChiaGaming').CoinOfInterestEntry[]) => void;
@@ -598,6 +601,15 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   }, [sessionController, session.sessionModel, onCoinsChange, terminalMode]);
 
   const resolvedPhaseReportedRef = useRef(false);
+  const resolvedPhaseReportInFlightRef = useRef<Promise<void> | null>(null);
+  const [terminalRetryRevision, setTerminalRetryRevision] = useState(0);
+  useEffect(
+    () =>
+      sessionController.onTerminalFinalizationRetry(() => {
+        setTerminalRetryRevision((revision) => revision + 1);
+      }),
+    [sessionController],
+  );
   useEffect(() => {
     const phase = session.sessionPhase;
     if (
@@ -615,7 +627,18 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
         settledOutcome != null &&
         isErrorSettlementOutcome(settledOutcome));
     if (phase === 'resolved') {
-      resolvedPhaseReportedRef.current = true;
+      if (resolvedPhaseReportInFlightRef.current) return;
+      const report = Promise.resolve(onSessionPhaseChange(phase, hasError))
+        .then((completed) => {
+          if (completed === true) resolvedPhaseReportedRef.current = true;
+        })
+        .finally(() => {
+          if (resolvedPhaseReportInFlightRef.current === report) {
+            resolvedPhaseReportInFlightRef.current = null;
+          }
+        });
+      resolvedPhaseReportInFlightRef.current = report;
+      return;
     }
     onSessionPhaseChange(phase, hasError);
   }, [
@@ -623,8 +646,10 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
     session.channelStatus.state,
     session.gameTerminal.type,
     session.gameTerminal.outcome,
+    session.sessionModel,
     onSessionPhaseChange,
     suppressPhaseReporting,
+    terminalRetryRevision,
   ]);
 
   const previousGameModel = useRef(session.sessionModel.game);

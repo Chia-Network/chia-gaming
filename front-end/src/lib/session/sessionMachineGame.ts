@@ -180,7 +180,6 @@ export function reduceDurableGameEvent(
         coordination: {
           ...state.coordination,
           firstGameAccepted: true,
-          sameTermsRequested: false,
         },
       };
       const init: GameHandInitialization = {

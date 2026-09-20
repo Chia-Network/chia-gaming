@@ -1,4 +1,5 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
+import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { SessionController } from '../../hooks/SessionController';
 import type { ChiaGame, WasmConnection, WasmResult } from '../../types/ChiaGaming';
 import { restoreSession } from '../../hooks/blobSingleton';
@@ -10,6 +11,7 @@ import {
   peekSession,
 } from '../../hooks/save';
 import { validateSessionSaveEnvelope } from '../session/persistence';
+import { walletReservationLedger } from '../session/walletReservationLedger';
 import { writeSessionRecord } from '../session/indexedDb';
 import { liveSave } from './session_save_envelope.fixtures';
 import {
@@ -19,6 +21,7 @@ import {
   makeMockCradle,
   makePeerConn,
   mockBlockchain,
+  mockRpc,
   mockWasmConnection,
   saveLiveSession,
   setActiveBlob,
@@ -155,6 +158,54 @@ describe('durability failures', () => {
     expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
     expect(sentAcks).toEqual([1]);
     sub.unsubscribe();
+  });
+
+  it('launches cleanup after a failed write and checkpoints unresolved intent on retry', async () => {
+    let rejectCleanup!: (error: Error) => void;
+    const cleanup = new Promise<void>((_resolve, reject) => {
+      rejectCleanup = reject;
+    });
+    const cancelOffer = jest.fn(() => cleanup);
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, cancelOffer }, 60_000);
+    walletReservationLedger.attachRpc(blob.blockchain.rpc);
+    const checkpoints: Array<ReturnType<typeof blob.getWasmFields>> = [];
+    let failPersistence = true;
+    setTestPersistence(blob, async () => {
+      checkpoints.push(blob.getWasmFields());
+      if (failPersistence) throw new Error('disk full');
+    });
+
+    walletReservationLedger.hydrateFromDisk([
+      {
+        tradeId: 'trade-unresolved',
+        owner: { sessionId: '00'.repeat(16), gameSessionId: 'test' },
+        purpose: { kind: 'funding', operationId: 'funding-operation' },
+        stage: 'cancel-required',
+        reason: 'funding-offer-rejected',
+      },
+    ]);
+
+    await expect(blob.flushPendingSave()).rejects.toThrow('disk full');
+
+    expect(cancelOffer).toHaveBeenCalledTimes(1);
+    expect(blob.durabilityWarning).toContain('continuing without a durable checkpoint');
+    expect(blob.getWasmFields()?.walletReservationLedger).toEqual([
+      expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
+    ]);
+
+    failPersistence = false;
+    rejectCleanup(new Error('wallet offline'));
+    await blob.flushPendingWork();
+    await blob.flushPendingSave();
+
+    expect(checkpoints).toHaveLength(2);
+    expect(checkpoints[1]?.walletReservationLedger).toEqual([
+      expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
+    ]);
+    expect(blob.durabilityWarning).toBeUndefined();
+    expect(cancelOffer).toHaveBeenCalledTimes(1);
   });
 
   it('requires the prepared save to update cached synchronously before returning', async () => {

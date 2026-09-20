@@ -89,7 +89,6 @@ export function reduceSessionCommand(
             ...state.model,
             betweenHand: { ...betweenHand, newHandRequested: true },
           },
-          coordination: { ...state.coordination, sameTermsRequested: true },
         },
         effects: [{ type: 'controller-propose-game', handProposal: localTerms }],
       };

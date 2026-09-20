@@ -18,7 +18,6 @@ import type { PersistedGameState } from '@games/host';
 
 export interface SessionMachineCoordination {
   firstGameAccepted: boolean;
-  sameTermsRequested: boolean;
   nextNotificationId: bigint;
   channelEnrichmentGeneration: number;
   gameEnrichmentGeneration: Record<string, number>;
@@ -99,7 +98,6 @@ export type SessionMachineEvent =
   | { type: 'set-compose-timeout'; timeout: bigint }
   | { type: 'set-compose-proposal-sent'; sent: boolean }
   | { type: 'clear-proposals'; ids?: readonly string[] }
-  | { type: 'set-same-terms-requested'; requested: boolean }
   | { type: 'set-first-game-accepted'; accepted: boolean }
   | {
       type: 'notification-accepted-group';
@@ -165,6 +163,7 @@ export type SessionMachineEvent =
   | { type: 'go-on-chain' }
   | { type: 'go-on-chain-result'; started: boolean }
   | { type: 'wasm-notification'; notification: WasmNotification; iStarted: boolean }
+  | { type: 'clear-durability-error' }
   | {
       type: 'enqueue-error';
       kind: 'infra-error' | 'action-failed' | 'durability-error';

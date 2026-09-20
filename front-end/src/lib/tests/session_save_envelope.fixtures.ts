@@ -58,6 +58,7 @@ function setTestGlobal(key: string, value: unknown): void {
 type LegacyFields = Record<string, any>;
 
 const PRESENTATION_KEYS = new Set([
+  'handKey',
   'activeGameIds',
   'currentHandGameIds',
   'currentHandOrigin',
@@ -76,6 +77,7 @@ const PRESENTATION_KEYS = new Set([
   'betweenHandLastHandProposal',
   'betweenHandRejectedOnceHandProposal',
   'betweenHandPendingRetryHandProposal',
+  'newHandRequested',
   'pendingProposals',
   'waitingStateEnteredAt',
   'cleanShutdownGraceStartedAt',
@@ -108,6 +110,7 @@ function common(fields: LegacyFields) {
       wasmNotificationHistory: fields.wasmNotificationHistory,
       diagnosticLog: fields.diagnosticLog,
     },
+    walletReservationLedger: fields.walletReservationLedger ?? [],
   };
 }
 
@@ -119,6 +122,7 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
       ? fields.perGameAmount
       : '20';
   const result: LegacyFields = {
+    handKey: 0n,
     activeGameIds: [],
     currentHandGameIds: [],
     currentHandOrigin: null,
@@ -146,6 +150,7 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
     },
     betweenHandRejectedOnceHandProposal: null,
     betweenHandPendingRetryHandProposal: null,
+    newHandRequested: false,
     pendingProposals: [],
     waitingStateEnteredAt: null,
     cleanShutdownGraceStartedAt: null,
@@ -214,6 +219,7 @@ export function baseSave(fields: LegacyFields = {}): SessionSave {
         remoteNumber: fields.remoteNumber ?? 0n,
         unackedMessages: fields.unackedMessages ?? [],
         disposition: fields.transportDisposition ?? 'active',
+        terminalHandoff: fields.terminalHandoff ?? null,
       },
       ...(invalidPresentation ? { presentation: presentation(fields) } : {}),
     } as SessionSave;
@@ -240,18 +246,20 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
     rewardPuzzleHash: '11'.repeat(32),
     unackedMessages: [],
     activeGameIds: ['game-1'],
+    handKey: 1n,
     currentHandGameIds: ['game-1'],
     currentHandOrigin: 'local',
     lastDisplayedGameId: 'game-1',
     activeGameType: 'calpoker',
     gameInstances: { 'game-1': ACTIVE_INSTANCE },
     handState: calpokerStateCodec.encode({
+      perPlayerStake: 20n,
       playerHand: [1n, 2n],
       opponentHand: [3n, 4n],
       moveNumber: 1n,
       isPlayerTurn: true,
       iStarted: true,
-      error: null,
+      settlementOutcome: null,
     }),
     betweenHandLastHandProposal: {
       sender_is_player_a: false,
@@ -273,6 +281,7 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
       remoteNumber: merged.remoteNumber,
       unackedMessages: merged.unackedMessages,
       disposition: merged.transportDisposition ?? 'active',
+      terminalHandoff: merged.terminalHandoff ?? null,
       durabilityWarning: merged.durabilityWarning,
     },
     presentation: presentation(merged),
@@ -315,6 +324,7 @@ export function liveSave(fields: LegacyFields = {}): SessionSave {
       remoteNumber: merged.remoteNumber,
       unackedMessages: merged.unackedMessages,
       disposition: merged.transportDisposition ?? 'active',
+      terminalHandoff: merged.terminalHandoff ?? null,
       durabilityWarning: merged.durabilityWarning,
     },
     presentation: presentation(merged),

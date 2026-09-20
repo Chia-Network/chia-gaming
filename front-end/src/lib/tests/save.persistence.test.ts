@@ -30,6 +30,7 @@ import {
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../session/historyLimits';
 import { baseSave } from './session_save_envelope.fixtures';
+import { walletReservationLedger } from '../session/walletReservationLedger';
 import {
   clearTestGlobal,
   makeStorage,
@@ -408,6 +409,119 @@ describe('session persistence', () => {
     await clearSession();
     _resetForTests();
     expect(await peekSession()).toBeNull();
+  });
+
+  it('clearSession preserves wallet reservation obligations in preferences phase', async () => {
+    walletReservationLedger.registerReserved(
+      'trade-clear',
+      { sessionId: 'session', gameSessionId: 'game-session' },
+      { kind: 'funding', operationId: 'funding-operation' },
+    );
+    await clearSession();
+    _resetForTests();
+
+    const restored = await peekSession();
+    expect(restored?.phase).toBe('preferences');
+    expect(restored?.walletReservationLedger).toEqual([
+      expect.objectContaining({
+        tradeId: 'trade-clear',
+        stage: 'cancel-required',
+        reason: 'orphaned-reservation-restored',
+      }),
+    ]);
+    await flushSessionSave();
+    _resetForTests();
+    expect((await peekSession())?.walletReservationLedger).toEqual([
+      expect.objectContaining({
+        tradeId: 'trade-clear',
+        stage: 'cancel-required',
+        reason: 'orphaned-reservation-restored',
+      }),
+    ]);
+    walletReservationLedger.resetForTests();
+    await clearSession();
+  });
+
+  it.each([
+    ['preferences', baseSave({ blockchainType: 'walletconnect' })],
+    [
+      'terminal',
+      baseSave({
+        channelStatus: { state: 'ResolvedClean' },
+        coinsOfInterest: [],
+      }),
+    ],
+  ])(
+    'preserves a late reservation while hydrating a marked %s record',
+    async (_phase, diskRecord) => {
+      _resetForTests();
+      await writeSessionRecord(diskRecord);
+      markSavedSession();
+      loadState();
+      const owner = { sessionId: 'late-session', gameSessionId: 'late-game-session' };
+      const purpose = { kind: 'funding' as const, operationId: 'late-funding' };
+
+      walletReservationLedger.registerReserved('trade-late-hydrate', owner, purpose);
+      walletReservationLedger.requireCancellation(owner, purpose, 'late-controller-result');
+      await flushSessionSave();
+
+      expect(walletReservationLedger.snapshot()).toEqual([
+        expect.objectContaining({
+          tradeId: 'trade-late-hydrate',
+          stage: 'cancel-required',
+        }),
+      ]);
+      _resetForTests();
+      const restored = await peekSession();
+      expect(restored?.phase).toBe(diskRecord.phase);
+      expect(restored?.walletReservationLedger).toEqual([
+        expect.objectContaining({
+          tradeId: 'trade-late-hydrate',
+          stage: 'cancel-required',
+        }),
+      ]);
+      walletReservationLedger.resetForTests();
+      await clearSession();
+    },
+  );
+
+  it('merges an old disk obligation with a newer in-memory reservation', async () => {
+    _resetForTests();
+    const diskRecord = baseSave({ blockchainType: 'walletconnect' });
+    diskRecord.walletReservationLedger = [
+      {
+        tradeId: 'trade-disk-old',
+        owner: { sessionId: 'disk-session', gameSessionId: 'disk-game-session' },
+        purpose: { kind: 'fee', operationId: 'disk-submission' },
+        stage: 'cancel-required',
+        reason: 'disk-old',
+      },
+    ];
+    await writeSessionRecord(diskRecord);
+    markSavedSession();
+    loadState();
+
+    walletReservationLedger.registerReserved(
+      'trade-memory-new',
+      { sessionId: 'memory-session', gameSessionId: 'memory-game-session' },
+      { kind: 'funding', operationId: 'memory-funding' },
+    );
+    await flushSessionSave();
+
+    expect(
+      walletReservationLedger
+        .snapshot()
+        .map(({ tradeId }) => tradeId)
+        .sort(),
+    ).toEqual(['trade-disk-old', 'trade-memory-new']);
+    _resetForTests();
+    const restored = await peekSession();
+    expect(restored?.walletReservationLedger.map(({ tradeId }) => tradeId).sort()).toEqual([
+      'trade-disk-old',
+      'trade-memory-new',
+    ]);
+    walletReservationLedger.resetForTests();
+    await clearSession();
   });
 
   it('saveSession preserves blockchainType', async () => {

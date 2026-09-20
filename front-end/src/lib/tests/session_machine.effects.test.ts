@@ -5,6 +5,7 @@ import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
 import type { SessionRuntimeLease } from '../session/sessionRuntimeLease';
 import { runSessionMachineTransition, send } from './session_machine.harness';
+import { Subject } from 'rxjs';
 
 function deferred() {
   let resolve!: () => void;
@@ -18,7 +19,7 @@ function deferred() {
 
 describe('session machine behavior sequences', () => {
   function runtimeWithCoordinator(
-    persist: () => Promise<void>,
+    persist: (state: ReturnType<typeof createSessionMachineState>) => Promise<void>,
     flushDeferredWork: () => void = () => {},
   ) {
     let coordinator: SessionRuntimeLease | undefined;
@@ -32,9 +33,14 @@ describe('session machine behavior sequences', () => {
         }
         attachedCoordinator = next;
       },
+      commitSessionRuntime: (_runtime: SessionMachineRuntime, next: SessionRuntimeLease) => {
+        controller.attachTransactionCoordinator(next);
+      },
       detachTransactionCoordinator: (detached: SessionRuntimeLease) => {
         if (attachedCoordinator === detached) attachedCoordinator = undefined;
       },
+      getObservable: () => new Subject(),
+      onRestoreStatusChange: () => () => {},
       flushDeferredWork,
       prepareReliableCommit: () => ({
         generation: 0,
@@ -43,6 +49,8 @@ describe('session machine behavior sequences', () => {
         remoteNumber: 0n,
       }),
       completeReliableCommit: () => {},
+      reportDurabilityError: jest.fn(),
+      clearDurabilityError: jest.fn(),
     } as unknown as SessionController;
     const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
       controller,
@@ -58,7 +66,7 @@ describe('session machine behavior sequences', () => {
     return { runtime, coordinator, controller };
   }
 
-  it('constructs without attaching or revoking controller authority', async () => {
+  it('does not attach an abandoned render candidate or revoke controller authority', async () => {
     const controller = new SessionController(null, 'session-id', 0n, 0n, {
       sendMessage: () => true,
       sendAck: () => true,
@@ -89,6 +97,38 @@ describe('session machine behavior sequences', () => {
     expect(current.flush).toHaveBeenCalledTimes(1);
     controller.cleanup();
     expect(current.retire).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes committed replacement the sole authority and retires the old runtime', () => {
+    const controller = new SessionController(null, 'session-id', 0n, 0n, {
+      sendMessage: () => true,
+      sendAck: () => true,
+    });
+    const makeRuntime = () =>
+      new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+        controller,
+        iStarted: false,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        onError: jest.fn(),
+        persist: async () => {},
+      });
+    const first = makeRuntime();
+    const replacement = makeRuntime();
+    first.activate();
+    expect(controller.getCommittedSessionRuntime()).toBe(first);
+
+    replacement.activate();
+    expect(controller.getCommittedSessionRuntime()).toBe(replacement);
+    const retiredState = first.getState();
+    first.dispatch({ type: 'set-first-game-accepted', accepted: true });
+    expect(first.getState()).toBe(retiredState);
+
+    controller.cleanup();
+    const replacementState = replacement.getState();
+    replacement.dispatch({ type: 'set-first-game-accepted', accepted: true });
+    expect(replacement.getState()).toBe(replacementState);
   });
 
   it('synchronously revokes a replaced controller owner and ignores stale release', async () => {
@@ -169,6 +209,45 @@ describe('session machine behavior sequences', () => {
 
     await runtime.persist();
     expect(launcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears degraded durability after a full retry without replaying released effects', async () => {
+    const persisted: Array<ReturnType<typeof createSessionMachineState>> = [];
+    const persist = jest.fn(async (state: ReturnType<typeof createSessionMachineState>) => {
+      persisted.push(state);
+      if (persisted.length === 1) throw new Error('disk full');
+    });
+    const { runtime, coordinator, controller } = runtimeWithCoordinator(persist);
+    (controller.reportDurabilityError as jest.Mock).mockImplementation(() => {
+      runtime.dispatch({
+        type: 'enqueue-error',
+        kind: 'durability-error',
+        message: 'Session storage failed',
+      });
+    });
+    const launcher = jest.fn(async () => {});
+
+    const completion = coordinator.releaseAfterPersistence('cleanup', launcher);
+    await expect(runtime.persist()).rejects.toThrow('disk full');
+    await expect(completion).resolves.toBeUndefined();
+    expect(launcher).toHaveBeenCalledTimes(1);
+    expect(runtime.getState().model.channel.queue).toContainEqual(
+      expect.objectContaining({ kind: 'durability-error' }),
+    );
+
+    await runtime.persist();
+
+    expect(persisted).toHaveLength(2);
+    expect(
+      persisted[1].model.channel.queue.some(
+        (notification) => notification.kind === 'durability-error',
+      ),
+    ).toBe(false);
+    expect(controller.clearDurabilityError).toHaveBeenCalledTimes(1);
+    expect(launcher).toHaveBeenCalledTimes(1);
+
+    await runtime.persist();
+    expect(persisted).toHaveLength(2);
   });
 
   it('returns and rejects typed work after its transaction reaches a fixed point', async () => {
@@ -375,7 +454,7 @@ describe('session machine behavior sequences', () => {
       renderCount += 1;
 
       if (renderCount === 1) {
-        runtime.dispatch({ type: 'set-same-terms-requested', requested: true });
+        runtime.dispatch({ type: 'set-new-hand-requested', requested: true });
       }
 
       renderDepth -= 1;
@@ -388,11 +467,8 @@ describe('session machine behavior sequences', () => {
 
     expect(renderCount).toBe(2);
 
-    expect(runtime.getState().coordination).toMatchObject({
-      firstGameAccepted: true,
-
-      sameTermsRequested: true,
-    });
+    expect(runtime.getState().coordination.firstGameAccepted).toBe(true);
+    expect(runtime.getState().model.betweenHand.newHandRequested).toBe(true);
     jest.useRealTimers();
   });
 

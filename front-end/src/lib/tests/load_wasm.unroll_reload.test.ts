@@ -1,13 +1,20 @@
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { flushSessionSave, peekSession } from '../../hooks/save';
+import {
+  discardStagedTerminalSession,
+  flushSessionSave,
+  markSavedSession,
+  peekSession,
+  stageTerminalSession,
+} from '../../hooks/save';
 import {
   channelStatusModelFromPayload,
   createSessionModel,
   sessionModelFromSave,
 } from '../session/model';
 import { isTerminalChannelSnapshot } from '../session/selectors';
+import { finalizeTerminalSession } from '../session/terminalFinalization';
 import { coinIdFromBytes, toUint8 } from '../../util';
 import { coinRecordToName } from '../../util/coinWatch';
 import type { HandProposal } from '../session/types';
@@ -28,6 +35,14 @@ import { createReloadableSessionLane, injectSessionReload } from './reload_injec
 import * as assert from 'assert';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import { createHash } from 'crypto';
+
+const harnessTerminalDependencies = {
+  stageTerminal: stageTerminalSession,
+  flushSave: flushSessionSave,
+  discardTerminal: discardStagedTerminalSession,
+  updateMarker: markSavedSession,
+  teardown: () => {},
+};
 
 function diagnosticBlobHash(blob: string): string {
   return createHash('sha256').update(blob).digest('hex');
@@ -191,8 +206,13 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
     'ended',
     'restored on-chain turn must progress through its real timeout terminal',
   );
-  await lane.runtime.persist();
-  await flushSessionSave();
+  await finalizeTerminalSession(
+    {
+      controller: lane.controller,
+      identity: { myName: 'Alice', opponentName: 'Bob', iStarted: lane.controller.iStarted },
+    },
+    harnessTerminalDependencies,
+  );
   const terminalSave = await peekSession();
   assert.equal(terminalSave?.phase, 'terminal');
   assert.equal(
@@ -254,8 +274,13 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
     'ResolvedClean',
     `clean landing failed: advisory=${lane.controller.lastChannelStatus?.advisory ?? 'none'}\n${lane.controller.diagnosticLog.join('\n')}`,
   );
-  await lane.runtime.persist();
-  await flushSessionSave();
+  await finalizeTerminalSession(
+    {
+      controller: lane.controller,
+      identity: { myName: 'Alice', opponentName: 'Bob', iStarted: lane.controller.iStarted },
+    },
+    harnessTerminalDependencies,
+  );
   assert.equal((await peekSession())?.phase, 'terminal');
 }
 

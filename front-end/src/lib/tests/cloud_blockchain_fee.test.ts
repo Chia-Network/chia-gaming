@@ -212,6 +212,22 @@ describe('CloudBlockchainInterface fee support', () => {
     });
   });
 
+  it('preserves Cloud cancellation error details', async () => {
+    setTestGlobal(
+      'fetch',
+      jest.fn(async () => ({
+        status: 200,
+        ok: true,
+        text: async () =>
+          JSON.stringify({ errors: [{ message: 'Offer already cancelled by another client' }] }),
+      })),
+    );
+
+    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).rejects.toThrow(
+      /Offer already cancelled by another client/,
+    );
+  });
+
   it('does not preselect or pin Cloud wallet coins', async () => {
     const calls = mockGraphql(() => ({}));
     await expect(new CloudBlockchainInterface().selectCoins('uid', 100n)).resolves.toBeNull();

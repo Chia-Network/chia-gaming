@@ -1,4 +1,5 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
+import { walletReservationLedger } from '../session/walletReservationLedger';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import type { NeedCoinSpendRequest, WasmResult } from '../../types/ChiaGaming';
@@ -266,7 +267,7 @@ describe('protocol identity loading', () => {
     expect(tags).toEqual(['ProposalMade', 'ChannelStatus']);
   });
 
-  it('holds a puzzle-hash ProposalMade until protocol identities are ready', () => {
+  it('binds protocol identities before publishing a puzzle-hash ProposalMade', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     _resetGameIdentityWarmupForTests();
@@ -294,8 +295,8 @@ describe('protocol identity loading', () => {
       ],
     });
     blob.flushDeferredWork();
-    expect(tags).toEqual([]);
-    expect(protocolIdentitiesReady()).toBe(false);
+    expect(tags).toEqual(['ProposalMade']);
+    expect(protocolIdentitiesReady()).toBe(true);
 
     blob.processResult({
       ...wasmResult(),
@@ -304,7 +305,7 @@ describe('protocol identity loading', () => {
     });
     blob.flushDeferredWork();
     expect(protocolIdentitiesReady()).toBe(true);
-    expect(tags).toEqual(['ChannelStatus', 'ProposalMade']);
+    expect(tags).toEqual(['ProposalMade', 'ChannelStatus']);
   });
 
   it('reports a bind failure on Active and still delivers ChannelStatus', () => {
@@ -314,6 +315,7 @@ describe('protocol identity loading', () => {
     blob.wc = {
       registered_game_packages: () => [],
     } as (typeof blob)['wc'];
+    expectConsoleError('completeRegisteredGames failed');
     expectConsoleError('completeRegisteredGames failed');
     const tags: string[] = [];
     const errors: string[] = [];
@@ -751,6 +753,80 @@ describe('keepalive activity', () => {
 });
 
 describe('out-of-order delivery with reorder queue', () => {
+  it('reconstructs a lost receive gap solely from the sender reliable journal after both peers reload', async () => {
+    const sender = createReadyBlob();
+    sender.blob.processResult(
+      wasmResult({
+        events: [{ OutboundMessage: enc('frame-n') }, { OutboundMessage: enc('frame-n-plus-one') }],
+      }),
+    );
+    await sender.blob.flushPendingWork();
+    expect(sender.sentMessages.map(({ msgno }) => msgno)).toEqual([1, 2]);
+    const senderCheckpoint = {
+      messageNumber: sender.blob.messageNumber,
+      unackedMessages: structuredClone(sender.blob.unackedMessages),
+    };
+
+    const beforeReload = createReadyBlob();
+    beforeReload.blob.deliverMessage(
+      BigInt(sender.sentMessages[1].msgno),
+      sender.sentMessages[1].msg,
+    );
+    expect(beforeReload.cradle.deliver_message).not.toHaveBeenCalled();
+    expect((beforeReload.blob as any).reorderQueue.size).toBe(1);
+    beforeReload.blob.cleanup();
+
+    let authoritativeMoveEvents = 0;
+    const afterReload = createReadyBlob((message) =>
+      new TextDecoder().decode(message) === 'frame-n-plus-one'
+        ? {
+            events: [
+              {
+                Notification: {
+                  LocalActionApplied: { id: 'game-1', action: 'make_move' },
+                },
+              },
+            ],
+          }
+        : { events: [] },
+    );
+    afterReload.blob.getObservable().subscribe((event) => {
+      if (event.type === 'notification' && event.data.LocalActionApplied?.action === 'make_move') {
+        authoritativeMoveEvents += 1;
+      }
+    });
+    expect((afterReload.blob as any).reorderQueue.size).toBe(0);
+
+    const retransmitted: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const restoredSender = new SessionController(
+      mockBlockchain,
+      'test-sender-restored',
+      100n,
+      100n,
+      makePeerConn(retransmitted, []),
+    );
+    restoredSender.messageNumber = senderCheckpoint.messageNumber;
+    restoredSender.unackedMessages = senderCheckpoint.unackedMessages;
+    restoredSender.loadWasm(mockWasmConnection);
+    restoredSender.setGameSession(makeMockCradle());
+    restoredSender.kickSystem(2);
+
+    expect(restoredSender.resendUnacked()).toBe(true);
+    expect(retransmitted.map(({ msgno }) => msgno)).toEqual([1, 2]);
+    for (const frame of retransmitted) {
+      afterReload.blob.deliverMessage(BigInt(frame.msgno), frame.msg);
+    }
+
+    expect(
+      (afterReload.cradle.deliver_message as jest.Mock).mock.calls.map(([message]) =>
+        new TextDecoder().decode(message),
+      ),
+    ).toEqual(['frame-n', 'frame-n-plus-one']);
+    expect(afterReload.blob.remoteNumber).toBe(2n);
+    expect(authoritativeMoveEvents).toBe(1);
+    expect((afterReload.blob as any).reorderQueue.size).toBe(0);
+  });
+
   it('delivers 3, 1, 2 → cradle sees a, b, c in order', async () => {
     const delivered: Uint8Array[] = [];
     const { blob, sentAcks } = createReadyBlob((msg) => {
@@ -778,7 +854,7 @@ describe('out-of-order delivery with reorder queue', () => {
     expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(cradle.go_on_chain).toHaveBeenCalledTimes(1);
     expect((blob as any).reorderQueue.size).toBe(0);
-    expect(blob.storedMessages).toEqual([]);
+    expect((blob as any).reorderQueue.size).toBe(0);
   });
 
   it('fails on queued message count and aggregate bytes', () => {
@@ -792,7 +868,7 @@ describe('out-of-order delivery with reorder queue', () => {
     byteLimited.blob.deliverMessage(1n, enc('ab'));
     byteLimited.blob.deliverMessage(2n, enc('cd'));
     expect(byteLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
-    expect(byteLimited.blob.storedMessages).toEqual([]);
+    expect((byteLimited.blob as any).reorderQueue.size).toBe(0);
   });
 
   it('does not double-account duplicate queued msgnos', () => {
@@ -972,6 +1048,9 @@ describe('WASM wallet funding requests', () => {
       ['ab'.repeat(32)],
       123n,
       10n,
+      expect.objectContaining({
+        purpose: expect.objectContaining({ kind: 'funding' }),
+      }),
     );
     expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledWith(
       JSON.stringify(testSpendBundle('coin-spend')),
@@ -1126,6 +1205,7 @@ describe('WASM wallet funding requests', () => {
       .mockResolvedValue({ offer: 'offer1unexpected', tradeId: 'trade-1' });
     const cancelOffer = jest.fn().mockResolvedValue(undefined);
     const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds, cancelOffer }, 60000);
+    walletReservationLedger.attachRpc(blockchain.rpc);
     const { blob, cradle } = createReadyBlob();
     const walletCallbackFailed = jest.fn().mockReturnValue(wasmResult());
     (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
@@ -1150,7 +1230,7 @@ describe('WASM wallet funding requests', () => {
     expect(walletCallbackFailed).toHaveBeenCalledWith(
       expect.stringContaining('concurrent funding request'),
     );
-    expect(blob.getWasmFields()?.walletOfferCleanup).toEqual([]);
+    expect(blob.getWasmFields()?.walletReservationLedger).toEqual([]);
     expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 
@@ -1165,6 +1245,7 @@ describe('WASM wallet funding requests', () => {
       .mockResolvedValue({ offer: 'offer1invalid', tradeId: 'trade-1' });
     const cancelOffer = jest.fn().mockResolvedValue(undefined);
     const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds, cancelOffer }, 60000);
+    walletReservationLedger.attachRpc(blockchain.rpc);
     const { blob, cradle } = createReadyBlob();
     const walletCallbackFailed = jest.fn().mockReturnValue(wasmResult());
     (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
@@ -1189,6 +1270,50 @@ describe('WASM wallet funding requests', () => {
     expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 
+  it('routes a late funding result through the ledger after controller teardown', async () => {
+    let resolveOffer!: (value: { offer: string; tradeId: string }) => void;
+    const createOfferForIds = jest.fn(
+      () =>
+        new Promise<{ offer: string; tradeId: string }>((resolve) => {
+          resolveOffer = resolve;
+        }),
+    );
+    const cancelOffer = jest.fn().mockResolvedValue(undefined);
+    const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds, cancelOffer }, 60000);
+    walletReservationLedger.attachRpc(blockchain.rpc);
+    const { blob, cradle } = createReadyBlob();
+    const provideOffer = jest.fn().mockReturnValue(wasmResult());
+    (cradle as unknown as { provide_offer_bech32: jest.Mock }).provide_offer_bech32 = provideOffer;
+    setActiveBlob(blob);
+    blob.blockchain = blockchain;
+
+    blob.processResult(
+      wasmResult({
+        events: [
+          {
+            NeedCoinSpend: {
+              amount: '100',
+              fee: '0',
+              conditions: [{ opcode: 60, args: ['launcher'] }],
+            },
+          },
+        ],
+      }),
+    );
+    await blob.flushPendingSave();
+    for (let i = 0; i < 20 && createOfferForIds.mock.calls.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(createOfferForIds).toHaveBeenCalledTimes(1);
+    blob.cleanup();
+    resolveOffer({ offer: 'offer1late', tradeId: 'trade-late' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(cancelOffer).toHaveBeenCalledWith('trade-late');
+    expect(provideOffer).not.toHaveBeenCalled();
+  });
+
   it('processes a successful persisted offer result once and advances once', async () => {
     const request: NeedCoinSpendRequest = {
       amount: '100',
@@ -1203,6 +1328,7 @@ describe('WASM wallet funding requests', () => {
       .mockResolvedValue({ offer: 'offer1success', tradeId: 'trade-1' });
     const cancelOffer = jest.fn().mockResolvedValue(undefined);
     const blockchain = new BlockchainPoller({ ...mockRpc, createOfferForIds, cancelOffer }, 60000);
+    walletReservationLedger.attachRpc(blockchain.rpc);
     const { blob, cradle } = createReadyBlob();
     (cradle as unknown as { provide_offer_bech32: jest.Mock }).provide_offer_bech32 = jest
       .fn()
@@ -1356,15 +1482,22 @@ describe('wallet fee attachment on submission', () => {
 
   it('aggregates a wallet fee spend into the submitted bundle', async () => {
     const aggregated = { coin_spends: [], aggregated_signature: '0xcombined' };
-    const createFeeSpend = jest.fn().mockResolvedValue({ kind: 'offer', offer: 'offer1signed' });
+    const createFeeSpend = jest
+      .fn()
+      .mockResolvedValue({ kind: 'offer', offer: 'offer1signed', tradeId: 'fee-aggregate-trade' });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const cancelOffer = jest.fn().mockRejectedValue(new Error('offer already spent'));
     const finalize = jest.fn().mockReturnValue({
       protocol_bundle: testSpendBundle('coin'),
       bundle: aggregated,
       applied_fee: '10',
       warning: null,
     });
-    const blockchain = new BlockchainPoller({ ...mockRpc, createFeeSpend, spend }, 60000);
+    const blockchain = new BlockchainPoller(
+      { ...mockRpc, createFeeSpend, spend, cancelOffer },
+      60000,
+    );
+    walletReservationLedger.attachRpc(blockchain.rpc);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
@@ -1374,7 +1507,11 @@ describe('wallet fee attachment on submission', () => {
     submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
     await transactionSubmitQueue(blob);
 
-    expect(createFeeSpend).toHaveBeenCalledWith(10n, feeTarget);
+    expect(createFeeSpend).toHaveBeenCalledWith(
+      10n,
+      feeTarget,
+      expect.objectContaining({ purpose: { kind: 'fee', operationId: expect.any(String) } }),
+    );
     expect(finalize).toHaveBeenCalledWith(
       expect.any(String),
       jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
@@ -1386,13 +1523,14 @@ describe('wallet fee attachment on submission', () => {
       'submitTransaction',
       10n,
     );
+    expect(cancelOffer).toHaveBeenCalledWith('fee-aggregate-trade');
   });
 
   it('gates fee creation and finalized broadcast on persistence attempts, continuing after failure', async () => {
     const order: string[] = [];
     const createFeeSpend = jest.fn().mockImplementation(async () => {
       order.push('fee');
-      return { kind: 'offer', offer: 'offer1signed' };
+      return { kind: 'offer', offer: 'offer1signed', tradeId: 'fee-gated-trade' };
     });
     const spend = jest.fn().mockImplementation(async () => {
       order.push('spend');
@@ -1647,7 +1785,11 @@ describe('wallet fee attachment on submission', () => {
     const createFeeSpend = jest
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'wallet transport disconnected' })
-      .mockResolvedValueOnce({ kind: 'offer', offer: 'offer1signed' });
+      .mockResolvedValueOnce({
+        kind: 'offer',
+        offer: 'offer1signed',
+        tradeId: 'fee-retry-trade',
+      });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
       { ...mockRpc, createFeeSpend, spend, isReadyForPlay: () => true },
@@ -1757,6 +1899,7 @@ describe('wallet fee attachment on submission', () => {
       { ...mockRpc, createFeeSpend, cancelOffer, spend },
       60000,
     );
+    walletReservationLedger.attachRpc(blockchain.rpc);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;
@@ -1806,6 +1949,7 @@ describe('wallet fee attachment on submission', () => {
       { ...mockRpc, createFeeSpend, cancelOffer, spend },
       60000,
     );
+    walletReservationLedger.attachRpc(blockchain.rpc);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = blockchain;

@@ -7,7 +7,6 @@ import {
   flushSessionSave,
   peekSession,
   saveSession,
-  saveTerminalSession,
   type LiveSessionSave,
 } from '../../hooks/save';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
@@ -60,7 +59,6 @@ function bindRuntime(
       getRestoreError: () => controller.getRestoreError(),
       onError: (error) => controller.reportRuntimeError(error),
       save: (update) => persistOutsideReload(controller, () => saveSession(update)),
-      saveTerminal: (update) => persistOutsideReload(controller, () => saveTerminalSession(update)),
     },
   );
   runtime.activate();

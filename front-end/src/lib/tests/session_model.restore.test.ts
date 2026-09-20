@@ -135,6 +135,7 @@ describe('session model restore, schema, and event contracts', () => {
       perGameAmount: '10',
       rewardPuzzleHash: '11'.repeat(32),
       unackedMessages: [],
+      handKey: 1n,
       activeGameIds: [],
       activeGameType: 'spacepoker',
       channelStatus: {

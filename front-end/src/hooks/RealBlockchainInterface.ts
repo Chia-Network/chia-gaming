@@ -36,6 +36,7 @@ const ASSERT_COIN_ANNOUNCEMENT = 61n;
 const ASSERT_CONCURRENT_SPEND = 64n;
 const RESERVE_FEE = 52n;
 const RECEIVE_MESSAGE = 67n;
+const MAX_WALLET_CANCELLATION_ERROR_LENGTH = 512;
 
 function serializeClvmAtomHex(atomHex: string): string {
   const atom = normalizeHexString(atomHex);
@@ -199,6 +200,11 @@ function collectErrorText(err: unknown): string {
         ),
     )
     .join(' ');
+}
+
+function boundedCancellationError(value: unknown): string {
+  const detail = collectErrorText(value) || 'wallet returned success=false without details';
+  return detail.slice(0, MAX_WALLET_CANCELLATION_ERROR_LENGTH);
 }
 
 function isCoinRecordMiss(err: unknown): boolean {
@@ -460,11 +466,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         ],
       });
       const offer = (response as any)?.offer;
+      const tradeId = (response as any)?.tradeRecord?.tradeId;
       if (typeof offer !== 'string' || !offer.startsWith('offer')) {
         throw new Error('wallet returned no signed offer for the fee');
       }
+      if (typeof tradeId !== 'string' || !tradeId) {
+        throw new Error('wallet returned a persisted fee offer without tradeRecord.tradeId');
+      }
       log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
-      return { kind: 'offer', offer };
+      return { kind: 'offer', offer, tradeId };
     } catch (e) {
       // Propagate the real reason (RPC error, missing signed bundle) so the
       // caller's user-facing warning is accurate rather than always blaming
@@ -629,9 +639,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           if (typeof tradeId === 'string' && tradeId) {
             return { offer: offerStr, tradeId };
           }
-          log(
-            '[wc-blockchain] persisted createOfferForIds response omitted trade ID; rejected offers cannot be released automatically',
-          );
+          throw new Error('wallet returned a persisted funding offer without tradeRecord.tradeId');
         }
         return offerStr;
       }
@@ -674,7 +682,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async cancelOffer(tradeId: string): Promise<void> {
     const response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });
     if (!response.success) {
-      throw new Error(`wallet failed to cancel rejected offer ${tradeId}`);
+      throw new Error(
+        `wallet failed to cancel offer ${tradeId}: ${boundedCancellationError(response)}`,
+      );
     }
   }
 

@@ -83,6 +83,7 @@ export function loadPreferences(): SessionSave {
             network: preferences.network,
           },
           history: {},
+          walletReservationLedger: [],
         };
       }
     }
@@ -96,6 +97,7 @@ export function loadPreferences(): SessionSave {
     identity: { playerId: randomHex() },
     preferences: {},
     history: {},
+    walletReservationLedger: [],
   };
 }
 

@@ -123,8 +123,7 @@ export function reduceSessionNotification(
     } else if (reason === 'CancelledByPeer') {
       step({ type: 'set-pending-retry-terms', handProposal: null });
       step({ type: 'set-compose-proposal-sent', sent: false });
-      const sameTerms = before.coordination.sameTermsRequested && wasOurs;
-      step({ type: 'set-same-terms-requested', requested: false });
+      const sameTerms = before.model.betweenHand.newHandRequested && wasOurs;
       step({ type: 'set-new-hand-requested', requested: false });
       if (sameTerms) {
         current = {
@@ -261,17 +260,16 @@ export function reduceSessionNotification(
       current.model.game.currentHandOrigin,
     );
     if (between.mode === 'decision') {
-      if (matchesLast && current.coordination.sameTermsRequested) {
+      if (matchesLast && current.model.betweenHand.newHandRequested) {
         current = {
           ...current,
-          coordination: { ...current.coordination, sameTermsRequested: false },
           model: {
             ...current.model,
             betweenHand: { ...between, pendingRetryHandProposal: null, newHandRequested: false },
           },
         };
         effects.push({ type: 'controller-accept-proposal', id: incoming.id });
-      } else if (current.coordination.sameTermsRequested && !matchesLast) {
+      } else if (current.model.betweenHand.newHandRequested && !matchesLast) {
         for (const proposal of between.pendingProposals) {
           if (proposal.lifecycle === 'local-outgoing' && proposal.id !== incoming.id) {
             effects.push({ type: 'controller-cancel-proposal', id: proposal.id });
@@ -279,7 +277,6 @@ export function reduceSessionNotification(
         }
         current = {
           ...current,
-          coordination: { ...current.coordination, sameTermsRequested: false },
           model: {
             ...current.model,
             betweenHand: {

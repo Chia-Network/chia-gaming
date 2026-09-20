@@ -115,7 +115,6 @@ pub struct OffChainPhase {
     // Unroll timeout
     unroll_timeout: Timeout,
 
-    #[serde(skip)]
     channel_spend_next_phase:
         Option<Box<crate::session_phases::spend_channel_coin_phase::SpendChannelCoinPhase>>,
 }

@@ -1,6 +1,6 @@
-import type { ChannelStatusPayload } from '../../types/ChiaGaming';
+import type { ChannelStatusPayload, CoinOfInterestEntry } from '../../types/ChiaGaming';
 import type { CanonicalFundingRequest } from './fundingRequest';
-import type { WalletOfferCleanupEntry } from './walletOfferCleanup';
+import type { WalletReservationLedgerEntry } from './walletReservationLedgerSchema';
 import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
@@ -12,7 +12,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 26n;
+export const SESSION_SAVE_VERSION = 28n;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
@@ -63,6 +63,15 @@ export interface SessionTransportSave {
   remoteNumber: bigint;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   disposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
+  terminalHandoff: SessionTerminalHandoffSave | null;
+}
+
+export interface SessionTerminalHandoffSave {
+  id: string;
+  message: Uint8Array;
+  msgno: bigint;
+  sent: boolean;
+  acknowledged: boolean;
 }
 
 export interface SessionLiveSave extends SessionTransportSave {
@@ -71,7 +80,6 @@ export interface SessionLiveSave extends SessionTransportSave {
   rewardPuzzleHash: string;
   durabilityWarning?: string;
   fundingOutbox?: Array<{ key: string; request: CanonicalFundingRequest }>;
-  walletOfferCleanup?: WalletOfferCleanupEntry[];
 }
 
 export interface SavedGameInstance {
@@ -106,6 +114,7 @@ export interface SavedQueuedNotification {
 }
 
 export interface SessionPresentationSave {
+  handKey: bigint;
   activeGameIds: string[];
   currentHandGameIds: string[];
   currentHandOrigin: ProposalOrigin | null;
@@ -128,6 +137,7 @@ export interface SessionPresentationSave {
   betweenHandLastHandProposal: SavedHandProposal | null;
   betweenHandRejectedOnceHandProposal: SavedHandProposal | null;
   betweenHandPendingRetryHandProposal: SavedHandProposal | null;
+  newHandRequested: boolean;
   pendingProposals: Array<{
     id: string;
     lifecycle: PendingProposalLifecycle;
@@ -143,6 +153,7 @@ interface SessionSaveBase {
   identity: SessionIdentitySave;
   preferences: SessionPreferencesSave;
   history: SessionHistorySave;
+  walletReservationLedger: WalletReservationLedgerEntry[];
 }
 
 export interface PreferencesSessionSave extends SessionSaveBase {
@@ -166,7 +177,7 @@ export interface TerminalSessionSave extends SessionSaveBase {
   phase: 'terminal';
   terminal: {
     iStarted: boolean;
-    coinsOfInterest: Array<{ label: string; id: string }>;
+    coinsOfInterest: CoinOfInterestEntry[];
     myAlias: string | null;
     opponentAlias: string | null;
   };

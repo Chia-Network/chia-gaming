@@ -126,6 +126,7 @@ export function makeMockCradle(
     report_coin_states: jest.fn(() => wasmResult()),
     report_height: jest.fn(() => wasmResult()),
     snapshot_watched_coins: jest.fn(() => []),
+    coins_of_interest: jest.fn(() => []),
     drain_submissions: jest.fn(() => []),
     configure_submission_fee: jest.fn(),
     finalize_submission: jest.fn(() => ({

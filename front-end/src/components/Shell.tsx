@@ -65,7 +65,6 @@ import {
   setTheme as saveTheme,
   peekSession,
   saveSession,
-  patchLiveSessionPresentation,
   patchPreHandshakeTransport,
   replaceSession,
   flushSessionSave,
@@ -127,7 +126,7 @@ import {
   CHAIN_POLL_INTERVAL_MS,
   type BlockchainPoller,
 } from '../hooks/BlockchainPoller';
-import { RestoreStatus } from '../hooks/SessionController';
+import { RestoreStatus, WalletOfferCleanupPendingError } from '../hooks/SessionController';
 import {
   deferredHubRemapEscalationAction,
   isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt,
@@ -173,7 +172,10 @@ import {
 } from '../lib/session/peerSessionParams';
 import { DEFAULT_SESSION_RECEIVE_POLICY } from '../lib/session/receivePolicy';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
-import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
+import {
+  finalizeTerminalSession,
+  TerminalSessionStorageError,
+} from '../lib/session/terminalFinalization';
 import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 import {
   appendRecent,
@@ -856,6 +858,9 @@ const Shell = () => {
   );
 
   const [walletConnected, setWalletConnected] = useState(false);
+  const [terminalFinalizationBlocker, setTerminalFinalizationBlocker] = useState<string | null>(
+    null,
+  );
   // Mirror walletConnected into a ref so presence callbacks (getPresence,
   // session cleanup, phase change) can report busy while walletless without
   // re-subscribing. Disconnect/connect paths also set this synchronously so an
@@ -1070,7 +1075,7 @@ const Shell = () => {
         waitingEnteredAtRef.current = now;
         waitingStateRef.current = channelState;
         setAbandonEnabled(false);
-        patchLiveSessionPresentation({ waitingStateEnteredAt: now });
+        sessionController?.setPresentationTiming({ waitingStateEnteredAt: now });
         abandonTimerRef.current = setTimeout(() => {
           abandonTimerRef.current = null;
           if (dashboardSessionModelRef.current?.channel.status.state !== channelState) return;
@@ -1085,7 +1090,7 @@ const Shell = () => {
       if (waitingEnteredAtRef.current !== null) {
         waitingEnteredAtRef.current = null;
         waitingStateRef.current = null;
-        patchLiveSessionPresentation({ waitingStateEnteredAt: null });
+        sessionController?.setPresentationTiming({ waitingStateEnteredAt: null });
       }
       setAbandonEnabled(false);
     }
@@ -1465,7 +1470,10 @@ const Shell = () => {
       isReady: () => true,
       deliver: () => {},
       persist: async () => {
-        await patchPreHandshakeTransport(peer.reliableState);
+        await patchPreHandshakeTransport({
+          ...peer.reliableState,
+          terminalHandoff: null,
+        });
         await flushSessionSave();
       },
       acknowledged: () => {
@@ -1756,7 +1764,10 @@ const Shell = () => {
                     ? { unrollTimeout: unrollTimeout.toString() }
                     : {}),
                 },
-                transport: structuredClone(peerSessionRef.current!.reliableState),
+                transport: {
+                  ...structuredClone(peerSessionRef.current!.reliableState),
+                  terminalHandoff: null,
+                },
                 identity: {
                   sessionId: hubSessionId,
                   ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
@@ -2254,7 +2265,10 @@ const Shell = () => {
                     channelTimeout: proposal.channel_timeout,
                     unrollTimeout: proposal.unroll_timeout,
                   },
-                  transport: structuredClone(provisional.reliableState),
+                  transport: {
+                    ...structuredClone(provisional.reliableState),
+                    terminalHandoff: null,
+                  },
                 });
                 if (peerSessionRef.current !== provisional) return;
                 sessionSaveRef.current = loadState();
@@ -2969,14 +2983,12 @@ const Shell = () => {
   const finishResolvedSessionDisplay = useCallback(
     async (hasError: boolean): Promise<boolean> => {
       const controller = sessionController;
-      const model = dashboardSessionModelRef.current;
-      if (!controller || !model) {
+      if (!controller) {
         setSessionError(true);
         return false;
       }
       const alias =
         sessionConfigRef.current?.myAlias ?? savedMyAlias(sessionSaveRef.current) ?? peekAlias();
-      const terminalCoins = selectDashboardCoins(model, coinsRef.current);
       const identity = {
         myName: alias ?? '',
         opponentName:
@@ -2993,14 +3005,23 @@ const Shell = () => {
         terminal = await finalizeTerminalSession({
           controller,
           identity,
-          coins: terminalCoins,
         });
       } catch (error) {
-        controller.reportDurabilityError(error);
+        if (error instanceof WalletOfferCleanupPendingError) {
+          setTerminalFinalizationBlocker(error.message);
+          setWalletAlert(true);
+        } else if (error instanceof TerminalSessionStorageError) {
+          controller.reportDurabilityError(error);
+        } else {
+          setTerminalFinalizationBlocker(
+            error instanceof Error ? error.message : 'Session finalization is blocked.',
+          );
+        }
         setSessionError(true);
         return false;
       }
 
+      setTerminalFinalizationBlocker(null);
       handleCoinsChange(terminal.coins);
       dashboardSessionModelRef.current = terminal.model;
       setDashboardSessionModel(terminal.model);
@@ -3051,21 +3072,23 @@ const Shell = () => {
       setSessionConfig,
       setSessionError,
       setSessionPhase,
+      setTerminalFinalizationBlocker,
+      setWalletAlert,
     ],
   );
 
   const handleSessionPhaseChange = useCallback(
-    (phase: SessionPhase, hasError?: boolean) => {
+    (phase: SessionPhase, hasError?: boolean): void | Promise<boolean> => {
       if (phase === 'resolved') {
-        if (sessionFinishedCleanupRef.current) return;
+        if (sessionFinishedCleanupRef.current) return Promise.resolve(true);
         const previousPhase = sessionPhaseRef.current;
         const switchHub = shouldSwitchToHubOnResolved(previousPhase, !!hasError);
         const bcType = blockchainTypeRef.current;
         if (bcType) startBalancePolling(bcType);
-        void finishResolvedSessionDisplay(!!hasError).then((finished) => {
+        return finishResolvedSessionDisplay(!!hasError).then((finished) => {
           if (finished && switchHub) setActiveTab('hub');
+          return finished;
         });
-        return;
       }
 
       sessionPhaseRef.current = phase;
@@ -3350,6 +3373,7 @@ const Shell = () => {
       }
       const restoredChannelStatus = savedChannelStatus(save);
       const restoredPresentation = save.phase === 'live' ? save.presentation : null;
+      const presentationTimingOwner = sessionController;
       if (
         restoredPresentation?.waitingStateEnteredAt != null &&
         isAbandonWaitingState(restoredChannelStatus)
@@ -3376,7 +3400,7 @@ const Shell = () => {
         waitingStateRef.current = null;
         setAbandonEnabled(false);
         if (restoredPresentation?.waitingStateEnteredAt != null) {
-          patchLiveSessionPresentation({ waitingStateEnteredAt: null });
+          presentationTimingOwner?.setPresentationTiming({ waitingStateEnteredAt: null });
         }
       }
 
@@ -3389,7 +3413,9 @@ const Shell = () => {
             () => {
               cleanShutdownGraceTimerRef.current = null;
               setCleanShutdownGraceActive(false);
-              patchLiveSessionPresentation({ cleanShutdownGraceStartedAt: null });
+              presentationTimingOwner?.setPresentationTiming({
+                cleanShutdownGraceStartedAt: null,
+              });
             },
             Number(GRACE_DELAY_MS - elapsed),
           );
@@ -3805,18 +3831,18 @@ const Shell = () => {
   }, [peerLiveness, sessionPhase, doDisconnectHub]);
 
   const startCleanShutdownGrace = useCallback(() => {
+    const presentationTimingOwner = sessionController;
     if (cleanShutdownGraceTimerRef.current !== null) {
       clearTimeout(cleanShutdownGraceTimerRef.current);
     }
     setCleanShutdownGraceActive(true);
-    saveSession({
-      scope: 'presentation',
-      presentation: { cleanShutdownGraceStartedAt: BigInt(Date.now()) },
+    presentationTimingOwner?.setPresentationTiming({
+      cleanShutdownGraceStartedAt: BigInt(Date.now()),
     });
     cleanShutdownGraceTimerRef.current = setTimeout(() => {
       cleanShutdownGraceTimerRef.current = null;
       setCleanShutdownGraceActive(false);
-      patchLiveSessionPresentation({ cleanShutdownGraceStartedAt: null });
+      presentationTimingOwner?.setPresentationTiming({ cleanShutdownGraceStartedAt: null });
     }, Number(GRACE_DELAY_MS));
   }, []);
 
@@ -4676,6 +4702,15 @@ const Shell = () => {
               visibility: activeTab === 'game' ? 'visible' : 'hidden',
             }}
           >
+            {terminalFinalizationBlocker && (
+              <div
+                role="alert"
+                className="px-4 py-2 text-sm text-alert-text bg-canvas-bg-subtle border-b border-canvas-border"
+              >
+                <span className="font-semibold">Session finalization blocked: </span>
+                {terminalFinalizationBlocker}
+              </div>
+            )}
             <GameDashboard
               view={dashboardView}
               balances={statusBarBalances}

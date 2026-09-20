@@ -346,7 +346,16 @@ async function createOfferForIds(data: CreateOfferForIdsRequest) {
 }
 
 async function cancelOffer(data: { tradeId: string; secure: boolean; fee: bigint }) {
-  return await request<{ success: boolean }, typeof data>(ChiaMethod.CancelOffer, data);
+  return await request<
+    {
+      success: boolean;
+      error?: unknown;
+      message?: unknown;
+      detail?: unknown;
+      data?: unknown;
+    },
+    typeof data
+  >(ChiaMethod.CancelOffer, data);
 }
 
 async function pushTransactions(data: PushTransactionsRequest) {

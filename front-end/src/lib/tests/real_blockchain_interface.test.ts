@@ -1,3 +1,5 @@
+import { expectConsoleError } from '../../../scripts/testSetup';
+
 jest.mock('../../hooks/WalletConnectRpc', () => ({
   WalletConnectTransportError: class WalletConnectTransportError extends Error {},
   WalletConnectResponseError: class WalletConnectResponseError extends Error {},
@@ -60,6 +62,7 @@ import {
   WalletConnectTransportError,
 } from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
+import { WalletReservationLedger } from '../session/walletReservationLedger';
 import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
@@ -626,13 +629,14 @@ describe('RealBlockchainInterface', () => {
     });
   });
 
-  it('accepts a persisted 2.7.4 offer response without a trade ID', async () => {
+  it('rejects a persisted offer response without a trade ID', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+    expectConsoleError('createOfferForIds error');
 
     await expect(
       blockchain.createOfferForIds('test', { '1': -100n }, undefined, ['ab'.repeat(32)]),
-    ).resolves.toBe('offer1signed');
+    ).rejects.toThrow('tradeRecord.tradeId');
 
     expect(mockCreateOfferForIds).toHaveBeenCalledWith(
       expect.objectContaining({ validateOnly: false }),
@@ -650,6 +654,41 @@ describe('RealBlockchainInterface', () => {
       secure: false,
       fee: 0n,
     });
+  });
+
+  it('preserves already-spent cancellation detail and converges the ledger', async () => {
+    const ledger = new WalletReservationLedger();
+    const blockchain = new RealBlockchainInterface();
+    mockCancelOffer.mockResolvedValue({
+      success: false,
+      error: 'Offer trade already spent on chain',
+    });
+    ledger.attachRpc(blockchain);
+    const owner = { sessionId: 'session', gameSessionId: 'game-session' };
+    const purpose = { kind: 'fee' as const, operationId: 'submission' };
+
+    ledger.registerReserved('trade-already-spent', owner, purpose);
+    ledger.requireCancellation(owner, purpose, 'wallet-outcome-finalized');
+    await ledger.awaitSession(owner.gameSessionId);
+
+    expect(ledger.snapshot()).toEqual([]);
+    expect(mockCancelOffer).toHaveBeenCalledWith({
+      tradeId: 'trade-already-spent',
+      secure: false,
+      fee: 0n,
+    });
+  });
+
+  it('does not hide an uncertain cancellation response', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCancelOffer.mockResolvedValue({
+      success: false,
+      detail: 'temporary wallet database failure',
+    });
+
+    await expect(blockchain.cancelOffer('trade-uncertain')).rejects.toThrow(
+      /temporary wallet database failure/,
+    );
   });
 
   it('persists receiver funding offers to reserve wallet-selected inputs', async () => {
@@ -672,7 +711,10 @@ describe('RealBlockchainInterface', () => {
 
   it('encodes RESERVE_FEE as a WalletConnect amount condition', async () => {
     const blockchain = new RealBlockchainInterface();
-    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+    mockCreateOfferForIds.mockResolvedValue({
+      offer: 'offer1signed',
+      tradeRecord: { tradeId: 'reserve-fee-trade' },
+    });
 
     await blockchain.createOfferForIds(
       'test',
@@ -692,11 +734,15 @@ describe('RealBlockchainInterface', () => {
   it('lets createOfferForIds select its own wallet inputs', async () => {
     const blockchain = new RealBlockchainInterface();
     mockSelectCoins.mockRejectedValue(new Error('Internal error'));
-    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+    mockCreateOfferForIds.mockResolvedValue({
+      offer: 'offer1signed',
+      tradeRecord: { tradeId: 'selected-trade' },
+    });
 
-    await expect(blockchain.createOfferForIds('test', { '1': -100n })).resolves.toBe(
-      'offer1signed',
-    );
+    await expect(blockchain.createOfferForIds('test', { '1': -100n })).resolves.toEqual({
+      offer: 'offer1signed',
+      tradeId: 'selected-trade',
+    });
 
     expect(mockSelectCoins).not.toHaveBeenCalled();
     expect(mockCreateOfferForIds).toHaveBeenCalledWith(
@@ -706,12 +752,16 @@ describe('RealBlockchainInterface', () => {
 
   it('persists a wallet-signed fee offer to reserve its selected input', async () => {
     const blockchain = new RealBlockchainInterface();
-    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+    mockCreateOfferForIds.mockResolvedValue({
+      offer: 'offer1signed',
+      tradeRecord: { tradeId: 'fee-trade' },
+    });
 
     const bindCoinId = 'ab'.repeat(32);
     await expect(blockchain.createFeeSpend(10n, bindCoinId)).resolves.toEqual({
       kind: 'offer',
       offer: 'offer1signed',
+      tradeId: 'fee-trade',
     });
 
     expect(mockSelectCoins).not.toHaveBeenCalled();
@@ -749,10 +799,14 @@ describe('RealBlockchainInterface', () => {
 
   it('does not preselect or pin a fee parent coin', async () => {
     const blockchain = new RealBlockchainInterface();
-    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+    mockCreateOfferForIds.mockResolvedValue({
+      offer: 'offer1signed',
+      tradeRecord: { tradeId: 'fee-parent-trade' },
+    });
     await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toEqual({
       kind: 'offer',
       offer: 'offer1signed',
+      tradeId: 'fee-parent-trade',
     });
     expect(mockSelectCoins).not.toHaveBeenCalled();
   });

@@ -15,7 +15,11 @@ import type {
   TerminalSessionSave,
 } from './saveEnvelope';
 import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
-import { decodePersistedGameState, isCatalogGameType } from '../gameRegistry';
+import {
+  decodePersistedGameState,
+  isCatalogGameType,
+  restoreRegisteredGameHandState,
+} from '../gameRegistry';
 import {
   DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
@@ -58,17 +62,44 @@ import {
   requireOptionalBigint,
   requireBoolean,
   requireNullableString,
+  requireExactKeys,
   requireRecord,
   requireString,
   requireUniqueIds,
   parseStringArray,
 } from './persistencePrimitives';
 import { decodeCanonicalFundingRequest, fundingRequestKey } from './fundingRequest';
-import { decodeWalletOfferCleanupEntries } from './walletOfferCleanup';
+import { decodeWalletReservationLedger } from './walletReservationLedgerSchema';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
 export const SESSION_SAVE_ENVELOPE_VERSION = SESSION_SAVE_VERSION;
+
+const PRESENTATION_FIELDS = new Set([
+  'handKey',
+  'activeGameIds',
+  'currentHandGameIds',
+  'currentHandOrigin',
+  'lastDisplayedGameId',
+  'gameInstances',
+  'activeGameType',
+  'handState',
+  'channelStatus',
+  'myRunningBalance',
+  'channelNotifQueue',
+  'gameNotifQueue',
+  'dismissedChannelStatus',
+  'cleanShutdownStarted',
+  'betweenHandMode',
+  'betweenHandCompose',
+  'betweenHandLastHandProposal',
+  'betweenHandRejectedOnceHandProposal',
+  'betweenHandPendingRetryHandProposal',
+  'newHandRequested',
+  'pendingProposals',
+  'waitingStateEnteredAt',
+  'cleanShutdownGraceStartedAt',
+]);
 
 function parseIdentity(value: unknown): SessionIdentitySave {
   const fields = requireRecord(value, 'identity');
@@ -184,6 +215,28 @@ function parseTransportFields(
   if (!Array.isArray(fields.unackedMessages)) {
     throw new Error(`Garbled save: invalid ${label}.unackedMessages`);
   }
+  if (!Object.hasOwn(fields, 'terminalHandoff')) {
+    throw new Error(`Garbled save: ${label}.terminalHandoff is required`);
+  }
+  const terminalHandoff =
+    fields.terminalHandoff === null
+      ? null
+      : (() => {
+          const record = requireRecord(fields.terminalHandoff, `${label}.terminalHandoff`);
+          if (!(record.message instanceof Uint8Array)) {
+            throw new Error(`Garbled save: invalid ${label}.terminalHandoff.message`);
+          }
+          return {
+            id: requireString(record.id, `${label}.terminalHandoff.id`),
+            message: record.message,
+            msgno: requireBigint(record.msgno, `${label}.terminalHandoff.msgno`),
+            sent: requireBoolean(record.sent, `${label}.terminalHandoff.sent`),
+            acknowledged: requireBoolean(
+              record.acknowledged,
+              `${label}.terminalHandoff.acknowledged`,
+            ),
+          };
+        })();
   return {
     messageNumber: requireBigint(fields.messageNumber, `${label}.messageNumber`),
     remoteNumber: requireBigint(fields.remoteNumber, `${label}.remoteNumber`),
@@ -202,6 +255,7 @@ function parseTransportFields(
       new Set(['active', 'proposal-received', 'outbound-reject', 'inbound-reject']),
       `${label}.disposition`,
     ),
+    terminalHandoff,
   };
 }
 
@@ -249,14 +303,6 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
             }
             return { key, request };
           }),
-        }),
-    ...(fields.walletOfferCleanup === undefined
-      ? {}
-      : {
-          walletOfferCleanup: decodeWalletOfferCleanupEntries(
-            fields.walletOfferCleanup,
-            'live.walletOfferCleanup',
-          ),
         }),
   };
   validateLive(live);
@@ -340,6 +386,14 @@ function savedHandProposalFromModel(handProposal: HandProposal): SavedHandPropos
 
 function parsePresentation(value: unknown): SessionPresentationSave {
   const fields = requireRecord(value, 'presentation');
+  requireExactKeys(fields, PRESENTATION_FIELDS, 'presentation');
+  if (
+    typeof fields.handKey !== 'bigint' ||
+    fields.handKey < 0n ||
+    fields.handKey > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
+    throw new Error('Garbled save: invalid handKey');
+  }
   const activeGameIds = requireUniqueIds(fields.activeGameIds, 'activeGameIds');
   const currentHandGameIds = requireUniqueIds(fields.currentHandGameIds, 'currentHandGameIds');
   const currentHandOrigin =
@@ -368,6 +422,21 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     fields.handState === null ? null : decodePersistedGameState(fields.handState);
   if (fields.handState !== null && decodedHandState === null) {
     throw new Error('Garbled save: invalid handState');
+  }
+  if (decodedHandState !== null) {
+    if (decodedHandState.persisted.gameType !== fields.activeGameType) {
+      throw new Error('Garbled save: activeGameType does not match handState.gameType');
+    }
+    try {
+      restoreRegisteredGameHandState(fields.activeGameType, decodedHandState.persisted);
+    } catch (error) {
+      throw new Error(
+        `Garbled save: ${fields.activeGameType} handState cannot be restored: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
   }
   const dismissedChannelStatus =
     fields.dismissedChannelStatus === null
@@ -403,6 +472,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       ? null
       : requireBigint(fields.cleanShutdownGraceStartedAt, 'cleanShutdownGraceStartedAt');
   return {
+    handKey: fields.handKey,
     activeGameIds,
     currentHandGameIds,
     currentHandOrigin,
@@ -435,6 +505,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       pendingRetryHandProposal === null
         ? null
         : savedHandProposalFromModel(pendingRetryHandProposal),
+    newHandRequested: requireBoolean(fields.newHandRequested, 'newHandRequested'),
     pendingProposals: pendingProposals.map((proposal) => ({
       id: proposal.id,
       lifecycle: proposal.lifecycle,
@@ -483,12 +554,17 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   const identity = parseIdentity(envelope.identity);
   const preferences = parsePreferences(envelope.preferences);
   const history = parseHistory(envelope.history);
+  const walletReservationLedger = decodeWalletReservationLedger(
+    envelope.walletReservationLedger,
+    'walletReservationLedger',
+  );
   const common = {
     schema: SESSION_SAVE_SCHEMA,
     version: SESSION_SAVE_VERSION,
     identity,
     preferences,
     history,
+    walletReservationLedger,
   } as const;
   let typedEnvelope: SessionSave;
   let presentation: SessionPresentationSave | null = null;
@@ -618,16 +694,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   if (typedEnvelope.phase === 'terminal' && !isTerminalChannelSnapshot(save.channelStatus)) {
     throw new Error('Garbled save: terminal phase requires a terminal channelStatus');
   }
-  if (
-    typedEnvelope.phase === 'live' &&
-    isTerminalChannelSnapshot(save.channelStatus) &&
-    save.activeGameIds.length === 0
-  ) {
-    throw new Error(
-      'Garbled save: live phase cannot contain a terminal channelStatus without active games',
-    );
-  }
-
   const activeIds = save.activeGameIds;
   const currentHandIds = save.currentHandGameIds;
   const currentSet = new Set(currentHandIds);
@@ -720,10 +786,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   const lastDisplayedId = save.lastDisplayedGameId;
   const mode = save.betweenHandMode;
   const pendingProposals = parsePendingProposals(save.pendingProposals, 'pendingProposals');
-  const hasOutgoing = pendingProposals.some(
-    (proposal) =>
-      proposal.lifecycle === 'local-outgoing' || proposal.lifecycle === 'local-cancel-queued',
-  );
   const model = normalizeSessionPresentation(
     createSessionModel({
       restore: {
@@ -744,10 +806,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         queue: parseQueuedNotifications(save.channelNotifQueue),
       },
       game: {
-        handKey:
-          restoredActiveIds.length > 0 || save.handState || save.betweenHandLastHandProposal
-            ? 1
-            : 0,
+        handKey: Number(save.handKey),
         activeIds: restoredActiveIds,
         currentHandIds,
         currentHandOrigin: save.currentHandOrigin,
@@ -770,7 +829,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         ),
         lastHandProposal,
         compose,
-        newHandRequested: hasOutgoing && mode === 'decision',
+        newHandRequested: save.newHandRequested,
       },
       history: {
         humanHistory: recentEntries(typedEnvelope.history.humanHistory ?? [], HUMAN_HISTORY_LIMIT),

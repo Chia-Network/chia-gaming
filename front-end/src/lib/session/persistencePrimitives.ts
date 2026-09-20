@@ -12,6 +12,17 @@ export function requireRecord(value: unknown, label: string): UnknownRecord {
   return value as UnknownRecord;
 }
 
+export function requireExactKeys(
+  value: UnknownRecord,
+  allowed: ReadonlySet<string>,
+  label: string,
+): void {
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  if (unexpected.length > 0) {
+    throw new Error(`Garbled save: unexpected ${label} field ${unexpected[0]}`);
+  }
+}
+
 export function requireString(value: unknown, label: string, allowEmpty = false): string {
   if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) {
     throw new Error(`Garbled save: invalid ${label}`);

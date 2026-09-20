@@ -97,7 +97,6 @@ pub struct SpendChannelCoinPhase {
 
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
-    #[serde(skip)]
     replacement: Option<Box<OnChainPhase>>,
 }
 

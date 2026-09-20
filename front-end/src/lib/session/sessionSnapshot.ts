@@ -8,13 +8,16 @@ import type { HandProposal, RegisteredGameType, SessionModel } from './types';
 
 export interface SessionPresentationFacts {
   channelStatus?: ChannelStatusPayload | null;
-  waitingStateEnteredAt?: bigint | null;
-  cleanShutdownGraceStartedAt?: bigint | null;
+  waitingStateEnteredAt: bigint | null;
+  cleanShutdownGraceStartedAt: bigint | null;
 }
 
 export function snapshotFromSessionModel(
   model: SessionModel,
-  facts: SessionPresentationFacts = {},
+  facts: SessionPresentationFacts = {
+    waitingStateEnteredAt: null,
+    cleanShutdownGraceStartedAt: null,
+  },
 ): SessionPresentationSave {
   const requireCatalogGameType = (gameType: string, label: string): RegisteredGameType => {
     if (!isCatalogGameType(gameType)) {
@@ -78,6 +81,7 @@ export function snapshotFromSessionModel(
   }
 
   return {
+    handKey: BigInt(model.game.handKey),
     activeGameIds: model.game.activeIds,
     activeGameType: requireCatalogGameType(model.game.activeGameType, 'activeGameType'),
     handState: model.game.handState,
@@ -128,12 +132,13 @@ export function snapshotFromSessionModel(
     betweenHandPendingRetryHandProposal: model.betweenHand.pendingRetryHandProposal
       ? handProposalSnapshot(model.betweenHand.pendingRetryHandProposal)
       : null,
+    newHandRequested: model.betweenHand.newHandRequested,
     pendingProposals: model.betweenHand.pendingProposals.map((proposal) => ({
       id: proposal.id,
       lifecycle: proposal.lifecycle,
       hand_proposal: handProposalSnapshot(proposal.handProposal),
     })),
-    waitingStateEnteredAt: facts.waitingStateEnteredAt ?? null,
-    cleanShutdownGraceStartedAt: facts.cleanShutdownGraceStartedAt ?? null,
+    waitingStateEnteredAt: facts.waitingStateEnteredAt,
+    cleanShutdownGraceStartedAt: facts.cleanShutdownGraceStartedAt,
   };
 }

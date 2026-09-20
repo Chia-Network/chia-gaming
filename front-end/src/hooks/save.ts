@@ -58,6 +58,8 @@ import {
   releaseLeaseIfOwner,
   resetStorageCoordinationForTests,
 } from './saveCoordination';
+import { walletReservationLedger } from '../lib/session/walletReservationLedger';
+import type { WalletReservationLedgerEntry } from '../lib/session/walletReservationLedgerSchema';
 
 export {
   checkLease,
@@ -88,13 +90,17 @@ export type {
 
 export const CURRENT_VERSION = SESSION_SAVE_ENVELOPE_VERSION;
 
-type CommonSaveFields = Pick<SessionSave, 'identity' | 'preferences' | 'history'>;
+type CommonSaveFields = Pick<
+  SessionSave,
+  'identity' | 'preferences' | 'history' | 'walletReservationLedger'
+>;
 
 function commonFields(state: SessionSave): CommonSaveFields {
   return {
     identity: structuredClone(state.identity),
     preferences: structuredClone(state.preferences),
     history: structuredClone(state.history),
+    walletReservationLedger: walletReservationLedger.snapshot(),
   };
 }
 
@@ -303,7 +309,12 @@ export function flushSessionSave(): Promise<void> {
       );
       return pending ? Promise.all([pending, write]).then(() => {}) : write;
     }
-    if (!isDurableSession(cached) && hasSavedSessionMarker() && !hasConnectionPreferences(cached)) {
+    if (
+      !isDurableSession(cached) &&
+      hasSavedSessionMarker() &&
+      !hasConnectionPreferences(cached) &&
+      cached.walletReservationLedger.length === 0
+    ) {
       const error = new Error(
         'Refusing to persist non-resumable in-memory state over a marked saved session',
       );
@@ -360,6 +371,7 @@ export function _writeRawState(obj: Record<string, unknown>): void {
  * the durable hub session_id on the next peek/hydrate merge.
  */
 let identityDiskChecked = false;
+let sessionCacheHydratedFromDisk = false;
 
 /** @internal — reset module state between test cases */
 export function _resetForTests(): void {
@@ -372,7 +384,9 @@ export function _resetForTests(): void {
   stagedTerminal = null;
   writeChain = Promise.resolve();
   identityDiskChecked = false;
+  sessionCacheHydratedFromDisk = false;
   resetStorageCoordinationForTests();
+  walletReservationLedger.resetForTests();
 }
 
 export function loadState(): SessionSave {
@@ -403,10 +417,12 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
   // in-memory cradle on every flush — freezing the first persisted size.
   if (cached && isDurableSession(cached)) {
     identityDiskChecked = true;
+    sessionCacheHydratedFromDisk = true;
     return false;
   }
   if (!hasSavedSessionMarker()) {
     identityDiskChecked = true;
+    sessionCacheHydratedFromDisk = true;
     return false;
   }
 
@@ -423,6 +439,7 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
   await writeChain;
   const { record, discarded } = await readCompatibleSessionRecord();
   identityDiskChecked = true;
+  sessionCacheHydratedFromDisk = true;
   if (!record) {
     if (!discarded) return false;
     // Same wipe+marker policy as peekSession: remove the unreadable record but
@@ -430,11 +447,13 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
     cached = loadPreferences();
     return true;
   }
+  walletReservationLedger.hydrateFromDisk(record.walletReservationLedger);
 
   const mem = cached ?? loadPreferences();
   if (isDurableSession(record)) {
     cached = {
       ...record,
+      walletReservationLedger: walletReservationLedger.snapshot(),
       identity: {
         playerId: mem.identity.playerId || record.identity.playerId,
         sessionId: mem.identity.sessionId || record.identity.sessionId,
@@ -454,25 +473,22 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
       },
     };
     savePreferences(cached);
+    walletReservationLedger.persistIfDirty();
     return false;
   }
 
   // Non-resumable record: still pull hub identity if prefs lack it.
-  if (
-    (!mem.identity.sessionId && record.identity.sessionId) ||
-    (!mem.identity.playerId && record.identity.playerId) ||
-    (!mem.identity.myHubPlayerId && record.identity.myHubPlayerId)
-  ) {
-    cached = {
-      ...mem,
-      identity: {
-        sessionId: mem.identity.sessionId || record.identity.sessionId,
-        playerId: mem.identity.playerId || record.identity.playerId,
-        myHubPlayerId: mem.identity.myHubPlayerId || record.identity.myHubPlayerId,
-      },
-    };
-    savePreferences(cached);
-  }
+  cached = {
+    ...mem,
+    walletReservationLedger: walletReservationLedger.snapshot(),
+    identity: {
+      sessionId: mem.identity.sessionId || record.identity.sessionId,
+      playerId: mem.identity.playerId || record.identity.playerId,
+      myHubPlayerId: mem.identity.myHubPlayerId || record.identity.myHubPlayerId,
+    },
+  };
+  savePreferences(cached);
+  walletReservationLedger.persistIfDirty();
   return false;
 }
 
@@ -480,7 +496,11 @@ function mutate(fn: (state: SessionSave) => SessionSave | void): Promise<void> {
   // Fast path: memory already has the resumable session, or there is no
   // marked disk session to protect. Keep this synchronous so preference
   // helpers can read their own writes immediately.
-  if ((cached && isDurableSession(cached)) || !hasSavedSessionMarker()) {
+  if (
+    (cached && isDurableSession(cached)) ||
+    !hasSavedSessionMarker() ||
+    sessionCacheHydratedFromDisk
+  ) {
     const state = loadState();
     cached = fn(state) ?? state;
     savePreferences(cached);
@@ -576,8 +596,8 @@ export type SessionCacheUpdate =
       identity?: Partial<SessionIdentitySave>;
       preferences?: Partial<SessionPreferencesSave>;
       history?: Partial<SessionHistorySave>;
+      walletReservationLedger?: WalletReservationLedgerEntry[];
     }
-  | { scope: 'presentation'; presentation: Partial<SessionPresentationSave> }
   | {
       scope: 'live';
       pairing: SessionPairingSave;
@@ -593,12 +613,9 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
         Object.assign(s.identity, update.identity);
         Object.assign(s.preferences, update.preferences);
         Object.assign(s.history, update.history);
-        break;
-      case 'presentation':
-        if (s.phase !== 'live') {
-          throw new Error(`Cannot patch presentation while session phase is ${s.phase}`);
+        if (update.walletReservationLedger) {
+          s.walletReservationLedger = walletReservationLedger.snapshot();
         }
-        Object.assign(s.presentation, update.presentation);
         break;
       case 'live': {
         const common = commonFields(s);
@@ -618,15 +635,9 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
   });
 }
 
-export function patchLiveSessionPresentation(
-  presentation: Partial<SessionPresentationSave>,
-): Promise<void> {
-  return mutate((state) => {
-    if (state.phase !== 'live') return;
-    Object.assign(state.presentation, presentation);
-    capPersistedHistories(state);
-  });
-}
+walletReservationLedger.configurePersistence((entries) =>
+  saveSession({ scope: 'common', walletReservationLedger: entries }),
+);
 
 export function patchPreHandshakeTransport(transport: SessionTransportSave): Promise<void> {
   return mutate((state) => {
@@ -767,6 +778,7 @@ export async function peekSession(): Promise<SessionSave | null> {
     // is keyed by session_id; reminting on reload breaks pre-cradle routing.
     cached = {
       ...record,
+      walletReservationLedger: walletReservationLedger.snapshot(),
       identity: {
         playerId: preferences.identity.playerId || record.identity.playerId,
         sessionId: preferences.identity.sessionId || record.identity.sessionId,
@@ -784,7 +796,7 @@ export async function peekSession(): Promise<SessionSave | null> {
       markSavedSession();
       return cached;
     }
-    if (hasConnectionPreferences(cached)) {
+    if (hasConnectionPreferences(cached) || cached.walletReservationLedger.length > 0) {
       markSavedSession();
       return cached;
     }
@@ -816,8 +828,16 @@ export function clearSession(): Promise<void> {
   const deletePromise = (writeChain = writeChain
     .catch(() => {})
     .then(async () => {
-      await deleteSessionRecord();
-      if (cached?.preferences.blockchainType || cached?.preferences.hubUrl) {
+      if (cached && cached.walletReservationLedger.length > 0) {
+        await writeSessionRecord(structuredClone(cached));
+      } else {
+        await deleteSessionRecord();
+      }
+      if (
+        cached?.preferences.blockchainType ||
+        cached?.preferences.hubUrl ||
+        (cached?.walletReservationLedger.length ?? 0) > 0
+      ) {
         markSavedSession();
       } else {
         clearSavedSessionMarker();
@@ -875,6 +895,7 @@ export async function clearGameSessionPreservingHistory(): Promise<void> {
             remoteNumber: prev.live.remoteNumber,
             unackedMessages: structuredClone(prev.live.unackedMessages),
             disposition: prev.live.disposition,
+            terminalHandoff: structuredClone(prev.live.terminalHandoff),
           },
         }
       : prev.phase === 'pre-handshake'

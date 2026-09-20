@@ -1,4 +1,7 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
+import { log } from '../../services/log';
+import type { WasmEvent } from '../../types/ChiaGaming';
+import { dispatchWasmNotification } from './gameSessionEvents';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
 import {
   prepareSessionPersistence,
@@ -29,9 +32,9 @@ export interface SessionMachineRuntimeDependencies {
   getRestoreStatus(): RestoreStatus;
   getRestoreError(): string | null;
   onError(error: unknown): void;
+  bindControllerEvents?: boolean;
   persist?(state: SessionMachineState): Promise<void>;
   save?: SessionPersistDependencies['save'];
-  saveTerminal?: SessionPersistDependencies['saveTerminal'];
   enrichCoin?: typeof coinIdHex;
 }
 
@@ -109,6 +112,11 @@ export class SessionMachineRuntime {
   private render: (state: SessionMachineState) => void = () => {};
   private readonly interpreter: SessionMachineInterpreter;
   private readonly controller: SessionController;
+  private readonly iStarted: boolean;
+  private readonly restoring: boolean;
+  private readonly bindControllerEvents: boolean;
+  private controllerEventsUnsubscribe: (() => void) | null = null;
+  private restoreStatusUnsubscribe: (() => void) | null = null;
   private activeHand: RegisteredGameHand | null = null;
   private activeHandGameType: RegisteredGameType | null = null;
   private readonly activeHandContext: ActiveGameHandContext = {
@@ -137,6 +145,7 @@ export class SessionMachineRuntime {
   private committing = false;
   private commitActivityPending = false;
   private durabilityDirty = false;
+  private durabilityDegraded = false;
   private projectionPending = false;
   private commitScheduled = false;
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -145,6 +154,7 @@ export class SessionMachineRuntime {
   private readonly failureWarningEvents = new Set<SessionMachineEvent>();
   private readonly preparePersistence: (
     state: SessionMachineState,
+    clearDurabilityWarning: boolean,
   ) => PreparedSessionPersistence | null;
   private readonly onError: (error: unknown) => void;
   private readonly runtimeLease: SessionRuntimeLease;
@@ -154,11 +164,14 @@ export class SessionMachineRuntime {
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
     this.state = initial;
     this.controller = dependencies.controller;
+    this.iStarted = dependencies.iStarted;
+    this.restoring = dependencies.restoring;
+    this.bindControllerEvents = dependencies.bindControllerEvents ?? false;
     this.onError = dependencies.onError;
     this.restoreActiveHand(initial);
     this.preparePersistence = dependencies.persist
       ? (state) => ({ write: () => dependencies.persist!(state) })
-      : (state) =>
+      : (state, clearDurabilityWarning) =>
           prepareSessionPersistence({
             controller: dependencies.controller,
             getState: () => state,
@@ -166,7 +179,7 @@ export class SessionMachineRuntime {
             getRestoreStatus: dependencies.getRestoreStatus,
             getRestoreError: dependencies.getRestoreError,
             save: dependencies.save,
-            saveTerminal: dependencies.saveTerminal,
+            clearDurabilityWarning,
           });
     this.interpreter = new SessionMachineInterpreter({
       controller: dependencies.controller,
@@ -198,7 +211,15 @@ export class SessionMachineRuntime {
   activate(): void {
     if (this.activated || this.retired) return;
     this.activated = true;
-    this.controller.attachTransactionCoordinator(this.runtimeLease);
+    this.controller.commitSessionRuntime(this, this.runtimeLease);
+    if (this.retired || !this.bindControllerEvents) return;
+    const subscription = this.controller.getObservable().subscribe({
+      next: (event: WasmEvent) => this.dispatchControllerEvent(event),
+    });
+    this.controllerEventsUnsubscribe = () => subscription.unsubscribe();
+    this.restoreStatusUnsubscribe = this.controller.onRestoreStatusChange(() => {
+      this.dispatchHostProjection();
+    });
   }
 
   setRender(render: (state: SessionMachineState) => void): void {
@@ -226,9 +247,62 @@ export class SessionMachineRuntime {
     }
     this.pendingExternalEffects.clear();
     this.pendingEvents.length = 0;
+    this.controllerEventsUnsubscribe?.();
+    this.controllerEventsUnsubscribe = null;
+    this.restoreStatusUnsubscribe?.();
+    this.restoreStatusUnsubscribe = null;
     if (this.activated) {
       this.controller.detachTransactionCoordinator(this.runtimeLease);
     }
+  }
+
+  private dispatchControllerEvent(event: WasmEvent): void {
+    switch (event.type) {
+      case 'notification':
+        dispatchWasmNotification(
+          event.data,
+          (notification) =>
+            this.dispatch({
+              type: 'wasm-notification',
+              notification,
+              iStarted: this.iStarted,
+            }),
+          (error) =>
+            this.dispatch({ type: 'enqueue-error', kind: 'infra-error', message: String(error) }),
+        );
+        this.dispatchHostProjection();
+        break;
+      case 'error':
+        this.dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
+        break;
+      case 'game-action-error':
+        this.dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
+        break;
+      case 'durability-error':
+        this.dispatch({ type: 'enqueue-error', kind: 'durability-error', message: event.error });
+        break;
+      case 'log':
+        log(`[wasm] ${event.message}`);
+        this.dispatchHostProjection();
+        break;
+      case 'address':
+        break;
+    }
+  }
+
+  private dispatchHostProjection(): void {
+    const status = this.controller.getRestoreStatus();
+    this.dispatch({
+      type: 'host-projection',
+      restore: {
+        restoring: this.restoring,
+        status,
+        error: this.controller.getRestoreError(),
+        hubReconciled: status === 'restored',
+      },
+      wasmNotificationHistory: this.controller.wasmNotificationHistory,
+      diagnosticLog: this.controller.diagnosticLog,
+    });
   }
 
   dispatch(event: SessionMachineEvent): void {
@@ -507,10 +581,17 @@ export class SessionMachineRuntime {
     }
     const reliableCommit = this.controller.prepareReliableCommit();
     const externalEffects = [...this.pendingExternalEffects.entries()];
-    const persistenceState = structuredClone(projectedState);
+    const recoveringDurability = this.durabilityDegraded;
+    const persistenceState = recoveringDurability
+      ? reduceSessionMachine(
+          structuredClone(projectedState),
+          { type: 'clear-durability-error' },
+          this.activeHandContext,
+        ).state
+      : structuredClone(projectedState);
     const persistence =
       this.controller.prepareInboundSessionRejectPersistence?.() ??
-      this.preparePersistence(persistenceState);
+      this.preparePersistence(persistenceState, recoveringDurability);
     this.durabilityDirty = false;
     this.projectionPending = false;
     this.committing = true;
@@ -540,9 +621,21 @@ export class SessionMachineRuntime {
       .then(
         () => {
           if (this.retired) return;
+          const renderedState = recoveringDurability
+            ? reduceSessionMachine(
+                this.state,
+                { type: 'clear-durability-error' },
+                this.activeHandContext,
+              ).state
+            : projectedState;
+          if (recoveringDurability) {
+            this.durabilityDegraded = false;
+            this.controller.clearDurabilityError?.();
+            this.state = renderedState;
+          }
           if (shouldProject) {
             try {
-              this.render(projectedState);
+              this.render(renderedState);
             } catch (error) {
               this.onError(error);
             }
@@ -558,6 +651,7 @@ export class SessionMachineRuntime {
           if (this.retired) throw error;
           persistenceFailed = true;
           this.durabilityDirty = true;
+          this.durabilityDegraded = true;
           this.reportingDurabilityFailure = true;
           try {
             this.controller.reportDurabilityError?.(error);
