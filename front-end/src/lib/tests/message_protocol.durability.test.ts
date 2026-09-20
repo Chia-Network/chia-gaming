@@ -166,10 +166,10 @@ describe('durability failures', () => {
     const cleanup = new Promise<{ status: 'unavailable'; detail: string }>((resolve) => {
       finishCleanup = () => resolve({ status: 'unavailable', detail: 'wallet offline' });
     });
-    const cancelOffer = jest.fn(() => cleanup);
+    const releaseWalletOffer = jest.fn(() => cleanup);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, cancelOffer }, 60_000);
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, releaseWalletOffer }, 60_000);
     walletReservationLedger.attachRpc(blob.blockchain.rpc);
     const checkpoints: Array<ReturnType<typeof blob.getWasmFields>> = [];
     let failPersistence = true;
@@ -192,7 +192,7 @@ describe('durability failures', () => {
 
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full');
 
-    expect(cancelOffer).toHaveBeenCalledTimes(1);
+    expect(releaseWalletOffer).toHaveBeenCalledTimes(1);
     expect(blob.durabilityWarning).toContain('continuing without a durable checkpoint');
     expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
@@ -208,7 +208,7 @@ describe('durability failures', () => {
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
     expect(blob.durabilityWarning).toBeUndefined();
-    expect(cancelOffer).toHaveBeenCalledTimes(1);
+    expect(releaseWalletOffer).toHaveBeenCalledTimes(1);
   });
 
   it('requires the prepared save to update cached synchronously before returning', async () => {

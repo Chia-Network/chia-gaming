@@ -8,6 +8,7 @@ import type {
   PeerConnectionResult,
   SpendBundle,
   TransactionSubmission,
+  SubmissionDrainFailure,
   ChannelStatusPayload,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
@@ -119,8 +120,9 @@ export function testSpendBundle(coinHex: string): SpendBundle {
 export function submissionDrain(
   submissions: TransactionSubmission[] = [],
   retired_submission_ids: string[] = [],
+  failures: SubmissionDrainFailure[] = [],
 ) {
-  return { submissions, retired_submission_ids };
+  return { submissions, retired_submission_ids, failures };
 }
 
 export function makeMockCradle(

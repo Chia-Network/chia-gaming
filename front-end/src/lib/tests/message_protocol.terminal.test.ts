@@ -833,15 +833,18 @@ describe('transaction submission', () => {
   });
 
   it('suppresses a same-stack fresh-sync duplicate while its submission is queued', async () => {
-    const createFeeSpend = jest.fn().mockResolvedValue({
-      kind: 'bundle',
-      bundle: { coin_spends: [], aggregated_signature: '0x' },
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created',
+      material: {
+        kind: 'bundle',
+        bundle: { coin_spends: [], aggregated_signature: '0x' },
+      },
     });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
-        createFeeSpend,
+        beginWalletOffer,
         spend,
         isReadyForPlay: () => true,
       } as InternalBlockchainInterface,
@@ -882,7 +885,7 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
-    expect(createFeeSpend).toHaveBeenCalledTimes(1);
+    expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(finalizeSubmission).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);

@@ -8,7 +8,9 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
-  WalletFeeSourceOutcome,
+  WalletOfferBeginOutcome,
+  WalletOfferOperation,
+  WalletOfferRequest,
   WalletOfferCancellationOutcome,
   WalletSubmitOutcome,
 } from '../types/ChiaGaming';
@@ -145,6 +147,13 @@ export class SyntheticFeeOfferTracker {
       throw new Error(`Duplicate simulator fee offer ${tradeId}`);
     }
     const inputCoinKeys = walletSpendInputCoinKeys(feeBundle);
+    for (const [existingTradeId, offer] of this.offers) {
+      if ([...inputCoinKeys].some((coinKey) => offer.inputCoinKeys.has(coinKey))) {
+        throw new Error(
+          `Simulator fee offer ${tradeId} reuses an input reserved by ${existingTradeId}`,
+        );
+      }
+    }
     this.offers.set(tradeId, {
       state: 'reserved',
       inputCoinKeys,
@@ -471,31 +480,34 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
-  async createOfferForIds(
-    uniqueId: string,
-    offer: { [walletId: string]: bigint },
-    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
-    coinIds?: string[],
-    maxHeight?: bigint,
-    _openingFee?: bigint,
-  ): Promise<any | null> {
-    const params: any = { who: uniqueId, offer };
-    const conditions = [...(extraConditions ?? [])];
+  async beginWalletOffer(
+    _operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferBeginOutcome> {
+    if (request.kind === 'fee') {
+      return this.beginFeeOffer(request);
+    }
+    const params: any = { who: request.uniqueId, offer: request.offer };
+    const conditions = [...(request.extraConditions ?? [])];
+    const { maxHeight } = request;
     if (maxHeight !== undefined) {
       conditions.push({ opcode: 87n, args: [encodeU64AsClvmHex(maxHeight)] });
     }
     if (conditions.length > 0) params.extraConditions = conditions;
-    if (coinIds) params.coinIds = coinIds;
+    if (request.coinIds) params.coinIds = request.coinIds;
     const raw = await this.sendRequest('create_offer_for_ids', params);
-    if (!raw) return null;
-    return typeof raw === 'string' ? jsonParse(raw) : raw;
+    if (!raw) return { kind: 'failure', reason: 'simulator could not build a funding offer' };
+    return {
+      kind: 'created',
+      material: { kind: 'bundle', bundle: typeof raw === 'string' ? jsonParse(raw) : raw },
+    };
   }
 
-  async createFeeSpend(
-    fee: bigint,
-    concurrentSpendCoinId: string,
-  ): Promise<WalletFeeSourceOutcome | null> {
-    if (fee <= 0n) return null;
+  private async beginFeeOffer(
+    request: Extract<WalletOfferRequest, { kind: 'fee' }>,
+  ): Promise<WalletOfferBeginOutcome> {
+    const { fee, concurrentSpendCoinId } = request;
+    if (fee <= 0n) return { kind: 'failure', reason: 'fee must be positive' };
     try {
       const bundle = await this.sendRequest('create_offer_for_ids', {
         who: this.uniqueId,
@@ -509,7 +521,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       if (!bundle) return { kind: 'failure', reason: 'simulator could not build a fee offer' };
       const tradeId = `sim-fee-${this.uniqueId}-${this.nextSyntheticTradeId++}`;
       this.syntheticFeeOffers.reserve(tradeId, bundle);
-      return { kind: 'bundle', bundle, tradeId };
+      return { kind: 'created', material: { kind: 'bundle', bundle }, tradeId };
     } catch (error) {
       if (error instanceof SimulatorTransportError) {
         return { kind: 'unavailable', reason: error.message };
@@ -521,7 +533,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async cancelOffer(tradeId: string): Promise<WalletOfferCancellationOutcome> {
+  async releaseWalletOffer(tradeId: string): Promise<WalletOfferCancellationOutcome> {
     const state = this.syntheticFeeOffers.cancel(tradeId);
     if (state === undefined) {
       return { status: 'already-terminal', detail: 'simulator fee offer is not active' };

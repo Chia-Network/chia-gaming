@@ -819,6 +819,13 @@ settles submission deliveries and detaches in-flight external operations from
 controller quiescence; late persisted-wallet results transfer to the wallet
 reservation ledger.
 
+Restore separates local presentation from external recovery. Once the strict
+IndexedDB envelope and serialized WASM cradle have hydrated, the saved shell,
+game, and dashboard are visible even when the hub, wallet, or blockchain is
+still unavailable. Actions that require those services remain gated until their
+independent reconciliation succeeds; external availability is not a reason to
+hide valid local state.
+
 Durable funding requests use one explicit canonical model: `amount`, `fee`, and
 optional `max_height` are canonical decimal `u64` strings; condition opcodes are
 bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
@@ -829,27 +836,50 @@ there is no successor/predecessor funding protocol. Rust owns transaction
 submission intent and the frontend submission queue owns only ordered one-shot
 wallet delivery.
 
-The browser session envelope is currently strict version 30, its serialized
+The browser session envelope is currently strict version 31, its serialized
 Rust/WASM cradle is schema 17, and wallet reservations use an independent
-strict version-2 record. These explicit versions remain future migration hooks.
+strict version-3 record. These explicit versions remain future migration hooks.
 No app or hub persistence format has shipped, so only each current app-owned
 format is decoded; incompatible predecessors are deleted without fallback
 decoders, aliases, or migrations. This does not relax deployed compatibility:
 Cloud Wallet GraphQL, WalletConnect RPC, Chia bech32m offer compression
 dictionaries, Coinset JSON, peer/on-chain protocols, and historical signed
 unroll recognition remain compatibility-sensitive external contracts.
+Rust snapshots convert checked `usize` state numbers to `u64`; the WASM
+boundary exposes every present channel state-number field as JavaScript
+`bigint`. Internal host and persisted forms stay `bigint`, with `number`
+conversion allowed only at external APIs that explicitly require it.
 
 Persisted funding and fee offers enter one wallet-level reservation ledger.
 Each trade carries its exact provider trade ID, exact owner
 (`installationPlayerId` plus peer session), stable purpose/operation identity,
-stage, and bounded reason. Multiple trades for one operation remain distinct.
+stage, and bounded reason. The wallet provider owns external offer lifecycle;
+the controller and Rust own protocol intent. Multiple trades for one operation
+remain distinct. Wallet mutation waits for successful ledger hydration and
+fails closed if hydration fails. Controller retirement promotes only `reserved`
+entries to cancellation; `retained-for-replay` remains owned by Rust replay.
 An attached fee offer is retained for exact transaction replay until wallet
 acknowledgement or Rust retirement requests typed cancellation; Cloud
 cancellation completes only after its signature request reaches a successful
-terminal state. The session envelope and complete independent ledger snapshot
-are checkpointed atomically in one IndexedDB transaction, and strict codecs
-reject unknown/missing fields, duplicate trades, invalid discriminants, and
-non-current versions.
+terminal state. Cloud persists a pending `signatureRequest` recovery ID before
+waiting for approval and reconciles that exact request after reload without
+creating a second offer; popup source/origin/request correlation and listener
+cleanup remain adapter responsibilities. The deployed WalletConnect API has no
+end-to-end idempotency or response-loss reconciliation capability, so a lost
+create-offer response may orphan an external offer and current retry is
+best-effort. The provider-neutral interface has an optional reconciliation
+capability for providers that can support it.
+
+The session envelope and complete independent ledger snapshot are checkpointed
+atomically in one IndexedDB transaction, and strict codecs reject
+unknown/missing fields, duplicate trades, invalid discriminants, and
+non-current versions. Every session, ledger, clear, and reset write enters one
+generation-fenced storage mutation coordinator. An old tab or retired lease
+cannot overwrite the winning generation; a clear followed immediately by an
+unawaited save is ordered and leaves the save. Hard reset advances the fence
+before deleting storage and intentionally erases every reservation, including
+replay-retained entries. Pre-reset work may finish only as part of the wipe and
+cannot recreate the database or state afterward.
 
 Persistence failure never gates use, transaction release, or cancellation of
 an offer; the in-memory session and ledger remain dirty for a later full atomic
@@ -874,6 +904,24 @@ receive the same promise, which settles with the launched external work. The
 persistence attempt gates launching that work but does not await its completion;
 the key is removed before launch so reentrant work may schedule the same key for
 a later boundary.
+
+Rust submission draining uses an isolated working copy per candidate. For an
+`A/B/C` queue with an invalid `B`, `A` and `C` commit, `B` is consumed and
+reported once, and later drains do not rediscover it. Abandonment emits the
+retained submission's retirement ID before removing it so provider reservation
+cleanup cannot be lost. A failure is availability-preserving only when that
+per-item boundary proves the remaining manager/session state intact: the host
+persists one bounded incident containing JavaScript stack and Rust context,
+shows one dismissible nonfatal modal, and keeps the game/dashboard active
+without also emitting an ordinary or global error. Unknown global integrity
+remains fatal. This uses the same failed-checkpoint policy as other live work:
+attempt persistence, then release the isolated safe boundary once and keep the
+latest in-memory state dirty.
+
+Puzzle/solution data from a successful trusted-wallet RPC is still protocol
+evidence, not trusted structure. Malformed puzzle or solution bytes make the
+Rust callback fail transactionally and remain a fatal/terminal request outcome;
+ordinary readiness or height changes must not retry that deterministic failure.
 
 No active-session adapter, reducer effect, or protocol callback may establish a
 competing save, render, or send boundary. New event sources must enter the same

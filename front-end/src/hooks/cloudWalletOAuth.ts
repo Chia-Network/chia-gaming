@@ -94,16 +94,20 @@ export function buildAuthorizeUrl(opts: {
   return url.toString();
 }
 
+export function canonicalSignatureRequestId(signatureRequestId: string): string {
+  return signatureRequestId.startsWith('SignatureRequest_')
+    ? signatureRequestId
+    : signatureRequestId.includes(':') || signatureRequestId.includes('_')
+      ? signatureRequestId
+      : `SignatureRequest_${signatureRequestId}`;
+}
+
 export function signatureRequestApproveUrl(
   signatureRequestId: string,
   uiBase = getCloudWalletUiUrl(),
 ): string {
   const base = uiBase.replace(/\/$/, '');
-  const id = signatureRequestId.startsWith('SignatureRequest_')
-    ? signatureRequestId
-    : signatureRequestId.includes(':') || signatureRequestId.includes('_')
-      ? signatureRequestId
-      : `SignatureRequest_${signatureRequestId}`;
+  const id = canonicalSignatureRequestId(signatureRequestId);
   // Cloud Wallet route uses the Relay global id segment.
   return `${base}/signature-requests/${encodeURIComponent(id)}`;
 }

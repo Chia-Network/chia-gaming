@@ -40,8 +40,8 @@ mod gaming_wasm {
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
     use chia_gaming::transaction_manager::{
-        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionFeeSource,
-        TransactionManager,
+        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionDrainFailureStage,
+        SubmissionFeeSource, TransactionManager,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
@@ -105,6 +105,18 @@ mod gaming_wasm {
     struct JsSubmissionDrain {
         submissions: Vec<JsTransactionSubmission>,
         retired_submission_ids: Vec<String>,
+        failures: Vec<JsSubmissionDrainFailure>,
+    }
+
+    #[derive(Serialize)]
+    struct JsSubmissionDrainFailure {
+        candidate_index: String,
+        retained_submission_id: Option<String>,
+        candidate_submission_id: Option<String>,
+        intent_fingerprint: Option<String>,
+        stage: &'static str,
+        message: String,
+        rust_context: String,
     }
 
     #[derive(Serialize)]
@@ -449,25 +461,46 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
         let result = with_game(cid, move |cradle: &mut JsGameSession| {
-            let submissions = cradle
-                .cradle
-                .drain_submissions()?
+            let drained = cradle.cradle.drain_submissions()?;
+            let submissions = drained
+                .submissions
                 .iter()
                 .map(|submission| JsTransactionSubmission {
                     id: submission.id.to_string(),
                     bundle: spend_bundle_to_js(&submission.bundle),
                     fee_request: match &submission.fee_intent {
-                        SubmissionFeeIntent::Attach { target, amount, .. } => {
-                            Some(JsFeeRequest {
-                                target: hex::encode(target.bytes()),
-                                amount: amount.to_u64().to_string(),
-                            })
+                        SubmissionFeeIntent::Attach { target, amount, .. } => Some(JsFeeRequest {
+                            target: hex::encode(target.bytes()),
+                            amount: amount.to_u64().to_string(),
+                        }),
+                        SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
+                            None
                         }
-                        SubmissionFeeIntent::AlreadyPaid
-                        | SubmissionFeeIntent::NoFeeConfigured => None,
                     },
                 })
                 .collect::<Vec<_>>();
+            let failures = drained
+                .failures
+                .into_iter()
+                .map(|failure| JsSubmissionDrainFailure {
+                    candidate_index: failure.candidate_index.to_string(),
+                    retained_submission_id: failure.retained_submission_id.map(|id| id.to_string()),
+                    candidate_submission_id: failure
+                        .candidate_submission_id
+                        .map(|id| id.to_string()),
+                    intent_fingerprint: failure
+                        .intent_fingerprint
+                        .map(|fingerprint| hex::encode(fingerprint.bytes())),
+                    stage: match failure.stage {
+                        SubmissionDrainFailureStage::Fingerprint => "fingerprint",
+                        SubmissionDrainFailureStage::RetainedState => "retained-state",
+                        SubmissionDrainFailureStage::ExpectedOutputs => "expected-outputs",
+                        SubmissionDrainFailureStage::SubmissionId => "submission-id",
+                    },
+                    message: failure.message,
+                    rust_context: failure.rust_context,
+                })
+                .collect();
             let retired_submission_ids = cradle
                 .cradle
                 .drain_retired_submission_ids()
@@ -477,6 +510,7 @@ mod gaming_wasm {
             Ok(JsSubmissionDrain {
                 submissions,
                 retired_submission_ids,
+                failures,
             })
         })?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))

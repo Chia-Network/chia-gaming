@@ -5,6 +5,16 @@ import { coinRecordToName } from '../../util/coinWatch';
 import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 import { walletReservationLedger } from '../session/walletReservationLedger';
 
+const walletOperation = {
+  owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+  purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
+};
+const walletRequest = {
+  kind: 'funding' as const,
+  uniqueId: 'wallet',
+  offer: { '1': -1n },
+};
+
 function makeRpc(heights: bigint[]): InternalBlockchainInterface {
   let lastHeight = heights[0] ?? 0n;
   return new Proxy(
@@ -79,6 +89,35 @@ describe('BlockchainPoller', () => {
 
     expect(reportedPeaks).toEqual([100n, 90n]);
     expect(poller.getPeak()).toEqual(90n);
+  });
+
+  it('isolates a failing session from healthy height and snapshot delivery', async () => {
+    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const failing: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'bad', coin_string: 'bad-coin' }],
+      reportNewBlock: () => Promise.reject(new Error('session-owned height failure')),
+      reportCoinStates: () => Promise.reject(new Error('session-owned snapshot failure')),
+    };
+    const healthyHeights: bigint[] = [];
+    const healthySnapshots: bigint[] = [];
+    const healthy: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'good', coin_string: 'good-coin' }],
+      reportNewBlock: (height) => {
+        healthyHeights.push(height);
+      },
+      reportCoinStates: (height) => {
+        healthySnapshots.push(height);
+      },
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(failing);
+    poller.attachGameSession(healthy);
+
+    await pollOnce(poller);
+    await pollOnce(poller);
+
+    expect(healthyHeights).toEqual([100n, 101n]);
+    expect(healthySnapshots).toEqual([100n, 101n]);
   });
 
   it('skips reporting a cradle until all of its coins are registered', async () => {
@@ -579,8 +618,8 @@ describe('BlockchainPoller', () => {
           calls.push('balance');
           return balance.promise;
         },
-        createOfferForIds: () => {
-          calls.push('createOfferForIds');
+        beginWalletOffer: () => {
+          calls.push('beginWalletOffer');
           return createOffer.promise;
         },
         selectCoins: () => {
@@ -602,25 +641,25 @@ describe('BlockchainPoller', () => {
     const p1 = poller.rpc.getHeightInfo();
     await advanceLane();
     const p2 = poller.rpc.getBalance();
-    const p3 = poller.rpc.createOfferForIds('u', {});
+    const p3 = poller.rpc.beginWalletOffer(walletOperation, walletRequest);
     const p4 = poller.rpc.selectCoins('u', 1n);
     const p5 = poller.rpc.spend('blob', {}, '11'.repeat(32), 'submitTransaction', 0n);
 
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds']);
+    expect(calls).toEqual(['height', 'beginWalletOffer']);
     createOffer.resolve({});
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins']);
+    expect(calls).toEqual(['height', 'beginWalletOffer', 'selectCoins']);
     selectCoins.resolve(null);
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend']);
+    expect(calls).toEqual(['height', 'beginWalletOffer', 'selectCoins', 'spend']);
     spend.resolve({ status: 'acknowledged' });
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend']);
+    expect(calls).toEqual(['height', 'beginWalletOffer', 'selectCoins', 'spend']);
 
     first.resolve(7n);
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend', 'balance']);
+    expect(calls).toEqual(['height', 'beginWalletOffer', 'selectCoins', 'spend', 'balance']);
     balance.resolve(11n);
     await expect(p1).resolves.toBe(7n);
     await expect(p2).resolves.toBe(11n);
@@ -628,6 +667,60 @@ describe('BlockchainPoller', () => {
     await expect(p4).resolves.toBeNull();
     await expect(p5).resolves.toEqual({ status: 'acknowledged' });
     jest.useRealTimers();
+  });
+
+  it('starts reads immediately but waits for successful ledger hydration before wallet mutation', async () => {
+    walletReservationLedger.resetForTests(false);
+    const getHeightInfo = jest.fn().mockResolvedValue(7n);
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer-ready' },
+      tradeId: 'trade-ready',
+    });
+    const poller = new BlockchainPoller(
+      {
+        getHeightInfo,
+        beginWalletOffer,
+        isConnected: () => true,
+      } as unknown as InternalBlockchainInterface,
+      1000,
+    );
+
+    const read = poller.rpc.getHeightInfo();
+    const mutation = poller.rpc.beginWalletOffer(walletOperation, walletRequest);
+    await Promise.resolve();
+    await expect(read).resolves.toBe(7n);
+    expect(beginWalletOffer).not.toHaveBeenCalled();
+
+    walletReservationLedger.hydrateFromDisk(null);
+    await expect(mutation).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer-ready' },
+      tradeId: 'trade-ready',
+    });
+    expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+    walletReservationLedger.resetForTests();
+  });
+
+  it('fails wallet mutation closed when ledger hydration is malformed', async () => {
+    walletReservationLedger.resetForTests(false);
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'must-not-launch' },
+    });
+    const poller = new BlockchainPoller(
+      {
+        beginWalletOffer,
+        isConnected: () => true,
+      } as unknown as InternalBlockchainInterface,
+      1000,
+    );
+
+    const mutation = poller.rpc.beginWalletOffer(walletOperation, walletRequest);
+    expect(() => walletReservationLedger.hydrateFromDisk({ version: 2n })).toThrow();
+    await expect(mutation).rejects.toThrow();
+    expect(beginWalletOffer).not.toHaveBeenCalled();
+    walletReservationLedger.resetForTests();
   });
 
   it('revalidates the connection epoch after waiting at the shared gate', async () => {
@@ -899,22 +992,30 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
-  it('routes a stale successful wallet offer through the durable ledger', async () => {
+  it('returns a stale successful wallet offer to durable lifecycle ownership', async () => {
     jest.useFakeTimers();
     walletReservationLedger.resetForTests();
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
-    const firstOffer = deferred<{ offer: string; tradeId: string }>();
-    const createOfferForIds = jest
+    const firstOffer = deferred<{
+      kind: 'created';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }>();
+    const beginWalletOffer = jest
       .fn()
       .mockReturnValueOnce(firstOffer.promise)
-      .mockResolvedValueOnce({ offer: 'offer-new', tradeId: 'trade-new' });
-    const cancelOffer = jest
+      .mockResolvedValueOnce({
+        kind: 'created',
+        material: { kind: 'offer', offer: 'offer-new' },
+        tradeId: 'trade-new',
+      });
+    const releaseWalletOffer = jest
       .fn()
       .mockResolvedValue({ status: 'unavailable', detail: 'wallet offline' });
     const rpc = {
-      createOfferForIds,
-      cancelOffer,
+      beginWalletOffer,
+      releaseWalletOffer,
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
@@ -927,57 +1028,60 @@ describe('BlockchainPoller', () => {
     walletReservationLedger.attachRpc(poller.rpc);
     poller.startBalanceInterest(1000, { onBalance: () => {} });
 
-    const reservation = {
-      owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
-      purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
-    };
-    const stale = poller.rpc.createOfferForIds(
-      'old',
-      {},
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      reservation,
+    const stale = walletReservationLedger.createOffer(
+      poller.rpc,
+      walletOperation.owner,
+      walletOperation.purpose,
+      { ...walletRequest, uniqueId: 'old' },
     );
     await advanceLane(0);
     connected = false;
     onConnectionChange?.(false);
-    await expect(stale).rejects.toThrow(
-      'RPC request discarded during disconnect: createOfferForIds',
-    );
     connected = true;
     onConnectionChange?.(true);
-    const replacement = poller.rpc.createOfferForIds('new', {});
 
-    firstOffer.resolve({ offer: 'offer-old', tradeId: 'trade-old' });
+    firstOffer.resolve({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer-old' },
+      tradeId: 'trade-old',
+    });
     await advanceLane(0);
-    expect(createOfferForIds).toHaveBeenCalledTimes(2);
-    await expect(replacement).resolves.toEqual({ offer: 'offer-new', tradeId: 'trade-new' });
+    await expect(stale).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer-old' },
+      tradeId: 'trade-old',
+    });
+    walletReservationLedger.settleOperation(
+      walletOperation.owner,
+      walletOperation.purpose,
+      'cancel-required',
+      'stale-completion',
+    );
     await advanceLane(0);
-    expect(cancelOffer).toHaveBeenCalledWith('trade-old');
-    expect(walletReservationLedger.entriesFor(reservation.owner)).toEqual([
+    expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+    expect(releaseWalletOffer).toHaveBeenCalledWith('trade-old');
+    expect(walletReservationLedger.entriesFor(walletOperation.owner)).toEqual([
       expect.objectContaining({ tradeId: 'trade-old', stage: 'cancel-required' }),
     ]);
     await advanceLane(0);
-    expect(cancelOffer).toHaveBeenCalledTimes(1);
+    expect(releaseWalletOffer).toHaveBeenCalledTimes(1);
     walletReservationLedger.resetForTests();
     jest.useRealTimers();
   });
 
   it('does not let an inactive constructed poller steal ledger RPC ownership', async () => {
     walletReservationLedger.resetForTests();
-    const activeCancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
-    const inactiveCancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const activeRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const inactiveRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const activeRpc = {
-      cancelOffer: activeCancel,
+      releaseWalletOffer: activeRelease,
       onConnectionChange: () => () => {},
     } as unknown as InternalBlockchainInterface;
     walletReservationLedger.attachRpc(activeRpc);
     new BlockchainPoller(
       {
         ...makeRpc([1n]),
-        cancelOffer: inactiveCancel,
+        releaseWalletOffer: inactiveRelease,
       },
       1000,
     );
@@ -988,8 +1092,8 @@ describe('BlockchainPoller', () => {
     walletReservationLedger.requireCancellation('trade-active-owner', 'wallet-outcome-finalized');
     await walletReservationLedger.awaitOwner(owner);
 
-    expect(activeCancel).toHaveBeenCalledWith('trade-active-owner');
-    expect(inactiveCancel).not.toHaveBeenCalled();
+    expect(activeRelease).toHaveBeenCalledWith('trade-active-owner');
+    expect(inactiveRelease).not.toHaveBeenCalled();
     walletReservationLedger.resetForTests();
   });
 
@@ -1081,10 +1185,10 @@ describe('BlockchainPoller', () => {
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const selected = deferred<string | null>();
     const selectCoins = jest.fn(() => selected.promise);
-    const createFeeSpend = jest.fn();
+    const beginWalletOffer = jest.fn();
     const rpc = {
       selectCoins,
-      createFeeSpend,
+      beginWalletOffer,
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
@@ -1096,7 +1200,15 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.startBalanceInterest(1000, { onBalance: () => {} });
     const walletRequest = poller.rpc.selectCoins('wallet', 1n);
-    const feeRequest = poller.rpc.createFeeSpend!(1n, 'fee-target');
+    const feeRequest = poller.rpc.beginWalletOffer(
+      { ...walletOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+      {
+        kind: 'fee',
+        uniqueId: 'wallet',
+        fee: 1n,
+        concurrentSpendCoinId: 'fee-target',
+      },
+    );
     await advanceLane(0);
     expect(selectCoins).toHaveBeenCalledTimes(1);
 
@@ -1112,12 +1224,11 @@ describe('BlockchainPoller', () => {
       status: 'unavailable',
       detail: 'RPC request discarded during disconnect: spend',
     });
-    await expect(feeRequest).resolves.toEqual({
-      kind: 'unavailable',
-      reason: 'RPC request discarded during disconnect: createFeeSpend',
-    });
+    await expect(feeRequest).rejects.toThrow(
+      'RPC request discarded during disconnect: beginWalletOffer',
+    );
     expect(selectCoins).toHaveBeenCalledTimes(1);
-    expect(createFeeSpend).not.toHaveBeenCalled();
+    expect(beginWalletOffer).not.toHaveBeenCalled();
 
     selected.resolve(null);
     await advanceLane(0);

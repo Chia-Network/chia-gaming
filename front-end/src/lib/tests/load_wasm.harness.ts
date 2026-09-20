@@ -28,6 +28,18 @@ import * as assert from 'assert';
 
 export const LONG_WASM_TEST_TIMEOUT = 10 * 60 * 1000;
 
+export function assertWasmStateNumbersAreBigInt(status: Record<string, unknown>): void {
+  for (const field of [
+    'state_number',
+    'unrolling_state_number',
+    'preempting_state_number',
+  ] as const) {
+    if (status[field] !== undefined && status[field] !== null) {
+      assert.equal(typeof status[field], 'bigint', `${field} must cross WASM as bigint`);
+    }
+  }
+}
+
 function rooted(name: string) {
   // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
   return resolve(__dirname, '../../../..', name);
@@ -318,6 +330,7 @@ export async function action_with_messages(
               const tag = typeof evt.data === 'object' ? Object.keys(evt.data)[0] : null;
               if (tag === 'ChannelStatus') {
                 const cs = (evt.data as Record<string, Record<string, unknown>>).ChannelStatus;
+                assertWasmStateNumbersAreBigInt(cs);
                 if (cs?.state === 'Active') {
                   evt_results[index] = true;
                 }

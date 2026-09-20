@@ -159,6 +159,11 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
     'Unrolling',
     'restored channel-spend phase must advance to an observed unroll',
   );
+  assert.equal(
+    typeof lane.controller.lastChannelStatus?.unrolling_state_number,
+    'bigint',
+    'unrolling real-WASM status must expose unrolling_state_number as bigint',
+  );
 
   lane = (await injectSessionReload(lane, poller)).lane;
   assert.equal(lane.controller.lastChannelStatus?.state, 'Unrolling');

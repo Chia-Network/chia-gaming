@@ -239,7 +239,12 @@ export function reduceChannelEvent(
       const notification = {
         id: state.coordination.nextNotificationId + 1n,
         kind: event.kind,
-        title: event.kind === 'durability-error' ? 'Session Storage Error' : 'Error',
+        title:
+          event.kind === 'durability-error'
+            ? 'Session Storage Error'
+            : event.kind === 'recoverable-internal-error'
+              ? 'Internal Error'
+              : 'Error',
         message: event.message,
       };
       return {

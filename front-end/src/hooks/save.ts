@@ -40,6 +40,8 @@ import { hardResetStorage } from './saveHardReset';
 import { loadPreferences, savePreferences } from './savePreferences';
 import {
   checkLease,
+  beginHardResetPersistence,
+  capturePersistenceFence,
   claimLease,
   clearAutoResumeOnce,
   clearLease,
@@ -49,6 +51,7 @@ import {
   hasWalletConnectStorage,
   installStorageCoordination,
   isFenced,
+  isPersistenceFenceCurrent,
   isLeaseConflict,
   markAutoResumeOnce,
   markSavedSession,
@@ -116,12 +119,16 @@ function isDurableSession(state: SessionSave): boolean {
 
 function stopPersistenceForHardReset(): void {
   cached = null;
-  fencePersistence();
+  stagedTerminal = null;
+  if (!isFenced()) fencePersistence();
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
   settleScheduledPersist();
+  identityDiskChecked = true;
+  sessionCacheHydratedFromDisk = true;
+  walletReservationLedgerHydration = null;
 }
 
 // --- In-memory cache + debounced persistence ---
@@ -132,7 +139,6 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistPromise: Promise<void> | null = null;
 let resolvePersist: (() => void) | null = null;
 let rejectPersist: ((reason: unknown) => void) | null = null;
-let writeChain: Promise<void> = Promise.resolve();
 const PERSIST_DEBOUNCE_MS = 300;
 
 /**
@@ -239,6 +245,7 @@ function capPersistedHistories(state: SessionSave): void {
 }
 
 function queueWrite(state: SessionSave): Promise<void> {
+  const fence = capturePersistenceFence();
   const snapshot = structuredClone(state);
   const ledgerCheckpoint = walletReservationLedger.checkpoint();
   capPersistedHistories(snapshot);
@@ -249,7 +256,7 @@ function queueWrite(state: SessionSave): Promise<void> {
     ledgerCheckpoint.entries,
     () => !isFenced(),
   ).then(() => {
-    if (isFenced()) return;
+    if (!isPersistenceFenceCurrent(fence)) return;
     walletReservationLedger.combinedCheckpointPersisted(ledgerCheckpoint);
     // Only *set* the boot marker for a durable game session here. Pre-game
     // wallet connection marks explicitly in Shell; preference-only writes must
@@ -259,8 +266,7 @@ function queueWrite(state: SessionSave): Promise<void> {
       markSavedSession();
     }
   });
-  writeChain = write;
-  return writeChain;
+  return write;
 }
 
 function settleScheduledPersist(error?: unknown): void {
@@ -381,7 +387,6 @@ export function _resetForTests(): void {
   settleScheduledPersist();
   cached = null;
   stagedTerminal = null;
-  writeChain = Promise.resolve();
   identityDiskChecked = false;
   sessionCacheHydratedFromDisk = false;
   walletReservationLedgerHydration = null;
@@ -396,11 +401,12 @@ export function loadState(): SessionSave {
 
 export function hydrateWalletReservationLedger(): Promise<void> {
   if (walletReservationLedgerHydration) return walletReservationLedgerHydration;
+  walletReservationLedger.beginHydration();
   walletReservationLedgerHydration = (async () => {
     const record = await readWalletReservationRecord();
     walletReservationLedger.hydrateFromDisk(record);
   })().catch((error) => {
-    walletReservationLedgerHydration = null;
+    walletReservationLedger.failHydration(error);
     throw error;
   });
   return walletReservationLedgerHydration;
@@ -422,6 +428,11 @@ export function hydrateWalletReservationLedger(): Promise<void> {
  */
 /** @returns true when an incompatible IndexedDB schema was wiped (marker kept). */
 export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
+  if (isFenced()) {
+    identityDiskChecked = true;
+    sessionCacheHydratedFromDisk = true;
+    return false;
+  }
   await hydrateWalletReservationLedger();
   // Memory already holding durable game state must win over IndexedDB. Do not
   // require sessionId here: handshake saves often persist a cradle before any
@@ -449,7 +460,6 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
     settleScheduledPersist();
   }
 
-  await writeChain;
   const { record, discarded } = await readCompatibleSessionRecord();
   identityDiskChecked = true;
   sessionCacheHydratedFromDisk = true;
@@ -638,7 +648,13 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
   });
 }
 
-walletReservationLedger.configurePersistence(writeWalletReservationRecord);
+walletReservationLedger.configurePersistence(async (entries) => {
+  const fence = capturePersistenceFence();
+  await writeWalletReservationRecord(entries);
+  if (!isPersistenceFenceCurrent(fence)) {
+    throw new Error('Wallet reservation persistence was fenced before it executed');
+  }
+});
 
 export function patchPreHandshakeTransport(transport: SessionTransportSave): Promise<void> {
   return mutate((state) => {
@@ -764,7 +780,6 @@ export async function peekSession(): Promise<SessionSave | null> {
   // a durable resumable record that the boot marker is advertising.
   const wipedIncompatible = await hydrateSessionCacheFromDisk();
   if (persistPromise) await flushSessionSave();
-  await writeChain;
   const { record, discarded } = await readCompatibleSessionRecord();
   if (discarded) {
     // Wipe the unreadable record but keep the boot marker so reload still
@@ -825,20 +840,19 @@ export function clearSession(): Promise<void> {
   const prev = loadState();
   cached = freshSessionState(prev);
   savePreferences(cached);
-  const deletePromise = (writeChain = writeChain
-    .catch(() => {})
-    .then(async () => {
-      await deleteSessionRecord();
-      if (
-        cached?.preferences.blockchainType ||
-        cached?.preferences.hubUrl ||
-        walletReservationLedger.snapshot().length > 0
-      ) {
-        markSavedSession();
-      } else {
-        clearSavedSessionMarker();
-      }
-    }));
+  const fence = capturePersistenceFence();
+  const deletePromise = deleteSessionRecord().then(() => {
+    if (!isPersistenceFenceCurrent(fence)) return;
+    if (
+      cached?.preferences.blockchainType ||
+      cached?.preferences.hubUrl ||
+      walletReservationLedger.snapshot().length > 0
+    ) {
+      markSavedSession();
+    } else {
+      clearSavedSessionMarker();
+    }
+  });
   return deletePromise;
 }
 
@@ -862,20 +876,19 @@ export function clearSessionWithRejectionTombstone(
   const prev = loadState();
   cached = freshSessionState(prev);
   savePreferences(cached);
-  const replacePromise = (writeChain = writeChain
-    .catch(() => {})
-    .then(async () => {
-      await replaceSessionWithRejectionTombstone(tombstone);
-      if (
-        cached?.preferences.blockchainType ||
-        cached?.preferences.hubUrl ||
-        walletReservationLedger.snapshot().length > 0
-      ) {
-        markSavedSession();
-      } else {
-        clearSavedSessionMarker();
-      }
-    }));
+  const fence = capturePersistenceFence();
+  const replacePromise = replaceSessionWithRejectionTombstone(tombstone).then(() => {
+    if (!isPersistenceFenceCurrent(fence)) return;
+    if (
+      cached?.preferences.blockchainType ||
+      cached?.preferences.hubUrl ||
+      walletReservationLedger.snapshot().length > 0
+    ) {
+      markSavedSession();
+    } else {
+      clearSavedSessionMarker();
+    }
+  });
   return replacePromise;
 }
 
@@ -911,8 +924,10 @@ export async function clearGameSessionPreservingHistory(): Promise<void> {
 }
 
 export async function hardReset(): Promise<void> {
+  const generation = beginHardResetPersistence();
+  stopPersistenceForHardReset();
   walletReservationLedger.clearForHardReset();
-  await hardResetStorage(stopPersistenceForHardReset);
+  await hardResetStorage(generation);
 }
 
 // --- Alias ---

@@ -246,28 +246,34 @@ describe('coin puzzle/solution delivery', () => {
     }
   });
 
-  it('blocks deterministic rejection across readiness and height triggers', async () => {
-    const getPuzzleAndSolution = jest.fn().mockResolvedValue(null);
+  it('keeps malformed puzzle/solution from a successful wallet response terminal', async () => {
+    const getPuzzleAndSolution = jest.fn().mockResolvedValue(['02', '80']);
     const { controller, cradle, request, signalReady } = setup(getPuzzleAndSolution);
     const lease = new ControlledLease();
     try {
       controller.attachTransactionCoordinator(lease);
-      request();
-      await lease.launch(effectKey);
-      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, undefined, undefined);
-
       (cradle.report_puzzle_and_solution as jest.Mock).mockReturnValue(
-        wasmResult({ actionSucceeded: false }),
+        wasmResult({
+          actionSucceeded: false,
+          events: [
+            {
+              Notification: {
+                ActionFailed: { reason: 'trusted wallet returned malformed puzzle/solution' },
+              },
+            },
+          ],
+        }),
       );
       request();
       expectConsoleError(/puzzle\/solution callback failed/);
       await lease.launch(effectKey);
+      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, '02', '80');
       (cradle.snapshot_pending_coin_solution_requests as jest.Mock).mockReturnValue([coin]);
       signalReady();
       controller.reportNewBlock(2n);
       expect(lease.has(effectKey)).toBe(false);
-      expect(getPuzzleAndSolution).toHaveBeenCalledTimes(2);
-      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(2);
+      expect(getPuzzleAndSolution).toHaveBeenCalledTimes(1);
+      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
       await controller.flushPendingWork();
     } finally {
       controller.cleanup();

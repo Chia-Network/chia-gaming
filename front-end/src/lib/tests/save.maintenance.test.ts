@@ -7,6 +7,7 @@ import {
   getTheme,
   setTheme,
   hardReset,
+  flushSessionSave,
   getHubAlert,
   setHubAlert,
   claimLease,
@@ -14,7 +15,14 @@ import {
   isLeaseConflict,
   releaseLeaseIfOwner,
 } from '../../hooks/save';
-import { SESSION_DB_NAME } from '../session/indexedDb';
+import {
+  _holdNextStorageMutationForTests,
+  SESSION_DB_NAME,
+  writeRejectionTombstone,
+  writeSessionAndWalletReservationRecords,
+} from '../session/indexedDb';
+import { walletReservationLedger } from '../session/walletReservationLedger';
+import { liveSave } from './session_save_envelope.fixtures';
 import {
   startPendingWalletConnectWipe,
   _resetPendingWalletConnectWipeForTests,
@@ -81,6 +89,51 @@ describe('hard reset', () => {
     expect(sessionStorage.length).toBe(1);
     expect(sessionStorage.getItem('appState_pendingWcWipe')).not.toBeNull();
     expect(await peekSession()).toBeNull();
+  });
+
+  it('invalidates a held checkpoint before reset and cannot recreate storage afterward', async () => {
+    walletReservationLedger.registerReserved(
+      'pre-reset-ledger',
+      { installationPlayerId: 'installation', peerSessionId: 'pre-reset-peer' },
+      { kind: 'funding', operationId: 'pre-reset-operation' },
+    );
+    saveLiveFields(sampleSession);
+    await flushSessionSave();
+    await writeRejectionTombstone({
+      kind: 'inbound-receipt',
+      peerId: 'pre-reset-peer',
+      sessionId: 'ab'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 1n,
+      unackedMessages: [],
+      createdAt: Date.now(),
+    });
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    _holdNextStorageMutationForTests(held);
+    const staleCheckpoint = writeSessionAndWalletReservationRecords(liveSave(sampleSession), [
+      {
+        tradeId: 'stale-reset-ledger',
+        owner: { installationPlayerId: 'installation', peerSessionId: 'stale-peer' },
+        purpose: { kind: 'funding', operationId: 'stale-operation' },
+        stage: 'reserved',
+        reason: 'held-before-hard-reset',
+      },
+    ]);
+
+    const reset = hardReset();
+    release();
+    await Promise.all([staleCheckpoint, reset]);
+
+    const databases = await (
+      indexedDB as IDBFactory & { databases: () => Promise<Array<{ name?: string }>> }
+    ).databases();
+    expect(databases.map((database) => database.name)).not.toContain(SESSION_DB_NAME);
+    expect(loadState().phase).toBe('preferences');
+    expect(walletReservationLedger.snapshot()).toEqual([]);
   });
 
   it('starts deletion for every IndexedDB database returned by the browser', async () => {

@@ -11,10 +11,6 @@ import {
   AsyncRequestStartGate,
 } from '../lib/AsyncScheduler';
 import { walletReservationLedger } from '../lib/session/walletReservationLedger';
-import type {
-  WalletReservationOwner,
-  WalletReservationPurpose,
-} from '../lib/session/walletReservationLedgerSchema';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
@@ -149,22 +145,23 @@ export class BlockchainPoller {
           throw error;
         }
       },
-      createFeeSpend: adapter.createFeeSpend
-        ? async (fee, concurrentSpendCoinId, reservation) => {
-            try {
-              return await this.enqueueMutation(
-                'createFeeSpend',
-                () => adapter.createFeeSpend!(fee, concurrentSpendCoinId, reservation),
-                true,
-                reservation,
-              );
-            } catch (error) {
-              if (error instanceof BlockchainRpcUnavailableError) {
-                return { kind: 'unavailable', reason: error.message };
-              }
-              throw error;
-            }
-          }
+      beginWalletOffer: (operation, request) =>
+        this.enqueueMutation(
+          'beginWalletOffer',
+          () => adapter.beginWalletOffer(operation, request),
+          true,
+        ),
+      reconcileWalletOffer: adapter.reconcileWalletOffer
+        ? (operation, request, recoveryId) =>
+            this.enqueueMutation(
+              'reconcileWalletOffer',
+              () => adapter.reconcileWalletOffer!(operation, request, recoveryId),
+              true,
+            )
+        : undefined,
+      releaseWalletOffer: adapter.releaseWalletOffer
+        ? (tradeId) =>
+            this.enqueueMutation('releaseWalletOffer', () => adapter.releaseWalletOffer!(tradeId))
         : undefined,
       getAddress: () => this.enqueueRead('getAddress', () => adapter.getAddress()),
       getBalance: () => this.enqueueRead('getBalance', () => adapter.getBalance()),
@@ -173,33 +170,6 @@ export class BlockchainPoller {
       selectCoins: (uniqueId, amount) =>
         this.enqueueMutation('selectCoins', () => adapter.selectCoins(uniqueId, amount)),
       getHeightInfo: () => this.enqueueRead('getHeightInfo', () => adapter.getHeightInfo()),
-      createOfferForIds: (
-        uniqueId,
-        offer,
-        extraConditions,
-        coinIds,
-        maxHeight,
-        openingFee,
-        reservation,
-      ) =>
-        this.enqueueMutation(
-          'createOfferForIds',
-          () =>
-            adapter.createOfferForIds(
-              uniqueId,
-              offer,
-              extraConditions,
-              coinIds,
-              maxHeight,
-              openingFee,
-              reservation,
-            ),
-          true,
-          reservation,
-        ),
-      cancelOffer: adapter.cancelOffer
-        ? (tradeId) => this.enqueueMutation('cancelOffer', () => adapter.cancelOffer!(tradeId))
-        : undefined,
       getCoinRecordsByNames: (names) =>
         this.enqueueRead('getCoinRecordsByNames', () => adapter.getCoinRecordsByNames(names)),
       registerCoins: (names) =>
@@ -222,18 +192,21 @@ export class BlockchainPoller {
   private enqueueMutation<T>(
     label: string,
     run: () => Promise<T> | T,
-    cancelStaleOffer = false,
-    reservation?: { owner: WalletReservationOwner; purpose: WalletReservationPurpose },
+    preserveActiveCompletion = false,
   ): Promise<T> {
-    return this.enqueueRpc(this.mutationLane, label, run, cancelStaleOffer, reservation);
+    return this.enqueueRpc(
+      this.mutationLane,
+      label,
+      () => walletReservationLedger.runAfterHydration(run),
+      preserveActiveCompletion,
+    );
   }
 
   private enqueueRpc<T>(
     lane: AsyncJobQueue,
     label: string,
     run: () => Promise<T> | T,
-    cancelStaleOffer = false,
-    reservation?: { owner: WalletReservationOwner; purpose: WalletReservationPurpose },
+    preserveActiveCompletion = false,
   ): Promise<T> {
     if (!this.isConnected()) {
       return Promise.reject(new BlockchainRpcUnavailableError(label));
@@ -248,7 +221,7 @@ export class BlockchainPoller {
         this.pendingRpcRejects.delete(rejectForDisconnect);
         complete(value);
       };
-      this.pendingRpcRejects.add(rejectForDisconnect);
+      if (!preserveActiveCompletion) this.pendingRpcRejects.add(rejectForDisconnect);
       const job: AsyncQueueJob = {
         label,
         run: async () => {
@@ -259,7 +232,10 @@ export class BlockchainPoller {
           try {
             const result = await this.runAdapterRpc(connectionEpoch, label, run);
             if (!this.isConnectionEpochActive(connectionEpoch)) {
-              if (cancelStaleOffer) this.routeStaleOfferResult(label, result, reservation);
+              if (preserveActiveCompletion) {
+                settle(resolve, result);
+                return;
+              }
               rejectForDisconnect();
               return;
             }
@@ -284,29 +260,6 @@ export class BlockchainPoller {
       throw new BlockchainRpcUnavailableError(label);
     }
     return run();
-  }
-
-  private routeStaleOfferResult(
-    label: string,
-    result: unknown,
-    reservation?: { owner: WalletReservationOwner; purpose: WalletReservationPurpose },
-  ): void {
-    const tradeId =
-      typeof result === 'object' &&
-      result !== null &&
-      typeof (result as { tradeId?: unknown }).tradeId === 'string'
-        ? (result as { tradeId: string }).tradeId
-        : undefined;
-    if (!tradeId || !reservation) {
-      log(`[blockchain-poller] stale ${label} result lacks reservation identity or tradeId`);
-      return;
-    }
-    walletReservationLedger.routeStaleResult(
-      tradeId,
-      reservation.owner,
-      reservation.purpose,
-      `stale-${label}-result`,
-    );
   }
 
   attachGameSession(cradle: PollingGameSession) {
@@ -509,7 +462,7 @@ export class BlockchainPoller {
       // Advance every session as soon as a height is available, independently
       // of the slower watched-coin lookup. This is deliberately a
       // manager-owned height-only observation, not an empty coin snapshot.
-      await Promise.all(
+      await Promise.allSettled(
         this.collectGameSessionCoins().map(({ c }) => Promise.resolve(c.reportNewBlock(height))),
       );
 
@@ -691,7 +644,7 @@ export class BlockchainPoller {
       csr.sort((a, b) => a.coin.localeCompare(b.coin));
       deliveries.push(Promise.resolve(c.reportCoinStates(height, csr)));
     }
-    await Promise.all(deliveries);
+    await Promise.allSettled(deliveries);
   }
 
   private currentBackoffMs(): number {

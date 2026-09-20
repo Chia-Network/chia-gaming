@@ -116,6 +116,7 @@ export type NotificationKind =
   | 'channel-state'
   | 'action-failed'
   | 'infra-error'
+  | 'recoverable-internal-error'
   | 'durability-error'
   | 'proposal-rejected'
   | 'insufficient-bal'

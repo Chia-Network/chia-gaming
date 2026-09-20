@@ -281,6 +281,14 @@ export class SessionMachineRuntime {
       case 'durability-error':
         this.dispatch({ type: 'enqueue-error', kind: 'durability-error', message: event.error });
         break;
+      case 'recoverable-internal-error':
+        this.dispatch({
+          type: 'enqueue-error',
+          kind: 'recoverable-internal-error',
+          message: event.error,
+        });
+        this.dispatchHostProjection();
+        break;
       case 'log':
         log(`[wasm] ${event.message}`);
         this.dispatchHostProjection();

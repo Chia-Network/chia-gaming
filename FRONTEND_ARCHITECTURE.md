@@ -371,12 +371,12 @@ resumable-session marker, and tab/reset coordination keys, inside the same-origi
 trust model described above.
 
 The current and only legal browser envelope is `chia-gaming-session` version
-`30`; the serialized Rust/WASM cradle inside a live envelope is schema `17`.
+`31`; the serialized Rust/WASM cradle inside a live envelope is schema `17`.
 The wallet reservation ledger is not an envelope field: it is an independent
-`chia-gaming-wallet-reservations` version-`2` record in its own IndexedDB store.
+`chia-gaming-wallet-reservations` version-`3` record in its own IndexedDB store.
 All three explicit version fields remain centralized migration hooks. No player
 app or hub persistence format has shipped, so non-current app-owned versions
-are deleted without fallback decoding, aliases, or migrations. A decoded v30
+are deleted without fallback decoding, aliases, or migrations. A decoded v31
 record must also satisfy the complete phase-owned envelope contract (keyed game
 membership, generic game-state envelope agreement, terminal data, and frozen
 terminal coin list); malformed records are deleted rather than partially
@@ -408,7 +408,7 @@ are grouped under those phase-owned payloads:
 
 | Field                                 | Type                                                | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                             | `bigint`                                            | Save envelope version; currently `30`.                                                                                                                                                                                                                                                                          |
+| `version`                             | `bigint`                                            | Save envelope version; currently `31`.                                                                                                                                                                                                                                                                          |
 | `playerId`                            | `string`                                            | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                           | `string?`                                           | Local master secret used to derive a distinct hub iframe/game-channel credential for each canonical hub origin.                                                                                                                                                                                                 |
 | `alias`                               | `string?`                                           | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -592,15 +592,19 @@ outcome back to Rust.
 
 The external wallet constructs each funding offer from Rust's canonical
 request; Rust validates the result. Rejection terminates the handshake and does
-not create controller-owned successor or predecessor requests. Rejected
-persisted funding and fee offers instead enter the independent strict-v2 wallet
-reservation ledger. Every trade owns its exact provider trade ID and exact
+not create controller-owned successor or predecessor requests. Persisted
+funding and fee offers enter the independent strict-v3 wallet reservation
+ledger. Every trade owns its exact provider trade ID and exact
 `(installationPlayerId, peerSessionId, purpose kind, operationId)` identity;
 one operation may retain multiple historical trades without conflating owners
 or cleanup. Stages are strictly `reserved`, `retained-for-replay`, or
 `cancel-required`. An attached fee source remains retained while Rust may
 replay the exact finalized transaction; acknowledgement, retirement, rejection,
 or unused finalization moves it through typed cancellation before removal.
+Controller retirement promotes only `reserved` entries; replay-retained fee
+sources stay retained until Rust explicitly retires their stable submission.
+Wallet mutation is held until ledger hydration succeeds and fails closed if the
+record is malformed.
 
 The active session envelope and complete ledger snapshot are written in one
 IndexedDB transaction. Strict codecs reject unknown/missing fields, duplicate
@@ -655,7 +659,21 @@ the complete `TransactionManager` and nested session, committing manager state,
 watch deltas, effects, and callback completion together only on success.
 Outstanding requested coin IDs are durable Rust state; restore reissues each
 still-live request once, while retire-aware controller completion prevents an
-old runtime from delivering into its replacement.
+old runtime from delivering into its replacement. A successful wallet RPC does
+not make its puzzle/solution bytes structurally trusted: malformed data is
+fatal protocol evidence, leaves the request terminally blocked, and is not
+retried on ordinary readiness or height triggers.
+
+Submission draining applies the same isolation principle at item granularity.
+Each candidate is planned against a working copy; a malformed middle candidate
+is consumed and reported once while valid candidates before and after it
+commit. Rust emits retirement for abandoned retained submissions before
+removing them. Only this proven-local failure class is recoverable: the host
+persists one bounded incident with JavaScript stack and Rust context, displays
+one dismissible nonfatal modal, and leaves the game/dashboard active without an
+ordinary or global error duplicate. Unknown manager/session integrity remains
+fatal. Release follows the live failed-checkpoint policy: attempt persistence,
+release the isolated safe boundary once, and retain dirty in-memory state.
 
 Rust local batch packaging is modular and host-invisible. `OffChainPhase`
 exclusively owns a `BatchPlan` containing cloned channel state, queue
@@ -700,7 +718,7 @@ Acceptance removes
 the proposal and creates factory-ordered game members in `GameSlice`;
 `InsufficientBalance` and proposal cancellation remove only the proposal.
 Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
-independently by `GameID`. The current v30 envelope makes
+independently by `GameID`. The current v31 envelope makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
@@ -971,12 +989,21 @@ is the escape hatch for garbled local state, so it must not deserialize saved
 state, reconnect to services, preserve preferences, or otherwise interpret the
 current session. The handler tears down live hub/wallet sockets (so
 IndexedDB deletes are not blocked), awaits `hardReset()`, and reloads the page.
+All session, ledger, clear, and reset mutations share one serialized,
+generation-fenced storage coordinator. This orders `clearSession()` followed by
+an immediate unawaited save, and prevents an old tab or retired lease from
+overwriting the winning generation. `hardReset()` advances that fence before
+deletion; queued or in-flight pre-reset writes cannot recreate IndexedDB or
+cached state afterward.
 `hardReset()`:
 
 1. Signals sibling tabs to stop persisting.
-2. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
+2. Erases every in-memory wallet reservation, including
+   `retained-for-replay`; reset is intentionally destructive and does not run
+   graceful cancellation.
+3. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
    marker and prefs must not outlive a later IndexedDB hang).
-3. Deletes every known app / WalletConnect IndexedDB database, then enumerates
+4. Deletes every known app / WalletConnect IndexedDB database, then enumerates
    and deletes any remaining origin databases. Deletion waits through
    `onblocked` until `onsuccess`/`onerror`; hardReset does **not** time out and
    abandon the wipe.
@@ -996,19 +1023,23 @@ state and reloads.
 
 When the user chooses to resume a full save, `performResume` fires:
 
-1. Hydrate local UI state (game params, human history, WASM notification
-   history, and diagnostic log) from the save.
-2. Connect to the wallet backend (`beginConnect` + `finalize`).
-3. Connect to the hub. On `connection_status`, reconcile the hub's
+1. Decode the strict IndexedDB record, hydrate local UI state (game params,
+   human history, WASM notification history, and diagnostic log), and restore
+   the serialized WASM cradle.
+2. Publish the locally restored shell/game/dashboard immediately. Action
+   controls that need a wallet, hub, or blockchain remain gated.
+3. Independently connect to the wallet backend (`beginConnect` + `finalize`)
+   and attach blockchain recovery.
+4. Connect to the hub. On `connection_status`, reconcile the hub's
    pairing state against the save (see
    [Reconnect Reconciliation](#reconnect-reconciliation)).
-4. `sessionController.restoreSession` loads WASM and deserializes the cradle
-   via `WasmStateInit.deserializeGame()`, restores WASM/transport counters and
-   logs. `sessionModelFromSave` initializes the machine's game-owned `handState`
-   directly from the decoded save.
 5. Hub `registered` and a matching `peer_available` are the only boundaries
    that re-send un-acked peer messages. Pending chain transactions are re-submitted when
    the restored transaction manager attaches.
+
+Local IndexedDB+WASM presentation and external hub/wallet/blockchain recovery
+are deliberately separate authorities: external outage delays reconciliation
+and actions, not visibility of a valid local restore.
 
 #### Cleanup
 
@@ -1025,9 +1056,10 @@ There are two different reset paths:
   UI state.
 - `hardReset()` is destructive app-origin storage reset. It is used by Start
   over and intentionally wipes all local browser state without attempting
-  graceful wallet, hub, or session cleanup. Sync storage is cleared before
-  IndexedDB so markers/prefs cannot outlive the wipe; IndexedDB deletion is
-  awaited to completion (no give-up timeout).
+  graceful wallet, hub, or session cleanup. It erases every reservation,
+  advances the storage generation before deletion, clears sync storage before
+  IndexedDB so markers/prefs cannot outlive the wipe, and awaits IndexedDB
+  deletion to completion (no give-up timeout).
 
 The browser storage involved is split across three APIs:
 
@@ -1349,6 +1381,24 @@ Shell manages wallet connections through two abstractions defined in
   wallet reservation. The wallet chooses the offer inputs, so Cloud no longer
   selects or pins a funding coin in JavaScript.
 
+  The provider-neutral offer lifecycle has an optional reconciliation
+  capability. Cloud persists the exact pending `signatureRequest` recovery ID
+  before awaiting approval; after ledger reload it polls that request and never
+  starts a duplicate `createOffer`. Approval messages must match origin, popup
+  source, and canonical request ID, and every terminal path closes the popup and
+  removes its listener exactly once. The currently deployed WalletConnect API
+  does not expose end-to-end create-offer idempotency or response-loss
+  reconciliation. If its successful response is lost, an external offer may be
+  orphaned; retry is therefore explicitly best-effort until WalletConnect
+  provides the optional capability.
+
+  The simulator mirrors wallet reservation semantics with synthetic trade
+  identities. Each synthetic fee offer reserves the exact input identity
+  selected for that offer. Submission terminalizes only the synthetic trade
+  whose exact bundle identity was acknowledged; another outstanding offer is
+  neither consumed nor released, and reusing an already reserved input is
+  rejected.
+
   Cloud fee attachment is also offer-based. `createFeeSpend` creates a fee-only
   offer with empty `offered`/`requested` arrays, the native `fee` field, and one
   serialized `ASSERT_CONCURRENT_SPEND` targeting Rust's protocol coin. Unlike a
@@ -1495,7 +1545,11 @@ host-side coordinator for chain observations. It separates three concerns:
    A new generation may run immediately even if an unabortable old read never
    resolves. Each request revalidates its connection epoch after the shared
    start gate and after adapter completion, so stale work cannot start late or
-   publish a late old-generation result.
+   publish a late old-generation result. Read polling fans session delivery out
+   with `allSettled`: one session's callback failure does not block healthy
+   sessions and does not trigger global adapter backoff. Wallet mutations start
+   only after successful wallet-ledger hydration; malformed hydration rejects
+   them before the provider is called.
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
@@ -1661,6 +1715,10 @@ conversions happen at the call site with an explicit `Number()` cast — the
 Bencodex represents those integers and raw byte strings directly. IndexedDB
 stores one salt-prefixed, masked `Uint8Array` containing the bencodex record;
 there is no tagged-JSON save envelope and no structured-clone object graph.
+Rust first converts internal `usize` channel state numbers to checked `u64`.
+WASM exposes all three optional channel status fields—current, unrolling, and
+preempting state number—as `bigint`; number-valued decodes are rejected.
+`number` conversion is confined to external APIs that explicitly require it.
 
 **View layer boundary.** React components that render or edit a value receive
 view-safe props: decimal strings for money and CLVM integers, or small `number`s
@@ -1971,8 +2029,8 @@ not to limit concurrency.
 | `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                                                                       |
 | `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                                                           |
 | `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules                    |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v30 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v30 presentation snapshot encoder                                                                                                    |
+| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v31 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
+| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v31 presentation snapshot encoder                                                                                                    |
 | `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                                                                  |
 | `front-end/src/lib/session/incomingProposal.ts`  | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                                                                            |
 | `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                                                                     |
@@ -1982,7 +2040,7 @@ not to limit concurrency.
 | `front-end/src/lib/gameIdentities.ts`            | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                                                             |
 | `front-end/src/hooks/blobSingleton.ts`           | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence                                         |
 | `front-end/src/services/PeerSession.ts`          | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                                                                  |
-| `front-end/src/hooks/save.ts`                    | v21 cache/write and live/terminal lifecycle facade                                                                                                              |
+| `front-end/src/hooks/save.ts`                    | Current-version cache/write and live/terminal lifecycle facade                                                                                                  |
 | `front-end/src/hooks/saveCoordination.ts`        | Resume markers, active-tab lease, and cross-tab persistence fencing                                                                                             |
 | `front-end/src/hooks/saveHardReset.ts`           | Hard-reset and WalletConnect browser-storage cleanup                                                                                                            |
 | `front-end/src/hooks/savePreferences.ts`         | Local preference encoding and decoding                                                                                                                          |

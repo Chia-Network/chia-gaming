@@ -80,6 +80,7 @@ const NOTIFICATION_KINDS = new Set([
   'channel-state',
   'action-failed',
   'infra-error',
+  'recoverable-internal-error',
   'durability-error',
   'proposal-rejected',
   'insufficient-bal',
@@ -411,10 +412,7 @@ export function validateLive(live: LiveSessionSave['live']): void {
   }
 }
 
-export function validateChannelStatus(
-  value: unknown,
-  options: { allowNumberStateNumbers?: boolean } = {},
-): void {
+export function validateChannelStatus(value: unknown): void {
   if (value == null) return;
   const status = requireRecord(value, 'channelStatus');
   requireExactKeys(status, CHANNEL_STATUS_KEYS, 'channelStatus');
@@ -474,14 +472,6 @@ export function validateChannelStatus(
   ] as const) {
     const value = status[field];
     if (value === undefined || value === null) continue;
-    if (
-      options.allowNumberStateNumbers &&
-      typeof value === 'number' &&
-      Number.isInteger(value) &&
-      value >= 0
-    ) {
-      continue;
-    }
     requireBigint(value, `channelStatus.${field}`);
   }
 }

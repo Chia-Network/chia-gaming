@@ -216,6 +216,11 @@ it(
 
       await action_with_messages(poller, cradle1, cradle2);
       for (const blob of [wasm_blob1, wasm_blob2]) {
+        assert.equal(
+          typeof blob.lastChannelStatus?.state_number,
+          'bigint',
+          'active real-WASM status must expose state_number as bigint',
+        );
         const coins = blob.getCoinsOfInterest();
         assert.equal(coins.length, 1);
         const [channelCoin] = coins;

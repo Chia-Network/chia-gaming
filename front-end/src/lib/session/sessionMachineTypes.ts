@@ -166,7 +166,7 @@ export type SessionMachineEvent =
   | { type: 'clear-durability-error' }
   | {
       type: 'enqueue-error';
-      kind: 'infra-error' | 'action-failed' | 'durability-error';
+      kind: 'infra-error' | 'action-failed' | 'recoverable-internal-error' | 'durability-error';
       message: string;
     }
   | {

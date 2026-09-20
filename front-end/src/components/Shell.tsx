@@ -822,8 +822,6 @@ const Shell = () => {
     shellDispatchRef.current({ type: 'setRestoreHubReconciled', value });
   }, []);
 
-  const restoreHubReconciled = shellState.restoreHubReconciled;
-
   const stablePeerConn: PeerConnectionResult = useMemo(
     () => ({
       get reliableState() {
@@ -2645,7 +2643,7 @@ const Shell = () => {
   );
 
   // Auto-connect to saved hub once this tab owns the app lease. Also while
-  // autoResuming (blank UI) so session restore can reconcile before first paint.
+  // autoResuming so external reconciliation can begin alongside local restore.
   useEffect(() => {
     if (bootState.kind !== 'ready' && bootState.kind !== 'autoResuming') {
       hubConnRef.current?.disconnect();
@@ -3175,11 +3173,7 @@ const Shell = () => {
     [completeTransition, setDashboardSessionModel],
   );
 
-  const restoreBlocked = isRestoreBlocked(
-    !!sessionConfig?.restoring,
-    restoreStatus,
-    restoreHubReconciled,
-  );
+  const restoreBlocked = isRestoreBlocked(!!sessionConfig?.restoring, restoreStatus);
 
   // Mirror the active backend's play-readiness into blockchainReadyRef and push
   // the hub busy bit. The backend owns the computation (sim: connected;
@@ -3564,7 +3558,7 @@ const Shell = () => {
       return;
     }
     const restoring = !!sessionConfig.restoring;
-    const blocked = isRestoreBlocked(restoring, restoreStatus, restoreHubReconciled);
+    const blocked = isRestoreBlocked(restoring, restoreStatus);
     const { keepSession } = shouldMountGameSession(
       true,
       walletConnected,
@@ -3574,14 +3568,7 @@ const Shell = () => {
     if (keepSession && !blocked) {
       setBootState({ kind: 'ready' });
     }
-  }, [
-    bootState.kind,
-    sessionConfig,
-    peerConn,
-    walletConnected,
-    restoreStatus,
-    restoreHubReconciled,
-  ]);
+  }, [bootState.kind, sessionConfig, peerConn, walletConnected, restoreStatus]);
 
   // User clicked "Take over" in the tabConflict dialog.
   // Claim the lease in place (this fences the other tab via storage event)

@@ -46,11 +46,11 @@ it(
     const cancellationOutcomes: Array<{ status: string; detail?: string }> = [];
     let feeOfferCreations = 0;
     const originalSpend = fakeBlockchainInfo.spend;
-    const originalCreateFeeSpend = fakeBlockchainInfo.createFeeSpend;
-    const originalCancelOffer = fakeBlockchainInfo.cancelOffer;
-    fakeBlockchainInfo.createFeeSpend = async (...args) => {
-      feeOfferCreations += 1;
-      return originalCreateFeeSpend.apply(fakeBlockchainInfo, args);
+    const originalBeginWalletOffer = fakeBlockchainInfo.beginWalletOffer;
+    const originalReleaseWalletOffer = fakeBlockchainInfo.releaseWalletOffer;
+    fakeBlockchainInfo.beginWalletOffer = async (...args) => {
+      if (args[1].kind === 'fee') feeOfferCreations += 1;
+      return originalBeginWalletOffer.apply(fakeBlockchainInfo, args);
     };
     fakeBlockchainInfo.spend = async (...args) => {
       submittedBlobs.push(args[0]);
@@ -67,8 +67,8 @@ it(
       submissionOutcomes.push(outcome);
       return outcome;
     };
-    fakeBlockchainInfo.cancelOffer = async (...args) => {
-      const outcome = await originalCancelOffer.apply(fakeBlockchainInfo, args);
+    fakeBlockchainInfo.releaseWalletOffer = async (...args) => {
+      const outcome = await originalReleaseWalletOffer.apply(fakeBlockchainInfo, args);
       cancellationOutcomes.push(outcome);
       return outcome;
     };
@@ -167,8 +167,8 @@ it(
       for (const adapter of adapters) adapter.blob?.cleanup();
       errorSubscription.unsubscribe();
       fakeBlockchainInfo.spend = originalSpend;
-      fakeBlockchainInfo.createFeeSpend = originalCreateFeeSpend;
-      fakeBlockchainInfo.cancelOffer = originalCancelOffer;
+      fakeBlockchainInfo.beginWalletOffer = originalBeginWalletOffer;
+      fakeBlockchainInfo.releaseWalletOffer = originalReleaseWalletOffer;
     }
   },
   LONG_WASM_TEST_TIMEOUT,

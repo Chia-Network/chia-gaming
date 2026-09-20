@@ -99,6 +99,72 @@ pub struct DrainedSubmission {
     pub fee_intent: SubmissionFeeIntent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmissionDrainFailureStage {
+    Fingerprint,
+    RetainedState,
+    ExpectedOutputs,
+    SubmissionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmissionDrainFailure {
+    pub candidate_index: u64,
+    pub retained_submission_id: Option<u64>,
+    pub candidate_submission_id: Option<u64>,
+    pub intent_fingerprint: Option<Hash>,
+    pub stage: SubmissionDrainFailureStage,
+    pub message: String,
+    pub rust_context: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubmissionDrainResult {
+    pub submissions: Vec<DrainedSubmission>,
+    pub failures: Vec<SubmissionDrainFailure>,
+}
+
+impl std::ops::Deref for SubmissionDrainResult {
+    type Target = Vec<DrainedSubmission>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.submissions
+    }
+}
+
+impl std::ops::DerefMut for SubmissionDrainResult {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.submissions
+    }
+}
+
+impl IntoIterator for SubmissionDrainResult {
+    type Item = DrainedSubmission;
+    type IntoIter = std::vec::IntoIter<DrainedSubmission>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.submissions.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a SubmissionDrainResult {
+    type Item = &'a DrainedSubmission;
+    type IntoIter = std::slice::Iter<'a, DrainedSubmission>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.submissions.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut SubmissionDrainResult {
+    type Item = &'a mut DrainedSubmission;
+    type IntoIter = std::slice::IterMut<'a, DrainedSubmission>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.submissions.iter_mut()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinalizedSubmission {
     pub bundle: SpendBundle,
@@ -165,6 +231,177 @@ fn submission_intent_fingerprint(
         bencodex::to_vec(&(&submission.bundle.spends, submission.expiry, fee_intent))
             .map_err(|e| Error::StrErr(format!("failed to encode transaction intent: {e}")))?;
     Ok(Sha256Input::Bytes(&canonical_bytes).hash())
+}
+
+const SUBMISSION_DRAIN_MESSAGE_LIMIT: usize = 512;
+const SUBMISSION_DRAIN_RUST_CONTEXT_LIMIT: usize = 4096;
+
+fn bounded_text(value: String, limit: usize) -> String {
+    if value.len() <= limit {
+        return value;
+    }
+    let mut end = limit;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &value[..end])
+}
+
+struct SubmissionPlanError {
+    stage: SubmissionDrainFailureStage,
+    candidate_submission_id: Option<u64>,
+    intent_fingerprint: Option<Hash>,
+    message: String,
+    rust_context: String,
+}
+
+fn plan_pending_submission(
+    pending: &PendingSubmission,
+    submitted: &mut Vec<SubmittedTx>,
+    next_submission_id: &mut u64,
+    emitted_ids: &mut HashSet<u64>,
+) -> Result<Option<DrainedSubmission>, SubmissionPlanError> {
+    let fingerprint = submission_intent_fingerprint(&pending.submission, &pending.fee_intent)
+        .map_err(|error| SubmissionPlanError {
+            stage: SubmissionDrainFailureStage::Fingerprint,
+            candidate_submission_id: pending.id,
+            intent_fingerprint: None,
+            message: "Failed to derive the canonical submission fingerprint".to_string(),
+            rust_context: format!("{error:?}"),
+        })?;
+
+    let existing_index = match pending.id {
+        Some(id) => Some(submitted.iter().position(|tx| tx.id == id).ok_or_else(|| {
+            SubmissionPlanError {
+                stage: SubmissionDrainFailureStage::RetainedState,
+                candidate_submission_id: Some(id),
+                intent_fingerprint: Some(fingerprint.clone()),
+                message: format!("Queued submission {id} no longer has retained state"),
+                rust_context: format!(
+                    "pending.id={id}; retained_count={}; fingerprint={fingerprint:?}",
+                    submitted.len()
+                ),
+            }
+        })?),
+        None => submitted
+            .iter()
+            .position(|tx| tx.intent_fingerprint == fingerprint),
+    };
+
+    let id = if let Some(index) = existing_index {
+        let retained = &mut submitted[index];
+        if pending.fee_intent != retained.fee_intent {
+            return Err(SubmissionPlanError {
+                stage: SubmissionDrainFailureStage::RetainedState,
+                candidate_submission_id: Some(retained.id),
+                intent_fingerprint: Some(fingerprint.clone()),
+                message: format!(
+                    "Queued submission {} has a fee intent that does not match retained state",
+                    retained.id
+                ),
+                rust_context: format!(
+                    "retained.id={}; retained.fingerprint={:?}; candidate.fingerprint={fingerprint:?}",
+                    retained.id, retained.intent_fingerprint
+                ),
+            });
+        }
+        if retained.intent_fingerprint != fingerprint {
+            return Err(SubmissionPlanError {
+                stage: SubmissionDrainFailureStage::RetainedState,
+                candidate_submission_id: Some(retained.id),
+                intent_fingerprint: Some(fingerprint.clone()),
+                message: format!(
+                    "Queued submission id {} does not match its retained intent",
+                    retained.id
+                ),
+                rust_context: format!(
+                    "retained.id={}; retained.fingerprint={:?}; candidate.fingerprint={fingerprint:?}",
+                    retained.id, retained.intent_fingerprint
+                ),
+            });
+        }
+        retained.expiry = min_expiry(retained.expiry, pending.submission.expiry);
+        (retained.delivery_state == SubmissionDeliveryState::AwaitingWalletAck)
+            .then_some(retained.id)
+    } else {
+        let candidate_id = *next_submission_id;
+        if submitted.iter().any(|tx| tx.id == candidate_id) {
+            return Err(SubmissionPlanError {
+                stage: SubmissionDrainFailureStage::SubmissionId,
+                candidate_submission_id: Some(candidate_id),
+                intent_fingerprint: Some(fingerprint.clone()),
+                message: format!(
+                    "Submission identifier {candidate_id} collides with retained state"
+                ),
+                rust_context: format!(
+                    "next_submission_id={candidate_id}; retained_count={}",
+                    submitted.len()
+                ),
+            });
+        }
+        let outputs = expected_output_coins(&pending.submission.bundle).map_err(|error| {
+            SubmissionPlanError {
+                stage: SubmissionDrainFailureStage::ExpectedOutputs,
+                candidate_submission_id: Some(candidate_id),
+                intent_fingerprint: Some(fingerprint.clone()),
+                message: "Failed to derive expected outputs for queued submission".to_string(),
+                rust_context: format!("{error:?}"),
+            }
+        })?;
+        *next_submission_id =
+            next_submission_id
+                .checked_add(1)
+                .ok_or_else(|| SubmissionPlanError {
+                    stage: SubmissionDrainFailureStage::SubmissionId,
+                    candidate_submission_id: Some(candidate_id),
+                    intent_fingerprint: Some(fingerprint.clone()),
+                    message: "Submission identifier source is exhausted".to_string(),
+                    rust_context: format!("next_submission_id={candidate_id}"),
+                })?;
+        let spent_coin_ids = pending
+            .submission
+            .bundle
+            .spends
+            .iter()
+            .map(|spend| spend.coin.to_coin_id())
+            .collect();
+        submitted.push(SubmittedTx {
+            id: candidate_id,
+            intent_fingerprint: fingerprint,
+            delivery_state: SubmissionDeliveryState::AwaitingWalletAck,
+            bundle: pending.submission.bundle.clone(),
+            fee_intent: pending.fee_intent.clone(),
+            finalized_bundle: None,
+            finalized_applied_fee: 0,
+            finalized_fee_source_disposition: None,
+            spent_coin_ids,
+            expected_output_coins: outputs,
+            landed: false,
+            expiry: pending.submission.expiry,
+        });
+        Some(candidate_id)
+    };
+
+    let Some(id) = id.filter(|id| emitted_ids.insert(*id)) else {
+        return Ok(None);
+    };
+    let retained = submitted
+        .iter()
+        .find(|tx| tx.id == id)
+        .expect("planned submission must be retained");
+    Ok(Some(DrainedSubmission {
+        id,
+        bundle: retained
+            .finalized_bundle
+            .clone()
+            .unwrap_or_else(|| pending.submission.bundle.clone()),
+        expiry: retained.expiry,
+        fee_intent: if retained.finalized_bundle.is_some() {
+            SubmissionFeeIntent::AlreadyPaid
+        } else {
+            pending.fee_intent.clone()
+        },
+    }))
 }
 
 /// Per-watched-coin bookkeeping owned by the manager.
@@ -618,103 +855,48 @@ impl<C> TransactionManager<C> {
     /// transaction is retained under its monotonic public id and exact canonical
     /// intent fingerprint so its outputs can be resubmitted if a reorg rolls
     /// them back.
-    pub fn drain_submissions(&mut self) -> Result<Vec<DrainedSubmission>, Error> {
-        for pending in &self.pending_submissions {
-            if let Some(id) = pending.id {
-                let Some(retained) = self.submitted.iter().find(|tx| tx.id == id) else {
-                    return Err(Error::StrErr(format!(
-                        "queued submission {id} no longer has retained state"
-                    )));
-                };
-                if pending.fee_intent != retained.fee_intent {
-                    return Err(Error::StrErr(format!(
-                        "queued submission id {id} has a fee intent that does not match retained state"
-                    )));
-                }
-                let fingerprint =
-                    submission_intent_fingerprint(&pending.submission, &pending.fee_intent)?;
-                if fingerprint != retained.intent_fingerprint {
-                    return Err(Error::StrErr(format!(
-                        "queued submission id {id} does not match its retained intent"
-                    )));
-                }
-            }
-        }
+    pub fn drain_submissions(&mut self) -> Result<SubmissionDrainResult, Error> {
         let pending = std::mem::take(&mut self.pending_submissions);
-        let mut out = Vec::with_capacity(pending.len());
+        let mut result = SubmissionDrainResult {
+            submissions: Vec::with_capacity(pending.len()),
+            failures: Vec::new(),
+        };
         let mut emitted_ids = HashSet::new();
-        for pending in pending {
-            let submission = pending.submission;
-            let fee_intent = pending.fee_intent;
-            let fingerprint = submission_intent_fingerprint(&submission, &fee_intent)?;
-            let existing = match pending.id {
-                Some(id) => self.submitted.iter_mut().find(|tx| tx.id == id),
-                None => self
-                    .submitted
-                    .iter_mut()
-                    .find(|tx| tx.intent_fingerprint == fingerprint),
-            };
-            let id = if let Some(existing) = existing {
-                if existing.intent_fingerprint != fingerprint {
-                    return Err(Error::StrErr(format!(
-                        "queued submission id {} does not match its retained intent",
-                        existing.id
-                    )));
+        for (candidate_index, pending) in pending.into_iter().enumerate() {
+            let mut working_submitted = self.submitted.clone();
+            let mut working_next_submission_id = self.next_submission_id;
+            let mut working_emitted_ids = emitted_ids.clone();
+            match plan_pending_submission(
+                &pending,
+                &mut working_submitted,
+                &mut working_next_submission_id,
+                &mut working_emitted_ids,
+            ) {
+                Ok(drained) => {
+                    self.submitted = working_submitted;
+                    self.next_submission_id = working_next_submission_id;
+                    emitted_ids = working_emitted_ids;
+                    if let Some(drained) = drained {
+                        result.submissions.push(drained);
+                    }
                 }
-                existing.expiry = min_expiry(existing.expiry, submission.expiry);
-                (existing.delivery_state == SubmissionDeliveryState::AwaitingWalletAck)
-                    .then_some(existing.id)
-            } else {
-                let spent_coin_ids = submission
-                    .bundle
-                    .spends
-                    .iter()
-                    .map(|spend| spend.coin.to_coin_id())
-                    .collect();
-                let outputs = expected_output_coins(&submission.bundle)?;
-                let id = self.next_submission_id;
-                self.next_submission_id = self
-                    .next_submission_id
-                    .checked_add(1)
-                    .expect("submission identifier exhausted");
-                self.submitted.push(SubmittedTx {
-                    id,
-                    intent_fingerprint: fingerprint,
-                    delivery_state: SubmissionDeliveryState::AwaitingWalletAck,
-                    bundle: submission.bundle.clone(),
-                    fee_intent: fee_intent.clone(),
-                    finalized_bundle: None,
-                    finalized_applied_fee: 0,
-                    finalized_fee_source_disposition: None,
-                    spent_coin_ids,
-                    expected_output_coins: outputs,
-                    landed: false,
-                    expiry: submission.expiry,
-                });
-                Some(id)
-            };
-            if let Some(id) = id.filter(|id| emitted_ids.insert(*id)) {
-                let retained = self
-                    .submitted
-                    .iter()
-                    .find(|tx| tx.id == id)
-                    .expect("drained submission must be retained");
-                out.push(DrainedSubmission {
-                    id,
-                    bundle: retained
-                        .finalized_bundle
-                        .clone()
-                        .unwrap_or(submission.bundle),
-                    expiry: retained.expiry,
-                    fee_intent: if retained.finalized_bundle.is_some() {
-                        SubmissionFeeIntent::AlreadyPaid
-                    } else {
-                        fee_intent
-                    },
-                });
+                Err(error) => {
+                    result.failures.push(SubmissionDrainFailure {
+                        candidate_index: candidate_index as u64,
+                        retained_submission_id: pending.id,
+                        candidate_submission_id: error.candidate_submission_id,
+                        intent_fingerprint: error.intent_fingerprint,
+                        stage: error.stage,
+                        message: bounded_text(error.message, SUBMISSION_DRAIN_MESSAGE_LIMIT),
+                        rust_context: bounded_text(
+                            error.rust_context,
+                            SUBMISSION_DRAIN_RUST_CONTEXT_LIMIT,
+                        ),
+                    });
+                }
             }
         }
-        Ok(out)
+        Ok(result)
     }
 
     /// Finalize the exact retained protocol submission. Provider fee material
@@ -1191,12 +1373,12 @@ impl<C: ManagedGameSession> TransactionManager<C> {
     }
 
     fn discard_local_artifacts(&mut self) {
+        self.retain_submitted(|_| false);
         self.pending_submissions.clear();
         self.pending_events.clear();
         self.pending_watch_coins.clear();
         self.pending_unwatch_coins.clear();
         self.watched_coins.clear();
-        self.submitted.clear();
         self.vanished_coins.clear();
         self.rollback_replayed_ids.clear();
     }
@@ -1673,6 +1855,22 @@ mod tests {
                 coin: input.clone(),
                 bundle: Spend {
                     puzzle: Puzzle::from(puzzle),
+                    solution: Program::nil().into(),
+                    signature: Default::default(),
+                },
+            }],
+        }
+    }
+
+    fn test_bundle_with_invalid_conditions(name: &str, input: &CoinString) -> SpendBundle {
+        SpendBundle {
+            name: Some(name.to_string()),
+            spends: vec![CoinSpend {
+                coin: input.clone(),
+                bundle: Spend {
+                    puzzle: Puzzle::from(
+                        Program::from_bytes(&[0x02]).expect("serialized apply atom"),
+                    ),
                     solution: Program::nil().into(),
                     signature: Default::default(),
                 },
@@ -3777,6 +3975,117 @@ mod tests {
     }
 
     #[test]
+    fn drain_submissions_quarantines_one_invalid_candidate_and_commits_later_work() {
+        let input_a = test_coin(170);
+        let input_b = test_coin(171);
+        let input_c = test_coin(172);
+        let output_a = test_coin(173);
+        let output_c = test_coin(174);
+        let mut mgr = TransactionManager::new(PersistableMockGameSession);
+        mgr.pending_submissions.extend([
+            PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::already_paid(
+                    test_bundle_spending_creating("candidate-a", &input_a, &output_a),
+                    None,
+                ),
+                fee_intent: SubmissionFeeIntent::AlreadyPaid,
+            },
+            PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::already_paid(
+                    test_bundle_with_invalid_conditions("candidate-b", &input_b),
+                    None,
+                ),
+                fee_intent: SubmissionFeeIntent::AlreadyPaid,
+            },
+            PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::already_paid(
+                    test_bundle_spending_creating("candidate-c", &input_c, &output_c),
+                    None,
+                ),
+                fee_intent: SubmissionFeeIntent::AlreadyPaid,
+            },
+        ]);
+
+        let drained = mgr.drain_submissions().expect("item-local drain");
+
+        assert_eq!(
+            drained
+                .submissions
+                .iter()
+                .map(|submission| submission.bundle.name.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("candidate-a"), Some("candidate-c")]
+        );
+        assert_eq!(
+            drained
+                .submissions
+                .iter()
+                .map(|submission| submission.id)
+                .collect::<Vec<_>>(),
+            vec![0, 1],
+            "the failed candidate must not consume or collide with a durable id"
+        );
+        assert_eq!(drained.failures.len(), 1);
+        assert_eq!(drained.failures[0].candidate_index, 1);
+        assert_eq!(
+            drained.failures[0].stage,
+            SubmissionDrainFailureStage::ExpectedOutputs
+        );
+        assert_eq!(drained.failures[0].candidate_submission_id, Some(1));
+        assert!(drained.failures[0].intent_fingerprint.is_some());
+        assert_eq!(mgr.submitted.len(), 2);
+        assert_eq!(mgr.next_submission_id, 2);
+        assert!(mgr
+            .submitted
+            .iter()
+            .all(|submission| submission.bundle.name.as_deref() != Some("candidate-b")));
+
+        let next = mgr
+            .drain_submissions()
+            .expect("quarantined candidate stays consumed");
+        assert!(next.submissions.is_empty());
+        assert!(next.failures.is_empty());
+    }
+
+    #[test]
+    fn abandoning_fee_bearing_unavailable_submission_emits_retirement() {
+        let input = test_coin(175);
+        let output = test_coin(176);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![GameSessionEvent::OutboundTransaction(
+            TransactionSubmission::attach_to(
+                test_bundle_spending_creating("fee-bearing", &input, &output),
+                None,
+                &input,
+            ),
+        )]);
+        let mut mgr = TransactionManager::new(mock);
+        let mut allocator = AllocEncoder::new();
+        mgr.configure_fee(FeeConfiguration {
+            amount: Amount::new(10),
+            attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+        });
+        mgr.flush_and_collect(&mut allocator)
+            .expect("capture submission");
+        let submission = mgr.drain_submissions().expect("drain submission").remove(0);
+        mgr.submitted[0].finalized_bundle = Some(mgr.submitted[0].bundle.clone());
+        mgr.submitted[0].finalized_applied_fee = 10;
+        mgr.submitted[0].finalized_fee_source_disposition = Some(FeeSourceDisposition::Attached);
+        assert!(mgr.drain_retired_submission_ids().is_empty());
+
+        mgr.cradle.abandoned = true;
+        mgr.flush_and_collect(&mut allocator)
+            .expect("abandon local artifacts");
+
+        assert!(mgr.submitted.is_empty());
+        assert_eq!(mgr.drain_retired_submission_ids(), vec![submission.id]);
+        assert!(mgr.drain_retired_submission_ids().is_empty());
+    }
+
+    #[test]
     fn exact_duplicate_uses_same_id_without_duplicate_retained_intent() {
         let input = test_coin(53);
         let output = CoinString::from_parts(
@@ -4705,7 +5014,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_pending_id_fails_without_consuming_valid_queue_entries() {
+    fn stale_pending_id_is_quarantined_without_blocking_valid_queue_entries() {
         let mut mgr = TransactionManager::new(PersistableMockGameSession);
         mgr.pending_submissions.extend([
             PendingSubmission {
@@ -4720,17 +5029,23 @@ mod tests {
             },
         ]);
 
-        assert!(mgr.drain_submissions().is_err());
-        assert_eq!(mgr.pending_submissions.len(), 2);
-        mgr.pending_submissions
-            .retain(|pending| pending.id != Some(999));
         let drained = mgr.drain_submissions().unwrap();
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].bundle.name.as_deref(), Some("valid"));
+        assert_eq!(drained.failures.len(), 1);
+        assert_eq!(drained.failures[0].retained_submission_id, Some(999));
+        assert_eq!(
+            drained.failures[0].stage,
+            SubmissionDrainFailureStage::RetainedState
+        );
+        assert!(mgr.pending_submissions.is_empty());
+        let next = mgr.drain_submissions().unwrap();
+        assert!(next.submissions.is_empty());
+        assert!(next.failures.is_empty());
     }
 
     #[test]
-    fn pending_id_fee_intent_mismatch_does_not_consume_valid_queue_entries() {
+    fn pending_id_fee_intent_mismatch_is_quarantined_without_blocking_valid_work() {
         let mut mgr = TransactionManager::new(PersistableMockGameSession);
         mgr.pending_submissions.push(PendingSubmission {
             id: None,
@@ -4746,15 +5061,23 @@ mod tests {
             fee_intent: SubmissionFeeIntent::AlreadyPaid,
         });
 
-        let error = mgr.drain_submissions().unwrap_err();
-        assert!(format!("{error:?}").contains("fee intent"));
-        assert_eq!(mgr.pending_submissions.len(), 2);
-
-        mgr.pending_submissions
-            .retain(|pending| pending.id != Some(retained.id));
         let drained = mgr.drain_submissions().unwrap();
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].bundle.name.as_deref(), Some("valid"));
+        assert_eq!(drained.failures.len(), 1);
+        assert_eq!(
+            drained.failures[0].retained_submission_id,
+            Some(retained.id)
+        );
+        assert_eq!(
+            drained.failures[0].stage,
+            SubmissionDrainFailureStage::RetainedState
+        );
+        assert!(drained.failures[0].message.contains("fee intent"));
+        assert!(mgr.pending_submissions.is_empty());
+        let next = mgr.drain_submissions().unwrap();
+        assert!(next.submissions.is_empty());
+        assert!(next.failures.is_empty());
     }
 
     #[test]

@@ -18,6 +18,34 @@ export interface SpendBundle {
   spends: CoinSpend[];
 }
 
+export interface TransactionSubmission {
+  id: string;
+  bundle: SpendBundle;
+  fee_request?: { target: string; amount: string } | null;
+}
+
+export type SubmissionDrainFailureStage =
+  | 'fingerprint'
+  | 'retained-state'
+  | 'expected-outputs'
+  | 'submission-id';
+
+export interface SubmissionDrainFailure {
+  candidate_index: string;
+  retained_submission_id?: string | null;
+  candidate_submission_id?: string | null;
+  intent_fingerprint?: string | null;
+  stage: SubmissionDrainFailureStage;
+  message: string;
+  rust_context: string;
+}
+
+export interface SubmissionDrain {
+  submissions: TransactionSubmission[];
+  retired_submission_ids: string[];
+  failures: SubmissionDrainFailure[];
+}
+
 export interface IChiaIdentity {
   private_key: string;
   synthetic_private_key: string;

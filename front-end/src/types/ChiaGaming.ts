@@ -197,6 +197,11 @@ export type WasmEvent =
       error: string;
     }
   | { type: 'durability-error'; error: string }
+  | {
+      type: 'recoverable-internal-error';
+      error: string;
+      failure: SubmissionDrainFailure;
+    }
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string };
 
@@ -210,18 +215,10 @@ export interface CoinOfInterestEntry {
   game_coin_kind?: 'current' | 'reward';
 }
 
-export interface TransactionSubmission {
-  /** Stable Rust-owned identifier for delivery acknowledgement. */
-  id: string;
-  bundle: SpendBundle;
-  /** Rust-owned request for opaque provider fee material. */
-  fee_request?: { target: string; amount: string } | null;
-}
-
-export interface SubmissionDrain {
-  submissions: TransactionSubmission[];
-  retired_submission_ids: string[];
-}
+export type TransactionSubmission = WasmContract.TransactionSubmission;
+export type SubmissionDrainFailureStage = WasmContract.SubmissionDrainFailureStage;
+export type SubmissionDrainFailure = WasmContract.SubmissionDrainFailure;
+export type SubmissionDrain = WasmContract.SubmissionDrain;
 
 export interface FinalizedSubmission {
   protocol_bundle: SpendBundle;
@@ -236,11 +233,40 @@ export type WalletSubmitOutcome =
   | { status: 'unavailable'; detail: string }
   | { status: 'rejected'; detail: string };
 
-export type WalletFeeSourceOutcome =
-  | { kind: 'offer'; offer: string; tradeId: string }
-  | { kind: 'bundle'; bundle: unknown; tradeId?: string }
+export type WalletOfferOperation = {
+  owner: { installationPlayerId: string; peerSessionId: string };
+  purpose: { kind: 'funding'; operationId: string } | { kind: 'fee'; operationId: string };
+};
+
+export type WalletOfferRequest =
+  | {
+      kind: 'funding';
+      uniqueId: string;
+      offer: { [walletId: string]: bigint };
+      extraConditions?: Array<{ opcode: bigint; args: string[] }>;
+      coinIds?: string[];
+      maxHeight?: bigint;
+      openingFee?: bigint;
+    }
+  | {
+      kind: 'fee';
+      uniqueId: string;
+      fee: bigint;
+      concurrentSpendCoinId: string;
+    };
+
+export type WalletOfferMaterial =
+  | { kind: 'offer'; offer: string }
+  | { kind: 'bundle'; bundle: unknown };
+
+export type WalletOfferCompletion =
+  | { kind: 'created'; material: WalletOfferMaterial; tradeId?: string }
   | { kind: 'failure'; reason: string }
   | { kind: 'unavailable'; reason: string };
+
+export type WalletOfferBeginOutcome =
+  | WalletOfferCompletion
+  | { kind: 'pending'; recoveryId: string };
 
 export interface WasmConnection {
   // System
@@ -563,35 +589,23 @@ export interface InternalBlockchainInterface {
     source?: string,
     fee?: bigint,
   ): Promise<WalletSubmitOutcome>;
-  // Build the wallet half of a fee-bearing aggregate spend, bound to the known
-  // protocol coin. Offer-producing backends may include the persisted trade ID
-  // so the host can release the reservation when Rust rejects it.
-  createFeeSpend?(
-    fee: bigint,
-    concurrentSpendCoinId: string,
-    reservation?: {
-      owner: { installationPlayerId: string; peerSessionId: string };
-      purpose: { kind: 'fee'; operationId: string };
-    },
-  ): Promise<WalletFeeSourceOutcome | null>;
+  beginWalletOffer(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferBeginOutcome>;
+  // Optional capability seam. Providers without it retain best-effort retry:
+  // they never return `pending`, so reconnect starts the same operation again.
+  reconcileWalletOffer?(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+    recoveryId: string,
+  ): Promise<WalletOfferCompletion>;
+  releaseWalletOffer?(tradeId: string): Promise<WalletOfferCancellationOutcome>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
   selectCoins(uniqueId: string, amount: bigint): Promise<string | null>;
   getHeightInfo(): Promise<bigint>;
-  createOfferForIds(
-    uniqueId: string,
-    offer: { [walletId: string]: bigint },
-    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
-    coinIds?: string[],
-    maxHeight?: bigint,
-    openingFee?: bigint,
-    reservation?: {
-      owner: { installationPlayerId: string; peerSessionId: string };
-      purpose: { kind: 'funding'; operationId: string };
-    },
-  ): Promise<any | null>;
-  cancelOffer?(tradeId: string): Promise<WalletOfferCancellationOutcome>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;

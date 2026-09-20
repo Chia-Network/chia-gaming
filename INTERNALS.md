@@ -368,6 +368,27 @@ Test-only off-chain operations are exposed through the concrete
 production lifecycle trait contract and are not stubbed across unrelated
 phases.
 
+### Transaction Submission Drain Isolation
+
+`TransactionManager::drain_submissions` is availability-first only where it can
+prove isolation. Each queued candidate is planned on a working copy and commits
+independently. If `B` fails in an `A/B/C` queue, `A` and `C` commit, `B` is
+consumed, and one typed failure records its candidate index, optional stable ID,
+intent fingerprint, stage, bounded message, and Rust context. A later drain
+does not report `B` again. Rust abandonment emits retirement IDs before removing
+retained submissions, allowing the wallet ledger to cancel only the exact
+provider reservations Rust no longer needs.
+
+The host persists one bounded diagnostic incident with a JavaScript stack and
+the Rust context, emits one recoverable-internal-error notification, and shows
+one dismissible nonfatal modal while the game and dashboard remain active. It
+must not also emit an ordinary session error or a global uncaught-error report.
+This continuation is legal only because the per-item working copy proves the
+remaining manager/session state intact. Unknown global integrity remains fatal.
+The recovered boundary follows the live failed-checkpoint policy: attempt the
+checkpoint, release safe work once even if it fails, and retain dirty in-memory
+state for a later checkpoint.
+
 ---
 
 ## Blockchain Observation Boundary
@@ -395,7 +416,11 @@ data as serialized `Program` bytes; allocator-local `NodePtr` values must not
 cross the boundary. Requested puzzle/solution coin IDs are durable manager
 state. Explicit restore reissues each still-live request once; retire-aware
 controller deliveries prevent a callback owned by an obsolete runtime from
-committing into its replacement.
+committing into its replacement. Puzzle and solution bytes remain protocol
+evidence even when a trusted wallet RPC returned successfully. Malformed bytes
+make the Rust callback fail transactionally and terminally block that request;
+ordinary wallet-readiness or height changes do not retry deterministic invalid
+data.
 
 **Key code:** `src/transaction_manager.rs` — `ObservationTransients`,
 `apply_observation_transaction`, `report_height`, and `report_coin_states`.
@@ -412,6 +437,11 @@ committed lease and `SessionController` cleanup—including terminal
 cleanup—own retirement. The controller retains the committed runtime while no
 renderer is mounted; a later renderer reads and reattaches that same runtime
 without changing protocol ownership during render.
+
+Local restore and external recovery are separate. A valid IndexedDB envelope
+and WASM cradle may project the restored shell/game/dashboard immediately,
+without a live hub, wallet, or blockchain. Controls that require those services
+stay gated until their independent reconciliation completes.
 
 For an active or rehydrated browser session, the activated runtime is the only
 commit owner. One stimulus is not finished merely because its first reducer or
@@ -470,27 +500,47 @@ Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-The current app-owned persistence contracts are browser session envelope v30,
-Rust/WASM cradle schema 17, and independent wallet reservation record v2.
+The current app-owned persistence contracts are browser session envelope v31,
+Rust/WASM cradle schema 17, and independent wallet reservation record v3.
 Their explicit versions are future migration hooks. None has shipped, so strict
 codecs accept only the current shape and version; they do not migrate, alias, or
 fallback-decode predecessors. Deployed Cloud/WalletConnect RPC, Chia offer
 compression and Coinset JSON, peer/on-chain protocols, and signed-unroll
 recognition remain compatibility-sensitive external contracts.
+Rust snapshots convert `usize` state numbers through checked `u64`; WASM and
+all internal/persisted JavaScript channel state-number fields are `bigint`.
+Conversion to `number` is restricted to external APIs that require it, and
+number-valued persistence or event decodes are rejected.
 
 Persisted funding and fee offers enter the strict wallet-level durable ledger
 shared across controller lifetimes. Entries preserve the exact provider trade
 ID and exact `(installationPlayerId, peerSessionId, purpose kind,
 operationId)` owner, so multiple trades for one operation remain independent.
-The only stages are `reserved`, `retained-for-replay`, and `cancel-required`.
+Provider adapters own external offer lifecycle; the controller and Rust own
+protocol intent. Wallet mutations wait for successful ledger hydration and fail
+closed on malformed hydration. The only durable post-creation stages are
+`reserved`, `retained-for-replay`, and `cancel-required`; pending Cloud creation
+also persists its exact `signatureRequest` recovery ID. Controller retirement
+promotes only `reserved` entries and preserves `retained-for-replay`.
 An attached fee stays retained while Rust owns exact-byte replay; wallet
 acknowledgement or Rust retirement requests typed cancellation. Cloud
 cancellation is complete only after its signature request reaches terminal
-success.
+success. Reloaded Cloud creation reconciles the same request without another
+begin call, with popup source/origin/request correlation and exact listener and
+popup cleanup. Deployed WalletConnect lacks end-to-end create-offer idempotency
+and response-loss reconciliation; a lost successful response may orphan an
+external offer, so retry is currently best-effort. The provider boundary keeps
+an optional reconciliation capability for future support.
 
 One IndexedDB transaction checkpoints the complete session envelope and
 independent ledger snapshot atomically. Strict codecs reject unknown/missing
 fields, duplicate trade IDs, invalid discriminants, and non-current versions.
+One generation-fenced storage mutation coordinator serializes session, ledger,
+clear, and reset writes. Old tabs and retired leases cannot overwrite a winning
+generation, and a clear immediately followed by an unawaited save leaves the
+save. Hard reset advances the fence before deletion and intentionally erases
+every reservation, including replay retention; pre-reset writes cannot recreate
+the database or cached state after the wipe.
 Ledger persistence does not gate wallet use, transaction release, or
 `cancelOffer`; a failed write leaves both in-memory authorities dirty for a
 later full checkpoint. A failed cancellation stays in the ledger and is

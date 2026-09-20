@@ -18,9 +18,10 @@ use crate::common::types::{
     LocalProposalId, Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout, WireProposalId,
 };
 use crate::session_phases::effects::{
-    format_coin, AcceptedGameMember, CancelReason, ChannelStatus, ChannelStatusSnapshot,
-    CoinOfInterest, Effect, FailedGameAction, GameNotification, GameStatusKind,
-    GameStatusOtherParams, LocalActionKind, SettlementOutcome, TimeoutClaimSemantic,
+    format_coin, snapshot_state_number, AcceptedGameMember, CancelReason, ChannelStatus,
+    ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction, GameNotification,
+    GameStatusKind, GameStatusOtherParams, LocalActionKind, SettlementOutcome,
+    TimeoutClaimSemantic,
 };
 use crate::shutdown::{complete_shutdown_spend, get_conditions_with_channel_state};
 
@@ -2058,7 +2059,7 @@ impl PeerLifecyclePhase for OffChainPhase {
             game_allocated: Some(ch.total_game_allocated()),
             have_potato: Some(matches!(self.state.have_potato, PotatoState::Present)),
             zero_payout: shutting_down.then(|| ch.has_zero_payout()),
-            state_number: Some(ch.state_number()),
+            state_number: Some(snapshot_state_number(ch.state_number())),
             ..ChannelStatusSnapshot::new(if shutting_down {
                 ChannelStatus::ShuttingDown
             } else {

@@ -15,9 +15,9 @@ use crate::common::types::{
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
-    format_coin, CancelReason, ChannelSemanticPhase, ChannelStatus, ChannelStatusSnapshot,
-    CoinOfInterest, Effect, FailedGameAction, GameNotification, GameStatusKind, SettlementOutcome,
-    TimeoutClaimSemantic, UnrollInitiator,
+    format_coin, snapshot_state_number, CancelReason, ChannelSemanticPhase, ChannelStatus,
+    ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction, GameNotification,
+    GameStatusKind, SettlementOutcome, TimeoutClaimSemantic, UnrollInitiator,
 };
 use crate::session_phases::handler_base::{
     build_channel_to_unroll_bundle, classify_unroll, ChannelStateBase, UnrollOutcome,
@@ -1345,8 +1345,8 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             state: ChannelStatus,
             coin: Option<CoinString>,
             semantic_phase: Option<ChannelSemanticPhase>,
-            unrolling_state_number: Option<usize>,
-            preempting_state_number: Option<usize>,
+            unrolling_state_number: Option<u64>,
+            preempting_state_number: Option<u64>,
         }
         let view = match &self.state {
             SpendChannelCoinState::ChannelSpend { channel_coin } => {
@@ -1357,6 +1357,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                             .channel_state
                             .as_ref()
                             .and_then(|ch| ch.unroll_target_state_number())
+                            .map(snapshot_state_number)
                     })
                     .flatten();
                 SpendSnapshotView {
@@ -1383,7 +1384,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 semantic_phase: Some(
                     self.finishing_unroll_semantic_phase(self.timeout_finish_submitted),
                 ),
-                unrolling_state_number: Some(*state_number),
+                unrolling_state_number: Some(snapshot_state_number(*state_number)),
                 preempting_state_number: None,
             },
             SpendChannelCoinState::UnrollSpend {
@@ -1395,8 +1396,8 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 state: ChannelStatus::Unrolling,
                 coin: Some(unroll_coin.clone()),
                 semantic_phase: Some(ChannelSemanticPhase::Preempting),
-                unrolling_state_number: Some(*state_number),
-                preempting_state_number: *preempting_state_number,
+                unrolling_state_number: Some(snapshot_state_number(*state_number)),
+                preempting_state_number: preempting_state_number.map(snapshot_state_number),
             },
             SpendChannelCoinState::UnrollConditions {
                 unroll_coin,
@@ -1411,8 +1412,8 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 } else {
                     self.finishing_unroll_semantic_phase(true)
                 }),
-                unrolling_state_number: Some(*state_number),
-                preempting_state_number: *preempting_state_number,
+                unrolling_state_number: Some(snapshot_state_number(*state_number)),
+                preempting_state_number: preempting_state_number.map(snapshot_state_number),
             },
         };
         let (our_balance, their_balance, game_allocated) =
@@ -1440,7 +1441,11 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             zero_payout,
             unroll_initiator: self.unroll_initiator,
             semantic_phase: view.semantic_phase,
-            state_number: self.base.channel_state.as_ref().map(|ch| ch.state_number()),
+            state_number: self
+                .base
+                .channel_state
+                .as_ref()
+                .map(|ch| snapshot_state_number(ch.state_number())),
             unrolling_state_number: view.unrolling_state_number,
             preempting_state_number: view.preempting_state_number,
             ..ChannelStatusSnapshot::new(view.state)

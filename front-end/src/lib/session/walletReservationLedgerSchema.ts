@@ -7,18 +7,34 @@ export type WalletReservationPurpose =
   | { kind: 'funding'; operationId: string }
   | { kind: 'fee'; operationId: string };
 
-export type WalletReservationStage = 'reserved' | 'retained-for-replay' | 'cancel-required';
+export type WalletReservationStage =
+  | 'creating'
+  | 'reserved'
+  | 'retained-for-replay'
+  | 'cancel-required';
 
-export interface WalletReservationLedgerEntry {
-  tradeId: string;
+interface WalletReservationEntryBase {
   owner: WalletReservationOwner;
   purpose: WalletReservationPurpose;
-  stage: WalletReservationStage;
   reason: string;
 }
 
+export type WalletReservationRecoveryEntry = WalletReservationEntryBase & {
+  stage: 'creating';
+  recoveryId: string;
+};
+
+export type WalletReservationTradeEntry = WalletReservationEntryBase & {
+  stage: Exclude<WalletReservationStage, 'creating'>;
+  tradeId: string;
+};
+
+export type WalletReservationLedgerEntry =
+  | WalletReservationRecoveryEntry
+  | WalletReservationTradeEntry;
+
 export const WALLET_RESERVATION_RECORD_SCHEMA = 'chia-gaming-wallet-reservations' as const;
-export const WALLET_RESERVATION_RECORD_VERSION = 2n;
+export const WALLET_RESERVATION_RECORD_VERSION = 3n;
 
 export interface WalletReservationRecord {
   schema: typeof WALLET_RESERVATION_RECORD_SCHEMA;
@@ -63,13 +79,14 @@ export function decodeWalletReservationLedgerEntry(
   }
   const fields = value as Record<string, unknown>;
   const keys = Object.keys(fields);
+  const creating = fields.stage === 'creating';
   if (
     keys.length !== 5 ||
-    !keys.includes('tradeId') ||
     !keys.includes('owner') ||
     !keys.includes('purpose') ||
     !keys.includes('stage') ||
-    !keys.includes('reason')
+    !keys.includes('reason') ||
+    (creating ? !keys.includes('recoveryId') : !keys.includes('tradeId'))
   ) {
     throw new Error(`Garbled save: invalid ${label} fields`);
   }
@@ -99,14 +116,14 @@ export function decodeWalletReservationLedgerEntry(
     throw new Error(`Garbled save: invalid ${label}.purpose fields`);
   }
   if (
+    fields.stage !== 'creating' &&
     fields.stage !== 'reserved' &&
     fields.stage !== 'retained-for-replay' &&
     fields.stage !== 'cancel-required'
   ) {
     throw new Error(`Garbled save: invalid ${label}.stage`);
   }
-  return {
-    tradeId: requireBoundedString(fields.tradeId, `${label}.tradeId`, MAX_TRADE_ID_LENGTH),
+  const common: WalletReservationEntryBase = {
     owner: {
       installationPlayerId: requireBoundedString(
         ownerFields.installationPlayerId,
@@ -120,20 +137,35 @@ export function decodeWalletReservationLedgerEntry(
       ),
     },
     purpose: {
-      kind: purposeFields.kind,
+      kind: purposeFields.kind as WalletReservationPurpose['kind'],
       operationId: requireBoundedString(
         purposeFields.operationId,
         `${label}.purpose.operationId`,
         MAX_OPERATION_ID_LENGTH,
       ),
     },
-    stage: fields.stage,
     reason: requireBoundedString(
       fields.reason,
       `${label}.reason`,
       MAX_WALLET_RESERVATION_REASON_LENGTH,
       true,
     ),
+  };
+  if (fields.stage === 'creating') {
+    return {
+      ...common,
+      stage: 'creating',
+      recoveryId: requireBoundedString(
+        fields.recoveryId,
+        `${label}.recoveryId`,
+        MAX_TRADE_ID_LENGTH,
+      ),
+    };
+  }
+  return {
+    ...common,
+    stage: fields.stage,
+    tradeId: requireBoundedString(fields.tradeId, `${label}.tradeId`, MAX_TRADE_ID_LENGTH),
   };
 }
 
@@ -144,13 +176,30 @@ export function decodeWalletReservationLedger(
   if (!Array.isArray(value)) {
     throw new Error(`Garbled save: invalid ${label}`);
   }
-  const tradeIds = new Set<string>();
+  const entryIds = new Set<string>();
+  const operationStages = new Map<string, { creating: boolean; tradeCount: number }>();
   return value.map((entry, index) => {
     const decoded = decodeWalletReservationLedgerEntry(entry, `${label}[${index}]`);
-    if (tradeIds.has(decoded.tradeId)) {
-      throw new Error(`Garbled save: duplicate ${label} tradeId ${decoded.tradeId}`);
+    const entryId =
+      decoded.stage === 'creating' ? `recovery:${decoded.recoveryId}` : `trade:${decoded.tradeId}`;
+    if (entryIds.has(entryId)) {
+      throw new Error(`Garbled save: duplicate ${label} entry ${entryId}`);
     }
-    tradeIds.add(decoded.tradeId);
+    entryIds.add(entryId);
+    const operation = walletReservationOperationKey(decoded.owner, decoded.purpose);
+    const stages = operationStages.get(operation) ?? { creating: false, tradeCount: 0 };
+    if (decoded.stage === 'creating') {
+      if (stages.creating || stages.tradeCount > 0) {
+        throw new Error(`Garbled save: contradictory ${label} operation ownership`);
+      }
+      stages.creating = true;
+    } else {
+      if (stages.creating) {
+        throw new Error(`Garbled save: contradictory ${label} operation ownership`);
+      }
+      stages.tradeCount += 1;
+    }
+    operationStages.set(operation, stages);
     return decoded;
   });
 }

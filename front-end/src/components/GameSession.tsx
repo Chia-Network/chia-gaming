@@ -382,7 +382,10 @@ function NotificationOverlay({
   const dismissButtonRef = useRef<HTMLButtonElement>(null);
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
-  const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
+  const isError =
+    notification.kind === 'infra-error' ||
+    notification.kind === 'action-failed' ||
+    notification.kind === 'recoverable-internal-error';
   const titleColor = 'text-canvas-text-contrast';
 
   useEffect(() => {

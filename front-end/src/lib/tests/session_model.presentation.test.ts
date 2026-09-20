@@ -383,8 +383,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     expect(status.coin?.[71]).toBe(71);
   });
 
-  it('promotes inbound integer state numbers to bigint before persistence', () => {
-    expect(
+  it('rejects number state numbers at the model event boundary', () => {
+    expect(() =>
       decodeChannelStatusPayload({
         state: 'Active',
         advisory: null,
@@ -396,11 +396,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         unrolling_state_number: 2,
         preempting_state_number: 3,
       }),
-    ).toMatchObject({
-      state_number: 0n,
-      unrolling_state_number: 2n,
-      preempting_state_number: 3n,
-    });
+    ).toThrow('channelStatus.state_number');
   });
 
   it('names unroll, preempt, and finish-unroll actions with the relevant state numbers', () => {

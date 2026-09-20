@@ -1,4 +1,4 @@
-import { SESSION_DB_NAME } from '../lib/session/indexedDb';
+import { enqueueHardResetStorageMutation, SESSION_DB_NAME } from '../lib/session/indexedDb';
 import { isWalletConnectStorageKey, signalHardResetToOtherTabs } from './saveCoordination';
 
 const KNOWN_WALLETCONNECT_DB_NAMES = [
@@ -173,23 +173,24 @@ async function clearAllIndexedDbForHardReset(): Promise<void> {
   }
 }
 
-export async function hardResetStorage(stopPersistence: () => void): Promise<void> {
+export function hardResetStorage(generation: number): Promise<void> {
   signalHardResetToOtherTabs();
-  stopPersistence();
-  try {
-    localStorage.clear();
-  } catch (error) {
-    console.error('[save] failed to clear localStorage during hard reset:', error);
-  }
-  try {
-    sessionStorage.clear();
-  } catch (error) {
-    console.error('[save] failed to clear sessionStorage during hard reset:', error);
-  }
-  await clearAllIndexedDbForHardReset();
-  // A live WalletConnect connection can block the WC IndexedDB deletion above,
-  // in which case the database survives this reset. Mark it so the next boot
-  // completes the wipe before any client reopens it. Set after sessionStorage
-  // is cleared so this marker is the only survivor.
-  markPendingWalletConnectWipe();
+  return enqueueHardResetStorageMutation(generation, async () => {
+    try {
+      localStorage.clear();
+    } catch (error) {
+      console.error('[save] failed to clear localStorage during hard reset:', error);
+    }
+    try {
+      sessionStorage.clear();
+    } catch (error) {
+      console.error('[save] failed to clear sessionStorage during hard reset:', error);
+    }
+    await clearAllIndexedDbForHardReset();
+    // A live WalletConnect connection can block the WC IndexedDB deletion above,
+    // in which case the database survives this reset. Mark it so the next boot
+    // completes the wipe before any client reopens it. Set after sessionStorage
+    // is cleared so this marker is the only survivor.
+    markPendingWalletConnectWipe();
+  });
 }

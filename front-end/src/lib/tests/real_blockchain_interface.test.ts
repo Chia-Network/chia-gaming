@@ -73,6 +73,11 @@ import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinIdFromBytes, toUint8 } from '../../util';
 import { encodePuzzleHashToBech32m } from '../../util/bech32m';
 
+const offerOperation = {
+  owner: { installationPlayerId: 'player', peerSessionId: 'session' },
+  purpose: { kind: 'funding' as const, operationId: 'operation' },
+};
+
 const mockCreateOfferForIds = rpc.createOfferForIds as jest.Mock;
 const mockCancelOffer = rpc.cancelOffer as jest.Mock;
 const mockCreateNewRemoteWallet = rpc.createNewRemoteWallet as jest.Mock;
@@ -617,8 +622,17 @@ describe('RealBlockchainInterface', () => {
     });
 
     await expect(
-      blockchain.createOfferForIds('test', { '1': -100n }, undefined, [fundingCoinId]),
-    ).resolves.toEqual({ offer: 'offer1signed', tradeId: 'trade-id' });
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+        coinIds: [fundingCoinId],
+      }),
+    ).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer1signed' },
+      tradeId: 'trade-id',
+    });
 
     expect(mockSelectCoins).not.toHaveBeenCalled();
     expect(mockCreateOfferForIds).toHaveBeenCalledWith({
@@ -636,7 +650,12 @@ describe('RealBlockchainInterface', () => {
     expectConsoleError('createOfferForIds error');
 
     await expect(
-      blockchain.createOfferForIds('test', { '1': -100n }, undefined, ['ab'.repeat(32)]),
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+        coinIds: ['ab'.repeat(32)],
+      }),
     ).rejects.toThrow('tradeRecord.tradeId');
 
     expect(mockCreateOfferForIds).toHaveBeenCalledWith(
@@ -648,7 +667,9 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({ success: true });
 
-    await expect(blockchain.cancelOffer('trade-id')).resolves.toEqual({ status: 'cancelled' });
+    await expect(blockchain.releaseWalletOffer('trade-id')).resolves.toEqual({
+      status: 'cancelled',
+    });
 
     expect(mockCancelOffer).toHaveBeenCalledWith({
       tradeId: 'trade-id',
@@ -692,7 +713,7 @@ describe('RealBlockchainInterface', () => {
       detail: 'temporary wallet database failure',
     });
 
-    await expect(blockchain.cancelOffer('trade-uncertain')).resolves.toEqual({
+    await expect(blockchain.releaseWalletOffer('trade-uncertain')).resolves.toEqual({
       status: 'rejected',
       detail: expect.stringMatching(/temporary wallet database failure/),
     });
@@ -704,7 +725,7 @@ describe('RealBlockchainInterface', () => {
       new WalletConnectTransportError('WalletConnect cancellation transport failed'),
     );
 
-    await expect(blockchain.cancelOffer('trade-offline')).resolves.toEqual({
+    await expect(blockchain.releaseWalletOffer('trade-offline')).resolves.toEqual({
       status: 'unavailable',
       detail: expect.stringMatching(/transport failed/),
     });
@@ -718,7 +739,7 @@ describe('RealBlockchainInterface', () => {
       tradeId: 'trade-missing',
     });
 
-    await expect(blockchain.cancelOffer('trade-missing')).resolves.toEqual({
+    await expect(blockchain.releaseWalletOffer('trade-missing')).resolves.toEqual({
       status: 'already-terminal',
       detail: expect.stringMatching(/trade missing/),
     });
@@ -731,8 +752,15 @@ describe('RealBlockchainInterface', () => {
       tradeRecord: { tradeId: 'receiver-trade-id' },
     });
 
-    await expect(blockchain.createOfferForIds('test', { '1': -100n })).resolves.toEqual({
-      offer: 'offer1signed',
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+      }),
+    ).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'receiver-trade-id',
     });
 
@@ -749,12 +777,13 @@ describe('RealBlockchainInterface', () => {
       tradeRecord: { tradeId: 'reserve-fee-trade' },
     });
 
-    await blockchain.createOfferForIds(
-      'test',
-      { '1': -110n },
-      [{ opcode: 52n, args: ['0a'] }],
-      ['ab'.repeat(32)],
-    );
+    await blockchain.beginWalletOffer(offerOperation, {
+      kind: 'funding',
+      uniqueId: 'test',
+      offer: { '1': -110n },
+      extraConditions: [{ opcode: 52n, args: ['0a'] }],
+      coinIds: ['ab'.repeat(32)],
+    });
 
     expect(mockCreateOfferForIds).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -764,7 +793,7 @@ describe('RealBlockchainInterface', () => {
     );
   });
 
-  it('lets createOfferForIds select its own wallet inputs', async () => {
+  it('lets funding offer creation select its own wallet inputs', async () => {
     const blockchain = new RealBlockchainInterface();
     mockSelectCoins.mockRejectedValue(new Error('Internal error'));
     mockCreateOfferForIds.mockResolvedValue({
@@ -772,8 +801,15 @@ describe('RealBlockchainInterface', () => {
       tradeRecord: { tradeId: 'selected-trade' },
     });
 
-    await expect(blockchain.createOfferForIds('test', { '1': -100n })).resolves.toEqual({
-      offer: 'offer1signed',
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+      }),
+    ).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'selected-trade',
     });
 
@@ -791,9 +827,14 @@ describe('RealBlockchainInterface', () => {
     });
 
     const bindCoinId = 'ab'.repeat(32);
-    await expect(blockchain.createFeeSpend(10n, bindCoinId)).resolves.toEqual({
-      kind: 'offer',
-      offer: 'offer1signed',
+    await expect(
+      blockchain.beginWalletOffer(
+        { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        { kind: 'fee', uniqueId: 'test', fee: 10n, concurrentSpendCoinId: bindCoinId },
+      ),
+    ).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'fee-trade',
     });
 
@@ -813,7 +854,17 @@ describe('RealBlockchainInterface', () => {
   it('reports wallet rejection when it cannot build a fee offer', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockRejectedValue(new Error('wallet not synced'));
-    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toEqual({
+    await expect(
+      blockchain.beginWalletOffer(
+        { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        {
+          kind: 'fee',
+          uniqueId: 'test',
+          fee: 10n,
+          concurrentSpendCoinId: 'cd'.repeat(32),
+        },
+      ),
+    ).resolves.toEqual({
       kind: 'failure',
       reason: 'wallet not synced',
     });
@@ -824,7 +875,17 @@ describe('RealBlockchainInterface', () => {
     mockCreateOfferForIds.mockRejectedValue(
       new WalletConnectTransportError('WalletConnect relayer disconnected'),
     );
-    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toEqual({
+    await expect(
+      blockchain.beginWalletOffer(
+        { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        {
+          kind: 'fee',
+          uniqueId: 'test',
+          fee: 10n,
+          concurrentSpendCoinId: 'cd'.repeat(32),
+        },
+      ),
+    ).resolves.toEqual({
       kind: 'unavailable',
       reason: 'WalletConnect relayer disconnected',
     });
@@ -836,9 +897,19 @@ describe('RealBlockchainInterface', () => {
       offer: 'offer1signed',
       tradeRecord: { tradeId: 'fee-parent-trade' },
     });
-    await expect(blockchain.createFeeSpend(10n, 'cd'.repeat(32))).resolves.toEqual({
-      kind: 'offer',
-      offer: 'offer1signed',
+    await expect(
+      blockchain.beginWalletOffer(
+        { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        {
+          kind: 'fee',
+          uniqueId: 'test',
+          fee: 10n,
+          concurrentSpendCoinId: 'cd'.repeat(32),
+        },
+      ),
+    ).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'fee-parent-trade',
     });
     expect(mockSelectCoins).not.toHaveBeenCalled();
@@ -846,7 +917,17 @@ describe('RealBlockchainInterface', () => {
 
   it('does not contact the wallet for a zero fee', async () => {
     const blockchain = new RealBlockchainInterface();
-    await expect(blockchain.createFeeSpend(0n, 'cd'.repeat(32))).resolves.toBeNull();
+    await expect(
+      blockchain.beginWalletOffer(
+        { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        {
+          kind: 'fee',
+          uniqueId: 'test',
+          fee: 0n,
+          concurrentSpendCoinId: 'cd'.repeat(32),
+        },
+      ),
+    ).resolves.toEqual({ kind: 'failure', reason: 'fee must be positive' });
     expect(mockSelectCoins).not.toHaveBeenCalled();
     expect(mockCreateOfferForIds).not.toHaveBeenCalled();
   });
@@ -991,6 +1072,29 @@ describe('RealBlockchainInterface', () => {
 
     expect(tracker.cancel('trade-a')).toBe('submitted');
     expect(tracker.cancel('trade-b')).toBe('reserved');
+  });
+
+  it('rejects a second synthetic fee offer that reuses an exact reserved input', () => {
+    const bundle = {
+      coin_spends: [
+        {
+          coin: {
+            parent_coin_info: `0x${'11'.repeat(32)}`,
+            puzzle_hash: `0x${'ab'.repeat(32)}`,
+            amount: 100n,
+          },
+          puzzle_reveal: '0x80',
+          solution: '0x80',
+        },
+      ],
+      aggregated_signature: '0x',
+    };
+    const tracker = new SyntheticFeeOfferTracker();
+    tracker.reserve('trade-a', bundle);
+
+    expect(() => tracker.reserve('trade-b', bundle)).toThrow(/reuses an input reserved/);
+    expect(tracker.cancel('trade-a')).toBe('reserved');
+    expect(tracker.cancel('trade-b')).toBeUndefined();
   });
 
   it('applies conservative simulator outcome defaults', () => {

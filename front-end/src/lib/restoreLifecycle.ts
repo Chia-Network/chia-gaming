@@ -8,14 +8,10 @@ import {
   selectShouldAdvertiseAvailable,
 } from './session/model';
 
-export function isRestoreBlocked(
-  restoring: boolean,
-  restoreStatus: RestoreStatus,
-  hubReconciled: boolean,
-): boolean {
+export function isRestoreBlocked(restoring: boolean, restoreStatus: RestoreStatus): boolean {
   return selectRestoreBlocked(
     createSessionModel({
-      restore: { restoring, status: restoreStatus, hubReconciled, error: null },
+      restore: { restoring, status: restoreStatus, hubReconciled: false, error: null },
     }),
   );
 }
@@ -151,9 +147,9 @@ export async function transitionToFreshSession(dependencies: {
 
 /**
  * Phase reports are terminal lifecycle inputs to Shell. A restored save is only
- * a persisted projection until WASM restoration and hub reconciliation finish,
- * so it must not cause terminal cleanup. Once unblocked, a resolved phase is
- * reported once from the current session projection.
+ * a persisted projection until local WASM restoration finishes, so it must not
+ * cause terminal cleanup. Once unblocked, a resolved phase is reported once
+ * from the current session projection.
  */
 export function shouldReportSessionPhase(
   sessionPhase: Exclude<SessionPhase, 'none'>,

@@ -8,7 +8,13 @@ const TAB_ID_SESSION_KEY = 'appState_tabId';
 
 let autoResumeLatch = false;
 let fenced = false;
+let persistenceGeneration = 0;
 const fencedListeners = new Set<() => void>();
+
+export interface PersistenceFenceToken {
+  generation: number;
+  leaseOwner: string | null;
+}
 
 export function randomHex(): string {
   const bytes = new Uint8Array(16);
@@ -77,6 +83,7 @@ export function checkLease(): boolean {
 }
 
 export function claimLease(): void {
+  persistenceGeneration += 1;
   fenced = false;
   try {
     localStorage.setItem(LEASE_KEY, tabId);
@@ -113,7 +120,39 @@ export function isFenced(): boolean {
 }
 
 export function fencePersistence(): void {
+  persistenceGeneration += 1;
   fenced = true;
+}
+
+export function capturePersistenceFence(): PersistenceFenceToken {
+  let leaseOwner: string | null = null;
+  try {
+    leaseOwner = localStorage.getItem(LEASE_KEY);
+  } catch {
+    /* ignore */
+  }
+  return { generation: persistenceGeneration, leaseOwner };
+}
+
+export function isPersistenceFenceCurrent(token: PersistenceFenceToken): boolean {
+  if (fenced || token.generation !== persistenceGeneration) return false;
+  try {
+    const currentOwner = localStorage.getItem(LEASE_KEY);
+    return currentOwner === token.leaseOwner && (currentOwner === null || currentOwner === tabId);
+  } catch {
+    return token.leaseOwner === null;
+  }
+}
+
+export function beginHardResetPersistence(): number {
+  persistenceGeneration += 1;
+  fenced = true;
+  fireFenced();
+  return persistenceGeneration;
+}
+
+export function isHardResetGenerationCurrent(generation: number): boolean {
+  return fenced && generation === persistenceGeneration;
 }
 
 export function hasSavedSessionMarker(): boolean {
@@ -222,6 +261,7 @@ export function installStorageCoordination(onHardReset: () => void): void {
 
 export function resetStorageCoordinationForTests(): void {
   fenced = false;
+  persistenceGeneration += 1;
   fencedListeners.clear();
   autoResumeLatch = false;
   try {

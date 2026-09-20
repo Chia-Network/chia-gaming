@@ -6,6 +6,12 @@ import {
   type WalletReservationRecord,
 } from './walletReservationLedgerSchema';
 import { decode, encode, type BencodexValue } from 'chia-gaming-bencodex';
+import {
+  capturePersistenceFence,
+  isHardResetGenerationCurrent,
+  isPersistenceFenceCurrent,
+  type PersistenceFenceToken,
+} from '../../hooks/saveCoordination';
 
 export const SESSION_DB_NAME = 'chia-gaming-session';
 const SESSION_DB_VERSION = 3;
@@ -16,7 +22,19 @@ const WALLET_RESERVATION_STORE_NAME = 'wallet-reservations';
 const WALLET_RESERVATION_RECORD_KEY = 'current';
 export const MAX_DURABLE_REJECTION_TOMBSTONES = 8;
 export const REJECTION_TOMBSTONE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
-let storageWriteQueue: Promise<void> = Promise.resolve();
+type StorageMutationFence =
+  | { kind: 'lease'; token: PersistenceFenceToken }
+  | { kind: 'hard-reset'; generation: number };
+type StorageMutation = {
+  fence: StorageMutationFence;
+  run: (isCurrent: () => boolean) => Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+};
+const storageMutationQueue: StorageMutation[] = [];
+let storageMutationRunning = false;
+let storageMutationTail: Promise<void> = Promise.resolve();
+let holdNextStorageMutationForTests: Promise<void> | null = null;
 const OBFUSCATION_KEY = new Uint8Array([
   0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b, 0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
 ]);
@@ -181,15 +199,68 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function enqueueStorageWrite(write: () => Promise<void>): Promise<void> {
-  const queued = storageWriteQueue.catch(() => {}).then(write);
-  storageWriteQueue = queued;
+function isMutationFenceCurrent(fence: StorageMutationFence): boolean {
+  return fence.kind === 'lease'
+    ? isPersistenceFenceCurrent(fence.token)
+    : isHardResetGenerationCurrent(fence.generation);
+}
+
+function pumpStorageMutations(): void {
+  if (storageMutationRunning) return;
+  const mutation = storageMutationQueue.shift();
+  if (!mutation) return;
+  storageMutationRunning = true;
+  const barrier = holdNextStorageMutationForTests;
+  holdNextStorageMutationForTests = null;
+  void (async () => {
+    if (barrier) await barrier;
+    const isCurrent = () => isMutationFenceCurrent(mutation.fence);
+    if (isCurrent()) await mutation.run(isCurrent);
+  })()
+    .then(mutation.resolve, mutation.reject)
+    .finally(() => {
+      storageMutationRunning = false;
+      pumpStorageMutations();
+    });
+}
+
+function enqueueStorageMutation(
+  fence: StorageMutationFence,
+  run: (isCurrent: () => boolean) => Promise<void>,
+): Promise<void> {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const queued = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  storageMutationQueue.push({ fence, run, resolve, reject });
+  storageMutationTail = queued.catch(() => {});
+  pumpStorageMutations();
   return queued;
+}
+
+function enqueueStorageWrite(write: (isCurrent: () => boolean) => Promise<void>): Promise<void> {
+  return enqueueStorageMutation({ kind: 'lease', token: capturePersistenceFence() }, write);
+}
+
+export function enqueueHardResetStorageMutation(
+  generation: number,
+  reset: () => Promise<void>,
+): Promise<void> {
+  return enqueueStorageMutation({ kind: 'hard-reset', generation }, async (isCurrent) => {
+    if (isCurrent()) await reset();
+  });
+}
+
+/** @internal test-only: hold the next queued mutation before its fence check. */
+export function _holdNextStorageMutationForTests(barrier: Promise<void>): void {
+  holdNextStorageMutationForTests = barrier;
 }
 
 export async function readSessionRecord(): Promise<unknown | null> {
   if (typeof indexedDB === 'undefined') return null;
-  await storageWriteQueue.catch(() => {});
+  await storageMutationTail;
   const db = await openDatabase();
   try {
     const transaction = db.transaction(SESSION_STORE_NAME, 'readonly');
@@ -224,12 +295,16 @@ export async function readSessionRecord(): Promise<unknown | null> {
   }
 }
 
-async function performWriteSessionRecord(record: SessionSave): Promise<void> {
+async function performWriteSessionRecord(
+  record: SessionSave,
+  isCurrent: () => boolean,
+): Promise<void> {
   if (typeof indexedDB === 'undefined') {
     throw new Error('IndexedDB is unavailable; refusing to send without durable session storage');
   }
   const db = await openDatabase();
   try {
+    if (!isCurrent()) return;
     const transaction = db.transaction(SESSION_STORE_NAME, 'readwrite');
     transaction.objectStore(SESSION_STORE_NAME).put(obfuscateRecord(record), SESSION_RECORD_KEY);
     await transactionComplete(transaction);
@@ -240,7 +315,7 @@ async function performWriteSessionRecord(record: SessionSave): Promise<void> {
 
 export function writeSessionRecord(record: SessionSave): Promise<void> {
   const snapshot = structuredClone(record);
-  return enqueueStorageWrite(() => performWriteSessionRecord(snapshot));
+  return enqueueStorageWrite((isCurrent) => performWriteSessionRecord(snapshot, isCurrent));
 }
 
 export function writeSessionAndWalletReservationRecords(
@@ -255,10 +330,11 @@ export function writeSessionAndWalletReservationRecords(
   }
   const sessionSnapshot = structuredClone(session);
   const ledgerRecord = encodeWalletReservationRecord(structuredClone(entries));
-  return enqueueStorageWrite(async () => {
-    if (!shouldWrite()) return;
+  return enqueueStorageWrite(async (isCurrent) => {
+    if (!isCurrent() || !shouldWrite()) return;
     const db = await openDatabase();
     try {
+      if (!isCurrent() || !shouldWrite()) return;
       const transaction = db.transaction(
         [SESSION_STORE_NAME, WALLET_RESERVATION_STORE_NAME],
         'readwrite',
@@ -278,9 +354,10 @@ export function writeSessionAndWalletReservationRecords(
 
 export function deleteSessionRecord(): Promise<void> {
   if (typeof indexedDB === 'undefined') return Promise.resolve();
-  return enqueueStorageWrite(async () => {
+  return enqueueStorageWrite(async (isCurrent) => {
     const db = await openDatabase();
     try {
+      if (!isCurrent()) return;
       const transaction = db.transaction(SESSION_STORE_NAME, 'readwrite');
       transaction.objectStore(SESSION_STORE_NAME).delete(SESSION_RECORD_KEY);
       await transactionComplete(transaction);
@@ -292,7 +369,7 @@ export function deleteSessionRecord(): Promise<void> {
 
 export async function readWalletReservationRecord(): Promise<WalletReservationRecord | null> {
   if (typeof indexedDB === 'undefined') return null;
-  await storageWriteQueue.catch(() => {});
+  await storageMutationTail;
   const db = await openDatabase();
   try {
     const transaction = db.transaction(WALLET_RESERVATION_STORE_NAME, 'readonly');
@@ -330,9 +407,10 @@ export function writeWalletReservationRecord(
     );
   }
   const record = encodeWalletReservationRecord(structuredClone(entries));
-  return enqueueStorageWrite(async () => {
+  return enqueueStorageWrite(async (isCurrent) => {
     const db = await openDatabase();
     try {
+      if (!isCurrent()) return;
       const transaction = db.transaction(WALLET_RESERVATION_STORE_NAME, 'readwrite');
       transaction
         .objectStore(WALLET_RESERVATION_STORE_NAME)
@@ -346,9 +424,10 @@ export function writeWalletReservationRecord(
 
 export function deleteWalletReservationRecord(): Promise<void> {
   if (typeof indexedDB === 'undefined') return Promise.resolve();
-  return enqueueStorageWrite(async () => {
+  return enqueueStorageWrite(async (isCurrent) => {
     const db = await openDatabase();
     try {
+      if (!isCurrent()) return;
       const transaction = db.transaction(WALLET_RESERVATION_STORE_NAME, 'readwrite');
       transaction.objectStore(WALLET_RESERVATION_STORE_NAME).delete(WALLET_RESERVATION_RECORD_KEY);
       await transactionComplete(transaction);
@@ -432,13 +511,16 @@ export async function readRejectionTombstones(
 async function performWriteRejectionTombstone(
   tombstone: DurableRejectionTombstone,
   clearSession: boolean,
+  isCurrent: () => boolean,
 ): Promise<void> {
   if (typeof indexedDB === 'undefined') {
     throw new Error('IndexedDB is unavailable; refusing to reject without durable storage');
   }
   const existing = await readRejectionTombstones(false);
+  if (!isCurrent()) return;
   const db = await openDatabase();
   try {
+    if (!isCurrent()) return;
     const transaction = db.transaction(
       clearSession ? [REJECTION_STORE_NAME, SESSION_STORE_NAME] : REJECTION_STORE_NAME,
       'readwrite',
@@ -467,20 +549,25 @@ async function performWriteRejectionTombstone(
 }
 
 export function writeRejectionTombstone(tombstone: DurableRejectionTombstone): Promise<void> {
-  return enqueueStorageWrite(() => performWriteRejectionTombstone(tombstone, false));
+  return enqueueStorageWrite((isCurrent) =>
+    performWriteRejectionTombstone(tombstone, false, isCurrent),
+  );
 }
 
 export function replaceSessionWithRejectionTombstone(
   tombstone: DurableRejectionTombstone,
 ): Promise<void> {
-  return enqueueStorageWrite(() => performWriteRejectionTombstone(tombstone, true));
+  return enqueueStorageWrite((isCurrent) =>
+    performWriteRejectionTombstone(tombstone, true, isCurrent),
+  );
 }
 
 export function deleteRejectionTombstone(peerId: string, sessionId: string): Promise<void> {
   if (typeof indexedDB === 'undefined') return Promise.resolve();
-  return enqueueStorageWrite(async () => {
+  return enqueueStorageWrite(async (isCurrent) => {
     const db = await openDatabase();
     try {
+      if (!isCurrent()) return;
       const transaction = db.transaction(REJECTION_STORE_NAME, 'readwrite');
       transaction
         .objectStore(REJECTION_STORE_NAME)

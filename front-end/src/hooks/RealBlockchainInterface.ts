@@ -8,7 +8,9 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
-  WalletFeeSourceOutcome,
+  WalletOfferBeginOutcome,
+  WalletOfferOperation,
+  WalletOfferRequest,
   WalletOfferCancellationOutcome,
   WalletSubmitOutcome,
 } from '../types/ChiaGaming';
@@ -515,11 +517,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async createFeeSpend(
-    fee: bigint,
-    concurrentSpendCoinId: string,
-  ): Promise<WalletFeeSourceOutcome | null> {
-    if (fee <= 0n) return null;
+  async beginWalletOffer(
+    _operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferBeginOutcome> {
+    if (request.kind === 'funding') {
+      return this.createFundingOffer(request);
+    }
+    const { fee, concurrentSpendCoinId } = request;
+    if (fee <= 0n) return { kind: 'failure', reason: 'fee must be positive' };
     const protocolCoinId = concurrentSpendCoinId.startsWith('0x')
       ? concurrentSpendCoinId
       : `0x${normalizeHexString(concurrentSpendCoinId)}`;
@@ -546,7 +552,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('wallet returned a persisted fee offer without tradeRecord.tradeId');
       }
       log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
-      return { kind: 'offer', offer, tradeId };
+      return { kind: 'created', material: { kind: 'offer', offer }, tradeId };
     } catch (e) {
       // Propagate the real reason (RPC error, missing signed bundle) so the
       // caller's user-facing warning is accurate rather than always blaming
@@ -608,14 +614,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     return resp.height;
   }
 
-  async createOfferForIds(
-    _uniqueId: string,
-    offer: { [walletId: string]: bigint },
-    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
-    coinIds?: string[],
-    maxHeight?: bigint,
-    _openingFee?: bigint,
-  ): Promise<any | null> {
+  private async createFundingOffer(
+    request: Extract<WalletOfferRequest, { kind: 'funding' }>,
+  ): Promise<WalletOfferBeginOutcome> {
+    const { offer, extraConditions, coinIds, maxHeight } = request;
     try {
       const conditions = [...(extraConditions ?? [])];
       if (maxHeight !== undefined) {
@@ -703,14 +705,17 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         if (!payload.validateOnly) {
           const tradeId = (response as any)?.tradeRecord?.tradeId;
           if (typeof tradeId === 'string' && tradeId) {
-            return { offer: offerStr, tradeId };
+            return {
+              kind: 'created',
+              material: { kind: 'offer', offer: offerStr },
+              tradeId,
+            };
           }
           throw new Error('wallet returned a persisted funding offer without tradeRecord.tradeId');
         }
-        return offerStr;
+        return { kind: 'created', material: { kind: 'offer', offer: offerStr } };
       }
-      log(`[wc-blockchain] createOfferForIds returned non-offer payload type=${typeof response}`);
-      return response;
+      throw new Error(`wallet returned non-offer payload type=${typeof response}`);
     } catch (e) {
       let parsedError: unknown = undefined;
       if (e instanceof Error) {
@@ -745,7 +750,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async cancelOffer(tradeId: string): Promise<WalletOfferCancellationOutcome> {
+  async releaseWalletOffer(tradeId: string): Promise<WalletOfferCancellationOutcome> {
     let response: Awaited<ReturnType<typeof rpc.cancelOffer>>;
     try {
       response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });

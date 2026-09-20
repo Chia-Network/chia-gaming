@@ -466,6 +466,35 @@ describe('session machine causal sequences', () => {
     expect(transition.state.model.history.wasmNotificationHistory).toEqual(['notification']);
   });
 
+  it('presents a recoverable internal error once and dismisses without replacing active state', () => {
+    const state = createSessionMachineState(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
+        game: { activeIds: ['7'], currentHandIds: ['7'] },
+      }),
+    );
+    const presented = reduceSessionMachine(state, {
+      type: 'enqueue-error',
+      kind: 'recoverable-internal-error',
+      message: 'The failed submission was quarantined.',
+    }).state;
+
+    expect(presented.model.channel.status.state).toBe('Active');
+    expect(presented.model.game.activeIds).toEqual(['7']);
+    expect(presented.model.channel.queue).toEqual([
+      expect.objectContaining({
+        kind: 'recoverable-internal-error',
+        title: 'Internal Error',
+        message: 'The failed submission was quarantined.',
+      }),
+    ]);
+
+    const dismissed = reduceSessionMachine(presented, { type: 'dismiss-channel' }).state;
+    expect(dismissed.model.channel.queue).toEqual([]);
+    expect(dismissed.model.channel.status.state).toBe('Active');
+    expect(dismissed.model.game.activeIds).toEqual(['7']);
+  });
+
   it('opens compose when there are no lastHandProposal to replay', () => {
     const state = createSessionMachineState(createSessionModel());
     const transition = reduceSessionMachine(state, { type: 'choose-same-terms' });
@@ -702,7 +731,7 @@ describe('session machine controller command failures', () => {
     controller.setGameSession({
       pendingTerminalHandoff: () => null,
       snapshot_watched_coins: () => [],
-      drain_submissions: () => ({ submissions: [], retired_submission_ids: [] }),
+      drain_submissions: () => ({ submissions: [], retired_submission_ids: [], failures: [] }),
       configure_submission_fee: () => {},
       accept_proposal: () =>
         wasmResult({

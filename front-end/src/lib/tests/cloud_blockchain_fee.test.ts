@@ -47,6 +47,11 @@ jest.mock('../../hooks/save', () => ({
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
 
+const testOperation = {
+  owner: { installationPlayerId: 'player', peerSessionId: 'session' },
+  purpose: { kind: 'funding' as const, operationId: 'operation' },
+};
+
 /** Capture GraphQL bodies and return canned data keyed by query text. */
 function mockGraphql(handler: (query: string, variables: Record<string, unknown>) => unknown) {
   const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
@@ -81,7 +86,7 @@ describe('CloudBlockchainInterface fee support', () => {
       walletId: 'Wallet_1',
     });
     // openApprovePopup runs right after the mutation; returning null makes
-    // createOfferForIds reject there, after the variables we assert on are sent.
+    // Approval tracking starts only during reconciliation.
     setTestGlobal('window', globalThis);
     (globalThis as unknown as { open: () => unknown }).open = () => null;
   });
@@ -108,15 +113,14 @@ describe('CloudBlockchainInterface fee support', () => {
     const iface = new CloudBlockchainInterface();
     const preLauncherPuzzleHash = 'ab'.repeat(32);
     await expect(
-      iface.createOfferForIds(
-        'uid',
-        { '1': -1000n },
-        [{ opcode: 67n, args: ['10', '', preLauncherPuzzleHash] }],
-        undefined,
-        undefined,
-        500n,
-      ),
-    ).rejects.toThrow(/popup/i);
+      iface.beginWalletOffer(testOperation, {
+        kind: 'funding',
+        uniqueId: 'uid',
+        offer: { '1': -1000n },
+        extraConditions: [{ opcode: 67n, args: ['10', '', preLauncherPuzzleHash] }],
+        openingFee: 500n,
+      }),
+    ).resolves.toEqual({ kind: 'pending', recoveryId: 'SR_1' });
     const input = findOfferMutation(calls);
     expect(input.offered).toEqual([{ amount: '1000' }]);
     expect(input.requested).toEqual([]);
@@ -135,12 +139,17 @@ describe('CloudBlockchainInterface fee support', () => {
     });
     const iface = new CloudBlockchainInterface();
     await expect(
-      iface.createOfferForIds('uid', { '1': -1000n }, undefined, undefined, 500n),
-    ).rejects.toThrow(/popup/i);
+      iface.beginWalletOffer(testOperation, {
+        kind: 'funding',
+        uniqueId: 'uid',
+        offer: { '1': -1000n },
+        maxHeight: 500n,
+      }),
+    ).resolves.toEqual({ kind: 'pending', recoveryId: 'SR_1' });
     expect(findOfferMutation(calls).extraConditions).toEqual(['ff57ff8201f480']);
   });
 
-  it('createFeeSpend uses a fee-only offer bound to the protocol coin', async () => {
+  it('begins a fee-only offer bound to the protocol coin', async () => {
     const calls = mockGraphql((query) => {
       if (query.includes('createOffer')) {
         return {
@@ -151,10 +160,17 @@ describe('CloudBlockchainInterface fee support', () => {
     });
     const iface = new CloudBlockchainInterface();
     const protocolCoinId = 'ab'.repeat(32);
-    await expect(iface.createFeeSpend(500n, protocolCoinId)).resolves.toEqual({
-      kind: 'failure',
-      reason: expect.stringMatching(/popup/i),
-    });
+    await expect(
+      iface.beginWalletOffer(
+        { ...testOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        {
+          kind: 'fee',
+          uniqueId: 'uid',
+          fee: 500n,
+          concurrentSpendCoinId: protocolCoinId,
+        },
+      ),
+    ).resolves.toEqual({ kind: 'pending', recoveryId: 'SR_1' });
     const input = findOfferMutation(calls);
     expect(input.offered).toEqual([]);
     expect(input.requested).toEqual([]);
@@ -166,7 +182,17 @@ describe('CloudBlockchainInterface fee support', () => {
     setTestGlobal('fetch', jest.fn().mockRejectedValue(new TypeError('network disconnected')));
     const iface = new CloudBlockchainInterface();
 
-    await expect(iface.createFeeSpend(500n, 'ab'.repeat(32))).resolves.toEqual({
+    await expect(
+      iface.beginWalletOffer(
+        { ...testOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        {
+          kind: 'fee',
+          uniqueId: 'uid',
+          fee: 500n,
+          concurrentSpendCoinId: 'ab'.repeat(32),
+        },
+      ),
+    ).resolves.toEqual({
       kind: 'unavailable',
       reason: expect.stringMatching(/network disconnected/i),
     });
@@ -194,17 +220,181 @@ describe('CloudBlockchainInterface fee support', () => {
     });
 
     await expect(
-      new CloudBlockchainInterface().createOfferForIds('uid', { '1': -1000n }),
-    ).resolves.toEqual({ offer, tradeId: 'Offer_1' });
+      new CloudBlockchainInterface().reconcileWalletOffer(
+        testOperation,
+        { kind: 'funding', uniqueId: 'uid', offer: { '1': -1000n } },
+        'SR_1',
+      ),
+    ).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer },
+      tradeId: 'Offer_1',
+    });
     const pollQuery = calls.find((call) => call.query.includes('transaction'))!.query;
     expect(pollQuery.replace(/\s+/g, ' ')).toContain('transaction { offer { bech32 offerId } }');
+  });
+
+  it('accepts a canonical bare approval id while rejecting empty and suffix collisions', async () => {
+    jest.useFakeTimers();
+    const popup = { close: jest.fn() };
+    (globalThis as unknown as { open: () => unknown }).open = () => popup;
+    let listener: ((event: MessageEvent) => void) | undefined;
+    const add = jest.fn((_type: string, callback: (event: MessageEvent) => void) => {
+      listener = callback;
+    });
+    const remove = jest.fn();
+    setTestGlobal('addEventListener', add);
+    setTestGlobal('removeEventListener', remove);
+    mockGraphql((query) => {
+      if (query.includes('createOffer')) {
+        return {
+          createOffer: {
+            signatureRequest: { id: 'SignatureRequest_12', status: 'PENDING' },
+          },
+        };
+      }
+      return {
+        signatureRequest: {
+          id: 'SignatureRequest_12',
+          status: 'PENDING',
+          transaction: null,
+        },
+      };
+    });
+    const iface = new CloudBlockchainInterface();
+    const operation = {
+      owner: { installationPlayerId: 'player', peerSessionId: 'session' },
+      purpose: { kind: 'funding' as const, operationId: 'op' },
+    };
+    const request = { kind: 'funding' as const, uniqueId: 'player', offer: { '1': -1n } };
+    await expect(iface.beginWalletOffer(operation, request)).resolves.toEqual({
+      kind: 'pending',
+      recoveryId: 'SignatureRequest_12',
+    });
+    const completion = iface.reconcileWalletOffer(operation, request, 'SignatureRequest_12');
+    await Promise.resolve();
+    let settled = false;
+    void completion.then(() => {
+      settled = true;
+    });
+    for (const signatureRequestId of ['', '2', 'Request_12', 'xSignatureRequest_12']) {
+      listener?.({
+        origin: 'https://dev-testnet11.cw.chia.net',
+        source: popup,
+        data: {
+          type: 'chia-cloud-wallet/signature-request',
+          signatureRequestId,
+          status: 'rejected',
+        },
+      } as unknown as MessageEvent);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+    }
+
+    listener?.({
+      origin: 'https://dev-testnet11.cw.chia.net',
+      source: popup,
+      data: {
+        type: 'chia-cloud-wallet/signature-request',
+        signatureRequestId: '12',
+        status: 'rejected',
+      },
+    } as unknown as MessageEvent);
+    await expect(completion).resolves.toEqual({
+      kind: 'failure',
+      reason: expect.stringMatching(/rejected/i),
+    });
+    expect(remove).toHaveBeenCalledWith('message', listener);
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it('accepts a canonical prefixed approval id for a bare request id', async () => {
+    jest.useFakeTimers();
+    const popup = { close: jest.fn() };
+    (globalThis as unknown as { open: () => unknown }).open = () => popup;
+    let listener: ((event: MessageEvent) => void) | undefined;
+    setTestGlobal(
+      'addEventListener',
+      jest.fn((_type: string, callback: (event: MessageEvent) => void) => {
+        listener = callback;
+      }),
+    );
+    setTestGlobal('removeEventListener', jest.fn());
+    mockGraphql(() => ({
+      signatureRequest: {
+        id: '34',
+        status: 'PENDING',
+        transaction: null,
+      },
+    }));
+    const iface = new CloudBlockchainInterface();
+    const request = { kind: 'funding' as const, uniqueId: 'player', offer: { '1': -1n } };
+    const completion = iface.reconcileWalletOffer(testOperation, request, '34');
+    await Promise.resolve();
+    listener?.({
+      origin: 'https://dev-testnet11.cw.chia.net',
+      source: popup,
+      data: {
+        type: 'chia-cloud-wallet/signature-request',
+        signatureRequestId: 'SignatureRequest_34',
+        status: 'rejected',
+      },
+    } as unknown as MessageEvent);
+
+    await expect(completion).resolves.toEqual({
+      kind: 'failure',
+      reason: expect.stringMatching(/rejected/i),
+    });
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it('reconciles a reloaded signature request without creating a replacement offer', async () => {
+    const offer = `offer1${'b'.repeat(80)}`;
+    const popup = { close: jest.fn() };
+    (globalThis as unknown as { open: () => unknown }).open = () => popup;
+    setTestGlobal('addEventListener', jest.fn());
+    setTestGlobal('removeEventListener', jest.fn());
+    const calls = mockGraphql((query) => {
+      if (query.includes('createOffer')) {
+        return { createOffer: { signatureRequest: { id: 'SR_reload', status: 'PENDING' } } };
+      }
+      return {
+        signatureRequest: {
+          id: 'SR_reload',
+          status: 'SUBMITTED',
+          transaction: { offer: { bech32: offer, offerId: 'Offer_reload' } },
+        },
+      };
+    });
+    const operation = {
+      owner: { installationPlayerId: 'player', peerSessionId: 'session' },
+      purpose: { kind: 'funding' as const, operationId: 'op' },
+    };
+    const request = { kind: 'funding' as const, uniqueId: 'player', offer: { '1': -1n } };
+    const first = new CloudBlockchainInterface();
+    await expect(first.beginWalletOffer(operation, request)).resolves.toEqual({
+      kind: 'pending',
+      recoveryId: 'SR_reload',
+    });
+
+    await expect(
+      new CloudBlockchainInterface().reconcileWalletOffer(operation, request, 'SR_reload'),
+    ).resolves.toEqual({
+      kind: 'created',
+      material: { kind: 'offer', offer },
+      tradeId: 'Offer_reload',
+    });
+    expect(calls.filter((call) => call.query.includes('mutation')).length).toBe(1);
+    expect(calls.some((call) => call.query.includes('signatureRequest(id: $id)'))).toBe(true);
   });
 
   it('cancels a persisted offer off chain by offerId', async () => {
     const calls = mockGraphql(() => ({
       cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'SUBMITTED' } },
     }));
-    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
       status: 'cancelled',
       detail: 'SUBMITTED',
     });
@@ -228,7 +418,7 @@ describe('CloudBlockchainInterface fee support', () => {
       })),
     );
 
-    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
       status: 'rejected',
       detail: expect.stringMatching(/Offer already cancelled by another client/),
     });
@@ -252,7 +442,7 @@ describe('CloudBlockchainInterface fee support', () => {
       })),
     );
 
-    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
       status: 'already-terminal',
       detail: expect.stringMatching(/offer is gone/),
     });
@@ -263,7 +453,7 @@ describe('CloudBlockchainInterface fee support', () => {
       cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'PENDING' } },
     }));
 
-    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
       status: 'unavailable',
       detail: expect.stringMatching(/popup blocked/i),
     });
@@ -286,10 +476,12 @@ describe('CloudBlockchainInterface fee support', () => {
     });
 
     let settled = false;
-    const cancellation = new CloudBlockchainInterface().cancelOffer('Offer_1').then((outcome) => {
-      settled = true;
-      return outcome;
-    });
+    const cancellation = new CloudBlockchainInterface()
+      .releaseWalletOffer('Offer_1')
+      .then((outcome) => {
+        settled = true;
+        return outcome;
+      });
     await Promise.resolve();
     await Promise.resolve();
     expect(settled).toBe(false);
@@ -315,7 +507,7 @@ describe('CloudBlockchainInterface fee support', () => {
       return { signatureRequest: { id: 'SR_cancel', status: 'FAILED' } };
     });
 
-    await expect(new CloudBlockchainInterface().cancelOffer('Offer_1')).resolves.toEqual({
+    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
       status: 'rejected',
       detail: 'Cloud Wallet cancellation ended with status FAILED',
     });

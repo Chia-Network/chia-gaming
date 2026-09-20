@@ -373,7 +373,7 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
 
 export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload | null {
   if (value === null) return null;
-  validateChannelStatus(value, { allowNumberStateNumbers: true });
+  validateChannelStatus(value);
   const fields = requireRecord(value, 'channelStatus');
   for (const required of ['advisory', 'coin', 'our_balance', 'their_balance', 'game_allocated']) {
     if (!Object.hasOwn(fields, required)) {
@@ -421,7 +421,6 @@ export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload
   ): bigint | null | undefined => {
     const value = fields[field];
     if (value === undefined || value === null) return value;
-    if (typeof value === 'number') return BigInt(value);
     return requireBigint(value, `channelStatus.${field}`);
   };
   return {

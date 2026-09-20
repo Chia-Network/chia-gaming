@@ -195,9 +195,7 @@ export function selectSessionPhase(
 }
 
 export function selectRestoreBlocked(model: SessionModel): boolean {
-  return (
-    model.restore.restoring && (model.restore.status !== 'restored' || !model.restore.hubReconciled)
-  );
+  return model.restore.restoring && model.restore.status !== 'restored';
 }
 
 export function selectShouldAdvertiseAvailable(model: SessionModel, phase: SessionPhase): boolean {

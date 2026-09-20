@@ -10,12 +10,15 @@ import {
   clearAutoResumeOnce,
   clearSessionWithInboundRejectionReceipt,
   clearSessionWithRejectionTombstone,
+  claimLease,
   loadState,
   flushSessionSave,
   getPlayerId,
+  reclaimLease,
   _resetForTests,
 } from '../../hooks/save';
 import {
+  _holdNextStorageMutationForTests,
   MAX_DURABLE_REJECTION_TOMBSTONES,
   readRejectionTombstones,
   readSessionRecord,
@@ -39,6 +42,7 @@ import {
   walletReservationLedger,
 } from '../session/walletReservationLedger';
 import {
+  decodeWalletReservationLedger,
   decodeWalletReservationRecord,
   WALLET_RESERVATION_RECORD_SCHEMA,
   WALLET_RESERVATION_RECORD_VERSION,
@@ -131,6 +135,78 @@ describe('session persistence', () => {
     expect(() => new WalletReservationLedger().hydrateFromDisk([])).toThrow(
       'Garbled wallet reservation record',
     );
+  });
+
+  it('rejects more than one creating entry for the same wallet operation', () => {
+    const operation = {
+      owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+      purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
+    };
+    expect(() =>
+      decodeWalletReservationLedger([
+        {
+          ...operation,
+          stage: 'creating',
+          recoveryId: 'SignatureRequest_first',
+          reason: 'pending',
+        },
+        {
+          ...operation,
+          stage: 'creating',
+          recoveryId: 'SignatureRequest_second',
+          reason: 'pending',
+        },
+      ]),
+    ).toThrow(/contradictory.*operation ownership/i);
+  });
+
+  it.each([
+    ['creation first', true],
+    ['trade first', false],
+  ])('rejects creating and trade ownership for one operation with %s', (_label, creatingFirst) => {
+    const operation = {
+      owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+      purpose: { kind: 'fee' as const, operationId: 'submission' },
+    };
+    const creating = {
+      ...operation,
+      stage: 'creating' as const,
+      recoveryId: 'SignatureRequest_pending',
+      reason: 'pending',
+    };
+    const trade = {
+      ...operation,
+      stage: 'reserved' as const,
+      tradeId: 'trade-existing',
+      reason: 'created',
+    };
+
+    expect(() =>
+      decodeWalletReservationLedger(creatingFirst ? [creating, trade] : [trade, creating]),
+    ).toThrow(/contradictory.*operation ownership/i);
+  });
+
+  it('allows multiple distinct trade entries for one wallet operation', () => {
+    const operation = {
+      owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+      purpose: { kind: 'fee' as const, operationId: 'submission' },
+    };
+    expect(
+      decodeWalletReservationLedger([
+        {
+          ...operation,
+          stage: 'reserved',
+          tradeId: 'trade-first',
+          reason: 'created',
+        },
+        {
+          ...operation,
+          stage: 'retained-for-replay',
+          tradeId: 'trade-second',
+          reason: 'attached',
+        },
+      ]),
+    ).toHaveLength(2);
   });
 
   it('obfuscates and round-trips one raw binary/bigint record through IndexedDB', async () => {
@@ -586,6 +662,59 @@ describe('session persistence', () => {
     await clearSession();
     _resetForTests();
     expect(await peekSession()).toBeNull();
+  });
+
+  it('orders clearSession before an immediate unawaited replacement save', async () => {
+    saveLiveFields({
+      ...sampleSession,
+      serializedGameSession: new Uint8Array([1]),
+    });
+    await flushSessionSave();
+
+    const cleared = clearSession();
+    const saved = saveLiveFields({
+      ...sampleSession,
+      serializedGameSession: new Uint8Array([2]),
+      pairingToken: 'replacement-after-clear',
+    });
+    const flushed = flushSessionSave();
+    await Promise.all([cleared, saved, flushed]);
+
+    const persisted = requireLive(await readSessionRecord());
+    expect(persisted.live.serializedGameSession).toEqual(new Uint8Array([2]));
+    expect(persisted.pairing.token).toBe('replacement-after-clear');
+  });
+
+  it('does not let an old lease generation overwrite the winning ledger', async () => {
+    claimLease();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    _holdNextStorageMutationForTests(held);
+    const oldWrite = writeWalletReservationRecord([
+      {
+        tradeId: 'old-generation',
+        owner: { installationPlayerId: 'installation', peerSessionId: 'old-peer' },
+        purpose: { kind: 'funding', operationId: 'old-operation' },
+        stage: 'reserved',
+        reason: 'old-tab-result',
+      },
+    ]);
+
+    reclaimLease();
+    const winningEntry = {
+      tradeId: 'winning-generation',
+      owner: { installationPlayerId: 'installation', peerSessionId: 'winning-peer' },
+      purpose: { kind: 'funding' as const, operationId: 'winning-operation' },
+      stage: 'reserved' as const,
+      reason: 'winning-tab-result',
+    };
+    const winningWrite = writeWalletReservationRecord([winningEntry]);
+    release();
+    await Promise.all([oldWrite, winningWrite]);
+
+    expect((await readWalletReservationRecord())?.entries).toEqual([winningEntry]);
   });
 
   it('clearSession deletes the session while preserving the independent ledger', async () => {

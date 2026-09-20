@@ -32,7 +32,7 @@ function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
 }
 
 describe('session model restore, schema, and event contracts', () => {
-  it('derives restore blocking and shell decisions from the canonical model', () => {
+  it('does not block restored local presentation on external hub reconciliation', () => {
     const restoring = createSessionModel({
       restore: {
         restoring: true,
@@ -50,10 +50,10 @@ describe('session model restore, schema, and event contracts', () => {
       },
     });
 
-    expect(selectRestoreBlocked(restoring)).toBe(true);
+    expect(selectRestoreBlocked(restoring)).toBe(false);
     expect(selectSessionPhase(restoring)).toBe('off-chain');
     expect(selectShellView(restoring, 'off-chain')).toMatchObject({
-      restoreBlocked: true,
+      restoreBlocked: false,
       canAdvertiseAvailable: false,
       sessionError: false,
     });

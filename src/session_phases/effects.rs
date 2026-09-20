@@ -63,14 +63,18 @@ pub struct ChannelStatusSnapshot {
     pub semantic_phase: Option<ChannelSemanticPhase>,
     /// Most recent channel state number this side is aware of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state_number: Option<usize>,
+    pub state_number: Option<u64>,
     /// State number of the unroll we are publishing, or of the unroll coin
     /// that landed on-chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unrolling_state_number: Option<usize>,
+    pub unrolling_state_number: Option<u64>,
     /// State number we are (or were) preempting the landed unroll with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preempting_state_number: Option<usize>,
+    pub preempting_state_number: Option<u64>,
+}
+
+pub(crate) fn snapshot_state_number(state_number: usize) -> u64 {
+    u64::try_from(state_number).expect("channel state number exceeds u64")
 }
 
 impl ChannelStatusSnapshot {

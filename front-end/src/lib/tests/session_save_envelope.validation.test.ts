@@ -19,6 +19,19 @@ import {
 installSessionEnvelopeTestSetup();
 
 describe('validateSessionSaveEnvelope', () => {
+  it('rejects number channel state fields in the current save version', () => {
+    const save = liveSave({
+      channelStatus: {
+        state: 'Active',
+        state_number: 1,
+        unrolling_state_number: 2n,
+        preempting_state_number: 3n,
+      },
+    });
+
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow('channelStatus.state_number');
+  });
+
   it('accepts empty preferences and a complete pre-handshake checkpoint', () => {
     expect(() => validateSessionSaveEnvelope(baseSave())).not.toThrow();
     expect(() =>
