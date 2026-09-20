@@ -66,15 +66,21 @@ import { WalletReservationLedger } from '../session/walletReservationLedger';
 import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
+  FakeBlockchainInterface,
   SimulatorTransportError,
   SyntheticFeeOfferTracker,
 } from '../../hooks/FakeBlockchainInterface';
+import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinIdFromBytes, toUint8 } from '../../util';
 import { encodePuzzleHashToBech32m } from '../../util/bech32m';
 
 const offerOperation = {
-  owner: { installationPlayerId: 'player', peerSessionId: 'session' },
+  owner: {
+    installationPlayerId: 'player',
+    peerSessionId: 'session',
+    providerScope: { provider: 'simulator' as const, identity: 'player' },
+  },
   purpose: { kind: 'funding' as const, operationId: 'operation' },
 };
 
@@ -656,7 +662,10 @@ describe('RealBlockchainInterface', () => {
         offer: { '1': -100n },
         coinIds: ['ab'.repeat(32)],
       }),
-    ).rejects.toThrow('tradeRecord.tradeId');
+    ).resolves.toEqual({
+      kind: 'failure',
+      reason: expect.stringMatching(/tradeRecord\.tradeId/),
+    });
 
     expect(mockCreateOfferForIds).toHaveBeenCalledWith(
       expect.objectContaining({ validateOnly: false }),
@@ -667,7 +676,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({ success: true });
 
-    await expect(blockchain.releaseWalletOffer('trade-id')).resolves.toEqual({
+    await expect(blockchain.beginWalletOfferCancellation('trade-id')).resolves.toEqual({
       status: 'cancelled',
     });
 
@@ -690,8 +699,21 @@ describe('RealBlockchainInterface', () => {
         },
       },
     });
+    jest.spyOn(blockchain, 'getWalletProviderScope').mockReturnValue({
+      provider: 'walletconnect',
+      fingerprint: '123456',
+      remoteWalletId: '7',
+    });
     ledger.attachRpc(blockchain);
-    const owner = { installationPlayerId: 'installation', peerSessionId: 'peer-session' };
+    const owner = {
+      installationPlayerId: 'installation',
+      peerSessionId: 'peer-session',
+      providerScope: {
+        provider: 'walletconnect' as const,
+        fingerprint: '123456',
+        remoteWalletId: '7',
+      },
+    };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
     ledger.registerReserved('trade-already-spent', owner, purpose);
@@ -713,7 +735,7 @@ describe('RealBlockchainInterface', () => {
       detail: 'temporary wallet database failure',
     });
 
-    await expect(blockchain.releaseWalletOffer('trade-uncertain')).resolves.toEqual({
+    await expect(blockchain.beginWalletOfferCancellation('trade-uncertain')).resolves.toEqual({
       status: 'rejected',
       detail: expect.stringMatching(/temporary wallet database failure/),
     });
@@ -725,7 +747,7 @@ describe('RealBlockchainInterface', () => {
       new WalletConnectTransportError('WalletConnect cancellation transport failed'),
     );
 
-    await expect(blockchain.releaseWalletOffer('trade-offline')).resolves.toEqual({
+    await expect(blockchain.beginWalletOfferCancellation('trade-offline')).resolves.toEqual({
       status: 'unavailable',
       detail: expect.stringMatching(/transport failed/),
     });
@@ -739,7 +761,7 @@ describe('RealBlockchainInterface', () => {
       tradeId: 'trade-missing',
     });
 
-    await expect(blockchain.releaseWalletOffer('trade-missing')).resolves.toEqual({
+    await expect(blockchain.beginWalletOfferCancellation('trade-missing')).resolves.toEqual({
       status: 'already-terminal',
       detail: expect.stringMatching(/trade missing/),
     });
@@ -1128,6 +1150,28 @@ describe('RealBlockchainInterface', () => {
     expect(classifyFakeBlockchainSubmitError(new Error('unexpected simulator failure'))).toEqual({
       status: 'rejected',
       detail: 'unexpected simulator failure',
+    });
+  });
+});
+
+describe('simulator wallet scope', () => {
+  it('uses the exact stable simulator identity', async () => {
+    const blockchain = new FakeBlockchainInterface('ws://simulator.invalid');
+    await blockchain.beginConnect('player-exact-identity');
+    expect(blockchain.getWalletProviderScope()).toEqual({
+      provider: 'simulator',
+      identity: 'player-exact-identity',
+    });
+  });
+
+  it('scopes a shared simulator adapter to the operation owner', async () => {
+    const blockchain = new FakeBlockchainInterface('ws://simulator.invalid');
+    await blockchain.beginConnect('last-registered-player');
+    const poller = new BlockchainPoller(blockchain, 60_000);
+
+    expect(poller.rpc.getWalletProviderScope?.(offerOperation.owner)).toEqual({
+      provider: 'simulator',
+      identity: 'player',
     });
   });
 });

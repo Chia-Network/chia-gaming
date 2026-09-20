@@ -14,6 +14,7 @@ import {
   startFailureDisposition,
 } from '../lib/session/acceptLifecycle';
 import { selectGamePaneKind } from '../lib/session/gamePane';
+import { walletReservationLedger } from '../lib/session/walletReservationLedger';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
@@ -107,6 +108,10 @@ import {
   releaseLeaseIfOwner,
   setAlias,
 } from '../hooks/save';
+import {
+  reloadAfterSuccessfulHardReset,
+  startPendingWalletConnectWipe,
+} from '../hooks/saveHardReset';
 import type { ChiaNetwork } from '../lib/session/saveEnvelope';
 import { getCurrencyLabels } from '../constants/currency';
 import { MIN_NONZERO_FEE_MOJOS, isEffectivelyZeroFee } from '../constants/fees';
@@ -178,9 +183,10 @@ import {
 } from '../lib/session/terminalFinalization';
 import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 import {
+  appendDiagnosticEntry,
   appendRecent,
-  DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
+  recentDiagnosticEntries,
   recentEntries,
 } from '../lib/session/historyLimits';
 import { log } from '../services/log';
@@ -818,10 +824,6 @@ const Shell = () => {
 
   const restoreError = shellState.restoreError;
 
-  const setRestoreHubReconciled = useCallback((value: boolean) => {
-    shellDispatchRef.current({ type: 'setRestoreHubReconciled', value });
-  }, []);
-
   const stablePeerConn: PeerConnectionResult = useMemo(
     () => ({
       get reliableState() {
@@ -958,17 +960,43 @@ const Shell = () => {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      const pendingWipe = await startPendingWalletConnectWipe();
+      if (cancelled) return;
+      if (!pendingWipe.success) {
+        markSavedSession();
+        setBootState({
+          kind: 'resumeDialog',
+          loadError:
+            'A pending hard reset is still blocked. Close other app tabs and wallet connections, then retry.',
+        });
+        return;
+      }
+      const hydration = await hydrateSessionCacheFromDisk();
+      if (cancelled) return;
+      if (hydration.status === 'failed') {
+        clearAutoResumeOnce();
+        markSavedSession();
+        setBootState({ kind: 'resumeDialog', loadError: hydration.error });
+        return;
+      }
       // Restore hub session_id from disk before any mint / identify.
-      const sid = await ensureHubIdentity();
+      let sid: string;
+      try {
+        sid = await ensureHubIdentity();
+      } catch (error) {
+        if (cancelled) return;
+        clearAutoResumeOnce();
+        markSavedSession();
+        setBootState({
+          kind: 'resumeDialog',
+          loadError: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
       if (cancelled) return;
       setSessionId(sid);
 
       if (shouldOfferResumeOrStartOver()) {
-        // Hydrate IndexedDB into the in-memory cache immediately so incidental
-        // saveSession patches (logs, alerts) cannot clobber the durable cradle
-        // while the dialog is open (or while auto-resume runs).
-        await hydrateSessionCacheFromDisk();
-        if (cancelled) return;
         markSavedSession();
         if (peekAutoResumeOnce()) {
           setBootState({ kind: 'autoResuming' });
@@ -981,7 +1009,8 @@ const Shell = () => {
         setBootState({ kind: 'tabConflict', save: null, midSession: false });
         return;
       }
-      claimLease();
+      await claimLease();
+      if (cancelled) return;
       setBootState({ kind: 'ready' });
     })();
     return () => {
@@ -1103,6 +1132,16 @@ const Shell = () => {
     saveUnreadGame(v);
   }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => getSavedWalletAlert());
+  const [walletRecoveryReadiness, setWalletRecoveryReadiness] = useState(() =>
+    walletReservationLedger.getRecoveryReadiness(),
+  );
+  useEffect(
+    () =>
+      walletReservationLedger.subscribe(() =>
+        setWalletRecoveryReadiness(walletReservationLedger.getRecoveryReadiness()),
+      ),
+    [],
+  );
   const setWalletAlert = useCallback((v: boolean) => {
     setWalletAlertRaw(v);
     saveWalletAlert(v);
@@ -1580,7 +1619,6 @@ const Shell = () => {
       setTerminalPresentation(null);
       setRestoreStatus('idle');
       setRestoreError(null);
-      setRestoreHubReconciled(false);
       shellDispatchRef.current({ type: 'acceptAborted', error: !!options?.error });
       hubConnRef.current?.setBusy(presenceBusy('none'));
     },
@@ -1592,7 +1630,6 @@ const Shell = () => {
       setDashboardSessionModel,
       setPeerConn,
       setRestoreError,
-      setRestoreHubReconciled,
       setRestoreStatus,
       setSessionConfig,
       setSessionPhase,
@@ -1726,7 +1763,6 @@ const Shell = () => {
             setSessionError(false);
             setRestoreStatus('idle');
             setRestoreError(null);
-            setRestoreHubReconciled(true);
             dashboardSessionModelRef.current = null;
             setDashboardSessionModel(null);
             setTerminalPresentation(null);
@@ -1851,7 +1887,6 @@ const Shell = () => {
       setDashboardSessionModel,
       setPeerConn,
       setRestoreError,
-      setRestoreHubReconciled,
       setRestoreStatus,
       setSessionConfig,
       setSessionError,
@@ -1962,7 +1997,7 @@ const Shell = () => {
   useEffect(() => {
     return subscribeLog((line) => {
       deferStateUpdate(() => {
-        const next = appendRecent(logLinesRef.current, line, DIAGNOSTIC_LOG_LIMIT);
+        const next = appendDiagnosticEntry(logLinesRef.current, line);
         logLinesRef.current = next;
         setLogLines(next);
         saveSession({ scope: 'common', history: { diagnosticLog: next } });
@@ -2463,14 +2498,12 @@ const Shell = () => {
               } else {
                 bindPeerMessageHandler(peerSessionRef.current);
               }
-              setRestoreHubReconciled(true);
               // Restore never goes through startFreshSessionWithPeer, which is
               // otherwise the only place that marks the hub busy. Use restoreBusy
               // (session/wallet/peer-wait); terminal saves stay available unless
               // walletless or the full-node-peer wait still requires busy.
               conn.setBusy(restoreBusy);
             } else if (save?.phase === 'live' || save?.phase === 'pre-handshake') {
-              setRestoreHubReconciled(true);
               conn.setBusy(restoreBusy);
             }
             if (peerSessionRef.current && (!prevMine || prevMine === playerId)) {
@@ -2593,7 +2626,6 @@ const Shell = () => {
       replayRejectionPeers,
       setActiveTab,
       setHubAlert,
-      setRestoreHubReconciled,
       setSessionError,
       setSessionPhase,
     ],
@@ -2923,7 +2955,6 @@ const Shell = () => {
         setTerminalPresentation(null);
         setRestoreStatus('idle');
         setRestoreError(null);
-        setRestoreHubReconciled(false);
         setPendingAdvisoryState(null);
         setPendingProposalState(null);
         cancelTransition();
@@ -2949,7 +2980,6 @@ const Shell = () => {
       setDashboardSessionModel,
       setPeerConn,
       setRestoreError,
-      setRestoreHubReconciled,
       setRestoreStatus,
       setSessionConfig,
       setSessionError,
@@ -3044,7 +3074,7 @@ const Shell = () => {
       sessionSaveRef.current = null;
       sessionSavePropRef.current = undefined;
       clearSessionTimers();
-      // Drop the restore mount flag before resetting status/hub gates. A resumed
+      // Drop the restore mount flag before resetting status. A resumed
       // session keeps params.restoring=true; resetting gates alone would re-arm
       // restoreBlocked and GameSession would show "Restoring session..." over
       // the terminal presentation (visible on slash because hasError stays on game).
@@ -3055,7 +3085,6 @@ const Shell = () => {
       }
       setRestoreStatus(restoreGate.restoreStatus);
       setRestoreError(null);
-      setRestoreHubReconciled(restoreGate.hubReconciled);
       return true;
     },
     [
@@ -3065,7 +3094,6 @@ const Shell = () => {
       resetPeerRelayState,
       setDashboardSessionModel,
       setRestoreError,
-      setRestoreHubReconciled,
       setRestoreStatus,
       setSessionConfig,
       setSessionError,
@@ -3260,7 +3288,6 @@ const Shell = () => {
       setPeerConn(null);
       setRestoreStatus('idle');
       setRestoreError(null);
-      setRestoreHubReconciled(true);
       hubConnRef.current?.setBusy(presenceBusy('resolved'));
       setResuming(false);
     },
@@ -3271,7 +3298,6 @@ const Shell = () => {
       setDashboardSessionModel,
       setPeerConn,
       setRestoreError,
-      setRestoreHubReconciled,
       setRestoreStatus,
       setSessionConfig,
       setSessionError,
@@ -3291,7 +3317,6 @@ const Shell = () => {
       setResuming(true);
       setRestoreStatus('restoring');
       setRestoreError(null);
-      setRestoreHubReconciled(false);
       setSessionPhase('none');
       setSessionError(false);
 
@@ -3352,7 +3377,7 @@ const Shell = () => {
       const savedHistory = humanHistoryFromSave(save);
       const savedLog = diagnosticLogFromSave(save);
       if (savedHistory) setHistory(recentEntries(savedHistory, HUMAN_HISTORY_LIMIT));
-      if (savedLog) setLogLines(recentEntries(savedLog, DIAGNOSTIC_LOG_LIMIT));
+      if (savedLog) setLogLines(recentDiagnosticEntries(savedLog));
       setBlockchainType(bcType);
 
       const { iface, pollMs } = getInterface(bcType);
@@ -3463,7 +3488,6 @@ const Shell = () => {
       setWalletAlert,
       setPeerConn,
       setRestoreError,
-      setRestoreHubReconciled,
       setRestoreStatus,
       setPendingProposalState,
       setSessionConfig,
@@ -3511,7 +3535,7 @@ const Shell = () => {
       setResuming(false);
       return;
     }
-    claimLease();
+    await claimLease();
     // Select the destination tab before any hydrate so the first ready paint
     // is already on the right tab.
     const resumeTab = tabForResumedSave(save);
@@ -3573,38 +3597,29 @@ const Shell = () => {
   // User clicked "Take over" in the tabConflict dialog.
   // Claim the lease in place (this fences the other tab via storage event)
   // and continue with whatever action we were about to take.
-  const handleTakeOver = useCallback(() => {
-    setBootState((prev) => {
-      if (prev.kind !== 'tabConflict') return prev;
-      claimLease();
-      if (prev.midSession) {
-        // Our session is already live — just reclaim the lease.
-      } else if (prev.save) {
-        const resumeTab = tabForResumedSave(prev.save);
-        if (resumeTab) setActiveTab(resumeTab);
-        if (prev.save.phase === 'live' || prev.save.phase === 'pre-handshake') {
-          performResume(prev.save);
-        } else if (isTerminalSavedChannel(prev.save)) {
-          restoreFinishedSessionFromSave(prev.save);
-          const bcType = prev.save.preferences.blockchainType ?? getBlockchainType();
-          if (bcType) {
-            void handleConnect(bcType, true);
-          }
-        } else {
-          const bcType = prev.save.preferences.blockchainType ?? getBlockchainType();
-          if (bcType) {
-            void handleConnect(bcType, true);
-          }
-        }
+  const handleTakeOver = useCallback(async () => {
+    if (bootState.kind !== 'tabConflict') return;
+    const conflict = bootState;
+    await claimLease();
+    if (!conflict.midSession && conflict.save) {
+      const resumeTab = tabForResumedSave(conflict.save);
+      if (resumeTab) setActiveTab(resumeTab);
+      if (conflict.save.phase === 'live' || conflict.save.phase === 'pre-handshake') {
+        performResume(conflict.save);
+      } else if (isTerminalSavedChannel(conflict.save)) {
+        restoreFinishedSessionFromSave(conflict.save);
+        const bcType = conflict.save.preferences.blockchainType ?? getBlockchainType();
+        if (bcType) void handleConnect(bcType, true);
       } else {
-        const bcType = getBlockchainType();
-        if (bcType) {
-          void handleConnect(bcType, true);
-        }
+        const bcType = conflict.save.preferences.blockchainType ?? getBlockchainType();
+        if (bcType) void handleConnect(bcType, true);
       }
-      return { kind: 'ready' };
-    });
-  }, [performResume, handleConnect, restoreFinishedSessionFromSave, setActiveTab]);
+    } else if (!conflict.midSession) {
+      const bcType = getBlockchainType();
+      if (bcType) void handleConnect(bcType, true);
+    }
+    setBootState({ kind: 'ready' });
+  }, [bootState, performResume, handleConnect, restoreFinishedSessionFromSave, setActiveTab]);
 
   const handleCloseTab = useCallback(() => {
     stopBalancePolling();
@@ -3638,11 +3653,29 @@ const Shell = () => {
       console.error('[Shell] start over connection teardown failed:', e);
     }
     try {
-      await hardReset();
+      const result = await hardReset();
+      if (!result.success) {
+        const blocked = result.failures.some((failure) => failure.reason === 'blocked');
+        markSavedSession();
+        setBootState({
+          kind: 'resumeDialog',
+          loadError: blocked
+            ? 'Hard reset is blocked. Close other app tabs and wallet connections, then retry.'
+            : 'Hard reset could not delete all local databases. Close other app tabs and wallet connections, then retry.',
+        });
+        setStartingOver(false);
+        return;
+      }
+      reloadAfterSuccessfulHardReset(result, () => window.location.reload());
     } catch (e) {
       console.error('[Shell] start over hard reset failed:', e);
-    } finally {
-      window.location.reload();
+      markSavedSession();
+      setBootState({
+        kind: 'resumeDialog',
+        loadError:
+          'Hard reset failed. Close other app tabs and wallet connections, then retry hard reset.',
+      });
+      setStartingOver(false);
     }
   }, []);
 
@@ -4019,7 +4052,7 @@ const Shell = () => {
           </p>
           <p className="text-canvas-text text-sm text-center">
             {loadFailed
-              ? `${bootState.loadError} Start over to clear it.`
+              ? `${bootState.loadError} Use Retry Hard Reset when the blockers are closed.`
               : 'You have previously saved state. Resume where you left off, or start over?'}
           </p>
           {!loadFailed && (
@@ -4036,7 +4069,7 @@ const Shell = () => {
             disabled={resuming || startingOver}
             className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
           >
-            {startingOver ? 'Starting over\u2026' : 'Start over'}
+            {startingOver ? 'Starting over\u2026' : loadFailed ? 'Retry Hard Reset' : 'Start over'}
           </button>
         </div>
       </div>
@@ -4304,6 +4337,17 @@ const Shell = () => {
             </button>
           </div>
         </div>
+
+        {walletRecoveryReadiness !== 'ready' && (
+          <div
+            role="alert"
+            className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-900 dark:text-amber-200"
+          >
+            {walletRecoveryReadiness === 'scope-mismatch'
+              ? 'Reconnect the original wallet account to resume pending wallet recovery. The connected account will not be used.'
+              : 'Reconnect the original wallet account to resume pending wallet recovery.'}
+          </div>
+        )}
 
         {/* Tab content */}
         <div

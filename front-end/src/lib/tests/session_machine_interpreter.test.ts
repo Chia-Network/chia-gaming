@@ -458,7 +458,7 @@ describe('session machine causal sequences', () => {
     const state = createSessionMachineState(createSessionModel());
     const transition = reduceSessionMachine(state, {
       type: 'host-projection',
-      restore: { restoring: false, status: 'idle', error: null, hubReconciled: false },
+      restore: { restoring: false, status: 'idle', error: null },
       wasmNotificationHistory: ['notification'],
       diagnosticLog: ['line'],
     });

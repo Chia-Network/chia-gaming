@@ -217,6 +217,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.deleted = false;
   }
 
+  getWalletProviderScope(
+    owner?: Pick<WalletOfferOperation['owner'], 'installationPlayerId' | 'peerSessionId'>,
+  ) {
+    const identity = owner?.installationPlayerId ?? this.uniqueId;
+    return identity ? ({ provider: 'simulator', identity } as const) : null;
+  }
+
   private connect(): Promise<void> {
     if (this.ws && this.ws.readyState === 1) {
       return Promise.resolve();
@@ -533,7 +540,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async releaseWalletOffer(tradeId: string): Promise<WalletOfferCancellationOutcome> {
+  async beginWalletOfferCancellation(tradeId: string): Promise<WalletOfferCancellationOutcome> {
     const state = this.syntheticFeeOffers.cancel(tradeId);
     if (state === undefined) {
       return { status: 'already-terminal', detail: 'simulator fee offer is not active' };
@@ -603,6 +610,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async beginConnect(uniqueId: string, _fresh = false): Promise<ConnectionSetup> {
+    this.uniqueId = uniqueId;
     return {
       qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
       title: 'Simulator',

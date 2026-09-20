@@ -1244,9 +1244,9 @@ describe('WASM wallet funding requests', () => {
       material: { kind: 'offer', offer: 'offer1unexpected' },
       tradeId: 'trade-1',
     });
-    const releaseWalletOffer = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer, releaseWalletOffer },
+      { ...mockRpc, beginWalletOffer, beginWalletOfferCancellation },
       60000,
     );
     walletReservationLedger.attachRpc(blockchain.rpc);
@@ -1272,7 +1272,7 @@ describe('WASM wallet funding requests', () => {
     expect(processResult.mock.calls.filter(([result]) => result === unexpectedResult)).toHaveLength(
       1,
     );
-    expect(releaseWalletOffer).not.toHaveBeenCalled();
+    expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
     expect(walletCallbackFailed).toHaveBeenCalledTimes(1);
     expect(walletCallbackFailed).toHaveBeenCalledWith(
       expect.stringContaining('concurrent funding request'),
@@ -1292,9 +1292,9 @@ describe('WASM wallet funding requests', () => {
       material: { kind: 'offer', offer: 'offer1invalid' },
       tradeId: 'trade-1',
     });
-    const releaseWalletOffer = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer, releaseWalletOffer },
+      { ...mockRpc, beginWalletOffer, beginWalletOfferCancellation },
       60000,
     );
     walletReservationLedger.attachRpc(blockchain.rpc);
@@ -1315,8 +1315,8 @@ describe('WASM wallet funding requests', () => {
     await blob.flushPendingWork();
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    expect(releaseWalletOffer).toHaveBeenCalledTimes(1);
-    expect(releaseWalletOffer).toHaveBeenCalledWith('trade-1');
+    expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-1');
     expect(walletCallbackFailed).toHaveBeenCalledTimes(1);
     expect(walletCallbackFailed).toHaveBeenCalledWith('wallet funding offer failed validation');
     expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
@@ -1338,9 +1338,9 @@ describe('WASM wallet funding requests', () => {
           resolveOffer = resolve;
         }),
     );
-    const releaseWalletOffer = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer, releaseWalletOffer },
+      { ...mockRpc, beginWalletOffer, beginWalletOfferCancellation },
       60000,
     );
     walletReservationLedger.attachRpc(blockchain.rpc);
@@ -1374,15 +1374,20 @@ describe('WASM wallet funding requests', () => {
       material: { kind: 'offer', offer: 'offer1late' },
       tradeId: 'trade-late',
     });
-    for (let pass = 0; pass < 20 && releaseWalletOffer.mock.calls.length === 0; pass += 1) {
+    for (
+      let pass = 0;
+      pass < 20 && beginWalletOfferCancellation.mock.calls.length === 0;
+      pass += 1
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     await walletReservationLedger.awaitOwner({
       installationPlayerId: 'test',
       peerSessionId: '00'.repeat(16),
+      providerScope: { provider: 'simulator', identity: 'submission-handoff' },
     });
 
-    expect(releaseWalletOffer).toHaveBeenCalledWith('trade-late');
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late');
     expect(provideOffer).not.toHaveBeenCalled();
   });
 
@@ -1400,9 +1405,9 @@ describe('WASM wallet funding requests', () => {
       material: { kind: 'offer', offer: 'offer1success' },
       tradeId: 'trade-1',
     });
-    const releaseWalletOffer = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer, releaseWalletOffer },
+      { ...mockRpc, beginWalletOffer, beginWalletOfferCancellation },
       60000,
     );
     walletReservationLedger.attachRpc(blockchain.rpc);
@@ -1431,7 +1436,60 @@ describe('WASM wallet funding requests', () => {
       1,
     );
     expect(advances).toEqual(['advanced']);
-    expect(releaseWalletOffer).not.toHaveBeenCalled();
+    expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
+    expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
+  });
+
+  it('keeps funding pending on wallet unavailability and retries on readiness', async () => {
+    const beginWalletOffer = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'unavailable', reason: 'wallet disconnected' })
+      .mockResolvedValueOnce({
+        kind: 'created',
+        material: { kind: 'bundle', bundle: testSpendBundle('funding-retry') },
+      });
+    let readiness: ((ready: boolean) => void) | undefined;
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        beginWalletOffer,
+        onPlayReadinessChange: (callback: (ready: boolean) => void) => {
+          readiness = callback;
+          return () => {};
+        },
+      },
+      60000,
+    );
+    walletReservationLedger.attachRpc(blockchain.rpc);
+    const { blob, cradle } = createReadyBlob();
+    const walletCallbackFailed = jest.fn().mockReturnValue(wasmResult());
+    (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
+      walletCallbackFailed;
+    setActiveBlob(blob);
+    blob.attachBlockchain(blockchain);
+
+    blob.processResult(
+      wasmResult({
+        events: [
+          {
+            NeedCoinSpend: {
+              amount: '100',
+              fee: '0',
+              conditions: [{ opcode: 60, args: ['launcher'] }],
+            },
+          },
+        ],
+      }),
+    );
+    await blob.flushPendingWork();
+    expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+    expect(walletCallbackFailed).not.toHaveBeenCalled();
+    expect(blob.getWasmFields()?.fundingOutbox).toHaveLength(1);
+
+    readiness?.(true);
+    await blob.flushPendingWork();
+    expect(beginWalletOffer).toHaveBeenCalledTimes(2);
+    expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
     expect(blob.getWasmFields()?.fundingOutbox).toEqual([]);
   });
 
@@ -1581,7 +1639,7 @@ describe('wallet fee attachment on submission', () => {
       tradeId: 'fee-aggregate-trade',
     });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
-    const releaseWalletOffer = jest
+    const beginWalletOfferCancellation = jest
       .fn()
       .mockResolvedValue({ status: 'already-terminal', detail: 'offer already spent' });
     const finalize = jest.fn().mockReturnValue({
@@ -1592,7 +1650,7 @@ describe('wallet fee attachment on submission', () => {
       fee_source_disposition: 'attached',
     });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer, spend, releaseWalletOffer },
+      { ...mockRpc, beginWalletOffer, spend, beginWalletOfferCancellation },
       60000,
     );
     walletReservationLedger.attachRpc(blockchain.rpc);
@@ -1625,7 +1683,7 @@ describe('wallet fee attachment on submission', () => {
       'submitTransaction',
       10n,
     );
-    expect(releaseWalletOffer).toHaveBeenCalledWith('fee-aggregate-trade');
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('fee-aggregate-trade');
   });
 
   it('gates fee creation and finalized broadcast on persistence attempts, continuing after failure', async () => {
@@ -1971,11 +2029,17 @@ describe('wallet fee attachment on submission', () => {
       .fn()
       .mockResolvedValueOnce({ status: 'unavailable', detail: 'wallet disconnected' })
       .mockResolvedValueOnce({ status: 'acknowledged' });
-    const releaseWalletOffer = jest
+    const beginWalletOfferCancellation = jest
       .fn()
       .mockResolvedValue({ status: 'already-terminal', detail: 'offer already spent' });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer, spend, releaseWalletOffer, isReadyForPlay: () => true },
+      {
+        ...mockRpc,
+        beginWalletOffer,
+        spend,
+        beginWalletOfferCancellation,
+        isReadyForPlay: () => true,
+      },
       60000,
     );
     walletReservationLedger.attachRpc(blockchain.rpc);
@@ -2009,12 +2073,12 @@ describe('wallet fee attachment on submission', () => {
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(cradle.finalize_submission).toHaveBeenLastCalledWith(initial.id, undefined);
-    expect(releaseWalletOffer).toHaveBeenCalledWith('attached-replay-trade');
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('attached-replay-trade');
   });
 
   it('cancels retained fee sources from Rust retirement output', async () => {
-    const releaseWalletOffer = jest.fn().mockResolvedValue({ status: 'cancelled' });
-    const blockchain = new BlockchainPoller({ ...mockRpc, releaseWalletOffer }, 60000);
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60000);
     walletReservationLedger.attachRpc(blockchain.rpc);
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
@@ -2038,7 +2102,7 @@ describe('wallet fee attachment on submission', () => {
     blob.processResult(wasmResult());
     await blob.flushPendingWork();
 
-    expect(releaseWalletOffer).toHaveBeenCalledWith('retired-trade');
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('retired-trade');
   });
 
   it('reports each typed drain failure once with persisted stack and Rust context', async () => {
@@ -2134,7 +2198,7 @@ describe('wallet fee attachment on submission', () => {
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'Offer_fee',
     });
-    const releaseWalletOffer = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const finalize = jest.fn().mockReturnValue({
       protocol_bundle: testSpendBundle('coin'),
@@ -2145,7 +2209,7 @@ describe('wallet fee attachment on submission', () => {
       fee_source_disposition: 'unused',
     });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer, releaseWalletOffer, spend },
+      { ...mockRpc, beginWalletOffer, beginWalletOfferCancellation, spend },
       60000,
     );
     walletReservationLedger.attachRpc(blockchain.rpc);
@@ -2177,7 +2241,7 @@ describe('wallet fee attachment on submission', () => {
     );
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/reuses protocol input coin/i);
-    expect(releaseWalletOffer).toHaveBeenCalledWith('Offer_fee');
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('Offer_fee');
   });
 
   it('cancels a Cloud fee offer when the finalized transaction is rejected', async () => {
@@ -2186,7 +2250,7 @@ describe('wallet fee attachment on submission', () => {
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'Offer_fee',
     });
-    const releaseWalletOffer = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const spend = jest.fn().mockResolvedValue({ status: 'rejected', detail: 'invalid spend' });
     const finalize = jest.fn().mockReturnValue({
       protocol_bundle: testSpendBundle('coin'),
@@ -2196,7 +2260,7 @@ describe('wallet fee attachment on submission', () => {
       fee_source_disposition: 'attached',
     });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer, releaseWalletOffer, spend },
+      { ...mockRpc, beginWalletOffer, beginWalletOfferCancellation, spend },
       60000,
     );
     walletReservationLedger.attachRpc(blockchain.rpc);
@@ -2219,7 +2283,7 @@ describe('wallet fee attachment on submission', () => {
     ).submitTransaction(submission);
     await transactionSubmitQueue(blob);
 
-    expect(releaseWalletOffer).toHaveBeenCalledWith('Offer_fee');
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('Offer_fee');
   });
 
   it('surfaces the real wallet error in the warning when the fee offer fails', async () => {

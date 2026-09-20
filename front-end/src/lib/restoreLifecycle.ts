@@ -11,7 +11,7 @@ import {
 export function isRestoreBlocked(restoring: boolean, restoreStatus: RestoreStatus): boolean {
   return selectRestoreBlocked(
     createSessionModel({
-      restore: { restoring, status: restoreStatus, hubReconciled: false, error: null },
+      restore: { restoring, status: restoreStatus, error: null },
     }),
   );
 }
@@ -19,16 +19,15 @@ export function isRestoreBlocked(restoring: boolean, restoreStatus: RestoreStatu
 /**
  * After live terminal finalization the GameSession mount is no longer a restore.
  * Clearing `restoring` prevents re-arming the "Restoring session..." gate when
- * finishResolvedSessionDisplay resets status/hubReconciled — a resumed session
+ * finishResolvedSessionDisplay resets status — a resumed session
  * otherwise keeps params.restoring=true forever and would flash that UI on slash
  * (or any error resolution that stays on the game tab).
  */
 export function restoreGateAfterTerminalFinalization(): {
   restoring: false;
   restoreStatus: 'idle';
-  hubReconciled: false;
 } {
-  return { restoring: false, restoreStatus: 'idle', hubReconciled: false };
+  return { restoring: false, restoreStatus: 'idle' };
 }
 
 /**
@@ -51,7 +50,6 @@ export function shouldAdvertiseAvailable(
       restore: {
         restoring: restoreBlocked,
         status: restoreBlocked ? 'restoring' : 'restored',
-        hubReconciled: !restoreBlocked,
         error: null,
       },
     }),

@@ -4,6 +4,7 @@ import type {
   SessionMachineState,
   SessionMachineTransition,
 } from './sessionMachineTypes';
+import { recentDiagnosticEntries } from './historyLimits';
 
 export type ChannelEvent = Extract<
   SessionMachineEvent,
@@ -82,7 +83,7 @@ export function reduceChannelEvent(
           history: {
             ...state.model.history,
             wasmNotificationHistory: event.wasmNotificationHistory,
-            diagnosticLog: event.diagnosticLog,
+            diagnosticLog: recentDiagnosticEntries(event.diagnosticLog),
           },
         },
       };

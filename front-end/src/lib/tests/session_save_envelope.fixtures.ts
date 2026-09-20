@@ -3,6 +3,7 @@ import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import {
   CURRENT_VERSION,
   _resetForTests,
+  claimLease,
   type SessionPresentationSave,
   type SessionSave,
 } from '../../hooks/save';
@@ -335,6 +336,7 @@ export function installSessionEnvelopeTestSetup(): void {
     _resetForTests();
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
+    await claimLease();
     await deleteSessionRecord();
     await deleteWalletReservationRecord();
   });

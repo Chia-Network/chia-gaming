@@ -11,8 +11,8 @@ import {
 } from '../lib/session/indexedDb';
 import { isDenseNumericByteObject } from '../lib/reactPropSafe';
 import {
-  DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
+  recentDiagnosticEntries,
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
@@ -36,7 +36,7 @@ import {
   decodeSessionSaveEnvelope,
   SESSION_SAVE_ENVELOPE_VERSION,
 } from '../lib/session/persistence';
-import { hardResetStorage } from './saveHardReset';
+import { hardResetStorage, type HardResetResult } from './saveHardReset';
 import { loadPreferences, savePreferences } from './savePreferences';
 import {
   checkLease,
@@ -240,7 +240,7 @@ function capPersistedHistories(state: SessionSave): void {
     );
   }
   if (state.history.diagnosticLog) {
-    state.history.diagnosticLog = recentEntries(state.history.diagnosticLog, DIAGNOSTIC_LOG_LIMIT);
+    state.history.diagnosticLog = recentDiagnosticEntries(state.history.diagnosticLog);
   }
 }
 
@@ -280,7 +280,7 @@ function settleScheduledPersist(error?: unknown): void {
 }
 
 export function flushSessionSave(): Promise<void> {
-  return hydrateSessionCacheFromDisk().then(async () => {
+  return hydrateSessionCacheFromDiskStrict().then(async () => {
     if (!cached || isFenced()) {
       await walletReservationLedger.persistIfDirty();
       return;
@@ -427,7 +427,7 @@ export function hydrateWalletReservationLedger(): Promise<void> {
  * reload never remints session_id over a durable id still on disk.
  */
 /** @returns true when an incompatible IndexedDB schema was wiped (marker kept). */
-export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
+async function hydrateSessionCacheFromDiskStrict(): Promise<boolean> {
   if (isFenced()) {
     identityDiskChecked = true;
     sessionCacheHydratedFromDisk = true;
@@ -492,6 +492,7 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
           mem.history.wasmNotificationHistory ?? record.history.wasmNotificationHistory,
       },
     };
+    capPersistedHistories(cached);
     savePreferences(cached);
     return false;
   }
@@ -509,6 +510,24 @@ export async function hydrateSessionCacheFromDisk(): Promise<boolean> {
   return false;
 }
 
+export type BootStorageHydrationResult =
+  | { status: 'ready'; discardedSession: boolean }
+  | { status: 'failed'; error: string };
+
+export async function hydrateSessionCacheFromDisk(): Promise<BootStorageHydrationResult> {
+  try {
+    return {
+      status: 'ready',
+      discardedSession: await hydrateSessionCacheFromDiskStrict(),
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 function mutate(fn: (state: SessionSave) => SessionSave | void): Promise<void> {
   // Fast path: memory already has the resumable session, or there is no
   // marked disk session to protect. Keep this synchronous so preference
@@ -523,7 +542,7 @@ function mutate(fn: (state: SessionSave) => SessionSave | void): Promise<void> {
     savePreferences(cached);
     return schedulePersist();
   }
-  return hydrateSessionCacheFromDisk().then(() => {
+  return hydrateSessionCacheFromDiskStrict().then(() => {
     const state = loadState();
     cached = fn(state) ?? state;
     savePreferences(cached);
@@ -546,7 +565,7 @@ export function getPlayerId(): string {
  */
 export async function ensureHubIdentity(): Promise<string> {
   if (hasSavedSessionMarker() && !identityDiskChecked) {
-    await hydrateSessionCacheFromDisk();
+    await hydrateSessionCacheFromDiskStrict();
   }
   identityDiskChecked = true;
   return getSessionId();
@@ -633,7 +652,7 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
       case 'live': {
         const common = commonFields(s);
         Object.assign(common.history, update.history);
-        return {
+        const next: LiveSessionSave = {
           schema: SESSION_SAVE_SCHEMA,
           version: SESSION_SAVE_VERSION,
           phase: 'live',
@@ -642,6 +661,8 @@ export function saveSession(update: SessionCacheUpdate): Promise<void> {
           live: structuredClone(update.live),
           presentation: structuredClone(update.presentation),
         };
+        capPersistedHistories(next);
+        return next;
       }
     }
     capPersistedHistories(s);
@@ -694,7 +715,7 @@ export async function replaceSession(checkpoint: {
   identity?: Partial<SessionIdentitySave>;
   history?: Partial<SessionHistorySave>;
 }): Promise<void> {
-  await hydrateSessionCacheFromDisk();
+  await hydrateSessionCacheFromDiskStrict();
   if (persistPromise) await flushSessionSave();
   const common = commonFields(loadState());
   Object.assign(common.identity, checkpoint.identity);
@@ -754,7 +775,7 @@ export async function stageTerminalSession(fields: {
   terminal: TerminalSessionSave['terminal'];
   presentation: SessionPresentationSave;
 }): Promise<void> {
-  await hydrateSessionCacheFromDisk();
+  await hydrateSessionCacheFromDiskStrict();
   const current = loadState();
   stagedTerminal = {
     schema: SESSION_SAVE_SCHEMA,
@@ -764,6 +785,7 @@ export async function stageTerminalSession(fields: {
     terminal: structuredClone(fields.terminal),
     presentation: structuredClone(fields.presentation),
   };
+  capPersistedHistories(stagedTerminal);
 }
 
 export function discardStagedTerminalSession(): void {
@@ -778,7 +800,7 @@ export function discardStagedTerminalSession(): void {
 export async function peekSession(): Promise<SessionSave | null> {
   // Hydrate before any flush so a prefs-only in-memory cache cannot overwrite
   // a durable resumable record that the boot marker is advertising.
-  const wipedIncompatible = await hydrateSessionCacheFromDisk();
+  const wipedIncompatible = await hydrateSessionCacheFromDiskStrict();
   if (persistPromise) await flushSessionSave();
   const { record, discarded } = await readCompatibleSessionRecord();
   if (discarded) {
@@ -806,6 +828,7 @@ export async function peekSession(): Promise<SessionSave | null> {
         ),
       },
     };
+    capPersistedHistories(cached);
     savePreferences(cached);
     if (isDurableSession(cached)) {
       markSavedSession();
@@ -923,11 +946,11 @@ export async function clearGameSessionPreservingHistory(): Promise<void> {
   }
 }
 
-export async function hardReset(): Promise<void> {
-  const generation = beginHardResetPersistence();
+export async function hardReset(): Promise<HardResetResult> {
+  const authority = await beginHardResetPersistence();
   stopPersistenceForHardReset();
   walletReservationLedger.clearForHardReset();
-  await hardResetStorage(generation);
+  return hardResetStorage(authority);
 }
 
 // --- Alias ---

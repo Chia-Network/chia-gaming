@@ -750,17 +750,17 @@ describe('transaction submission', () => {
       snapshot_watched_coins: jest.fn(() => [{ coin_name: 'cc', coin_string: 'coin-c' }]),
       drain_submissions: jest
         .fn()
-        .mockReturnValueOnce(submissionDrain())
         .mockReturnValueOnce(
           submissionDrain([{ id: '5', bundle: testSpendBundle('05'), fee_request: null }]),
-        ),
+        )
+        .mockReturnValue(submissionDrain()),
     } as unknown as ChiaGame;
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.processResult(wasmResult());
 
-    expect(cradle.drain_submissions).not.toHaveBeenCalled();
+    expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(spend).not.toHaveBeenCalled();
 
     blob.attachBlockchain(blockchain);
@@ -768,10 +768,48 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(cradle.resubmit_submitted).toHaveBeenCalledTimes(1);
-    expect(cradle.drain_submissions).toHaveBeenCalledTimes(3);
+    expect(cradle.drain_submissions).toHaveBeenCalledTimes(4);
     expect(spend).toHaveBeenCalledTimes(1);
     blob.detachBlockchain(blockchain);
     errorSpy.mockRestore();
+  });
+
+  it('handles lifecycle retirement and typed drain failure without a blockchain', () => {
+    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
+    const recoverableErrors: string[] = [];
+    blob.getObservable().subscribe((event) => {
+      if (event.type === 'recoverable-internal-error') recoverableErrors.push(event.error);
+    });
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest.fn(() =>
+        submissionDrain(
+          [{ id: 'offline-retired', bundle: testSpendBundle('07'), fee_request: null }],
+          ['offline-retired'],
+          [
+            {
+              candidate_index: '0',
+              retained_submission_id: 'offline-retired',
+              candidate_submission_id: 'offline-retired',
+              intent_fingerprint: null,
+              stage: 'retained-state',
+              message: 'retained mismatch',
+              rust_context: 'offline retirement test',
+            },
+          ],
+        ),
+      ),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+    blob.processResult(wasmResult());
+
+    expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
+    expect(recoverableErrors).toEqual([expect.stringMatching(/retained-state/)]);
+    expect((blob as any).pendingSubmissionDeliveries.size).toBe(0);
+    blob.cleanup();
   });
 
   it('waits for the restored manager coin snapshot before resubmitting after early attach', () => {

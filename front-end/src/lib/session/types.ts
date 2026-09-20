@@ -169,7 +169,6 @@ export interface RestoreModel {
   restoring: boolean;
   status: RestoreStatus;
   error: string | null;
-  hubReconciled: boolean;
 }
 
 export interface PeerModel {

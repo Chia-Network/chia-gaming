@@ -14,10 +14,12 @@ import {
   loadState,
   flushSessionSave,
   getPlayerId,
+  hydrateSessionCacheFromDisk,
   reclaimLease,
   _resetForTests,
 } from '../../hooks/save';
 import {
+  _afterNextStorageAuthorityCheckForTests,
   _holdNextStorageMutationForTests,
   MAX_DURABLE_REJECTION_TOMBSTONES,
   readRejectionTombstones,
@@ -33,6 +35,8 @@ import {
 } from '../session/indexedDb';
 import {
   DIAGNOSTIC_LOG_LIMIT,
+  DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT,
+  diagnosticLogUtf8Bytes,
   HUMAN_HISTORY_LIMIT,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../session/historyLimits';
@@ -64,7 +68,11 @@ describe('session persistence', () => {
     const entries = [
       {
         tradeId: 'trade-round-trip',
-        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'peer-session',
+          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+        },
         purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
         stage: 'reserved' as const,
         reason: 'wallet-offer-created',
@@ -85,7 +93,11 @@ describe('session persistence', () => {
     const retained = [
       {
         tradeId: 'trade-ordered',
-        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'peer-session',
+          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+        },
         purpose: { kind: 'fee' as const, operationId: 'submission-ordered' },
         stage: 'retained-for-replay' as const,
         reason: 'fee-source-attached',
@@ -106,6 +118,14 @@ describe('session persistence', () => {
       {
         schema: 'wrong-wallet-schema',
         version: WALLET_RESERVATION_RECORD_VERSION,
+        entries: [],
+      },
+    ],
+    [
+      'v3 predecessor',
+      {
+        schema: WALLET_RESERVATION_RECORD_SCHEMA,
+        version: 3n,
         entries: [],
       },
     ],
@@ -137,9 +157,50 @@ describe('session persistence', () => {
     );
   });
 
+  it('reports malformed ledger boot hydration and leaves the record on disk', async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(SESSION_DB_NAME);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('wallet-reservations', 'readwrite');
+      transaction.objectStore('wallet-reservations').put({ malformed: true }, 'current');
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    db.close();
+
+    _resetForTests();
+    const hydration = await hydrateSessionCacheFromDisk();
+    expect(hydration).toEqual({
+      status: 'failed',
+      error: 'Stored wallet reservation ledger is malformed',
+    });
+
+    const verifyDb = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(SESSION_DB_NAME);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const stored = await new Promise<unknown>((resolve, reject) => {
+      const transaction = verifyDb.transaction('wallet-reservations', 'readonly');
+      const request = transaction.objectStore('wallet-reservations').get('current');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    verifyDb.close();
+    expect(stored).toEqual({ malformed: true });
+  });
+
   it('rejects more than one creating entry for the same wallet operation', () => {
     const operation = {
-      owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+      owner: {
+        installationPlayerId: 'installation',
+        peerSessionId: 'peer-session',
+        providerScope: { provider: 'simulator' as const, identity: 'installation' },
+      },
       purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
     };
     expect(() =>
@@ -148,12 +209,14 @@ describe('session persistence', () => {
           ...operation,
           stage: 'creating',
           recoveryId: 'SignatureRequest_first',
+          request: { kind: 'funding', uniqueId: 'installation', offer: { '1': -1n } },
           reason: 'pending',
         },
         {
           ...operation,
           stage: 'creating',
           recoveryId: 'SignatureRequest_second',
+          request: { kind: 'funding', uniqueId: 'installation', offer: { '1': -1n } },
           reason: 'pending',
         },
       ]),
@@ -165,13 +228,23 @@ describe('session persistence', () => {
     ['trade first', false],
   ])('rejects creating and trade ownership for one operation with %s', (_label, creatingFirst) => {
     const operation = {
-      owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+      owner: {
+        installationPlayerId: 'installation',
+        peerSessionId: 'peer-session',
+        providerScope: { provider: 'simulator' as const, identity: 'installation' },
+      },
       purpose: { kind: 'fee' as const, operationId: 'submission' },
     };
     const creating = {
       ...operation,
       stage: 'creating' as const,
       recoveryId: 'SignatureRequest_pending',
+      request: {
+        kind: 'fee' as const,
+        uniqueId: 'installation',
+        fee: 1n,
+        concurrentSpendCoinId: 'ab'.repeat(32),
+      },
       reason: 'pending',
     };
     const trade = {
@@ -188,7 +261,11 @@ describe('session persistence', () => {
 
   it('allows multiple distinct trade entries for one wallet operation', () => {
     const operation = {
-      owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+      owner: {
+        installationPlayerId: 'installation',
+        peerSessionId: 'peer-session',
+        providerScope: { provider: 'simulator' as const, identity: 'installation' },
+      },
       purpose: { kind: 'fee' as const, operationId: 'submission' },
     };
     expect(
@@ -337,6 +414,34 @@ describe('session persistence', () => {
     ]);
   });
 
+  it('waits for the ordered mutation tail before publicly reading tombstones', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    _holdNextStorageMutationForTests(held);
+    const write = writeRejectionTombstone({
+      kind: 'inbound-receipt',
+      peerId: 'tail-peer',
+      sessionId: 'fa'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 3n,
+      unackedMessages: [],
+      createdAt: Date.now(),
+    });
+    let readSettled = false;
+    const read = readRejectionTombstones().then((records) => {
+      readSettled = true;
+      return records;
+    });
+
+    await Promise.resolve();
+    expect(readSettled).toBe(false);
+    release();
+    await write;
+    expect(await read).toEqual([expect.objectContaining({ peerId: 'tail-peer' })]);
+  });
+
   it('atomically replaces the active session with an inbound rejection receipt', async () => {
     saveLiveFields();
     await flushSessionSave();
@@ -460,6 +565,7 @@ describe('session persistence', () => {
 
     // Simulate marker-only boot: memory has preferences, IndexedDB has the cradle.
     _resetForTests();
+    await claimLease();
     expect(hasSavedSessionMarker()).toBe(true);
     expect(loadState()).not.toHaveProperty('live');
 
@@ -530,7 +636,11 @@ describe('session persistence', () => {
   });
 
   it('atomically checkpoints coordinated session and ledger transitions and heals after abort', async () => {
-    const owner = { installationPlayerId: 'installation', peerSessionId: 'peer-session' };
+    const owner = {
+      installationPlayerId: 'installation',
+      peerSessionId: 'peer-session',
+      providerScope: { provider: 'simulator' as const, identity: 'installation' },
+    };
     walletReservationLedger.registerReserved(
       'trade-atomic',
       owner,
@@ -652,6 +762,23 @@ describe('session persistence', () => {
     expect(loaded.history.diagnosticLog?.[0]).toBe('diag-2');
   });
 
+  it('round-trips only newest complete diagnostics within the UTF-8 byte budget', async () => {
+    const older = `older:${'😀'.repeat(40_000)}`;
+    const newer = `newer:${'界'.repeat(60_000)}`;
+    saveLiveFields({
+      ...sampleSession,
+      diagnosticLog: [older, newer],
+    });
+    await flushSessionSave();
+    _resetForTests();
+
+    const loaded = requireLive(await peekSession());
+    expect(loaded.history.diagnosticLog).toEqual([newer]);
+    expect(diagnosticLogUtf8Bytes(loaded.history.diagnosticLog ?? [])).toBeLessThanOrEqual(
+      DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT,
+    );
+  });
+
   it('returns null when nothing is saved', async () => {
     expect(await peekSession()).toBeNull();
   });
@@ -686,7 +813,7 @@ describe('session persistence', () => {
   });
 
   it('does not let an old lease generation overwrite the winning ledger', async () => {
-    claimLease();
+    await claimLease();
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -695,17 +822,25 @@ describe('session persistence', () => {
     const oldWrite = writeWalletReservationRecord([
       {
         tradeId: 'old-generation',
-        owner: { installationPlayerId: 'installation', peerSessionId: 'old-peer' },
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'old-peer',
+          providerScope: { provider: 'simulator', identity: 'installation' },
+        },
         purpose: { kind: 'funding', operationId: 'old-operation' },
         stage: 'reserved',
         reason: 'old-tab-result',
       },
     ]);
 
-    reclaimLease();
+    await reclaimLease();
     const winningEntry = {
       tradeId: 'winning-generation',
-      owner: { installationPlayerId: 'installation', peerSessionId: 'winning-peer' },
+      owner: {
+        installationPlayerId: 'installation',
+        peerSessionId: 'winning-peer',
+        providerScope: { provider: 'simulator' as const, identity: 'installation' },
+      },
       purpose: { kind: 'funding' as const, operationId: 'winning-operation' },
       stage: 'reserved' as const,
       reason: 'winning-tab-result',
@@ -717,10 +852,48 @@ describe('session persistence', () => {
     expect((await readWalletReservationRecord())?.entries).toEqual([winningEntry]);
   });
 
+  it('serializes a takeover requested after authorization before the winning write', async () => {
+    await claimLease();
+    let takeover: Promise<unknown> | undefined;
+    _afterNextStorageAuthorityCheckForTests(() => {
+      takeover = reclaimLease();
+    });
+    const authorizedEntry = {
+      tradeId: 'authorized-before-takeover',
+      owner: {
+        installationPlayerId: 'installation',
+        peerSessionId: 'old-peer',
+        providerScope: { provider: 'simulator' as const, identity: 'installation' },
+      },
+      purpose: { kind: 'funding' as const, operationId: 'old-operation' },
+      stage: 'reserved' as const,
+      reason: 'authorized-before-takeover',
+    };
+
+    await writeWalletReservationRecord([authorizedEntry]);
+    expect(takeover).toBeDefined();
+    await takeover;
+
+    const winningEntry = {
+      ...authorizedEntry,
+      tradeId: 'winning-after-takeover',
+      owner: { ...authorizedEntry.owner, peerSessionId: 'winning-peer' },
+      purpose: { kind: 'funding' as const, operationId: 'winning-operation' },
+      reason: 'winning-generation',
+    };
+    await writeWalletReservationRecord([winningEntry]);
+
+    expect((await readWalletReservationRecord())?.entries).toEqual([winningEntry]);
+  });
+
   it('clearSession deletes the session while preserving the independent ledger', async () => {
     walletReservationLedger.registerReserved(
       'trade-clear',
-      { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+      {
+        installationPlayerId: 'installation',
+        peerSessionId: 'peer-session',
+        providerScope: { provider: 'simulator' as const, identity: 'installation' },
+      },
       { kind: 'funding', operationId: 'funding-operation' },
     );
     await walletReservationLedger.flushPersistence();
@@ -742,7 +915,11 @@ describe('session persistence', () => {
     await writeWalletReservationRecord([
       {
         tradeId: 'trade-independent',
-        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'peer-session',
+          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+        },
         purpose: { kind: 'fee', operationId: 'submission' },
         stage: 'reserved',
         reason: 'created-before-reload',
@@ -765,7 +942,11 @@ describe('session persistence', () => {
     await writeWalletReservationRecord([
       {
         tradeId: 'trade-retained',
-        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'peer-session',
+          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+        },
         purpose: { kind: 'fee', operationId: 'submission-7' },
         stage: 'retained-for-replay',
         reason: 'fee-source-attached',
@@ -788,7 +969,11 @@ describe('session persistence', () => {
     async (kind) => {
       const entry = {
         tradeId: `trade-${kind}`,
-        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'peer-session',
+          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+        },
         purpose: { kind: 'funding' as const, operationId: 'funding' },
         stage: 'cancel-required' as const,
         reason: 'cleanup',

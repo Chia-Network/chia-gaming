@@ -5,6 +5,7 @@ import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 import {
+  claimLease,
   flushSessionSave,
   hasSavedSessionMarker,
   peekSession,
@@ -167,7 +168,9 @@ it(
       await flushSessionSave();
 
       // Simulate marker-only boot + preference patches while resume dialog is open.
+      await flushWrapperDrain([cradle1, cradle2]);
       resetSaveState();
+      await claimLease();
       assert.ok(hasSavedSessionMarker());
       void saveSession({
         scope: 'common',
@@ -176,6 +179,7 @@ it(
       await flushSessionSave();
 
       resetSaveState();
+      await claimLease();
       const reloaded = await peekSession();
       assert.equal(reloaded?.phase, 'live');
       if (reloaded?.phase !== 'live') throw new Error('expected live reload');

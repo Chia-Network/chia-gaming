@@ -234,9 +234,18 @@ export type WalletSubmitOutcome =
   | { status: 'rejected'; detail: string };
 
 export type WalletOfferOperation = {
-  owner: { installationPlayerId: string; peerSessionId: string };
+  owner: {
+    installationPlayerId: string;
+    peerSessionId: string;
+    providerScope: WalletProviderScope;
+  };
   purpose: { kind: 'funding'; operationId: string } | { kind: 'fee'; operationId: string };
 };
+
+export type WalletProviderScope =
+  | { provider: 'cloud'; walletId: string }
+  | { provider: 'walletconnect'; fingerprint: string; remoteWalletId: string }
+  | { provider: 'simulator'; identity: string };
 
 export type WalletOfferRequest =
   | {
@@ -578,9 +587,16 @@ export type WalletOfferCancellationOutcome =
   | { status: 'unavailable'; detail: string }
   | { status: 'rejected'; detail: string };
 
+export type WalletOfferCancellationBeginOutcome =
+  | WalletOfferCancellationOutcome
+  | { status: 'pending'; recoveryId: string };
+
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
   fundingMode?: 'offer-settlement';
+  getWalletProviderScope?(
+    owner?: Pick<WalletOfferOperation['owner'], 'installationPlayerId' | 'peerSessionId'>,
+  ): WalletProviderScope | null;
   getRegistrationScopeKey?(): string | undefined;
   spend(
     blob: string,
@@ -600,7 +616,11 @@ export interface InternalBlockchainInterface {
     request: WalletOfferRequest,
     recoveryId: string,
   ): Promise<WalletOfferCompletion>;
-  releaseWalletOffer?(tradeId: string): Promise<WalletOfferCancellationOutcome>;
+  beginWalletOfferCancellation?(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
+  reconcileWalletOfferCancellation?(
+    tradeId: string,
+    recoveryId: string,
+  ): Promise<WalletOfferCancellationOutcome>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

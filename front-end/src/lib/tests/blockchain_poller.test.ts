@@ -6,7 +6,11 @@ import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 import { walletReservationLedger } from '../session/walletReservationLedger';
 
 const walletOperation = {
-  owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+  owner: {
+    installationPlayerId: 'installation',
+    peerSessionId: 'peer-session',
+    providerScope: { provider: 'simulator' as const, identity: 'installation' },
+  },
   purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
 };
 const walletRequest = {
@@ -1010,12 +1014,13 @@ describe('BlockchainPoller', () => {
         material: { kind: 'offer', offer: 'offer-new' },
         tradeId: 'trade-new',
       });
-    const releaseWalletOffer = jest
+    const beginWalletOfferCancellation = jest
       .fn()
       .mockResolvedValue({ status: 'unavailable', detail: 'wallet offline' });
     const rpc = {
       beginWalletOffer,
-      releaseWalletOffer,
+      beginWalletOfferCancellation,
+      getWalletProviderScope: () => walletOperation.owner.providerScope,
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
@@ -1059,12 +1064,12 @@ describe('BlockchainPoller', () => {
     );
     await advanceLane(0);
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    expect(releaseWalletOffer).toHaveBeenCalledWith('trade-old');
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-old');
     expect(walletReservationLedger.entriesFor(walletOperation.owner)).toEqual([
       expect.objectContaining({ tradeId: 'trade-old', stage: 'cancel-required' }),
     ]);
     await advanceLane(0);
-    expect(releaseWalletOffer).toHaveBeenCalledTimes(1);
+    expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
     walletReservationLedger.resetForTests();
     jest.useRealTimers();
   });
@@ -1074,18 +1079,26 @@ describe('BlockchainPoller', () => {
     const activeRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const inactiveRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const activeRpc = {
-      releaseWalletOffer: activeRelease,
+      beginWalletOfferCancellation: activeRelease,
+      getWalletProviderScope: () => ({
+        provider: 'simulator' as const,
+        identity: 'installation',
+      }),
       onConnectionChange: () => () => {},
     } as unknown as InternalBlockchainInterface;
     walletReservationLedger.attachRpc(activeRpc);
     new BlockchainPoller(
       {
         ...makeRpc([1n]),
-        releaseWalletOffer: inactiveRelease,
+        beginWalletOfferCancellation: inactiveRelease,
       },
       1000,
     );
-    const owner = { installationPlayerId: 'installation', peerSessionId: 'peer-session' };
+    const owner = {
+      installationPlayerId: 'installation',
+      peerSessionId: 'peer-session',
+      providerScope: { provider: 'simulator' as const, identity: 'installation' },
+    };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
     walletReservationLedger.registerReserved('trade-active-owner', owner, purpose);

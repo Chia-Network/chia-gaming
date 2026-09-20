@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { saveSession, type SessionSave, _resetForTests } from '../../hooks/save';
+import { claimLease, saveSession, type SessionSave, _resetForTests } from '../../hooks/save';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import type { BlockchainType } from '../session/saveEnvelope';
 import { liveSave } from './session_save_envelope.fixtures';
@@ -125,6 +125,7 @@ beforeEach(async () => {
     request.onerror = () => resolve();
     request.onblocked = () => resolve();
   });
+  await claimLease();
 });
 
 afterEach(() => {

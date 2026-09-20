@@ -306,7 +306,6 @@ export class SessionMachineRuntime {
         restoring: this.restoring,
         status,
         error: this.controller.getRestoreError(),
-        hubReconciled: status === 'restored',
       },
       wasmNotificationHistory: this.controller.wasmNotificationHistory,
       diagnosticLog: this.controller.diagnosticLog,

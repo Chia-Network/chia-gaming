@@ -2,6 +2,7 @@ import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { SessionController } from '../../hooks/SessionController';
 import { restoreSession } from '../../hooks/blobSingleton';
 import {
+  claimLease,
   _resetForTests as resetSaveState,
   flushSessionSave,
   peekSession,
@@ -140,7 +141,9 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     });
     await flushSessionSave();
 
+    await flushWrapperDrain(cradles);
     resetSaveState();
+    await claimLease();
     const reloaded = await peekSession();
     assert.ok(
       reloaded,
@@ -182,16 +185,20 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       }
     } finally {
       restored.cleanup();
+      await restored.flushPendingWork();
     }
 
-    cradles.forEach((cradle) => cradle.shutdown());
+    await Promise.all(cradles.map((cradle) => cradle.shutdown()));
+    await flushSessionSave();
     resetSaveState();
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
       request.onsuccess = () => resolve();
-      request.onerror = () => resolve();
-      request.onblocked = () => resolve();
+      request.onerror = () =>
+        reject(request.error ?? new Error('Failed to delete session database'));
+      request.onblocked = () => reject(new Error('Session database deletion was blocked'));
     });
+    await claimLease();
   }
 }
 

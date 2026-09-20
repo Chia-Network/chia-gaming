@@ -1,4 +1,9 @@
 import { isElectronDistribution } from '../util/distribution';
+import {
+  beginDurableHardReset,
+  claimDurableStorageAuthority,
+  type DurableStorageAuthority,
+} from '../lib/session/indexedDb';
 
 const SESSION_MARKER_KEY = 'appState_savedSession';
 const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
@@ -14,6 +19,7 @@ const fencedListeners = new Set<() => void>();
 export interface PersistenceFenceToken {
   generation: number;
   leaseOwner: string | null;
+  durableAuthority: DurableStorageAuthority;
 }
 
 export function randomHex(): string {
@@ -38,6 +44,11 @@ const tabId: string = (() => {
   }
   return id;
 })();
+let durableAuthority: DurableStorageAuthority | null = null;
+
+export function getStorageTabId(): string {
+  return tabId;
+}
 
 function fireFenced(): void {
   for (const cb of fencedListeners) {
@@ -82,7 +93,9 @@ export function checkLease(): boolean {
   }
 }
 
-export function claimLease(): void {
+export async function claimLease(): Promise<void> {
+  const claimed = await claimDurableStorageAuthority(tabId);
+  durableAuthority = claimed;
   persistenceGeneration += 1;
   fenced = false;
   try {
@@ -92,8 +105,8 @@ export function claimLease(): void {
   }
 }
 
-export function reclaimLease(): void {
-  claimLease();
+export function reclaimLease(): Promise<void> {
+  return claimLease();
 }
 
 export function clearLease(): void {
@@ -125,13 +138,16 @@ export function fencePersistence(): void {
 }
 
 export function capturePersistenceFence(): PersistenceFenceToken {
+  if (!durableAuthority) {
+    throw new Error('Persistence lease has not been durably claimed');
+  }
   let leaseOwner: string | null = null;
   try {
     leaseOwner = localStorage.getItem(LEASE_KEY);
   } catch {
     /* ignore */
   }
-  return { generation: persistenceGeneration, leaseOwner };
+  return { generation: persistenceGeneration, leaseOwner, durableAuthority };
 }
 
 export function isPersistenceFenceCurrent(token: PersistenceFenceToken): boolean {
@@ -144,15 +160,13 @@ export function isPersistenceFenceCurrent(token: PersistenceFenceToken): boolean
   }
 }
 
-export function beginHardResetPersistence(): number {
+export async function beginHardResetPersistence(): Promise<DurableStorageAuthority> {
+  const resetAuthority = await beginDurableHardReset(tabId);
+  durableAuthority = resetAuthority;
   persistenceGeneration += 1;
   fenced = true;
   fireFenced();
-  return persistenceGeneration;
-}
-
-export function isHardResetGenerationCurrent(generation: number): boolean {
-  return fenced && generation === persistenceGeneration;
+  return resetAuthority;
 }
 
 export function hasSavedSessionMarker(): boolean {
@@ -241,7 +255,6 @@ export function installStorageCoordination(onHardReset: () => void): void {
   window.addEventListener('storage', (event: StorageEvent) => {
     if (event.key === RESET_KEY) {
       onHardReset();
-      window.location.reload();
       return;
     }
     if (event.key === LEASE_KEY && event.newValue !== tabId && !fenced) {
@@ -262,6 +275,7 @@ export function installStorageCoordination(onHardReset: () => void): void {
 export function resetStorageCoordinationForTests(): void {
   fenced = false;
   persistenceGeneration += 1;
+  durableAuthority = null;
   fencedListeners.clear();
   autoResumeLatch = false;
   try {

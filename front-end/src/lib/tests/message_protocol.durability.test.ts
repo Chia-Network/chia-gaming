@@ -11,6 +11,7 @@ import {
   peekSession,
 } from '../../hooks/save';
 import { validateSessionSaveEnvelope } from '../session/persistence';
+import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
 import { walletReservationLedger } from '../session/walletReservationLedger';
 import { encodeWalletReservationRecord } from '../session/walletReservationLedgerSchema';
 import { writeSessionRecord } from '../session/indexedDb';
@@ -166,10 +167,10 @@ describe('durability failures', () => {
     const cleanup = new Promise<{ status: 'unavailable'; detail: string }>((resolve) => {
       finishCleanup = () => resolve({ status: 'unavailable', detail: 'wallet offline' });
     });
-    const releaseWalletOffer = jest.fn(() => cleanup);
+    const beginWalletOfferCancellation = jest.fn(() => cleanup);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, releaseWalletOffer }, 60_000);
+    blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60_000);
     walletReservationLedger.attachRpc(blob.blockchain.rpc);
     const checkpoints: Array<ReturnType<typeof blob.getWasmFields>> = [];
     let failPersistence = true;
@@ -182,7 +183,14 @@ describe('durability failures', () => {
       encodeWalletReservationRecord([
         {
           tradeId: 'trade-unresolved',
-          owner: { installationPlayerId: 'test', peerSessionId: '00'.repeat(16) },
+          owner: {
+            installationPlayerId: 'test',
+            peerSessionId: '00'.repeat(16),
+            providerScope: {
+              provider: 'simulator',
+              identity: 'submission-handoff',
+            },
+          },
           purpose: { kind: 'funding', operationId: 'funding-operation' },
           stage: 'cancel-required',
           reason: 'funding-offer-rejected',
@@ -192,7 +200,7 @@ describe('durability failures', () => {
 
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full');
 
-    expect(releaseWalletOffer).toHaveBeenCalledTimes(1);
+    expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
     expect(blob.durabilityWarning).toContain('continuing without a durable checkpoint');
     expect(walletReservationLedger.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
@@ -208,7 +216,7 @@ describe('durability failures', () => {
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
     expect(blob.durabilityWarning).toBeUndefined();
-    expect(releaseWalletOffer).toHaveBeenCalledTimes(1);
+    expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
   });
 
   it('requires the prepared save to update cached synchronously before returning', async () => {
@@ -366,6 +374,7 @@ describe('restore ordering', () => {
     const statuses: string[] = [];
     const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
 
+    const newestDiagnostic = `newest:${'界'.repeat(60_000)}`;
     const save = liveSave({
       version: 22n,
       playerId: 'p1',
@@ -382,7 +391,7 @@ describe('restore ordering', () => {
       rewardPuzzleHash: '11'.repeat(32),
       unackedMessages: [{ msgno: 4n, msg: enc('outbound') }],
       wasmNotificationHistory: ['notification'],
-      diagnosticLog: ['diagnostic'],
+      diagnosticLog: [`older:${'😀'.repeat(40_000)}`, newestDiagnostic],
     });
     expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
     await blob.beginRestore(restoreSession(blob, save, wasmStateInit));
@@ -395,7 +404,10 @@ describe('restore ordering', () => {
     expect(blob.messageNumber).toBe(5n);
     expect(blob.remoteNumber).toBe(1n);
     expect(blob.wasmNotificationHistory).toEqual(['notification']);
-    expect(blob.diagnosticLog).toEqual(['diagnostic']);
+    expect(blob.diagnosticLog).toEqual([newestDiagnostic]);
+    expect(diagnosticLogUtf8Bytes(blob.diagnosticLog)).toBeLessThanOrEqual(
+      DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT,
+    );
     expect(statuses).toEqual(['idle', 'restoring', 'restored']);
     expect(blob.getRestoreStatus()).toBe('restored');
   });

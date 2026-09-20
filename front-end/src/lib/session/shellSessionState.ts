@@ -65,7 +65,6 @@ export interface ShellSessionState {
   sessionError: boolean;
   restoreStatus: RestoreStatus;
   restoreError: string | null;
-  restoreHubReconciled: boolean;
   transition: ShellSessionTransition;
 }
 
@@ -79,7 +78,6 @@ export type ShellSessionAction =
   | { type: 'setSessionError'; value: boolean }
   | { type: 'setRestoreStatus'; value: RestoreStatus }
   | { type: 'setRestoreError'; value: string | null }
-  | { type: 'setRestoreHubReconciled'; value: boolean }
   | {
       type: 'beginAccept';
       reason: ShellSessionTransitionReason;
@@ -106,7 +104,6 @@ export const initialShellSessionState: ShellSessionState = {
   sessionError: false,
   restoreStatus: 'idle',
   restoreError: null,
-  restoreHubReconciled: false,
   transition: { kind: 'idle' },
 };
 
@@ -133,8 +130,6 @@ export function shellSessionReducer(
       return { ...state, restoreStatus: action.value };
     case 'setRestoreError':
       return { ...state, restoreError: action.value };
-    case 'setRestoreHubReconciled':
-      return { ...state, restoreHubReconciled: action.value };
     case 'beginAccept':
       // Clears consent prompts atomically with entering the Accept transition.
       return {

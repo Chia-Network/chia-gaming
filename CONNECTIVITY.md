@@ -437,10 +437,17 @@ The hub does not create a session. It can only advise and relay:
 - **Session persistence**: one salt-prefixed, masked Bencodex `SessionSave`
   byte value in IndexedDB (including raw cradle/unacked byte strings), plus
   small preferences and the resumable-session boot marker in localStorage
-  (`front-end/src/hooks/save.ts`).
+  (`front-end/src/hooks/save.ts`). The app database is schema 4: durable owner,
+  write, and reset epochs are checked atomically with every mutation;
+  localStorage lease/reset state is only an early UI hint. Diagnostic history
+  retains newest complete entries within 256 KiB total UTF-8 text, with the
+  2,000-entry cap secondary.
 - **Resume on reload**: Marker-first boot state machine with Resume /
   Start Over dialog, full `hardReset` obliteration, and lease system for tab
-  conflict detection (`Shell.tsx`).
+  conflict detection (`Shell.tsx`). A malformed strict-v4 wallet ledger is
+  preserved and displayed there. Hard reset reloads only after confirmed
+  deletion success; blocked/failed deletion stays on recovery UI with Retry and
+  a pending-wipe fallback for the next boot.
 - **Game dashboard banner**: Selector-driven channel / lifecycle /
   balance strip from `SessionModel`
   (`selectGameDashboardView`, `selectStatusBarBalances`).
@@ -463,6 +470,16 @@ The hub does not create a session. It can only advise and relay:
   Connection network toggle is locked while a session binds a genesis
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
   chain id than the existing WASM cradle. (`Shell.tsx`)
+
+- **Wallet reservation recovery**: strict-v4 entries bind installation,
+  peer-session, and provider/account scope. Pending creation embeds the
+  canonical request and exact recovery ID; pending cancellation preserves the
+  exact trade and cancellation recovery ID. A scope mismatch is visible and
+  cannot mutate another wallet. Funding unavailability remains pending.
+  Disconnect detaches the provider RPC without discarding cleanup; controller
+  retirement records cleanup, and matching restore/reconnect attachment drains
+  it. Deployed WalletConnect still cannot reconcile a lost successful
+  create-offer response end to end, so that case remains best-effort.
 
 - **Session state surfaced to Shell**: `GameSession` reports coarse session
   phase (`off-chain | on-chain | resolved`) and an error flag to Shell via
@@ -487,8 +504,10 @@ The hub does not create a session. It can only advise and relay:
   WebSocket.
   The `identify` message includes the current busy bit. Shell calls
   `setBusy(!(sessionPhase === 'none' || sessionPhase === 'resolved'))` whenever
-  the broader session phase changes, while restore blocking keeps unresolved
-  restores busy until reconciliation completes. A resolved session no longer has
+  the broader session phase changes. Local game presentation depends only on
+  the local restoring flag and WASM restore status; independent hub, wallet,
+  and blockchain readiness continues to gate external actions and hub
+  availability. A resolved session no longer has
   an active game obligation, so the player can be available for a new match even
   if the existing relay is still visible.
 

@@ -74,7 +74,6 @@ export type SessionMachineEvent =
         restoring: boolean;
         status: RestoreStatus;
         error: string | null;
-        hubReconciled: boolean;
       };
       wasmNotificationHistory: string[];
       diagnosticLog: string[];

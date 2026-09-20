@@ -7,6 +7,7 @@ import {
   WalletOfferOperation,
   WalletOfferRequest,
   WalletOfferCancellationOutcome,
+  WalletOfferCancellationBeginOutcome,
   WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
@@ -214,6 +215,12 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         saveCloudWalletAuth(next);
       },
     );
+  }
+
+  getWalletProviderScope() {
+    return this.auth?.walletId
+      ? ({ provider: 'cloud', walletId: this.auth.walletId } as const)
+      : null;
   }
 
   private requireWalletId(): string {
@@ -723,13 +730,20 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     request: WalletOfferRequest,
   ): Promise<WalletOfferBeginOutcome> {
     if (request.kind === 'funding') {
-      const amount = absAmountFromOffer(request.offer);
-      const conditions = conditionsForGraphql(request.extraConditions, request.maxHeight);
-      return this.beginCloudOffer({
-        offered: [{ amount }],
-        requested: [],
-        extraConditions: conditions,
-      });
+      try {
+        const amount = absAmountFromOffer(request.offer);
+        const conditions = conditionsForGraphql(request.extraConditions, request.maxHeight);
+        return await this.beginCloudOffer({
+          offered: [{ amount }],
+          requested: [],
+          extraConditions: conditions,
+        });
+      } catch (error) {
+        const reason = cloudErrorDetail(error);
+        return error instanceof CloudWalletTransportError
+          ? { kind: 'unavailable', reason }
+          : { kind: 'failure', reason };
+      }
     }
     if (request.fee <= 0n) {
       return { kind: 'failure', reason: 'fee must be positive' };
@@ -828,7 +842,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     };
   }
 
-  async releaseWalletOffer(offerId: string): Promise<WalletOfferCancellationOutcome> {
+  async beginWalletOfferCancellation(
+    offerId: string,
+  ): Promise<WalletOfferCancellationBeginOutcome> {
     try {
       const data = await this.gql<{
         cancelOffer: { signatureRequest: { id: string; status: string } | null } | null;
@@ -872,9 +888,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           detail: `Cloud Wallet cancellation ended with status ${initialStatus}`,
         };
       }
-      return await this.trackSignatureRequest(request.id, 'offer cancellation', () =>
-        this.pollCancellationSignatureRequest(request.id),
-      );
+      return { status: 'pending', recoveryId: request.id };
     } catch (error) {
       const detail = boundedCancellationDetail(cloudErrorDetail(error));
       if (cloudCancellationIsAlreadyTerminal(error, offerId)) {
@@ -887,6 +901,23 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         return { status: 'unavailable', detail };
       }
       return { status: 'rejected', detail };
+    }
+  }
+
+  async reconcileWalletOfferCancellation(
+    _offerId: string,
+    recoveryId: string,
+  ): Promise<WalletOfferCancellationOutcome> {
+    try {
+      return await this.trackSignatureRequest(recoveryId, 'offer cancellation', () =>
+        this.pollCancellationSignatureRequest(recoveryId),
+      );
+    } catch (error) {
+      const detail = boundedCancellationDetail(cloudErrorDetail(error));
+      return error instanceof CloudWalletTransportError ||
+        error instanceof SignatureRequestUnavailableError
+        ? { status: 'unavailable', detail }
+        : { status: 'rejected', detail };
     }
   }
 

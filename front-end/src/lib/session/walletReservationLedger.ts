@@ -4,13 +4,16 @@ import type {
   WalletOfferRequest,
 } from '../../types/ChiaGaming';
 import { log } from '../../services/log';
+import { jsonStringify } from '../../util/jsonSafe';
 import {
   decodeWalletReservationLedger,
   decodeWalletReservationRecord,
   MAX_WALLET_RESERVATION_REASON_LENGTH,
   walletReservationOperationKey,
   walletReservationOwnerKey,
+  walletProviderScopeKey,
   type WalletReservationLedgerEntry,
+  type WalletReservationCancellationEntry,
   type WalletReservationRecoveryEntry,
   type WalletReservationTradeEntry,
   type WalletReservationOwner,
@@ -29,7 +32,10 @@ function boundedReason(reason: string): string {
 }
 
 export class WalletReservationLedger {
-  private readonly entriesByTradeId = new Map<string, WalletReservationTradeEntry>();
+  private readonly entriesByTradeId = new Map<
+    string,
+    WalletReservationTradeEntry | WalletReservationCancellationEntry
+  >();
   private readonly recoveriesByOperation = new Map<string, WalletReservationRecoveryEntry>();
   private readonly inFlightAttempts = new Map<string, Promise<unknown>>();
   private readonly inFlightCancellations = new Map<string, Promise<void>>();
@@ -92,6 +98,36 @@ export class WalletReservationLedger {
       }
     }
     this.retryCancelRequired();
+    this.notify();
+  }
+
+  getScopeStatus(
+    installationPlayerId: string,
+    peerSessionId: string,
+  ): { kind: 'ready' } | { kind: 'unavailable' } | { kind: 'mismatch' } {
+    const relevant = this.snapshot().filter(
+      (entry) =>
+        entry.owner.installationPlayerId === installationPlayerId &&
+        entry.owner.peerSessionId === peerSessionId,
+    );
+    if (relevant.length === 0) return { kind: 'ready' };
+    const scope = this.rpc?.getWalletProviderScope?.();
+    if (!scope) return { kind: 'unavailable' };
+    const current = walletProviderScopeKey(scope);
+    return relevant.every((entry) => walletProviderScopeKey(entry.owner.providerScope) === current)
+      ? { kind: 'ready' }
+      : { kind: 'mismatch' };
+  }
+
+  getRecoveryReadiness(): 'ready' | 'wallet-unavailable' | 'scope-mismatch' {
+    const entries = this.snapshot();
+    if (entries.length === 0) return 'ready';
+    const scope = this.rpc?.getWalletProviderScope?.();
+    if (!scope) return 'wallet-unavailable';
+    const current = walletProviderScopeKey(scope);
+    return entries.some((entry) => walletProviderScopeKey(entry.owner.providerScope) !== current)
+      ? 'scope-mismatch'
+      : 'ready';
   }
 
   detachRpc(rpc: InternalBlockchainInterface): void {
@@ -99,6 +135,7 @@ export class WalletReservationLedger {
     this.connectionUnsubscribe?.();
     this.connectionUnsubscribe = null;
     this.rpc = null;
+    this.notify();
   }
 
   subscribe(listener: () => void): () => void {
@@ -137,7 +174,9 @@ export class WalletReservationLedger {
     for (const diskEntry of decoded) this.mergeDiskEntry(diskEntry);
     this.persistIfDirty();
     for (const entry of this.entriesByTradeId.values()) {
-      if (entry.stage === 'cancel-required') this.scheduleCancellationAfterPersistence(entry);
+      if (entry.stage === 'cancel-required' || entry.stage === 'cancelling') {
+        this.scheduleCancellationAfterPersistence(entry);
+      }
     }
     this.notify();
   }
@@ -310,6 +349,31 @@ export class WalletReservationLedger {
     return this.snapshot().filter((entry) => walletReservationOwnerKey(entry.owner) === ownerKey);
   }
 
+  hasEntriesForSession(installationPlayerId: string, peerSessionId: string): boolean {
+    return this.snapshot().some(
+      (entry) =>
+        entry.owner.installationPlayerId === installationPlayerId &&
+        entry.owner.peerSessionId === peerSessionId,
+    );
+  }
+
+  creatingFundingEntryForSession(
+    installationPlayerId: string,
+    peerSessionId: string,
+  ): WalletReservationRecoveryEntry | null {
+    const entries = [...this.recoveriesByOperation.values()].filter(
+      (entry) =>
+        entry.purpose.kind === 'funding' &&
+        entry.request.kind === 'funding' &&
+        entry.owner.installationPlayerId === installationPlayerId &&
+        entry.owner.peerSessionId === peerSessionId,
+    );
+    if (entries.length > 1) {
+      throw new Error('Wallet reservation ledger contains conflicting funding recoveries');
+    }
+    return entries[0] ? structuredClone(entries[0]) : null;
+  }
+
   retainedEntriesForOperation(
     owner: WalletReservationOwner,
     purpose: WalletReservationPurpose,
@@ -329,6 +393,12 @@ export class WalletReservationLedger {
     request: WalletOfferRequest,
   ): Promise<WalletOfferCompletion> {
     await this.awaitHydrated();
+    if (!this.scopeMatchesRpc(owner, rpc)) {
+      return {
+        kind: 'unavailable',
+        reason: 'Reconnect the original wallet account to resume this operation',
+      };
+    }
     const operation = { owner, purpose };
     const key = walletReservationOperationKey(owner, purpose);
     if (
@@ -345,6 +415,9 @@ export class WalletReservationLedger {
         let recovery = this.recoveriesByOperation.get(key);
         let completion: WalletOfferCompletion;
         if (recovery?.stage === 'creating') {
+          if (jsonStringify(recovery.request) !== jsonStringify(request)) {
+            throw new Error('Persisted wallet offer request conflicts with the requested recovery');
+          }
           if (!rpc.reconcileWalletOffer) {
             throw new Error('Wallet provider cannot reconcile its persisted offer creation');
           }
@@ -359,6 +432,7 @@ export class WalletReservationLedger {
               purpose,
               stage: 'creating',
               recoveryId: begun.recoveryId,
+              request: structuredClone(request),
               reason: boundedReason('wallet-offer-creation-pending'),
             };
             this.recoveriesByOperation.set(key, recovery);
@@ -448,7 +522,7 @@ export class WalletReservationLedger {
     const ownerKey = owner ? walletReservationOwnerKey(owner) : undefined;
     for (const entry of this.entriesByTradeId.values()) {
       if (
-        entry.stage === 'cancel-required' &&
+        (entry.stage === 'cancel-required' || entry.stage === 'cancelling') &&
         !this.coordinatedLaunchRequired.has(entry.tradeId) &&
         (ownerKey === undefined || walletReservationOwnerKey(entry.owner) === ownerKey)
       ) {
@@ -460,7 +534,9 @@ export class WalletReservationLedger {
   launchCancellation(tradeId: string): Promise<void> {
     this.coordinatedLaunchRequired.delete(tradeId);
     const entry = this.entriesByTradeId.get(tradeId);
-    if (!entry || entry.stage !== 'cancel-required') return Promise.resolve();
+    if (!entry || (entry.stage !== 'cancel-required' && entry.stage !== 'cancelling')) {
+      return Promise.resolve();
+    }
     return this.attemptCancellation(entry);
   }
 
@@ -556,7 +632,9 @@ export class WalletReservationLedger {
   }
 
   private scheduleCancellationAfterPersistence(entry: WalletReservationLedgerEntry): Promise<void> {
-    if (entry.stage !== 'cancel-required') return Promise.resolve();
+    if (entry.stage !== 'cancel-required' && entry.stage !== 'cancelling') {
+      return Promise.resolve();
+    }
     const existing = this.inFlightCancellations.get(entry.tradeId);
     if (existing) return existing;
     const scheduled = this.flushPersistence()
@@ -571,10 +649,12 @@ export class WalletReservationLedger {
   }
 
   private attemptCancellation(entry: WalletReservationLedgerEntry): Promise<void> {
-    if (entry.stage !== 'cancel-required') return Promise.resolve();
+    if (entry.stage !== 'cancel-required' && entry.stage !== 'cancelling') {
+      return Promise.resolve();
+    }
     const existing = this.inFlightCancellations.get(entry.tradeId);
     if (existing) return existing;
-    const cancelOffer = this.rpc?.releaseWalletOffer;
+    const cancelOffer = this.rpc?.beginWalletOfferCancellation;
     if (!cancelOffer) return Promise.resolve();
     const attempt = this.performCancellation(entry).finally(() => {
       if (this.inFlightCancellations.get(entry.tradeId) === attempt) {
@@ -586,12 +666,37 @@ export class WalletReservationLedger {
   }
 
   private async performCancellation(entry: WalletReservationLedgerEntry): Promise<void> {
-    if (entry.stage !== 'cancel-required') return;
+    if (entry.stage !== 'cancel-required' && entry.stage !== 'cancelling') return;
     await this.awaitHydrated();
-    const cancelOffer = this.rpc?.releaseWalletOffer;
-    if (!cancelOffer) return;
+    const rpc = this.rpc;
+    if (!rpc || !this.scopeMatchesRpc(entry.owner, rpc)) return;
     try {
-      const outcome = await cancelOffer(entry.tradeId);
+      let outcome;
+      if (entry.stage === 'cancelling') {
+        if (!rpc.reconcileWalletOfferCancellation) return;
+        outcome = await rpc.reconcileWalletOfferCancellation(entry.tradeId, entry.recoveryId);
+      } else {
+        if (!rpc.beginWalletOfferCancellation) return;
+        const begun = await rpc.beginWalletOfferCancellation(entry.tradeId);
+        if (begun.status === 'pending') {
+          const cancelling: WalletReservationCancellationEntry = {
+            ...entry,
+            stage: 'cancelling',
+            recoveryId: begun.recoveryId,
+          };
+          this.entriesByTradeId.set(entry.tradeId, cancelling);
+          this.changed();
+          await this.flushPersistence();
+          if (!rpc.reconcileWalletOfferCancellation) return;
+          outcome = await rpc.reconcileWalletOfferCancellation(
+            cancelling.tradeId,
+            cancelling.recoveryId,
+          );
+          entry = cancelling;
+        } else {
+          outcome = begun;
+        }
+      }
       if (this.entriesByTradeId.get(entry.tradeId) !== entry) return;
       if (outcome.status === 'cancelled' || outcome.status === 'already-terminal') {
         this.remove(entry.tradeId);
@@ -605,6 +710,16 @@ export class WalletReservationLedger {
       if (this.entriesByTradeId.get(entry.tradeId) !== entry) return;
       log(`[wallet-reservation-ledger] cancel threw trade_id=${entry.tradeId}: ${String(error)}`);
     }
+  }
+
+  private scopeMatchesRpc(
+    owner: WalletReservationOwner,
+    rpc: InternalBlockchainInterface,
+  ): boolean {
+    const scope = rpc.getWalletProviderScope?.(owner);
+    return (
+      scope != null && walletProviderScopeKey(scope) === walletProviderScopeKey(owner.providerScope)
+    );
   }
 
   /** @internal */

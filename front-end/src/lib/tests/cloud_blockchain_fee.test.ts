@@ -48,7 +48,11 @@ import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
 
 const testOperation = {
-  owner: { installationPlayerId: 'player', peerSessionId: 'session' },
+  owner: {
+    installationPlayerId: 'player',
+    peerSessionId: 'session',
+    providerScope: { provider: 'simulator' as const, identity: 'player' },
+  },
   purpose: { kind: 'funding' as const, operationId: 'operation' },
 };
 
@@ -263,7 +267,11 @@ describe('CloudBlockchainInterface fee support', () => {
     });
     const iface = new CloudBlockchainInterface();
     const operation = {
-      owner: { installationPlayerId: 'player', peerSessionId: 'session' },
+      owner: {
+        installationPlayerId: 'player',
+        peerSessionId: 'session',
+        providerScope: { provider: 'simulator' as const, identity: 'player' },
+      },
       purpose: { kind: 'funding' as const, operationId: 'op' },
     };
     const request = { kind: 'funding' as const, uniqueId: 'player', offer: { '1': -1n } };
@@ -369,7 +377,11 @@ describe('CloudBlockchainInterface fee support', () => {
       };
     });
     const operation = {
-      owner: { installationPlayerId: 'player', peerSessionId: 'session' },
+      owner: {
+        installationPlayerId: 'player',
+        peerSessionId: 'session',
+        providerScope: { provider: 'simulator' as const, identity: 'player' },
+      },
       purpose: { kind: 'funding' as const, operationId: 'op' },
     };
     const request = { kind: 'funding' as const, uniqueId: 'player', offer: { '1': -1n } };
@@ -394,7 +406,9 @@ describe('CloudBlockchainInterface fee support', () => {
     const calls = mockGraphql(() => ({
       cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'SUBMITTED' } },
     }));
-    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
+    await expect(
+      new CloudBlockchainInterface().beginWalletOfferCancellation('Offer_1'),
+    ).resolves.toEqual({
       status: 'cancelled',
       detail: 'SUBMITTED',
     });
@@ -418,7 +432,9 @@ describe('CloudBlockchainInterface fee support', () => {
       })),
     );
 
-    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
+    await expect(
+      new CloudBlockchainInterface().beginWalletOfferCancellation('Offer_1'),
+    ).resolves.toEqual({
       status: 'rejected',
       detail: expect.stringMatching(/Offer already cancelled by another client/),
     });
@@ -442,7 +458,9 @@ describe('CloudBlockchainInterface fee support', () => {
       })),
     );
 
-    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
+    await expect(
+      new CloudBlockchainInterface().beginWalletOfferCancellation('Offer_1'),
+    ).resolves.toEqual({
       status: 'already-terminal',
       detail: expect.stringMatching(/offer is gone/),
     });
@@ -453,7 +471,12 @@ describe('CloudBlockchainInterface fee support', () => {
       cancelOffer: { signatureRequest: { id: 'SR_cancel', status: 'PENDING' } },
     }));
 
-    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
+    const iface = new CloudBlockchainInterface();
+    await expect(iface.beginWalletOfferCancellation('Offer_1')).resolves.toEqual({
+      status: 'pending',
+      recoveryId: 'SR_cancel',
+    });
+    await expect(iface.reconcileWalletOfferCancellation('Offer_1', 'SR_cancel')).resolves.toEqual({
       status: 'unavailable',
       detail: expect.stringMatching(/popup blocked/i),
     });
@@ -476,8 +499,13 @@ describe('CloudBlockchainInterface fee support', () => {
     });
 
     let settled = false;
-    const cancellation = new CloudBlockchainInterface()
-      .releaseWalletOffer('Offer_1')
+    const iface = new CloudBlockchainInterface();
+    await expect(iface.beginWalletOfferCancellation('Offer_1')).resolves.toEqual({
+      status: 'pending',
+      recoveryId: 'SR_cancel',
+    });
+    const cancellation = iface
+      .reconcileWalletOfferCancellation('Offer_1', 'SR_cancel')
       .then((outcome) => {
         settled = true;
         return outcome;
@@ -507,7 +535,12 @@ describe('CloudBlockchainInterface fee support', () => {
       return { signatureRequest: { id: 'SR_cancel', status: 'FAILED' } };
     });
 
-    await expect(new CloudBlockchainInterface().releaseWalletOffer('Offer_1')).resolves.toEqual({
+    const iface = new CloudBlockchainInterface();
+    await expect(iface.beginWalletOfferCancellation('Offer_1')).resolves.toEqual({
+      status: 'pending',
+      recoveryId: 'SR_cancel',
+    });
+    await expect(iface.reconcileWalletOfferCancellation('Offer_1', 'SR_cancel')).resolves.toEqual({
       status: 'rejected',
       detail: 'Cloud Wallet cancellation ended with status FAILED',
     });

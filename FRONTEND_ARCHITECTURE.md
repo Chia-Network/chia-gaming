@@ -366,15 +366,16 @@ with a stream derived from the fresh salt and a key compiled into the client.
 This deters casual inspection but is not a security boundary: the client has
 everything needed to reverse it. The serialized WASM cradle and unacknowledged
 protocol messages remain raw `Uint8Array` values within that binary encoding;
-they are not base64-expanded. localStorage holds only small preferences, the
-resumable-session marker, and tab/reset coordination keys, inside the same-origin
-trust model described above.
+they are not base64-expanded. localStorage holds only small preferences,
+resumable-session markers, and tab/reset hints inside the same-origin trust
+model described above; it is not storage authority.
 
 The current and only legal browser envelope is `chia-gaming-session` version
 `31`; the serialized Rust/WASM cradle inside a live envelope is schema `17`.
 The wallet reservation ledger is not an envelope field: it is an independent
-`chia-gaming-wallet-reservations` version-`3` record in its own IndexedDB store.
-All three explicit version fields remain centralized migration hooks. No player
+`chia-gaming-wallet-reservations` version-`4` record in its own IndexedDB store,
+and the app database itself is IndexedDB schema `4`. These explicit version
+fields remain centralized migration hooks. No player
 app or hub persistence format has shipped, so non-current app-owned versions
 are deleted without fallback decoding, aliases, or migrations. A decoded v31
 record must also satisfy the complete phase-owned envelope contract (keyed game
@@ -441,7 +442,7 @@ are grouped under those phase-owned payloads:
 | `terminalHandoff`                     | `{ id, message, msgno, sent, acknowledged } \| null` | Exact cooperative terminal command-to-frame binding; restore reuses its frame or completes an already-ACKed Rust command.                                                                                                                                                                                       |
 | `humanHistory`                        | `string[]?`                                         | Recent user-facing transcript entries (capped at 1,000).                                                                                                                                                                                                                                                        |
 | `wasmNotificationHistory`             | `string[]?`                                         | Recent serialized WASM notifications (capped at 1,000).                                                                                                                                                                                                                                                         |
-| `diagnosticLog`                       | `string[]?`                                         | Recent diagnostic entries (capped at 2,000).                                                                                                                                                                                                                                                                    |
+| `diagnosticLog`                       | `string[]?`                                         | Recent complete diagnostic entries, capped at 256 KiB total UTF-8 text; an individually oversized entry is dropped deterministically, and 2,000 entries remains a secondary cap.                                                                                                                               |
 | `durabilityWarning`                   | `string?`                                           | Last delivery-boundary storage failure warning.                                                                                                                                                                                                                                                                 |
 | `handKey`                             | `bigint`                                            | Monotonic host hand lifetime key. Reload preserves values greater than one so a restored hand keeps its identity.                                                                                                                                                                                               |
 | `activeGameIds`                       | `string[]`                                          | IDs of currently live games in an atomic group; empty when none are active.                                                                                                                                                                                                                                     |
@@ -593,18 +594,26 @@ outcome back to Rust.
 The external wallet constructs each funding offer from Rust's canonical
 request; Rust validates the result. Rejection terminates the handshake and does
 not create controller-owned successor or predecessor requests. Persisted
-funding and fee offers enter the independent strict-v3 wallet reservation
+funding and fee offers enter the independent strict-v4 wallet reservation
 ledger. Every trade owns its exact provider trade ID and exact
-`(installationPlayerId, peerSessionId, purpose kind, operationId)` identity;
+`(installationPlayerId, peerSessionId, provider/account scope, purpose kind,
+operationId)` identity;
 one operation may retain multiple historical trades without conflating owners
-or cleanup. Stages are strictly `reserved`, `retained-for-replay`, or
-`cancel-required`. An attached fee source remains retained while Rust may
+or cleanup. Pending creation uses `creating` with its embedded canonical request
+and exact recovery ID; pending cancellation uses `cancelling` with its exact
+trade and recovery ID. Recovery reconciles those exact requests instead of
+starting replacements. Funding unavailability remains pending; it is not
+converted into rejection. Post-creation stages include `reserved`,
+`retained-for-replay`, and `cancel-required`. An attached fee source remains retained while Rust may
 replay the exact finalized transaction; acknowledgement, retirement, rejection,
 or unused finalization moves it through typed cancellation before removal.
 Controller retirement promotes only `reserved` entries; replay-retained fee
 sources stay retained until Rust explicitly retires their stable submission.
 Wallet mutation is held until ledger hydration succeeds and fails closed if the
-record is malformed.
+record is malformed. The malformed record is preserved and its error remains
+on Resume / Start Over. A connected provider/account scope that differs from
+the durable owner is shown as a recovery mismatch rather than touching the
+wrong wallet.
 
 The active session envelope and complete ledger snapshot are written in one
 IndexedDB transaction. Strict codecs reject unknown/missing fields, duplicate
@@ -618,7 +627,9 @@ cancellation RPC. A failed cancellation stays durable and retries only on
 restore, wallet reconnect/attachment, or an explicit terminal-finalization
 attempt.
 There is no timer or immediate retry loop, and terminal quiescence fails while
-that session has any unresolved ledger entry.
+that session has any unresolved ledger entry. Going offline detaches the
+provider RPC without discarding cleanup; retirement records the required
+transitions, and the next matching lifecycle attachment drains them.
 
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
@@ -987,14 +998,20 @@ hasSavedSessionMarker()?
 **Start over hard reset:** Start over is deliberately not graceful cleanup. It
 is the escape hatch for garbled local state, so it must not deserialize saved
 state, reconnect to services, preserve preferences, or otherwise interpret the
-current session. The handler tears down live hub/wallet sockets (so
-IndexedDB deletes are not blocked), awaits `hardReset()`, and reloads the page.
-All session, ledger, clear, and reset mutations share one serialized,
-generation-fenced storage coordinator. This orders `clearSession()` followed by
-an immediate unawaited save, and prevents an old tab or retired lease from
-overwriting the winning generation. `hardReset()` advances that fence before
-deletion; queued or in-flight pre-reset writes cannot recreate IndexedDB or
-cached state afterward.
+current session. The handler tears down live hub/wallet sockets (so IndexedDB
+deletes are not blocked), awaits `hardReset()`, and reloads only after every
+targeted deletion confirms success. A blocked or failed deletion leaves the
+shell on recovery UI with Retry Hard Reset guidance.
+
+All session, ledger, rejection, clear, and reset mutations share one serialized
+same-tab coordinator. IndexedDB schema 4 also contains a strict durable authority
+record with owner tab, monotonic write epoch, and reset epoch/status. Every
+mutation validates its captured authority in the same IndexedDB transaction as
+its data change; localStorage is only an early UX conflict/reset hint. This
+orders `clearSession()` followed by an immediate unawaited save and prevents an
+old tab or retired lease from committing after takeover. `hardReset()` durably
+advances the reset epoch before invalidating memory and deleting storage;
+pre-reset work cannot recreate the database or cached state afterward.
 `hardReset()`:
 
 1. Signals sibling tabs to stop persisting.
@@ -1004,9 +1021,11 @@ cached state afterward.
 3. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
    marker and prefs must not outlive a later IndexedDB hang).
 4. Deletes every known app / WalletConnect IndexedDB database, then enumerates
-   and deletes any remaining origin databases. Deletion waits through
-   `onblocked` until `onsuccess`/`onerror`; hardReset does **not** time out and
-   abandon the wipe.
+   and deletes any remaining targeted origin databases. `onsuccess` confirms
+   deletion; `onblocked` or `onerror` returns a typed unsuccessful result,
+   keeps recovery UI open with **Retry Hard Reset**, and leaves a minimal
+   generalized pending-wipe marker for retry or next boot. Reload occurs only
+   after every deletion confirms success.
 
 **Full vs pre-game saves:** The resume/takeover handlers check
 `save.serializedGameSession` to distinguish full game saves from pre-game saves.
@@ -2022,6 +2041,10 @@ checks, not single-hand enforcement. They exist to prevent protocol violations,
 not to limit concurrency.
 
 ## Key Files
+
+Broad F8 file decomposition is deferred. Current cleanup preserves the existing
+ownership boundaries and does not restructure files merely to reduce line
+count.
 
 | File                                             | Purpose                                                                                                                                                         |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |

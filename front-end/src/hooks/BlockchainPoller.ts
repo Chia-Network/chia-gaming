@@ -131,6 +131,7 @@ export class BlockchainPoller {
     return {
       requestGapMs: adapter.requestGapMs,
       fundingMode: adapter.fundingMode,
+      getWalletProviderScope: (owner) => adapter.getWalletProviderScope?.(owner) ?? null,
       getRegistrationScopeKey: () => adapter.getRegistrationScopeKey?.(),
       spend: async (blob, spendBundle, changePuzzleHash, source, fee) => {
         try {
@@ -159,9 +160,17 @@ export class BlockchainPoller {
               true,
             )
         : undefined,
-      releaseWalletOffer: adapter.releaseWalletOffer
+      beginWalletOfferCancellation: adapter.beginWalletOfferCancellation
         ? (tradeId) =>
-            this.enqueueMutation('releaseWalletOffer', () => adapter.releaseWalletOffer!(tradeId))
+            this.enqueueMutation('beginWalletOfferCancellation', () =>
+              adapter.beginWalletOfferCancellation!(tradeId),
+            )
+        : undefined,
+      reconcileWalletOfferCancellation: adapter.reconcileWalletOfferCancellation
+        ? (tradeId, recoveryId) =>
+            this.enqueueMutation('reconcileWalletOfferCancellation', () =>
+              adapter.reconcileWalletOfferCancellation!(tradeId, recoveryId),
+            )
         : undefined,
       getAddress: () => this.enqueueRead('getAddress', () => adapter.getAddress()),
       getBalance: () => this.enqueueRead('getBalance', () => adapter.getBalance()),

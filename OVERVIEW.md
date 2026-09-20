@@ -837,8 +837,9 @@ submission intent and the frontend submission queue owns only ordered one-shot
 wallet delivery.
 
 The browser session envelope is currently strict version 31, its serialized
-Rust/WASM cradle is schema 17, and wallet reservations use an independent
-strict version-3 record. These explicit versions remain future migration hooks.
+Rust/WASM cradle is schema 17, the app IndexedDB is schema 4, and wallet
+reservations use an independent strict version-4 record. These explicit
+versions remain future migration hooks.
 No app or hub persistence format has shipped, so only each current app-owned
 format is decoded; incompatible predecessors are deleted without fallback
 decoders, aliases, or migrations. This does not relax deployed compatibility:
@@ -852,12 +853,18 @@ conversion allowed only at external APIs that explicitly require it.
 
 Persisted funding and fee offers enter one wallet-level reservation ledger.
 Each trade carries its exact provider trade ID, exact owner
-(`installationPlayerId` plus peer session), stable purpose/operation identity,
-stage, and bounded reason. The wallet provider owns external offer lifecycle;
-the controller and Rust own protocol intent. Multiple trades for one operation
-remain distinct. Wallet mutation waits for successful ledger hydration and
-fails closed if hydration fails. Controller retirement promotes only `reserved`
-entries to cancellation; `retained-for-replay` remains owned by Rust replay.
+(`installationPlayerId`, peer session, and strict provider/account scope),
+stable purpose/operation identity, stage, and bounded reason. A `creating`
+entry embeds the canonical create request and exact recovery ID; a
+`cancelling` entry records the exact trade and cancellation recovery ID.
+The wallet provider owns external offer lifecycle; the controller and Rust own
+protocol intent. Multiple trades for one operation remain distinct. Wallet
+mutation waits for successful ledger hydration and fails closed if hydration
+fails. A malformed ledger is preserved and shown at Resume / Start Over rather
+than silently erased, and a connected wallet with a different scope exposes a
+visible mismatch. Funding unavailability remains pending rather than becoming
+a rejection. Controller retirement promotes only `reserved` entries to
+cancellation; `retained-for-replay` remains owned by Rust replay.
 An attached fee offer is retained for exact transaction replay until wallet
 acknowledgement or Rust retirement requests typed cancellation; Cloud
 cancellation completes only after its signature request reaches a successful
@@ -873,20 +880,30 @@ capability for providers that can support it.
 The session envelope and complete independent ledger snapshot are checkpointed
 atomically in one IndexedDB transaction, and strict codecs reject
 unknown/missing fields, duplicate trades, invalid discriminants, and
-non-current versions. Every session, ledger, clear, and reset write enters one
-generation-fenced storage mutation coordinator. An old tab or retired lease
-cannot overwrite the winning generation; a clear followed immediately by an
-unawaited save is ordered and leaves the save. Hard reset advances the fence
-before deleting storage and intentionally erases every reservation, including
-replay-retained entries. Pre-reset work may finish only as part of the wipe and
-cannot recreate the database or state afterward.
+non-current versions. IndexedDB schema 4 stores durable owner, write, and reset
+epochs; every session, ledger, clear, and reset mutation checks that authority
+atomically with its data write. `localStorage` lease and resume markers are UX
+hints only. An old tab or retired lease cannot overwrite the winning
+generation; a clear followed immediately by an unawaited save is ordered and
+leaves the save. Hard reset advances the durable reset epoch before deleting
+storage and intentionally erases every reservation, including replay-retained
+entries. It reloads only after every deletion reports success. A blocked or
+failed deletion remains on recovery UI with Retry and leaves a minimal
+pending-wipe marker for the next boot; pre-reset work cannot recreate state.
 
 Persistence failure never gates use, transaction release, or cancellation of
 an offer; the in-memory session and ledger remain dirty for a later full atomic
 checkpoint. Failed cancellation retries only on restore, wallet
 reconnect/attachment, or explicit terminal finalization—never by a timer or
 immediate loop. Terminal finalization is blocked while that session still has
-an unresolved ledger entry.
+an unresolved ledger entry. Going offline detaches the provider RPC without
+discarding cleanup; retirement records the required transitions, and matching
+restore/reconnect attachment drains them.
+
+Diagnostic history is bounded by 256 KiB of total UTF-8 text, retaining the
+newest complete entries and dropping an individually oversized entry; the
+2,000-entry limit remains a secondary defense. Existing per-field Rust and
+JavaScript incident bounds still apply.
 
 Persistence is checkpointing, not permission to continue a game for money. If
 the browser write fails, the runtime reports a persistent durability warning

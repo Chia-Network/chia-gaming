@@ -12,7 +12,7 @@ import type {
   ChannelStatusPayload,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { _resetForTests as resetSaveState, saveSession } from '../../hooks/save';
+import { _resetForTests as resetSaveState, claimLease, saveSession } from '../../hooks/save';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
@@ -20,10 +20,19 @@ import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
 import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
 import { deleteWalletReservationRecord } from '../session/indexedDb';
 export const testIndexedDb = indexedDB;
-export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
-  get: (target, property) =>
-    property in target ? Reflect.get(target, property) : () => Promise.resolve(undefined),
-});
+export const mockRpc = new Proxy(
+  {
+    isConnected: () => true,
+    getWalletProviderScope: () => ({
+      provider: 'simulator' as const,
+      identity: 'submission-handoff',
+    }),
+  } as InternalBlockchainInterface,
+  {
+    get: (target, property) =>
+      property in target ? Reflect.get(target, property) : () => Promise.resolve(undefined),
+  },
+);
 
 export function saveLiveSession(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
@@ -339,6 +348,7 @@ beforeEach(async () => {
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
   resetSaveState();
+  await claimLease();
   await deleteWalletReservationRecord();
 });
 

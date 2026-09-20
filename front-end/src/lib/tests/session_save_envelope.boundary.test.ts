@@ -27,7 +27,7 @@ describe('save boundary enforcement', () => {
   it('preserves wallet storage when session reading encounters a newer database version', async () => {
     const sentinel = new Uint8Array([9, 8, 7]);
     await new Promise<void>((resolve, reject) => {
-      const open = indexedDB.open('chia-gaming-session', 4);
+      const open = indexedDB.open('chia-gaming-session', 5);
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {
         const db = open.result;
@@ -44,7 +44,7 @@ describe('save boundary enforcement', () => {
     try {
       await expect(readSessionRecord()).rejects.toMatchObject({ name: 'VersionError' });
       const rawLedger = await new Promise<unknown>((resolve, reject) => {
-        const open = indexedDB.open('chia-gaming-session', 4);
+        const open = indexedDB.open('chia-gaming-session', 5);
         open.onerror = () => reject(open.error);
         open.onsuccess = () => {
           const db = open.result;
@@ -77,7 +77,7 @@ describe('save boundary enforcement', () => {
     });
     const sentinel = new Uint8Array([6, 5, 4]);
     await new Promise<void>((resolve, reject) => {
-      const open = indexedDB.open('chia-gaming-session', 3);
+      const open = indexedDB.open('chia-gaming-session', 4);
       open.onerror = () => reject(open.error);
       open.onupgradeneeded = () => {
         open.result.createObjectStore('wallet-reservations');
@@ -97,7 +97,7 @@ describe('save boundary enforcement', () => {
     try {
       await expect(readSessionRecord()).rejects.toMatchObject({ name: 'NotFoundError' });
       const rawLedger = await new Promise<unknown>((resolve, reject) => {
-        const open = indexedDB.open('chia-gaming-session', 3);
+        const open = indexedDB.open('chia-gaming-session', 4);
         open.onerror = () => reject(open.error);
         open.onsuccess = () => {
           const db = open.result;
@@ -152,7 +152,11 @@ describe('save boundary enforcement', () => {
     const ledger = [
       {
         tradeId: 'trade-preserved',
-        owner: { installationPlayerId: 'installation', peerSessionId: 'peer-session' },
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'peer-session',
+          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+        },
         purpose: { kind: 'funding' as const, operationId: 'funding' },
         stage: 'cancel-required' as const,
         reason: 'cleanup',

@@ -37,7 +37,6 @@ describe('session model restore, schema, and event contracts', () => {
       restore: {
         restoring: true,
         status: 'restored',
-        hubReconciled: false,
         error: null,
       },
       peer: { connected: false },

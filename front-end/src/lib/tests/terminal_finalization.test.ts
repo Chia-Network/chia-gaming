@@ -17,6 +17,7 @@ import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import {
   _resetForTests,
+  claimLease,
   discardStagedTerminalSession,
   flushSessionSave,
   hasSavedSessionMarker,
@@ -210,6 +211,7 @@ beforeEach(async () => {
     request.onerror = () => resolve();
     request.onblocked = () => resolve();
   });
+  await claimLease();
   await seedLiveSession();
 });
 

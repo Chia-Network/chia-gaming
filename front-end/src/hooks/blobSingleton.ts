@@ -15,7 +15,7 @@ import { getGenesisChallenge } from '../constants/wallet-connect';
 import { log } from '../services/log';
 import { ReliablePeerTransport } from '../services/PeerSession';
 import {
-  DIAGNOSTIC_LOG_LIMIT,
+  recentDiagnosticEntries,
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
@@ -163,7 +163,7 @@ export async function restoreSession(
     save.history.wasmNotificationHistory ?? [],
     WASM_NOTIFICATION_HISTORY_LIMIT,
   );
-  sc.diagnosticLog = recentEntries(save.history.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
+  sc.diagnosticLog = recentDiagnosticEntries(save.history.diagnosticLog ?? []);
   sc.durabilityWarning = save.live.durabilityWarning;
   sc.restoreFundingOutbox(save.live.fundingOutbox ?? []);
   if (!Array.isArray(save.presentation.activeGameIds)) {

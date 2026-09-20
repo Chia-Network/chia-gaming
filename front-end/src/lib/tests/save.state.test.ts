@@ -18,6 +18,7 @@ import {
   hasSavedSessionMarker,
   shouldOfferResumeOrStartOver,
   markSavedSession,
+  claimLease,
   replaceSession,
   CURRENT_VERSION,
   _resetForTests,
@@ -365,6 +366,7 @@ describe('flat state', () => {
   it('getBlockchainType accepts cloud', async () => {
     _resetForTests();
     setTestGlobal('localStorage', makeStorage());
+    await claimLease();
     expect(getBlockchainType()).toBeUndefined();
     await savePreferences({ blockchainType: 'cloud' });
     expect(getBlockchainType()).toBe('cloud');
@@ -395,6 +397,12 @@ describe('flat state', () => {
   });
 
   it('deletes an incompatible IndexedDB schema instead of migrating it', async () => {
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    });
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME, 2);
       request.onupgradeneeded = () => request.result.createObjectStore('stale');

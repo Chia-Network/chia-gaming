@@ -47,7 +47,7 @@ it(
     let feeOfferCreations = 0;
     const originalSpend = fakeBlockchainInfo.spend;
     const originalBeginWalletOffer = fakeBlockchainInfo.beginWalletOffer;
-    const originalReleaseWalletOffer = fakeBlockchainInfo.releaseWalletOffer;
+    const originalReleaseWalletOffer = fakeBlockchainInfo.beginWalletOfferCancellation;
     fakeBlockchainInfo.beginWalletOffer = async (...args) => {
       if (args[1].kind === 'fee') feeOfferCreations += 1;
       return originalBeginWalletOffer.apply(fakeBlockchainInfo, args);
@@ -67,7 +67,7 @@ it(
       submissionOutcomes.push(outcome);
       return outcome;
     };
-    fakeBlockchainInfo.releaseWalletOffer = async (...args) => {
+    fakeBlockchainInfo.beginWalletOfferCancellation = async (...args) => {
       const outcome = await originalReleaseWalletOffer.apply(fakeBlockchainInfo, args);
       cancellationOutcomes.push(outcome);
       return outcome;
@@ -168,7 +168,7 @@ it(
       errorSubscription.unsubscribe();
       fakeBlockchainInfo.spend = originalSpend;
       fakeBlockchainInfo.beginWalletOffer = originalBeginWalletOffer;
-      fakeBlockchainInfo.releaseWalletOffer = originalReleaseWalletOffer;
+      fakeBlockchainInfo.beginWalletOfferCancellation = originalReleaseWalletOffer;
     }
   },
   LONG_WASM_TEST_TIMEOUT,

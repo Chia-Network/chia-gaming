@@ -21,8 +21,8 @@ import {
   restoreRegisteredGameHandState,
 } from '../gameRegistry';
 import {
-  DIAGNOSTIC_LOG_LIMIT,
   HUMAN_HISTORY_LIMIT,
+  recentDiagnosticEntries,
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from './historyLimits';
@@ -241,7 +241,7 @@ function parseHistory(value: unknown): SessionHistorySave {
     diagnosticLog:
       fields.diagnosticLog === undefined
         ? undefined
-        : parseStringArray(fields.diagnosticLog, 'history.diagnosticLog'),
+        : recentDiagnosticEntries(parseStringArray(fields.diagnosticLog, 'history.diagnosticLog')),
   };
 }
 
@@ -754,7 +754,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
             history.wasmNotificationHistory ?? [],
             WASM_NOTIFICATION_HISTORY_LIMIT,
           ),
-          diagnosticLog: recentEntries(history.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT),
+          diagnosticLog: recentDiagnosticEntries(history.diagnosticLog ?? []),
         },
       }),
     };
@@ -861,7 +861,6 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
         restoring,
         status: restoring ? 'restoring' : 'idle',
         error: null,
-        hubReconciled: false,
       },
       channel: {
         status: save.channelStatus
@@ -906,10 +905,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
           typedEnvelope.history.wasmNotificationHistory ?? [],
           WASM_NOTIFICATION_HISTORY_LIMIT,
         ),
-        diagnosticLog: recentEntries(
-          typedEnvelope.history.diagnosticLog ?? [],
-          DIAGNOSTIC_LOG_LIMIT,
-        ),
+        diagnosticLog: recentDiagnosticEntries(typedEnvelope.history.diagnosticLog ?? []),
       },
       myRunningBalance: parseDecimalString(save.myRunningBalance, 'myRunningBalance'),
     }),

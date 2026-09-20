@@ -7,7 +7,7 @@ import {
   ChiaMethod,
 } from '../../constants/wallet-connect';
 import { MAINNET_GENESIS_CHALLENGE, TESTNET_GENESIS_CHALLENGE } from '../../constants/env';
-import { setNetwork, saveSession, _resetForTests } from '../../hooks/save';
+import { claimLease, setNetwork, saveSession, _resetForTests } from '../../hooks/save';
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();
@@ -32,10 +32,11 @@ function setGlobal(key: string, value: unknown) {
 }
 
 describe('WalletConnect chain id follows the network preference', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     _resetForTests();
     setGlobal('localStorage', makeStorage());
     setGlobal('sessionStorage', makeStorage());
+    await claimLease();
   });
 
   afterEach(() => {
@@ -75,10 +76,11 @@ describe('WalletConnect chain id follows the network preference', () => {
 });
 
 describe('genesis challenge follows the network preference', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     _resetForTests();
     setGlobal('localStorage', makeStorage());
     setGlobal('sessionStorage', makeStorage());
+    await claimLease();
   });
 
   afterEach(() => {

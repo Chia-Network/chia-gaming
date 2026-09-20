@@ -375,6 +375,17 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     this.blockchainAddressData = { puzzleHash: '' };
   }
 
+  getWalletProviderScope() {
+    const fingerprint = walletConnectState.getAddress();
+    return fingerprint && this.remoteWalletId !== undefined
+      ? ({
+          provider: 'walletconnect',
+          fingerprint,
+          remoteWalletId: this.remoteWalletId.toString(),
+        } as const)
+      : null;
+  }
+
   async getAddress() {
     return this.blockchainAddressData;
   }
@@ -746,11 +757,14 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         (parsedError as any)?.data?.error ??
         (parsedError as any)?.data?.structuredError?.message ??
         '';
-      throw new Error(errorMsg || errorText || 'createOfferForIds failed', { cause: e });
+      const reason = errorMsg || errorText || 'createOfferForIds failed';
+      return e instanceof WalletConnectTransportError
+        ? { kind: 'unavailable', reason }
+        : { kind: 'failure', reason };
     }
   }
 
-  async releaseWalletOffer(tradeId: string): Promise<WalletOfferCancellationOutcome> {
+  async beginWalletOfferCancellation(tradeId: string): Promise<WalletOfferCancellationOutcome> {
     let response: Awaited<ReturnType<typeof rpc.cancelOffer>>;
     try {
       response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });

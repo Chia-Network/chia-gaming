@@ -3,6 +3,7 @@ import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { SessionController } from '../../hooks/SessionController';
 import { restoreSession } from '../../hooks/blobSingleton';
 import {
+  claimLease,
   _resetForTests as resetSaveState,
   flushSessionSave,
   peekSession,
@@ -71,7 +72,6 @@ function bindRuntime(
         restoring,
         status,
         error: controller.getRestoreError(),
-        hubReconciled: status === 'restored',
       },
       wasmNotificationHistory: controller.wasmNotificationHistory,
       diagnosticLog: controller.diagnosticLog,
@@ -153,7 +153,12 @@ export async function injectSessionReload(
       getRestoreError: () => lane.controller.getRestoreError(),
     })?.write();
     await flushSessionSave();
+    lane.subscription.unsubscribe();
+    lane.runtime.setRender(() => {});
+    lane.controller.cleanup();
+    await lane.controller.flushPendingWork();
     resetSaveState();
+    await claimLease();
     save = await peekSession();
   } finally {
     reloadController = null;
@@ -165,9 +170,6 @@ export async function injectSessionReload(
   }
 
   const uniqueId = lane.controller.uniqueId;
-  lane.subscription.unsubscribe();
-  lane.runtime.setRender(() => {});
-  lane.controller.cleanup();
   await whileReloaded?.();
 
   const controller = new SessionController(

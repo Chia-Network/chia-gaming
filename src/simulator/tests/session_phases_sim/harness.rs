@@ -1322,6 +1322,7 @@ impl SimulationHarness {
             player
                 .drain_submissions()
                 .expect("drain_submissions")
+                .submissions
                 .into_iter()
                 .map(|submission| submission.bundle),
         );

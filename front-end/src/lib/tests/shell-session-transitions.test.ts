@@ -39,7 +39,6 @@ describe('shellSessionReducer', () => {
       sessionError: false,
       restoreStatus: 'idle',
       restoreError: null,
-      restoreHubReconciled: false,
       transition: { kind: 'idle' },
     });
   });

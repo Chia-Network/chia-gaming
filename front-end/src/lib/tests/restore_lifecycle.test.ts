@@ -37,7 +37,7 @@ describe('restore lifecycle gates', () => {
     // Resumed live sessions keep params.restoring=true after WASM+hub succeed.
     expect(isRestoreBlocked(true, 'restored')).toBe(false);
 
-    // The old finishResolvedSessionDisplay reset (idle + hubReconciled=false)
+    // Resetting restore status after terminal finalization
     // while leaving restoring=true re-blocked GameSession via suppressPhaseReporting.
     expect(isRestoreBlocked(true, 'idle')).toBe(true);
     expect(shouldSuppressPhaseReporting(true, false)).toBe(true);

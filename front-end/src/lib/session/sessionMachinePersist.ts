@@ -1,6 +1,7 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
 import { loadState, saveSession, type SessionCacheUpdate } from '../../hooks/save';
 import { channelStatusModelFromPayload, normalizeSessionPresentation } from './normalization';
+import { recentDiagnosticEntries } from './historyLimits';
 import { snapshotFromSessionModel } from './sessionSnapshot';
 import type { SessionMachineState } from './sessionMachineTypes';
 
@@ -35,13 +36,12 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
       restoring: dependencies.restoring,
       status: restoreStatus,
       error: dependencies.getRestoreError(),
-      hubReconciled: restoreStatus === 'restored',
     },
     channel: { ...state.model.channel, status: authoritativeStatus },
     history: {
       ...state.model.history,
       wasmNotificationHistory: wasm.wasmNotificationHistory,
-      diagnosticLog: wasm.diagnosticLog,
+      diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
     },
   });
   const current = loadState();
@@ -86,7 +86,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
       presentation,
       history: {
         wasmNotificationHistory: wasm.wasmNotificationHistory,
-        diagnosticLog: wasm.diagnosticLog,
+        diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
       },
     },
   };

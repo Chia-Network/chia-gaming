@@ -5,7 +5,7 @@ import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult, WasmEvent } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import { _resetForTests as resetSaveState } from '../../hooks/save';
+import { claimLease, flushSessionSave, _resetForTests as resetSaveState } from '../../hooks/save';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
@@ -90,16 +90,21 @@ beforeAll(() => {
   setTestGlobal('localStorage', makeStorage());
 });
 
+async function deleteSessionDatabase(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error ?? new Error('Failed to delete session database'));
+    request.onblocked = () => reject(new Error('Session database deletion was blocked'));
+  });
+}
+
 beforeEach(async () => {
   resetSaveState();
   _resetWasmLoadForTests();
   storeInitArgs(async () => {}, WholeWasmObject);
-  await new Promise<void>((resolve) => {
-    const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
-    request.onsuccess = () => resolve();
-    request.onerror = () => resolve();
-    request.onblocked = () => resolve();
-  });
+  await deleteSessionDatabase();
+  await claimLease();
 });
 
 afterAll(async () => {
@@ -125,22 +130,18 @@ async function cleanupActiveResources() {
     activeSubscriptions.pop()?.unsubscribe();
   }
   while (activeCradles.length > 0) {
-    activeCradles.pop()?.shutdown();
+    await activeCradles.pop()?.shutdown();
   }
   testPoller?.stop();
   testPoller = null;
   await fakeBlockchainInfo.disconnect();
+  await flushSessionSave();
 }
 
 afterEach(async () => {
   try {
     await cleanupActiveResources();
     resetSaveState();
-    // Drain microtask queue to catch late async errors.  Widened from 50ms to
-    // give in-flight teardown async (poller RPCs rejecting on disconnect, the
-    // submit queue, reconnect loop) time to settle inside the test boundary so
-    // it fails here with a real message instead of escaping past afterAll.
-    await new Promise<void>((r) => setTimeout(r, 300));
   } catch (e) {
     throw new Error(`[load_wasm cleanup failed]\n${String(e)}`, { cause: e });
   }
@@ -229,9 +230,15 @@ export class SessionControllerAdapter {
     this.waiting_messages.push({ msgno, msg });
   }
 
-  shutdown() {
+  async shutdown(): Promise<void> {
+    await this.runtime?.persist();
+    await this.blob?.flushPendingWork();
+    await this.runtime?.persist();
     this.retireRuntime();
-    this.blob?.cleanup();
+    const blob = this.blob;
+    this.blob = undefined;
+    blob?.cleanup();
+    await blob?.flushPendingWork();
   }
 }
 

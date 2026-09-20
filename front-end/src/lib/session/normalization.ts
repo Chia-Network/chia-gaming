@@ -2,6 +2,7 @@ import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming
 import { coerceToBytes } from '../../util';
 import { DEFAULT_CATALOG_GAME_TYPE } from '../gameRegistry';
 import { emptyComposeDraftState } from './composeDraft';
+import { recentDiagnosticEntries } from './historyLimits';
 import { gameInstanceFromView } from './presentation';
 import type {
   ChannelStatusModel,
@@ -100,7 +101,6 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       restoring: false,
       status: 'idle',
       error: null,
-      hubReconciled: false,
       ...partial.restore,
     },
     peer: { connected: null, ...partial.peer },
@@ -137,8 +137,8 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
     history: {
       humanHistory: [],
       wasmNotificationHistory: [],
-      diagnosticLog: [],
       ...partial.history,
+      diagnosticLog: recentDiagnosticEntries(partial.history?.diagnosticLog ?? []),
     },
     myRunningBalance: partial.myRunningBalance ?? 0n,
   };
