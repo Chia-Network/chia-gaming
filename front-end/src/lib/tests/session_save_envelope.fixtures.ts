@@ -58,6 +58,15 @@ function setTestGlobal(key: string, value: unknown): void {
 
 type LegacyFields = Record<string, any>;
 
+function walletProviderScope(fields: LegacyFields) {
+  return (
+    fields.walletProviderScope ?? {
+      provider: 'simulator' as const,
+      identity: fields.playerId ?? 'player',
+    }
+  );
+}
+
 const PRESENTATION_KEYS = new Set([
   'handKey',
   'activeGameIds',
@@ -197,6 +206,7 @@ export function baseSave(fields: LegacyFields = {}): SessionSave {
     return {
       ...shared,
       phase: 'terminal',
+      walletProviderScope: walletProviderScope(fields),
       terminal: {
         iStarted: fields.terminalIStarted ?? false,
         coinsOfInterest: fields.coinsOfInterest,
@@ -213,6 +223,7 @@ export function baseSave(fields: LegacyFields = {}): SessionSave {
     return {
       ...shared,
       phase: 'pre-handshake',
+      walletProviderScope: walletProviderScope(fields),
       pairing: pairing(fields),
       transport: {
         messageNumber: fields.messageNumber ?? 1n,
@@ -272,6 +283,7 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
   return {
     ...common(merged),
     phase: 'live',
+    walletProviderScope: walletProviderScope(merged),
     pairing: pairing(merged),
     live: {
       serializedGameSession: merged.serializedGameSession,
@@ -315,6 +327,7 @@ export function liveSave(fields: LegacyFields = {}): SessionSave {
   return {
     ...common(merged),
     phase: 'live',
+    walletProviderScope: walletProviderScope(merged),
     pairing: pairing(merged),
     live: {
       serializedGameSession: merged.serializedGameSession,
@@ -337,8 +350,8 @@ export function installSessionEnvelopeTestSetup(): void {
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
     await storageRepository.claimLease();
-    await storageRepository.persist(storageRepository.mutateRecords('delete-session'));
-    await storageRepository.persist(storageRepository.mutateRecords('delete-wallet-operations'));
+    await storageRepository.clearSession();
+    await storageRepository.saveWalletOperations([]);
   });
 
   afterEach(() => {

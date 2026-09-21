@@ -26,6 +26,7 @@ function saveLiveFields(fields: Record<string, unknown>): Promise<void> {
   if (save.phase !== 'live') throw new Error('expected live save');
   return storageRepository.saveSession({
     scope: 'live',
+    walletProviderScope: save.walletProviderScope,
     pairing: save.pairing,
     live: save.live,
     presentation: save.presentation,

@@ -77,7 +77,7 @@ function fakeController(overrides: Partial<SessionController> = {}): SessionCont
     makeMove: jest.fn(),
     acceptSettlement: jest.fn(),
     cheat: jest.fn(),
-    attachTransactionCoordinator: jest.fn(),
+    commitSessionRuntime: jest.fn(),
     flushDeferredWork: jest.fn(),
     prepareReliableCommit: jest.fn(() => ({
       generation: 0,

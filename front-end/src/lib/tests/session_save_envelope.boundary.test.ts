@@ -114,7 +114,7 @@ describe('save boundary enforcement', () => {
 
   it('blocks session hydration when the independent wallet ledger is malformed', async () => {
     const session = liveSave();
-    await storageRepository.persist(storageRepository.mutateRecords('write-session', session));
+    await storageRepository.saveSessionAndWalletOperations(session, []);
     const malformedLedger = new Uint8Array([1, 2, 3]);
     await new Promise<void>((resolve, reject) => {
       const open = indexedDB.open('chia-gaming-session');
@@ -155,16 +155,14 @@ describe('save boundary enforcement', () => {
         reason: 'cleanup',
       },
     ];
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', ledger),
-    );
     markSavedSession();
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-session', {
+    await storageRepository.saveSessionAndWalletOperations(
+      {
         version: CURRENT_VERSION - 1n,
         playerId: 'old-player',
         serializedGameSession: new Uint8Array([1, 2, 3]),
-      } as unknown as SessionSave),
+      } as unknown as SessionSave,
+      ledger,
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -186,6 +184,7 @@ describe('save boundary enforcement', () => {
     if (invalid.phase !== 'live') throw new Error('expected live fixture');
     const scheduled = storageRepository.saveSession({
       scope: 'live',
+      walletProviderScope: invalid.walletProviderScope,
       pairing: invalid.pairing,
       live: invalid.live,
       presentation: invalid.presentation,
@@ -198,13 +197,11 @@ describe('save boundary enforcement', () => {
 
   it('deletes an invalid current game envelope while retaining the boot marker', async () => {
     markSavedSession();
-    await storageRepository.persist(
-      storageRepository.mutateRecords(
-        'write-session',
-        activeSave({
-          activeGameIds: ['game-1', 'game-1'],
-        }),
-      ),
+    await storageRepository.saveSessionAndWalletOperations(
+      activeSave({
+        activeGameIds: ['game-1', 'game-1'],
+      }),
+      [],
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -216,31 +213,29 @@ describe('save boundary enforcement', () => {
 
   it('deletes a cross-phase current payload during hydration', async () => {
     markSavedSession();
-    await storageRepository.persist(
-      storageRepository.mutateRecords(
-        'write-session',
-        baseSave({
-          activeGameIds: ['game-1'],
-          currentHandGameIds: ['game-1'],
-          activeGameType: 'calpoker',
-          gameInstances: { 'game-1': ACTIVE_INSTANCE },
-          handState: calpokerStateCodec.encode({
-            playerHand: [1n],
-            opponentHand: [2n],
-            moveNumber: 1n,
-            isPlayerTurn: true,
-            iStarted: true,
-            error: null,
-          }),
-          betweenHandLastHandProposal: {
-            my_contribution: '20',
-            their_contribution: '20',
-            game_timeout: '15',
-            game_type: 'calpoker',
-            parameters: null,
-          },
+    await storageRepository.saveSessionAndWalletOperations(
+      baseSave({
+        activeGameIds: ['game-1'],
+        currentHandGameIds: ['game-1'],
+        activeGameType: 'calpoker',
+        gameInstances: { 'game-1': ACTIVE_INSTANCE },
+        handState: calpokerStateCodec.encode({
+          playerHand: [1n],
+          opponentHand: [2n],
+          moveNumber: 1n,
+          isPlayerTurn: true,
+          iStarted: true,
+          error: null,
         }),
-      ),
+        betweenHandLastHandProposal: {
+          my_contribution: '20',
+          their_contribution: '20',
+          game_timeout: '15',
+          game_type: 'calpoker',
+          parameters: null,
+        },
+      }),
+      [],
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -252,8 +247,9 @@ describe('save boundary enforcement', () => {
 
   it('deletes a current live record that restoreSession cannot consume', async () => {
     markSavedSession();
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-session', liveSave({ messageNumber: undefined })),
+    await storageRepository.saveSessionAndWalletOperations(
+      liveSave({ messageNumber: undefined }),
+      [],
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -265,13 +261,11 @@ describe('save boundary enforcement', () => {
 
   it('deletes a persisted hand whose game type disagrees with its terms', async () => {
     markSavedSession();
-    await storageRepository.persist(
-      storageRepository.mutateRecords(
-        'write-session',
-        activeSave({
-          activeGameType: 'spacepoker',
-        }),
-      ),
+    await storageRepository.saveSessionAndWalletOperations(
+      activeSave({
+        activeGameType: 'spacepoker',
+      }),
+      [],
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -283,22 +277,20 @@ describe('save boundary enforcement', () => {
 
   it('deletes a malformed current metadata envelope read from IndexedDB', async () => {
     markSavedSession();
-    await storageRepository.persist(
-      storageRepository.mutateRecords(
-        'write-session',
-        baseSave({
-          betweenHandCompose: {
-            selected_game: 'calpoker',
-            game_timeout: 'not-a-timeout',
-            proposal_sent: false,
-            drafts: {
-              calpoker: { amount: '10' },
-              krunk: { amount: '100' },
-              spacepoker: { unitSize: '1', stackSize: '10' },
-            },
+    await storageRepository.saveSessionAndWalletOperations(
+      baseSave({
+        betweenHandCompose: {
+          selected_game: 'calpoker',
+          game_timeout: 'not-a-timeout',
+          proposal_sent: false,
+          drafts: {
+            calpoker: { amount: '10' },
+            krunk: { amount: '100' },
+            spacepoker: { unitSize: '1', stackSize: '10' },
           },
-        }),
-      ),
+        },
+      }),
+      [],
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 

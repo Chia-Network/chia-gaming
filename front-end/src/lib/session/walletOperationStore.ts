@@ -6,7 +6,6 @@ import type {
   WalletProviderScope,
 } from '../../types/ChiaGaming';
 import type { CanonicalFundingRequest } from './fundingRequest';
-import { jsonStringify } from '../../util/jsonSafe';
 
 export type WalletOperationOwner = WalletOfferOperation['owner'];
 export type WalletOperationPurpose = WalletOfferOperation['purpose'];
@@ -33,15 +32,6 @@ export interface FundingMaterialSink {
   requestCheckpoint(): void;
   scheduleCleanup(): void;
   track(effect: Promise<void>): void;
-}
-
-export interface FundingDemand {
-  owner: WalletOperationOwner | null;
-  purpose: Extract<WalletOperationPurpose, { kind: 'funding' }>;
-  request: CanonicalFundingRequest;
-  sinkKey: string;
-  scheduledGeneration: number | null;
-  launched: boolean;
 }
 
 export interface WalletOperationFlight {
@@ -177,7 +167,7 @@ export function walletProviderScopeKey(scope: WalletProviderScope): string {
 }
 
 export type WalletOperationTransition =
-  | { kind: 'retire'; reason: string }
+  | { kind: 'cleanup-required'; reason: string; preserveReplay: boolean }
   | {
       kind: 'creation-pending';
       recoveryId: string;
@@ -202,13 +192,12 @@ export type WalletOperationTransition =
     }
   | { kind: 'creation-unavailable'; reason: string }
   | { kind: 'creation-rejected' }
-  | { kind: 'creation-completed'; tradeId?: string; reason: string }
+  | { kind: 'creation-completed'; tradeId: string | null; reason: string }
   | { kind: 'creation-recovery-identified'; recoveryId: string; reason: string }
   | { kind: 'reserve'; tradeId: string; reason: string }
   | { kind: 'stale-result'; tradeId: string; reason: string }
   | { kind: 'consume' }
   | { kind: 'retain-for-replay'; reason: string }
-  | { kind: 'require-cancellation'; reason: string }
   | { kind: 'cancellation-pending'; recoveryId: string }
   | { kind: 'cancellation-uncertain'; readinessEpoch: bigint; reason: string }
   | {
@@ -224,77 +213,27 @@ export type WalletOperationTransition =
 
 export type WalletOperationState = Iterable<WalletOperationEntry>;
 
-export type WalletOperationHandoffEvidence =
-  | {
-      kind: 'creation-recovery';
-      owner: WalletOperationOwner;
-      purpose: WalletOperationPurpose;
-      recoveryId: string;
-      request: WalletOperationRecoveryRequest;
-      disposition: 'active' | 'cancel-on-create';
-      reason: string;
-      orphanRisk?: 'pre-id-response-lost';
-    }
-  | {
-      kind: 'creation-uncertainty';
-      owner: WalletOperationOwner;
-      purpose: WalletOperationPurpose;
-      request: WalletOperationRecoveryRequest;
-      disposition: 'active' | 'cancel-on-create';
-      readinessEpoch: bigint;
-      reason: string;
-      orphanRisk: 'pre-id-response-lost';
-    }
-  | {
-      kind: 'created-trade';
-      owner: WalletOperationOwner;
-      purpose: WalletOperationPurpose;
-      tradeId: string;
-      reason: string;
-      orphanRisk?: 'pre-id-response-lost';
-    }
-  | {
-      kind: 'cancellation-recovery';
-      owner: WalletOperationOwner;
-      purpose: WalletOperationPurpose;
-      tradeId: string;
-      recoveryId: string;
-    }
-  | {
-      kind: 'cancellation-uncertainty';
-      owner: WalletOperationOwner;
-      purpose: WalletOperationPurpose;
-      tradeId: string;
-      readinessEpoch: bigint;
-      reason: string;
-    };
-
 export type WalletOperationCommand =
   | { kind: 'hydrate'; entries: readonly WalletOperationEntry[]; replace: boolean }
-  | { kind: 'handoff-evidence'; evidence: WalletOperationHandoffEvidence }
   | { kind: 'install'; entry: WalletOperationEntry }
   | { kind: 'remove'; key: WalletOperationEntryKey }
   | {
-      kind: 'settle';
-      owner: WalletOperationOwner;
-      purpose: WalletOperationPurpose;
+      kind: 'settle-obligation';
+      target:
+        | { kind: 'operation'; owner: WalletOperationOwner; purpose: WalletOperationPurpose }
+        | { kind: 'trade'; tradeId: string };
       disposition: 'consumed' | 'cancel-required' | 'retained-for-replay';
       reason: string;
       coordinated: boolean;
     }
   | {
-      kind: 'settle-trade';
-      tradeId: string;
-      disposition: 'consumed' | 'cancel-required' | 'retained-for-replay';
+      kind: 'obligate-cleanup';
+      target:
+        | { kind: 'operation'; owner: WalletOperationOwner; purpose: WalletOperationPurpose }
+        | { kind: 'session'; installationPlayerId: string; peerSessionId: string };
       reason: string;
       coordinated: boolean;
-    }
-  | {
-      kind: 'retire-session';
-      installationPlayerId: string;
-      peerSessionId: string;
-      reason: string;
-      coordinated: boolean;
+      preserveReplay: boolean;
     }
   | {
       kind: 'creation-result';
@@ -329,66 +268,6 @@ export interface WalletOperationReduction {
 
 function operationReason(reason: string): string {
   return reason.slice(0, MAX_WALLET_OPERATION_REASON_LENGTH);
-}
-
-export function walletOperationHandoffKey(evidence: WalletOperationHandoffEvidence): string {
-  if (evidence.kind === 'creation-recovery' || evidence.kind === 'creation-uncertainty') {
-    return walletOperationRecoveryKey(evidence.owner, evidence.purpose);
-  }
-  return walletOperationTradeKey(evidence.tradeId);
-}
-
-function entryFromHandoff(evidence: WalletOperationHandoffEvidence): WalletOperationEntry {
-  const common = {
-    owner: evidence.owner,
-    purpose: evidence.purpose,
-    reason: operationReason(
-      'reason' in evidence ? evidence.reason : 'wallet-operation-evidence-handoff',
-    ),
-  };
-  switch (evidence.kind) {
-    case 'creation-recovery':
-      return {
-        ...common,
-        stage: 'creating',
-        disposition: evidence.disposition,
-        recoveryId: evidence.recoveryId,
-        request: structuredClone(evidence.request),
-        ...(evidence.orphanRisk ? { orphanRisk: evidence.orphanRisk } : {}),
-      };
-    case 'creation-uncertainty':
-      return {
-        ...common,
-        stage: 'best-effort-uncertain',
-        disposition: evidence.disposition,
-        request: structuredClone(evidence.request),
-        generation: 0n,
-        lastAttemptEpoch: evidence.readinessEpoch,
-        orphanRisk: evidence.orphanRisk,
-      };
-    case 'created-trade':
-      return {
-        ...common,
-        stage: 'cancel-required',
-        tradeId: evidence.tradeId,
-        ...(evidence.orphanRisk ? { orphanRisk: evidence.orphanRisk } : {}),
-      };
-    case 'cancellation-recovery':
-      return {
-        ...common,
-        stage: 'cancelling',
-        tradeId: evidence.tradeId,
-        recoveryId: evidence.recoveryId,
-      };
-    case 'cancellation-uncertainty':
-      return {
-        ...common,
-        stage: 'best-effort-cancellation-uncertain',
-        tradeId: evidence.tradeId,
-        generation: 0n,
-        lastAttemptEpoch: evidence.readinessEpoch,
-      };
-  }
 }
 
 /**
@@ -445,13 +324,11 @@ export function reduceWalletOperation(
       );
       if (conflict) continue;
       if (diskEntry.stage === 'reserved') {
-        const promoted = reduceWalletOperation([diskEntry], {
-          kind: 'require-cancellation',
-          key: walletOperationEntryKey(diskEntry),
-          owner: diskEntry.owner,
-          purpose: diskEntry.purpose,
+        const promoted = {
+          ...diskEntry,
+          stage: 'cancel-required' as const,
           reason: 'orphaned-reservation-restored',
-        }).nextState[0]!;
+        };
         install(promoted);
         dirty = true;
       } else install(diskEntry);
@@ -460,91 +337,6 @@ export function reduceWalletOperation(
       nextState,
       effects: dirty ? [{ kind: 'persist' }, { kind: 'notify' }] : [{ kind: 'notify' }],
     };
-  }
-  if (command.kind === 'handoff-evidence') {
-    const evidence = command.evidence;
-    const incoming = entryFromHandoff(evidence);
-    let accepted = incoming;
-    const otherOwner = nextState.some(
-      (entry) =>
-        entry.owner.installationPlayerId === incoming.owner.installationPlayerId &&
-        entry.owner.peerSessionId === incoming.owner.peerSessionId &&
-        walletOperationOwnerKey(entry.owner) !== walletOperationOwnerKey(incoming.owner),
-    );
-    if (otherOwner) throw new Error('Wallet evidence belongs to another hydrated owner');
-    const key = walletOperationEntryKey(incoming);
-    const current = nextState.find((entry) => walletOperationEntryKey(entry) === key) ?? null;
-    if (evidence.kind === 'creation-recovery' || evidence.kind === 'creation-uncertainty') {
-      if (incoming.stage !== 'creating' && incoming.stage !== 'best-effort-uncertain') {
-        throw new Error('Invalid wallet creation handoff evidence');
-      }
-      if (current) {
-        if (
-          (current.stage !== 'creating' && current.stage !== 'best-effort-uncertain') ||
-          jsonStringify(current.request) !== jsonStringify(incoming.request) ||
-          current.disposition !== incoming.disposition ||
-          current.orphanRisk !== incoming.orphanRisk ||
-          (current.stage === 'creating' &&
-            incoming.stage === 'creating' &&
-            current.recoveryId !== incoming.recoveryId)
-        ) {
-          throw new Error('Wallet creation evidence conflicts with hydrated recovery');
-        }
-        if (current.stage === 'best-effort-uncertain' && incoming.stage === 'creating') {
-          install(incoming);
-          return { nextState, effects: [{ kind: 'persist' }, { kind: 'notify' }] };
-        }
-        return { nextState, effects: [] };
-      }
-    } else if (evidence.kind === 'created-trade') {
-      if (current) {
-        if (
-          walletOperationKey(current.owner, current.purpose) !==
-          walletOperationKey(incoming.owner, incoming.purpose)
-        ) {
-          throw new Error('Created trade evidence conflicts with hydrated trade');
-        }
-        return { nextState, effects: [] };
-      }
-    } else {
-      if (
-        !current ||
-        current.stage === 'creating' ||
-        current.stage === 'best-effort-uncertain' ||
-        walletOperationKey(current.owner, current.purpose) !==
-          walletOperationKey(incoming.owner, incoming.purpose)
-      ) {
-        throw new Error('Cancellation evidence has no matching hydrated trade');
-      }
-      if (current.stage === 'cancelling') {
-        if (
-          evidence.kind === 'cancellation-recovery' &&
-          current.recoveryId !== evidence.recoveryId
-        ) {
-          throw new Error('Cancellation evidence conflicts with hydrated recovery');
-        }
-        return { nextState, effects: [] };
-      }
-      if (current.stage === 'best-effort-cancellation-uncertain') {
-        if (evidence.kind === 'cancellation-uncertainty') {
-          return { nextState, effects: [] };
-        }
-      } else if (current.stage !== 'cancel-required') {
-        throw new Error('Cancellation evidence conflicts with hydrated trade stage');
-      }
-      accepted =
-        evidence.kind === 'cancellation-recovery'
-          ? { ...current, stage: 'cancelling', recoveryId: evidence.recoveryId }
-          : {
-              ...current,
-              stage: 'best-effort-cancellation-uncertain',
-              generation: 0n,
-              lastAttemptEpoch: evidence.readinessEpoch,
-              reason: operationReason(evidence.reason),
-            };
-    }
-    install(accepted);
-    return { nextState, effects: [{ kind: 'persist' }, { kind: 'notify' }] };
   }
   if (command.kind === 'install') {
     install(command.entry);
@@ -556,13 +348,19 @@ export function reduceWalletOperation(
       effects: remove(command.key) ? [{ kind: 'persist' }, { kind: 'notify' }] : [],
     };
   }
-  if (command.kind === 'settle') {
-    const operation = walletOperationKey(command.owner, command.purpose);
+  if (command.kind === 'settle-obligation') {
+    const matches = (entry: WalletOperationEntry): boolean =>
+      command.target.kind === 'trade'
+        ? entry.stage !== 'creating' &&
+          entry.stage !== 'best-effort-uncertain' &&
+          entry.tradeId === command.target.tradeId
+        : walletOperationKey(entry.owner, entry.purpose) ===
+          walletOperationKey(command.target.owner, command.target.purpose);
     const effects: WalletOperationEffect[] = [];
     let changed = false;
     for (const entry of [...nextState]) {
       if (
-        walletOperationKey(entry.owner, entry.purpose) !== operation ||
+        !matches(entry) ||
         entry.stage === 'creating' ||
         entry.stage === 'best-effort-uncertain'
       ) {
@@ -572,7 +370,7 @@ export function reduceWalletOperation(
         command.disposition === 'consumed'
           ? { kind: 'consume' }
           : command.disposition === 'cancel-required'
-            ? { kind: 'require-cancellation', reason: command.reason }
+            ? { kind: 'cleanup-required', reason: command.reason, preserveReplay: false }
             : { kind: 'retain-for-replay', reason: command.reason };
       const reduced = reduceWalletOperation(nextState, {
         ...transition,
@@ -592,52 +390,24 @@ export function reduceWalletOperation(
       effects: changed ? [{ kind: 'persist' }, { kind: 'notify' }, ...effects] : [],
     };
   }
-  if (command.kind === 'settle-trade') {
-    const current = nextState.find(
-      (entry) =>
-        entry.stage !== 'creating' &&
-        entry.stage !== 'best-effort-uncertain' &&
-        entry.tradeId === command.tradeId,
-    );
-    if (!current) return { nextState, effects: [] };
-    const transition: WalletOperationTransition =
-      command.disposition === 'consumed'
-        ? { kind: 'consume' }
-        : command.disposition === 'cancel-required'
-          ? { kind: 'require-cancellation', reason: command.reason }
-          : { kind: 'retain-for-replay', reason: command.reason };
-    const reduced = reduceWalletOperation(nextState, {
-      ...transition,
-      key: walletOperationEntryKey(current),
-      owner: current.owner,
-      purpose: current.purpose,
-    });
-    if (reduced.effects.length && command.disposition === 'cancel-required') {
-      reduced.effects.push({
-        kind: 'cancel',
-        tradeId: command.tradeId,
-        coordinated: command.coordinated,
-      });
-    }
-    return reduced;
-  }
-  if (command.kind === 'retire-session') {
+  if (command.kind === 'obligate-cleanup') {
     const effects: WalletOperationEffect[] = [];
     let changed = false;
     for (const entry of [...nextState]) {
-      if (
-        entry.owner.installationPlayerId !== command.installationPlayerId ||
-        entry.owner.peerSessionId !== command.peerSessionId ||
-        entry.stage === 'retained-for-replay'
-      ) {
-        continue;
-      }
+      const matches =
+        command.target.kind === 'session'
+          ? entry.owner.installationPlayerId === command.target.installationPlayerId &&
+            entry.owner.peerSessionId === command.target.peerSessionId
+          : walletOperationKey(entry.owner, entry.purpose) ===
+            walletOperationKey(command.target.owner, command.target.purpose);
+      if (!matches) continue;
       const reduced = reduceWalletOperation(nextState, {
-        kind: 'retire',
+        kind: 'cleanup-required',
         key: walletOperationEntryKey(entry),
         owner: entry.owner,
         purpose: entry.purpose,
         reason: command.reason,
+        preserveReplay: command.preserveReplay,
       });
       if (reduced.effects.length === 0) continue;
       nextState = reduced.nextState;
@@ -645,9 +415,13 @@ export function reduceWalletOperation(
       if (
         entry.stage !== 'creating' &&
         entry.stage !== 'best-effort-uncertain' &&
-        !command.coordinated
+        entry.stage !== 'retained-for-replay'
       ) {
-        effects.push({ kind: 'cancel', tradeId: entry.tradeId, coordinated: false });
+        effects.push({
+          kind: 'cancel',
+          tradeId: entry.tradeId,
+          coordinated: command.coordinated,
+        });
       }
     }
     return {
@@ -662,12 +436,12 @@ export function reduceWalletOperation(
           walletOperationKey(entry.owner, entry.purpose) ===
           walletOperationKey(command.owner, command.purpose),
       ) ?? null;
-    if (!current && command.completion.kind !== 'created') {
+    if (!current && command.completion.kind !== 'created-reserved') {
       return { nextState, effects: [] };
     }
     const key = current
       ? walletOperationEntryKey(current)
-      : command.completion.kind === 'created' && command.completion.tradeId
+      : command.completion.kind === 'created-reserved'
         ? walletOperationTradeKey(command.completion.tradeId)
         : walletOperationRecoveryKey(command.owner, command.purpose);
     const transition: WalletOperationTransition =
@@ -677,7 +451,8 @@ export function reduceWalletOperation(
           ? { kind: 'creation-rejected' }
           : {
               kind: 'creation-completed',
-              tradeId: command.completion.tradeId,
+              tradeId:
+                command.completion.kind === 'created-reserved' ? command.completion.tradeId : null,
               reason: command.reason,
             };
     return reduceWalletOperation(nextState, {
@@ -873,27 +648,9 @@ export function reduceWalletOperation(
           stage: 'retained-for-replay',
           reason: operationReason(command.reason),
         };
-      case 'retire':
-        if (current === null || current.stage === 'retained-for-replay') return current;
-        if (current.stage === 'creating' || current.stage === 'best-effort-uncertain') {
-          return {
-            ...current,
-            disposition: 'cancel-on-create',
-            reason: operationReason(command.reason),
-          };
-        }
-        if (current.stage === 'best-effort-cancellation-uncertain') {
-          return { ...current, reason: operationReason(command.reason) };
-        }
-        return {
-          ...common,
-          ...provenance,
-          stage: 'cancel-required',
-          tradeId: current.tradeId,
-          reason: operationReason(command.reason),
-        } satisfies WalletOperationEntry;
-      case 'require-cancellation':
-        if (current === null) return null;
+      case 'cleanup-required':
+        if (current === null || (command.preserveReplay && current.stage === 'retained-for-replay'))
+          return current;
         if (current.stage === 'creating' || current.stage === 'best-effort-uncertain') {
           return {
             ...current,
@@ -976,5 +733,13 @@ export function reduceWalletOperation(
   if (transitioned === current) return { nextState, effects: [] };
   remove(command.key);
   if (transitioned) install(transitioned);
-  return { nextState, effects: [{ kind: 'persist' }, { kind: 'notify' }] };
+  const effects: WalletOperationEffect[] = [{ kind: 'persist' }, { kind: 'notify' }];
+  if (command.kind === 'cancellation-completed') {
+    effects.push({
+      kind: 'funding',
+      installationPlayerId: command.owner.installationPlayerId,
+      peerSessionId: command.owner.peerSessionId,
+    });
+  }
+  return { nextState, effects };
 }

@@ -11,7 +11,7 @@ import {
   testSpendBundle,
   wasmResult,
 } from './message_protocol.harness';
-import { ControlledLease, setup } from './submission_handoff.harness';
+import { commitRuntime, ControlledRuntime, setup } from './runtime_capability.harness';
 
 describe('durable wallet operation record', () => {
   const owner = {
@@ -35,7 +35,7 @@ describe('durable wallet operation record', () => {
     controller.rewardPuzzleHash = '11'.repeat(32);
     controller.loadWasm(mockWasmConnection);
     controller.setGameSession(cradle);
-    controller.attachTransactionCoordinator(new ControlledLease());
+    commitRuntime(controller, new ControlledRuntime());
     const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
@@ -48,7 +48,7 @@ describe('durable wallet operation record', () => {
     controller.flushDeferredWork();
 
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-ephemeral',
       material: { kind: 'bundle', bundle: testSpendBundle('restore-before-adapter') },
     });
     const blockchain = new BlockchainPoller(
@@ -67,7 +67,7 @@ describe('durable wallet operation record', () => {
     {
       label: 'offer',
       outcome: {
-        kind: 'created' as const,
+        kind: 'created-reserved' as const,
         material: { kind: 'offer' as const, offer: 'offer1funding' },
         tradeId: 'trade-offer-funding',
       },
@@ -76,7 +76,7 @@ describe('durable wallet operation record', () => {
     {
       label: 'bundle',
       outcome: {
-        kind: 'created' as const,
+        kind: 'created-ephemeral' as const,
         material: {
           kind: 'bundle' as const,
           bundle: testSpendBundle('bundle-funding'),
@@ -104,7 +104,7 @@ describe('durable wallet operation record', () => {
       try {
         controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
         controller.flushDeferredWork();
-        controller.attachTransactionCoordinator(new ControlledLease());
+        commitRuntime(controller, new ControlledRuntime());
         await controller.flushPendingWork();
 
         expect(beginWalletOffer).toHaveBeenCalledTimes(1);
@@ -118,6 +118,42 @@ describe('durable wallet operation record', () => {
       }
     },
   );
+
+  it('does not cancel recoverable funding when creation-pending notifies subscribers', async () => {
+    const beginWalletOffer = jest
+      .fn()
+      .mockResolvedValue({ kind: 'pending', recoveryId: 'SR_notification' });
+    const reconcileWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'bundle', bundle: testSpendBundle('recoverable-notification') },
+      tradeId: 'Offer_notification',
+    });
+    const beginWalletOfferCancellation = jest.fn();
+    const { controller, cradle } = setup(jest.fn(), {
+      beginWalletOffer,
+      reconcileWalletOffer,
+      beginWalletOfferCancellation,
+    });
+    const request = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60n, args: ['launcher'] }],
+    });
+    try {
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      controller.flushDeferredWork();
+      commitRuntime(controller, new ControlledRuntime());
+      await controller.flushPendingWork();
+
+      expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+      expect(reconcileWalletOffer).toHaveBeenCalledTimes(1);
+      expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
+      expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
+      expect(walletOperationRuntime.entriesFor(owner)).toEqual([]);
+    } finally {
+      controller.cleanup();
+    }
+  });
 
   it('keeps a failed independent write dirty and recovers on a later checkpoint', async () => {
     const ledger = new WalletOperationRuntime();
@@ -144,8 +180,9 @@ describe('durable wallet operation record', () => {
   it('reconciles a scoped creating operation when Rust re-emits funding intent', async () => {
     const beginWalletOffer = jest.fn();
     const reconcileWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('ledger-only-funding') },
+      tradeId: 'Offer_ledger_only',
     });
     const { controller, cradle } = setup(jest.fn(), {
       beginWalletOffer,
@@ -176,10 +213,10 @@ describe('durable wallet operation record', () => {
         reason: 'pending',
       },
     ]);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     controller.flushDeferredWork();
-    controller.attachTransactionCoordinator(lease);
+    commitRuntime(controller, lease);
     await controller.flushPendingWork();
 
     expect(beginWalletOffer).not.toHaveBeenCalled();
@@ -203,7 +240,7 @@ describe('durable wallet operation record', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'cloud disconnected' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'bundle', bundle: testSpendBundle('cloud-restored-funding') },
         tradeId: 'Offer_full_reload',
       });
@@ -227,7 +264,7 @@ describe('durable wallet operation record', () => {
     try {
       first.controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
       first.controller.flushDeferredWork();
-      first.controller.attachTransactionCoordinator(new ControlledLease());
+      commitRuntime(first.controller, new ControlledRuntime());
       await first.controller.flushPendingWork();
 
       expect(beginWalletOffer).toHaveBeenCalledTimes(1);
@@ -248,7 +285,7 @@ describe('durable wallet operation record', () => {
     walletOperationRuntime.restore(persistedLedger);
     const restored = setup(jest.fn(), rpcOverrides);
     try {
-      restored.controller.attachTransactionCoordinator(new ControlledLease());
+      commitRuntime(restored.controller, new ControlledRuntime());
       await restored.controller.flushPendingWork();
 
       expect(beginWalletOffer).toHaveBeenCalledTimes(1);
@@ -278,11 +315,11 @@ describe('durable wallet operation record', () => {
         }),
     );
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-ephemeral',
       material: { kind: 'bundle', bundle: testSpendBundle('restored-funding') },
     });
     const { controller } = setup(jest.fn(), { beginWalletOffer, beginWalletOfferCancellation });
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
@@ -301,7 +338,7 @@ describe('durable wallet operation record', () => {
           reason: 'created-before-reload',
         },
       ]);
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       for (let i = 0; i < 20 && beginWalletOfferCancellation.mock.calls.length === 0; i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
@@ -377,7 +414,7 @@ describe('durable wallet operation record', () => {
       .fn()
       .mockResolvedValue({ status: 'rejected', detail: 'wallet refused cancellation' });
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     try {
       walletOperationRuntime.restore([
         {
@@ -388,7 +425,7 @@ describe('durable wallet operation record', () => {
           reason: 'wallet-outcome-finalized',
         },
       ]);
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
 
       await expect(controller.quiesceForTerminalFinalization()).rejects.toMatchObject({
         code: 'WALLET_OFFER_CLEANUP_PENDING',
@@ -404,7 +441,7 @@ describe('durable wallet operation record', () => {
 
   it('keeps terminal teardown blocked when cancellation API is missing', async () => {
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation: undefined });
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     try {
       walletOperationRuntime.restore([
         {
@@ -415,7 +452,7 @@ describe('durable wallet operation record', () => {
           reason: 'funding-rejected',
         },
       ]);
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       await expect(controller.quiesceForTerminalFinalization()).rejects.toMatchObject({
         code: 'WALLET_OFFER_CLEANUP_PENDING',
       });
@@ -431,15 +468,19 @@ describe('durable wallet operation record', () => {
       fingerprint: '999',
       chainId: 'chia:testnet11',
     };
-    const { controller } = setup(jest.fn(), {
-      getWalletOfferProvider: () => ({
-        capability: 'best-effort' as const,
-        scope: wrongScope,
-        beginCreation: jest.fn(),
-        cancel: wrongCancel,
-      }),
-    });
-    const lease = new ControlledLease();
+    const { controller } = setup(
+      jest.fn(),
+      {
+        getWalletOfferProvider: () => ({
+          capability: 'best-effort' as const,
+          scope: wrongScope,
+          beginCreation: jest.fn(),
+          cancel: wrongCancel,
+        }),
+      },
+      owner.providerScope,
+    );
+    const lease = new ControlledRuntime();
     try {
       walletOperationRuntime.restore([
         {
@@ -450,7 +491,7 @@ describe('durable wallet operation record', () => {
           reason: 'created-before-wallet-switch',
         },
       ]);
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
 
       await expect(controller.quiesceForTerminalFinalization()).rejects.toMatchObject({
         code: 'WALLET_OFFER_CLEANUP_PENDING',

@@ -9,10 +9,11 @@ use crate::session_phases::effects::{
 
 use super::replay::ReplayEpoch;
 use super::{
-    bounded_text, plan_pending_submission, submission_variant_fingerprint, DurableFeeIntent,
-    FeeResolution, FeeSourceDisposition, FinalizedSubmission, SubmissionBroadcastVariant,
-    SubmissionChainTerminality, SubmissionDrainFailure, SubmissionDrainResult, SubmissionFeeSource,
-    SubmittedTx, SUBMISSION_DRAIN_MESSAGE_LIMIT, SUBMISSION_DRAIN_RUST_CONTEXT_LIMIT,
+    bounded_text, plan_pending_submission, submission_intent_fingerprint,
+    submission_variant_fingerprint, DurableFeeIntent, FeeResolution, FeeSourceDisposition,
+    FinalizedSubmission, SubmissionBroadcastVariant, SubmissionChainTerminality,
+    SubmissionDrainFailure, SubmissionDrainResult, SubmissionFeeSource, SubmittedTx,
+    SUBMISSION_DRAIN_MESSAGE_LIMIT, SUBMISSION_DRAIN_RUST_CONTEXT_LIMIT,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +37,7 @@ pub enum SubmissionDeliveryGoal {
     FeeUpgrade,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubmissionAttemptRelationship {
     Initial,
     Exact,
@@ -60,7 +61,6 @@ pub(super) struct PendingDelivery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct DeliveryAttempt {
     pub(super) token: u64,
-    pub(super) submission_id: u64,
     pub(super) goal: SubmissionDeliveryGoal,
     pub(super) drained_variant_fingerprint: Hash,
     pub(super) finalized_variant_fingerprint: Option<Hash>,
@@ -119,11 +119,51 @@ impl TryFrom<UncheckedSubmissionBook> for SubmissionBook {
 
 impl SubmissionBook {
     fn validate_restored_state(&self) -> Result<(), String> {
+        let mut ids = HashSet::new();
+        let mut intent_fingerprints = Vec::new();
         let mut tokens = HashSet::new();
         for submission in &self.submitted {
+            if !ids.insert(submission.id) {
+                return Err(format!(
+                    "submission id {} is retained more than once",
+                    submission.id
+                ));
+            }
+            if submission.id >= self.next_submission_id {
+                return Err(format!(
+                    "submission id {} is outside issued range 0..{}",
+                    submission.id, self.next_submission_id
+                ));
+            }
             submission.validate().map_err(|error| {
                 format!("invalid retained submission {}: {error:?}", submission.id)
             })?;
+            let canonical_intent = submission_intent_fingerprint(
+                &TransactionSubmission::already_paid(
+                    submission.base_bundle.clone(),
+                    submission.expiry,
+                ),
+                submission.canonical_fee_intent(),
+            )
+            .map_err(|error| {
+                format!(
+                    "submission {} canonical intent cannot be derived: {error:?}",
+                    submission.id
+                )
+            })?;
+            if submission.intent_fingerprint != canonical_intent {
+                return Err(format!(
+                    "submission {} retains a noncanonical intent fingerprint",
+                    submission.id
+                ));
+            }
+            if intent_fingerprints.contains(&canonical_intent) {
+                return Err(format!(
+                    "submission {} duplicates a retained canonical intent fingerprint",
+                    submission.id
+                ));
+            }
+            intent_fingerprints.push(canonical_intent);
             if submission.active_attempt.is_some() && submission.completed_attempt.is_some() {
                 return Err(format!(
                     "submission {} retains both active and completed delivery attempts",
@@ -137,12 +177,6 @@ impl SubmissionBook {
             .into_iter()
             .flatten()
             {
-                if attempt.submission_id != submission.id {
-                    return Err(format!(
-                        "delivery attempt {} belongs to submission {}, not containing submission {}",
-                        attempt.token, attempt.submission_id, submission.id
-                    ));
-                }
                 if attempt.token >= self.next_delivery_attempt_token {
                     return Err(format!(
                         "delivery attempt token {} is outside issued range 0..{}",
@@ -172,6 +206,82 @@ impl SubmissionBook {
                         attempt.token, submission.id
                     ));
                 }
+            }
+            if submission.chain_terminality == SubmissionChainTerminality::Landed
+                && submission.active_attempt.is_some()
+            {
+                return Err(format!(
+                    "landed submission {} retains an active delivery attempt",
+                    submission.id
+                ));
+            }
+        }
+
+        let mut pending_ids = HashSet::new();
+        for pending in &self.pending_deliveries {
+            match pending.trigger {
+                DeliveryTrigger::Protocol
+                    if pending.goal != SubmissionDeliveryGoal::EnsureBroadcast =>
+                {
+                    return Err("protocol delivery cannot request a fee-upgrade goal".to_string());
+                }
+                DeliveryTrigger::Rollback
+                    if pending.goal != SubmissionDeliveryGoal::EnsureBroadcast =>
+                {
+                    return Err("rollback delivery cannot request a fee-upgrade goal".to_string());
+                }
+                _ => {}
+            }
+            let Some(id) = pending.intent.id else {
+                continue;
+            };
+            if !pending_ids.insert(id) {
+                return Err(format!("submission {id} has duplicate pending deliveries"));
+            }
+            let submission = self
+                .submitted
+                .iter()
+                .find(|submission| submission.id == id)
+                .ok_or_else(|| format!("pending delivery references absent submission {id}"))?;
+            let fingerprint = submission_intent_fingerprint(
+                &pending.intent.submission,
+                &pending.intent.fee_intent,
+            )
+            .map_err(|error| {
+                format!("pending delivery for submission {id} cannot be fingerprinted: {error:?}")
+            })?;
+            if fingerprint != submission.intent_fingerprint
+                || pending.intent.fee_intent != *submission.canonical_fee_intent()
+            {
+                return Err(format!(
+                    "pending delivery for submission {id} does not match retained intent"
+                ));
+            }
+        }
+
+        let mut retired_ids = HashSet::new();
+        for id in &self.retired_submission_ids {
+            if !retired_ids.insert(*id) {
+                return Err(format!("submission {id} is retired more than once"));
+            }
+            if *id >= self.next_submission_id {
+                return Err(format!(
+                    "retired submission id {id} is outside issued range 0..{}",
+                    self.next_submission_id
+                ));
+            }
+        }
+        self.replay_epoch.validate(&ids)?;
+        for id in self.replay_epoch.replayed_ids() {
+            let submission = self
+                .submitted
+                .iter()
+                .find(|submission| submission.id == *id)
+                .expect("validated replay reference");
+            if submission.chain_terminality != SubmissionChainTerminality::Active {
+                return Err(format!(
+                    "replay epoch references non-active submission {id}"
+                ));
             }
         }
         Ok(())
@@ -291,18 +401,6 @@ impl SubmissionBook {
             .iter_mut()
             .find(|tx| tx.id == drained.id)
             .expect("drained submission must remain retained");
-        let predecessor = submission
-            .active_attempt
-            .as_ref()
-            .or(submission.completed_attempt.as_ref());
-        if let Some(predecessor) = predecessor {
-            if predecessor.submission_id != submission.id {
-                return Err(Error::StrErr(format!(
-                    "delivery attempt {} belongs to submission {}, not successor submission {}",
-                    predecessor.token, predecessor.submission_id, submission.id
-                )));
-            }
-        }
         let token = self.next_delivery_attempt_token;
         let next_token = token.checked_add(1).ok_or_else(|| {
             Error::StrErr("delivery attempt token source is exhausted".to_string())
@@ -313,8 +411,8 @@ impl SubmissionBook {
             .or_else(|| submission.completed_attempt.take());
         self.next_delivery_attempt_token = next_token;
         drained.attempt_token = token;
-        drained.predecessor_attempt_token = predecessor.as_ref().map(|attempt| attempt.token);
-        drained.relationship = match &predecessor {
+        let predecessor_token = predecessor.as_ref().map(|attempt| attempt.token);
+        let relationship = match &predecessor {
             None => SubmissionAttemptRelationship::Initial,
             Some(_) if goal == SubmissionDeliveryGoal::FeeUpgrade => {
                 SubmissionAttemptRelationship::NewerFeeBearing
@@ -326,9 +424,10 @@ impl SubmissionBook {
             }
             Some(_) => SubmissionAttemptRelationship::Other,
         };
+        drained.predecessor_attempt_token = predecessor_token;
+        drained.relationship = relationship;
         submission.active_attempt = Some(DeliveryAttempt {
             token,
-            submission_id: submission.id,
             goal,
             drained_variant_fingerprint,
             finalized_variant_fingerprint: None,
@@ -385,7 +484,8 @@ impl SubmissionBook {
             .filter(|tx| {
                 tx.chain_terminality == SubmissionChainTerminality::Active
                     || tx
-                        .expected_output_coins
+                        .expected_output_coins()
+                        .expect("validated retained base bundle must remain parseable")
                         .iter()
                         .any(&mut retain_landed_output)
             })
@@ -405,19 +505,21 @@ impl SubmissionBook {
                 "unknown delivery attempt token {attempt_token}"
             )));
         };
-        self.submitted
+        let submission = self
+            .submitted
             .iter()
-            .find(|tx| tx.id == attempt.submission_id)
-            .map(|tx| {
-                Some(
-                    tx.unresolved_fee_intent()
-                        .cloned()
-                        .unwrap_or(SubmissionFeeIntent::AlreadyPaid),
-                )
+            .find(|tx| {
+                tx.active_attempt
+                    .as_ref()
+                    .is_some_and(|candidate| candidate.token == attempt.token)
             })
-            .ok_or_else(|| {
-                Error::StrErr(format!("unknown submission id {}", attempt.submission_id))
-            })
+            .expect("active attempt must belong to a retained submission");
+        Ok(Some(
+            submission
+                .unresolved_fee_intent()
+                .cloned()
+                .unwrap_or(SubmissionFeeIntent::AlreadyPaid),
+        ))
     }
 
     pub(super) fn finalize_attempt(
@@ -440,7 +542,16 @@ impl SubmissionBook {
                 "delivery attempt token {attempt_token} was already finalized"
             )));
         }
-        let id = attempt.submission_id;
+        let id = self
+            .submitted
+            .iter()
+            .find(|tx| {
+                tx.active_attempt
+                    .as_ref()
+                    .is_some_and(|candidate| candidate.token == attempt_token)
+            })
+            .expect("active attempt must belong to a retained submission")
+            .id;
         let goal = attempt.goal;
         let submission = self
             .submitted
@@ -574,6 +685,7 @@ impl SubmissionBook {
         }
         let variant_fingerprint = attempt.resolved_variant_fingerprint();
         let submission = &mut self.submitted[submission_index];
+        let submission_id = submission.id;
         if submission.current_variant_fingerprint()? != *variant_fingerprint {
             return Err(Error::StrErr(format!(
                 "delivery attempt token {attempt_token} refers to a stale broadcast variant"
@@ -582,7 +694,7 @@ impl SubmissionBook {
         submission.wallet_acknowledged_variant = Some(variant_fingerprint.clone());
         submission.completed_attempt = submission.active_attempt.take();
         self.pending_deliveries
-            .retain(|pending| pending.intent.id != Some(attempt.submission_id));
+            .retain(|pending| pending.intent.id != Some(submission_id));
         Ok(SubmissionAttemptStatus::Applied)
     }
 
@@ -611,12 +723,11 @@ impl SubmissionBook {
         &mut self,
         attempt_token: u64,
     ) -> Result<SubmissionAttemptStatus, Error> {
-        if let Some(submission) = self.submitted.iter_mut().find(|tx| {
+        if self.submitted.iter().any(|tx| {
             tx.completed_attempt
                 .as_ref()
                 .is_some_and(|attempt| attempt.token == attempt_token)
         }) {
-            submission.completed_attempt = None;
             return Ok(SubmissionAttemptStatus::Applied);
         }
         if attempt_token < self.next_delivery_attempt_token {
@@ -651,30 +762,27 @@ impl SubmissionBook {
         self.replay_epoch.begin(height)
     }
 
-    pub(super) fn reset_replay_at(&mut self, height: u64) {
-        self.replay_epoch.reset_at(height);
-    }
-
     pub(super) fn reconcile_chain_terminality(
         &mut self,
         observed_created: &HashSet<CoinString>,
         reorg: bool,
-        spend_reversal: bool,
         causally_rolled_back_ids: &HashSet<u64>,
     ) {
         let mut newly_landed_ids = Vec::new();
         for tx in &mut self.submitted {
-            if tx.expected_output_coins.is_empty() {
+            let expected_output_coins = tx
+                .expected_output_coins()
+                .expect("validated retained base bundle must remain parseable");
+            if expected_output_coins.is_empty() {
                 continue;
             }
-            let output_observed = tx
-                .expected_output_coins
+            let output_observed = expected_output_coins
                 .iter()
                 .any(|coin| observed_created.contains(coin));
             if output_observed {
                 tx.chain_terminality = SubmissionChainTerminality::Landed;
                 newly_landed_ids.push(tx.id);
-            } else if reorg || spend_reversal || causally_rolled_back_ids.contains(&tx.id) {
+            } else if reorg || causally_rolled_back_ids.contains(&tx.id) {
                 tx.chain_terminality = SubmissionChainTerminality::Active;
             }
         }
@@ -683,7 +791,9 @@ impl SubmissionBook {
             self.pending_deliveries
                 .retain(|pending| pending.intent.id != Some(id));
             if let Some(submission) = self.submitted.iter_mut().find(|tx| tx.id == id) {
-                submission.completed_attempt = submission.active_attempt.take();
+                if submission.active_attempt.is_some() {
+                    submission.completed_attempt = submission.active_attempt.take();
+                }
             }
             self.emit_retirement(id);
         }
@@ -697,15 +807,16 @@ impl SubmissionBook {
         self.submitted
             .iter()
             .filter(|tx| {
+                let expected_output_coins = tx
+                    .expected_output_coins()
+                    .expect("validated retained base bundle must remain parseable");
                 tx.chain_terminality == SubmissionChainTerminality::Landed
-                    && tx
-                        .expected_output_coins
+                    && expected_output_coins
                         .iter()
                         .any(|coin| explicitly_absent.contains(coin))
                     && tx
-                        .spent_coin_ids
-                        .iter()
-                        .any(|coin_id| explicitly_live_input_ids.contains(coin_id))
+                        .spent_coin_ids()
+                        .any(|coin_id| explicitly_live_input_ids.contains(&coin_id))
             })
             .map(|tx| tx.id)
             .collect()
@@ -719,9 +830,11 @@ impl SubmissionBook {
         self.submitted
             .iter()
             .filter(|tx| ids.contains(&tx.id))
-            .flat_map(|tx| tx.expected_output_coins.iter())
-            .filter(|coin| explicitly_absent.contains(*coin))
-            .cloned()
+            .flat_map(|tx| {
+                tx.expected_output_coins()
+                    .expect("validated retained base bundle must remain parseable")
+            })
+            .filter(|coin| explicitly_absent.contains(coin))
             .collect()
     }
 
@@ -875,8 +988,18 @@ impl SubmissionBook {
     }
 
     #[cfg(test)]
+    pub(super) fn test_set_next_submission_id(&mut self, id: u64) {
+        self.next_submission_id = id;
+    }
+
+    #[cfg(test)]
     pub(super) fn test_next_attempt_token(&self) -> u64 {
         self.next_delivery_attempt_token
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_set_next_attempt_token(&mut self, token: u64) {
+        self.next_delivery_attempt_token = token;
     }
 
     #[cfg(test)]
@@ -895,5 +1018,15 @@ impl SubmissionBook {
             .iter()
             .filter(|tx| tx.completed_attempt.is_some())
             .count()
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_retired_mut(&mut self) -> &mut Vec<u64> {
+        &mut self.retired_submission_ids
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_replay_epoch_mut(&mut self) -> &mut ReplayEpoch {
+        &mut self.replay_epoch
     }
 }

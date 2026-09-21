@@ -126,27 +126,32 @@ describe('hard reset', () => {
       },
       { kind: 'funding', operationId: 'pre-reset-operation' },
     );
-    saveLiveFields(sampleSession);
+    saveLiveFields({
+      ...sampleSession,
+      walletProviderScope: { provider: 'simulator', identity: 'installation' },
+    });
     await storageRepository.flushSessionSave();
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-rejection', {
-        kind: 'inbound-receipt',
-        peerId: 'pre-reset-peer',
-        sessionId: 'ab'.repeat(16),
-        messageNumber: 1n,
-        remoteNumber: 1n,
-        unackedMessages: [],
-        createdAt: Date.now(),
-      }),
-    );
+    await storageRepository.writeRejection({
+      kind: 'inbound-receipt',
+      peerId: 'pre-reset-peer',
+      sessionId: 'ab'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 1n,
+      unackedMessages: [],
+      createdAt: Date.now(),
+    });
 
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
     storageRepository.holdNextMutationForTests(held);
-    const staleCheckpoint = storageRepository.persist(
-      storageRepository.checkpoint(liveSave(sampleSession), [
+    const staleCheckpoint = storageRepository.saveSessionAndWalletOperations(
+      liveSave({
+        ...sampleSession,
+        walletProviderScope: { provider: 'simulator', identity: 'installation' },
+      }),
+      [
         {
           tradeId: 'stale-reset-ledger',
           owner: {
@@ -158,7 +163,7 @@ describe('hard reset', () => {
           stage: 'reserved',
           reason: 'held-before-hard-reset',
         },
-      ]),
+      ],
     );
 
     const reset = storageRepository.hardReset();

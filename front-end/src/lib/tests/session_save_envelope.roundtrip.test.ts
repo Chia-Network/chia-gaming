@@ -28,6 +28,7 @@ describe('durable game envelope round trips', () => {
     if (save.phase !== 'live') throw new Error('test fixture did not produce a live save');
     await storageRepository.saveSession({
       scope: 'live',
+      walletProviderScope: save.walletProviderScope,
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
@@ -85,13 +86,13 @@ describe('durable game envelope round trips', () => {
   ] as const)(
     'round-trips a legitimate %s phase through IndexedDB and canonical decode',
     async (_label, save, kind) => {
-      await storageRepository.persist(storageRepository.mutateRecords('write-session', save));
+      await storageRepository.saveSessionAndWalletOperations(save, []);
       const restored = await readSessionRecord();
       expect(restored).not.toBeNull();
       const decoded = decodeSessionSaveEnvelope(restored!);
       expect(decoded.phase).toBe(kind);
       expect(decoded.save).toEqual(save);
-      await storageRepository.persist(storageRepository.mutateRecords('delete-session'));
+      await storageRepository.clearSession();
     },
   );
 

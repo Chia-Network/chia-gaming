@@ -44,13 +44,8 @@ import {
   encodePeerAppMessage,
   generateSessionId,
 } from '../services/PeerSession';
-import { rejectionTombstoneKey } from '../lib/session/indexedDb';
 import { storageRepository } from '../lib/session/storageRepository';
-import {
-  bindOutboundRejectionPeer,
-  retainRejectionPeer,
-  transferOutboundRejection,
-} from '../services/RejectionTransport';
+import { useSessionRejection } from '../hooks/useSessionRejection';
 import { subscribeLog } from '../services/log';
 import { reactPropSafeValue } from '../lib/reactPropSafe';
 import { type LiveSessionSave, type SessionSave } from '../lib/session/saveEnvelope';
@@ -705,10 +700,26 @@ const Shell = () => {
   const inboundSessionRejectHandlerRef = useRef<(sessionId: string, remoteNumber: bigint) => void>(
     () => {},
   );
-  const rejectionPeersRef = useRef(new Map<string, PeerSession>());
   const peerMessageHandlerRef = useRef<import('../services/PeerSession').MessageHandler | null>(
     null,
   );
+  const {
+    bindInboundProposal,
+    bindPrimaryRetirement: bindOutboundRejectRetirement,
+    installInboundReceipt: installInboundRejectionReceipt,
+    persistInboundReceipt,
+    rejectUnknownProposal,
+    replay: replayRejectionPeers,
+    restore: restoreRejections,
+    routeFrame: routeRejectionFrame,
+    sendSessionReject,
+  } = useSessionRejection({
+    getPrimaryPeer: () => peerSessionRef.current,
+    releasePrimaryPeer: (peer) => {
+      if (peerSessionRef.current === peer) peerSessionRef.current = null;
+      setPeerLiveness(null);
+    },
+  });
 
   const bindPeerMessageHandler = useCallback((ps: PeerSession | null) => {
     if (!ps || !sessionController) return;
@@ -786,14 +797,7 @@ const Shell = () => {
         if (!peer || peer.sessionId !== sessionId) {
           throw new Error('Cannot persist inbound rejection receipt without its selected peer');
         }
-        return storageRepository.clearSessionWithInboundRejectionReceipt({
-          peerId: peer.peerId,
-          sessionId,
-          messageNumber: peer.reliableState.messageNumber,
-          remoteNumber,
-          unackedMessages: [],
-          createdAt: Date.now(),
-        });
+        return persistInboundReceipt(peer, remoteNumber);
       },
       onSessionReject: (sessionId, remoteNumber) =>
         inboundSessionRejectHandlerRef.current(sessionId, remoteNumber),
@@ -803,7 +807,7 @@ const Shell = () => {
       hostLog: (m) => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).hostLog(m),
       close: () => (peerSessionRef.current ?? IDLE_PEER_CONNECTION).close(),
     }),
-    [],
+    [persistInboundReceipt],
   );
 
   const [walletConnected, setWalletConnected] = useState(false);
@@ -1235,13 +1239,11 @@ const Shell = () => {
     const humanHistory = historyRef.current;
     const diagnosticLog = storageRepository.loadState().history.diagnosticLog;
     const wasmNotificationHistory = storageRepository.loadState().history.wasmNotificationHistory;
-    storageRepository.clearSession();
-    if (humanHistory.length > 0 || diagnosticLog || wasmNotificationHistory) {
-      storageRepository.saveSession({
-        scope: 'common',
-        history: { humanHistory, diagnosticLog, wasmNotificationHistory },
-      });
-    }
+    return storageRepository.clearGameSessionPreservingHistory({
+      humanHistory,
+      diagnosticLog,
+      wasmNotificationHistory,
+    });
   }, []);
 
   const syncPeerLiveness = useCallback(() => {
@@ -1317,144 +1319,6 @@ const Shell = () => {
     const peer = peerSessionRef.current;
     if (!peer || peer.isDestroyed()) return;
     peer.reliableTransport.replayUnacked();
-  }, []);
-
-  const replayRejectionPeers = useCallback((peerId?: string) => {
-    for (const peer of rejectionPeersRef.current.values()) {
-      if (peer.isDestroyed() || (peerId !== undefined && peer.peerId !== peerId)) continue;
-      if (peer.reliableTransport.hasPendingDurability()) {
-        void peer.reliableTransport.flushPending().catch((error) => {
-          console.error('[Shell] failed to persist reliable session rejection', error);
-        });
-      } else {
-        peer.reliableTransport.replayUnacked();
-      }
-    }
-  }, []);
-
-  const installInboundRejectionReceipt = useCallback(
-    (
-      conn: HubConnection,
-      peerId: string,
-      sessionId: string,
-      messageNumber: bigint,
-      remoteNumber: bigint,
-    ) => {
-      retainRejectionPeer(
-        rejectionPeersRef.current,
-        new PeerSession(peerId, sessionId, conn, DEFAULT_SESSION_RECEIVE_POLICY, {
-          messageNumber,
-          remoteNumber,
-          unackedMessages: [],
-          disposition: 'inbound-reject',
-        }),
-      );
-    },
-    [],
-  );
-
-  const bindRejectionTombstone = useCallback(
-    (peer: PeerSession, tombstone: { createdAt: number }) =>
-      bindOutboundRejectionPeer(peer, rejectionPeersRef.current, tombstone.createdAt),
-    [],
-  );
-
-  const rejectUnknownProposal = useCallback(
-    (conn: HubConnection, fromId: string, sessionId: string, payload: Uint8Array): void => {
-      const peers = rejectionPeersRef.current;
-      const key = rejectionTombstoneKey(fromId, sessionId);
-      if (peers.has(key)) {
-        peers.get(key)!.deliverRawPeerMessage(fromId, payload);
-        return;
-      }
-      const peer = new PeerSession(fromId, sessionId, conn, DEFAULT_SESSION_RECEIVE_POLICY, {
-        messageNumber: 1n,
-        remoteNumber: 0n,
-        unackedMessages: [],
-        disposition: 'outbound-reject',
-      });
-      retainRejectionPeer(rejectionPeersRef.current, peer);
-      bindRejectionTombstone(peer, {
-        createdAt: Date.now(),
-      });
-      peer.deliverRawPeerMessage(fromId, payload);
-      void peer.reliableTransport.flushPending().catch((error) => {
-        console.error('[Shell] failed to persist reliable unknown-session rejection', error);
-      });
-    },
-    [bindRejectionTombstone],
-  );
-
-  const bindOutboundRejectRetirement = useCallback((peer: PeerSession) => {
-    peer.reliableTransport.attachConsumer({
-      isReady: () => true,
-      deliver: () => {},
-      persist: async () => {
-        await storageRepository.patchPreHandshakeTransport({
-          ...peer.reliableState,
-          terminalHandoff: null,
-        });
-        await storageRepository.flushSessionSave();
-      },
-      acknowledged: () => {
-        if (peer.reliableState.unackedMessages.length > 0) return;
-        void peer.reliableTransport
-          .flushPending()
-          .then(() => storageRepository.clearSession())
-          .then(() => {
-            if (peerSessionRef.current !== peer) return;
-            peer.destroy();
-            peerSessionRef.current = null;
-            setPeerLiveness(null);
-          })
-          .catch((error) => {
-            console.error('[Shell] failed to retire reliable session rejection', error);
-          });
-      },
-      keepalive: () => {},
-      failure: (reason) => {
-        console.error('[Shell] invalid rejection acknowledgement', reason);
-      },
-    });
-  }, []);
-
-  const sendSessionReject = useCallback((peerId: string): Promise<void> => {
-    const peer = peerSessionRef.current;
-    if (!peer || peer.peerId !== peerId || peer.isDestroyed()) return Promise.resolve();
-    const saved = storageRepository.loadState();
-    const ownsResumableSave =
-      (saved.phase === 'live' || saved.phase === 'pre-handshake') &&
-      saved.pairing.peerId === peer.peerId &&
-      saved.pairing.gameSessionId === peer.sessionId;
-    let replacedResumableSave = false;
-    return transferOutboundRejection(
-      peer,
-      rejectionPeersRef.current,
-      () => {
-        if (peerSessionRef.current === peer) peerSessionRef.current = null;
-        setPeerLiveness(null);
-      },
-      ownsResumableSave
-        ? {
-            write: async (tombstone) => {
-              if (!replacedResumableSave) {
-                await storageRepository.clearSessionWithRejectionTombstone(tombstone);
-                replacedResumableSave = true;
-                return;
-              }
-              await storageRepository.persist(
-                storageRepository.mutateRecords('write-rejection', tombstone),
-              );
-            },
-            delete: (peerId, sessionId) =>
-              storageRepository.persist(
-                storageRepository.mutateRecords('delete-rejection', peerId, sessionId),
-              ),
-          }
-        : undefined,
-    ).catch((error) => {
-      console.error('[Shell] failed to persist reliable session rejection', error);
-    });
   }, []);
 
   const resetPeerRelayState = useCallback((options?: { persistSession?: boolean }) => {
@@ -1671,6 +1535,11 @@ const Shell = () => {
               },
               clearSessionPreservingHistory,
               checkpoint: {
+                walletProviderScope: (() => {
+                  const scope = activeBlockchainRef.current?.getWalletOfferProvider()?.scope;
+                  if (!scope) throw new Error('Wallet provider scope is unavailable');
+                  return scope;
+                })(),
                 pairing: {
                   token,
                   peerId: request.peerId,
@@ -2086,16 +1955,8 @@ const Shell = () => {
             setActiveTab('game');
           },
           onPeerMessage: (fromId: string, fromAlias: string, payload: Uint8Array) => {
+            if (routeRejectionFrame(fromId, payload)) return;
             const frame = decodeReliableFrame(payload);
-            if (frame) {
-              const rejectionPeer = rejectionPeersRef.current.get(
-                rejectionTombstoneKey(fromId, frame.sessionId),
-              );
-              if (rejectionPeer) {
-                rejectionPeer.deliverRawPeerMessage(fromId, payload);
-                return;
-              }
-            }
             const selected = peerSessionRef.current;
             if (selected && selected.peerId === fromId) {
               selected.deliverRawPeerMessage(fromId, payload);
@@ -2132,45 +1993,16 @@ const Shell = () => {
             const provisional = new PeerSession(fromId, frame.sessionId, conn);
             provisional.reliableState.disposition = 'proposal-received';
             peerSessionRef.current = provisional;
-            let negotiationRejected = false;
-            let negotiationRejectPersisted = false;
-            const isSessionReject = (body: Uint8Array): boolean => {
-              try {
-                return decodePeerAppMessage(body)?.type === 'session_reject';
-              } catch {
-                return false;
-              }
-            };
-            provisional.reliableTransport.attachConsumer({
-              isReady: () => !negotiationRejected,
-              canDeliver: (msgno, body) => msgno === 1n || isSessionReject(body),
-              canTerminateAt: (_msgno, body) => isSessionReject(body),
-              deliver: (msgno, body) => {
-                const semantic = decodePeerAppMessage(body);
-                if (semantic?.type === 'session_reject') {
-                  negotiationRejected = true;
-                  provisional.reliableState.disposition = 'inbound-reject';
-                  provisional.reliableTransport.discardOutbound();
-                  return;
-                }
-                if (msgno !== 1n || semantic?.type !== 'session_proposal') {
-                  throw new Error('initial reliable message is not a session proposal');
-                }
-              },
-              persist: async () => {
-                if (negotiationRejected) {
-                  await storageRepository.clearSessionWithInboundRejectionReceipt({
-                    peerId: fromId,
-                    sessionId: frame.sessionId,
-                    messageNumber: provisional.reliableState.messageNumber,
-                    remoteNumber: provisional.reliableState.remoteNumber,
-                    unackedMessages: [],
-                    createdAt: Date.now(),
-                  });
-                  negotiationRejectPersisted = true;
-                  return;
-                }
+            bindInboundProposal({
+              conn,
+              peer: provisional,
+              persistProposal: async () => {
                 await storageRepository.replaceSession({
+                  walletProviderScope: (() => {
+                    const scope = activeBlockchainRef.current?.getWalletOfferProvider()?.scope;
+                    if (!scope) throw new Error('Wallet provider scope is unavailable');
+                    return scope;
+                  })(),
                   pairing: {
                     token: pairingToken,
                     peerId: fromId,
@@ -2206,22 +2038,13 @@ const Shell = () => {
                 setActiveTab('game');
                 syncPeerLiveness();
               },
-              committed: () => {
-                if (!negotiationRejectPersisted) return;
-                negotiationRejectPersisted = false;
-                installInboundRejectionReceipt(
-                  conn,
-                  fromId,
-                  frame.sessionId,
-                  provisional.reliableState.messageNumber,
-                  provisional.reliableState.remoteNumber,
-                );
+              rejected: () => {
                 log(`[Shell] session_reject from=${fromId}: durably cancelled`);
                 markPeerDead();
                 if (abortAcceptIfActive({ error: true })) return;
                 cancelAttemptedSession({ error: true });
               },
-              failure: (reason) => {
+              failed: (reason) => {
                 console.error('[Shell] invalid provisional reliable session', reason);
                 if (peerSessionRef.current === provisional) {
                   provisional.destroy();
@@ -2472,47 +2295,9 @@ const Shell = () => {
         return;
       }
       hubConnRef.current = conn;
-      void storageRepository
-        .readRejections()
-        .then((tombstones) => {
-          if (hubConnRef.current !== conn) return;
-          for (const tombstone of tombstones) {
-            if (tombstone.kind === 'outbound-reject' && tombstone.unackedMessages.length === 0) {
-              void storageRepository.persist(
-                storageRepository.mutateRecords(
-                  'delete-rejection',
-                  tombstone.peerId,
-                  tombstone.sessionId,
-                ),
-              );
-              continue;
-            }
-            const peer = new PeerSession(
-              tombstone.peerId,
-              tombstone.sessionId,
-              conn,
-              DEFAULT_SESSION_RECEIVE_POLICY,
-              {
-                messageNumber: tombstone.messageNumber,
-                remoteNumber: tombstone.remoteNumber,
-                unackedMessages: tombstone.unackedMessages,
-                disposition:
-                  tombstone.kind === 'outbound-reject' ? 'outbound-reject' : 'inbound-reject',
-              },
-            );
-            rejectionPeersRef.current.set(
-              rejectionTombstoneKey(tombstone.peerId, tombstone.sessionId),
-              peer,
-            );
-            if (tombstone.kind === 'outbound-reject') {
-              bindRejectionTombstone(peer, { createdAt: tombstone.createdAt });
-              peer.reliableTransport.replayUnacked();
-            }
-          }
-        })
-        .catch((error) => {
-          console.error('[Shell] failed to restore rejection tombstones', error);
-        });
+      void restoreRejections(conn).catch((error) => {
+        console.error('[Shell] failed to restore rejection tombstones', error);
+      });
     },
     [
       syncPeerLiveness,
@@ -2527,13 +2312,14 @@ const Shell = () => {
       presenceBusy,
       setPendingAdvisoryState,
       setPendingProposalState,
+      bindInboundProposal,
       bindPeerMessageHandler,
-      installInboundRejectionReceipt,
-      bindRejectionTombstone,
       bindOutboundRejectRetirement,
       rejectUnknownProposal,
       replayPeerUnacked,
       replayRejectionPeers,
+      restoreRejections,
+      routeRejectionFrame,
       setActiveTab,
       setHubAlert,
       setSessionError,

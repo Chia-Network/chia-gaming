@@ -31,11 +31,11 @@ No connectivity decision affects the blockchain itself.
 
 ### Wallet
 
-The wallet is a **replaceable interface** to the blockchain. WalletConnect and
-the simulator are different lenses into the same chain. Connecting a different
-wallet (or reconnecting the same one) gives you the same view of the same
-coins. Switching between simulator and real chain is a user error the app
-doesn't guard against — coins simply won't exist.
+The wallet is an interface to the blockchain. A durable session binds one
+canonical provider/account scope; reconnecting that scope resumes work, while a
+different connected scope is shown as a mismatch and performs no wallet RPC.
+This prevents funding and cleanup obligations from being applied to another
+account. Chain and peer protocols remain independent of wallet connectivity.
 
 The wallet is **orthogonal** to the other three axes. It can be connected or
 disconnected in any combination with hub, peer, and session state. No
@@ -440,20 +440,19 @@ The hub does not create a session. It can only advise and relay:
   strings), while
   `WalletOperationRuntime` decodes/hydrates its independent record. Small
   preferences and the resumable-session boot marker remain in localStorage.
-  The app-owned formats are session envelope v32, Rust/WASM cradle schema 20,
-  IndexedDB schema 4, and wallet-operation record v7. The app database's durable
+  The app-owned formats are session envelope v33, Rust/WASM cradle schema 21,
+  IndexedDB schema 4, and wallet-operation record v8. The app database's durable
   owner, write, and reset epochs are checked atomically with every mutation;
-  localStorage lease/reset state is only an early UI hint. Ordinary I/O failure
-  leaves the owner degraded; typed authority loss retires it and suppresses
-  pending effects. Its mutation result is `committed`, ordinary `failed`, or
-  `authority-lost`; ordinary failure preserves dirty in-memory authority and
-  does not gate effects. Diagnostic history
+  localStorage ownership/reset state is only an early UI hint. Callers use
+  semantic repository operations rather than raw storage mutations. Ordinary
+  I/O failure leaves the owner dirty and does not gate effects; typed authority
+  loss retires it and suppresses pending effects. Diagnostic history
   retains newest complete entries within 256 KiB total UTF-8 text, with the
   2,000-entry cap secondary.
 - **Resume on reload**: `BootRecoveryBoundary` owns pending wipe, visible local
   loading, read-only inspection, atomic claim-and-read, subsequent strict
   hydration, takeover, malformed evidence, reset retry, and authority loss. A
-  malformed strict-v7 wallet
+  malformed strict-v8 wallet
   operation record is
   preserved and displayed there. Local dashboard/game presentation does not
   wait for hub or wallet reconnection; only dependent controls remain gated.
@@ -482,7 +481,7 @@ The hub does not create a session. It can only advise and relay:
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
   chain id than the existing WASM cradle. (`Shell.tsx`)
 
-- **Wallet operation recovery**: `WalletOperationRuntime` strict-v7 entries bind installation,
+- **Wallet operation recovery**: `WalletOperationRuntime` strict-v8 entries bind installation,
   peer-session, and provider/account scope. Pending creation embeds the
   canonical request, exact recovery ID, and active/cancel-on-create disposition;
   pending cancellation preserves its exact IDs. Retired creation is cancelled
@@ -495,7 +494,7 @@ The hub does not create a session. It can only advise and relay:
   `signatureRequest` ID is known persists `best-effort-uncertain`; after that ID
   is known, paired begin/reconcile operations recover the exact creation or
   cancellation. A replacement begin that first yields the ID transitions into
-  exact reconciliation. Wallet record v7 carries typed
+  exact reconciliation. Wallet record v8 carries typed
   `orphanRisk: 'pre-id-response-lost'` provenance through that transition and
   any eventual created trade, preserving the unidentified-request warning.
   Deployed WalletConnect cannot reconcile a lost successful create response end

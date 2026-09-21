@@ -67,6 +67,7 @@ import {
   requireUniqueIds,
   parseStringArray,
 } from './persistencePrimitives';
+import { decodeWalletProviderScope } from './walletOperationCodec';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
@@ -75,9 +76,20 @@ export const SESSION_SAVE_ENVELOPE_VERSION = SESSION_SAVE_VERSION;
 const COMMON_ENVELOPE_FIELDS = ['schema', 'version', 'phase', 'identity', 'preferences', 'history'];
 const ENVELOPE_FIELDS = {
   preferences: new Set(COMMON_ENVELOPE_FIELDS),
-  'pre-handshake': new Set([...COMMON_ENVELOPE_FIELDS, 'pairing', 'transport']),
-  live: new Set([...COMMON_ENVELOPE_FIELDS, 'pairing', 'live', 'presentation']),
-  terminal: new Set([...COMMON_ENVELOPE_FIELDS, 'terminal', 'presentation']),
+  'pre-handshake': new Set([
+    ...COMMON_ENVELOPE_FIELDS,
+    'walletProviderScope',
+    'pairing',
+    'transport',
+  ]),
+  live: new Set([
+    ...COMMON_ENVELOPE_FIELDS,
+    'walletProviderScope',
+    'pairing',
+    'live',
+    'presentation',
+  ]),
+  terminal: new Set([...COMMON_ENVELOPE_FIELDS, 'walletProviderScope', 'terminal', 'presentation']),
 } as const;
 const IDENTITY_FIELDS = new Set(['playerId', 'sessionId', 'myHubPlayerId']);
 const PREFERENCE_FIELDS = new Set([
@@ -633,6 +645,10 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       typedEnvelope = {
         ...common,
         phase: 'pre-handshake',
+        walletProviderScope: decodeWalletProviderScope(
+          envelope.walletProviderScope,
+          'walletProviderScope',
+        ),
         pairing: parsePairing(envelope.pairing),
         transport: parseTransport(envelope.transport),
       } satisfies PreHandshakeSessionSave;
@@ -649,6 +665,10 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       typedEnvelope = {
         ...common,
         phase: 'live',
+        walletProviderScope: decodeWalletProviderScope(
+          envelope.walletProviderScope,
+          'walletProviderScope',
+        ),
         pairing: parsePairing(envelope.pairing),
         live: parseLive(envelope.live),
         presentation,
@@ -672,6 +692,10 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       typedEnvelope = {
         ...common,
         phase: 'terminal',
+        walletProviderScope: decodeWalletProviderScope(
+          envelope.walletProviderScope,
+          'walletProviderScope',
+        ),
         terminal: {
           iStarted: requireBoolean(terminal.iStarted, 'terminal.iStarted'),
           coinsOfInterest: coins.map((coin, index) => {

@@ -3,6 +3,7 @@ import { decodeCanonicalFundingRequest } from './fundingRequest';
 import {
   MAX_WALLET_OPERATION_REASON_LENGTH,
   walletOperationKey,
+  walletProviderScopeKey,
   type WalletOperationEntry,
   type WalletOperationEntryBase,
   type WalletOperationPurpose,
@@ -10,7 +11,7 @@ import {
 } from './walletOperationStore';
 
 export const WALLET_OPERATION_RECORD_SCHEMA = 'chia-gaming-wallet-operations' as const;
-export const WALLET_OPERATION_RECORD_VERSION = 7n;
+export const WALLET_OPERATION_RECORD_VERSION = 8n;
 
 export interface WalletOperationRecord {
   schema: typeof WALLET_OPERATION_RECORD_SCHEMA;
@@ -34,7 +35,7 @@ function requireBoundedString(
   return value;
 }
 
-function decodeProviderScope(value: unknown, label: string): WalletProviderScope {
+export function decodeWalletProviderScope(value: unknown, label: string): WalletProviderScope {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error(`Garbled save: invalid ${label}`);
   }
@@ -199,7 +200,10 @@ export function decodeWalletOperationEntry(
         `${label}.owner.peerSessionId`,
         MAX_IDENTITY_LENGTH,
       ),
-      providerScope: decodeProviderScope(ownerFields.providerScope, `${label}.owner.providerScope`),
+      providerScope: decodeWalletProviderScope(
+        ownerFields.providerScope,
+        `${label}.owner.providerScope`,
+      ),
     },
     purpose: {
       kind: purposeFields.kind as WalletOperationPurpose['kind'],
@@ -292,8 +296,16 @@ export function decodeWalletOperationEntries(
     string,
     { creating: boolean; cleanupCount: number; otherTradeCount: number }
   >();
+  const sessionScopes = new Map<string, string>();
   return value.map((entry, index) => {
     const decoded = decodeWalletOperationEntry(entry, `${label}[${index}]`);
+    const sessionKey = `${decoded.owner.installationPlayerId.length}:${decoded.owner.installationPlayerId}${decoded.owner.peerSessionId.length}:${decoded.owner.peerSessionId}`;
+    const scopeKey = walletProviderScopeKey(decoded.owner.providerScope);
+    const existingScope = sessionScopes.get(sessionKey);
+    if (existingScope !== undefined && existingScope !== scopeKey) {
+      throw new Error(`Garbled save: wallet operations for one session span provider scopes`);
+    }
+    sessionScopes.set(sessionKey, scopeKey);
     const entryId =
       decoded.stage === 'creating'
         ? `recovery:${decoded.recoveryId}`

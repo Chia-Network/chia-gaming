@@ -3,12 +3,10 @@ import {
   walletOperationOwnerKey,
   walletProviderScopeKey,
   type WalletOperationEntry,
-  type WalletOperationHandoffEvidence,
   type WalletOperationOwner,
   type WalletOperationPurpose,
   type WalletOperationRecoveryEntry,
   type WalletOperationRecoveryRequest,
-  type WalletOperationTradeState,
 } from './walletOperationStore';
 import type { WalletOfferProvider, WalletOfferRequest } from '../../types/ChiaGaming';
 import type { CanonicalFundingRequest } from './fundingRequest';
@@ -73,6 +71,7 @@ export function flightBelongsToOwner(
     return false;
   }
   const ownerKey = walletOperationOwnerKey(owner);
+  if (key === `transfer:${ownerKey}`) return true;
   if (key.startsWith('cancel:')) {
     const tradeId = key.slice(7);
     return entries.some(
@@ -103,82 +102,6 @@ export function canLosePreIdResponse(provider: WalletOfferProvider): boolean {
   return provider.capability === 'best-effort' || provider.capability === 'recoverable-after-begin';
 }
 
-export function creationRecoveryHandoff(
-  owner: WalletOperationOwner,
-  purpose: WalletOperationPurpose,
-  request: WalletOperationRecoveryRequest,
-  recoveryId: string,
-  recovery: WalletOperationEntry | null,
-  retired: boolean,
-): WalletOperationHandoffEvidence {
-  return {
-    kind: 'creation-recovery',
-    owner,
-    purpose,
-    request,
-    recoveryId,
-    disposition:
-      (recovery && 'disposition' in recovery && recovery.disposition === 'cancel-on-create') ||
-      retired
-        ? 'cancel-on-create'
-        : 'active',
-    reason: 'wallet-offer-creation-recovery-identified-after-authority-change',
-    ...(recovery?.orphanRisk ? { orphanRisk: recovery.orphanRisk } : {}),
-  };
-}
-
-export function creationUncertaintyHandoff(
-  owner: WalletOperationOwner,
-  purpose: WalletOperationPurpose,
-  request: WalletOperationRecoveryRequest,
-  recovery: WalletOperationEntry | null,
-  retired: boolean,
-  readinessEpoch: bigint,
-  reason: string,
-): WalletOperationHandoffEvidence {
-  return {
-    kind: 'creation-uncertainty',
-    owner,
-    purpose,
-    request,
-    disposition:
-      (recovery && 'disposition' in recovery && recovery.disposition === 'cancel-on-create') ||
-      retired
-        ? 'cancel-on-create'
-        : 'active',
-    readinessEpoch,
-    reason,
-    orphanRisk: 'pre-id-response-lost',
-  };
-}
-
-export function cancellationRecoveryHandoff(
-  entry: WalletOperationTradeState,
-  recoveryId: string,
-): WalletOperationHandoffEvidence {
-  return {
-    kind: 'cancellation-recovery',
-    owner: entry.owner,
-    purpose: entry.purpose,
-    tradeId: entry.tradeId,
-    recoveryId,
-  };
-}
-
-export function cancellationUncertaintyHandoff(
-  entry: WalletOperationTradeState,
-  readinessEpoch: bigint,
-): WalletOperationHandoffEvidence {
-  return {
-    kind: 'cancellation-uncertainty',
-    owner: entry.owner,
-    purpose: entry.purpose,
-    tradeId: entry.tradeId,
-    readinessEpoch,
-    reason: 'cloud-cancellation-response-lost-orphan-risk',
-  };
-}
-
 export function entryForOperation(
   entries: Iterable<WalletOperationEntry>,
   owner: WalletOperationOwner,
@@ -203,31 +126,6 @@ export function entriesForOwner(
 ): WalletOperationEntry[] {
   const key = walletOperationOwnerKey(owner);
   return entries.filter((entry) => walletOperationOwnerKey(entry.owner) === key);
-}
-
-export function ownerForSession(
-  entries: readonly WalletOperationEntry[],
-  installationPlayerId: string,
-  peerSessionId: string,
-): WalletOperationOwner | null {
-  const owners = entries
-    .filter(
-      (entry) =>
-        entry.owner.installationPlayerId === installationPlayerId &&
-        entry.owner.peerSessionId === peerSessionId,
-    )
-    .map((entry) => entry.owner);
-  const unique = owners.filter(
-    (owner, index) =>
-      owners.findIndex(
-        (candidate) => walletOperationOwnerKey(candidate) === walletOperationOwnerKey(owner),
-      ) === index,
-  );
-  if (unique.length > 1) {
-    throw new Error('Wallet operations for one session span multiple provider scopes');
-  }
-  const owner = unique[0];
-  return owner ? structuredClone(owner) : null;
 }
 
 export function recoveryReadiness(

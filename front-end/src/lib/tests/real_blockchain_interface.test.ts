@@ -672,7 +672,7 @@ describe('RealBlockchainInterface', () => {
         coinIds: [fundingCoinId],
       }),
     ).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'trade-id',
     });
@@ -822,7 +822,7 @@ describe('RealBlockchainInterface', () => {
         offer: { '1': -100n },
       }),
     ).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'receiver-trade-id',
     });
@@ -871,7 +871,7 @@ describe('RealBlockchainInterface', () => {
         offer: { '1': -100n },
       }),
     ).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'selected-trade',
     });
@@ -896,7 +896,7 @@ describe('RealBlockchainInterface', () => {
         { kind: 'fee', uniqueId: 'test', fee: 10n, concurrentSpendCoinId: bindCoinId },
       ),
     ).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'fee-trade',
     });
@@ -971,7 +971,7 @@ describe('RealBlockchainInterface', () => {
         },
       ),
     ).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'fee-parent-trade',
     });

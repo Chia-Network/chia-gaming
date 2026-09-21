@@ -74,8 +74,9 @@ describe('WalletOperationStore reducer', () => {
     expect(replacement).toMatchObject({ generation: 1n, lastAttemptEpoch: 5n });
 
     const retired = transition(replacement, {
-      kind: 'retire',
+      kind: 'cleanup-required',
       reason: 'terminal-session',
+      preserveReplay: true,
     });
     expect(retired).toMatchObject({ disposition: 'cancel-on-create' });
 
@@ -118,7 +119,7 @@ describe('WalletOperationStore reducer', () => {
     ).toBeNull();
   });
 
-  it('accepts only strict current v7 records', () => {
+  it('accepts only strict current v8 records', () => {
     const entry = transition(null, {
       kind: 'creation-uncertain',
       request,
@@ -130,7 +131,7 @@ describe('WalletOperationStore reducer', () => {
     const encoded = encodeWalletOperationRecord(entry ? [entry] : []);
     expect(encoded.version).toBe(WALLET_OPERATION_RECORD_VERSION);
     expect(decodeWalletOperationRecord(encoded)).toEqual(encoded);
-    expect(() => decodeWalletOperationRecord({ ...encoded, version: 6n })).toThrow(/version/);
+    expect(() => decodeWalletOperationRecord({ ...encoded, version: 7n })).toThrow(/version/);
     expect(() =>
       decodeWalletOperationRecord({
         ...encoded,
@@ -164,7 +165,7 @@ describe('WalletOperationStore reducer', () => {
     ).toThrow(/contradictory/);
   });
 
-  it('rejects conflicting handed-off evidence without changing hydrated state', () => {
+  it('rejects multiple provider scopes for one session', () => {
     const creating: WalletOperationEntry = {
       owner,
       purpose,
@@ -174,36 +175,25 @@ describe('WalletOperationStore reducer', () => {
       request,
       reason: 'winner',
     };
+    const otherScope = {
+      ...owner,
+      providerScope: {
+        provider: 'walletconnect' as const,
+        fingerprint: '456',
+        chainId: 'chia:testnet11',
+      },
+    };
     expect(() =>
-      reduceWalletOperation([creating], {
-        kind: 'handoff-evidence',
-        evidence: {
-          kind: 'creation-recovery',
-          owner,
+      encodeWalletOperationRecord([
+        creating,
+        {
+          owner: otherScope,
           purpose,
-          disposition: 'active',
-          recoveryId: 'loser-recovery',
-          request: {
-            kind: 'funding',
-            canonical: { ...request.canonical, amount: '11' },
-          },
-          reason: 'loser',
+          stage: 'cancel-required',
+          tradeId: 'other-scope-trade',
+          reason: 'conflict',
         },
-      }),
-    ).toThrow(/conflicts with hydrated recovery/);
-    expect(creating).toMatchObject({ recoveryId: 'winner-recovery', request });
-
-    expect(() =>
-      reduceWalletOperation([], {
-        kind: 'handoff-evidence',
-        evidence: {
-          kind: 'cancellation-recovery',
-          owner,
-          purpose,
-          tradeId: 'missing-trade',
-          recoveryId: 'loser-cancel',
-        },
-      }),
-    ).toThrow(/no matching hydrated trade/);
+      ]),
+    ).toThrow(/span provider scopes/);
   });
 });

@@ -8,10 +8,8 @@ import type {
 import { log } from '../../services/log';
 import { spend_bundle_to_clvm } from '../../util';
 import { jsonStringify } from '../../util/jsonSafe';
-import type { SessionRuntimeLease } from './sessionRuntimeLease';
 import { SessionRuntimeRetiredError } from './sessionMachineRuntime';
 import type { WalletOperationOwner, WalletOperationPurpose } from './walletOperationStore';
-import { walletOperation, type WalletOperationHandle } from './walletOperationHandle';
 import type { WalletOperationRuntime } from './walletOperationRuntime';
 
 type SubmissionOutcome = 'acknowledged' | 'unavailable' | 'rejected' | 'local-failure' | 'skipped';
@@ -25,7 +23,6 @@ type PumpEntryState =
   | { readonly kind: 'idle' }
   | {
       readonly kind: 'scheduled';
-      readonly lease: SessionRuntimeLease;
       readonly release: Promise<void>;
     }
   | { readonly kind: 'launched'; readonly attemptToken: string }
@@ -46,6 +43,8 @@ export interface SubmissionPumpPorts {
   getInstallationPlayerId(): string;
   isRetired(): boolean;
   isPublishingDisabled(): boolean;
+  runCommittedMutation<T>(work: () => T): Promise<T>;
+  schedulePersistenceGatedEffect(key: string, launcher: () => Promise<void>): Promise<void>;
   requestCommit(): void;
   scheduleWalletCleanup(): void;
   reportWarning(message: string): void;
@@ -57,7 +56,6 @@ export interface SubmissionPumpPorts {
 export class SubmissionPump {
   private readonly entries = new Map<string, PumpEntry>();
   private tail: Promise<void> = Promise.resolve();
-  private lease: SessionRuntimeLease | null = null;
   private providerIsReady = false;
   private retired = false;
 
@@ -118,11 +116,6 @@ export class SubmissionPump {
     if (ready) this.scheduleAll();
   }
 
-  attachLease(lease: SessionRuntimeLease | null): void {
-    this.lease = lease;
-    this.scheduleAll();
-  }
-
   retire(id: string): void {
     const entry = this.entries.get(id);
     if (entry) {
@@ -135,9 +128,9 @@ export class SubmissionPump {
       owner,
       { kind: 'fee', operationId: id },
       'fee-submission-retired',
-      Boolean(this.lease),
+      !this.ports.isRetired(),
     );
-    if (this.lease) this.ports.scheduleWalletCleanup();
+    if (!this.ports.isRetired()) this.ports.scheduleWalletCleanup();
   }
 
   retireAll(): void {
@@ -145,7 +138,6 @@ export class SubmissionPump {
     this.retired = true;
     for (const entry of this.entries.values()) entry.retired = true;
     this.entries.clear();
-    this.lease = null;
     this.tail = Promise.resolve();
   }
 
@@ -180,64 +172,47 @@ export class SubmissionPump {
 
   private schedule(id: string): void {
     const entry = this.entries.get(id);
-    const lease = this.lease;
     if (
       !entry ||
-      !lease ||
       !this.canLaunch(entry) ||
       entry.state.kind === 'launched' ||
       entry.state.kind === 'settling' ||
-      (entry.state.kind === 'scheduled' && entry.state.lease === lease)
+      entry.state.kind === 'scheduled'
     ) {
       return;
     }
 
-    let release!: Promise<void>;
-    try {
-      release = lease.releaseAfterPersistence(`submission:${id}`, () => {
-        const current = this.entries.get(id);
-        if (
-          current !== entry ||
-          current.state.kind !== 'scheduled' ||
-          current.state.lease !== lease
-        ) {
-          return Promise.resolve();
-        }
-        const launched = entry.submission;
-        entry.state = { kind: 'launched', attemptToken: launched.attempt_token };
-        const run = this.tail.then(() => this.execute(launched));
-        const completed = run.then(
-          (completion) => this.complete(entry, launched, completion),
-          (error) => this.complete(entry, launched, undefined, error),
-        );
-        this.tail = completed.catch(() => {});
+    const release = this.ports.schedulePersistenceGatedEffect(`submission:${id}`, () => {
+      const current = this.entries.get(id);
+      if (current !== entry || current.state.kind !== 'scheduled') {
         return Promise.resolve();
-      });
-    } catch (error) {
-      this.handleReleaseFailure(entry, lease, error);
-      return;
-    }
-    entry.state = { kind: 'scheduled', lease, release };
-    void release.catch((error) => this.handleReleaseFailure(entry, lease, error));
+      }
+      const launched = entry.submission;
+      entry.state = { kind: 'launched', attemptToken: launched.attempt_token };
+      const run = this.tail.then(() => this.execute(launched));
+      const completed = run.then(
+        (completion) => this.complete(entry, launched, completion),
+        (error) => this.complete(entry, launched, undefined, error),
+      );
+      this.tail = completed.catch(() => {});
+      return Promise.resolve();
+    });
+    entry.state = { kind: 'scheduled', release };
+    void release.catch((error) => this.handleReleaseFailure(entry, error));
   }
 
-  private handleReleaseFailure(entry: PumpEntry, lease: SessionRuntimeLease, error: unknown): void {
+  private handleReleaseFailure(entry: PumpEntry, error: unknown): void {
     const current = this.entries.get(entry.submission.id);
-    if (current !== entry || entry.state.kind !== 'scheduled' || entry.state.lease !== lease)
-      return;
-    if (error instanceof SessionRuntimeRetiredError) {
-      entry.state = { kind: 'idle' };
-      if (this.lease !== lease) this.schedule(entry.submission.id);
-      return;
-    }
+    if (current !== entry || entry.state.kind !== 'scheduled') return;
+    if (error instanceof SessionRuntimeRetiredError && this.ports.isRetired()) return;
     const failed = entry.submission;
-    const completion = this.mutate(() => this.ports.reportLocalFailure(failed, error)).finally(
-      async () => {
+    const completion = this.ports
+      .runCommittedMutation(() => this.ports.reportLocalFailure(failed, error))
+      .finally(async () => {
         if (this.entries.get(failed.id) !== entry) return;
         if (!entry.retired) await this.relinquish(failed);
         this.finishAttempt(entry, failed, false);
-      },
-    );
+      });
     entry.state = { kind: 'settling', completion };
     this.tail = completion.catch((recordingError) => this.reportSettlementError(recordingError));
   }
@@ -256,7 +231,7 @@ export class SubmissionPump {
       !(this.ports.isRetired() && error instanceof SessionRuntimeRetiredError)
     ) {
       try {
-        await this.mutate(() => this.ports.reportLocalFailure(launched, error));
+        await this.ports.runCommittedMutation(() => this.ports.reportLocalFailure(launched, error));
       } catch (recordingError) {
         if (!this.ports.isRetired()) this.ports.reportError(recordingError);
       }
@@ -298,7 +273,8 @@ export class SubmissionPump {
       return this.completion('unavailable', true);
     }
 
-    let reservation: WalletOperationHandle | undefined;
+    let feeOwner: WalletOperationOwner | undefined;
+    let feePurpose: WalletOperationPurpose | undefined;
     let feeOfferCreated = false;
     let feeSourceJson: string | undefined;
     let finalizedDisposition: FinalizedSubmission['fee_source_disposition'] | undefined;
@@ -315,24 +291,36 @@ export class SubmissionPump {
             reason: 'wallet fee provider is unavailable',
           });
         } else {
-          reservation = walletOperation(
-            this.getWalletOperations(),
-            owner,
-            this.feePurpose(submission),
-          );
-          const feeSource = await reservation.createFee({
+          feeOwner = owner;
+          feePurpose = this.feePurpose(submission);
+          const request = {
             kind: 'fee',
             uniqueId: this.ports.getInstallationPlayerId(),
             fee: BigInt(submission.fee_request.amount),
             concurrentSpendCoinId: submission.fee_request.target,
-          });
-          if (feeSource.kind === 'created') {
+          } as const;
+          if (!/^[0-9a-f]{64}$/.test(request.concurrentSpendCoinId)) {
+            throw new Error('Fee target coin id must be lowercase 64-hex');
+          }
+          const feeSource = await this.getWalletOperations().createOffer(
+            owner,
+            feePurpose,
+            request,
+            request,
+            () => this.isInactive(submission),
+          );
+          if (feeSource.kind === 'created-reserved') {
             if (feeSource.warning) this.ports.reportWarning(feeSource.warning);
             feeOfferCreated = true;
             if (this.isInactive(submission)) {
-              reservation.settle('cancel-required', 'fee-submission-retired');
+              this.getWalletOperations().settleOperation(
+                feeOwner,
+                feePurpose,
+                'cancel-required',
+                'fee-submission-retired',
+              );
               if (!this.ports.isRetired()) {
-                await this.mutate(() => {
+                await this.ports.runCommittedMutation(() => {
                   this.ports.scheduleWalletCleanup();
                   this.ports.requestCommit();
                 });
@@ -343,16 +331,24 @@ export class SubmissionPump {
               feeSource.material.kind === 'offer'
                 ? jsonStringify({ kind: 'offer', offer: feeSource.material.offer })
                 : jsonStringify({ kind: 'bundle', bundle: feeSource.material.bundle });
-          } else {
+          } else if (feeSource.kind === 'failure' || feeSource.kind === 'unavailable') {
             feeSourceJson = jsonStringify({ kind: 'failure', reason: feeSource.reason });
+          } else {
+            throw new Error('Reserving fee provider returned ephemeral wallet material');
           }
         }
       }
 
-      const execution = await this.mutate(() => {
+      const execution = await this.ports.runCommittedMutation(() => {
         if (this.isInactive(submission)) {
-          if (feeOfferCreated && reservation) {
-            reservation.settle('cancel-required', 'fee-submission-retired', true);
+          if (feeOfferCreated && feeOwner && feePurpose) {
+            this.getWalletOperations().settleOperation(
+              feeOwner,
+              feePurpose,
+              'cancel-required',
+              'fee-submission-retired',
+              true,
+            );
             this.ports.scheduleWalletCleanup();
           }
           this.ports.requestCommit();
@@ -362,8 +358,14 @@ export class SubmissionPump {
         if (!cradle) throw new Error('WASM cradle became unavailable before finalization');
         const result = cradle.finalize_submission_attempt(submission.attempt_token, feeSourceJson);
         if ('status' in result && result.status === 'stale') {
-          if (feeOfferCreated && reservation) {
-            reservation.settle('cancel-required', 'fee-submission-superseded', true);
+          if (feeOfferCreated && feeOwner && feePurpose) {
+            this.getWalletOperations().settleOperation(
+              feeOwner,
+              feePurpose,
+              'cancel-required',
+              'fee-submission-superseded',
+              true,
+            );
             this.ports.scheduleWalletCleanup();
           }
           this.ports.requestCommit();
@@ -371,11 +373,23 @@ export class SubmissionPump {
         }
         const finalized = result as FinalizedSubmission;
         finalizedDisposition = finalized.fee_source_disposition;
-        if (feeOfferCreated && reservation) {
+        if (feeOfferCreated && feeOwner && feePurpose) {
           if (finalized.fee_source_disposition === 'attached') {
-            reservation.settle('retained-for-replay', 'fee-source-attached', true);
+            this.getWalletOperations().settleOperation(
+              feeOwner,
+              feePurpose,
+              'retained-for-replay',
+              'fee-source-attached',
+              true,
+            );
           } else {
-            reservation.settle('cancel-required', 'fee-source-unused-at-finalization', true);
+            this.getWalletOperations().settleOperation(
+              feeOwner,
+              feePurpose,
+              'cancel-required',
+              'fee-source-unused-at-finalization',
+              true,
+            );
             this.ports.scheduleWalletCleanup();
           }
         }
@@ -383,7 +397,7 @@ export class SubmissionPump {
         if (!finalized.should_broadcast) {
           return { finalized, broadcast: Promise.resolve() };
         }
-        const broadcast = this.release(
+        const broadcast = this.ports.schedulePersistenceGatedEffect(
           `broadcast:${submission.id}:${finalized.variant_fingerprint}`,
           async () => {
             if (this.isInactive(submission)) return;
@@ -403,7 +417,7 @@ export class SubmissionPump {
               'submitTransaction',
               appliedFee || undefined,
             );
-            await this.mutate(() => {
+            await this.ports.runCommittedMutation(() => {
               if (this.isInactive(submission)) return;
               const activeCradle = this.ports.getCradle();
               if (!activeCradle) {
@@ -425,7 +439,7 @@ export class SubmissionPump {
 
       if (!execution.finalized) return this.completion('skipped', false);
       if (!execution.finalized.should_broadcast) {
-        await this.mutate(() => {
+        await this.ports.runCommittedMutation(() => {
           if (!this.isInactive(submission)) {
             this.ports.getCradle()?.acknowledge_submission_attempt(submission.attempt_token);
             this.ports.requestCommit();
@@ -441,14 +455,20 @@ export class SubmissionPump {
       return this.completion(outcome.status, outcome.status === 'unavailable');
     } catch (error) {
       if (this.isInactive(submission)) return this.completion('skipped', false);
-      if (feeOfferCreated && reservation && finalizedDisposition !== 'attached') {
-        await this.mutate(() => {
-          reservation!.settle('cancel-required', 'fee-finalization-rejected', true);
+      if (feeOfferCreated && feeOwner && feePurpose && finalizedDisposition !== 'attached') {
+        await this.ports.runCommittedMutation(() => {
+          this.getWalletOperations().settleOperation(
+            feeOwner!,
+            feePurpose!,
+            'cancel-required',
+            'fee-finalization-rejected',
+            true,
+          );
           this.ports.scheduleWalletCleanup();
           this.ports.requestCommit();
         });
       }
-      await this.mutate(() => this.ports.reportLocalFailure(submission, error));
+      await this.ports.runCommittedMutation(() => this.ports.reportLocalFailure(submission, error));
       return this.completion('local-failure', true);
     }
   }
@@ -466,7 +486,7 @@ export class SubmissionPump {
   }
 
   private async relinquish(submission: TransactionSubmission): Promise<void> {
-    await this.mutate(() => {
+    await this.ports.runCommittedMutation(() => {
       const cradle = this.ports.getCradle();
       if (!cradle) {
         if (this.ports.isRetired()) return;
@@ -475,7 +495,7 @@ export class SubmissionPump {
       cradle.relinquish_submission_attempt(submission.attempt_token);
       this.ports.requestCommit();
     });
-    await this.release(
+    await this.ports.schedulePersistenceGatedEffect(
       `submission-relinquishment:${submission.id}:${submission.attempt_token}`,
       async () => {},
     );
@@ -484,60 +504,6 @@ export class SubmissionPump {
   private queueRelinquishment(submission: TransactionSubmission): void {
     const completion = this.tail.then(() => this.relinquish(submission));
     this.tail = completion.catch((error) => this.reportSettlementError(error));
-  }
-
-  private async mutate<T>(work: () => T): Promise<T> {
-    let lease = this.lease;
-    if (!lease) {
-      if (this.retired || this.ports.isRetired()) throw new SessionRuntimeRetiredError();
-      throw new Error('Submission mutations require an authoritative runtime lease');
-    }
-    for (;;) {
-      try {
-        return await lease.enqueueResult(work);
-      } catch (error) {
-        if (
-          !(error instanceof SessionRuntimeRetiredError) ||
-          this.retired ||
-          this.ports.isRetired()
-        ) {
-          throw error;
-        }
-        const replacement = this.lease;
-        if (!replacement || replacement === lease) throw error;
-        lease = replacement;
-      }
-    }
-  }
-
-  private async release(key: string, launcher: () => Promise<void>): Promise<void> {
-    let lease = this.lease;
-    if (!lease) {
-      if (this.retired || this.ports.isRetired()) throw new SessionRuntimeRetiredError();
-      throw new Error('Submission effects require an authoritative runtime lease');
-    }
-    for (;;) {
-      let started = false;
-      try {
-        await lease.releaseAfterPersistence(key, () => {
-          started = true;
-          return launcher();
-        });
-        return;
-      } catch (error) {
-        if (
-          started ||
-          !(error instanceof SessionRuntimeRetiredError) ||
-          this.retired ||
-          this.ports.isRetired()
-        ) {
-          throw error;
-        }
-        const replacement = this.lease;
-        if (!replacement || replacement === lease) throw error;
-        lease = replacement;
-      }
-    }
   }
 
   private reportSettlementError(error: unknown): void {

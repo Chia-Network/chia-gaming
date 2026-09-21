@@ -59,6 +59,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
   return {
     live: {
       scope: 'live',
+      walletProviderScope: dependencies.controller.getWalletProviderScope(),
       pairing: {
         token: wasm.pairingToken,
         peerId: currentPairing?.peerId,

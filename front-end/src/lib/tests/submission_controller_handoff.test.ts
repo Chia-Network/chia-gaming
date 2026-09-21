@@ -2,7 +2,7 @@ import { createSessionModel } from '../session/model';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import { canonicalizeFundingRequest } from '../session/fundingRequest';
 import { wasmResult } from './message_protocol.harness';
-import { ControlledLease, setup, submission } from './submission_handoff.harness';
+import { commitRuntime, ControlledRuntime, setup, submission } from './runtime_capability.harness';
 
 describe('submission controller handoff and quiescence', () => {
   it('keeps terminal quiescence blocked on the delivery entry and queue job', async () => {
@@ -14,9 +14,9 @@ describe('submission controller handoff and quiescence', () => {
         }),
     );
     const { controller, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, runtime);
       submit(submission('slow-wallet'));
       let quiesced = false;
       const quiescence = controller.quiesceForTerminalFinalization().then(() => {
@@ -26,7 +26,7 @@ describe('submission controller handoff and quiescence', () => {
       expect(spend).not.toHaveBeenCalled();
       expect(quiesced).toBe(false);
 
-      const launch = lease.launch('submission:slow-wallet');
+      const launch = runtime.launch('submission:slow-wallet');
       for (let i = 0; i < 10 && spend.mock.calls.length === 0; i += 1) {
         await Promise.resolve();
       }
@@ -44,19 +44,19 @@ describe('submission controller handoff and quiescence', () => {
     }
   });
 
-  it('revalidates quiescence when the active lease changes during snapshot', async () => {
+  it('revalidates quiescence when the committed runtime changes during snapshot', async () => {
     const { controller } = setup(jest.fn());
     const firstModel = createSessionModel({ myRunningBalance: 1n });
     const replacementModel = createSessionModel({ myRunningBalance: 2n });
     const replacementSnapshot = jest.fn(() => replacementModel);
-    const replacement = new ControlledLease(undefined, undefined, replacementSnapshot);
+    const replacement = new ControlledRuntime(undefined, undefined, replacementSnapshot);
     const firstSnapshot = jest.fn(() => {
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
       return firstModel;
     });
-    const first = new ControlledLease(undefined, undefined, firstSnapshot);
+    const first = new ControlledRuntime(undefined, undefined, firstSnapshot);
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
 
       const snapshot = await controller.quiesceForTerminalFinalization();
       expect(snapshot).toEqual({ model: replacementModel, coinsOfInterest: [] });
@@ -68,11 +68,11 @@ describe('submission controller handoff and quiescence', () => {
     }
   });
 
-  it('fails terminal quiescence explicitly without an active lease', async () => {
+  it('fails terminal quiescence explicitly without an active runtime', async () => {
     const { controller } = setup(jest.fn());
     try {
       await expect(controller.quiesceForTerminalFinalization()).rejects.toThrow(
-        'terminal finalization requires an active runtime lease',
+        'terminal finalization requires an active runtime',
       );
     } finally {
       controller.cleanup();
@@ -81,12 +81,12 @@ describe('submission controller handoff and quiescence', () => {
 
   it('fails terminal quiescence when the authoritative coin query fails', async () => {
     const { controller, cradle } = setup(jest.fn());
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     (cradle.coins_of_interest as jest.Mock).mockImplementation(() => {
       throw new Error('coin query failed');
     });
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, runtime);
       await expect(controller.quiesceForTerminalFinalization()).rejects.toThrow(
         'coin query failed',
       );
@@ -98,7 +98,7 @@ describe('submission controller handoff and quiescence', () => {
   it('settles unlaunched submissions and tracked work synchronously on repeated cleanup', async () => {
     const spend = jest.fn();
     const { controller, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     let finishEffect!: () => void;
     const effect = new Promise<void>((resolve) => {
       finishEffect = resolve;
@@ -108,7 +108,7 @@ describe('submission controller handoff and quiescence', () => {
         trackEffect(effect: Promise<void>): void;
       }
     ).trackEffect(effect);
-    controller.attachTransactionCoordinator(lease);
+    commitRuntime(controller, runtime);
     submit(submission('never-launched'));
 
     controller.cleanup();
@@ -136,10 +136,10 @@ describe('submission controller handoff and quiescence', () => {
         }),
     );
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease();
-    controller.attachTransactionCoordinator(lease);
+    const runtime = new ControlledRuntime();
+    commitRuntime(controller, runtime);
     submit(submission('late-wallet'));
-    const launch = lease.launch('submission:late-wallet');
+    const launch = runtime.launch('submission:late-wallet');
     for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
       await Promise.resolve();
     }
@@ -160,14 +160,14 @@ describe('submission controller handoff and quiescence', () => {
   it('routes a late funding offer through the global ledger after cleanup', async () => {
     walletOperationRuntime.resetForTests();
     let resolveOffer!: (value: {
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }) => void;
     const beginWalletOffer = jest.fn(
       () =>
         new Promise<{
-          kind: 'created';
+          kind: 'created-reserved';
           material: { kind: 'offer'; offer: string };
           tradeId: string;
         }>((resolve) => {
@@ -179,7 +179,7 @@ describe('submission controller handoff and quiescence', () => {
       beginWalletOffer,
       beginWalletOfferCancellation,
     });
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
@@ -187,7 +187,7 @@ describe('submission controller handoff and quiescence', () => {
     });
     controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     controller.flushDeferredWork();
-    controller.attachTransactionCoordinator(lease);
+    commitRuntime(controller, runtime);
     for (let pass = 0; pass < 20 && beginWalletOffer.mock.calls.length === 0; pass += 1) {
       await Promise.resolve();
     }
@@ -195,7 +195,7 @@ describe('submission controller handoff and quiescence', () => {
 
     controller.cleanup();
     resolveOffer({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1late' },
       tradeId: 'trade-late-funding',
     });
@@ -231,7 +231,7 @@ describe('submission controller handoff and quiescence', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'wallet disconnected' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1latefee' },
         tradeId: 'trade-late-fee',
       });
@@ -241,13 +241,13 @@ describe('submission controller handoff and quiescence', () => {
       reconcileWalletOffer,
       beginWalletOfferCancellation,
     });
-    const lease = new ControlledLease();
-    controller.attachTransactionCoordinator(lease);
+    const runtime = new ControlledRuntime();
+    commitRuntime(controller, runtime);
     submit({
       ...submission('late-fee-recovery'),
       fee_request: { target: '22'.repeat(32), amount: '10' },
     });
-    await lease.launch('submission:late-fee-recovery');
+    await runtime.launch('submission:late-fee-recovery');
     for (let pass = 0; pass < 20 && beginWalletOffer.mock.calls.length === 0; pass += 1) {
       await Promise.resolve();
     }

@@ -1,4 +1,8 @@
-import type { ChannelStatusPayload, CoinOfInterestEntry } from '../../types/ChiaGaming';
+import type {
+  ChannelStatusPayload,
+  CoinOfInterestEntry,
+  WalletProviderScope,
+} from '../../types/ChiaGaming';
 import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
@@ -10,7 +14,7 @@ import type {
 } from './types';
 
 export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 32n;
+export const SESSION_SAVE_VERSION = 33n;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
@@ -156,20 +160,24 @@ export interface PreferencesSessionSave extends SessionSaveBase {
   phase: 'preferences';
 }
 
-export interface PreHandshakeSessionSave extends SessionSaveBase {
+interface DurableSessionSaveBase extends SessionSaveBase {
+  walletProviderScope: WalletProviderScope;
+}
+
+export interface PreHandshakeSessionSave extends DurableSessionSaveBase {
   phase: 'pre-handshake';
   pairing: SessionPairingSave;
   transport: SessionTransportSave;
 }
 
-export interface LiveSessionSave extends SessionSaveBase {
+export interface LiveSessionSave extends DurableSessionSaveBase {
   phase: 'live';
   pairing: SessionPairingSave;
   live: SessionLiveSave;
   presentation: SessionPresentationSave;
 }
 
-export interface TerminalSessionSave extends SessionSaveBase {
+export interface TerminalSessionSave extends DurableSessionSaveBase {
   phase: 'terminal';
   terminal: {
     iStarted: boolean;

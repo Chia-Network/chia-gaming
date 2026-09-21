@@ -1,5 +1,6 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
 import { log } from '../../services/log';
+import type { ReliableCommitCoordinator } from '../../services/PeerSession';
 import type { WasmEvent } from '../../types/ChiaGaming';
 import { dispatchWasmNotification } from './gameSessionEvents';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
@@ -17,7 +18,6 @@ import type {
 } from './sessionMachineTypes';
 import type { RegisteredGameType } from './types';
 import type { coinIdHex } from './gameSessionEvents';
-import type { SessionRuntimeLease } from './sessionRuntimeLease';
 import { StorageAuthorityLostError } from './indexedDb';
 import {
   packageFor,
@@ -108,7 +108,7 @@ function createResultDeferred<T>(): ResultDeferred<T> {
   return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
 
-export class SessionMachineRuntime {
+export class SessionMachineRuntime implements ReliableCommitCoordinator {
   private state: SessionMachineState;
   private render: (state: SessionMachineState) => void = () => {};
   private readonly interpreter: SessionMachineInterpreter;
@@ -158,7 +158,6 @@ export class SessionMachineRuntime {
     clearDurabilityWarning: boolean,
   ) => PreparedSessionPersistence | null;
   private readonly onError: (error: unknown) => void;
-  private readonly runtimeLease: SessionRuntimeLease;
   private activated = false;
   private retired = false;
 
@@ -190,15 +189,6 @@ export class SessionMachineRuntime {
       onError: dependencies.onError,
       enrichCoin: dependencies.enrichCoin,
     });
-    this.runtimeLease = {
-      retire: () => this.retire(),
-      requestCommit: () => this.requestCommit(),
-      flush: () => this.flush(),
-      enqueue: (work) => this.enqueueControllerWork(work),
-      enqueueResult: (work) => this.enqueueControllerWorkResult(work),
-      releaseAfterPersistence: (key, effect) => this.releaseAfterPersistence(key, effect),
-      snapshotModel: () => this.snapshotModel(),
-    };
   }
 
   getState(): SessionMachineState {
@@ -212,7 +202,7 @@ export class SessionMachineRuntime {
   activate(): void {
     if (this.activated || this.retired) return;
     this.activated = true;
-    this.controller.commitSessionRuntime(this, this.runtimeLease);
+    this.controller.commitSessionRuntime(this);
     if (this.retired || !this.bindControllerEvents) return;
     const subscription = this.controller.getObservable().subscribe({
       next: (event: WasmEvent) => this.dispatchControllerEvent(event),
@@ -252,9 +242,6 @@ export class SessionMachineRuntime {
     this.controllerEventsUnsubscribe = null;
     this.restoreStatusUnsubscribe?.();
     this.restoreStatusUnsubscribe = null;
-    if (this.activated) {
-      this.controller.detachTransactionCoordinator(this.runtimeLease);
-    }
   }
 
   private dispatchControllerEvent(event: WasmEvent): void {
@@ -470,7 +457,7 @@ export class SessionMachineRuntime {
     this.scheduleCommit(false);
   }
 
-  private enqueueControllerWork(work: () => void): void {
+  enqueue(work: () => void): void {
     if (this.retired) return;
     if (this.committing) {
       this.pendingControllerWork.push({ kind: 'fire-and-forget', run: work });
@@ -479,7 +466,7 @@ export class SessionMachineRuntime {
     this.runTransaction(work);
   }
 
-  private enqueueControllerWorkResult<T>(work: () => T): Promise<T> {
+  enqueueResult<T>(work: () => T): Promise<T> {
     const deferred = createResultDeferred<T>();
     if (this.retired) {
       deferred.reject(new SessionRuntimeRetiredError());
@@ -500,7 +487,7 @@ export class SessionMachineRuntime {
     return deferred.promise;
   }
 
-  private releaseAfterPersistence(key: string, launcher: () => Promise<void>): Promise<void> {
+  releaseAfterPersistence(key: string, launcher: () => Promise<void>): Promise<void> {
     if (this.retired) {
       const deferred = createDeferred();
       deferred.reject(new SessionRuntimeRetiredError());
@@ -535,7 +522,7 @@ export class SessionMachineRuntime {
     if (requestCommit) this.scheduleCommit(false);
   }
 
-  private requestCommit(): void {
+  requestCommit(): void {
     this.scheduleCommit(true);
   }
 
@@ -726,7 +713,7 @@ export class SessionMachineRuntime {
     void this.commitPromise.catch(() => {});
   }
 
-  private async flush(): Promise<void> {
+  async flush(): Promise<void> {
     if (this.retired) return;
     if (this.commitTimer !== null) {
       clearTimeout(this.commitTimer);

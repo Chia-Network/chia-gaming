@@ -1,8 +1,10 @@
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { SessionController } from '../../hooks/SessionController';
 import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
-import type { SessionRuntimeLease } from '../session/sessionRuntimeLease';
-import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
+import {
+  SessionMachineRuntime,
+  SessionRuntimeRetiredError,
+} from '../session/sessionMachineRuntime';
 import { createSessionModel } from '../session/model';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import {
@@ -21,7 +23,7 @@ interface PendingRelease {
   readonly reject: (error: unknown) => void;
 }
 
-class ControlledLease implements SessionRuntimeLease {
+class ControlledRuntime {
   private readonly pending = new Map<string, PendingRelease>();
   private readonly heldMutations: Array<(error: unknown) => void> = [];
   private nextMutationError: unknown;
@@ -98,6 +100,10 @@ class ControlledLease implements SessionRuntimeLease {
 const coin = 'ab'.repeat(72);
 const effectKey = `coin-solution:${coin}`;
 
+function commitRuntime(controller: SessionController, runtime: ControlledRuntime): void {
+  controller.commitSessionRuntime(runtime as unknown as SessionMachineRuntime);
+}
+
 function setup(getPuzzleAndSolution: jest.Mock, pendingRequests: string[] = []) {
   let readinessListener: ((ready: boolean) => void) | null = null;
   const blockchain = new BlockchainPoller(
@@ -144,11 +150,11 @@ describe('coin puzzle/solution delivery', () => {
   it('seeds delivery from the live Rust pending-request snapshot', async () => {
     const getPuzzleAndSolution = jest.fn().mockResolvedValue(['aa', 'bb']);
     const { controller, cradle } = setup(getPuzzleAndSolution, [coin]);
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
-      expect(lease.has(effectKey)).toBe(true);
-      await lease.launch(effectKey);
+      commitRuntime(controller, runtime);
+      expect(runtime.has(effectKey)).toBe(true);
+      await runtime.launch(effectKey);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, 'aa', 'bb');
     } finally {
       controller.cleanup();
@@ -158,15 +164,15 @@ describe('coin puzzle/solution delivery', () => {
   it('deduplicates duplicate events and launches only after persistence release', async () => {
     const getPuzzleAndSolution = jest.fn().mockResolvedValue(['aa', 'bb']);
     const { controller, cradle, request } = setup(getPuzzleAndSolution);
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, runtime);
       request();
       request();
 
-      expect(lease.has(effectKey)).toBe(true);
+      expect(runtime.has(effectKey)).toBe(true);
       expect(getPuzzleAndSolution).not.toHaveBeenCalled();
-      await lease.launch(effectKey);
+      await runtime.launch(effectKey);
 
       expect(getPuzzleAndSolution).toHaveBeenCalledTimes(1);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
@@ -182,18 +188,18 @@ describe('coin puzzle/solution delivery', () => {
       .mockRejectedValueOnce(new Error('provider unavailable'))
       .mockResolvedValueOnce(['aa', 'bb']);
     const { controller, cradle, request, signalReady } = setup(getPuzzleAndSolution);
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, runtime);
       request();
       expectConsoleError(/provider unavailable/);
-      await lease.launch(effectKey);
+      await runtime.launch(effectKey);
       expect(cradle.report_puzzle_and_solution).not.toHaveBeenCalled();
       expect(getPuzzleAndSolution).toHaveBeenCalledTimes(1);
 
       signalReady();
-      expect(lease.has(effectKey)).toBe(true);
-      await lease.launch(effectKey);
+      expect(runtime.has(effectKey)).toBe(true);
+      await runtime.launch(effectKey);
       expect(getPuzzleAndSolution).toHaveBeenCalledTimes(2);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, 'aa', 'bb');
     } finally {
@@ -201,15 +207,15 @@ describe('coin puzzle/solution delivery', () => {
     }
   });
 
-  it('hands an unlaunched request to a replacement lease', async () => {
+  it('hands an unlaunched request to the replacement runtime', async () => {
     const getPuzzleAndSolution = jest.fn().mockResolvedValue(['aa', 'bb']);
     const { controller, cradle, request } = setup(getPuzzleAndSolution);
-    const first = new ControlledLease();
-    const replacement = new ControlledLease();
+    const first = new ControlledRuntime();
+    const replacement = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
       request();
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
       await Promise.resolve();
 
       expect(replacement.has(effectKey)).toBe(true);
@@ -221,23 +227,23 @@ describe('coin puzzle/solution delivery', () => {
     }
   });
 
-  it('replays completion mutation on a replacement lease after RPC completion', async () => {
+  it('replays an unstarted completion mutation on the replacement runtime', async () => {
     let resolveLookup!: (value: string[]) => void;
     const lookup = new Promise<string[]>((resolve) => {
       resolveLookup = resolve;
     });
     const getPuzzleAndSolution = jest.fn(() => lookup);
     const { controller, cradle, request } = setup(getPuzzleAndSolution);
-    const first = new ControlledLease(true);
-    const replacement = new ControlledLease();
+    const first = new ControlledRuntime(true);
+    const replacement = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
       request();
       const launch = first.launch(effectKey);
       resolveLookup(['aa', 'bb']);
       await Promise.resolve();
 
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
       await launch;
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, 'aa', 'bb');
@@ -249,9 +255,9 @@ describe('coin puzzle/solution delivery', () => {
   it('keeps malformed puzzle/solution from a successful wallet response terminal', async () => {
     const getPuzzleAndSolution = jest.fn().mockResolvedValue(['02', '80']);
     const { controller, cradle, request, signalReady } = setup(getPuzzleAndSolution);
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, runtime);
       (cradle.report_puzzle_and_solution as jest.Mock).mockReturnValue(
         wasmResult({
           actionSucceeded: false,
@@ -266,12 +272,12 @@ describe('coin puzzle/solution delivery', () => {
       );
       request();
       expectConsoleError(/puzzle\/solution callback failed/);
-      await lease.launch(effectKey);
+      await runtime.launch(effectKey);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, '02', '80');
       (cradle.snapshot_pending_coin_solution_requests as jest.Mock).mockReturnValue([coin]);
       signalReady();
       controller.reportNewBlock(2n);
-      expect(lease.has(effectKey)).toBe(false);
+      expect(runtime.has(effectKey)).toBe(false);
       expect(getPuzzleAndSolution).toHaveBeenCalledTimes(1);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
       await controller.flushPendingWork();
@@ -283,21 +289,21 @@ describe('coin puzzle/solution delivery', () => {
   it('retries a transient completion mutation failure on readiness', async () => {
     const getPuzzleAndSolution = jest.fn().mockResolvedValue(['aa', 'bb']);
     const { controller, cradle, request, signalReady } = setup(getPuzzleAndSolution);
-    const lease = new ControlledLease();
+    const runtime = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
-      lease.failNextMutation(new Error('transient mutation failure'));
+      commitRuntime(controller, runtime);
+      runtime.failNextMutation(new Error('transient mutation failure'));
       request();
       expectConsoleError(/transient mutation failure/);
-      await lease.launch(effectKey);
+      await runtime.launch(effectKey);
 
       expect(getPuzzleAndSolution).toHaveBeenCalledTimes(1);
       expect(cradle.report_puzzle_and_solution).not.toHaveBeenCalled();
-      expect(lease.has(effectKey)).toBe(false);
+      expect(runtime.has(effectKey)).toBe(false);
 
       signalReady();
-      expect(lease.has(effectKey)).toBe(true);
-      await lease.launch(effectKey);
+      expect(runtime.has(effectKey)).toBe(true);
+      await runtime.launch(effectKey);
       expect(getPuzzleAndSolution).toHaveBeenCalledTimes(2);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, 'aa', 'bb');
@@ -315,10 +321,10 @@ describe('coin puzzle/solution delivery', () => {
         }),
     );
     const { controller, cradle, request } = setup(getPuzzleAndSolution);
-    const lease = new ControlledLease();
-    controller.attachTransactionCoordinator(lease);
+    const runtime = new ControlledRuntime();
+    commitRuntime(controller, runtime);
     request();
-    const launch = lease.launch(effectKey);
+    const launch = runtime.launch(effectKey);
     for (let i = 0; i < 10 && getPuzzleAndSolution.mock.calls.length === 0; i += 1) {
       await Promise.resolve();
     }

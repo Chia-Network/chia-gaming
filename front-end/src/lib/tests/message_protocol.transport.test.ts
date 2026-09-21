@@ -26,6 +26,7 @@ import {
   mockRpc,
   mockWasmConnection,
   setActiveBlob,
+  setTestBlockchain,
   setTestPersistence,
   submissionDrain,
   submitTransaction,
@@ -1042,7 +1043,7 @@ describe('WASM wallet funding requests', () => {
     (cradle as unknown as { start_handshake: jest.Mock }).start_handshake = startHandshake;
     setActiveBlob(blob);
     blob.getFee = () => 10n;
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, selectCoins }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, selectCoins }, 60000));
 
     blob.activateSpend();
 
@@ -1052,13 +1053,13 @@ describe('WASM wallet funding requests', () => {
 
   it('forwards a typed NeedCoinSpend payload to the wallet offer lifecycle', async () => {
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('coin-spend') },
     });
     const blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000);
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     const request: NeedCoinSpendRequest = {
       amount: '100',
       fee: '10',
@@ -1094,13 +1095,13 @@ describe('WASM wallet funding requests', () => {
     const beginWalletOffer = jest.fn().mockImplementation(async () => {
       order.push('funding');
       return {
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'bundle', bundle: testSpendBundle('coin-spend') },
       };
     });
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
     let persistenceAttempts = 0;
     setTestPersistence(blob, async () => {
       persistenceAttempts += 1;
@@ -1132,12 +1133,12 @@ describe('WASM wallet funding requests', () => {
       conditions: [{ opcode: 60, args: ['launcher'] }],
     };
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('initial') },
     });
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
 
     blob.processResult(
       wasmResult({ events: [{ NeedCoinSpend: request }, { NeedCoinSpend: request }] }),
@@ -1161,7 +1162,7 @@ describe('WASM wallet funding requests', () => {
     };
     const unexpectedResult = wasmResult({ events: [{ NeedCoinSpend: successor }] });
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1unexpected' },
       tradeId: 'trade-1',
     });
@@ -1182,7 +1183,7 @@ describe('WASM wallet funding requests', () => {
       'processResultNow',
     );
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
 
     expectConsoleError('concurrent funding request');
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
@@ -1207,7 +1208,7 @@ describe('WASM wallet funding requests', () => {
       conditions: [{ opcode: 60, args: ['launcher'] }],
     };
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1invalid' },
       tradeId: 'trade-1',
     });
@@ -1226,7 +1227,7 @@ describe('WASM wallet funding requests', () => {
         throw new Error('wallet funding offer failed validation');
       });
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
 
     expectConsoleError('wallet funding offer failed validation');
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
@@ -1241,14 +1242,14 @@ describe('WASM wallet funding requests', () => {
 
   it('routes a late funding result through the ledger after controller teardown', async () => {
     let resolveOffer!: (value: {
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }) => void;
     const beginWalletOffer = jest.fn(
       () =>
         new Promise<{
-          kind: 'created';
+          kind: 'created-reserved';
           material: { kind: 'offer'; offer: string };
           tradeId: string;
         }>((resolve) => {
@@ -1264,7 +1265,7 @@ describe('WASM wallet funding requests', () => {
     const provideOffer = jest.fn().mockReturnValue(wasmResult());
     (cradle as unknown as { provide_offer_bech32: jest.Mock }).provide_offer_bech32 = provideOffer;
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
 
     blob.processResult(
       wasmResult({
@@ -1286,7 +1287,7 @@ describe('WASM wallet funding requests', () => {
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     blob.cleanup();
     resolveOffer({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1late' },
       tradeId: 'trade-late',
     });
@@ -1317,7 +1318,7 @@ describe('WASM wallet funding requests', () => {
       events: [{ Notification: { ActionFailed: { reason: 'advanced' } } }],
     });
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1success' },
       tradeId: 'trade-1',
     });
@@ -1341,7 +1342,7 @@ describe('WASM wallet funding requests', () => {
       }
     });
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
 
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     await blob.flushPendingWork();
@@ -1359,7 +1360,7 @@ describe('WASM wallet funding requests', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'wallet disconnected' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'bundle', bundle: testSpendBundle('funding-retry') },
       });
     let readiness: ((ready: boolean) => void) | undefined;
@@ -1447,11 +1448,11 @@ describe('WASM wallet funding requests', () => {
       conditions: [{ opcode: 60, args: ['second'] }],
     };
     let resolveFirst!: (outcome: {
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'bundle'; bundle: ReturnType<typeof testSpendBundle> };
     }) => void;
     const firstWalletRequest = new Promise<{
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'bundle'; bundle: ReturnType<typeof testSpendBundle> };
     }>((resolve) => {
       resolveFirst = resolve;
@@ -1461,7 +1462,7 @@ describe('WASM wallet funding requests', () => {
     const walletCallbackFailed = jest.fn().mockReturnValue(wasmResult());
     (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
       walletCallbackFailed;
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
     const errors: string[] = [];
     const subscription = blob.getObservable().subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
@@ -1475,7 +1476,7 @@ describe('WASM wallet funding requests', () => {
     }
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: second }] }));
     resolveFirst({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('first') },
     });
     await blob.flushPendingWork();
@@ -1494,11 +1495,11 @@ describe('WASM wallet funding requests', () => {
       conditions: [{ opcode: 60, args: ['launcher'] }],
     };
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('replacement-runtime') },
     });
     const { blob } = createReadyBlob();
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
 
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     const replacement = createCoordinatorOnlySessionMachineRuntime(blob);
@@ -1568,7 +1569,7 @@ describe('wallet fee attachment on submission', () => {
     const blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
 
@@ -1589,7 +1590,7 @@ describe('wallet fee attachment on submission', () => {
   it('aggregates a wallet fee spend into the submitted bundle', async () => {
     const aggregated = { coin_spends: [], aggregated_signature: '0xcombined' };
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'fee-aggregate-trade',
     });
@@ -1610,7 +1611,7 @@ describe('wallet fee attachment on submission', () => {
     );
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
 
@@ -1649,7 +1650,7 @@ describe('wallet fee attachment on submission', () => {
   it('does not retain fee material when finalized-result conversion fails', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'fee-conversion-failure-trade',
     });
@@ -1661,7 +1662,7 @@ describe('wallet fee attachment on submission', () => {
     );
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     blob.getFee = () => 10n;
     setFinalizer(
       blob,
@@ -1688,7 +1689,7 @@ describe('wallet fee attachment on submission', () => {
     const beginWalletOffer = jest.fn().mockImplementation(async () => {
       order.push('fee');
       return {
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1signed' },
         tradeId: 'fee-gated-trade',
       };
@@ -1709,7 +1710,7 @@ describe('wallet fee attachment on submission', () => {
     });
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000));
     setFinalizer(blob, finalize);
     let writes = 0;
     setTestPersistence(blob, async () => {
@@ -1758,7 +1759,7 @@ describe('wallet fee attachment on submission', () => {
       });
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, spend }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, spend }, 60000));
     setFinalizer(blob, finalize);
 
     expectConsoleError('submitTransaction failed');
@@ -1784,7 +1785,7 @@ describe('wallet fee attachment on submission', () => {
     });
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, spend }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, spend }, 60000));
     setFinalizer(blob, finalize);
     const errors: string[] = [];
     const subscription = blob.getObservable().subscribe((event) => {
@@ -1827,7 +1828,7 @@ describe('wallet fee attachment on submission', () => {
     });
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000));
     setFinalizer(blob, finalize);
     const pendingEffects = (blob as unknown as { pendingEffects: Set<Promise<void>> })
       .pendingEffects;
@@ -1876,7 +1877,7 @@ describe('wallet fee attachment on submission', () => {
     });
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, spend }, 60000);
+    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, spend }, 60000));
     setFinalizer(blob, finalize);
     const persistedAcknowledgementCounts: number[] = [];
     setTestPersistence(blob, () => {
@@ -1920,7 +1921,7 @@ describe('wallet fee attachment on submission', () => {
     };
     const aggregated = { coin_spends: [], aggregated_signature: '0xcombined' };
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'bundle', bundle: feeSpend },
     });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
@@ -1934,7 +1935,7 @@ describe('wallet fee attachment on submission', () => {
     const blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
 
@@ -1964,7 +1965,7 @@ describe('wallet fee attachment on submission', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'wallet transport disconnected' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1signed' },
         tradeId: 'fee-retry-trade',
       });
@@ -1975,7 +1976,7 @@ describe('wallet fee attachment on submission', () => {
     );
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     (cradle.drain_submissions as jest.Mock)
       .mockReturnValueOnce(submissionDrain([submission]))
       .mockReturnValueOnce(
@@ -2069,7 +2070,7 @@ describe('wallet fee attachment on submission', () => {
       fee_request: null,
     };
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'attached-replay-trade',
     });
@@ -2092,7 +2093,7 @@ describe('wallet fee attachment on submission', () => {
     );
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     (cradle.drain_submissions as jest.Mock)
       .mockReturnValueOnce(submissionDrain([initial]))
       .mockReturnValueOnce(submissionDrain())
@@ -2140,7 +2141,7 @@ describe('wallet fee attachment on submission', () => {
     const blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60000);
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     const owner = (
       blob as unknown as {
         walletOperationOwner(): { installationPlayerId: string; peerSessionId: string };
@@ -2194,7 +2195,7 @@ describe('wallet fee attachment on submission', () => {
     const blockchain = new BlockchainPoller({ ...mockRpc, spend }, 60000);
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     const valid = {
       id: 'valid-after-quarantine',
       bundle: testSpendBundle('coin'),
@@ -2261,7 +2262,7 @@ describe('wallet fee attachment on submission', () => {
     const blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
 
@@ -2290,7 +2291,7 @@ describe('wallet fee attachment on submission', () => {
 
   it('surfaces Rust fallback warning when a fee source reuses a protocol input coin', async () => {
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'Offer_fee',
     });
@@ -2310,7 +2311,7 @@ describe('wallet fee attachment on submission', () => {
     );
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
 
@@ -2341,7 +2342,7 @@ describe('wallet fee attachment on submission', () => {
 
   it('retains a Cloud fee offer when broadcast is rejected before chain terminality', async () => {
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1signed' },
       tradeId: 'Offer_fee',
     });
@@ -2360,7 +2361,7 @@ describe('wallet fee attachment on submission', () => {
     );
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
     const submission: TransactionSubmission = {
@@ -2402,7 +2403,7 @@ describe('wallet fee attachment on submission', () => {
     const blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = blockchain;
+    setTestBlockchain(blob, blockchain);
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
 

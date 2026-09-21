@@ -5,7 +5,6 @@ import { expectConsoleError } from '../../../scripts/testSetup';
 import { useGameSession } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
 import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import type { SessionRuntimeLease } from '../session/sessionRuntimeLease';
 import type { GameSessionParams, WasmEvent } from '../../types/ChiaGaming';
 
 class TestErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -22,16 +21,12 @@ class TestErrorBoundary extends Component<{ children: ReactNode }, { failed: boo
   }
 }
 
-describe('useGameSession runtime lease', () => {
+describe('useGameSession committed runtime', () => {
   function setup() {
-    let lease: SessionRuntimeLease | undefined;
     let runtime: SessionMachineRuntime | null = null;
-    const attachTransactionCoordinator = jest.fn((next: SessionRuntimeLease) => {
-      if (lease && lease !== next) lease.retire();
-      lease = next;
-    });
-    const detachTransactionCoordinator = jest.fn((detached: SessionRuntimeLease) => {
-      if (lease === detached) lease = undefined;
+    const commitSessionRuntime = jest.fn((nextRuntime: SessionMachineRuntime) => {
+      if (runtime && runtime !== nextRuntime) runtime.retire();
+      runtime = nextRuntime;
     });
     const events = new Subject<WasmEvent>();
     const controller = {
@@ -39,17 +34,8 @@ describe('useGameSession runtime lease', () => {
       iStarted: false,
       wasmNotificationHistory: [],
       diagnosticLog: [],
-      attachTransactionCoordinator,
-      detachTransactionCoordinator,
       getCommittedSessionRuntime: () => runtime,
-      commitSessionRuntime: (
-        nextRuntime: SessionMachineRuntime,
-        nextLease: SessionRuntimeLease,
-      ) => {
-        if (runtime && runtime !== nextRuntime) runtime.retire();
-        runtime = nextRuntime;
-        attachTransactionCoordinator(nextLease);
-      },
+      commitSessionRuntime,
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
       reportRuntimeError: jest.fn(),
@@ -77,16 +63,14 @@ describe('useGameSession runtime lease', () => {
     return {
       controller,
       params,
-      getLease: () => lease,
       getRuntime: () => runtime,
       events,
-      attachTransactionCoordinator,
-      detachTransactionCoordinator,
+      commitSessionRuntime,
     };
   }
 
   it('keeps the committed runtime active when the hook unmounts', () => {
-    const { controller, params, getLease, getRuntime, detachTransactionCoordinator } = setup();
+    const { controller, params, getRuntime } = setup();
     function Harness() {
       useGameSession(params, controller, () => {});
       return null;
@@ -96,23 +80,19 @@ describe('useGameSession runtime lease', () => {
     act(() => {
       renderer = create(createElement(Harness));
     });
-    expect(getLease()).toBeDefined();
     const runtime = getRuntime();
     expect(runtime).not.toBeNull();
 
     act(() => renderer?.unmount());
-    expect(detachTransactionCoordinator).not.toHaveBeenCalled();
-
     act(() => {
       renderer = create(createElement(Harness));
     });
     expect(getRuntime()).toBe(runtime);
-    expect(getLease()).toBeDefined();
     act(() => renderer?.unmount());
   });
 
-  it('keeps the same lease through Strict Effects setup-cleanup-setup replay', () => {
-    const { controller, params, getLease, attachTransactionCoordinator } = setup();
+  it('keeps the same runtime through Strict Effects setup-cleanup-setup replay', () => {
+    const { controller, params, getRuntime, commitSessionRuntime } = setup();
     function Harness() {
       useGameSession(params, controller, () => {});
       return null;
@@ -122,12 +102,12 @@ describe('useGameSession runtime lease', () => {
     act(() => {
       renderer = create(createElement(StrictMode, null, createElement(Harness)));
     });
-    const lease = getLease();
-    expect(lease).toBeDefined();
-    expect(attachTransactionCoordinator).toHaveBeenCalledTimes(1);
+    const runtime = getRuntime();
+    expect(runtime).not.toBeNull();
+    expect(commitSessionRuntime).toHaveBeenCalledTimes(1);
 
     act(() => renderer?.unmount());
-    expect(getLease()).toBe(lease);
+    expect(getRuntime()).toBe(runtime);
   });
 
   it('keeps reducing controller events while unmounted and projects them on remount', () => {

@@ -864,7 +864,7 @@ describe('transaction submission', () => {
 
   it('suppresses a same-stack fresh-sync duplicate while its submission is queued', async () => {
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: {
         kind: 'bundle',
         bundle: { coin_spends: [], aggregated_signature: '0x' },

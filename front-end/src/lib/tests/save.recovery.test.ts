@@ -252,11 +252,9 @@ describe('session persistence: recovery', () => {
 
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
-    await storageRepository.persist(
-      storageRepository.mutateRecords(
-        'write-session',
-        baseSave({ playerId: 'player', blockchainType: 'simulator' }),
-      ),
+    await storageRepository.saveSessionAndWalletOperations(
+      baseSave({ playerId: 'player', blockchainType: 'simulator' }),
+      [],
     );
     expect(await storageRepository.peekSession()).toMatchObject({
       preferences: { blockchainType: 'simulator' },
@@ -266,9 +264,7 @@ describe('session persistence: recovery', () => {
 
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-session', baseSave({ playerId: 'player' })),
-    );
+    await storageRepository.saveSessionAndWalletOperations(baseSave({ playerId: 'player' }), []);
     expect(await storageRepository.peekSession()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(false);
   });
@@ -361,21 +357,19 @@ describe('session persistence: recovery', () => {
   it('hydrates the independent ledger without a session record or marker', async () => {
     storageRepository._resetForTests();
     await storageRepository.claimLease();
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', [
-        {
-          tradeId: 'trade-independent',
-          owner: {
-            installationPlayerId: 'installation',
-            peerSessionId: 'peer-session',
-            providerScope: { provider: 'simulator' as const, identity: 'installation' },
-          },
-          purpose: { kind: 'fee', operationId: 'submission' },
-          stage: 'reserved',
-          reason: 'created-before-reload',
+    await storageRepository.saveWalletOperations([
+      {
+        tradeId: 'trade-independent',
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'peer-session',
+          providerScope: { provider: 'simulator' as const, identity: 'installation' },
         },
-      ]),
-    );
+        purpose: { kind: 'fee', operationId: 'submission' },
+        stage: 'reserved',
+        reason: 'created-before-reload',
+      },
+    ]);
     clearSavedSessionMarker();
 
     expect(await storageRepository.claimAndHydrateSession()).toMatchObject({
@@ -393,21 +387,19 @@ describe('session persistence: recovery', () => {
   it('restores retained fee sources without promoting them to cancellation', async () => {
     storageRepository._resetForTests();
     await storageRepository.claimLease();
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', [
-        {
-          tradeId: 'trade-retained',
-          owner: {
-            installationPlayerId: 'installation',
-            peerSessionId: 'peer-session',
-            providerScope: { provider: 'simulator' as const, identity: 'installation' },
-          },
-          purpose: { kind: 'fee', operationId: 'submission-7' },
-          stage: 'retained-for-replay',
-          reason: 'fee-source-attached',
+    await storageRepository.saveWalletOperations([
+      {
+        tradeId: 'trade-retained',
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'peer-session',
+          providerScope: { provider: 'simulator' as const, identity: 'installation' },
         },
-      ]),
-    );
+        purpose: { kind: 'fee', operationId: 'submission-7' },
+        stage: 'retained-for-replay',
+        reason: 'fee-source-attached',
+      },
+    ]);
 
     await storageRepository.claimAndHydrateSession();
 
@@ -434,15 +426,13 @@ describe('session persistence: recovery', () => {
         stage: 'cancel-required' as const,
         reason: 'cleanup',
       };
-      await storageRepository.persist(
-        storageRepository.mutateRecords('write-wallet-operations', [entry]),
-      );
-      saveLiveFields();
+      await storageRepository.saveWalletOperations([entry]);
+      saveLiveFields({ ...sampleSession, walletProviderScope: entry.owner.providerScope });
       await storageRepository.flushSessionSave();
       if (kind === 'session deletion') {
         await storageRepository.clearSession();
       } else {
-        await storageRepository.clearSessionWithRejectionTombstone({
+        await storageRepository.replaceSessionWithRejection({
           kind: 'outbound-reject',
           peerId: 'peer',
           sessionId: '0'.repeat(32),

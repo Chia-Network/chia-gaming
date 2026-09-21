@@ -15,7 +15,7 @@ import type {
   SessionTransportSave,
   TerminalSessionSave,
 } from './saveEnvelope';
-import type { ChannelStatus } from '../../types/ChiaGaming';
+import type { ChannelStatus, WalletProviderScope } from '../../types/ChiaGaming';
 import type { SessionModel } from './types';
 import { PRE_ACTIVE_CHANNEL_STATES } from './selectors';
 
@@ -85,11 +85,13 @@ export function shouldCompleteAcceptTransition(model: SessionModel): boolean {
 }
 
 export type TerminalSessionBackup = {
+  walletProviderScope: WalletProviderScope;
   terminal: TerminalSessionSave['terminal'];
   presentation: SessionPresentationSave;
 } | null;
 
 export type FreshStartCheckpoint = {
+  walletProviderScope: WalletProviderScope;
   pairing: SessionPairingSave;
   transport: SessionTransportSave;
   identity?: Partial<SessionIdentitySave>;
@@ -133,6 +135,7 @@ export async function persistFreshStartCheckpoint(args: {
   const terminalBackup: TerminalSessionBackup =
     prior.phase === 'terminal'
       ? {
+          walletProviderScope: structuredClone(prior.walletProviderScope),
           terminal: structuredClone(prior.terminal),
           presentation: structuredClone(prior.presentation),
         }

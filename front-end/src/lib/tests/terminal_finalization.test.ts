@@ -33,6 +33,7 @@ import {
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
 const testIndexedDb = indexedDB;
+const walletProviderScope = { provider: 'simulator' as const, identity: 'player' };
 const liveCradle = new Uint8Array([1, 2, 3]);
 const handState = {
   gameType: 'calpoker',
@@ -133,6 +134,7 @@ const model = createSessionModel({
 function makeController(events: string[]): SessionController {
   return {
     handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
+    getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: async () => {
       events.push('controller-quiesce');
       return {
@@ -163,6 +165,7 @@ async function seedLiveSession(): Promise<void> {
   if (live.phase !== 'live') throw new Error('expected live fixture');
   storageRepository.saveSession({
     scope: 'live',
+    walletProviderScope: live.walletProviderScope,
     pairing: live.pairing,
     live: live.live,
     presentation: live.presentation,
@@ -183,6 +186,7 @@ function terminalUpdate(fields: {
   });
   if (complete.phase !== 'terminal') throw new Error('expected terminal fixture');
   return {
+    walletProviderScope: complete.walletProviderScope,
     terminal: complete.terminal,
     presentation: complete.presentation,
   };
@@ -306,6 +310,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
     releaseQuiescence = resolve;
   });
   const controller = {
+    getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: jest.fn(() => quiescenceGate),
   } as unknown as SessionController;
   const stageTerminal = jest.fn(async () => {});
@@ -336,6 +341,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
 
 it('does not stage or tear down while wallet offer cleanup remains unresolved', async () => {
   const controller = {
+    getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: jest.fn(async () => {
       throw new WalletOfferCleanupPendingError([
         { tradeId: 'trade-terminal', source: 'fee-finalization-warning' },
@@ -398,6 +404,7 @@ it('stages and returns the model produced after terminal quiescence', async () =
     betweenHand: model.betweenHand,
   });
   const controller = {
+    getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: jest.fn(async () => ({
       model: structuredClone(authoritativeModel),
       coinsOfInterest: [
@@ -576,6 +583,7 @@ it('aborts after persist when the start epoch advances during replaceSession', a
       const terminalBackup =
         prior.phase === 'terminal'
           ? {
+              walletProviderScope: structuredClone(prior.walletProviderScope),
               terminal: structuredClone(prior.terminal),
               presentation: structuredClone(prior.presentation),
             }
@@ -704,6 +712,7 @@ it('keeps the resolved display and terminal checkpoint when fresh persistence fa
 it('keeps a fully resolved live checkpoint until terminal finalization succeeds', async () => {
   const save = jest.fn(async () => {});
   const controller = {
+    getWalletProviderScope: () => walletProviderScope,
     getWasmFields: () => ({
       serializedGameSession: liveCradle,
       gameSessionSchemaVersion: 3n,
@@ -766,6 +775,7 @@ it('keeps a resolved unroll live while an on-chain game is still unresolved', as
     },
   });
   const controller = {
+    getWalletProviderScope: () => walletProviderScope,
     getWasmFields: () => ({
       serializedGameSession: liveCradle,
       gameSessionSchemaVersion: 3n,
@@ -815,6 +825,7 @@ it('persists live machine hand state instead of a former controller bundle value
     state: { ...handState.state, moveNumber: 99n },
   };
   const controller = {
+    getWalletProviderScope: () => walletProviderScope,
     getWasmFields: () => ({
       serializedGameSession: liveCradle,
       gameSessionSchemaVersion: 3n,
@@ -855,6 +866,7 @@ it('assembles current timer ownership instead of stale checkpoint timing', () =>
   let waitingStateEnteredAt: bigint | null = 200n;
   const staleMachineCheckpoint = createSessionMachineState(model);
   const controller = {
+    getWalletProviderScope: () => walletProviderScope,
     getWasmFields: () => ({
       serializedGameSession: liveCradle,
       gameSessionSchemaVersion: 3n,
@@ -961,6 +973,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   });
   const controller = {
     handState: acceptedHandState,
+    getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: async () => ({
       model: structuredClone(timeoutModel),
       coinsOfInterest: [],
@@ -1040,6 +1053,7 @@ it('keeps live state and ownership after failure, then retries without teardown 
   let latestModel = structuredClone(model);
   let latestCoins = [{ label: 'Reward coin', id: 'coin-1' }];
   const controller = {
+    getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: async () => {
       events.push('controller-quiesce');
       return {

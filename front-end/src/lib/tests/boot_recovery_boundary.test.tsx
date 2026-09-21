@@ -267,6 +267,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     });
     await storageRepository.saveSession({
       scope: 'live',
+      walletProviderScope: save.walletProviderScope,
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
@@ -314,6 +315,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     if (save.phase !== 'live') throw new Error('expected live save');
     await storageRepository.saveSession({
       scope: 'live',
+      walletProviderScope: save.walletProviderScope,
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
@@ -375,15 +377,16 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     [
       'incompatible',
       async () => {
-        await storageRepository.persist(
-          storageRepository.mutateRecords('write-session', {
+        await storageRepository.saveSessionAndWalletOperations(
+          {
             schema: 'unsupported-session',
             version: 999n,
             phase: 'preferences',
             identity: {},
             preferences: {},
             history: {},
-          } as never),
+          } as never,
+          [],
         );
       },
     ],
@@ -615,6 +618,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     if (save.phase !== 'live') throw new Error('expected live save');
     await storageRepository.saveSession({
       scope: 'live',
+      walletProviderScope: save.walletProviderScope,
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
@@ -668,6 +672,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     if (save.phase !== 'live') throw new Error('expected live save');
     await storageRepository.saveSession({
       scope: 'live',
+      walletProviderScope: save.walletProviderScope,
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,

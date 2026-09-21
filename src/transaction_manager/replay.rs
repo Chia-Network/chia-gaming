@@ -9,6 +9,21 @@ pub(super) struct ReplayEpoch {
 }
 
 impl ReplayEpoch {
+    pub(super) fn validate(&self, retained_ids: &HashSet<u64>) -> Result<(), String> {
+        if let Some(id) = self
+            .replayed_submission_ids
+            .iter()
+            .find(|id| !retained_ids.contains(id))
+        {
+            return Err(format!("replay epoch references absent submission {id}"));
+        }
+        Ok(())
+    }
+
+    pub(super) fn replayed_ids(&self) -> &HashSet<u64> {
+        &self.replayed_submission_ids
+    }
+
     pub(super) fn rollback_height(&self) -> Option<u64> {
         self.rollback_height
     }
@@ -20,11 +35,6 @@ impl ReplayEpoch {
         self.rollback_height = Some(height);
         self.replayed_submission_ids.clear();
         true
-    }
-
-    pub(super) fn reset_at(&mut self, height: u64) {
-        self.rollback_height = Some(height);
-        self.replayed_submission_ids.clear();
     }
 
     pub(super) fn finish_if_advanced(&mut self, height: u64) {
@@ -49,5 +59,10 @@ impl ReplayEpoch {
     pub(super) fn clear(&mut self) {
         self.rollback_height = None;
         self.replayed_submission_ids.clear();
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_insert_replayed(&mut self, id: u64) {
+        self.replayed_submission_ids.insert(id);
     }
 }

@@ -46,6 +46,12 @@ export function saveLiveSession(fields: Record<string, unknown>): Promise<void> 
   const save = liveSave(fields);
   return storageRepository.saveSession({
     scope: 'live',
+    walletProviderScope: (fields.walletProviderScope as
+      | typeof save.walletProviderScope
+      | undefined) ?? {
+      provider: 'simulator',
+      identity: 'submission-handoff',
+    },
     pairing: save.pairing,
     live: save.live,
     presentation: save.presentation,
@@ -53,6 +59,11 @@ export function saveLiveSession(fields: Record<string, unknown>): Promise<void> 
   });
 }
 export const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
+
+export function setTestBlockchain(blob: SessionController, blockchain: BlockchainPoller): void {
+  blockchain.refreshWalletOperationProvider();
+  blob.blockchain = blockchain;
+}
 
 export function wasmResult(overrides: Partial<WasmResult> = {}): WasmResult {
   return {
@@ -291,6 +302,7 @@ export function createReadyBlob(
   onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
   receivePolicy?: ReadonlySessionReceivePolicy,
 ): TestHarness {
+  if (trackedBlobs.length === 0) mockBlockchain.refreshWalletOperationProvider();
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
   const blob = new SessionController(
@@ -311,6 +323,7 @@ export function createReadyBlob(
   blob.reportCoinStates(1n, []);
   setTestPersistence(blob, () =>
     saveLiveSession({
+      walletProviderScope: blob.getWalletProviderScope(),
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
       gameSessionSchemaVersion: 4n,
@@ -341,6 +354,7 @@ export function createUnreadyBlob(
   onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
   receivePolicy?: ReadonlySessionReceivePolicy,
 ): TestHarness {
+  if (trackedBlobs.length === 0) mockBlockchain.refreshWalletOperationProvider();
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
   const blob = new SessionController(
@@ -359,6 +373,7 @@ export function createUnreadyBlob(
   attachTestCommitCoordinator(blob);
   setTestPersistence(blob, () =>
     saveLiveSession({
+      walletProviderScope: blob.getWalletProviderScope(),
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
       gameSessionSchemaVersion: 4n,
@@ -404,9 +419,10 @@ beforeEach(async () => {
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
+  mockBlockchain.detachWalletOperationProvider();
   storageRepository._resetForTests();
   await storageRepository.claimLease();
-  await storageRepository.persist(storageRepository.mutateRecords('delete-wallet-operations'));
+  await storageRepository.saveWalletOperations([]);
 });
 
 afterEach(async () => {

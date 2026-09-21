@@ -221,44 +221,58 @@ export class BlockchainPoller {
     }
     this.sourceWalletProvider = source;
     this.sourceWalletProviderKey = sourceKey;
-    this.queuedWalletProvider =
-      source.capability === 'recoverable' || source.capability === 'recoverable-after-begin'
-        ? {
-            capability: source.capability,
-            scope: source.scope,
-            beginCreation: (operation, request) =>
-              this.enqueueMutation(
-                'beginWalletOffer',
-                () => source.beginCreation(operation, request),
-                true,
-              ),
-            reconcileCreation: (operation, request, recoveryId) =>
-              this.enqueueMutation(
-                'reconcileWalletOffer',
-                () => source.reconcileCreation(operation, request, recoveryId),
-                true,
-              ),
-            beginCancellation: (tradeId) =>
-              this.enqueueMutation('beginWalletOfferCancellation', () =>
-                source.beginCancellation(tradeId),
-              ),
-            reconcileCancellation: (tradeId, recoveryId) =>
-              this.enqueueMutation('reconcileWalletOfferCancellation', () =>
-                source.reconcileCancellation(tradeId, recoveryId),
-              ),
-          }
-        : {
-            capability: source.capability,
-            scope: source.scope,
-            beginCreation: (operation, request) =>
-              this.enqueueMutation(
-                'beginWalletOffer',
-                () => source.beginCreation(operation, request),
-                true,
-              ),
-            cancel: (tradeId) =>
-              this.enqueueMutation('beginWalletOfferCancellation', () => source.cancel(tradeId)),
-          };
+    if (source.capability === 'recoverable' || source.capability === 'recoverable-after-begin') {
+      this.queuedWalletProvider = {
+        capability: source.capability,
+        scope: source.scope,
+        beginCreation: (operation, request) =>
+          this.enqueueMutation(
+            'beginWalletOffer',
+            () => source.beginCreation(operation, request),
+            true,
+          ),
+        reconcileCreation: (operation, request, recoveryId) =>
+          this.enqueueMutation(
+            'reconcileWalletOffer',
+            () => source.reconcileCreation(operation, request, recoveryId),
+            true,
+          ),
+        beginCancellation: (tradeId) =>
+          this.enqueueMutation('beginWalletOfferCancellation', () =>
+            source.beginCancellation(tradeId),
+          ),
+        reconcileCancellation: (tradeId, recoveryId) =>
+          this.enqueueMutation('reconcileWalletOfferCancellation', () =>
+            source.reconcileCancellation(tradeId, recoveryId),
+          ),
+      };
+    } else if (source.capability === 'best-effort') {
+      this.queuedWalletProvider = {
+        capability: 'best-effort',
+        scope: source.scope,
+        beginCreation: (operation, request) =>
+          this.enqueueMutation(
+            'beginWalletOffer',
+            () => source.beginCreation(operation, request),
+            true,
+          ),
+        cancel: (tradeId) =>
+          this.enqueueMutation('beginWalletOfferCancellation', () => source.cancel(tradeId)),
+      };
+    } else {
+      this.queuedWalletProvider = {
+        capability: 'terminal',
+        scope: source.scope,
+        beginCreation: (operation, request) =>
+          this.enqueueMutation(
+            'beginWalletOffer',
+            () => source.beginCreation(operation, request),
+            true,
+          ),
+        cancel: (tradeId) =>
+          this.enqueueMutation('beginWalletOfferCancellation', () => source.cancel(tradeId)),
+      };
+    }
     return this.queuedWalletProvider;
   }
 
@@ -327,7 +341,6 @@ export class BlockchainPoller {
   ): WalletOperationOwner | null {
     const provider = this.rpc.getWalletOfferProvider(owner);
     if (!provider) return null;
-    this.walletOperations.attachProvider(provider);
     return { ...owner, providerScope: provider.scope };
   }
 

@@ -10,6 +10,7 @@ import { SESSION_DB_NAME } from '../session/indexedDb';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
+import { clearSavedSessionMarker } from '../../hooks/saveCoordination';
 import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
 import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
@@ -100,6 +101,7 @@ async function deleteSessionDatabase(): Promise<void> {
 }
 
 beforeEach(async () => {
+  clearSavedSessionMarker();
   storageRepository._resetForTests();
   _resetWasmLoadForTests();
   storeInitArgs(async () => {}, WholeWasmObject);

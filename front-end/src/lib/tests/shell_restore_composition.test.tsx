@@ -150,7 +150,7 @@ describe('Shell production restore composition', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
     });
-    await storageRepository.persist(storageRepository.checkpoint(save, []));
+    await storageRepository.saveSessionAndWalletOperations(save, []);
     markSavedSession();
     releaseLeaseIfOwner();
     storageRepository._resetForTests();

@@ -13,17 +13,15 @@ describe('session persistence: rejection', () => {
     await storageRepository.flushSessionSave();
     await Promise.all(
       Array.from({ length: MAX_DURABLE_REJECTION_TOMBSTONES + 1 }, (_, index) =>
-        storageRepository.persist(
-          storageRepository.mutateRecords('write-rejection', {
-            kind: 'outbound-reject',
-            peerId: `peer-${index}`,
-            sessionId: index.toString(16).padStart(32, '0'),
-            messageNumber: 2n,
-            remoteNumber: 1n,
-            unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
-            createdAt: Date.now() + index,
-          }),
-        ),
+        storageRepository.writeRejection({
+          kind: 'outbound-reject',
+          peerId: `peer-${index}`,
+          sessionId: index.toString(16).padStart(32, '0'),
+          messageNumber: 2n,
+          remoteNumber: 1n,
+          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
+          createdAt: Date.now() + index,
+        }),
       ),
     );
 
@@ -43,17 +41,15 @@ describe('session persistence: rejection', () => {
     expect(routed.size).toBe(2);
     await Promise.all(
       ['peer-a', 'peer-b'].map((peerId, index) =>
-        storageRepository.persist(
-          storageRepository.mutateRecords('write-rejection', {
-            kind: 'outbound-reject',
-            peerId,
-            sessionId,
-            messageNumber: 2n,
-            remoteNumber: 1n,
-            unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
-            createdAt: Date.now() + index,
-          }),
-        ),
+        storageRepository.writeRejection({
+          kind: 'outbound-reject',
+          peerId,
+          sessionId,
+          messageNumber: 2n,
+          remoteNumber: 1n,
+          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([index]) }],
+          createdAt: Date.now() + index,
+        }),
       ),
     );
 
@@ -65,28 +61,24 @@ describe('session persistence: rejection', () => {
 
   it('retains empty inbound receipts and expires stale rejection records', async () => {
     const now = Date.now();
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-rejection', {
-        kind: 'inbound-receipt',
-        peerId: 'expired-peer',
-        sessionId: 'cd'.repeat(16),
-        messageNumber: 1n,
-        remoteNumber: 4n,
-        unackedMessages: [],
-        createdAt: now - REJECTION_TOMBSTONE_TTL_MS - 1,
-      }),
-    );
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-rejection', {
-        kind: 'inbound-receipt',
-        peerId: 'current-peer',
-        sessionId: 'ef'.repeat(16),
-        messageNumber: 1n,
-        remoteNumber: 7n,
-        unackedMessages: [],
-        createdAt: now,
-      }),
-    );
+    await storageRepository.writeRejection({
+      kind: 'inbound-receipt',
+      peerId: 'expired-peer',
+      sessionId: 'cd'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 4n,
+      unackedMessages: [],
+      createdAt: now - REJECTION_TOMBSTONE_TTL_MS - 1,
+    });
+    await storageRepository.writeRejection({
+      kind: 'inbound-receipt',
+      peerId: 'current-peer',
+      sessionId: 'ef'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 7n,
+      unackedMessages: [],
+      createdAt: now,
+    });
 
     const transactionSpy = jest.spyOn(IDBDatabase.prototype, 'transaction');
     expect(await storageRepository.readRejections()).toEqual([
@@ -117,14 +109,62 @@ describe('session persistence: rejection', () => {
       }
     };
     expect(await countRecords()).toBe(1);
-    const pruneSpy = jest.spyOn(IDBDatabase.prototype, 'transaction');
-    await storageRepository.persist(storageRepository.mutateRecords('prune-rejections'));
-    expect(pruneSpy).toHaveBeenCalledWith(
-      expect.arrayContaining(['rejections', 'coordination']),
-      'readwrite',
-    );
-    pruneSpy.mockRestore();
     expect(await countRecords()).toBe(1);
+  });
+
+  it('claims with mixed rejection records and prunes only malformed or expired entries', async () => {
+    const now = Date.now();
+    await storageRepository.writeRejection({
+      kind: 'inbound-receipt',
+      peerId: 'valid-peer',
+      sessionId: '11'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 3n,
+      unackedMessages: [],
+      createdAt: now,
+    });
+    await storageRepository.writeRejection({
+      kind: 'inbound-receipt',
+      peerId: 'expired-peer',
+      sessionId: '22'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 4n,
+      unackedMessages: [],
+      createdAt: now - REJECTION_TOMBSTONE_TTL_MS - 1,
+    });
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(SESSION_DB_NAME);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('rejections', 'readwrite');
+      transaction.objectStore('rejections').put(new Uint8Array([1, 2, 3]), 'malformed');
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    db.close();
+
+    storageRepository._resetForTests();
+    const claimed = await storageRepository.claimAndRead('claiming-tab');
+    expect(claimed.rejectionTombstones).toEqual([
+      expect.objectContaining({ peerId: 'valid-peer', sessionId: '11'.repeat(16) }),
+    ]);
+    expect(await storageRepository.readRejections()).toEqual(claimed.rejectionTombstones);
+
+    const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(SESSION_DB_NAME);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+      const transaction = reopened.transaction('rejections', 'readonly');
+      const request = transaction.objectStore('rejections').getAllKeys();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    reopened.close();
+    expect(keys).toEqual([rejectionTombstoneKey('valid-peer', '11'.repeat(16))]);
   });
 
   it('waits for the ordered mutation tail before publicly reading tombstones', async () => {
@@ -133,17 +173,15 @@ describe('session persistence: rejection', () => {
       release = resolve;
     });
     storageRepository.holdNextMutationForTests(held);
-    const write = storageRepository.persist(
-      storageRepository.mutateRecords('write-rejection', {
-        kind: 'inbound-receipt',
-        peerId: 'tail-peer',
-        sessionId: 'fa'.repeat(16),
-        messageNumber: 1n,
-        remoteNumber: 3n,
-        unackedMessages: [],
-        createdAt: Date.now(),
-      }),
-    );
+    const write = storageRepository.writeRejection({
+      kind: 'inbound-receipt',
+      peerId: 'tail-peer',
+      sessionId: 'fa'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 3n,
+      unackedMessages: [],
+      createdAt: Date.now(),
+    });
     let readSettled = false;
     const read = storageRepository.readRejections().then((records) => {
       readSettled = true;
@@ -160,7 +198,8 @@ describe('session persistence: rejection', () => {
   it('atomically replaces the active session with an inbound rejection receipt', async () => {
     saveLiveFields();
     await storageRepository.flushSessionSave();
-    await storageRepository.clearSessionWithInboundRejectionReceipt({
+    await storageRepository.replaceSessionWithRejection({
+      kind: 'inbound-receipt',
       peerId: 'rejecting-peer',
       sessionId: '12'.repeat(16),
       messageNumber: 1n,
@@ -183,7 +222,7 @@ describe('session persistence: rejection', () => {
   it('atomically replaces the active session with an outbound rejection tombstone', async () => {
     saveLiveFields();
     await storageRepository.flushSessionSave();
-    await storageRepository.clearSessionWithRejectionTombstone({
+    await storageRepository.replaceSessionWithRejection({
       kind: 'outbound-reject',
       peerId: 'rejected-peer',
       sessionId: '34'.repeat(16),

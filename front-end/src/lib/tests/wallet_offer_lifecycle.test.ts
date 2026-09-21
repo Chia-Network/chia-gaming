@@ -1,7 +1,7 @@
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
 import { log } from '../../services/log';
-import { walletOperation } from '../session/walletOperationHandle';
 import { WalletOperationRuntime } from '../session/walletOperationRuntime';
+import type { CanonicalFundingRequest } from '../session/fundingRequest';
 import { encodeWalletOperationRecord } from '../session/walletOperationCodec';
 import { StorageAuthorityLostError } from '../session/indexedDb';
 import {
@@ -10,7 +10,11 @@ import {
   walletOperationOwnerKey,
   type WalletOperationOwner,
 } from '../session/walletOperationStore';
-import { entriesForOwner, scopeStatus } from '../session/walletOperationSelectors';
+import {
+  entriesForOwner,
+  providerRequestFromRecovery,
+  scopeStatus,
+} from '../session/walletOperationSelectors';
 
 jest.mock('../../services/log', () => ({ log: jest.fn() }));
 
@@ -26,6 +30,37 @@ const fundingRequest = {
   fee: '0',
   conditions: [],
 };
+
+function fundingTestPort(
+  runtime: WalletOperationRuntime,
+  operationOwner: WalletOperationOwner,
+  purpose: typeof fundingPurpose,
+) {
+  let retired = false;
+  return {
+    createFunding(request: CanonicalFundingRequest) {
+      const recovery = { kind: 'funding' as const, canonical: request };
+      return runtime.createOffer(
+        operationOwner,
+        purpose,
+        providerRequestFromRecovery(operationOwner, recovery),
+        recovery,
+        () => retired,
+      );
+    },
+    settle(
+      disposition: 'consumed' | 'cancel-required' | 'retained-for-replay',
+      reason: string,
+      coordinated = false,
+    ) {
+      runtime.settleOperation(operationOwner, purpose, disposition, reason, coordinated);
+    },
+    retire(reason: string) {
+      retired = true;
+      runtime.retireOperation(operationOwner, purpose, reason);
+    },
+  };
+}
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -68,12 +103,12 @@ describe('provider-neutral wallet offer lifecycle', () => {
     let generation = 1;
     const writes: unknown[][] = [];
     let resolveCreate!: (value: {
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }) => void;
     const create = new Promise<{
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }>((resolve) => {
@@ -96,11 +131,11 @@ describe('provider-neutral wallet offer lifecycle', () => {
       cancel,
     });
 
-    const stale = walletOperation(runtime, owner, fundingPurpose).createFunding(fundingRequest);
+    const stale = fundingTestPort(runtime, owner, fundingPurpose).createFunding(fundingRequest);
     while (beginCreation.mock.calls.length === 0) await Promise.resolve();
     generation = 2;
     resolveCreate({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1stale' },
       tradeId: 'stale-trade',
     });
@@ -122,6 +157,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
           reason: 'winner',
         },
       ]),
+      owner.providerScope,
     );
     await runtime.awaitOwner(owner);
 
@@ -131,21 +167,22 @@ describe('provider-neutral wallet offer lifecycle', () => {
         expect.objectContaining({ stage: 'creating', recoveryId: 'winner-recovery' }),
         expect.objectContaining({ stage: 'cancel-required', tradeId: 'stale-trade' }),
       ]),
+      owner.providerScope,
     );
     expect(runtime.snapshot()).toEqual([
       expect.objectContaining({ stage: 'creating', recoveryId: 'winner-recovery' }),
     ]);
   });
 
-  it('holds stale cleanup across a reclaim by a different wallet owner', async () => {
+  it('does not carry stale cleanup across a different saved wallet scope', async () => {
     let generation = 1;
     let resolveCreate!: (value: {
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }) => void;
     const create = new Promise<{
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }>((resolve) => {
@@ -165,11 +202,11 @@ describe('provider-neutral wallet offer lifecycle', () => {
       cancel,
     });
 
-    const stale = walletOperation(runtime, owner, fundingPurpose).createFunding(fundingRequest);
+    const stale = fundingTestPort(runtime, owner, fundingPurpose).createFunding(fundingRequest);
     while (beginCreation.mock.calls.length === 0) await Promise.resolve();
     generation = 2;
     resolveCreate({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1staleowner' },
       tradeId: 'stale-owner-trade',
     });
@@ -190,17 +227,18 @@ describe('provider-neutral wallet offer lifecycle', () => {
           reason: 'other-owner-winner',
         },
       ]),
+      otherOwner.providerScope,
     );
     expect(cancel).not.toHaveBeenCalled();
     expect(runtime.snapshot()).toEqual([
       expect.objectContaining({ owner: otherOwner, recoveryId: 'other-owner-recovery' }),
     ]);
 
-    generation = 3;
-    runtime.hydrateClaimedSnapshot(null);
     await runtime.awaitOwner(owner);
-    expect(cancel).toHaveBeenCalledWith('stale-owner-trade');
-    expect(runtime.snapshot()).toEqual([]);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(runtime.snapshot()).toEqual([
+      expect.objectContaining({ owner: otherOwner, recoveryId: 'other-owner-recovery' }),
+    ]);
   });
 
   it.each([
@@ -215,12 +253,12 @@ describe('provider-neutral wallet offer lifecycle', () => {
   ])('retains stale cleanup after a $label cancellation outcome', async ({ first }) => {
     let generation = 1;
     let resolveCreate!: (value: {
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }) => void;
     const create = new Promise<{
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }>((resolve) => {
@@ -244,12 +282,12 @@ describe('provider-neutral wallet offer lifecycle', () => {
     });
     runtime.attachProvider(provider);
 
-    const stale = walletOperation(runtime, owner, fundingPurpose).createFunding(fundingRequest);
+    const stale = fundingTestPort(runtime, owner, fundingPurpose).createFunding(fundingRequest);
     while (beginCreation.mock.calls.length === 0) await Promise.resolve();
     generation = 2;
-    runtime.hydrateClaimedSnapshot(null);
+    runtime.hydrateClaimedSnapshot(null, owner.providerScope);
     resolveCreate({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1stale' },
       tradeId: 'stale-trade',
     });
@@ -272,12 +310,12 @@ describe('provider-neutral wallet offer lifecycle', () => {
   it('persists uncertain Cloud cleanup and removes it only after exact terminal recovery', async () => {
     let generation = 1;
     let resolveCreate!: (value: {
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }) => void;
     const create = new Promise<{
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }>((resolve) => {
@@ -303,12 +341,12 @@ describe('provider-neutral wallet offer lifecycle', () => {
     });
     runtime.attachProvider(provider);
 
-    const stale = walletOperation(runtime, owner, fundingPurpose).createFunding(fundingRequest);
+    const stale = fundingTestPort(runtime, owner, fundingPurpose).createFunding(fundingRequest);
     while (beginCreation.mock.calls.length === 0) await Promise.resolve();
     generation = 2;
-    runtime.hydrateClaimedSnapshot(null);
+    runtime.hydrateClaimedSnapshot(null, owner.providerScope);
     resolveCreate({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1cloudstale' },
       tradeId: 'Offer_cloud_stale',
     });
@@ -346,7 +384,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     });
     runtime.attachProvider(provider);
 
-    const creation = walletOperation(runtime, owner, fundingPurpose).createFunding(fundingRequest);
+    const creation = fundingTestPort(runtime, owner, fundingPurpose).createFunding(fundingRequest);
     generation = 2;
     await expect(creation).resolves.toMatchObject({
       kind: 'unavailable',
@@ -355,7 +393,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     expect(beginCreation).not.toHaveBeenCalled();
 
     generation = 3;
-    runtime.hydrateClaimedSnapshot(null);
+    runtime.hydrateClaimedSnapshot(null, owner.providerScope);
     runtime.registerReserved('cancel-before-launch', owner, fundingPurpose);
     runtime.settleTrade('cancel-before-launch', 'cancel-required', 'authority-fence-test');
     generation = 4;
@@ -381,7 +419,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     });
     runtime.attachProvider(provider);
 
-    const stale = walletOperation(runtime, owner, fundingPurpose).createFunding(fundingRequest);
+    const stale = fundingTestPort(runtime, owner, fundingPurpose).createFunding(fundingRequest);
     while (beginCreation.mock.calls.length === 0) await Promise.resolve();
     generation = 2;
     result.resolve({ kind: 'pending', recoveryId: 'SR_handoff_create' });
@@ -390,7 +428,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       reason: expect.stringMatching(/authority changed/i),
     });
 
-    runtime.hydrateClaimedSnapshot(null);
+    runtime.hydrateClaimedSnapshot(null, owner.providerScope);
     await runtime.awaitOwner(owner);
     expect(runtime.snapshot()).toEqual([
       expect.objectContaining({
@@ -400,7 +438,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
         request: { kind: 'funding', canonical: fundingRequest },
       }),
     ]);
-    await walletOperation(runtime, owner, fundingPurpose).createFunding(fundingRequest);
+    await fundingTestPort(runtime, owner, fundingPurpose).createFunding(fundingRequest);
     expect(beginCreation).toHaveBeenCalledTimes(1);
     expect(reconcileCreation).toHaveBeenCalledWith(
       { owner, purpose: fundingPurpose },
@@ -423,14 +461,14 @@ describe('provider-neutral wallet offer lifecycle', () => {
       isCurrent: (captured) => captured === generation,
     });
     runtime.attachProvider(provider);
-    const operation = walletOperation(runtime, owner, fundingPurpose);
+    const operation = fundingTestPort(runtime, owner, fundingPurpose);
 
     const stale = operation.createFunding(fundingRequest);
     while (beginCreation.mock.calls.length === 0) await Promise.resolve();
     generation = 2;
     result.resolve({ kind: 'unavailable', reason: 'response lost' });
     await stale;
-    runtime.hydrateClaimedSnapshot(null);
+    runtime.hydrateClaimedSnapshot(null, owner.providerScope);
     await runtime.awaitOwner(owner);
 
     expect(runtime.snapshot()).toEqual([
@@ -490,6 +528,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
           orphanRisk: 'pre-id-response-lost',
         },
       ]),
+      owner.providerScope,
     );
     await runtime.awaitOwner(owner);
     expect(beginCancellation).toHaveBeenCalledTimes(1);
@@ -540,6 +579,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
           orphanRisk: 'pre-id-response-lost',
         },
       ]),
+      owner.providerScope,
     );
     await runtime.awaitOwner(owner);
     expect(beginCancellation).toHaveBeenCalledTimes(1);
@@ -607,6 +647,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
           reason: 'winner',
         },
       ]),
+      owner.providerScope,
     );
     await runtime.awaitHydrated();
     await runtime.awaitOwner(owner);
@@ -687,11 +728,12 @@ describe('provider-neutral wallet offer lifecycle', () => {
           reason: 'winner',
         },
       ]),
+      owner.providerScope,
     );
     const hydration = runtime.awaitHydrated();
     await Promise.resolve();
     rejectAuthorityWrite(new StorageAuthorityLostError());
-    await expect(hydration).rejects.toBeInstanceOf(StorageAuthorityLostError);
+    await expect(hydration).resolves.toBeUndefined();
     await runtime.awaitOwner(owner);
 
     expect(writes).toEqual([
@@ -719,7 +761,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'disconnected' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1canonical' },
         tradeId: 'Offer_exact',
       });
@@ -728,7 +770,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       reconcileCreation: reconcile,
     });
     ledger.attachProvider(provider);
-    const operation = walletOperation(ledger, owner, fundingPurpose);
+    const operation = fundingTestPort(ledger, owner, fundingPurpose);
 
     await expect(operation.createFunding(fundingRequest)).resolves.toEqual({
       kind: 'unavailable',
@@ -749,9 +791,9 @@ describe('provider-neutral wallet offer lifecycle', () => {
     restored.restore(ledger.snapshot());
     restored.attachProvider(provider);
     await expect(
-      walletOperation(restored, owner, fundingPurpose).createFunding(fundingRequest),
+      fundingTestPort(restored, owner, fundingPurpose).createFunding(fundingRequest),
     ).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1canonical' },
       tradeId: 'Offer_exact',
     });
@@ -790,7 +832,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     ledger.attachProvider(wrongProvider);
 
     await expect(
-      walletOperation(ledger, owner, fundingPurpose).createFunding(fundingRequest),
+      fundingTestPort(ledger, owner, fundingPurpose).createFunding(fundingRequest),
     ).resolves.toEqual({
       kind: 'unavailable',
       reason: expect.stringMatching(/original wallet account/i),
@@ -827,7 +869,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       },
     ]);
     const reconcile = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1ordered' },
       tradeId: 'trade-ordered',
     });
@@ -847,8 +889,8 @@ describe('provider-neutral wallet offer lifecycle', () => {
       },
     );
     await expect(
-      walletOperation(ledger, scopedOwner, fundingPurpose).createFunding(fundingRequest),
-    ).resolves.toMatchObject({ kind: 'created', tradeId: 'trade-ordered' });
+      fundingTestPort(ledger, scopedOwner, fundingPurpose).createFunding(fundingRequest),
+    ).resolves.toMatchObject({ kind: 'created-reserved', tradeId: 'trade-ordered' });
     expect(reconcile).toHaveBeenCalledTimes(1);
   });
 
@@ -1033,7 +1075,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'transport lost' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1retry' },
         tradeId: 'trade-retry',
       });
@@ -1044,7 +1086,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       cancel: jest.fn().mockResolvedValue({ status: 'cancelled' }),
     };
     ledger.attachProvider(provider);
-    const operation = walletOperation(ledger, owner, fundingPurpose);
+    const operation = fundingTestPort(ledger, owner, fundingPurpose);
 
     await operation.createFunding(fundingRequest);
     await operation.createFunding(fundingRequest);
@@ -1056,7 +1098,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     ledger.attachProvider(provider);
     await ledger.awaitOwner(owner);
     await expect(operation.createFunding(fundingRequest)).resolves.toMatchObject({
-      kind: 'created',
+      kind: 'created-reserved',
       tradeId: 'trade-retry',
     });
 
@@ -1076,7 +1118,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'response lost' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1replacement' },
         tradeId: 'trade-replacement',
       });
@@ -1088,7 +1130,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     };
     const first = new WalletOperationRuntime();
     first.attachProvider(provider);
-    await walletOperation(first, scopedOwner, fundingPurpose).createFunding(fundingRequest);
+    await fundingTestPort(first, scopedOwner, fundingPurpose).createFunding(fundingRequest);
     expect(first.snapshot()).toEqual([
       expect.objectContaining({
         stage: 'best-effort-uncertain',
@@ -1215,7 +1257,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'accepted response lost' })
       .mockResolvedValueOnce({ kind: 'pending', recoveryId: 'SR_after_loss' });
     const reconcile = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer1afterloss' },
       tradeId: 'Offer_after_loss',
     });
@@ -1227,7 +1269,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     first.attachProvider(provider);
 
     await expect(
-      walletOperation(first, owner, fundingPurpose).createFunding(fundingRequest),
+      fundingTestPort(first, owner, fundingPurpose).createFunding(fundingRequest),
     ).resolves.toEqual({
       kind: 'unavailable',
       reason: 'accepted response lost',
@@ -1259,10 +1301,10 @@ describe('provider-neutral wallet offer lifecycle', () => {
       }),
     ]);
     await expect(
-      walletOperation(restored, owner, fundingPurpose).createFunding(fundingRequest),
+      fundingTestPort(restored, owner, fundingPurpose).createFunding(fundingRequest),
     ).resolves.toEqual(
       expect.objectContaining({
-        kind: 'created',
+        kind: 'created-reserved',
         warning: expect.stringMatching(/prior external reservation may still exist/i),
       }),
     );
@@ -1412,7 +1454,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'approval still pending' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1eventual' },
         tradeId: 'Offer_eventual',
       });
@@ -1422,7 +1464,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     });
     const first = new WalletOperationRuntime();
     first.attachProvider(provider);
-    await walletOperation(first, owner, fundingPurpose).createFunding(fundingRequest);
+    await fundingTestPort(first, owner, fundingPurpose).createFunding(fundingRequest);
     first.providerReconnectReady(provider);
     await first.awaitOwner(owner);
     expect(first.snapshot()).toEqual([
@@ -1437,10 +1479,10 @@ describe('provider-neutral wallet offer lifecycle', () => {
     restored.restore(first.snapshot());
     restored.attachProvider(provider);
     await expect(
-      walletOperation(restored, owner, fundingPurpose).createFunding(fundingRequest),
+      fundingTestPort(restored, owner, fundingPurpose).createFunding(fundingRequest),
     ).resolves.toEqual(
       expect.objectContaining({
-        kind: 'created',
+        kind: 'created-reserved',
         tradeId: 'Offer_eventual',
         warning: expect.stringMatching(/prior external reservation may still exist/i),
       }),
@@ -1463,7 +1505,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
         .fn()
         .mockResolvedValueOnce({ kind: 'unavailable', reason: 'pending' })
         .mockResolvedValueOnce({
-          kind: 'created',
+          kind: 'created-reserved',
           material: { kind: 'offer', offer: 'offer1late' },
           tradeId: 'Offer_late',
         }),
@@ -1471,7 +1513,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     });
     const coordinator = new WalletOperationRuntime();
     coordinator.attachProvider(provider);
-    const operation = walletOperation(coordinator, owner, fundingPurpose);
+    const operation = fundingTestPort(coordinator, owner, fundingPurpose);
     await operation.createFunding(fundingRequest);
     coordinator.retireSession(
       owner.installationPlayerId,
@@ -1494,7 +1536,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const provider = recoverableAfterBeginProvider({
       reconcileCreation: jest.fn().mockResolvedValue({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1retiredorphan' },
         tradeId: 'Offer_retired_orphan',
       }),
@@ -1536,7 +1578,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     });
     const coordinator = new WalletOperationRuntime();
     coordinator.attachProvider(provider);
-    const operation = walletOperation(coordinator, owner, fundingPurpose);
+    const operation = fundingTestPort(coordinator, owner, fundingPurpose);
 
     const creation = operation.createFunding(fundingRequest);
     operation.retire('controller-retired-before-recovery-id');
@@ -1580,7 +1622,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
       .fn()
       .mockResolvedValueOnce({ kind: 'unavailable', reason: 'offline' })
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer1terminal' },
         tradeId: 'terminal-late-trade',
       });
@@ -1591,7 +1633,7 @@ describe('provider-neutral wallet offer lifecycle', () => {
     });
     const service = new WalletOperationRuntime();
     service.attachProvider(provider);
-    await walletOperation(service, owner, fundingPurpose).createFunding(fundingRequest);
+    await fundingTestPort(service, owner, fundingPurpose).createFunding(fundingRequest);
     service.registerReserved('fee-replay', owner, {
       kind: 'fee',
       operationId: 'submission-retained',

@@ -216,6 +216,9 @@ export function getOrCreateSessionController(
     theirContribution,
     peerConn,
     walletOperationRuntime,
+    sessionSave && sessionSave.phase !== 'preferences'
+      ? sessionSave.walletProviderScope
+      : undefined,
   );
   if (sessionSave?.phase === 'live') {
     sessionController.restoreTransportCheckpoint(sessionSave.live);

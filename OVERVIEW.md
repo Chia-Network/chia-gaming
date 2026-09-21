@@ -711,11 +711,10 @@ captured fee intent. Exact canonical content is used only for idempotent
 deduplication: different transactions that spend the same inputs receive
 different IDs, and rejection retires only the named intent. Wallet delivery
 acknowledgement and chain finality are separate. Ordinary reconnect replay is
-limited to unacknowledged submissions, but any detected reorg resets and queues
-retained, unexpired transactions once per rollback epoch, including
-wallet-acknowledged ones. A lower tip replays the surviving retained set; an
-equal-or-higher replacement tip replays only a transaction whose watched output
-is explicitly absent while an input from that same bundle is explicitly live.
+limited to unacknowledged submissions. A lower tip replays the surviving
+retained set once for that rollback epoch; at an equal-or-higher replacement
+tip, only an intent whose watched output is explicitly absent and whose own
+input is explicitly live is reactivated.
 All replay paths reuse the current exact Rust-owned broadcast variant.
 This is **transaction rebroadcast**: resubmission of exact chain bytes.
 WalletConnect `pushTransactions` is intrinsically idempotent for those exact
@@ -725,7 +724,7 @@ unacknowledged numbered peer frames after reconnect or peer availability.
 
 `TransactionManager` is the durable retained owner of transaction submission
 intent. `SubmissionPump` owns one browser map and one ordered promise tail for
-persistence-gated launch, lease handoff, one-shot wallet delivery, and
+persistence-gated launch, one-shot wallet delivery, and
 relinquishment. It is not a second durable retry journal.
 
 Rust captures the configured fee amount, target, and explicit
@@ -803,9 +802,9 @@ launch and one-shot execution of Rust-issued opaque attempts.
 
 `SessionMachineRuntime` is constructed inert, so render-time construction
 cannot claim protocol ownership. Its committed React layout effect installs the
-render callback and activates an exclusive lease; React cleanup clears only
+render callback and activates the runtime; React cleanup clears only
 that render callback. Protocol retirement belongs to `SessionController`
-cleanup, including terminal cleanup and replacement of the committed lease.
+cleanup, including terminal cleanup and replacement of the committed runtime.
 The controller retains the committed runtime across presentation unmounts, so a
 renderer remount resumes the same accumulated model rather than reconstructing
 one from an older checkpoint.
@@ -818,14 +817,14 @@ combined machine/WASM/reliable boundary and attempts one atomic write before
 projecting React state and releasing sends/ACKs. This same rule applies while
 completing work after rehydration. React projection is not part of the drain;
 holding it until the persistence attempt finishes prevents transient UX states
-and flicker. `SessionRuntimeLease` extends the narrow peer
-`ReliableCommitCoordinator` with an authoritative model snapshot.
+and flicker. The runtime directly provides the peer
+`ReliableCommitCoordinator` facet and its authoritative model snapshot.
 `enqueueResult<T>` places result-bearing controller work on this same
 serialized boundary and returns a typed promise that resolves or rejects when
 that work executes, including work queued behind an in-progress commit.
 
-The controller grants an exclusive, retire-aware lease to one activated runtime
-coordinator. Attaching a replacement retires the previous committed runtime;
+The controller's single committed runtime slot is the exclusive, retire-aware
+authority. Committing a replacement retires the previous runtime;
 reload and controller cleanup retire the current one. Retirement discards
 queued reducer/controller work and rejects pending result promises and
 not-yet-launched external effects, so an obsolete runtime cannot publish,
@@ -844,17 +843,18 @@ hide valid local state.
 Funding requests use one explicit canonical model: `amount`, `fee`, and
 optional `max_height` are canonical decimal `u64` strings; condition opcodes are
 bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
-omitted rather than stored as null. `WalletOperationRuntime` holds the transient
-single-flight demand while Rust's serialized session and the independent
-wallet-operation record own durable protocol and provider recovery state.
+omitted rather than stored as null. Each durable session stores one canonical
+wallet-provider scope atomically with the independent wallet-operation record.
+`WalletOperationRuntime` attaches one stable funding inbox to that session while
+Rust and the wallet-operation record own durable protocol and recovery state.
 After restore, the same operation cannot launch another wallet offer until its
 orphaned reservation has settled; there is no successor/predecessor funding
 protocol. Rust owns transaction submission intent and the frontend submission
 queue owns only ordered one-shot wallet delivery.
 
-The browser session envelope is currently strict version 32, its serialized
-Rust/WASM cradle is schema 20, the app IndexedDB is schema 4, and wallet
-operations use an independent strict version-7 record. These explicit
+The browser session envelope is currently strict version 33, its serialized
+Rust/WASM cradle is schema 21, the app IndexedDB is schema 4, and wallet
+operations use an independent strict version-8 record. These explicit
 versions remain future migration hooks.
 No app or hub persistence format has shipped, so only each current app-owned
 format is decoded; incompatible predecessors are deleted without fallback
@@ -872,7 +872,7 @@ conversion allowed only at external APIs that explicitly require it.
 
 Persisted funding and fee offers enter the provider-owned
 `WalletOperationRuntime` and strict operation record.
-Each trade carries its exact provider trade ID, exact owner
+Each reserved trade carries its mandatory provider trade ID, exact owner
 (`installationPlayerId`, peer session, and strict provider/account scope),
 stable purpose/operation identity, stage, and bounded reason. A `creating`
 entry embeds the canonical create request and exact recovery ID; a
@@ -891,7 +891,7 @@ cancellation completes only after its signature request reaches a successful
 terminal state. Cloud is recoverable after begin: before a begin response
 supplies a `signatureRequest` ID, response loss is persisted uncertainty; once
 the ID is known, `creating`/`cancelling` persist it for exact paired
-reconciliation. Wallet record v7 carries the typed provenance
+reconciliation. Wallet record v8 carries the typed provenance
 `orphanRisk: 'pre-id-response-lost'` from that uncertain pre-ID attempt through
 a later identified recovery or created trade, so successful replacement does
 not erase the external-orphan warning. Popup source/origin/request correlation
@@ -907,14 +907,17 @@ atomic claim-and-read, subsequent strict hydration, takeover,
 malformed-evidence recovery, reset retry, and authority loss. The winner
 receives the exact session and wallet-operation snapshot read in the claim
 transaction; `StorageRepository` and `WalletOperationRuntime` decode/hydrate
-those records before preauthority identity/history/preference patches flush. The
+those records before pending common identity/history/preference changes flush.
+All session-phase, terminal, clear, rejection, and wallet-ledger mutations
+require claimed authority; rejection and reset writes use repository-owned
+semantic transactions. The
 session envelope and complete independent wallet-operation record
 snapshot are checkpointed atomically in one IndexedDB transaction, and strict codecs reject
 unknown/missing fields, duplicate trades, invalid discriminants, and
 non-current versions. IndexedDB schema 4 stores durable owner, write, and reset
 epochs; every session, wallet-operation, clear, and reset mutation checks that authority
-atomically with its data write. `localStorage` lease and resume markers are UX
-hints only. An old tab or retired lease cannot overwrite the winning
+atomically with its data write. `localStorage` ownership and resume markers are
+UX hints only. An old tab or retired runtime cannot overwrite the winning
 generation; a clear followed immediately by an unawaited save is ordered and
 leaves the save. Hard reset advances the durable reset epoch before deleting
 storage and intentionally erases every reservation, including replay-retained

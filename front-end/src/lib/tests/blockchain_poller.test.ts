@@ -9,6 +9,7 @@ import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 import { WalletOperationRuntime, walletOperationRuntime } from '../session/walletOperationRuntime';
 import { entriesForOwner, recoveryReadiness } from '../session/walletOperationSelectors';
 import { storageRepository } from '../session/storageRepository';
+import { walletProviderScopeKey } from '../session/walletOperationStore';
 
 const walletOperation = {
   owner: {
@@ -784,7 +785,7 @@ describe('BlockchainPoller', () => {
     walletOperationRuntime.resetForTests(false);
     const getHeightInfo = jest.fn().mockResolvedValue(7n);
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer-ready' },
       tradeId: 'trade-ready',
     });
@@ -812,7 +813,7 @@ describe('BlockchainPoller', () => {
 
     walletOperationRuntime.hydrateFromDisk(null);
     await expect(mutation).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer-ready' },
       tradeId: 'trade-ready',
     });
@@ -823,7 +824,7 @@ describe('BlockchainPoller', () => {
   it('fails wallet mutation closed when ledger hydration is malformed', async () => {
     walletOperationRuntime.resetForTests(false);
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'must-not-launch' },
     });
     const poller = new BlockchainPoller(
@@ -1123,7 +1124,7 @@ describe('BlockchainPoller', () => {
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const firstOffer = deferred<{
-      kind: 'created';
+      kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
       tradeId: string;
     }>();
@@ -1131,7 +1132,7 @@ describe('BlockchainPoller', () => {
       .fn()
       .mockReturnValueOnce(firstOffer.promise)
       .mockResolvedValueOnce({
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: 'offer-new' },
         tradeId: 'trade-new',
       });
@@ -1173,13 +1174,13 @@ describe('BlockchainPoller', () => {
     onConnectionChange?.(true);
 
     firstOffer.resolve({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer-old' },
       tradeId: 'trade-old',
     });
     await advanceLane(0);
     await expect(stale).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer-old' },
       tradeId: 'trade-old',
     });
@@ -1244,6 +1245,70 @@ describe('BlockchainPoller', () => {
     expect(activeRelease).toHaveBeenCalledWith('trade-active-owner');
     expect(inactiveRelease).not.toHaveBeenCalled();
     walletOperationRuntime.resetForTests();
+  });
+
+  it('resolves alternating canonical owners without re-dirtying a fixed-point drain', () => {
+    const walletRuntime = new WalletOperationRuntime();
+    walletRuntime.restore([]);
+    const rpc = {
+      getWalletOfferProvider: (
+        owner?: Pick<typeof walletOperation.owner, 'installationPlayerId' | 'peerSessionId'>,
+      ) => ({
+        capability: 'best-effort' as const,
+        scope: {
+          provider: 'simulator' as const,
+          identity: owner?.installationPlayerId ?? 'connected-wallet',
+        },
+        beginCreation: jest.fn(),
+        cancel: jest.fn(),
+      }),
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000, undefined, walletRuntime);
+    poller.refreshWalletOperationProvider();
+
+    let dirty = true;
+    let drainPasses = 0;
+    const unsubscribe = walletRuntime.subscribe(() => {
+      dirty = true;
+    });
+    while (dirty) {
+      dirty = false;
+      drainPasses += 1;
+      if (drainPasses > 3) throw new Error('owner resolution did not reach a fixed point');
+      expect(
+        poller.resolveWalletOperationOwner({
+          installationPlayerId: 'player-a',
+          peerSessionId: 'session-a',
+        })?.providerScope,
+      ).toEqual({ provider: 'simulator', identity: 'player-a' });
+      expect(
+        poller.resolveWalletOperationOwner({
+          installationPlayerId: 'player-b',
+          peerSessionId: 'session-b',
+        })?.providerScope,
+      ).toEqual({ provider: 'simulator', identity: 'player-b' });
+    }
+
+    expect(drainPasses).toBe(1);
+    expect(walletRuntime.providerScopeKeys()).toEqual(
+      new Set([walletProviderScopeKey({ provider: 'simulator', identity: 'connected-wallet' })]),
+    );
+
+    dirty = false;
+    poller.notifyWalletOperationReadiness({
+      installationPlayerId: 'player-a',
+      peerSessionId: 'session-a',
+    });
+    expect(dirty).toBe(true);
+    expect(walletRuntime.providerScopeKeys()).toEqual(
+      new Set([
+        walletProviderScopeKey({ provider: 'simulator', identity: 'connected-wallet' }),
+        walletProviderScopeKey({ provider: 'simulator', identity: 'player-a' }),
+      ]),
+    );
+
+    unsubscribe();
+    walletRuntime.resetForTests();
   });
 
   it('detaches wallet recovery readiness while the active provider is disconnected', () => {

@@ -1,4 +1,4 @@
-import type { CoinOfInterestEntry } from '../../types/ChiaGaming';
+import type { CoinOfInterestEntry, WalletProviderScope } from '../../types/ChiaGaming';
 import type { SessionController } from '../../hooks/SessionController';
 import { type SessionPresentationSave, type TerminalSessionSave } from './saveEnvelope';
 import { storageRepository } from './storageRepository';
@@ -17,6 +17,7 @@ export interface TerminalSessionIdentity {
 
 export interface TerminalFinalizationDependencies {
   stageTerminal: (fields: {
+    walletProviderScope: WalletProviderScope;
     terminal: TerminalSessionSave['terminal'];
     presentation: SessionPresentationSave;
   }) => Promise<void>;
@@ -66,6 +67,7 @@ export function finalizeTerminalSession(
     const model = structuredClone(snapshot.model);
     const coins = selectDashboardCoins(model, snapshot.coinsOfInterest);
     const terminalFields = structuredClone({
+      walletProviderScope: args.controller.getWalletProviderScope(),
       terminal: {
         iStarted: identity.iStarted,
         coinsOfInterest: coins,

@@ -4,6 +4,7 @@ import {
   readSessionRecord,
   readWalletOperationRecord,
   StorageAuthorityLostError,
+  StorageAuthorityRequiredError,
 } from '../session/indexedDb';
 import { baseSave } from './session_save_envelope.fixtures';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
@@ -17,20 +18,18 @@ import {
 } from './save.harness';
 
 describe('session persistence: authority', () => {
-  it('returns the explicit committed, failed, and authority-lost mutation outcomes', async () => {
-    await expect(storageRepository.mutateRecords('write-wallet-operations', [])).resolves.toEqual({
-      status: 'committed',
-    });
+  it('commits semantic writes and distinguishes ordinary failure from authority loss', async () => {
+    await expect(storageRepository.saveWalletOperations([])).resolves.toBeUndefined();
 
     setTestGlobal('indexedDB', {
       open: () => {
         throw new Error('ordinary storage failure');
       },
     });
-    await expect(storageRepository.mutateRecords('write-wallet-operations', [])).resolves.toEqual({
-      status: 'failed',
-      error: expect.objectContaining({ message: 'ordinary storage failure' }),
-    });
+    await expect(storageRepository.saveWalletOperations([])).rejects.toThrow(
+      'ordinary storage failure',
+    );
+    expect(storageRepository.hasAuthority()).toBe(true);
     setTestGlobal('indexedDB', testIndexedDb);
 
     let release!: () => void;
@@ -38,21 +37,18 @@ describe('session persistence: authority', () => {
       release = resolve;
     });
     storageRepository.holdNextMutationForTests(held);
-    const stale = storageRepository.mutateRecords('write-wallet-operations', []);
+    const stale = storageRepository.saveWalletOperations([]);
     await storageRepository.claimLease();
     release();
-    await expect(stale).resolves.toEqual({
-      status: 'authority-lost',
-      error: expect.any(StorageAuthorityLostError),
-    });
+    await expect(stale).rejects.toBeInstanceOf(StorageAuthorityLostError);
   });
 
   it('rejects every explicit persistence request without storage authority', async () => {
     storageRepository.loseAuthority('takeover');
 
-    await expect(
-      storageRepository.persist(storageRepository.mutateRecords('write-wallet-operations', [])),
-    ).rejects.toBeInstanceOf(StorageAuthorityLostError);
+    await expect(storageRepository.saveWalletOperations([])).rejects.toBeInstanceOf(
+      StorageAuthorityLostError,
+    );
     await expect(storageRepository.flushSessionSave()).rejects.toBeInstanceOf(
       StorageAuthorityLostError,
     );
@@ -73,25 +69,26 @@ describe('session persistence: authority', () => {
 
   it('treats the localStorage lease as a hint, not a write authority', async () => {
     localStorage.setItem('appState_activeTab', 'stale-hint');
-    await expect(storageRepository.mutateRecords('write-wallet-operations', [])).resolves.toEqual({
-      status: 'committed',
-    });
+    await expect(storageRepository.saveWalletOperations([])).resolves.toBeUndefined();
   });
 
-  it('buffers pre-authority history and merges it into the claimed session', async () => {
+  it('merges allowed pre-authority preferences and history into the claimed session', async () => {
     saveLiveFields();
     await storageRepository.flushSessionSave();
 
     storageRepository._resetForTests();
     const buffered = saveHistory({ diagnosticLog: ['recovery dialog log'] });
+    await storageRepository.updatePreference({ key: 'theme', value: 'dark' });
     await expect(buffered).resolves.toBeUndefined();
 
     const claimed = requireLive(await storageRepository.claimAndHydrateSession());
     expect(claimed.live.serializedGameSession).toEqual(sampleSession.serializedGameSession);
     expect(claimed.history.diagnosticLog).toEqual(['recovery dialog log']);
+    expect(claimed.preferences.theme).toBe('dark');
     expect(requireLive(await readSessionRecord()).history.diagnosticLog).toEqual([
       'recovery dialog log',
     ]);
+    expect(requireLive(await readSessionRecord()).preferences.theme).toBe('dark');
   });
 
   it('does not let an old lease generation overwrite the winning ledger', async () => {
@@ -103,21 +100,19 @@ describe('session persistence: authority', () => {
       release = resolve;
     });
     storageRepository.holdNextMutationForTests(held);
-    const oldWrite = storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', [
-        {
-          tradeId: 'old-generation',
-          owner: {
-            installationPlayerId: 'installation',
-            peerSessionId: 'old-peer',
-            providerScope: { provider: 'simulator', identity: 'installation' },
-          },
-          purpose: { kind: 'funding', operationId: 'old-operation' },
-          stage: 'reserved',
-          reason: 'old-tab-result',
+    const oldWrite = storageRepository.saveWalletOperations([
+      {
+        tradeId: 'old-generation',
+        owner: {
+          installationPlayerId: 'installation',
+          peerSessionId: 'old-peer',
+          providerScope: { provider: 'simulator', identity: 'installation' },
         },
-      ]),
-    );
+        purpose: { kind: 'funding', operationId: 'old-operation' },
+        stage: 'reserved',
+        reason: 'old-tab-result',
+      },
+    ]);
 
     await storageRepository.claimLease();
     const winningEntry = {
@@ -131,9 +126,7 @@ describe('session persistence: authority', () => {
       stage: 'reserved' as const,
       reason: 'winning-tab-result',
     };
-    const winningWrite = storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', [winningEntry]),
-    );
+    const winningWrite = storageRepository.saveWalletOperations([winningEntry]);
     release();
     await expect(oldWrite).rejects.toBeInstanceOf(StorageAuthorityLostError);
     await winningWrite;
@@ -179,9 +172,7 @@ describe('session persistence: authority', () => {
       reason: 'authorized-before-takeover',
     };
 
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', [authorizedEntry]),
-    );
+    await storageRepository.saveWalletOperations([authorizedEntry]);
     expect(takeover).toBeDefined();
     await takeover;
 
@@ -192,9 +183,7 @@ describe('session persistence: authority', () => {
       purpose: { kind: 'funding' as const, operationId: 'winning-operation' },
       reason: 'winning-generation',
     };
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', [winningEntry]),
-    );
+    await storageRepository.saveWalletOperations([winningEntry]);
 
     expect((await readWalletOperationRecord())?.entries).toEqual([winningEntry]);
   });
@@ -209,11 +198,80 @@ describe('session persistence: authority', () => {
       blockchainType: 'simulator',
     });
 
-    await storageRepository.persist(storageRepository.mutateRecords('write-session', predecessor));
+    await storageRepository.saveSessionAndWalletOperations(predecessor, []);
     expect(claim).toBeDefined();
     await expect(claim).resolves.toMatchObject({
       identity: { playerId: 'predecessor-player' },
       preferences: { blockchainType: 'simulator' },
     });
+  });
+
+  it('rejects session, terminal, rejection, and wallet mutations before claim', async () => {
+    storageRepository._resetForTests();
+    const rejection = {
+      kind: 'inbound-receipt' as const,
+      peerId: 'peer',
+      sessionId: 'ab'.repeat(16),
+      messageNumber: 1n,
+      remoteNumber: 1n,
+      unackedMessages: [],
+      createdAt: Date.now(),
+    };
+    const terminal = baseSave({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [],
+      terminalIStarted: true,
+    });
+    if (terminal.phase !== 'terminal') throw new Error('expected terminal fixture');
+    const preHandshake = baseSave({
+      pairingToken: 'pre-claim',
+      iStarted: true,
+      myContribution: '1',
+      theirContribution: '1',
+      perGameAmount: '1',
+    });
+    if (preHandshake.phase !== 'pre-handshake') {
+      throw new Error('expected pre-handshake fixture');
+    }
+
+    await expect(saveLiveFields()).rejects.toBeInstanceOf(StorageAuthorityRequiredError);
+    await expect(
+      storageRepository.replaceSession({
+        walletProviderScope: preHandshake.walletProviderScope,
+        pairing: preHandshake.pairing,
+        transport: preHandshake.transport,
+      }),
+    ).rejects.toBeInstanceOf(StorageAuthorityRequiredError);
+    await expect(
+      storageRepository.patchPreHandshakeTransport(preHandshake.transport),
+    ).rejects.toBeInstanceOf(StorageAuthorityRequiredError);
+    await expect(storageRepository.clearSession()).rejects.toBeInstanceOf(
+      StorageAuthorityRequiredError,
+    );
+    await expect(storageRepository.clearGameSessionPreservingHistory()).rejects.toBeInstanceOf(
+      StorageAuthorityRequiredError,
+    );
+    await expect(storageRepository.writeRejection(rejection)).rejects.toBeInstanceOf(
+      StorageAuthorityRequiredError,
+    );
+    await expect(storageRepository.replaceSessionWithRejection(rejection)).rejects.toBeInstanceOf(
+      StorageAuthorityRequiredError,
+    );
+    await expect(
+      storageRepository.deleteRejection(rejection.peerId, rejection.sessionId),
+    ).rejects.toBeInstanceOf(StorageAuthorityRequiredError);
+    await expect(storageRepository.saveWalletOperations([])).rejects.toBeInstanceOf(
+      StorageAuthorityRequiredError,
+    );
+    await expect(
+      storageRepository.saveSessionAndWalletOperations(preHandshake, []),
+    ).rejects.toBeInstanceOf(StorageAuthorityRequiredError);
+    await expect(
+      storageRepository.saveTerminalSession({
+        walletProviderScope: { provider: 'simulator', identity: 'installation' },
+        terminal: terminal.terminal,
+        presentation: terminal.presentation,
+      }),
+    ).rejects.toBeInstanceOf(StorageAuthorityRequiredError);
   });
 });

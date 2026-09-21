@@ -23,6 +23,7 @@ import {
   mockWasmConnection,
   saveLiveSession,
   setActiveBlob,
+  setTestBlockchain,
   setTestPersistence,
   wasmResult,
 } from './message_protocol.harness';
@@ -167,7 +168,10 @@ describe('durability failures', () => {
     const beginWalletOfferCancellation = jest.fn(() => cleanup);
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
-    blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60_000);
+    setTestBlockchain(
+      blob,
+      new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60_000),
+    );
     walletOperationRuntime.attachProvider(
       blob.blockchain.rpc.getWalletOfferProvider({
         installationPlayerId: 'test',
@@ -504,15 +508,16 @@ describe('cradle serialization schema restore guard', () => {
     async (_label, gameSessionSchemaVersion) => {
       expectConsoleError('[save] rejecting incompatible session record');
       markSavedSession();
-      await storageRepository.persist(
-        storageRepository.mutateRecords('write-session', {
+      await storageRepository.saveSessionAndWalletOperations(
+        {
           version: 22n,
           playerId: 'restore-schema-player',
           rewardPuzzleHash: '11'.repeat(32),
           serializedGameSession: new Uint8Array([1, 2, 3]),
           gameSessionSchemaVersion,
           pairingToken: 'restore-schema-test',
-        }),
+        } as never,
+        [],
       );
       const { deserializeMock } = makeRestoreHarness(makeMockCradle);
 

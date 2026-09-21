@@ -9,12 +9,12 @@ import {
   type DurableRejectionTombstone,
   InvalidSessionRecordError,
   StorageAuthorityLostError,
+  StorageAuthorityRequiredError,
 } from './indexedDb';
 import type { SessionSave } from './saveEnvelope';
 import { decodeSessionSaveEnvelope } from './persistence';
 import * as sessionPreferences from './sessionPreferences';
 import * as sessionState from './sessionStateTransitions';
-import type * as storageTypes from './storageRepositoryTypes';
 import { hardResetStorage, type HardResetResult } from '../../hooks/saveHardReset';
 import { loadPreferences, savePreferences } from '../../hooks/savePreferences';
 import {
@@ -31,7 +31,31 @@ import {
 } from '../../hooks/saveCoordination';
 import { walletOperationRuntime } from './walletOperationRuntime';
 import { decodeWalletOperationRecord } from './walletOperationCodec';
-import type { WalletOperationEntry } from './walletOperationStore';
+import { walletProviderScopeKey, type WalletOperationEntry } from './walletOperationStore';
+
+type StorageLifecycleEvent = 'claim' | 'authority-lost' | 'hard-reset';
+type BootStorageHydrationResult =
+  | { status: 'ready'; discardedSession: boolean; durableSession: SessionSave | null }
+  | { status: 'failed'; error: string };
+
+function assertSessionWalletScope(
+  session: SessionSave,
+  entries: readonly WalletOperationEntry[],
+): void {
+  if (
+    !sessionState.isDurableSession(session) ||
+    !('walletProviderScope' in session) ||
+    !session.walletProviderScope
+  ) {
+    return;
+  }
+  const expected = walletProviderScopeKey(session.walletProviderScope);
+  if (entries.some((entry) => walletProviderScopeKey(entry.owner.providerScope) !== expected)) {
+    throw new Error(
+      'Internal wallet consistency error: durable session and wallet ledger scopes differ',
+    );
+  }
+}
 
 class StorageRepository {
   private authority: DurableStorageAuthority | null = null;
@@ -42,7 +66,7 @@ class StorageRepository {
   private mutationTail: Promise<void> = Promise.resolve();
   private readonly authorityLostListeners = new Set<(reason: StorageAuthorityLossReason) => void>();
   private readonly lifecycleListeners = new Set<
-    (generation: number, event: storageTypes.StorageLifecycleEvent) => void
+    (generation: number, event: StorageLifecycleEvent) => void
   >();
   private pendingMutationBarrierForTests: Promise<void> | null = null;
   private pendingCheckpointHoldForTests: {
@@ -60,9 +84,7 @@ class StorageRepository {
   isGenerationCurrent(generation: number): boolean {
     return generation === this.generation && this.hasAuthority();
   }
-  onLifecycle(
-    listener: (generation: number, event: storageTypes.StorageLifecycleEvent) => void,
-  ): () => void {
+  onLifecycle(listener: (generation: number, event: StorageLifecycleEvent) => void): () => void {
     this.lifecycleListeners.add(listener);
     return () => this.lifecycleListeners.delete(listener);
   }
@@ -84,7 +106,7 @@ class StorageRepository {
     this.notifyAuthorityLost(reason);
   }
 
-  private notifyLifecycle(event: storageTypes.StorageLifecycleEvent): void {
+  private notifyLifecycle(event: StorageLifecycleEvent): void {
     for (const listener of this.lifecycleListeners) {
       try {
         listener(this.generation, event);
@@ -172,26 +194,25 @@ class StorageRepository {
   }
 
   hardResetMutation(authority: DurableStorageAuthority, reset: () => Promise<void>): Promise<void> {
-    return this.persist(
-      this.enqueue(
-        authority,
-        this.generation,
-        async () => {
-          await indexedDbStoragePort.validatePendingHardReset(authority);
-          await reset();
-        },
-        true,
-      ),
+    return this.enqueue(
+      authority,
+      this.generation,
+      async () => {
+        await indexedDbStoragePort.validatePendingHardReset(authority);
+        await reset();
+      },
+      true,
     );
   }
 
-  checkpoint(
+  saveSessionAndWalletOperations(
     session: SessionSave,
     entries: WalletOperationEntry[],
-  ): Promise<storageTypes.StorageMutationResult> {
+  ): Promise<void> {
     const sessionSnapshot = structuredClone(session);
     const entriesSnapshot = structuredClone(entries);
-    return this.mutateStorage(async (authority) => {
+    assertSessionWalletScope(sessionSnapshot, entriesSnapshot);
+    return this.runAuthorizedMutation(async (authority) => {
       await indexedDbStoragePort.writeCheckpoint(sessionSnapshot, entriesSnapshot, authority);
       const hold = this.pendingCheckpointHoldForTests;
       this.pendingCheckpointHoldForTests = null;
@@ -202,36 +223,28 @@ class StorageRepository {
     });
   }
 
-  mutateRecords(
-    ...command: storageTypes.StorageRecordMutation
-  ): Promise<storageTypes.StorageMutationResult> {
-    const input = structuredClone(command);
-    return this.mutateStorage((authority) => {
-      switch (input[0]) {
-        case 'write-session':
-          return indexedDbStoragePort.writeSession(input[1], authority);
-        case 'delete-session':
-          return indexedDbStoragePort.deleteSession(authority);
-        case 'write-wallet-operations':
-          return indexedDbStoragePort.writeWalletOperations(input[1], authority);
-        case 'delete-wallet-operations':
-          return indexedDbStoragePort.deleteWalletOperations(authority);
-        case 'write-rejection':
-          return indexedDbStoragePort.writeRejection(input[1], authority);
-        case 'replace-session-with-rejection':
-          return indexedDbStoragePort.replaceSessionWithRejection(input[1], authority);
-        case 'delete-rejection':
-          return indexedDbStoragePort.deleteRejection(input[1], input[2], authority);
-        case 'prune-rejections':
-          return indexedDbStoragePort.pruneRejections(authority);
-      }
-    });
+  saveWalletOperations(entries: WalletOperationEntry[]): Promise<void> {
+    const snapshot = structuredClone(entries);
+    return this.runAuthorizedMutation((authority) =>
+      indexedDbStoragePort.writeWalletOperations(snapshot, authority),
+    );
   }
 
-  persist(result: Promise<storageTypes.StorageMutationResult>): Promise<void> {
-    return result.then((completed) => {
-      if (completed.status !== 'committed') throw completed.error;
-    });
+  private deleteSessionRecord(): Promise<void> {
+    return this.runAuthorizedMutation((authority) => indexedDbStoragePort.deleteSession(authority));
+  }
+
+  writeRejection(tombstone: DurableRejectionTombstone): Promise<void> {
+    const snapshot = structuredClone(tombstone);
+    return this.runAuthorizedMutation((authority) =>
+      indexedDbStoragePort.writeRejection(snapshot, authority),
+    );
+  }
+
+  deleteRejection(peerId: string, sessionId: string): Promise<void> {
+    return this.runAuthorizedMutation((authority) =>
+      indexedDbStoragePort.deleteRejection(peerId, sessionId, authority),
+    );
   }
 
   holdNextMutationForTests(barrier: Promise<void>): void {
@@ -246,14 +259,15 @@ class StorageRepository {
     this.pendingClaimHoldForTests = { barrier, claimed };
   }
 
-  private mutateStorage(
+  private authorityMutationError(): StorageAuthorityRequiredError | StorageAuthorityLostError {
+    return this.fenced ? new StorageAuthorityLostError() : new StorageAuthorityRequiredError();
+  }
+
+  private runAuthorizedMutation(
     write: (authority: DurableStorageAuthority) => Promise<void>,
-  ): Promise<storageTypes.StorageMutationResult> {
+  ): Promise<void> {
     if (!this.authority || this.fenced) {
-      return Promise.resolve({
-        status: 'authority-lost',
-        error: new StorageAuthorityLostError(),
-      });
+      return Promise.reject(this.authorityMutationError());
     }
     const authority = { ...this.authority };
     return this.enqueue(authority, this.generation, () => write(authority));
@@ -264,7 +278,7 @@ class StorageRepository {
     generation: number,
     run: () => Promise<void>,
     allowFenced = false,
-  ): Promise<storageTypes.StorageMutationResult> {
+  ): Promise<void> {
     const lifecycle = this.lifecycle;
     const execution = this.mutationTail.then(async () => {
       const barrier = this.pendingMutationBarrierForTests;
@@ -287,19 +301,18 @@ class StorageRepository {
       () => {},
       () => {},
     );
-    return execution.then(
-      () => ({ status: 'committed' }),
-      (error: unknown) => this.mutationFailure(lifecycle, authority, error),
-    );
+    return execution.catch((error: unknown) => {
+      this.handleMutationFailure(lifecycle, authority, error);
+      throw error;
+    });
   }
 
-  private mutationFailure(
+  private handleMutationFailure(
     lifecycle: number,
     authority: DurableStorageAuthority,
     error: unknown,
-  ): storageTypes.StorageMutationResult {
-    if (lifecycle !== this.lifecycle) return { status: 'committed' };
-    if (!(error instanceof StorageAuthorityLostError)) return { status: 'failed', error };
+  ): void {
+    if (lifecycle !== this.lifecycle || !(error instanceof StorageAuthorityLostError)) return;
     if (
       this.authority?.ownerTabId === authority.ownerTabId &&
       this.authority.writeEpoch === authority.writeEpoch &&
@@ -307,7 +320,6 @@ class StorageRepository {
     ) {
       this.loseAuthority('durable-authority-lost');
     }
-    return { status: 'authority-lost', error };
   }
 
   private stopPersistenceForHardReset(): void {
@@ -350,7 +362,7 @@ class StorageRepository {
     } catch (error) {
       if (!(error instanceof InvalidSessionRecordError)) throw error;
       console.error('[save] rejecting unreadable session record:', error);
-      await this.persist(this.mutateRecords('delete-session'));
+      await this.deleteSessionRecord();
       markSavedSession();
       return { record: null, discarded: true };
     }
@@ -358,7 +370,7 @@ class StorageRepository {
     const decoded = sessionState.decodeCurrentSession(record);
     if (!decoded) {
       console.error('[save] rejecting incompatible session record');
-      await this.persist(this.mutateRecords('delete-session'));
+      await this.deleteSessionRecord();
       markSavedSession();
       return { record: null, discarded: true };
     }
@@ -370,12 +382,15 @@ class StorageRepository {
     const ledgerCheckpoint = walletOperationRuntime.checkpoint();
     sessionState.assertPersistableSession(snapshot);
     decodeSessionSaveEnvelope(snapshot);
-    const write = this.persist(this.checkpoint(snapshot, ledgerCheckpoint.entries)).then(() => {
-      walletOperationRuntime.combinedCheckpointPersisted(ledgerCheckpoint);
-      if (sessionState.isDurableSession(snapshot)) {
-        markSavedSession();
-      }
-    });
+    assertSessionWalletScope(snapshot, ledgerCheckpoint.entries);
+    const write = this.saveSessionAndWalletOperations(snapshot, ledgerCheckpoint.entries).then(
+      () => {
+        walletOperationRuntime.combinedCheckpointPersisted(ledgerCheckpoint);
+        if (sessionState.isDurableSession(snapshot)) {
+          markSavedSession();
+        }
+      },
+    );
     return write;
   }
 
@@ -394,7 +409,7 @@ class StorageRepository {
   }
 
   flushSessionSave(): Promise<void> {
-    if (!this.hasAuthority()) return Promise.reject(new StorageAuthorityLostError());
+    if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
     return this.hydrateSessionCacheFromDiskStrict().then(async () => {
       if (!this.cached || this.fenced) {
         await walletOperationRuntime.persistIfDirty();
@@ -500,15 +515,14 @@ class StorageRepository {
       isCurrent: (generation) => this.isGenerationCurrent(generation),
     });
     walletOperationRuntime.configurePersistence(async (entries) => {
-      if (!this.hasAuthority()) throw new StorageAuthorityLostError();
-      await this.persist(this.mutateRecords('write-wallet-operations', entries));
+      await this.saveWalletOperations(entries);
     });
   }
 
   private identityDiskChecked = false;
   private storageRepositoryHydratedFromDisk = false;
   private walletOperationRuntimeHydration: Promise<void> | null = null;
-  private preAuthorityPatch: sessionState.PreAuthorityPatch = {};
+  private pendingCommonPatch: sessionState.CommonSessionPatch = {};
 
   _resetForTests(options: { preserveWalletOperationRuntime?: boolean } = {}): void {
     this.lifecycle += 1;
@@ -532,7 +546,7 @@ class StorageRepository {
     this.identityDiskChecked = false;
     this.storageRepositoryHydratedFromDisk = false;
     this.walletOperationRuntimeHydration = null;
-    this.preAuthorityPatch = {};
+    this.pendingCommonPatch = {};
     resetStorageCoordinationForTests();
     if (!options.preserveWalletOperationRuntime) walletOperationRuntime.resetForTests();
   }
@@ -567,6 +581,7 @@ class StorageRepository {
     }
     await this.hydrateWalletSnapshot();
     if (this.cached && sessionState.isDurableSession(this.cached)) {
+      assertSessionWalletScope(this.cached, walletOperationRuntime.snapshot());
       this.identityDiskChecked = true;
       this.storageRepositoryHydratedFromDisk = true;
       return false;
@@ -592,6 +607,7 @@ class StorageRepository {
       this.cached = loadPreferences();
       return true;
     }
+    assertSessionWalletScope(record, walletOperationRuntime.snapshot());
     this.cached = sessionState.mergeDurableSession(record, this.cached ?? loadPreferences());
     savePreferences(this.cached);
     return false;
@@ -605,28 +621,35 @@ class StorageRepository {
       walletOperationRuntime.failHydration(snapshot.walletOperationError);
       throw snapshot.walletOperationError;
     }
-    walletOperationRuntime.hydrateClaimedSnapshot(snapshot.walletOperationRecord);
-    this.walletOperationRuntimeHydration = Promise.resolve();
-
     let record: SessionSave | null = null;
     let discarded = false;
     if (snapshot.sessionError) {
       console.error('[save] rejecting unreadable session record:', snapshot.sessionError);
-      await this.persist(this.mutateRecords('delete-session'));
+      await this.deleteSessionRecord();
       markSavedSession();
       discarded = true;
     } else if (snapshot.sessionRecord) {
       record = sessionState.decodeCurrentSession(snapshot.sessionRecord);
       if (!record) {
         console.error('[save] rejecting incompatible session record');
-        await this.persist(this.mutateRecords('delete-session'));
+        await this.deleteSessionRecord();
         markSavedSession();
         discarded = true;
       }
     }
+    const walletEntries =
+      snapshot.walletOperationRecord === null
+        ? []
+        : decodeWalletOperationRecord(snapshot.walletOperationRecord).entries;
+    if (record) assertSessionWalletScope(record, walletEntries);
+    walletOperationRuntime.hydrateClaimedSnapshot(
+      snapshot.walletOperationRecord,
+      record && sessionState.isDurableSession(record) ? record.walletProviderScope : null,
+    );
+    this.walletOperationRuntimeHydration = Promise.resolve();
 
-    const patch = this.preAuthorityPatch;
-    this.preAuthorityPatch = {};
+    const patch = this.pendingCommonPatch;
+    this.pendingCommonPatch = {};
     this.cached = sessionState.mergeClaimedSession(record, loadPreferences(), patch);
     this.identityDiskChecked = true;
     this.storageRepositoryHydratedFromDisk = true;
@@ -660,7 +683,7 @@ class StorageRepository {
     return this.installClaimedStorageSnapshot(snapshot);
   }
 
-  async hydrateSessionCacheFromDisk(): Promise<storageTypes.BootStorageHydrationResult> {
+  async hydrateSessionCacheFromDisk(): Promise<BootStorageHydrationResult> {
     try {
       if (!this.hasAuthority()) {
         const {
@@ -693,36 +716,38 @@ class StorageRepository {
     }
   }
 
-  private mutate(fn: (state: SessionSave) => SessionSave | void): Promise<void> {
+  private mutateCommon(fn: (state: SessionSave) => SessionSave): Promise<void> {
     if (!this.hasAuthority()) {
       const state = this.loadState();
       const before = structuredClone(state);
-      this.cached = fn(state) ?? state;
+      this.cached = fn(state);
       const patch = sessionState.commonPatch(before, this.cached);
-      this.preAuthorityPatch = {
-        identity: { ...this.preAuthorityPatch.identity, ...patch.identity },
-        preferences: { ...this.preAuthorityPatch.preferences, ...patch.preferences },
-        history: { ...this.preAuthorityPatch.history, ...patch.history },
+      this.pendingCommonPatch = {
+        identity: { ...this.pendingCommonPatch.identity, ...patch.identity },
+        preferences: { ...this.pendingCommonPatch.preferences, ...patch.preferences },
+        history: { ...this.pendingCommonPatch.history, ...patch.history },
       };
       savePreferences(this.cached);
       return Promise.resolve();
     }
+    return this.mutateSession(fn);
+  }
+
+  private mutateSession(fn: (state: SessionSave) => SessionSave): Promise<void> {
+    if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
+    const apply = () => {
+      this.cached = fn(this.loadState());
+      savePreferences(this.cached);
+      return this.schedulePersist();
+    };
     if (
       (this.cached && sessionState.isDurableSession(this.cached)) ||
       !hasSavedSessionMarker() ||
       this.storageRepositoryHydratedFromDisk
     ) {
-      const state = this.loadState();
-      this.cached = fn(state) ?? state;
-      savePreferences(this.cached);
-      return this.schedulePersist();
+      return apply();
     }
-    return this.hydrateSessionCacheFromDiskStrict().then(() => {
-      const state = this.loadState();
-      this.cached = fn(state) ?? state;
-      savePreferences(this.cached);
-      return this.schedulePersist();
-    });
+    return this.hydrateSessionCacheFromDiskStrict().then(apply);
   }
 
   getPlayerId(): string {
@@ -730,8 +755,8 @@ class StorageRepository {
     if (this.hasAuthority()) {
       savePreferences(state);
     } else {
-      this.preAuthorityPatch.identity = {
-        ...this.preAuthorityPatch.identity,
+      this.pendingCommonPatch.identity = {
+        ...this.pendingCommonPatch.identity,
         playerId: state.identity.playerId,
       };
     }
@@ -758,7 +783,7 @@ class StorageRepository {
   }
 
   updatePreference(update: sessionPreferences.SessionPreferenceUpdate): Promise<void> {
-    const persisted = this.mutate((state) =>
+    const persisted = this.mutateCommon((state) =>
       sessionPreferences.applySessionPreferenceUpdate(state, update),
     );
     if (update.key === 'hubUrl' && update.value) markSavedSession();
@@ -793,8 +818,8 @@ class StorageRepository {
       savePreferences(state);
       void this.schedulePersist();
     } else {
-      this.preAuthorityPatch.identity = {
-        ...this.preAuthorityPatch.identity,
+      this.pendingCommonPatch.identity = {
+        ...this.pendingCommonPatch.identity,
         sessionId: state.identity.sessionId,
         myHubPlayerId: undefined,
       };
@@ -804,27 +829,29 @@ class StorageRepository {
 
   clearHubIdentity(): void {
     this.identityDiskChecked = true;
-    void this.mutate((state) => ({
+    void this.mutateCommon((state) => ({
       ...state,
       identity: { ...state.identity, sessionId: undefined, myHubPlayerId: undefined },
     }));
   }
 
   saveSession(update: sessionState.SessionStateUpdate): Promise<void> {
-    return this.mutate((state) => sessionState.applySessionUpdate(state, update));
+    const apply = (state: SessionSave) => sessionState.applySessionUpdate(state, update);
+    return update.scope === 'common' ? this.mutateCommon(apply) : this.mutateSession(apply);
   }
 
   patchPreHandshakeTransport(
     transport: sessionState.SessionReplacement['transport'],
   ): Promise<void> {
-    return this.mutate((state) => sessionState.patchSessionTransport(state, transport));
+    return this.mutateSession((state) => sessionState.patchSessionTransport(state, transport));
   }
 
   clearSessionPairing(): Promise<void> {
-    return this.mutate(sessionState.clearSessionPeer);
+    return this.mutateSession(sessionState.clearSessionPeer);
   }
 
   async replaceSession(checkpoint: sessionState.SessionReplacement): Promise<void> {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
     await this.hydrateSessionCacheFromDiskStrict();
     if (this.persistPromise) await this.flushSessionSave();
     const replacement = sessionState.createPreHandshakeSession(this.loadState(), checkpoint);
@@ -835,10 +862,11 @@ class StorageRepository {
   }
 
   saveTerminalSession(fields: sessionState.TerminalFields): Promise<void> {
-    return this.mutate((state) => sessionState.createTerminalSession(state, fields));
+    return this.mutateSession((state) => sessionState.createTerminalSession(state, fields));
   }
 
   async stageTerminalSession(fields: sessionState.TerminalFields): Promise<void> {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
     await this.hydrateSessionCacheFromDiskStrict();
     this.stagedTerminal = sessionState.createTerminalSession(this.loadState(), fields);
   }
@@ -855,7 +883,7 @@ class StorageRepository {
       if (rawSession && !inspected) console.error('[save] rejecting incompatible session record');
       if (inspected) {
         const local = loadPreferences();
-        this.cached = sessionState.mergeInspectedSession(inspected, local, this.preAuthorityPatch);
+        this.cached = sessionState.mergeInspectedSession(inspected, local, this.pendingCommonPatch);
         this.identityDiskChecked = true;
         this.storageRepositoryHydratedFromDisk = true;
         if (
@@ -906,6 +934,7 @@ class StorageRepository {
   }
 
   clearSession(): Promise<void> {
+    if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
@@ -913,7 +942,7 @@ class StorageRepository {
     this.settleScheduledPersist();
     this.cached = sessionState.freshSessionState(this.loadState());
     savePreferences(this.cached);
-    const deletePromise = this.persist(this.mutateRecords('delete-session')).then(() => {
+    const deletePromise = this.deleteSessionRecord().then(() => {
       if (
         this.cached?.preferences.blockchainType ||
         this.cached?.preferences.hubUrl ||
@@ -927,16 +956,8 @@ class StorageRepository {
     return deletePromise;
   }
 
-  clearSessionWithInboundRejectionReceipt(
-    receipt: Omit<DurableRejectionTombstone, 'kind'>,
-  ): Promise<void> {
-    return this.clearSessionWithRejectionTombstone({
-      ...receipt,
-      kind: 'inbound-receipt',
-    });
-  }
-
-  clearSessionWithRejectionTombstone(tombstone: DurableRejectionTombstone): Promise<void> {
+  replaceSessionWithRejection(tombstone: DurableRejectionTombstone): Promise<void> {
+    if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
@@ -944,8 +965,9 @@ class StorageRepository {
     this.settleScheduledPersist();
     this.cached = sessionState.freshSessionState(this.loadState());
     savePreferences(this.cached);
-    const replacePromise = this.persist(
-      this.mutateRecords('replace-session-with-rejection', tombstone),
+    const snapshot = structuredClone(tombstone);
+    const replacePromise = this.runAuthorizedMutation((authority) =>
+      indexedDbStoragePort.replaceSessionWithRejection(snapshot, authority),
     ).then(() => {
       if (
         this.cached?.preferences.blockchainType ||
@@ -960,11 +982,32 @@ class StorageRepository {
     return replacePromise;
   }
 
-  async clearGameSessionPreservingHistory(): Promise<void> {
-    const checkpoint = sessionState.preservationCheckpoint(this.loadState());
-    await this.clearSession();
-    if (checkpoint) {
-      await this.replaceSession(checkpoint);
+  async clearGameSessionPreservingHistory(
+    history?: Partial<SessionSave['history']>,
+  ): Promise<void> {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    await this.hydrateSessionCacheFromDiskStrict();
+    if (this.persistPromise) await this.flushSessionSave();
+    const current = sessionState.applySessionUpdate(this.loadState(), {
+      scope: 'common',
+      history,
+    });
+    const checkpoint = sessionState.preservationCheckpoint(current);
+    const replacement = checkpoint
+      ? sessionState.createPreHandshakeSession(current, checkpoint)
+      : sessionState.freshSessionState(current);
+    await this.queueWrite(replacement);
+    this.cached = replacement;
+    this.stagedTerminal = null;
+    savePreferences(replacement);
+    if (
+      sessionPreferences.hasConnectionPreferences(replacement, hasWalletConnectStorage()) ||
+      walletOperationRuntime.snapshot().length > 0 ||
+      sessionState.isDurableSession(replacement)
+    ) {
+      markSavedSession();
+    } else {
+      clearSavedSessionMarker();
     }
   }
 
@@ -987,8 +1030,8 @@ class StorageRepository {
         key: 'alias',
         value: generated,
       });
-      this.preAuthorityPatch.preferences = {
-        ...this.preAuthorityPatch.preferences,
+      this.pendingCommonPatch.preferences = {
+        ...this.pendingCommonPatch.preferences,
         alias: generated,
       };
     }

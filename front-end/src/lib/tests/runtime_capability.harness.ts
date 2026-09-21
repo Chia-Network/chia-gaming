@@ -1,10 +1,16 @@
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { SessionController } from '../../hooks/SessionController';
-import type { SessionRuntimeLease } from '../session/sessionRuntimeLease';
-import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
+import {
+  SessionMachineRuntime,
+  SessionRuntimeRetiredError,
+} from '../session/sessionMachineRuntime';
 import type { SessionModel } from '../session/types';
 import { createSessionModel } from '../session/model';
-import type { InternalBlockchainInterface, TransactionSubmission } from '../../types/ChiaGaming';
+import type {
+  InternalBlockchainInterface,
+  TransactionSubmission,
+  WalletProviderScope,
+} from '../../types/ChiaGaming';
 import {
   makeMockCradle,
   makePeerConn,
@@ -20,7 +26,7 @@ interface PendingRelease {
   readonly reject: (error: unknown) => void;
 }
 
-export class ControlledLease implements SessionRuntimeLease {
+export class ControlledRuntime {
   private readonly pending = new Map<string, PendingRelease>();
   private readonly pendingMutations: Array<{
     readonly reject: (error: unknown) => void;
@@ -86,7 +92,7 @@ export class ControlledLease implements SessionRuntimeLease {
   }
 
   snapshotModel(): SessionModel {
-    return this.snapshot();
+    return structuredClone(this.snapshot());
   }
 
   has(key: string): boolean {
@@ -121,7 +127,15 @@ export class ControlledLease implements SessionRuntimeLease {
   }
 }
 
-export function setup(spend: jest.Mock, rpcOverrides: Partial<InternalBlockchainInterface> = {}) {
+export function commitRuntime(controller: SessionController, runtime: ControlledRuntime): void {
+  controller.commitSessionRuntime(runtime as unknown as SessionMachineRuntime);
+}
+
+export function setup(
+  spend: jest.Mock,
+  rpcOverrides: Partial<InternalBlockchainInterface> = {},
+  walletProviderScope?: WalletProviderScope,
+) {
   const legacy = rpcOverrides as Record<string, any>;
   const adapter = { ...mockRpc, spend, ...rpcOverrides } as InternalBlockchainInterface;
   if (!rpcOverrides.getWalletOfferProvider) {
@@ -161,6 +175,8 @@ export function setup(spend: jest.Mock, rpcOverrides: Partial<InternalBlockchain
     100n,
     100n,
     makePeerConn([], []),
+    undefined,
+    walletProviderScope,
   );
   const cradle = makeMockCradle();
   controller.rewardPuzzleHash = '11'.repeat(32);

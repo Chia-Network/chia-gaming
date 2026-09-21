@@ -531,7 +531,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async beginWalletOffer(
     _operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<WalletOfferCompletion> {
+  ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
     if (request.kind === 'funding') {
       return this.createFundingOffer(request);
     }
@@ -563,7 +563,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('wallet returned a persisted fee offer without tradeRecord.tradeId');
       }
       log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
-      return { kind: 'created', material: { kind: 'offer', offer }, tradeId };
+      return { kind: 'created-reserved', material: { kind: 'offer', offer }, tradeId };
     } catch (e) {
       // Propagate the real reason (RPC error, missing signed bundle) so the
       // caller's user-facing warning is accurate rather than always blaming
@@ -627,7 +627,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private async createFundingOffer(
     request: Extract<WalletOfferRequest, { kind: 'funding' }>,
-  ): Promise<WalletOfferCompletion> {
+  ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
     const { offer, extraConditions, coinIds, maxHeight } = request;
     try {
       const conditions = [...(extraConditions ?? [])];
@@ -713,18 +713,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
         log('[wc-blockchain] createOfferForIds returned bech32 offer string path');
-        if (!payload.validateOnly) {
-          const tradeId = (response as any)?.tradeRecord?.tradeId;
-          if (typeof tradeId === 'string' && tradeId) {
-            return {
-              kind: 'created',
-              material: { kind: 'offer', offer: offerStr },
-              tradeId,
-            };
-          }
-          throw new Error('wallet returned a persisted funding offer without tradeRecord.tradeId');
+        const tradeId = (response as any)?.tradeRecord?.tradeId;
+        if (typeof tradeId === 'string' && tradeId) {
+          return {
+            kind: 'created-reserved',
+            material: { kind: 'offer', offer: offerStr },
+            tradeId,
+          };
         }
-        return { kind: 'created', material: { kind: 'offer', offer: offerStr } };
+        throw new Error('wallet returned a persisted funding offer without tradeRecord.tradeId');
       }
       throw new Error(`wallet returned non-offer payload type=${typeof response}`);
     } catch (e) {

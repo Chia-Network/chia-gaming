@@ -19,7 +19,7 @@ function controller(acceptProposal: (id: string) => void): SessionController {
   return {
     acceptProposal,
     clearDerivedGamePresentation: jest.fn(),
-    attachTransactionCoordinator: jest.fn(),
+    commitSessionRuntime: jest.fn(),
     flushDeferredWork: jest.fn(),
     prepareReliableCommit: jest.fn(() => ({
       generation: 0,
@@ -254,6 +254,10 @@ describe('SessionMachineRuntime quiescent projection', () => {
       timeout: string;
     }> = [];
     const mockController = controller(jest.fn());
+    (mockController as SessionController).getWalletProviderScope = jest.fn(() => ({
+      provider: 'simulator',
+      identity: 'projection-test',
+    }));
     (mockController as SessionController).getWasmFields = jest.fn(() => ({
       serializedGameSession: wasmBytes,
       gameSessionSchemaVersion: 4n,

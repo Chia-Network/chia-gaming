@@ -273,8 +273,22 @@ export type WalletOfferMaterial =
   | { kind: 'offer'; offer: string }
   | { kind: 'bundle'; bundle: unknown };
 
+export type WalletOfferReservedCompletion = {
+  kind: 'created-reserved';
+  material: WalletOfferMaterial;
+  tradeId: string;
+  warning?: string;
+};
+
+export type WalletOfferEphemeralCompletion = {
+  kind: 'created-ephemeral';
+  material: WalletOfferMaterial;
+  warning?: string;
+};
+
 export type WalletOfferCompletion =
-  | { kind: 'created'; material: WalletOfferMaterial; tradeId?: string; warning?: string }
+  | WalletOfferReservedCompletion
+  | WalletOfferEphemeralCompletion
   | { kind: 'failure'; reason: string }
   | { kind: 'unavailable'; reason: string };
 
@@ -622,7 +636,7 @@ export interface BestEffortWalletOfferProvider extends WalletOfferProviderBase {
   beginCreation(
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<WalletOfferCompletion>;
+  ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
   cancel(tradeId: string): Promise<WalletOfferCancellationOutcome>;
 }
 
@@ -640,12 +654,12 @@ export interface RecoverableWalletOfferProvider extends WalletOfferProviderBase 
   beginCreation(
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<WalletOfferBeginOutcome>;
+  ): Promise<Exclude<WalletOfferBeginOutcome, WalletOfferEphemeralCompletion>>;
   reconcileCreation(
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
     recoveryId: string,
-  ): Promise<WalletOfferCompletion>;
+  ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
   beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
   reconcileCancellation(
     tradeId: string,
@@ -663,12 +677,12 @@ export interface RecoverableAfterBeginWalletOfferProvider extends WalletOfferPro
   beginCreation(
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<WalletOfferBeginOutcome>;
+  ): Promise<Exclude<WalletOfferBeginOutcome, WalletOfferEphemeralCompletion>>;
   reconcileCreation(
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
     recoveryId: string,
-  ): Promise<WalletOfferCompletion>;
+  ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
   beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
   reconcileCancellation(
     tradeId: string,

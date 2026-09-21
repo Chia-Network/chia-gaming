@@ -44,9 +44,7 @@ describe('session persistence: checkpoint', () => {
       },
     ];
 
-    await storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', entries),
-    );
+    await storageRepository.saveWalletOperations(entries);
 
     expect(await readWalletOperationRecord()).toEqual({
       schema: WALLET_OPERATION_RECORD_SCHEMA,
@@ -71,10 +69,8 @@ describe('session persistence: checkpoint', () => {
       },
     ];
 
-    const combined = storageRepository.persist(storageRepository.checkpoint(session, retained));
-    const laterCleanup = storageRepository.persist(
-      storageRepository.mutateRecords('write-wallet-operations', []),
-    );
+    const combined = storageRepository.saveSessionAndWalletOperations(session, retained);
+    const laterCleanup = storageRepository.saveWalletOperations([]);
     await Promise.all([combined, laterCleanup]);
 
     expect(await readSessionRecord()).toEqual(session);
@@ -348,6 +344,7 @@ describe('session persistence: checkpoint', () => {
     );
     saveLiveFields({
       ...sampleSession,
+      walletProviderScope: owner.providerScope,
       serializedGameSession: new Uint8Array([1]),
     });
     await storageRepository.flushSessionSave();
@@ -362,6 +359,7 @@ describe('session persistence: checkpoint', () => {
     );
     const scheduled = saveLiveFields({
       ...sampleSession,
+      walletProviderScope: owner.providerScope,
       serializedGameSession: new Uint8Array([2]),
     });
     const originalTransaction = IDBDatabase.prototype.transaction;
@@ -403,6 +401,7 @@ describe('session persistence: checkpoint', () => {
 
     const healed = saveLiveFields({
       ...sampleSession,
+      walletProviderScope: owner.providerScope,
       serializedGameSession: new Uint8Array([2]),
     });
     await storageRepository.flushSessionSave();

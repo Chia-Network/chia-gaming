@@ -3,15 +3,21 @@ import { SessionController } from '../../hooks/SessionController';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import type { TransactionSubmission } from '../../types/ChiaGaming';
 import { submissionDrain, wasmResult } from './message_protocol.harness';
-import { ControlledLease, nextAttempt, setup, submission } from './submission_handoff.harness';
+import {
+  commitRuntime,
+  ControlledRuntime,
+  nextAttempt,
+  setup,
+  submission,
+} from './runtime_capability.harness';
 
-describe('submission pump delivery and lease handoff', () => {
+describe('submission pump delivery and runtime replacement', () => {
   it('retires a delivery before persistence-gated launch', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(submission('retired-before-launch'));
       expect(lease.has('submission:retired-before-launch')).toBe(true);
 
@@ -44,9 +50,9 @@ describe('submission pump delivery and lease handoff', () => {
         }),
     );
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(submission(`retired-after-${outcome.status}`));
       const launch = lease.launch(`submission:retired-after-${outcome.status}`);
       for (let i = 0; i < 20 && spend.mock.calls.length === 0; i += 1) {
@@ -71,17 +77,18 @@ describe('submission pump delivery and lease handoff', () => {
     }
   });
 
-  it('reschedules an unlaunched delivery on the replacement lease exactly once', async () => {
+  it('reschedules an unlaunched delivery on the replacement runtime exactly once', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledLease();
-    const replacement = new ControlledLease();
+    const first = new ControlledRuntime();
+    const replacement = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
       submit(submission('before-persistence'));
       expect(first.has('submission:before-persistence')).toBe(true);
 
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
+      await Promise.resolve();
       expect(replacement.count('submission:before-persistence')).toBe(1);
       await replacement.launch('submission:before-persistence');
       await controller.flushPendingWork();
@@ -100,11 +107,11 @@ describe('submission pump delivery and lease handoff', () => {
   it('replaces an unlaunched bridge entry with the latest Rust attempt', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease(undefined, 'submission-relinquishment:');
+    const lease = new ControlledRuntime(undefined, 'submission-relinquishment:');
     const first = submission('prelaunch-successor');
     const successor = nextAttempt(first, 'prelaunch-successor-attempt-2');
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(first);
       submit(successor);
       for (
@@ -144,9 +151,9 @@ describe('submission pump delivery and lease handoff', () => {
   it('retains coordinator ownership until relinquishment is checkpointed', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease(undefined, 'submission-relinquishment:');
+    const lease = new ControlledRuntime(undefined, 'submission-relinquishment:');
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(submission('checkpointed-relinquishment'));
       await lease.launch('submission:checkpointed-relinquishment');
       for (
@@ -190,7 +197,7 @@ describe('submission pump delivery and lease handoff', () => {
   it('preserves a successor that arrives during launched-attempt relinquishment', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease(undefined, 'submission-relinquishment:');
+    const lease = new ControlledRuntime(undefined, 'submission-relinquishment:');
     const first = submission('successor-during-relinquishment');
     const successor = nextAttempt(first, 'successor-during-relinquishment-attempt-2');
     const firstRelinquishment =
@@ -198,7 +205,7 @@ describe('submission pump delivery and lease handoff', () => {
     const successorRelinquishment =
       'submission-relinquishment:successor-during-relinquishment:successor-during-relinquishment-attempt-2';
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(first);
       await lease.launch('submission:successor-during-relinquishment');
       for (let pass = 0; pass < 20 && !lease.has(firstRelinquishment); pass += 1) {
@@ -230,17 +237,17 @@ describe('submission pump delivery and lease handoff', () => {
     }
   });
 
-  it('keeps a launched delivery queue-owned across lease replacement', async () => {
+  it('keeps a launched delivery queue-owned across runtime replacement', async () => {
     let resolveSpend!: (value: { status: 'acknowledged' }) => void;
     const spendGate = new Promise<{ status: 'acknowledged' }>((resolve) => {
       resolveSpend = resolve;
     });
     const spend = jest.fn(() => spendGate);
     const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledLease();
-    const replacement = new ControlledLease();
+    const first = new ControlledRuntime();
+    const replacement = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
       submit(submission('after-launch'));
       const launch = first.launch('submission:after-launch');
       for (let i = 0; i < 10 && spend.mock.calls.length === 0; i += 1) {
@@ -248,7 +255,7 @@ describe('submission pump delivery and lease handoff', () => {
       }
       expect(spend).toHaveBeenCalledTimes(1);
 
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
       expect(replacement.has('submission:after-launch')).toBe(false);
 
       resolveSpend({ status: 'acknowledged' });
@@ -261,13 +268,13 @@ describe('submission pump delivery and lease handoff', () => {
     }
   });
 
-  it('hands an unlaunched finalized broadcast to the replacement lease', async () => {
+  it('hands an unlaunched finalized broadcast to the replacement runtime', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledLease(undefined, 'broadcast:');
-    const replacement = new ControlledLease();
+    const first = new ControlledRuntime(undefined, 'broadcast:');
+    const replacement = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
       submit(submission('finalized-broadcast-handoff'));
       const launch = first.launch('submission:finalized-broadcast-handoff');
       const broadcastKey = `broadcast:finalized-broadcast-handoff:${'bb'.repeat(32)}`;
@@ -279,7 +286,7 @@ describe('submission pump delivery and lease handoff', () => {
       expect(cradle.finalize_submission).toHaveBeenCalledTimes(1);
       expect(spend).not.toHaveBeenCalled();
 
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
       await launch;
       await controller.flushPendingWork();
 
@@ -294,10 +301,10 @@ describe('submission pump delivery and lease handoff', () => {
     }
   });
 
-  it('cleans a finalized fee reservation independently of lease replacement', async () => {
+  it('cleans a finalized fee reservation independently of runtime replacement', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'rejected', detail: 'wallet rejected' });
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer-fee' },
       tradeId: 'trade-fee',
     });
@@ -306,10 +313,10 @@ describe('submission pump delivery and lease handoff', () => {
       beginWalletOffer,
       beginWalletOfferCancellation,
     });
-    const first = new ControlledLease();
-    const replacement = new ControlledLease();
+    const first = new ControlledRuntime();
+    const replacement = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
         submissionDrain([], ['fee-release-handoff']),
       );
@@ -325,7 +332,7 @@ describe('submission pump delivery and lease handoff', () => {
       expect(cradle.reject_submission).toHaveBeenCalledTimes(1);
       expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
 
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
       await launch;
       controller.processResult(wasmResult());
       await controller.flushPendingWork();
@@ -339,13 +346,13 @@ describe('submission pump delivery and lease handoff', () => {
     }
   });
 
-  it('hands an acknowledged wallet outcome to the replacement lease without rebroadcasting', async () => {
+  it('hands an acknowledged wallet outcome to the replacement runtime without rebroadcasting', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledLease(2);
-    const replacement = new ControlledLease();
+    const first = new ControlledRuntime(2);
+    const replacement = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
       submit(submission('acknowledged-handoff'));
       const launch = first.launch('submission:acknowledged-handoff');
       for (let i = 0; i < 50 && !first.hasPendingMutation(); i += 1) {
@@ -355,7 +362,7 @@ describe('submission pump delivery and lease handoff', () => {
       expect(first.hasPendingMutation()).toBe(true);
       expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
 
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
       await launch;
       await controller.flushPendingWork();
 
@@ -385,17 +392,17 @@ describe('submission pump delivery and lease handoff', () => {
       [8n, [{ coin: 'coin-state', created_height: 8n, spent_height: null }]],
     ],
   ] as const)(
-    'hands %s to a replacement lease exactly once',
+    'hands %s to a replacement runtime exactly once',
     async (_label, deliver, cradleMethod, expectedArguments) => {
       const { controller, cradle } = setup(jest.fn());
-      const first = new ControlledLease(1);
-      const replacement = new ControlledLease();
+      const first = new ControlledRuntime(1);
+      const replacement = new ControlledRuntime();
       try {
-        controller.attachTransactionCoordinator(first);
+        commitRuntime(controller, first);
         const completion = deliver(controller);
         expect(first.hasPendingMutation()).toBe(true);
 
-        controller.attachTransactionCoordinator(replacement);
+        commitRuntime(controller, replacement);
         await completion;
 
         const callback = cradle[cradleMethod] as jest.Mock;
@@ -424,16 +431,16 @@ describe('submission pump delivery and lease handoff', () => {
       [8n, [{ coin: 'coin-state', created_height: 8n, spent_height: null }]],
     ],
   ] as const)(
-    'queues a %s until a committed runtime lease exists',
+    'queues a %s until a committed runtime exists',
     async (_label, deliver, cradleMethod, expectedArguments) => {
       const { controller, cradle } = setup(jest.fn());
-      const lease = new ControlledLease();
+      const lease = new ControlledRuntime();
       try {
         await deliver(controller);
         const callback = cradle[cradleMethod] as jest.Mock;
         expect(callback).not.toHaveBeenCalled();
 
-        controller.attachTransactionCoordinator(lease);
+        commitRuntime(controller, lease);
         await controller.flushPendingWork();
 
         expect(callback).toHaveBeenCalledTimes(1);
@@ -460,7 +467,7 @@ describe('submission pump delivery and lease handoff', () => {
     async (_label, cradleMethod, deliver) => {
       expectConsoleError('authoritative callback failed');
       const { controller, cradle } = setup(jest.fn());
-      const lease = new ControlledLease();
+      const lease = new ControlledRuntime();
       const errors: string[] = [];
       const subscription = controller.getObservable().subscribe((event) => {
         if (event.type === 'error') errors.push(event.error);
@@ -469,7 +476,7 @@ describe('submission pump delivery and lease handoff', () => {
         throw new Error('authoritative callback failed');
       });
       try {
-        controller.attachTransactionCoordinator(lease);
+        commitRuntime(controller, lease);
         await expect(deliver(controller)).rejects.toThrow('authoritative callback failed');
         expect(errors).toEqual(['authoritative callback failed']);
       } finally {
@@ -479,12 +486,12 @@ describe('submission pump delivery and lease handoff', () => {
     },
   );
 
-  it('hands wallet failure recording to the replacement lease without retrying the wallet', async () => {
+  it('hands wallet failure recording to the replacement runtime without retrying the wallet', async () => {
     expectConsoleError('wallet failed after broadcast');
     const spend = jest.fn().mockRejectedValue(new Error('wallet failed after broadcast'));
     const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledLease(2);
-    const replacement = new ControlledLease();
+    const first = new ControlledRuntime(2);
+    const replacement = new ControlledRuntime();
     const recordFailure = jest.spyOn(
       controller as unknown as {
         recordLocalSubmissionFailure(submission: TransactionSubmission, error: unknown): void;
@@ -496,7 +503,7 @@ describe('submission pump delivery and lease handoff', () => {
       if (event.type === 'error') errors.push(event.error);
     });
     try {
-      controller.attachTransactionCoordinator(first);
+      commitRuntime(controller, first);
       submit(submission('failure-handoff'));
       const launch = first.launch('submission:failure-handoff');
       for (let i = 0; i < 50 && !first.hasPendingMutation(); i += 1) {
@@ -506,7 +513,7 @@ describe('submission pump delivery and lease handoff', () => {
       expect(first.hasPendingMutation()).toBe(true);
       expect(errors).toEqual([]);
 
-      controller.attachTransactionCoordinator(replacement);
+      commitRuntime(controller, replacement);
       await launch;
       await controller.flushPendingWork();
 
@@ -524,15 +531,15 @@ describe('submission pump delivery and lease handoff', () => {
     }
   });
 
-  it('does not duplicate scheduling when the same lease attaches repeatedly', async () => {
+  it('does not duplicate scheduling when the same runtime commits repeatedly', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(submission('repeated-attach'));
-      controller.attachTransactionCoordinator(lease);
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
+      commitRuntime(controller, lease);
 
       expect(lease.count('submission:repeated-attach')).toBe(1);
       await lease.launch('submission:repeated-attach');
@@ -555,11 +562,11 @@ describe('submission pump delivery and lease handoff', () => {
       )
       .mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     const first = submission('variant-upgrade');
     const upgrade = nextAttempt(first, 'variant-upgrade-attempt-2');
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(first);
       await lease.launch('submission:variant-upgrade');
       for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
@@ -598,12 +605,12 @@ describe('submission pump delivery and lease handoff', () => {
       )
       .mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     const first = submission('superseded-wallet-result');
     const intermediate = nextAttempt(first, 'superseded-wallet-result-attempt-2');
     const successor = nextAttempt(intermediate, 'superseded-wallet-result-attempt-3');
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(first);
       const firstLaunch = lease.launch('submission:superseded-wallet-result');
       for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
@@ -639,12 +646,12 @@ describe('submission pump delivery and lease handoff', () => {
         }),
     );
     const { controller, submit } = setup(spend);
-    const firstLease = new ControlledLease();
-    const replacementLease = new ControlledLease();
+    const firstLease = new ControlledRuntime();
+    const replacementLease = new ControlledRuntime();
     const first = submission('exact-successor');
     const successor = nextAttempt(first, 'exact-successor-attempt-2');
     try {
-      controller.attachTransactionCoordinator(firstLease);
+      commitRuntime(controller, firstLease);
       submit(first);
       const launch = firstLease.launch('submission:exact-successor');
       for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
@@ -657,7 +664,7 @@ describe('submission pump delivery and lease handoff', () => {
 
       expect(firstLease.has('submission:exact-successor')).toBe(false);
 
-      controller.attachTransactionCoordinator(replacementLease);
+      commitRuntime(controller, replacementLease);
       await controller.reportChainSnapshotReady(2n);
       expect(replacementLease.has('submission:exact-successor')).toBe(true);
     } finally {
@@ -676,10 +683,10 @@ describe('submission pump delivery and lease handoff', () => {
         return () => {};
       },
     });
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     try {
       controller.attachBlockchain(blockchain);
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(submission('provider-gated'));
 
       await controller.reportChainSnapshotReady(3n);
@@ -710,14 +717,14 @@ describe('submission pump delivery and lease handoff', () => {
         }),
     );
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     const first = submission('fee-successor');
     const successor = {
       ...nextAttempt(first, 'fee-successor-attempt-2', 'newer-fee-bearing'),
       fee_request: { target: '22'.repeat(32), amount: '10' },
     };
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(first);
       const launch = lease.launch('submission:fee-successor');
       for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
@@ -747,12 +754,12 @@ describe('submission pump delivery and lease handoff', () => {
       )
       .mockResolvedValue({ status: 'acknowledged' });
     const { controller, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     const first = submission('snapshot-gated');
     const successor = nextAttempt(first, 'snapshot-gated-attempt-2');
     const unrelated = submission('unrelated-urgent');
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(first);
       const launch = lease.launch('submission:snapshot-gated');
       for (let pass = 0; pass < 20 && spend.mock.calls.length === 0; pass += 1) {
@@ -777,9 +784,9 @@ describe('submission pump delivery and lease handoff', () => {
   it('fails a duplicate stable id with invalid Rust lineage before wallet side effects', () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(submission('intent-mismatch'));
 
       expect(() =>
@@ -801,13 +808,13 @@ describe('submission pump delivery and lease handoff', () => {
     expectConsoleError('release exploded');
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, submit } = setup(spend);
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     const errors: string[] = [];
     const subscription = controller.getObservable().subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(submission('release-failure'));
       lease.reject('submission:release-failure', new Error('release exploded'));
       for (let i = 0; i < 10 && errors.length === 0; i += 1) {
@@ -828,7 +835,7 @@ describe('submission pump delivery and lease handoff', () => {
     expectConsoleError('release exploded');
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);
-    const lease = new ControlledLease(undefined, 'submission-relinquishment:');
+    const lease = new ControlledRuntime(undefined, 'submission-relinquishment:');
     const first = submission('release-failure-successor');
     const successor = nextAttempt(first, 'release-failure-successor-attempt-2');
     const firstRelinquishment =
@@ -836,7 +843,7 @@ describe('submission pump delivery and lease handoff', () => {
     const successorRelinquishment =
       'submission-relinquishment:release-failure-successor:release-failure-successor-attempt-2';
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit(first);
       lease.reject('submission:release-failure-successor', new Error('release exploded'));
       for (let pass = 0; pass < 20 && !lease.has(firstRelinquishment); pass += 1) {
@@ -875,7 +882,7 @@ describe('submission pump delivery and lease handoff', () => {
   it('keeps network rejection authoritative when durable fee cleanup fails', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'rejected', detail: 'invalid spend' });
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer-fee' },
       tradeId: 'trade-cleanup-fails',
     });
@@ -886,9 +893,9 @@ describe('submission pump delivery and lease handoff', () => {
       beginWalletOffer,
       beginWalletOfferCancellation,
     });
-    const lease = new ControlledLease();
+    const lease = new ControlledRuntime();
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
         submissionDrain([], ['network-rejected-cleanup-fails']),
       );
@@ -922,7 +929,7 @@ describe('submission pump delivery and lease handoff', () => {
     expectConsoleError('fee source rejected by Rust');
     const spend = jest.fn();
     const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer: 'offer-fee' },
       tradeId: 'trade-finalize-rejected',
     });
@@ -934,9 +941,9 @@ describe('submission pump delivery and lease handoff', () => {
     (cradle.finalize_submission as jest.Mock).mockImplementation(() => {
       throw new Error('fee source rejected by Rust');
     });
-    const lease = new ControlledLease(undefined, 'wallet-offer-cancellation:');
+    const lease = new ControlledRuntime(undefined, 'wallet-offer-cancellation:');
     try {
-      controller.attachTransactionCoordinator(lease);
+      commitRuntime(controller, lease);
       submit({
         ...submission('finalize-rejected'),
         fee_request: { target: '22'.repeat(32), amount: '10' },

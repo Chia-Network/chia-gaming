@@ -519,7 +519,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     const raw = await this.sendRequest('create_offer_for_ids', params);
     if (!raw) return { kind: 'failure', reason: 'simulator could not build a funding offer' };
     return {
-      kind: 'created',
+      kind: 'created-ephemeral',
       material: { kind: 'bundle', bundle: typeof raw === 'string' ? jsonParse(raw) : raw },
     };
   }
@@ -542,7 +542,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       if (!bundle) return { kind: 'failure', reason: 'simulator could not build a fee offer' };
       const tradeId = `sim-fee-${this.uniqueId}-${this.nextSyntheticTradeId++}`;
       this.syntheticFeeOffers.reserve(tradeId, bundle);
-      return { kind: 'created', material: { kind: 'bundle', bundle }, tradeId };
+      return { kind: 'created-reserved', material: { kind: 'bundle', bundle }, tradeId };
     } catch (error) {
       if (error instanceof SimulatorTransportError) {
         return { kind: 'unavailable', reason: error.message };

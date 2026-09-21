@@ -5,16 +5,21 @@ import type {
   WalletOfferCompletion,
   WalletOfferProvider,
   WalletOfferRequest,
+  WalletProviderScope,
 } from '../../types/ChiaGaming';
 import { diagStack, log } from '../../services/log';
-import { canonicalizeFundingRequest, fundingRequestKey } from './fundingRequest';
+import {
+  canonicalizeFundingRequest,
+  fundingRequestKey,
+  type CanonicalFundingRequest,
+} from './fundingRequest';
 import { jsonStringify } from '../../util/jsonSafe';
 import { decodeWalletOperationEntries, decodeWalletOperationRecord } from './walletOperationCodec';
 import {
   reduceWalletOperation,
   walletOperationEntryKey,
-  walletOperationHandoffKey,
   walletOperationKey,
+  walletOperationOwnerKey,
   walletProviderScopeKey,
   walletOperationRecoveryKey,
   walletOperationTradeKey,
@@ -23,11 +28,9 @@ import {
   type WalletOperationCommand,
   type WalletOperationEntry,
   type WalletOperationEntryKey,
-  type FundingDemand,
   type FundingMaterialSink,
   type WalletOperationCheckpoint,
   type WalletOperationFlight,
-  type WalletOperationHandoffEvidence,
   type WalletOperationLifecycle,
   type WalletOperationOwner,
   type WalletOperationPurpose,
@@ -40,10 +43,6 @@ import {
   entriesForOwner,
   entryForOperation,
   canLosePreIdResponse,
-  cancellationRecoveryHandoff,
-  cancellationUncertaintyHandoff,
-  creationRecoveryHandoff,
-  creationUncertaintyHandoff,
   flightBelongsToOwner,
   isRecoverableProvider,
   providerRequestFromRecovery,
@@ -58,8 +57,13 @@ import {
 import { StorageAuthorityLostError } from './indexedDb';
 
 type PersistOperations = (entries: WalletOperationEntry[]) => Promise<void>;
-// prettier-ignore
-type PendingHandoff = { evidence: WalletOperationHandoffEvidence; staleGeneration: number };
+
+interface AttachedFundingSession {
+  sink: FundingMaterialSink;
+  owner: WalletOperationOwner | null;
+  purpose: Extract<WalletOperationPurpose, { kind: 'funding' }> | null;
+  request: CanonicalFundingRequest | null;
+}
 
 // prettier-ignore
 const standaloneLifecycle: WalletOperationLifecycle = { generation: () => 0, isCurrent: () => true };
@@ -67,10 +71,7 @@ const standaloneLifecycle: WalletOperationLifecycle = { generation: () => 0, isC
 export class WalletOperationRuntime {
   private entries = new Map<WalletOperationEntryKey, WalletOperationEntry>();
   private readonly inFlight = new Map<string, WalletOperationFlight>();
-  private readonly fundingSinks = new Map<string, FundingMaterialSink>();
-  private readonly fundingDemands = new Map<string, FundingDemand>();
-  private readonly pendingHandoffs = new Map<string, PendingHandoff>();
-  private readonly retiredSessions = new Set<string>();
+  private readonly attachedFundingSessions = new Map<string, AttachedFundingSession>();
   private readonly listeners = new Set<() => void>();
   private persist: PersistOperations | null = null;
   private lifecycle: WalletOperationLifecycle = standaloneLifecycle;
@@ -81,6 +82,7 @@ export class WalletOperationRuntime {
   private lastPersistence: Promise<void> = Promise.resolve();
   private authorityLost: StorageAuthorityLostError | null = null;
   private hydratedGeneration: number | null = null;
+  private sessionScope: WalletProviderScope | null = null;
   private hydrationState: 'pending' | 'ready' | 'failed' = 'ready';
   private hydrationPromise = Promise.resolve();
   private hydrationResolve: () => void = () => {};
@@ -111,17 +113,22 @@ export class WalletOperationRuntime {
       const entries = record === null ? [] : decodeWalletOperationRecord(record).entries;
       this.installHydrated(entries, replace);
       const pending = this.hydrationState === 'pending'; if (pending) this.hydrationState = 'ready';
-      const delayed = this.installPendingHandoffs();
-      if (!delayed) { if (pending) this.hydrationResolve(); this.resumeAll(); }
+      if (pending) this.hydrationResolve();
+      void Promise.resolve().then(() => this.resumeAll());
     } catch (error) {
       this.failHydration(error); throw error;
     }
   }
 
   // prettier-ignore
-  hydrateClaimedSnapshot(record: unknown | null): void {
-    this.retireTransientWork(); this.initialized = false; this.dirty = false; this.coordinatedRevision = null;
-    this.lastPersistence = Promise.resolve(); this.authorityLost = null; this.resetHydration(false); this.hydrateFromDisk(record, true);
+  hydrateClaimedSnapshot(record: unknown | null, sessionScope: WalletProviderScope | null): void {
+    for (const attached of this.attachedFundingSessions.values()) {
+      attached.owner = null; attached.purpose = null; attached.request = null;
+    }
+    this.initialized = false; this.dirty = false; this.coordinatedRevision = null;
+    this.lastPersistence = Promise.resolve(); this.authorityLost = null; this.sessionScope = sessionScope ? structuredClone(sessionScope) : null;
+    if (this.hydrationState !== 'pending') this.resetHydration(false);
+    this.hydrateFromDisk(record, true);
   }
 
   // prettier-ignore
@@ -187,21 +194,19 @@ export class WalletOperationRuntime {
   }
   // prettier-ignore
   settleTrade(tradeId: string, disposition: 'consumed' | 'cancel-required' | 'retained-for-replay', reason: string, coordinated = false): void {
-    this.dispatch({ kind: 'settle-trade', tradeId, disposition, reason, coordinated }, coordinated);
+    this.dispatch({ kind: 'settle-obligation', target: { kind: 'trade', tradeId }, disposition, reason, coordinated }, coordinated);
   }
   // prettier-ignore
   settleOperation(owner: WalletOperationOwner, purpose: WalletOperationPurpose, disposition: 'consumed' | 'cancel-required' | 'retained-for-replay', reason: string, coordinated = false): void {
-    this.dispatch({ kind: 'settle', owner, purpose, disposition, reason, coordinated }, coordinated);
+    this.dispatch({ kind: 'settle-obligation', target: { kind: 'operation', owner, purpose }, disposition, reason, coordinated }, coordinated);
   }
   // prettier-ignore
   retireOperation(owner: WalletOperationOwner, purpose: WalletOperationPurpose, reason: string, coordinated = false): void {
-    const entry = entryForOperation(this.entries.values(), owner, purpose); if (entry) this.transition(entry, { kind: 'retire', reason }, coordinated);
-    this.settleOperation(owner, purpose, 'cancel-required', reason, coordinated);
+    this.dispatch({ kind: 'obligate-cleanup', target: { kind: 'operation', owner, purpose }, reason, coordinated, preserveReplay: false }, coordinated);
   }
   // prettier-ignore
   retireSession(installationPlayerId: string, peerSessionId: string, reason: string, coordinated = false): void {
-    this.retiredSessions.add(sessionKey(installationPlayerId, peerSessionId));
-    this.dispatch({ kind: 'retire-session', installationPlayerId, peerSessionId, reason, coordinated }, coordinated);
+    this.dispatch({ kind: 'obligate-cleanup', target: { kind: 'session', installationPlayerId, peerSessionId }, reason, coordinated, preserveReplay: true }, coordinated);
   }
 
   async createOffer(
@@ -279,27 +284,29 @@ export class WalletOperationRuntime {
     }
     let completion: WalletOfferBeginOutcome;
     try {
-      completion = exactRecovery
-        ? await this.providerMutation(generation, () =>
-            (
-              provider as Extract<
-                WalletOfferProvider,
-                { capability: 'recoverable' | 'recoverable-after-begin' }
-              >
-            ).reconcileCreation({ owner, purpose }, request, exactRecovery.recoveryId),
-          )
-        : await this.providerMutation(generation, () =>
-            provider.beginCreation({ owner, purpose }, request),
-          );
+      if (exactRecovery) {
+        completion = await this.providerMutation<WalletOfferBeginOutcome>(generation, () =>
+          (
+            provider as Extract<
+              WalletOfferProvider,
+              { capability: 'recoverable' | 'recoverable-after-begin' }
+            >
+          ).reconcileCreation({ owner, purpose }, request, exactRecovery.recoveryId),
+        );
+      } else {
+        completion = await this.providerMutation<WalletOfferBeginOutcome>(generation, () =>
+          provider.beginCreation({ owner, purpose }, request),
+        );
+      }
     } catch (error) {
       if (error instanceof StorageAuthorityLostError) {
         return { kind: 'unavailable', reason: 'Storage authority changed before wallet creation' };
       }
       if (exactRecovery || !canLosePreIdResponse(provider)) throw error;
       if (!replacement) {
-        const retired = isRetired() || this.isSessionRetired(owner);
+        const retired = isRetired();
         // prettier-ignore
-        this.recordUncertainty(owner, purpose, recoveryRequest, recovery, retired, uncertaintyReason, generation);
+        this.recordUncertainty(owner, purpose, recoveryRequest, retired, uncertaintyReason, generation);
       }
       return { kind: 'unavailable', reason: String(error) };
     }
@@ -309,9 +316,9 @@ export class WalletOperationRuntime {
       !replacement &&
       canLosePreIdResponse(provider)
     ) {
-      const retired = isRetired() || this.isSessionRetired(owner);
+      const retired = isRetired();
       // prettier-ignore
-      this.recordUncertainty(owner, purpose, recoveryRequest, recovery, retired, uncertaintyReason, generation);
+      this.recordUncertainty(owner, purpose, recoveryRequest, retired, uncertaintyReason, generation);
       return completion as WalletOfferCompletion;
     }
     if (completion.kind === 'pending') {
@@ -320,8 +327,29 @@ export class WalletOperationRuntime {
         throw new Error('Non-recoverable provider returned a recovery id');
       }
       if (!this.lifecycle.isCurrent(generation)) {
-        // prettier-ignore
-        this.queueHandoff(creationRecoveryHandoff(owner, purpose, recoveryRequest, recoveryId, recovery, isRetired() || this.isSessionRetired(owner)), generation);
+        this.transferToCurrent(owner, () => {
+          const current = entryForOperation(this.entries.values(), owner, purpose);
+          if (current?.stage === 'creating') return;
+          const retired = isRetired();
+          if (current?.stage === 'best-effort-uncertain') {
+            this.transition(current, {
+              kind: 'creation-recovery-identified',
+              recoveryId,
+              reason: 'wallet-offer-creation-recovery-identified-after-authority-change',
+            });
+          } else if (!current) {
+            this.dispatch({
+              kind: 'creation-pending',
+              key: walletOperationRecoveryKey(owner, purpose),
+              owner,
+              purpose,
+              recoveryId,
+              request: recoveryRequest,
+              reason: 'wallet-offer-creation-recovery-identified-after-authority-change',
+              retired,
+            });
+          }
+        });
         return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
       }
       const key = recovery
@@ -345,7 +373,7 @@ export class WalletOperationRuntime {
               recoveryId,
               request: recoveryRequest,
               reason: 'wallet-offer-creation-pending',
-              retired: isRetired() || this.isSessionRetired(owner),
+              retired: isRetired(),
             },
       );
       await this.flushPersistence();
@@ -367,9 +395,21 @@ export class WalletOperationRuntime {
       }
     }
     if (!this.lifecycle.isCurrent(generation)) {
-      if (completion.kind === 'created' && completion.tradeId) {
-        // prettier-ignore
-        this.queueHandoff({ kind: 'created-trade', owner, purpose, tradeId: completion.tradeId, reason: 'stale-create-result', ...(recovery?.orphanRisk ? { orphanRisk: recovery.orphanRisk } : {}) }, generation);
+      if (completion.kind === 'created-reserved') {
+        const reservedCompletion = completion;
+        this.transferToCurrent(owner, () => {
+          this.dispatch({
+            kind: 'install',
+            entry: {
+              owner,
+              purpose,
+              stage: 'cancel-required',
+              tradeId: reservedCompletion.tradeId,
+              reason: 'stale-create-result',
+              ...(recovery?.orphanRisk ? { orphanRisk: recovery.orphanRisk } : {}),
+            },
+          });
+        });
       }
       return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
     }
@@ -380,9 +420,8 @@ export class WalletOperationRuntime {
       completion,
       reason: `${purpose.kind}-offer-created`,
     });
-    const entry =
-      completion.kind === 'created' && completion.tradeId ? this.trade(completion.tradeId) : null;
-    if (entry?.orphanRisk && completion.kind === 'created') {
+    const entry = completion.kind === 'created-reserved' ? this.trade(completion.tradeId) : null;
+    if (entry?.orphanRisk && completion.kind === 'created-reserved') {
       const provider =
         entry.owner.providerScope.provider === 'cloud' ? 'Cloud Wallet' : 'WalletConnect';
       const warning = `${provider} lost the original create-offer response. A prior external reservation may still exist even though a later attempt succeeded.`;
@@ -394,15 +433,28 @@ export class WalletOperationRuntime {
   }
 
   // prettier-ignore
-  private recordUncertainty(owner: WalletOperationOwner, purpose: WalletOperationPurpose, request: WalletOperationRecoveryRequest, recovery: WalletOperationEntry | null, retired: boolean, reason: string, generation: number): void {
+  private recordUncertainty(owner: WalletOperationOwner, purpose: WalletOperationPurpose, request: WalletOperationRecoveryRequest, retired: boolean, reason: string, generation: number): void {
     if (!this.lifecycle.isCurrent(generation)) {
-      // prettier-ignore
-      this.queueHandoff(creationUncertaintyHandoff(owner, purpose, request, recovery, retired, BigInt(this.providerRegistry.readinessEpoch(owner.providerScope)), reason), generation);
+      this.transferToCurrent(owner, () => {
+        if (entryForOperation(this.entries.values(), owner, purpose)) return;
+        this.dispatch({
+          kind: 'creation-uncertain',
+          key: walletOperationRecoveryKey(owner, purpose),
+          owner,
+          purpose,
+          request,
+          generation: 0n,
+          readinessEpoch: BigInt(this.providerRegistry.readinessEpoch(owner.providerScope)),
+          retired,
+          reason,
+          orphanRisk: 'pre-id-response-lost',
+        });
+      });
       return;
     }
     if (entryForOperation(this.entries.values(), owner, purpose)) return;
     // prettier-ignore
-    this.dispatch({ kind: 'creation-uncertain', key: walletOperationRecoveryKey(owner, purpose), owner, purpose, request, generation: 0n, readinessEpoch: BigInt(this.providerRegistry.readinessEpoch(owner.providerScope)), retired: retired || this.isSessionRetired(owner), reason, orphanRisk: 'pre-id-response-lost' });
+    this.dispatch({ kind: 'creation-uncertain', key: walletOperationRecoveryKey(owner, purpose), owner, purpose, request, generation: 0n, readinessEpoch: BigInt(this.providerRegistry.readinessEpoch(owner.providerScope)), retired, reason, orphanRisk: 'pre-id-response-lost' });
     log(`[wallet-operation-runtime] create response lost; external reservation risk operation=${walletOperationKey(owner, purpose)}`);
   }
 
@@ -412,11 +464,13 @@ export class WalletOperationRuntime {
     sink: FundingMaterialSink,
   ): () => void {
     const key = sessionKey(installationPlayerId, peerSessionId);
-    this.fundingSinks.set(key, sink);
-    this.resumeFundingForSink(key);
+    const attached = { sink, owner: null, purpose: null, request: null };
+    this.attachedFundingSessions.set(key, attached);
+    this.restoreAttachedFunding(key);
     return () => {
-      if (this.fundingSinks.get(key) === sink) this.fundingSinks.delete(key);
-      this.fundingDemands.delete(key);
+      if (this.attachedFundingSessions.get(key) === attached) {
+        this.attachedFundingSessions.delete(key);
+      }
     };
   }
 
@@ -426,107 +480,94 @@ export class WalletOperationRuntime {
     request: NeedCoinSpendRequest,
   ): void {
     const sinkKey = sessionKey(installationPlayerId, peerSessionId);
-    const sink = this.fundingSinks.get(sinkKey);
-    if (!sink) throw new Error('Funding material sink is unavailable');
+    const attached = this.attachedFundingSessions.get(sinkKey);
+    if (!attached) throw new Error('Funding material sink is unavailable');
     const canonical = canonicalizeFundingRequest(request, 'WASM NeedCoinSpend request');
-    const previous = this.fundingDemands.get(sinkKey);
     const purpose = { kind: 'funding' as const, operationId: fundingRequestKey(canonical) };
-    if (previous && previous.purpose.operationId !== purpose.operationId) {
-      const message = `Internal protocol-state violation: received concurrent funding request ${purpose.operationId} while ${previous.purpose.operationId} is active`;
-      this.fundingDemands.delete(sinkKey);
-      sink.walletFailed(message);
+    if (attached.purpose && attached.purpose.operationId !== purpose.operationId) {
+      const message = `Internal protocol-state violation: received concurrent funding request ${purpose.operationId} while ${attached.purpose.operationId} is active`;
+      attached.owner = null;
+      attached.purpose = null;
+      attached.request = null;
+      attached.sink.walletFailed(message);
       throw new Error(message);
     }
-    if (!previous) {
-      this.fundingDemands.set(sinkKey, {
-        owner: sink.getOwner(),
-        purpose,
-        request: canonical,
-        sinkKey,
-        scheduledGeneration: null,
-        launched: false,
-      });
+    if (!attached.purpose) {
+      attached.owner = attached.sink.getOwner();
+      attached.purpose = purpose;
+      attached.request = canonical;
     }
     this.scheduleFunding(sinkKey);
   }
 
-  resumeFunding(installationPlayerId: string, peerSessionId: string): void {
+  activateFundingSession(installationPlayerId: string, peerSessionId: string): void {
     const key = sessionKey(installationPlayerId, peerSessionId);
-    const demand = this.fundingDemands.get(key);
-    if (demand && !demand.launched) demand.scheduledGeneration = null;
-    this.resumeFundingForSink(key);
+    this.restoreAttachedFunding(key);
     this.scheduleFunding(key);
   }
 
-  private resumeFundingForSink(sinkKey: string): void {
-    const sink = this.fundingSinks.get(sinkKey);
-    if (!sink || !sink.isReady() || this.hydrationState !== 'ready') return;
+  private restoreAttachedFunding(sinkKey: string): void {
+    const attached = this.attachedFundingSessions.get(sinkKey);
+    if (!attached || !attached.sink.isReady() || this.hydrationState !== 'ready') return;
     const entry = restoredFundingForSink(this.snapshot(), sinkKey);
     if (!entry) return;
-    this.fundingDemands.set(sinkKey, {
-      owner: entry.owner,
-      purpose: entry.purpose,
-      request: entry.request.canonical,
-      sinkKey,
-      scheduledGeneration: null,
-      launched: false,
-    });
+    attached.owner = entry.owner;
+    attached.purpose = entry.purpose;
+    attached.request = entry.request.canonical;
     this.scheduleFunding(sinkKey);
   }
 
   private scheduleFunding(sinkKey: string): void {
-    const demand = this.fundingDemands.get(sinkKey);
-    const sink = this.fundingSinks.get(sinkKey);
-    if (!demand || !sink || !sink.isReady() || sink.isRetired()) return;
-    demand.owner ??= sink.getOwner();
-    if (!demand.owner) return;
-    const owner = demand.owner;
-    const operation = entryForOperation(this.entries.values(), owner, demand.purpose);
+    const attached = this.attachedFundingSessions.get(sinkKey);
+    if (
+      !attached ||
+      !attached.purpose ||
+      !attached.request ||
+      !attached.sink.isReady() ||
+      attached.sink.isRetired()
+    )
+      return;
+    attached.owner ??= attached.sink.getOwner();
+    if (!attached.owner) return;
+    const owner = attached.owner;
+    const purpose = attached.purpose;
+    const request = attached.request;
+    const operation = entryForOperation(this.entries.values(), owner, purpose);
     if (operation && operation.stage !== 'creating') return;
     const generation = this.lifecycle.generation();
-    if (demand.scheduledGeneration === generation) return;
-    demand.scheduledGeneration = generation;
-    const effect = sink.releaseAfterPersistence(
-      `funding:${demand.purpose.operationId}`,
+    const effect = attached.sink.releaseAfterPersistence(
+      `funding:${purpose.operationId}`,
       async () => {
-        if (!this.lifecycle.isCurrent(generation) || this.fundingDemands.get(sinkKey) !== demand)
-          return;
-        demand.launched = true;
-        const recoveryRequest = { kind: 'funding' as const, canonical: demand.request };
+        if (!this.lifecycle.isCurrent(generation)) return;
+        const recoveryRequest = { kind: 'funding' as const, canonical: request };
         const outcome = await this.createOffer(
           owner,
-          demand.purpose,
+          purpose,
           providerRequestFromRecovery(owner, recoveryRequest),
           recoveryRequest,
-          () => sink.isRetired(),
+          () => attached.sink.isRetired(),
         );
-        await this.handleFundingOutcome(demand, sink, outcome, generation);
+        await this.handleFundingOutcome(attached, outcome, generation);
       },
     );
-    sink.track(effect);
+    attached.sink.track(effect);
   }
 
   private async handleFundingOutcome(
-    demand: FundingDemand,
-    sink: FundingMaterialSink,
+    attached: AttachedFundingSession,
     outcome: WalletOfferCompletion,
     generation: number,
   ): Promise<void> {
-    const owner = demand.owner;
-    if (!owner) return;
-    if (this.fundingDemands.get(demand.sinkKey) !== demand) {
-      if (outcome.kind === 'created')
-        this.settleOperation(owner, demand.purpose, 'cancel-required', 'funding-material-stale');
-      return;
-    }
+    const { owner, purpose, sink } = attached;
+    if (!owner || !purpose) return;
     if (outcome.kind === 'unavailable') {
-      demand.launched = false;
-      demand.scheduledGeneration = null;
       sink.requestCheckpoint();
       return;
     }
     if (outcome.kind === 'failure') {
-      this.fundingDemands.delete(demand.sinkKey);
+      attached.owner = null;
+      attached.purpose = null;
+      attached.request = null;
       await sink.mutate(() => {
         sink.reportWarning(outcome.reason);
         sink.walletFailed(outcome.reason);
@@ -534,36 +575,28 @@ export class WalletOperationRuntime {
       });
       return;
     }
+    if (!this.lifecycle.isCurrent(generation) || sink.isRetired()) {
+      this.settleOperation(owner, purpose, 'cancel-required', 'funding-material-stale');
+      sink.scheduleCleanup();
+      sink.requestCheckpoint();
+      return;
+    }
     await sink.mutate(() => {
-      if (!this.lifecycle.isCurrent(generation) || sink.isRetired()) {
-        this.settleOperation(
-          owner,
-          demand.purpose,
-          'cancel-required',
-          'funding-material-stale',
-          true,
-        );
-        sink.scheduleCleanup();
-        sink.requestCheckpoint();
-        return;
-      }
       try {
         if (outcome.warning) sink.reportWarning(outcome.warning);
         sink.materialDelivered(outcome.material);
-        this.settleOperation(owner, demand.purpose, 'consumed', 'funding-material-consumed', true);
-        this.fundingDemands.delete(demand.sinkKey);
+        this.settleOperation(owner, purpose, 'consumed', 'funding-material-consumed', true);
+        attached.owner = null;
+        attached.purpose = null;
+        attached.request = null;
         sink.requestCheckpoint();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         diagStack('handleNeedCoinSpend error', error);
-        this.settleOperation(
-          owner,
-          demand.purpose,
-          'cancel-required',
-          'funding-material-rejected',
-          true,
-        );
-        this.fundingDemands.delete(demand.sinkKey);
+        this.settleOperation(owner, purpose, 'cancel-required', 'funding-material-rejected', true);
+        attached.owner = null;
+        attached.purpose = null;
+        attached.request = null;
         sink.reportWarning(message);
         sink.walletFailed(message);
         sink.scheduleCleanup();
@@ -622,12 +655,29 @@ export class WalletOperationRuntime {
         }
         if (!this.lifecycle.isCurrent(generation)) {
           if (begun.status === 'pending') {
-            // prettier-ignore
-            this.queueHandoff(cancellationRecoveryHandoff(entry, begun.recoveryId), generation);
+            this.transferToCurrent(entry.owner, () => {
+              const current = this.trade(entry.tradeId);
+              if (current?.stage === 'cancel-required') {
+                this.transition(current, {
+                  kind: 'cancellation-pending',
+                  recoveryId: begun.recoveryId,
+                });
+              }
+            });
           // prettier-ignore
           } else if (begun.status === 'unavailable' && provider.capability === 'recoverable-after-begin' && entry.stage === 'cancel-required') {
-            // prettier-ignore
-            this.queueHandoff(cancellationUncertaintyHandoff(entry, BigInt(this.providerRegistry.readinessEpoch(entry.owner.providerScope))), generation);
+            this.transferToCurrent(entry.owner, () => {
+              const current = this.trade(entry.tradeId);
+              if (current?.stage === 'cancel-required') {
+                this.transition(current, {
+                  kind: 'cancellation-uncertain',
+                  readinessEpoch: BigInt(
+                    this.providerRegistry.readinessEpoch(entry.owner.providerScope),
+                  ),
+                  reason: 'cloud-cancellation-response-lost-orphan-risk',
+                });
+              }
+            });
           }
           return;
         }
@@ -672,7 +722,7 @@ export class WalletOperationRuntime {
   }
 
   // prettier-ignore
-  private resumeAll(): void { if (this.hydrationState === 'failed') return; this.dispatch({ kind: 'resume' }); for (const key of this.fundingSinks.keys()) this.resumeFundingForSink(key); }
+  private resumeAll(): void { if (this.hydrationState === 'failed') return; this.dispatch({ kind: 'resume' }); for (const key of this.attachedFundingSessions.keys()) this.restoreAttachedFunding(key); }
 
   private providerEvent(event: WalletProviderRegistryEvent): void {
     if (event.kind === 'detached') {
@@ -681,9 +731,8 @@ export class WalletOperationRuntime {
     }
     const scope = walletProviderScopeKey(event.provider.scope);
     this.dispatch({ kind: 'resume', scope: event.provider.scope });
-    for (const [key, demand] of this.fundingDemands) {
-      if (demand.owner && walletProviderScopeKey(demand.owner.providerScope) === scope) {
-        demand.scheduledGeneration = null;
+    for (const [key, attached] of this.attachedFundingSessions) {
+      if (!attached.owner || walletProviderScopeKey(attached.owner.providerScope) === scope) {
         this.scheduleFunding(key);
       }
     }
@@ -705,7 +754,8 @@ export class WalletOperationRuntime {
         () => entry.disposition === 'cancel-on-create',
         generation,
       );
-      if (completion.kind === 'created') await this.routeCompletion(entry, completion, generation);
+      if (completion.kind === 'created-reserved')
+        await this.routeCompletion(entry, completion, generation);
     });
   }
 
@@ -788,13 +838,13 @@ export class WalletOperationRuntime {
       generation,
       true,
     );
-    if (completed.kind !== 'created' || !this.lifecycle.isCurrent(generation)) return;
+    if (completed.kind !== 'created-reserved' || !this.lifecycle.isCurrent(generation)) return;
     await this.routeCompletion(entry, completed, generation);
   }
 
   private async routeCompletion(
     entry: WalletBestEffortUncertainEntry | WalletOperationRecoveryEntry,
-    completed: Extract<WalletOfferCompletion, { kind: 'created' }>,
+    completed: Extract<WalletOfferCompletion, { kind: 'created-reserved' }>,
     generation: number,
   ): Promise<void> {
     const key = walletOperationKey(entry.owner, entry.purpose);
@@ -803,9 +853,8 @@ export class WalletOperationRuntime {
       return;
     }
     const sinkKey = sessionKey(entry.owner.installationPlayerId, entry.owner.peerSessionId);
-    const sink = this.fundingSinks.get(sinkKey);
-    const demand = this.fundingDemands.get(sinkKey);
-    if (sink && demand) await this.handleFundingOutcome(demand, sink, completed, generation);
+    const attached = this.attachedFundingSessions.get(sinkKey);
+    if (attached?.purpose) await this.handleFundingOutcome(attached, completed, generation);
     else
       this.inFlight.set(`completed:${key}`, { promise: Promise.resolve(), completion: completed });
   }
@@ -841,7 +890,9 @@ export class WalletOperationRuntime {
           this.scheduleCancellation(effect.tradeId);
         }
       } else if (effect.kind === 'funding') {
-        this.resumeFundingForSink(sessionKey(effect.installationPlayerId, effect.peerSessionId));
+        const key = sessionKey(effect.installationPlayerId, effect.peerSessionId);
+        this.restoreAttachedFunding(key);
+        this.scheduleFunding(key);
       } else {
         const entry = this.entries.get(effect.key);
         if (effect.kind === 'recover' && entry?.stage === 'creating') {
@@ -922,57 +973,66 @@ export class WalletOperationRuntime {
     return flight.promise as Promise<T>;
   }
 
-  // prettier-ignore
-  private queueHandoff(evidence: WalletOperationHandoffEvidence, staleGeneration: number): void { this.pendingHandoffs.set(walletOperationHandoffKey(evidence), { evidence, staleGeneration }); this.installPendingHandoffs(); }
-
-  private installPendingHandoffs(): boolean {
+  private transferToCurrent(owner: WalletOperationOwner, apply: () => void): void {
     const generation = this.lifecycle.generation();
-    // prettier-ignore
-    if (this.hydrationState !== 'ready' || this.hydratedGeneration !== generation || !this.lifecycle.isCurrent(generation)) return false;
-    let installed = false;
-    for (const pending of [...this.pendingHandoffs.values()]) {
-      const evidenceKey = walletOperationHandoffKey(pending.evidence);
-      try {
-        this.dispatch({ kind: 'handoff-evidence', evidence: pending.evidence });
-      } catch (error) {
-        // prettier-ignore
-        log(`[wallet-operation-runtime] refused evidence handoff key=${evidenceKey} generation=${pending.staleGeneration}: ${String(error)}`);
-        continue;
-      }
-      installed = true;
-      this.pendingHandoffs.delete(evidenceKey);
-      const evidence = pending.evidence;
-      const key = `handoff:${walletOperationKey(evidence.owner, evidence.purpose)}:${evidenceKey}`;
-      void this.coalesce(key, async () => {
-        try {
+    if (this.hydratedGeneration !== generation && this.hydrationState === 'ready') {
+      this.resetHydration(false);
+    }
+    void this.awaitHydrated()
+      .then(() => {
+        const key = `transfer:${walletOperationOwnerKey(owner)}`;
+        const existing = this.inFlight.get(key);
+        if (existing) return existing.promise;
+        const promise = (async () => {
+          if (!this.lifecycle.isCurrent(generation)) return;
+          if (
+            !this.sessionScope ||
+            walletProviderScopeKey(this.sessionScope) !==
+              walletProviderScopeKey(owner.providerScope)
+          ) {
+            throw new Error(
+              'Internal wallet consistency error: stale wallet response scope does not match the saved session',
+            );
+          }
+          apply();
           await this.flushPersistence();
-          this.hydrationResolve();
-          // prettier-ignore
           if (this.lifecycle.isCurrent(generation)) this.resumeAll();
-        } catch (error) {
-          this.hydrationReject(error);
-          // prettier-ignore
-          this.pendingHandoffs.set(evidenceKey, pending);
+        })();
+        const flight: WalletOperationFlight = { promise };
+        this.inFlight.set(key, flight);
+        const cleanup = () => {
+          if (this.inFlight.get(key) === flight) this.inFlight.delete(key);
+        };
+        void promise.then(cleanup, cleanup);
+        return promise;
+      })
+      .catch((error) => {
+        if (!(error instanceof StorageAuthorityLostError)) {
+          log(`[wallet-operation-runtime] stale response transfer failed: ${String(error)}`);
         }
       });
-    }
-    return installed;
   }
 
   // prettier-ignore
   private notify(): void { for (const listener of this.listeners) listener(); }
   // prettier-ignore
-  private isSessionRetired(owner: WalletOperationOwner): boolean { return this.retiredSessions.has(sessionKey(owner.installationPlayerId, owner.peerSessionId)); }
   // prettier-ignore
-  private retireTransientWork(): void { this.inFlight.clear(); this.fundingDemands.clear(); }
+  private retireTransientWork(): void {
+    this.inFlight.clear();
+    for (const attached of this.attachedFundingSessions.values()) {
+      attached.owner = null;
+      attached.purpose = null;
+      attached.request = null;
+    }
+  }
 
   private reset(hard: boolean, hydrated: boolean): void {
     this.providerRegistry.clear();
     this.entries.clear();
     this.retireTransientWork();
-    this.pendingHandoffs.clear();
-    this.fundingSinks.clear();
-    this.retiredSessions.clear();
+    this.attachedFundingSessions.clear();
+    this.sessionScope = null;
+    this.hydratedGeneration = hydrated ? this.lifecycle.generation() : null;
     if (!hard) this.listeners.clear();
     this.initialized = hard;
     this.dirty = false;
@@ -980,7 +1040,6 @@ export class WalletOperationRuntime {
     this.revision = hard ? this.revision + 1 : 0;
     this.lastPersistence = Promise.resolve();
     this.authorityLost = null;
-    this.hydratedGeneration = hydrated ? this.lifecycle.generation() : null;
     this.resetHydration(hydrated);
     if (hard) this.notify();
   }

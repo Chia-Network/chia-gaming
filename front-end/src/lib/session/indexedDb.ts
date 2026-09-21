@@ -64,6 +64,15 @@ export class StorageAuthorityLostError extends Error {
   }
 }
 
+export class StorageAuthorityRequiredError extends Error {
+  readonly code = 'STORAGE_AUTHORITY_REQUIRED';
+
+  constructor() {
+    super('Durable storage authority must be claimed before this mutation');
+    this.name = 'StorageAuthorityRequiredError';
+  }
+}
+
 export interface ClaimedStorageSnapshot {
   authority: DurableStorageAuthority;
   sessionRecord: unknown | null;
@@ -386,9 +395,21 @@ async function claimAndReadDurableStorageRaw(ownerTabId: string): Promise<Claime
       transaction.objectStore(WALLET_OPERATION_STORE_NAME).get(WALLET_OPERATION_RECORD_KEY),
       'Failed to read wallet operation record while claiming storage authority',
     );
-    const rejectionRaw = await requestResult(
-      transaction.objectStore(REJECTION_STORE_NAME).getAll(),
-      'Failed to read rejection records while claiming storage authority',
+    const rejectionStore = transaction.objectStore(REJECTION_STORE_NAME);
+    const [rejectionKeys, rejectionRaw] = await Promise.all([
+      requestResult(
+        rejectionStore.getAllKeys(),
+        'Failed to read rejection record keys while claiming storage authority',
+      ),
+      requestResult(
+        rejectionStore.getAll(),
+        'Failed to read rejection records while claiming storage authority',
+      ),
+    ]);
+    const rejectionTombstones = parseRejectionTombstones(
+      rejectionRaw,
+      rejectionKeys,
+      rejectionStore,
     );
     putCoordinationRecord(transaction, claimed);
     await transactionComplete(transaction);
@@ -419,7 +440,7 @@ async function claimAndReadDurableStorageRaw(ownerTabId: string): Promise<Claime
       ...(sessionError ? { sessionError } : {}),
       walletOperationRecord,
       ...(walletOperationError ? { walletOperationError } : {}),
-      rejectionTombstones: parseCurrentRejectionTombstones(rejectionRaw),
+      rejectionTombstones,
     };
   } finally {
     db.close();
@@ -610,20 +631,6 @@ async function writeWalletOperationRecordRaw(
   }
 }
 
-async function deleteWalletOperationRecordRaw(authority: DurableStorageAuthority): Promise<void> {
-  if (typeof indexedDB === 'undefined') {
-    throw new Error('IndexedDB is unavailable; wallet operation record was not deleted');
-  }
-  const db = await openDatabase();
-  try {
-    const transaction = await openValidatedMutation(db, WALLET_OPERATION_STORE_NAME, authority);
-    transaction.objectStore(WALLET_OPERATION_STORE_NAME).delete(WALLET_OPERATION_RECORD_KEY);
-    await transactionComplete(transaction);
-  } finally {
-    db.close();
-  }
-}
-
 /** Stateless transaction port consumed only by StorageRepository. */
 export const indexedDbStoragePort = {
   claimAndRead: claimAndReadDurableStorageRaw,
@@ -633,8 +640,6 @@ export const indexedDbStoragePort = {
   writeCheckpoint: writeSessionAndWalletOperationRecordsRaw,
   deleteSession: deleteSessionRecordRaw,
   writeWalletOperations: writeWalletOperationRecordRaw,
-  deleteWalletOperations: deleteWalletOperationRecordRaw,
-  pruneRejections: pruneRejectionTombstonesRaw,
   writeRejection: writeRejectionTombstoneRaw,
   replaceSessionWithRejection: replaceSessionWithRejectionTombstoneRaw,
   deleteRejection: deleteRejectionTombstoneRaw,
@@ -676,17 +681,29 @@ function parseRejectionTombstone(value: unknown): DurableRejectionTombstone | nu
   return candidate as DurableRejectionTombstone;
 }
 
-function parseCurrentRejectionTombstones(records: unknown[]): DurableRejectionTombstone[] {
+function parseRejectionTombstones(
+  records: unknown[],
+  keys?: IDBValidKey[],
+  pruneStore?: IDBObjectStore,
+): DurableRejectionTombstone[] {
   const cutoff = Date.now() - REJECTION_TOMBSTONE_TTL_MS;
-  return records
-    .flatMap((record) => {
-      if (!(record instanceof Uint8Array)) return [];
-      const parsed = parseRejectionTombstone(deobfuscateRecord(record));
-      return parsed ? [parsed] : [];
-    })
-    .filter((record) => record.createdAt >= cutoff)
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .slice(-MAX_DURABLE_REJECTION_TOMBSTONES);
+  const current: DurableRejectionTombstone[] = [];
+  records.forEach((record, index) => {
+    let parsed: DurableRejectionTombstone | null;
+    try {
+      parsed =
+        record instanceof Uint8Array ? parseRejectionTombstone(deobfuscateRecord(record)) : null;
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || parsed.createdAt < cutoff) {
+      const key = keys?.[index];
+      if (pruneStore && key !== undefined) pruneStore.delete(key);
+      return;
+    }
+    current.push(parsed);
+  });
+  return current.sort((a, b) => a.createdAt - b.createdAt).slice(-MAX_DURABLE_REJECTION_TOMBSTONES);
 }
 
 async function listRejectionTombstonesInTransaction(
@@ -694,24 +711,11 @@ async function listRejectionTombstonesInTransaction(
   deleteExpired: boolean,
 ): Promise<DurableRejectionTombstone[]> {
   const store = transaction.objectStore(REJECTION_STORE_NAME);
-  const records = await requestResult(store.getAll(), 'Failed to read rejection records');
-  const parsed = records.flatMap((record) => {
-    if (!(record instanceof Uint8Array)) return [];
-    const parsedRecord = parseRejectionTombstone(deobfuscateRecord(record));
-    return parsedRecord ? [parsedRecord] : [];
-  });
-  const cutoff = Date.now() - REJECTION_TOMBSTONE_TTL_MS;
-  if (deleteExpired) {
-    for (const record of parsed) {
-      if (record.createdAt < cutoff) {
-        store.delete(rejectionTombstoneKey(record.peerId, record.sessionId));
-      }
-    }
-  }
-  return parsed
-    .filter((record) => record.createdAt >= cutoff)
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .slice(-MAX_DURABLE_REJECTION_TOMBSTONES);
+  const [keys, records] = await Promise.all([
+    requestResult(store.getAllKeys(), 'Failed to read rejection record keys'),
+    requestResult(store.getAll(), 'Failed to read rejection records'),
+  ]);
+  return parseRejectionTombstones(records, keys, deleteExpired ? store : undefined);
 }
 
 export async function readRejectionTombstones(): Promise<DurableRejectionTombstone[]> {
@@ -722,20 +726,6 @@ export async function readRejectionTombstones(): Promise<DurableRejectionTombsto
     const records = await listRejectionTombstonesInTransaction(transaction, false);
     await transactionComplete(transaction);
     return records;
-  } finally {
-    db.close();
-  }
-}
-
-async function pruneRejectionTombstonesRaw(authority: DurableStorageAuthority): Promise<void> {
-  if (typeof indexedDB === 'undefined') {
-    throw new Error('IndexedDB is unavailable; rejection records were not pruned');
-  }
-  const db = await openDatabase();
-  try {
-    const transaction = await openValidatedMutation(db, REJECTION_STORE_NAME, authority);
-    await listRejectionTombstonesInTransaction(transaction, true);
-    await transactionComplete(transaction);
   } finally {
     db.close();
   }

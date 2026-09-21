@@ -81,6 +81,7 @@ export function saveLiveFields(fields: Record<string, unknown> = sampleSession):
   }
   return storageRepository.saveSession({
     scope: 'live',
+    walletProviderScope: save.walletProviderScope,
     pairing: save.pairing,
     live: save.live,
     presentation: save.presentation,

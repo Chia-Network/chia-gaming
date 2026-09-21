@@ -102,9 +102,9 @@ The same ownership applies to submission intent: Rust
 `TransactionManager` is its durable retained owner. `SubmissionPump` owns one
 browser map and ordered promise tail from persistence-gated launch through
 optional fee acquisition, exact broadcast, typed completion, and
-relinquishment. Lease replacement reschedules only unlaunched work; launched
-work remains queue-owned through terminal quiescence. Duplicate IDs must carry
-the immutable Rust-issued lineage for the same retained intent.
+relinquishment. Committed-runtime replacement reschedules only unlaunched work;
+launched work remains queue-owned through terminal quiescence. Duplicate IDs
+must carry the immutable Rust-issued lineage for the same retained intent.
 
 **Retained transaction rebroadcast.** When the manager drains a transaction for
 submission, it keeps a retained copy for reload/reorg recovery and derives the
@@ -438,9 +438,9 @@ data.
 
 `SessionMachineRuntime` construction is inert. The committed React layout
 effect installs its render callback and calls `activate()`; only then does it
-attach an exclusive `SessionRuntimeLease`. Layout-effect cleanup calls only
-`clearRender()`. It does not retire the lease or protocol. Replacement of the
-committed lease and `SessionController` cleanup—including terminal
+become the controller's exclusive committed runtime. Layout-effect cleanup calls
+only `clearRender()`. It does not retire the runtime or protocol. Replacement of
+the committed runtime and `SessionController` cleanup—including terminal
 cleanup—own retirement. The controller retains the committed runtime while no
 renderer is mounted; a later renderer reads and reattaches that same runtime
 without changing protocol ownership during render.
@@ -489,10 +489,10 @@ the same coordinator. Pre-runtime negotiation may use the standalone reliable
 transport flush, but it follows the same attempt-persistence-before-release
 ordering and degraded failure policy.
 
-`SessionRuntimeLease` is the peer transport's narrow
-`ReliableCommitCoordinator` plus one capability:
-`snapshotModel()` returns the authoritative runtime model. Replacing a committed
-lease or cleaning up its controller retires the old runtime, discards queued
+`SessionMachineRuntime` directly provides the peer transport's narrow
+`ReliableCommitCoordinator` facet and `snapshotModel()` returns its
+authoritative model. Replacing a committed runtime or cleaning up its controller
+retires the old runtime, discards queued
 events and fire-and-forget controller work, and rejects queued result promises
 and persistence-gated effects. Completion callbacks from an in-flight write
 also become inert after retirement. Final controller cleanup settles unlaunched
@@ -500,16 +500,16 @@ submission deliveries and queued jobs and removes tracked effects from
 quiescence. A wallet RPC that returns afterward can only register/cancel its
 trade through the wallet-level ledger; it cannot mutate the dropped cradle.
 
-`WalletOperationRuntime` holds one canonical funding demand per attached
-material sink. A restored request cannot launch while the runtime still
-owns a blocking wallet operation for that same stable identity.
+`WalletOperationRuntime` holds one stable funding inbox per attached session.
+A restored request cannot launch while the runtime still owns a blocking wallet
+operation for that same stable identity.
 Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-The current app-owned persistence contracts are browser session envelope v32,
-Rust/WASM cradle schema 20, app IndexedDB schema 4, and independent wallet
-operation record v7.
+The current app-owned persistence contracts are browser session envelope v33,
+Rust/WASM cradle schema 21, app IndexedDB schema 4, and independent wallet
+operation record v8.
 Their explicit versions are future migration hooks. None has shipped, so strict
 codecs accept only the current shape and version; they do not migrate, alias, or
 fallback-decode predecessors. Deployed Cloud/WalletConnect RPC, Chia offer
@@ -544,7 +544,7 @@ success. Cloud is recoverable only after begin returns a
 `best-effort-uncertain`, while post-ID `creating` and `cancelling` entries
 reconcile the exact request without another begin call. If a replacement begin
 after pre-ID uncertainty supplies an ID, the entry transitions to `creating`
-and exact reconciliation takes over. Wallet record v7 preserves the typed
+and exact reconciliation takes over. Wallet record v8 preserves the typed
 `orphanRisk: 'pre-id-response-lost'` provenance through that transition and any
 eventual created trade, so the unidentified first request remains visibly
 risky after success. Popup source/origin/request correlation and exact
@@ -559,14 +559,17 @@ reload and automatically get exactly one new attempt on each later
 claim-and-read, subsequent strict hydration, takeover, malformed evidence,
 reset retry, and authority loss. The winning claim returns the exact session
 and wallet-operation snapshot; `StorageRepository` and `WalletOperationRuntime`
-decode/hydrate those records before buffered preauthority patches flush. One
+decode/hydrate those records before pending common identity, preference, and
+history changes flush. Other mutations reject until authority is claimed.
+Preserving reset replaces the session atomically, and rejection tombstones are
+decoded and pruned independently inside the claim transaction. One
 IndexedDB transaction checkpoints the complete session envelope and
 independent ledger snapshot atomically. Strict codecs reject unknown/missing
 fields, duplicate trade IDs, invalid discriminants, and non-current versions.
 IndexedDB schema 4 durably stores owner, write, and reset epochs. One
 generation-fenced storage mutation coordinator serializes session, ledger,
 clear, and reset writes, validating that authority atomically with each
-mutation; localStorage is only a UX hint. Old tabs and retired leases cannot
+mutation; localStorage is only a UX hint. Old tabs and retired runtimes cannot
 overwrite a winning generation, and a clear immediately followed by an
 unawaited save leaves the save. Hard reset advances the durable reset epoch
 before deletion and intentionally erases every reservation, including replay

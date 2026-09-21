@@ -233,7 +233,7 @@ describe('CloudBlockchainInterface fee support', () => {
         'SR_1',
       ),
     ).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer },
       tradeId: 'Offer_1',
     });
@@ -397,7 +397,7 @@ describe('CloudBlockchainInterface fee support', () => {
     await expect(
       new CloudBlockchainInterface().reconcileWalletOffer(operation, request, 'SR_reload'),
     ).resolves.toEqual({
-      kind: 'created',
+      kind: 'created-reserved',
       material: { kind: 'offer', offer },
       tradeId: 'Offer_reload',
     });

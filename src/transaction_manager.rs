@@ -84,14 +84,6 @@ struct SubmittedTx {
     wallet_acknowledged_variant: Option<Hash>,
     /// Chain evidence is independent from fee and wallet delivery state.
     chain_terminality: SubmissionChainTerminality,
-    /// Coin ids this transaction spends.  An output coin's parent is one of
-    /// these, which is how a vanished output is matched back to its creator.
-    spent_coin_ids: Vec<CoinID>,
-    /// Output coins this transaction should create, derived from its
-    /// `CREATE_COIN` conditions.  These are replay/conflict metadata only:
-    /// they do not become poll targets unless a protocol handler separately
-    /// registers the coin as watched.
-    expected_output_coins: Vec<CoinString>,
     /// Absolute height at/after which the transaction can no longer be included
     /// (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`).  `None` means no expiry.
     expiry: Option<u64>,
@@ -244,6 +236,17 @@ fn submission_variant_fingerprint(bundle: &SpendBundle) -> Result<Hash, Error> {
 }
 
 impl SubmittedTx {
+    fn spent_coin_ids(&self) -> impl Iterator<Item = CoinID> + '_ {
+        self.base_bundle
+            .spends
+            .iter()
+            .map(|spend| spend.coin.to_coin_id())
+    }
+
+    fn expected_output_coins(&self) -> Result<Vec<CoinString>, Error> {
+        expected_output_coins(&self.base_bundle)
+    }
+
     fn current_bundle(&self) -> &SpendBundle {
         match &self.current_variant {
             SubmissionBroadcastVariant::Base => &self.base_bundle,
@@ -282,6 +285,12 @@ impl SubmittedTx {
     }
 
     fn validate(&self) -> Result<(), Error> {
+        self.expected_output_coins().map_err(|error| {
+            Error::StrErr(format!(
+                "submission {} canonical base bundle is not parseable: {error:?}",
+                self.id
+            ))
+        })?;
         match (&self.fee_intent, &self.current_variant) {
             (
                 DurableFeeIntent::Unresolved(SubmissionFeeIntent::Attach { .. }),
@@ -489,15 +498,13 @@ fn plan_pending_submission(
                 ),
             });
         }
-        let outputs = expected_output_coins(&pending.submission.bundle).map_err(|error| {
-            SubmissionPlanError {
-                stage: SubmissionDrainFailureStage::ExpectedOutputs,
-                retained_submission_id: None,
-                candidate_submission_id: Some(candidate_id),
-                intent_fingerprint: Some(fingerprint.clone()),
-                message: "Failed to derive expected outputs for queued submission".to_string(),
-                rust_context: format!("{error:?}"),
-            }
+        expected_output_coins(&pending.submission.bundle).map_err(|error| SubmissionPlanError {
+            stage: SubmissionDrainFailureStage::ExpectedOutputs,
+            retained_submission_id: None,
+            candidate_submission_id: Some(candidate_id),
+            intent_fingerprint: Some(fingerprint.clone()),
+            message: "Failed to derive expected outputs for queued submission".to_string(),
+            rust_context: format!("{error:?}"),
         })?;
         let planned_next_submission_id =
             next_submission_id
@@ -510,13 +517,6 @@ fn plan_pending_submission(
                     message: "Submission identifier source is exhausted".to_string(),
                     rust_context: format!("next_submission_id={candidate_id}"),
                 })?;
-        let spent_coin_ids = pending
-            .submission
-            .bundle
-            .spends
-            .iter()
-            .map(|spend| spend.coin.to_coin_id())
-            .collect();
         let retained = SubmittedTx {
             id: candidate_id,
             active_attempt: None,
@@ -537,8 +537,6 @@ fn plan_pending_submission(
             },
             wallet_acknowledged_variant: None,
             chain_terminality: SubmissionChainTerminality::Active,
-            spent_coin_ids,
-            expected_output_coins: outputs,
             expiry: pending.submission.expiry,
         };
         (
@@ -1488,7 +1486,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         self.last_height = height;
         self.last_snapshot_height = height;
         let mut rearmed_timeout_claims: Vec<TimeoutClaimSemantic> = Vec::new();
-        let mut spend_reversal = false;
         let rollback_rearms = self.invalidate_timeout_claims_for_rollback_epoch(height, reorg);
         if let Some(rearmed) = rollback_rearms.as_ref() {
             rearmed_timeout_claims.extend(rearmed.iter().copied());
@@ -1580,7 +1577,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 // chooses peaks by weight, so the replacement tip may be equal
                 // or higher and cannot be detected from height alone.
                 if live && watched.spent_confirmed_at.take().is_some() {
-                    spend_reversal = true;
                     let was_claim_submitted = watched.claim_submitted;
                     watched.claim_submitted = false;
                     if was_claim_submitted {
@@ -1612,9 +1608,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
                 }
             }
         }
-        if spend_reversal && !reorg {
-            self.submission_book.reset_replay_at(height);
-        }
 
         // Retained submissions are replay intents, not timeless wishes. Once a
         // coin they spend is observed spent, an absent expected output proves a
@@ -1636,7 +1629,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         self.submission_book.reconcile_chain_terminality(
             &observed_created,
             reorg,
-            spend_reversal,
             &causally_rolled_back_ids,
         );
         let current_height = height;
@@ -1651,16 +1643,17 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             }
             if !spent_inputs.is_empty() {
                 let spends_observed_input = tx
-                    .spent_coin_ids
-                    .iter()
-                    .any(|coin_id| spent_inputs.contains(coin_id));
-                let expected_output_watched = tx
-                    .expected_output_coins
+                    .spent_coin_ids()
+                    .any(|coin_id| spent_inputs.contains(&coin_id));
+                let expected_output_coins = tx
+                    .expected_output_coins()
+                    .expect("validated retained base bundle must remain parseable");
+                let expected_output_watched = expected_output_coins
                     .iter()
                     .any(|coin| watched_outputs.contains(coin));
                 return !spends_observed_input
                     || tx.chain_terminality == SubmissionChainTerminality::Landed
-                    || tx.expected_output_coins.is_empty()
+                    || expected_output_coins.is_empty()
                     || !expected_output_watched;
             }
             true
@@ -1782,7 +1775,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             self.present_coins.remove(&coin);
             self.vanished_coins.remove(&coin);
             let coin_id = coin.to_coin_id();
-            self.retain_submitted(|tx| !tx.spent_coin_ids.contains(&coin_id));
+            self.retain_submitted(|tx| !tx.spent_coin_ids().any(|spent| spent == coin_id));
             self.pending_unwatch_coins.push(coin);
         }
     }
@@ -4665,7 +4658,7 @@ mod tests {
     }
 
     #[test]
-    fn equal_or_higher_tip_spend_reversal_replays_acknowledged_intent() {
+    fn equal_or_higher_tip_causal_rollback_replays_acknowledged_intent() {
         for replacement_height in [11, 12] {
             let input = test_coin(replacement_height as u8 + 70);
             let output = CoinString::from_parts(
@@ -4751,6 +4744,112 @@ mod tests {
             .unwrap();
             assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
         }
+    }
+
+    #[test]
+    fn equal_tip_reactivates_only_intent_with_absent_output_and_revived_input() {
+        let input_a = test_coin(0xa0);
+        let input_b = test_coin(0xa1);
+        let output_a = CoinString::from_parts(
+            &input_a.to_coin_id(),
+            &PuzzleHash::from_bytes([0xa2; 32]),
+            &Amount::new(1),
+        );
+        let output_b = CoinString::from_parts(
+            &input_b.to_coin_id(),
+            &PuzzleHash::from_bytes([0xa3; 32]),
+            &Amount::new(1),
+        );
+        let mut manager = TransactionManager::new(PersistableMockGameSession);
+        manager.register_watch(output_a.clone(), Timeout::new(50), None, None);
+        for (name, input, output) in [
+            ("causal-a", &input_a, &output_a),
+            ("unrelated-b", &input_b, &output_b),
+        ] {
+            manager.pending_submissions.push(PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::already_paid(
+                    test_bundle_spending_creating(name, input, output),
+                    None,
+                ),
+                fee_intent: SubmissionFeeIntent::AlreadyPaid,
+            });
+        }
+        let initial = manager.drain_submissions().unwrap().submissions;
+        for submission in &initial {
+            manager.acknowledge_submission(submission.id).unwrap();
+        }
+
+        let mut allocator = AllocEncoder::new();
+        manager
+            .report_coin_states(
+                &mut allocator,
+                40,
+                &[
+                    CoinStateRecord {
+                        coin: input_a.clone(),
+                        created_height: Some(30),
+                        spent_height: Some(40),
+                    },
+                    CoinStateRecord {
+                        coin: output_a.clone(),
+                        created_height: Some(40),
+                        spent_height: None,
+                    },
+                    CoinStateRecord {
+                        coin: input_b,
+                        created_height: Some(30),
+                        spent_height: Some(40),
+                    },
+                    CoinStateRecord {
+                        coin: output_b,
+                        created_height: Some(40),
+                        spent_height: None,
+                    },
+                ],
+            )
+            .unwrap();
+        assert!(manager
+            .submission_book
+            .test_submitted()
+            .iter()
+            .all(|submission| {
+                submission.chain_terminality == SubmissionChainTerminality::Landed
+            }));
+
+        manager
+            .report_coin_states(
+                &mut allocator,
+                40,
+                &[
+                    CoinStateRecord {
+                        coin: input_a,
+                        created_height: Some(30),
+                        spent_height: None,
+                    },
+                    CoinStateRecord {
+                        coin: output_a,
+                        created_height: None,
+                        spent_height: None,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let replay = manager.drain_submissions().unwrap().submissions;
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].id, initial[0].id);
+        assert_eq!(
+            manager
+                .submission_book
+                .test_submitted()
+                .iter()
+                .find(|submission| submission.id == initial[1].id)
+                .unwrap()
+                .chain_terminality,
+            SubmissionChainTerminality::Landed,
+            "an unrelated landed intent stays landed when its output was outside this poll scope"
+        );
     }
 
     #[test]
@@ -5237,46 +5336,6 @@ mod tests {
             .is_ok());
     }
 
-    #[test]
-    fn issuing_attempt_rejects_cross_submission_predecessor_without_consuming_state() {
-        let mut manager = TransactionManager::new(PersistableMockGameSession);
-        for (name, expiry) in [("lineage-a", Some(10)), ("lineage-b", Some(20))] {
-            manager.pending_submissions.push(PendingSubmission {
-                id: None,
-                submission: test_submission(name, expiry),
-                fee_intent: SubmissionFeeIntent::AlreadyPaid,
-            });
-        }
-        let drained = manager.drain_submissions().unwrap().submissions;
-        let first = &drained[0];
-        let second = &drained[1];
-        let next_token = manager.submission_book.test_next_attempt_token();
-        manager
-            .submission_book
-            .test_attempt_mut(second.attempt_token)
-            .unwrap()
-            .submission_id = first.id;
-        manager.pending_submissions.push(PendingSubmission {
-            id: Some(second.id),
-            submission: test_submission("lineage-b", Some(20)),
-            fee_intent: SubmissionFeeIntent::AlreadyPaid,
-        });
-
-        let error = manager.drain_submissions().unwrap_err();
-        assert!(format!("{error:?}").contains("belongs to submission"));
-        assert_eq!(
-            manager.submission_book.test_next_attempt_token(),
-            next_token
-        );
-        assert_eq!(
-            manager
-                .test_attempt_for_submission(second.id)
-                .unwrap()
-                .token,
-            second.attempt_token
-        );
-    }
-
     fn manager_with_two_live_attempts() -> TransactionManager<PersistableMockGameSession> {
         let mut manager = TransactionManager::new(PersistableMockGameSession);
         for (name, expiry) in [
@@ -5299,24 +5358,6 @@ mod tests {
             Ok(_) => panic!("malformed current-schema manager must be rejected"),
             Err(error) => error.to_string(),
         }
-    }
-
-    #[test]
-    fn restore_rejects_cross_owned_delivery_attempt() {
-        let mut manager = manager_with_two_live_attempts();
-        let first_id = manager.submission_book.test_submitted()[0].id;
-        let second_token = manager.submission_book.test_submitted()[1]
-            .active_attempt
-            .as_ref()
-            .unwrap()
-            .token;
-        manager
-            .submission_book
-            .test_attempt_mut(second_token)
-            .unwrap()
-            .submission_id = first_id;
-
-        assert!(restored_manager_error(&manager).contains("not containing submission"));
     }
 
     #[test]
@@ -5361,6 +5402,154 @@ mod tests {
         submitted.completed_attempt = submitted.active_attempt.clone();
 
         assert!(restored_manager_error(&manager).contains("both active and completed"));
+    }
+
+    #[test]
+    fn restore_rejects_each_malformed_submission_graph_invariant() {
+        fn duplicate_id(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            let id = manager.submission_book.test_submitted()[0].id;
+            manager.submission_book.test_submitted_mut()[1].id = id;
+        }
+        fn duplicate_intent(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            let first = manager.submission_book.test_submitted()[0].clone();
+            let second = &mut manager.submission_book.test_submitted_mut()[1];
+            second.base_bundle = first.base_bundle;
+            second.expiry = first.expiry;
+            second.fee_intent = first.fee_intent;
+            second.intent_fingerprint = first.intent_fingerprint;
+        }
+        fn noncanonical_intent(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager.submission_book.test_submitted_mut()[0].intent_fingerprint = Hash::default();
+        }
+        fn noncanonical_variant(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager.submission_book.test_submitted_mut()[0]
+                .active_attempt
+                .as_mut()
+                .unwrap()
+                .drained_variant_fingerprint = Hash::default();
+        }
+        fn stale_next_id(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            let id = manager.submission_book.test_submitted()[1].id;
+            manager.submission_book.test_set_next_submission_id(id);
+        }
+        fn stale_next_token(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            let token = manager.submission_book.test_submitted()[1]
+                .active_attempt
+                .as_ref()
+                .unwrap()
+                .token;
+            manager.submission_book.test_set_next_attempt_token(token);
+        }
+        fn landed_active(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager.submission_book.test_submitted_mut()[0].chain_terminality =
+                SubmissionChainTerminality::Landed;
+        }
+        fn absent_pending(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager.chain_snapshot_ready();
+            manager.submission_book.test_pending_mut()[0].intent.id = Some(99);
+        }
+        fn duplicate_pending(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager.chain_snapshot_ready();
+            let duplicate = manager.submission_book.test_pending()[0].clone();
+            manager.submission_book.test_pending_mut().push(duplicate);
+        }
+        fn mismatched_pending(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager.chain_snapshot_ready();
+            manager.submission_book.test_pending_mut()[0]
+                .intent
+                .submission
+                .expiry = Some(999);
+        }
+        fn invalid_retirement(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            let next = manager.submission_book.test_next_submission_id();
+            manager.submission_book.test_retired_mut().push(next);
+        }
+        fn duplicate_retirement(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager.submission_book.test_retired_mut().extend([0, 0]);
+        }
+        fn absent_replay_reference(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager
+                .submission_book
+                .test_replay_epoch_mut()
+                .test_insert_replayed(99);
+        }
+        fn landed_replay_reference(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            let id = manager.submission_book.test_submitted()[0].id;
+            manager.submission_book.test_submitted_mut()[0].active_attempt = None;
+            manager.submission_book.test_submitted_mut()[0].chain_terminality =
+                SubmissionChainTerminality::Landed;
+            manager
+                .submission_book
+                .test_replay_epoch_mut()
+                .test_insert_replayed(id);
+        }
+
+        type Mutator = fn(&mut TransactionManager<PersistableMockGameSession>);
+        let cases: &[(&str, Mutator, &str)] = &[
+            ("duplicate id", duplicate_id, "retained more than once"),
+            (
+                "duplicate intent",
+                duplicate_intent,
+                "duplicates a retained canonical intent",
+            ),
+            (
+                "noncanonical intent",
+                noncanonical_intent,
+                "noncanonical intent fingerprint",
+            ),
+            (
+                "noncanonical variant",
+                noncanonical_variant,
+                "does not match submission",
+            ),
+            ("next id", stale_next_id, "outside issued range"),
+            ("next token", stale_next_token, "outside issued range"),
+            ("landed active", landed_active, "landed submission"),
+            (
+                "absent pending",
+                absent_pending,
+                "references absent submission",
+            ),
+            (
+                "duplicate pending",
+                duplicate_pending,
+                "duplicate pending deliveries",
+            ),
+            (
+                "mismatched pending",
+                mismatched_pending,
+                "does not match retained intent",
+            ),
+            (
+                "invalid retirement",
+                invalid_retirement,
+                "retired submission id",
+            ),
+            (
+                "duplicate retirement",
+                duplicate_retirement,
+                "retired more than once",
+            ),
+            (
+                "absent replay",
+                absent_replay_reference,
+                "replay epoch references absent submission",
+            ),
+            (
+                "landed replay",
+                landed_replay_reference,
+                "replay epoch references non-active submission",
+            ),
+        ];
+        for (name, mutate, expected) in cases {
+            let mut manager = manager_with_two_live_attempts();
+            mutate(&mut manager);
+            let error = restored_manager_error(&manager);
+            assert!(
+                error.contains(expected),
+                "{name}: expected {expected:?} in {error:?}"
+            );
+        }
     }
 
     #[test]
@@ -5537,7 +5726,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_unavailable_fee_attempts_relinquish_without_tombstone_growth() {
+    fn repeated_unavailable_fee_attempts_keep_one_bounded_lineage_record() {
         let input = test_coin(0x7b);
         let mut manager = TransactionManager::new(PersistableMockGameSession);
         manager.pending_submissions.push(PendingSubmission {
@@ -5603,7 +5792,11 @@ mod tests {
                 &bencodex::to_vec(&manager).expect("serialize relinquished fee attempt"),
             )
             .expect("restore relinquished fee attempt");
-            assert_eq!(manager.submission_book.test_completed_attempt_count(), 0);
+            assert_eq!(
+                manager.submission_book.test_completed_attempt_count(),
+                1,
+                "relinquishment keeps exactly the latest immutable lineage record"
+            );
             assert_eq!(
                 manager
                     .stop_submission_attempt(upgrade.attempt_token)

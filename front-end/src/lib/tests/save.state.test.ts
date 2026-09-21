@@ -53,7 +53,7 @@ describe('flat state', () => {
     if (!rawRecord) throw new Error('Expected a persisted session record');
     const record = decodeSessionSaveEnvelope(rawRecord).save;
     delete record.identity.sessionId;
-    await storageRepository.persist(storageRepository.mutateRecords('write-session', record));
+    await storageRepository.saveSessionAndWalletOperations(record, []);
 
     storageRepository._resetForTests();
     setTestGlobal('localStorage', makeStorage());
@@ -302,6 +302,34 @@ describe('flat state', () => {
     expect(remaining.pairing.channelTimeout).toBe('100');
     expect(remaining.pairing.unrollTimeout).toBe('50');
     expect(remaining.pairing.opponentAlias).toBe('Opponent');
+  });
+
+  it('never exposes an empty record while preserving a resumable reset', async () => {
+    saveLiveFields({
+      ...sampleSession,
+      blockchainType: 'simulator',
+      humanHistory: ['preserved'],
+    });
+    await storageRepository.flushSessionSave();
+    let release!: () => void;
+    let committed!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reachedCommit = new Promise<void>((resolve) => {
+      committed = resolve;
+    });
+    storageRepository.holdNextCheckpointAfterCommitForTests(barrier, committed);
+
+    const reset = storageRepository.clearGameSessionPreservingHistory();
+    await reachedCommit;
+    const duringReset = await readSessionRecord();
+    expect(duringReset).toMatchObject({
+      phase: 'pre-handshake',
+      history: { humanHistory: ['preserved'] },
+    });
+    release();
+    await reset;
   });
 
   it('pairingToken-only pending handshake is resumable without a cradle', async () => {

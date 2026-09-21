@@ -747,7 +747,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   async beginWalletOffer(
     _operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<WalletOfferBeginOutcome> {
+  ): Promise<Exclude<WalletOfferBeginOutcome, { kind: 'created-ephemeral' }>> {
     if (request.kind === 'funding') {
       try {
         const amount = absAmountFromOffer(request.offer);
@@ -791,13 +791,13 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     _operation: WalletOfferOperation,
     request: WalletOfferRequest,
     recoveryId: string,
-  ): Promise<WalletOfferCompletion> {
+  ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
     try {
       const result = await this.trackSignatureRequest(recoveryId, request.kind, () =>
         this.pollSignatureRequestOffer(recoveryId),
       );
       return {
-        kind: 'created',
+        kind: 'created-reserved',
         material: { kind: 'offer', offer: result.offer },
         tradeId: result.tradeId,
       };

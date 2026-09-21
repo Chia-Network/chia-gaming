@@ -4,7 +4,6 @@ import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
 import { StorageAuthorityLostError } from '../session/indexedDb';
-import type { SessionRuntimeLease } from '../session/sessionRuntimeLease';
 import { runSessionMachineTransition, send } from './session_machine.harness';
 import { Subject } from 'rxjs';
 
@@ -23,22 +22,12 @@ describe('session machine behavior sequences', () => {
     persist: (state: ReturnType<typeof createSessionMachineState>) => Promise<void>,
     flushDeferredWork: () => void = () => {},
   ) {
-    let coordinator: SessionRuntimeLease | undefined;
-    let attachedCoordinator: SessionRuntimeLease | undefined;
+    let coordinator: SessionMachineRuntime | undefined;
     const controller = {
       clearDerivedGamePresentation: () => {},
-      attachTransactionCoordinator: (next: SessionRuntimeLease) => {
-        coordinator = next;
-        if (attachedCoordinator && attachedCoordinator !== next) {
-          attachedCoordinator.retire();
-        }
-        attachedCoordinator = next;
-      },
-      commitSessionRuntime: (_runtime: SessionMachineRuntime, next: SessionRuntimeLease) => {
-        controller.attachTransactionCoordinator(next);
-      },
-      detachTransactionCoordinator: (detached: SessionRuntimeLease) => {
-        if (attachedCoordinator === detached) attachedCoordinator = undefined;
+      commitSessionRuntime: (runtime: SessionMachineRuntime) => {
+        coordinator?.retire();
+        coordinator = runtime;
       },
       getObservable: () => new Subject(),
       onRestoreStatusChange: () => () => {},
@@ -63,7 +52,7 @@ describe('session machine behavior sequences', () => {
       persist,
     });
     runtime.activate();
-    if (!coordinator) throw new Error('runtime did not attach its commit coordinator');
+    if (!coordinator) throw new Error('runtime did not commit');
     return { runtime, coordinator, controller };
   }
 
@@ -72,16 +61,18 @@ describe('session machine behavior sequences', () => {
       sendMessage: () => true,
       sendAck: () => true,
     });
-    const current = {
-      retire: jest.fn(() => controller.detachTransactionCoordinator(current)),
-      requestCommit: jest.fn(),
-      flush: jest.fn(async () => {}),
-      enqueue: jest.fn(),
-      enqueueResult: jest.fn(),
-      releaseAfterPersistence: jest.fn(),
-      snapshotModel: jest.fn(() => createSessionModel()),
-    } as unknown as SessionRuntimeLease;
-    controller.attachTransactionCoordinator(current);
+    const current = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      controller,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: jest.fn(),
+      persist: async () => {},
+    });
+    const retire = jest.spyOn(current, 'retire');
+    const flush = jest.spyOn(current, 'flush');
+    current.activate();
 
     new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
       controller,
@@ -93,11 +84,11 @@ describe('session machine behavior sequences', () => {
       persist: async () => {},
     });
 
-    expect(current.retire).not.toHaveBeenCalled();
+    expect(retire).not.toHaveBeenCalled();
     await controller.flushPendingSave();
-    expect(current.flush).toHaveBeenCalledTimes(1);
+    expect(flush).toHaveBeenCalledTimes(1);
     controller.cleanup();
-    expect(current.retire).toHaveBeenCalledTimes(1);
+    expect(retire).toHaveBeenCalledTimes(1);
   });
 
   it('makes committed replacement the sole authority and retires the old runtime', () => {
@@ -132,40 +123,35 @@ describe('session machine behavior sequences', () => {
     expect(replacement.getState()).toBe(replacementState);
   });
 
-  it('synchronously revokes a replaced controller owner and ignores stale release', async () => {
+  it('synchronously revokes a replaced runtime owner', async () => {
     const controller = new SessionController(null, 'session-id', 0n, 0n, {
       sendMessage: () => true,
       sendAck: () => true,
     });
-    const first = {
-      retire: jest.fn(() => controller.detachTransactionCoordinator(first)),
-      requestCommit: jest.fn(),
-      flush: jest.fn(async () => {}),
-      enqueue: jest.fn(),
-      enqueueResult: jest.fn(),
-      releaseAfterPersistence: jest.fn(),
-      snapshotModel: jest.fn(() => createSessionModel()),
-    } as unknown as SessionRuntimeLease;
-    const second = {
-      retire: jest.fn(() => controller.detachTransactionCoordinator(second)),
-      requestCommit: jest.fn(),
-      flush: jest.fn(async () => {}),
-      enqueue: jest.fn(),
-      enqueueResult: jest.fn(),
-      releaseAfterPersistence: jest.fn(),
-      snapshotModel: jest.fn(() => createSessionModel()),
-    } as unknown as SessionRuntimeLease;
+    const makeRuntime = () =>
+      new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+        controller,
+        iStarted: false,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        onError: jest.fn(),
+        persist: async () => {},
+      });
+    const first = makeRuntime();
+    const second = makeRuntime();
+    const firstRetire = jest.spyOn(first, 'retire');
+    const secondFlush = jest.spyOn(second, 'flush');
+    const secondRetire = jest.spyOn(second, 'retire');
+    first.activate();
+    second.activate();
+    expect(firstRetire).toHaveBeenCalledTimes(1);
 
-    controller.attachTransactionCoordinator(first);
-    controller.attachTransactionCoordinator(second);
-    expect(first.retire).toHaveBeenCalledTimes(1);
-
-    controller.detachTransactionCoordinator(first);
     await controller.flushPendingSave();
-    expect(second.flush).toHaveBeenCalledTimes(1);
+    expect(secondFlush).toHaveBeenCalledTimes(1);
 
     controller.cleanup();
-    expect(second.retire).toHaveBeenCalledTimes(1);
+    expect(secondRetire).toHaveBeenCalledTimes(1);
   });
 
   it('deduplicates pending external effects by key without awaiting their completion', async () => {
@@ -191,6 +177,22 @@ describe('session machine behavior sequences', () => {
 
     resolveEffect();
     await expect(first).resolves.toBeUndefined();
+  });
+
+  it('captures concurrent effect keys behind one persistence gate', async () => {
+    const persist = jest.fn(async () => {});
+    const firstLauncher = jest.fn(async () => {});
+    const secondLauncher = jest.fn(async () => {});
+    const { runtime, coordinator } = runtimeWithCoordinator(persist);
+
+    const first = coordinator.releaseAfterPersistence('first-key', firstLauncher);
+    const second = coordinator.releaseAfterPersistence('second-key', secondLauncher);
+    await runtime.persist();
+    await Promise.all([first, second]);
+
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(firstLauncher).toHaveBeenCalledTimes(1);
+    expect(secondLauncher).toHaveBeenCalledTimes(1);
   });
 
   it('releases a captured effect once after failed persistence and rejects sync launcher throws', async () => {
@@ -429,7 +431,7 @@ describe('session machine behavior sequences', () => {
     jest.useFakeTimers();
     const controller = {
       clearDerivedGamePresentation: () => {},
-      attachTransactionCoordinator: jest.fn(),
+      commitSessionRuntime: jest.fn(),
       flushDeferredWork: jest.fn(),
       prepareReliableCommit: jest.fn(() => ({
         generation: 0,

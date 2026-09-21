@@ -20,9 +20,10 @@ import {
   type TerminalSessionSave,
 } from './saveEnvelope';
 import { decodeSessionSaveEnvelope } from './persistence';
+import type { WalletProviderScope } from '../../types/ChiaGaming';
 
 export type CommonSaveFields = Pick<SessionSave, 'identity' | 'preferences' | 'history'>;
-export type PreAuthorityPatch = {
+export type CommonSessionPatch = {
   identity?: Partial<SessionIdentitySave>;
   preferences?: Partial<SessionPreferencesSave>;
   history?: Partial<SessionHistorySave>;
@@ -36,22 +37,26 @@ export type SessionStateUpdate =
     }
   | {
       scope: 'live';
+      walletProviderScope: WalletProviderScope;
       pairing: SessionPairingSave;
       live: LiveSessionSave['live'];
       presentation: SessionPresentationSave;
       history?: Partial<SessionHistorySave>;
     };
 export interface SessionReplacement {
+  walletProviderScope: WalletProviderScope;
   pairing: SessionPairingSave;
   transport: SessionTransportSave;
   identity?: Partial<SessionIdentitySave>;
   history?: Partial<SessionHistorySave>;
 }
 export interface TerminalFields {
+  walletProviderScope: WalletProviderScope;
   terminal: TerminalSessionSave['terminal'];
   presentation: SessionPresentationSave;
 }
 export interface PreservedSessionCheckpoint {
+  walletProviderScope: WalletProviderScope;
   pairing: SessionPairingSave;
   transport: SessionTransportSave;
 }
@@ -127,7 +132,7 @@ export function assertPersistableSession(obj: unknown, path = 'SessionSave'): vo
 export function mergeClaimedSession(
   record: SessionSave | null,
   fallback: SessionSave,
-  patch: PreAuthorityPatch,
+  patch: CommonSessionPatch,
 ): SessionSave {
   const base = record ?? fallback;
   return capSessionHistories({
@@ -172,7 +177,7 @@ export function mergeDurableSession(record: SessionSave, memory: SessionSave): S
 export function mergeInspectedSession(
   record: SessionSave,
   local: SessionSave,
-  patch: PreAuthorityPatch,
+  patch: CommonSessionPatch,
 ): SessionSave {
   const merged = mergeClaimedSession(record, local, patch);
   return {
@@ -205,6 +210,7 @@ export function applySessionUpdate(state: SessionSave, update: SessionStateUpdat
     version: SESSION_SAVE_VERSION,
     phase: 'live',
     ...common,
+    walletProviderScope: structuredClone(update.walletProviderScope),
     pairing: structuredClone(update.pairing),
     live: structuredClone(update.live),
     presentation: structuredClone(update.presentation),
@@ -242,6 +248,7 @@ export function createPreHandshakeSession(
     ...common,
     identity: { ...common.identity, ...checkpoint.identity },
     history: { ...common.history, ...checkpoint.history },
+    walletProviderScope: structuredClone(checkpoint.walletProviderScope),
     pairing: structuredClone(checkpoint.pairing),
     transport: structuredClone(checkpoint.transport),
   });
@@ -256,6 +263,7 @@ export function createTerminalSession(
     version: SESSION_SAVE_VERSION,
     phase: 'terminal',
     ...commonSaveFields(state),
+    walletProviderScope: structuredClone(fields.walletProviderScope),
     terminal: structuredClone(fields.terminal),
     presentation: structuredClone(fields.presentation),
   });
@@ -264,12 +272,14 @@ export function createTerminalSession(
 export function preservationCheckpoint(state: SessionSave): PreservedSessionCheckpoint | null {
   if (state.phase === 'pre-handshake') {
     return {
+      walletProviderScope: structuredClone(state.walletProviderScope),
       pairing: structuredClone(state.pairing),
       transport: structuredClone(state.transport),
     };
   }
   if (state.phase !== 'live') return null;
   return {
+    walletProviderScope: structuredClone(state.walletProviderScope),
     pairing: structuredClone(state.pairing),
     transport: {
       messageNumber: state.live.messageNumber,
@@ -281,7 +291,7 @@ export function preservationCheckpoint(state: SessionSave): PreservedSessionChec
   };
 }
 
-export function commonPatch(before: SessionSave, after: SessionSave): PreAuthorityPatch {
+export function commonPatch(before: SessionSave, after: SessionSave): CommonSessionPatch {
   return {
     identity: changedFields(before.identity, after.identity),
     preferences: changedFields(before.preferences, after.preferences),
